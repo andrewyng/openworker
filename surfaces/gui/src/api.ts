@@ -307,6 +307,10 @@ export interface SlackWorkspace {
   allowed_users: string[];
   allow_all: boolean;
   allowed_user_names?: Record<string, string | null>;
+  // Who installed this workspace (authed_user) — pre-added to the allow-list on
+  // connect (UX-027); the GUI marks their chip "you" and keys the setup card copy.
+  installer_user_id?: string;
+  installer_name?: string;
 }
 
 // One connected GitHub App installation (managed relay is multi-installation;

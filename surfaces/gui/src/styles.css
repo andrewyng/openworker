@@ -1355,6 +1355,190 @@ html[data-theme="dark"] :not(.connector-badge) > .connector-icon[data-dark-mark]
 .art-chip-meta span { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .art-chip-open { margin-left: 8px; flex: none; font-size: 11.5px; color: var(--accent); font-weight: 500; }
 
+/* ---- UX-027: Slack post-connect "how mentions reach you" card ----
+   Split-scene carousel: the Slack window is PINNED to modern light-Slack (aubergine
+   chrome, white pill for the active channel, purple top toolbar with the search
+   field — it should read as a screenshot of Slack, not our UI). The OpenWorker
+   window uses app tokens. Everything enters via .hiw-k + an inline --d delay once
+   .hiw-play is set. */
+.hiw-tab { position: relative; font: inherit; font-size: 12px; color: var(--muted); background: none;
+  border: 0; padding: 5px 9px 7px; cursor: pointer; border-radius: 7px 7px 0 0; }
+.hiw-tab:hover { color: var(--ink); background: var(--paper); }
+.hiw-tab.on { color: var(--ink); font-weight: 600; }
+.hiw-prog { position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px;
+  background: var(--line-strong); opacity: 0; }
+.hiw-tab.on .hiw-prog { opacity: 1; }
+.hiw-tab.on .hiw-prog i { display: block; height: 100%; width: 0; background: var(--accent);
+  animation: hiw-prog-fill var(--hiw-dur, 8s) linear forwards; }
+@keyframes hiw-prog-fill { to { width: 100%; } }
+
+.hiw-scene { position: relative; display: flex; gap: 16px; }
+.hiw-win { border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden;
+  display: flex; flex-direction: column; height: 252px; box-shadow: 0 5px 14px rgba(0,0,0,.08); }
+
+/* ===== Slack side — modern light Slack, fixed palette ===== */
+.hiw-sl { flex: 1.3 1 0; min-width: 0; background: #fff; color: #1d1c1d; }
+/* window top = Slack's aubergine toolbar: traffic lights + the search pill */
+.hiw-sltop { display: flex; align-items: center; gap: 7px; padding: 4px 9px; background: #350d36; }
+.hiw-sltop .hiw-dots { display: flex; gap: 3.5px; flex: none; }
+.hiw-sltop .hiw-dots i { width: 6px; height: 6px; border-radius: 50%; }
+.hiw-sltop .hiw-dots i:nth-child(1) { background: #ff5f57; }
+.hiw-sltop .hiw-dots i:nth-child(2) { background: #febc2e; }
+.hiw-sltop .hiw-dots i:nth-child(3) { background: #28c840; }
+.hiw-slsearch { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px;
+  background: rgba(255,255,255,.24); border-radius: 5px; padding: 1.5px 7px;
+  font-size: 8px; color: #f4ecf4; white-space: nowrap; overflow: hidden; }
+.hiw-slbody { display: flex; flex: 1; min-height: 0; position: relative; }
+.hiw-slrail { width: 92px; flex: none; background: #4a154b; color: #d5c4d5; padding: 5px 0 5px; font-size: 9px; }
+.hiw-slrail .hiw-ws { color: #fff; font-weight: 800; font-size: 10px; padding: 1px 8px 5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hiw-slnav { display: flex; align-items: center; gap: 4px; padding: 1.5px 8px;
+  white-space: nowrap; overflow: hidden; opacity: .92; }
+.hiw-ic { width: 9px; height: 9px; flex: none; stroke: currentColor; fill: none;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.hiw-appav { width: 10px; height: 10px; border-radius: 3px; background: #fff; color: #4a154b;
+  display: grid; place-items: center; font-size: 6px; font-weight: 800; flex: none; }
+.hiw-slrail .hiw-sect { padding: 6px 8px 2px; font-size: 8.5px; opacity: .72; }
+.hiw-slrail .hiw-ch { margin: 0 4px; padding: 1.5px 5px; border-radius: 5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* modern Slack: the ACTIVE channel is a white pill with aubergine text */
+.hiw-slrail .hiw-ch.on { background: #fff; color: #2b0f2c; }
+.hiw-slrail .hiw-pres { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: #2bac76; margin-right: 3px; vertical-align: 1px; }
+.hiw-slmain { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #fff; }
+.hiw-slhead { display: flex; align-items: baseline; gap: 5px; padding: 5px 9px 4px; border-bottom: 1px solid #e3e2e3;
+  font-size: 10px; font-weight: 800; }
+.hiw-slhead .hiw-sub { font-weight: 400; color: #868686; font-size: 8.5px; }
+.hiw-slmsgs { flex: 1; padding: 5px 9px 4px; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+/* the centered date-divider pill */
+.hiw-sldate { display: flex; align-items: center; gap: 6px; margin: 1px 0; }
+.hiw-sldate::before, .hiw-sldate::after { content: ""; flex: 1; border-top: 1px solid #e3e2e3; }
+.hiw-sldate span { font-size: 7.5px; font-weight: 700; color: #454245; border: 1px solid #e3e2e3;
+  border-radius: 999px; padding: 1px 7px; background: #fff; }
+.hiw-slm { display: flex; gap: 6px; font-size: 9.5px; line-height: 1.35; }
+.hiw-sav { width: 20px; height: 20px; border-radius: 5px; flex: none; display: grid; place-items: center;
+  font-size: 8px; font-weight: 800; color: #fff; }
+.hiw-nm { font-weight: 800; color: #1d1c1d; }
+.hiw-ts { font-size: 8px; color: #868686; margin-left: 3px; font-weight: 400; }
+.hiw-appb { font-size: 6.5px; font-weight: 700; color: #868686; background: #efefef; border-radius: 3px;
+  padding: 0.5px 3px; margin-left: 3px; vertical-align: 1px; letter-spacing: .03em; }
+.hiw-men { color: #1264a3; background: #e8f5fa; border-radius: 3px; padding: 0 3px; font-weight: 600;
+  white-space: nowrap; }
+.hiw-replybar { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 8.5px;
+  color: #1264a3; font-weight: 700; }
+.hiw-replybar .hiw-sav2 { width: 13px; height: 13px; border-radius: 3px; background: #4a154b; color: #fff;
+  display: grid; place-items: center; font-size: 5.5px; font-weight: 800; }
+.hiw-replybar .hiw-later { color: #868686; font-weight: 400; }
+/* two-row Slack composer: formatting toolbar on top, then + / input / send */
+.hiw-slcomposer { margin: 0 9px 7px; border: 1px solid #8d8d8daa; border-radius: 7px; overflow: hidden; flex: none; }
+.hiw-slctools { display: flex; align-items: center; gap: 7px; padding: 2.5px 8px 2px;
+  font-size: 8px; color: #868686; background: #f8f8f8; }
+.hiw-slctools b { font-weight: 800; } .hiw-slctools i { font-style: italic; }
+.hiw-slctools u { text-decoration: underline; } .hiw-slctools s { text-decoration: line-through; }
+.hiw-slcrow { display: flex; align-items: center; gap: 5px; padding: 3px 7px 4px; font-size: 9px; color: #868686; }
+.hiw-slcrow .hiw-plus { width: 13px; height: 13px; border-radius: 50%; background: #efefef; color: #555;
+  display: grid; place-items: center; font-size: 9px; flex: none; }
+.hiw-slcrow .hiw-send { margin-left: auto; width: 16px; height: 13px; border-radius: 3px; background: #eaeaea;
+  color: #a0a0a0; display: grid; place-items: center; font-size: 7px; flex: none; }
+/* thread panel (slides in like the real thread rail) */
+.hiw-slthread { position: absolute; top: 0; right: 0; bottom: 0; width: 60%; background: #fff;
+  border-left: 1px solid #e3e2e3; box-shadow: -7px 0 15px rgba(0,0,0,.08);
+  display: flex; flex-direction: column; z-index: 2; }
+.hiw-slthread .hiw-th { display: flex; align-items: baseline; gap: 5px; padding: 5px 9px 4px;
+  border-bottom: 1px solid #e3e2e3; font-size: 10px; font-weight: 800; }
+.hiw-slthread .hiw-x { margin-left: auto; color: #868686; font-weight: 400; }
+.hiw-slthread .hiw-tmsgs { flex: 1; min-height: 0; padding: 6px 9px; display: flex; flex-direction: column;
+  gap: 6px; overflow: hidden; }
+/* "N replies ————" rule, like Slack's reply-count divider */
+.hiw-slthread .hiw-cnt { display: flex; align-items: center; gap: 5px; font-size: 8px; color: #868686; }
+.hiw-slthread .hiw-cnt::after { content: ""; flex: 1; border-top: 1px solid #e3e2e3; }
+.hiw-slthread .hiw-treply { margin: 0 8px 7px; border: 1px solid #8d8d8daa; border-radius: 7px;
+  padding: 3px 7px; font-size: 8.5px; color: #868686; flex: none; }
+
+/* ===== OpenWorker side — app tokens ===== */
+.hiw-ow { flex: 1 1 0; min-width: 0; background: var(--paper); }
+.hiw-owtop { display: flex; align-items: center; gap: 6px; padding: 4px 9px; font-size: 9.5px; font-weight: 600;
+  background: var(--panel); color: var(--muted); border-bottom: 1px solid var(--line); }
+.hiw-owtop .hiw-dots { display: flex; gap: 3.5px; }
+.hiw-owtop .hiw-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
+.hiw-owbody { display: flex; flex: 1; min-height: 0; }
+.hiw-owrail { width: 96px; flex: none; background: var(--panel); border-right: 1px solid var(--line); padding: 6px 5px; }
+.hiw-owrail .hiw-brand { font-weight: 700; font-size: 9px; letter-spacing: -.015em; padding: 0 3px 5px; color: var(--ink); }
+.hiw-newbtn { background: var(--accent); color: #fff; border-radius: 5px; padding: 3px 6px; font-size: 8px;
+  font-weight: 600; margin-bottom: 5px; }
+.hiw-ownav { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 8px; padding: 2px 3px; }
+.hiw-owrail .hiw-sect { font-size: 7px; letter-spacing: .07em; font-weight: 700; color: var(--faint); margin: 6px 3px 2px; }
+.hiw-sess { font-size: 8px; padding: 3px 4px; border-radius: 4px; color: var(--faint); line-height: 1.25; }
+.hiw-sess b { display: block; color: var(--ink); font-weight: 600; font-size: 8px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hiw-sess.hot { background: var(--accent-soft); }
+.hiw-owmain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.hiw-owtitle { padding: 4px 8px; font-size: 8.5px; font-weight: 600; border-bottom: 1px solid var(--line);
+  color: var(--ink); background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hiw-owtitle .hiw-via { font-weight: 400; color: var(--faint); font-size: 8px; }
+.hiw-owchat { flex: 1; padding: 7px 8px; display: flex; flex-direction: column; gap: 5px; overflow: hidden; }
+.hiw-bub { font-size: 8.5px; line-height: 1.4; border-radius: 7px; padding: 4px 7px; max-width: 94%; }
+.hiw-bub.user { background: var(--accent-soft); align-self: flex-end; color: var(--ink); }
+.hiw-bub.agent { background: var(--panel); border: 1px solid var(--line); align-self: flex-start; color: var(--muted); }
+.hiw-owcomposer { margin: 0 8px 7px; border: 1px solid var(--line-strong); border-radius: 6px; padding: 4px 7px;
+  font-size: 8.5px; color: var(--faint); background: var(--panel); flex: none; }
+.hiw-waitrow { display: flex; align-items: center; gap: 6px; font-size: 8.5px; padding: 5px 7px; margin: 9px 8px 0;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--warn-soft); color: var(--ink); }
+.hiw-allowbtn { font-size: 8.5px; font-weight: 600; color: #fff; background: var(--accent); border: 0;
+  border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex: none; }
+.hiw-waitcap { margin: 5px 10px; font-size: 8.5px; color: var(--muted); }
+
+/* the travelling spark between windows */
+.hiw-spark { position: absolute; top: 46%; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); opacity: 0; z-index: 4; }
+.hiw-play .hiw-spark { animation: hiw-shoot .9s ease-in-out forwards; animation-delay: var(--d, 0s); }
+@keyframes hiw-shoot {
+  0% { opacity: 0; left: 50%; } 15% { opacity: 1; }
+  85% { opacity: 1; } 100% { opacity: 0; left: 57%; }
+}
+
+/* post-it notes (rev 7): the concept in five hand-written words, slapped onto the
+   scene at its beat; they fade near the loop's end so they read as annotation. */
+.hiw-sticky {
+  position: absolute; width: 118px; padding: 8px 10px 10px; z-index: 5;
+  background: #fde68a; color: #6b4d11;
+  font: 10.5px/1.35 "Marker Felt", "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive;
+  box-shadow: 2px 4px 10px rgba(0,0,0,.22); transform: rotate(-3.5deg);
+}
+.hiw-sticky.r { transform: rotate(2.5deg); }
+.hiw-sticky::before { /* the bit of tape */
+  content: ""; position: absolute; top: -5px; left: 50%; width: 30px; height: 9px;
+  transform: translateX(-50%) rotate(-1deg); background: rgba(255,255,255,.55);
+  box-shadow: 0 1px 2px rgba(0,0,0,.08);
+}
+html[data-theme="dark"] .hiw-sticky { background: #eab308; color: #3d2c05; }
+.hiw-play .hiw-k.hiw-sticky {
+  animation: hiw-slap .45s ease forwards, hiw-sticky-out .6s ease forwards 7.2s;
+  animation-delay: var(--d, 0s), 7.2s;
+}
+.hiw-play .hiw-k.hiw-sticky.r {
+  animation-name: hiw-slap-r, hiw-sticky-out;
+}
+@keyframes hiw-slap { from { opacity: 0; transform: rotate(-3.5deg) scale(1.18); } to { opacity: 1; transform: rotate(-3.5deg) scale(1); } }
+@keyframes hiw-slap-r { from { opacity: 0; transform: rotate(2.5deg) scale(1.18); } to { opacity: 1; transform: rotate(2.5deg) scale(1); } }
+@keyframes hiw-sticky-out { to { opacity: 0; } }
+
+/* animation primitives */
+.hiw-k { opacity: 0; }
+.hiw-play .hiw-k { animation: hiw-fade-up .45s ease forwards; animation-delay: var(--d, 0s); }
+@keyframes hiw-fade-up { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+.hiw-play .hiw-glow { animation: hiw-fade-up .45s ease forwards, hiw-glow 1.2s ease var(--g, 1s) 2;
+  animation-delay: var(--d, 0s), var(--g, 1s); }
+.hiw-play .hiw-stay.hiw-glow { opacity: 1; animation: hiw-glow 1.2s ease var(--g, 1s) 2; }
+@keyframes hiw-glow { 0%,100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 0 3px var(--accent-soft); } }
+.hiw-stay { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hiw-k, .hiw-play .hiw-k, .hiw-play .hiw-glow, .hiw-play .hiw-spark { animation: none !important; opacity: 1 !important; }
+  .hiw-play .hiw-spark { opacity: 0 !important; }
+  .hiw-tab.on .hiw-prog i { animation: none !important; width: 100%; }
+}
+
 /* ---- UX-026: automation-start toast (top-right, 5s; schedule-fired runs only) ---- */
 .toast-pulse { animation: toast-pulse 1.2s ease infinite; }
 @keyframes toast-pulse { 50% { opacity: .35; } }
