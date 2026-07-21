@@ -9,13 +9,13 @@
 #
 # Prerequisites (mirrors build_windows.ps1's header):
 #   - Rust (rustup) + Node/npm, and the GUI deps installed (npm ci in surfaces/gui).
-#   - A Python venv at platform/.venv with this package installed editable, plus the
+#   - A Python venv at .venv (repo root) with this package installed editable, plus the
 #     build-only deps:
-#       python3 -m venv platform/.venv
-#       platform/.venv/bin/pip install -e . pyinstaller tzdata typer
+#       python3 -m venv .venv
+#       .venv/bin/pip install -e . pyinstaller tzdata typer
 #     `typer` is needed only at BUILD time: PyInstaller walks the `mcp` package and
 #     `mcp.cli` calls sys.exit() at import if typer is absent, which aborts the freeze.
-#     (aisuite is not pip-installed — the spec adds <repo> to pathex so PyInstaller finds it.)
+#     (aisuite installs like any other dependency — git-pinned in pyproject.toml.)
 #
 # SIGNING: set APPLE_SIGNING_IDENTITY to a "Developer ID Application: … (TEAMID)" identity and
 # `tauri build` signs the .app + the bundled sidecar with it. Left unset → UNSIGNED (first launch
@@ -133,7 +133,7 @@ echo "==> [3/5] tauri build (.app)"
 # `.ocw-updater.env` one directory above the repo (same convention as the notary env).
 # Keyless builds skip the overlay entirely so dev/fork builds keep working; keyless
 # RELEASES would strand every install without auto-update, hence the loud warning.
-UPDATER_ENV="${OCW_UPDATER_ENV:-$PLATFORM/../../.ocw-updater.env}"
+UPDATER_ENV="${OCW_UPDATER_ENV:-$PLATFORM/../.ocw-updater.env}"
 if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ] && [ -f "$UPDATER_ENV" ]; then
   # shellcheck disable=SC1090
   source "$UPDATER_ENV"
@@ -144,7 +144,9 @@ if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
 else
   echo "    WARNING: no updater signing key — building WITHOUT auto-update artifacts (not releasable)."
 fi
-( cd "$GUI" && npm run tauri build -- --bundles app "${UPDATER_OVERLAY[@]}" )
+# ${arr[@]+…} guard: plain "${arr[@]}" on an EMPTY array is an "unbound variable"
+# under set -u on macOS's stock bash 3.2 — hit by keyless (fresh-clone) builds.
+( cd "$GUI" && npm run tauri build -- --bundles app ${UPDATER_OVERLAY[@]+"${UPDATER_OVERLAY[@]}"} )
 
 echo "==> [4/5] hdiutil: wrapping into .dmg"
 BUNDLE="$GUI/src-tauri/target/release/bundle"
@@ -238,8 +240,7 @@ elif [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   NOTARYTOOL_API_KEY_ID="${NOTARYTOOL_API_KEY_ID:-${APPLE_API_KEY:-}}"
   NOTARYTOOL_API_ISSUER_ID="${NOTARYTOOL_API_ISSUER_ID:-${APPLE_API_ISSUER:-}}"
 
-  REPO="$(cd "$PLATFORM/.." && pwd)"
-  NOTARY_ENV="${OCW_NOTARY_ENV:-$REPO/../.ocw-notary.env}"
+  NOTARY_ENV="${OCW_NOTARY_ENV:-$PLATFORM/../.ocw-notary.env}"
   if [ -z "${NOTARYTOOL_API_KEY_PATH:-}" ] && [ -f "$NOTARY_ENV" ]; then
     set -a; # shellcheck disable=SC1090
     source "$NOTARY_ENV"; set +a

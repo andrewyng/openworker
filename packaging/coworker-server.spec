@@ -5,8 +5,8 @@ One-DIR bundle (exe + `_internal/` support folder) shipped via Tauri's `resource
 It used to be a onefile binary in the externalBin slot, but onefile self-extracts its whole
 archive to a temp dir on EVERY launch — 6-7s of "Starting coworker…" splash (measured; the
 actual Python import is ~0.5s). The wrinkles handled here:
-  - aisuite isn't pip-installed — it lives at <repo>/aisuite on sys.path via a `.pth`. We add
-    both the repo root and platform/ to `pathex` and collect coworker + aisuite submodules.
+  - aisuite is a regular pip dependency (git-pinned in pyproject.toml); collect coworker +
+    aisuite submodules from the venv.
   - uvicorn loads its protocol/lifespan impls dynamically → collect_all.
   - certifi's CA bundle must ship for TLS (OpenAI, web search, Telegram/Slack).
   - messaging extras (slack_bolt, telegram) are optional; collected if importable.
@@ -26,10 +26,9 @@ import sys
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # SPECPATH is injected by PyInstaller and points at this file's directory
-# (<repo>/platform/packaging). Derive everything else from it — no hardcoded paths.
+# (<repo>/packaging). Derive everything else from it — no hardcoded paths.
 PACKAGING = SPECPATH
-PLATFORM = os.path.dirname(PACKAGING)
-ROOT = os.path.dirname(PLATFORM)
+ROOT = os.path.dirname(PACKAGING)
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -79,7 +78,7 @@ for pkg in ("slack_bolt", "telegram"):  # [messaging] extra — optional
 
 a = Analysis(
     [os.path.join(PACKAGING, "server_entry.py")],
-    pathex=[ROOT, PLATFORM],
+    pathex=[ROOT],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
