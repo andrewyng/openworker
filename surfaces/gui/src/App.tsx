@@ -554,7 +554,8 @@ export function App() {
           setStreaming(""); // finalized into items (or empty tool-only turn)
           break;
         case "tool_proposed":
-          if (d.name === "todo_write" && d.arguments?.items) setTodo(normalizeTodos(d.arguments.items));
+          if (d.name === "todo_write" && (d.arguments?.todos || d.arguments?.items))
+            setTodo(normalizeTodos(d.arguments.todos ?? d.arguments.items));
           setItems((p) => [
             ...p,
             { kind: "tool", id: newId(), name: d.name, args: d.arguments, status: "…" },

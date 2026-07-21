@@ -195,9 +195,14 @@ describe("humanizeTool", () => {
   });
 
   it("summarizes todo_write by its single item and status", () => {
-    const line = humanizeTool("todo_write", { items: [{ content: "Post the digest", status: "in_progress" }] });
+    const line = humanizeTool("todo_write", { todos: [{ content: "Post the digest", status: "in_progress" }] });
     expect(line.pre).toBe("Updated the plan — ");
     expect(line.obj).toContain("Post the digest");
     expect(line.post).toBe(" → in progress");
+  });
+
+  it("still renders pre-rename todo_write histories (legacy `items` key)", () => {
+    const line = humanizeTool("todo_write", { items: [{ content: "Old plan", status: "pending" }] });
+    expect(line.obj).toContain("Old plan");
   });
 });
