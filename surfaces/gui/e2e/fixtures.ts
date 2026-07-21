@@ -1,4 +1,17 @@
-import { test as base, expect } from "@playwright/test";
+import { test as base, expect, type Page } from "@playwright/test";
+
+// The app-wide /ws/events socket each page opened (UX-026 toast et al.) — specs
+// push server events through it via sendAppEvent below.
+const eventSockets = new WeakMap<Page, { send: (data: string) => void }>();
+
+/** Push an app-wide event exactly as the server would over /ws/events. Waits for
+ * the GUI to have connected its socket first. */
+export async function sendAppEvent(page: Page, obj: unknown): Promise<void> {
+  for (let i = 0; i < 50 && !eventSockets.get(page); i++) await page.waitForTimeout(100);
+  const ws = eventSockets.get(page);
+  if (!ws) throw new Error("the app never opened /ws/events");
+  ws.send(JSON.stringify(obj));
+}
 
 // Hermetic API mock. Every /v1 request the GUI makes is fulfilled from the fixtures below (shapes
 // mirrored from the real backend), and the event WebSocket is a SCRIPTED FAKE AGENT (ready on
@@ -542,6 +555,11 @@ export async function mockApi(page: import("@playwright/test").Page) {
   //     assistant_deltas → assistant_message "Echo: <text>" → turn_done
   //   · a message containing "run a tool": tool_proposed + permission_required, then the turn
   //     SUSPENDS until the client's approval decision arrives (deny → skipped; else → ran)
+  // App-wide event stream: register the socket so sendAppEvent can push into it.
+  await page.routeWebSocket(/\/ws\/events$/, (ws) => {
+    eventSockets.set(page, ws);
+  });
+
   await page.routeWebSocket(/\/ws\/session\//, (ws) => {
     const send = (type: string, data: Record<string, unknown> = {}) =>
       ws.send(JSON.stringify({ type, data }));

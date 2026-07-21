@@ -391,3 +391,44 @@ def test_unseen_runs_counted_and_cleared_by_mark_seen(tmp_path, monkeypatch):
     assert row["unseen_runs"] == 1 and row["unseen_failed"] is False
 
     assert not manager.mark_automation_seen("task-nope")["ok"]
+
+
+@pytest.mark.asyncio
+async def test_scheduled_run_broadcasts_run_started_event(tmp_path, monkeypatch):
+    """UX-026: the moment a scheduled run starts, every /ws/events socket hears
+    automation_run_started (the top-right toast). Dead sockets drop silently."""
+    from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
+    from coworker.server.manager import SessionManager
+
+    class ScriptedProvider(ProviderClient):
+        def complete(self, *, model, messages, tools=None, **settings):
+            return AssistantTurn(text="done", finish_reason="stop")
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    manager = SessionManager(data_dir=tmp_path / "data", provider=ScriptedProvider())
+    task = _task(workspace=str(ws), agent="cowork")
+    manager.task_store.save(task)
+
+    heard: list = []
+
+    async def listener(message):
+        heard.append(message)
+
+    async def dead(message):
+        raise RuntimeError("socket gone")
+
+    manager.register_event_client(listener)
+    manager.register_event_client(dead)
+    run = await manager._run_scheduled_task(task, trigger="schedule")
+
+    (event,) = [m for m in heard if m["type"] == "automation_run_started"]
+    assert event["data"]["task_id"] == task.id
+    assert event["data"]["task_title"] == task.title
+    assert event["data"]["session_id"] == run.session_id
+    assert event["data"]["trigger"] == "schedule"
+    assert dead not in manager._event_clients  # dropped, not fatal

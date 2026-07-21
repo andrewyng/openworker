@@ -41,14 +41,22 @@ class MCPManager:
         # so library/CLI construction without secrets keeps working.
         self._secrets = secrets
 
-    async def ensure(self, server: MCPServerDef) -> _Conn:
-        """Return a live connection for `server`, connecting (once) if needed."""
+    async def ensure(self, server: MCPServerDef, *, interactive: bool = False) -> _Conn:
+        """Return a live connection for `server`, connecting (once) if needed.
+
+        `interactive=True` (explicit connect actions only) lets an OAuth server run
+        the browser sign-in flow; the default refuses it — stored tokens and silent
+        refresh still work, but a server that insists on re-authorization raises
+        InteractiveAuthRequired instead of hijacking the user's browser.
+        """
         async with self._lock:
             existing = self._conns.get(server.name)
             if existing is not None:
                 return existing
             ready: asyncio.Future = asyncio.get_running_loop().create_future()
-            self._tasks[server.name] = asyncio.create_task(self._serve(server, ready))
+            self._tasks[server.name] = asyncio.create_task(
+                self._serve(server, ready, interactive=interactive)
+            )
             conn = await ready  # propagates connection errors
             self._conns[server.name] = conn
             return conn
@@ -77,7 +85,9 @@ class MCPManager:
         self._tasks.clear()
 
     # -- per-server lifecycle (one task owns enter+exit) ------------------------
-    async def _serve(self, server: MCPServerDef, ready: asyncio.Future) -> None:
+    async def _serve(
+        self, server: MCPServerDef, ready: asyncio.Future, *, interactive: bool = False
+    ) -> None:
         try:
             async with AsyncExitStack() as stack:
                 if server.transport == "http":
@@ -92,7 +102,12 @@ class MCPManager:
 
                         if self._secrets is None:
                             self._secrets = SecretStore()
-                        auth = build_auth(server.name, server.url, self._secrets)
+                        auth = build_auth(
+                            server.name,
+                            server.url,
+                            self._secrets,
+                            interactive=interactive,
+                        )
                     read, write, *_ = await stack.enter_async_context(
                         streamablehttp_client(
                             server.url, headers=server.headers or None, auth=auth

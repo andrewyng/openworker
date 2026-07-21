@@ -8,7 +8,7 @@ import { test, expect } from "./fixtures";
 async function openTaskDetail(page: import("@playwright/test").Page) {
   await page.goto("/");
   await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Automations", exact: true }).click();
+  await page.getByTestId("account-menu").getByRole("button", { name: "Automations", exact: true }).click();
   await page.getByText("Daily AI News").first().click();
   await expect(page.getByRole("button", { name: /Run now/ })).toBeVisible();
 }
