@@ -1,8 +1,5 @@
-# App CI — the coworker Python suite + the GUI unit tests.
-#
-# The Playwright e2e suite (surfaces/gui, `npm run e2e`) is NOT wired in yet: it has
-# known pre-existing failures (automations/standing-approvals specs) inherited from the
-# source repo. Add it here once those are fixed so CI starts green and stays green.
+# App CI — the coworker Python suite, the GUI unit tests, and the hermetic
+# Playwright e2e suite (mocked /v1 + WS; no model or network needed).
 
 name: CI
 
@@ -38,3 +35,22 @@ jobs:
       - name: Unit tests
         working-directory: surfaces/gui
         run: npm test
+
+  gui-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: surfaces/gui/package-lock.json
+      - name: npm ci
+        working-directory: surfaces/gui
+        run: npm ci
+      - name: Install Playwright browsers
+        working-directory: surfaces/gui
+        run: npx playwright install --with-deps chromium
+      - name: e2e
+        working-directory: surfaces/gui
+        run: npm run e2e
