@@ -702,12 +702,13 @@ dropped.
 - **Chattiness tiers:** tagged → must respond, in the thread · untagged channel traffic →
   judgement-only, "stay silent unless a reply adds real value" · the allow-list still gates
   everything upstream (unauthorized senders park, never spawn).
-- **Sidebar:** mention-spawned sessions carry `origin`/`origin_label` and gather in ONE
-  cross-persona **"From Slack (N)"** band — collapsed by default, both layouts, placed after
-  Pinned; rows wear the Slack logo right-aligned in the indicator cluster. They never
-  duplicate into Recent or the persona lists (pinned wins; archived keeps the persona
-  disclosure). **No auto-archive** — deferred to a future global settings page (default vs
-  Slack session policies, owner call 2026-07-13).
+- **Sidebar (revised 2026-07-21 by owner; original band decision 2026-07-13):** mention-spawned
+  sessions carry `origin`/`origin_label` and list **chronologically in Recent / the persona
+  lists like any other session**, wearing the Slack logo right-aligned in the row's indicator
+  cluster (`origin_label` as its tooltip). The earlier collapsed cross-persona **"From Slack
+  (N)"** band is REMOVED — it hid fresh mentions below week-old sessions and read as clutter.
+  **No auto-archive** — deferred to a future global settings page (default vs Slack session
+  policies, owner call 2026-07-13).
 - `↪ Refinement (owner, 2026-07-14):` **titles put the ASK first** — "{ask, 48 chars} —
   #channel", mention token stripped. The old "#general — <@UBOT> …" prefix made every
   mention session truncate identically in the sidebar; the ask is what varies, so it gets

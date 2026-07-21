@@ -7,12 +7,13 @@ import { test, expect } from "./fixtures";
 
 test("session list caps at the peek count with Show more", async ({ page }) => {
   await page.goto("/");
-  // Boot resumes a cowork session, so the Coworker accordion body is expanded.
+  // Boot resumes a cowork session, so the Coworker accordion body is expanded. The body holds
+  // 8 sessions (7 weekly plans + the Slack-origin one, §31 rev) against sessions_peek=5.
   await expect(page.getByTitle("Weekly plan 1")).toBeVisible();
   await expect(page.getByTitle("Weekly plan 5")).toBeVisible();
   await expect(page.getByTitle("Weekly plan 6")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Show more (2)" }).click();
+  await page.getByRole("button", { name: "Show more (3)" }).click();
   await expect(page.getByTitle("Weekly plan 6")).toBeVisible();
   await expect(page.getByTitle("Weekly plan 7")).toBeVisible();
 });
@@ -42,26 +43,23 @@ test("archive via the row menu is reversible via the Archived disclosure", async
   await expect(page.getByTitle("Weekly plan 2")).toBeVisible();
 });
 
-test("mention-spawned sessions collapse under From Slack with the platform icon (§31)", async ({
+test("mention-spawned sessions list in Recent with the platform icon — no From Slack band (§31 rev)", async ({
   page,
 }) => {
+  // Flat chronological layout — the launch default (personas off).
+  await page.route("**/v1/settings", (r) => r.fulfill({ json: { nav_layout: "flat" } }));
   await page.goto("/");
   await expect(page.getByTitle("Weekly plan 1")).toBeVisible();
 
-  // Collapsed by default with a count; the session row hidden until expanded…
-  const toggle = page.getByTestId("from-slack-toggle");
-  await expect(toggle).toContainText("From Slack (1)");
-  await expect(page.getByTitle("#general — check the deploy?")).toHaveCount(0);
-
-  await toggle.click();
+  // No collapsed band; the session sits directly in Recent, exactly once (its fixture
+  // timestamp sorts it past the peek cap, so expand first)…
+  await expect(page.getByTestId("from-slack-toggle")).toHaveCount(0);
+  await page.getByText(/Show \d+ more/).click();
   const row = page.getByTitle("#general — check the deploy?");
   await expect(row).toBeVisible();
-  // …wearing the Slack logo (hover-hidden cluster, so assert attachment not visibility)…
-  await expect(
-    page.getByTestId("from-slack-list").locator('[data-logo="slack"]'),
-  ).toHaveCount(1);
-  // …and never duplicated into any other list.
   await expect(page.getByTitle("#general — check the deploy?")).toHaveCount(1);
+  // …wearing the Slack logo (hover-hidden cluster, so assert attachment not visibility).
+  await expect(row.locator('[data-logo="slack"]')).toHaveCount(1);
 });
 
 test("pin via the row menu moves the session to the Pinned band and back", async ({ page }) => {

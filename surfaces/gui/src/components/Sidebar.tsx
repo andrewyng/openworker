@@ -339,15 +339,9 @@ export function Sidebar(props: Props) {
   const pinnedSessions = props.sessions.filter(
     (s) => s.pinned && !s.session_id.startsWith("__") && !s.archived,
   );
-  // §31: mention-spawned sessions gather in one cross-persona "From Slack" group, collapsed by
-  // default (owner call 2026-07-13; no auto-archive — a future global setting). Pinned wins.
-  const slackSessions = props.sessions
-    .filter(
-      (s) =>
-        s.origin === "slack" && !s.archived && !s.pinned && !s.session_id.startsWith("__"),
-    )
-    .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
-  const [slackOpen, setSlackOpen] = useState(false);
+  // §31 (revised 2026-07-21): mention-spawned sessions list chronologically in Recent like any
+  // other session — the OriginIcon in the row's indicator cluster marks where they came from.
+  // The separate collapsed "From Slack" band hid fresh mentions below week-old sessions.
   // A row in the account menu (§26): closes the menu, then runs the destination.
   const appMenuItem = (
     icon: IconName,
@@ -411,9 +405,7 @@ export function Sidebar(props: Props) {
   // EXCLUDED here: they live in the cross-persona Pinned band only, so they don't repeat inside the
   // persona group / project list (matching the flat layout's Recent, which also drops pinned).
   const all = props.sessions.filter((s) => s.agent === browseKey && !s.session_id.startsWith("__"));
-  // Origin (mention-spawned) sessions live in the cross-persona "From Slack" band, not the
-  // persona lists — pinned still wins (Pinned band), and archived keeps the persona disclosure.
-  const mine = all.filter((s) => !s.archived && !s.pinned && !s.origin);
+  const mine = all.filter((s) => !s.archived && !s.pinned);
   const archived = all.filter((s) => s.archived);
   // Only PROJECT-SCOPED personas group sessions by project (git-bound Code, project-bound Ops).
   // Scratch/deliverable conversations are orphan (each has its own per-conversation scratch dir),
@@ -429,7 +421,7 @@ export function Sidebar(props: Props) {
   // Recent = every non-pinned, non-archived, real session across ALL personas, newest first
   // (by updated_at; missing timestamps keep store order), search-filtered. Drives the flat layout.
   const recentSessions = [...props.sessions]
-    .filter((s) => !s.archived && !s.session_id.startsWith("__") && !s.pinned && !s.origin)
+    .filter((s) => !s.archived && !s.session_id.startsWith("__") && !s.pinned)
     .filter((s) => personaVisible(s.agent))
     .filter(matches)
     .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
@@ -702,27 +694,6 @@ export function Sidebar(props: Props) {
             </button>
           ))}
         </div>
-      </div>
-    ) : null;
-
-  // §31: the collapsed cross-persona "From Slack" band — mention-spawned sessions, both layouts.
-  // Disclosure shape mirrors the persona body's Archived row.
-  const fromSlackBand = () =>
-    slackSessions.length > 0 ? (
-      <div>
-        <button
-          className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold hover:text-muted"
-          onClick={() => setSlackOpen((v) => !v)}
-          data-testid="from-slack-toggle"
-        >
-          <Icon name={slackOpen ? "chevronDown" : "chevronRight"} size={12} className="shrink-0" />
-          From Slack ({slackSessions.length})
-        </button>
-        {slackOpen && (
-          <div className="space-y-0.5 mt-0.5" data-testid="from-slack-list">
-            {slackSessions.map((s) => cardRow(s))}
-          </div>
-        )}
       </div>
     ) : null;
 
@@ -1075,7 +1046,6 @@ export function Sidebar(props: Props) {
         <div className="space-y-4">
           {pinnedBand()}
           {scheduledBand()}
-          {fromSlackBand()}
           <div>
             {recentHeader()}
             {layout === "grouped" ? (

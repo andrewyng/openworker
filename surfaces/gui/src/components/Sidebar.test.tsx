@@ -179,7 +179,7 @@ describe("From Slack group (§31)", () => {
     origin_label: "#general · T0AB",
   };
 
-  it("mention-spawned sessions collapse under From Slack with the platform icon, out of Recent", async () => {
+  it("mention-spawned sessions list chronologically in Recent with the platform icon (no band)", async () => {
     stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
@@ -187,20 +187,14 @@ describe("From Slack group (§31)", () => {
     render(<Sidebar {...baseProps} sessions={[...SESSIONS, SLACK_SESSION]} />);
     await screen.findByText("incident watch"); // flat Recent rendered
 
-    // Collapsed by default: the header shows a count, the row itself is hidden…
-    const toggle = screen.getByTestId("from-slack-toggle");
-    expect(toggle.textContent).toContain("From Slack (1)");
-    expect(screen.queryByText("#general — check the deploy?")).toBeNull();
-
-    // …and the session does NOT duplicate into the chronological Recent list.
-    fireEvent.click(toggle);
+    // No collapsed band — the session sits directly in the Recent list, exactly once…
+    expect(screen.queryByTestId("from-slack-toggle")).toBeNull();
     const row = await screen.findByText("#general — check the deploy?");
     expect(screen.getAllByText("#general — check the deploy?")).toHaveLength(1);
 
-    // The row wears the Slack logo, right-aligned in the indicator cluster.
-    const list = screen.getByTestId("from-slack-list");
-    expect(list.querySelector('[data-logo="slack"]')).toBeTruthy();
-    expect(row).toBeTruthy();
+    // …wearing the Slack logo in the row's indicator cluster.
+    const cluster = row.closest(".group");
+    expect(cluster?.querySelector('[data-logo="slack"]')).toBeTruthy();
   });
 });
 
