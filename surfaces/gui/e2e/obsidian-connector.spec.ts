@@ -14,6 +14,8 @@ async function openConnectors(page) {
 test("obsidian: folder field, vault validation error, then connects", async ({ page }) => {
   await openConnectors(page);
 
+  // Obsidian sits at the catalog's tail — expand past the truncation fold first.
+  await page.getByRole("button", { name: "show all" }).click();
   const card = page.getByTestId("connector-obsidian");
   await expect(card).toContainText("Obsidian");
   await card.getByRole("button", { name: "Connect" }).click();
