@@ -348,12 +348,6 @@ export function Sidebar(props: Props) {
     )
     .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
   const [slackOpen, setSlackOpen] = useState(false);
-  const personaLabel = (agentId: string) => {
-    const p = personas?.find((x) => x.id === agentId);
-    return shortPersonaName(p?.name, agentId);
-  };
-
-
   // A row in the account menu (§26): closes the menu, then runs the destination.
   const appMenuItem = (
     icon: IconName,
@@ -602,9 +596,10 @@ export function Sidebar(props: Props) {
     );
   };
 
-  // A 2-line card row (mock §141 list-flat): an optional persona icon tile + title + a
-  // persona/channel subtitle + right-side indicators, with the ⋮ actions kebab revealed on hover.
-  // Shared by the flat layout's Pinned (no icon) and Recent (with icon) sections.
+  // A single-line card row (mock §141 list-flat, subtitle dropped 2026-07-21): title +
+  // right-side indicators, with the ⋮ actions kebab revealed on hover. Shared by the flat
+  // layout's Pinned and Recent sections. Personas are disabled for the first release; when
+  // they return, surface the persona on hover (e.g. in the row tooltip) — not as a subtitle.
   const cardRow = (s: SessionInfo) => {
     const active = s.session_id === props.activeSession;
     const title = s.title || s.session_id;
@@ -614,12 +609,6 @@ export function Sidebar(props: Props) {
       if (next && next !== title) props.onRenameSession(s.session_id, next);
       setEditingId(null);
     };
-    // Subtitle (deliberately quiet): just the persona label + the workspace basename for
-    // project-scoped personas (a real folder). No channel/subscription detail — connectors show as
-    // the dot indicator on the right, so the subtitle stays clean. Scratch/orphan personas omit the
-    // workspace (it's an ugly per-conversation hash).
-    const subParts = [personaLabel(s.agent)];
-    if (s.workspace && isProjectScoped(personaOf(s.agent))) subParts.push(baseName(s.workspace));
     return (
       <div
         key={s.session_id}
@@ -634,8 +623,8 @@ export function Sidebar(props: Props) {
           if (!editing) props.onSelectSession(s.session_id, s.workspace, s.agent);
         }}
       >
-        {/* No leading glyph on session rows — the persona shows in the subtitle (Rohit's call
-            2026-07-07: the per-session icon read as noise in both grouped and chronological). */}
+        {/* No leading glyph on session rows (Rohit's call 2026-07-07: the per-session icon
+            read as noise in both grouped and chronological). */}
         {editing ? (
           <input
             className="flex-1 min-w-0 px-1.5 py-0.5 rounded-md bg-panel border border-accent text-[13px] text-ink outline-none"
@@ -652,9 +641,8 @@ export function Sidebar(props: Props) {
           />
         ) : (
           <>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-medium">{title}</span>
-              <span className="block truncate text-[11px] text-faint">{subParts.join(" · ")}</span>
+            <span className="min-w-0 flex-1 block truncate text-[13px] font-medium">
+              {title}
             </span>
             <span
               className={
