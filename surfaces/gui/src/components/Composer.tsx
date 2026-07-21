@@ -23,9 +23,9 @@ const PERMISSION_OPTIONS: Option[] = [
   { value: "custom", label: "Custom", description: "Use auto-allow rules from config.toml" },
 ];
 
-// Fallback list when the server hasn't supplied one yet; the live list (incl. detected Ollama
-// models) arrives via the `models` prop.
-const MODEL_VALUES = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"];
+// No hardcoded model fallback: until the server supplies the list (a few seconds after a
+// cold app boot), the picker renders a disabled "Loading models…" chip. A baked-in list
+// goes stale and silently offers ids the backend never confirmed (caught 2026-07-21).
 
 // Drop the provider prefix for display (anthropic:claude-opus-4-8 → claude-opus-4-8); full id on hover.
 const shortModel = (m: string) => (m.includes(":") ? m.split(":").slice(1).join(":") : m);
@@ -319,8 +319,10 @@ export function Composer(props: Props) {
     }
   };
 
-  const available = props.models && props.models.length ? props.models : MODEL_VALUES;
-  const modelOptions: Option[] = Array.from(new Set([props.model, ...available])).map((m) => ({
+  const modelsLoaded = !!(props.models && props.models.length);
+  const modelOptions: Option[] = Array.from(
+    new Set([props.model, ...(props.models || [])]),
+  ).map((m) => ({
     value: m,
     label: props.modelLabels?.[m] || shortModel(m),
   }));
@@ -472,9 +474,19 @@ export function Composer(props: Props) {
               <span className="model-warn-ico" aria-hidden>⚠</span>
             </button>
           ) : (
-            !props.modelLocked && (
-              <Dropdown value={props.model} options={modelOptions} onChange={props.onModelChange} align="right" />
-            )
+            !props.modelLocked &&
+              (modelsLoaded ? (
+                <Dropdown value={props.model} options={modelOptions} onChange={props.onModelChange} align="right" />
+              ) : (
+                <button
+                  className="pill chip text-faint cursor-default"
+                  disabled
+                  data-testid="models-loading"
+                  title="Fetching the model list from the server"
+                >
+                  <span className="pill-label">Loading models…</span>
+                </button>
+              ))
           ))}
 
           {/* mic — immediately before send (owner call, DMG #28 walkthrough) */}
