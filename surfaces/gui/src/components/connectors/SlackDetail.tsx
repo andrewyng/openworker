@@ -17,6 +17,7 @@ import {
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
 import type { DetailProps } from "./ConnectorsSection";
+import { SlackHowItWorks } from "./SlackHowItWorks";
 import { ToolsDisclosure } from "./ToolsDisclosure";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, PILL_LINE, ROW, TAG_WARN, XBTN } from "./ui";
 
@@ -104,6 +105,10 @@ export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
           </div>
         </div>
       )}
+
+      {/* UX-027: post-connect orientation — status line + animated how-it-works
+          carousel (collapsible; collapsed state is the local "seen" flag). */}
+      {relay && workspaces.length > 0 && <SlackHowItWorks workspaces={workspaces} />}
 
       {relay &&
         workspaces.map((w) => (
@@ -217,6 +222,8 @@ function WorkspaceGroup({
               allowed={w.allowed_users}
               names={w.allowed_user_names}
               teamId={w.team_id}
+              installerId={w.installer_user_id}
+              installerName={w.installer_name}
               onRemove={(u) => disallowUser("slack", u, w.team_id).then(onChanged)}
               onChanged={onChanged}
             />
@@ -253,15 +260,23 @@ function PeopleRow({
   allowed,
   names,
   teamId,
+  installerId,
+  installerName,
   onRemove,
   onChanged,
 }: {
   allowed: string[];
   names?: Record<string, string | null>;
   teamId: string | null; // null = manual flat list (directory queries as "default")
+  installerId?: string; // authed_user — pre-added on managed connect (UX-027)
+  installerName?: string;
   onRemove: (userId: string) => void;
   onChanged: () => void;
 }) {
+  // The installer's chip reads "you" — their name may still be unresolved (it's
+  // fetched lazily for outbound attribution), so fall back to a literal "You".
+  const label = (u: string) =>
+    names?.[u] || (u === installerId ? installerName || "You" : u);
   return (
     <div className={ROW}>
       <span className={LABEL}>People</span>
@@ -274,11 +289,13 @@ function PeopleRow({
             key={u}
             className="inline-flex items-center gap-1.5 pl-1 pr-2 py-0.5 rounded-full bg-paper border border-line text-[12.5px]"
             title={`id ${u}`}
+            data-testid={u === installerId ? "people-chip-you" : undefined}
           >
             <span className="w-5 h-5 rounded-full bg-accentSoft text-accent grid place-items-center text-[9px] font-bold">
-              {initials(names?.[u] || u)}
+              {initials(label(u))}
             </span>
-            {names?.[u] || u}
+            {label(u)}
+            {u === installerId && <span className="text-[10.5px] text-faint">· you</span>}
             <button className={XBTN} title="remove" onClick={() => onRemove(u)}>
               ×
             </button>

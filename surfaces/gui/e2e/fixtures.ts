@@ -358,8 +358,10 @@ export async function mockApi(page: import("@playwright/test").Page) {
     account: "deeplearning.ai",
     allowed_users: [] as string[], // flat list (manual Socket Mode only)
     workspaces: [
-      { team_id: "T1DL", account: "deeplearning.ai", domain: "dlaiteam", allowed_users: [] as string[], allow_all: false, allowed_user_names: {} as Record<string, string | null> },
-      { team_id: "T2AC", account: "acme-partners", domain: "acmehq", allowed_users: [] as string[], allow_all: false, allowed_user_names: {} as Record<string, string | null> },
+      // T1DL mirrors a managed install: the installer (authed_user) was pre-added
+      // to the allow-list on connect (UX-027) — keys the "you" chip + setup card.
+      { team_id: "T1DL", account: "deeplearning.ai", domain: "dlaiteam", allowed_users: ["U_ME"] as string[], allow_all: false, allowed_user_names: {} as Record<string, string | null>, installer_user_id: "U_ME", installer_name: "Rohit Prasad" },
+      { team_id: "T2AC", account: "acme-partners", domain: "acmehq", allowed_users: [] as string[], allow_all: false, allowed_user_names: {} as Record<string, string | null>, installer_user_id: "", installer_name: "" },
     ],
   };
   const slackConnector = () => ({
