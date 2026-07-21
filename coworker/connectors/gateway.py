@@ -1,6 +1,6 @@
 """Gateway — owns the messaging adapters and routes inbound messages.
 
-Lives inside the always-on `coworker-server` (started/stopped in its lifespan). On inbound:
+Lives inside the always-on `openworker-server` (started/stopped in its lifespan). On inbound:
 enforce the per-platform allowlist, then hand the message to the registered handler (the
 super-agent runner, wired in the next increment). Outbound replies go through the
 `send_message` tool, not the gateway — so the gateway stays a thin inbound router here.

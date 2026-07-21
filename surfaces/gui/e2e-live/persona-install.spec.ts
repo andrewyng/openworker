@@ -14,7 +14,7 @@ const FIXTURE_DIR = path.join(here, "fixtures", "persona"); // holds e2e-tester.
 
 test("live: install a persona from a directory, enable it, and run a task as it", async ({ page }) => {
   const scratchBase = await scratchBaseIfReady();
-  test.skip(!scratchBase, "live backend not ready — start coworker-server and configure a model");
+  test.skip(!scratchBase, "live backend not ready — start openworker-server and configure a model");
 
   const token = `PERSONA-${Date.now()}`;
   const name = `persona-${Date.now()}.txt`;

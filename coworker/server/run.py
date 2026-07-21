@@ -1,4 +1,4 @@
-"""Launch the server with uvicorn. Used by the desktop GUI sidecar and `coworker-server`."""
+"""Launch the server with uvicorn. Used by the desktop GUI sidecar and `openworker-server`."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from .manager import SessionManager
 def _exit_when_orphaned() -> None:
     """When launched as a desktop sidecar (`COWORKER_EXIT_WITH_PARENT=1`), exit if the parent
     process dies — even on an abrupt kill (e.g. the Tauri dev watcher restarting the app, or a
-    crash) that skips the shell's graceful child-kill. Standalone `coworker-server` runs are
+    crash) that skips the shell's graceful child-kill. Standalone `openworker-server` runs are
     unaffected.
 
     The GUI passes its own PID in `COWORKER_PARENT_PID`. Watching that explicit PID (not
@@ -127,7 +127,7 @@ def _ensure_ca_bundle() -> None:
 def main(argv=None) -> None:
     _ensure_ca_bundle()
     cfg = load_config()  # global config supplies defaults
-    parser = argparse.ArgumentParser(prog="coworker-server")
+    parser = argparse.ArgumentParser(prog="openworker-server")
     parser.add_argument("--cwd", default=None, help="optional seed/default workspace")
     parser.add_argument("--model", default=cfg.model)
     parser.add_argument(

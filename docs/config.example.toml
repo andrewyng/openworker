@@ -19,6 +19,6 @@ allowed_commands = [
 # asks). e.g. auto-accept file edits but keep asking before running shell commands.
 auto_allow = ["write_file", "replace_in_file", "apply_patch", "apply_unified_diff"]
 
-# Server (coworker-server) bind address.
+# Server (openworker-server) bind address.
 host = "127.0.0.1"
 port = 8765

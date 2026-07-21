@@ -1,7 +1,7 @@
 //! OpenWorker desktop shell.
 //!
 //! Tauri is a thin native window over the existing React SPA. It:
-//!   1. picks a free localhost port and starts the Python `coworker-server` as a managed
+//!   1. picks a free localhost port and starts the Python `openworker-server` as a managed
 //!      sidecar on that port (so it never clashes with a hand-run server on 8765);
 //!   2. injects `window.__COWORKER_HTTP__` / `__COWORKER_WS__` before the SPA loads, so
 //!      `api.ts` talks to the sidecar (single codebase — the browser build still hits 8765);
@@ -47,7 +47,7 @@ fn free_port() -> u16 {
 ///   2. The bundled onedir sidecar shipped via Tauri `resources` (production): the
 ///      `sidecar/` folder lands in Contents/Resources on macOS and in the install dir
 ///      (next to the app exe) on Windows.
-///   3. Legacy onefile slot: `coworker-server[.exe]` next to the app binary (pre-onedir
+///   3. Legacy onefile slot: `openworker-server[.exe]` next to the app binary (pre-onedir
 ///      builds used Tauri externalBin).
 ///   4. Dev fallback: the repo venv, relative to this crate (`src-tauri` → `platform/.venv`;
 ///      `bin/` on POSIX, `Scripts\` on Windows).
@@ -56,9 +56,9 @@ fn server_bin() -> PathBuf {
         return PathBuf::from(p);
     }
     let exe_name = if cfg!(windows) {
-        "coworker-server.exe"
+        "openworker-server.exe"
     } else {
-        "coworker-server"
+        "openworker-server"
     };
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -78,9 +78,9 @@ fn server_bin() -> PathBuf {
     }
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     if cfg!(windows) {
-        p.push("../../../.venv/Scripts/coworker-server.exe");
+        p.push("../../../.venv/Scripts/openworker-server.exe");
     } else {
-        p.push("../../../.venv/bin/coworker-server");
+        p.push("../../../.venv/bin/openworker-server");
     }
     p
 }
@@ -105,15 +105,15 @@ fn desktop_prefs_path() -> PathBuf {
     state_dir().join("desktop.json")
 }
 
-/// The sidecar's log file: `<state_dir>/logs/coworker-server.log`, fresh per
+/// The sidecar's log file: `<state_dir>/logs/openworker-server.log`, fresh per
 /// launch with the previous run kept as `.old`. None (→ /dev/null) only if the
 /// directory can't be created — logging must never block startup.
 fn server_log_file() -> Option<std::fs::File> {
     let dir = state_dir().join("logs");
     std::fs::create_dir_all(&dir).ok()?;
-    let path = dir.join("coworker-server.log");
+    let path = dir.join("openworker-server.log");
     if path.exists() {
-        let _ = std::fs::rename(&path, dir.join("coworker-server.log.old"));
+        let _ = std::fs::rename(&path, dir.join("openworker-server.log.old"));
     }
     std::fs::File::create(&path).ok()
 }
@@ -568,7 +568,7 @@ async fn install_update(
     }
     // Windows never reaches here (the NSIS installer takes over and relaunches).
     // macOS: the .app was swapped in place — restart into the new version. The tray
-    // Exit path's sidecar kill runs via RunEvent, so no orphaned coworker-server.
+    // Exit path's sidecar kill runs via RunEvent, so no orphaned openworker-server.
     app.restart();
 }
 

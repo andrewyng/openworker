@@ -53,19 +53,19 @@ if (-not (Test-Path $PyInst)) {
 $Triple = (& rustc -vV | Select-String '^host:').ToString().Split()[-1]
 $Arch   = $Triple.Split('-')[0]
 
-# A running coworker-server.exe (e.g. a prior sidecar/smoke test) locks the output exe and
+# A running openworker-server.exe (e.g. a prior sidecar/smoke test) locks the output exe and
 # makes PyInstaller's overwrite fail with Access-is-denied. Stop any before bundling.
-$running = Get-Process -Name "coworker-server" -ErrorAction SilentlyContinue
+$running = Get-Process -Name "openworker-server" -ErrorAction SilentlyContinue
 if ($running) {
-    Write-Host "==> stopping $($running.Count) running coworker-server process(es) holding the output exe"
+    Write-Host "==> stopping $($running.Count) running openworker-server process(es) holding the output exe"
     $running | Stop-Process -Force
     Start-Sleep -Seconds 1
 }
 
-Write-Host "==> [1/3] PyInstaller: bundling coworker-server ($Triple)" -ForegroundColor Cyan
+Write-Host "==> [1/3] PyInstaller: bundling openworker-server ($Triple)" -ForegroundColor Cyan
 & $PyInst --noconfirm --clean `
     --distpath (Join-Path $Here "dist") --workpath (Join-Path $Here "build") `
-    (Join-Path $Here "coworker-server.spec")
+    (Join-Path $Here "openworker-server.spec")
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (exit $LASTEXITCODE)" }
 
 Write-Host "==> [2/3] staging sidecar resources" -ForegroundColor Cyan
@@ -73,11 +73,11 @@ Write-Host "==> [2/3] staging sidecar resources" -ForegroundColor Cyan
 # next to the app exe — onefile's per-launch self-extraction cost seconds of boot splash.
 $BinDir = Join-Path $Gui "src-tauri\binaries"
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
-$Src = Join-Path $Here "dist\coworker-server"
+$Src = Join-Path $Here "dist\openworker-server"
 $Dst = Join-Path $BinDir "sidecar"
 if (Test-Path $Dst) { Remove-Item -Recurse -Force $Dst }
 # Clear any stale onefile binary from pre-onedir builds.
-Remove-Item -Force (Join-Path $BinDir "coworker-server-$Triple.exe") -ErrorAction SilentlyContinue
+Remove-Item -Force (Join-Path $BinDir "openworker-server-$Triple.exe") -ErrorAction SilentlyContinue
 Copy-Item -Recurse -Force $Src $Dst
 Write-Host "    -> $Dst"
 

@@ -7,7 +7,7 @@ import { scratchBaseIfReady, sendTask, startCoworkSession } from "./helpers";
 
 test("live: unattended routes an approval to the Inbox", async ({ page }) => {
   const scratchBase = await scratchBaseIfReady();
-  test.skip(!scratchBase, "live backend not ready — start coworker-server and configure a model");
+  test.skip(!scratchBase, "live backend not ready — start openworker-server and configure a model");
 
   const token = `INBOX-${Date.now()}`;
   const name = `inbox-${Date.now()}.txt`;

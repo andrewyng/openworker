@@ -45,9 +45,9 @@ messaging = ["python-telegram-bot>=21", "slack-bolt>=1.18", "aiohttp>=3.9"]
 browser = ["playwright>=1.44"]
 
 [project.scripts]
-coworker = "coworker.cli:main"
-coworker-server = "coworker.server.run:main"
-coworker-connectors = "coworker.connectors.cli:main"
+openworker = "coworker.cli:main"
+openworker-server = "coworker.server.run:main"
+openworker-connectors = "coworker.connectors.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
