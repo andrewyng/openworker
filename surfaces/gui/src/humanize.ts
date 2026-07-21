@@ -56,7 +56,9 @@ export function humanizeTool(name: string, args: any): HumanLine {
     case "git_log":
       return { pre: "Looked through recent git history" };
     case "todo_write": {
-      const items = Array.isArray(a.items) ? a.items : [];
+      // `todos` is current; `items` renders histories from before the rename (the old
+      // key breaks Together's GLM-5.2 chat template — see coworker/tools/todo.py).
+      const items = Array.isArray(a.todos) ? a.todos : Array.isArray(a.items) ? a.items : [];
       if (items.length === 1) {
         const it = items[0] || {};
         const status = String(it.status || "").replace(/_/g, " ");
