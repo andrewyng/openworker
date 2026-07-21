@@ -108,6 +108,10 @@ the HTML mock), **Built** (in the real React/Python app).
   opens the persona's detail page.
 - **Rationale:** Different mental models — time/recency vs. persona/role. Don't force one. Pins remain
   pure accessibility in both.
+- **Single-line session rows (Decided 2026-07-21 by owner):** Pinned/Recent rows are **one line**
+  (title only) — the persona/workspace subtitle is removed. With personas disabled for the first
+  release the subtitle read as noise ("Coworker" on every row). When personas return, surface the
+  persona **on hover** (row tooltip), not as a second line.
 - **Open:** persist the choice (prefs); default = Flat.
 
 ## 8. "New session" — persona picker  *(Decided / Mocked)*
