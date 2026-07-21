@@ -282,6 +282,8 @@ export interface ConnectorField {
   required: boolean;
   help: string;
   placeholder: string;
+  // Rendering hint: "" = text input; "folder" = offer the native folder picker (desktop).
+  kind?: string;
 }
 
 // A message from a sender not (yet) on the allow-list — parked instead of dropped (§19).

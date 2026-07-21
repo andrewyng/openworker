@@ -54,11 +54,21 @@ ABOUT: dict[str, str] = {
     "asana": "Keep up with your Asana work — search and read tasks and "
     "projects, create tasks, and comment. Connects with a personal access "
     "token from the Asana developer console.",
+    "obsidian": "Work with your Obsidian vault — search and read notes, follow "
+    "wikilinks and backlinks, pull up daily notes, and (with approval) write "
+    "notes. The vault is read directly from disk: no account, no keys, no "
+    "plugin, and nothing ever leaves this Mac. A hand-off tool can open any "
+    "note in the Obsidian app itself.",
 }
 
 # What connecting actually grants, as short honest bullets. Write powers always
 # name themselves; reads state their boundary ("…your account can see").
 ACCESS: dict[str, list[str]] = {
+    "obsidian": [
+        "Reads notes in the vault folder you pick — never outside it",
+        "Creates or edits notes only with your approval",
+        "Runs entirely on this Mac; no account or network access",
+    ],
     "telegram": [
         "Reads messages sent to your bot — never your personal chats.",
         "Sends messages as the bot.",

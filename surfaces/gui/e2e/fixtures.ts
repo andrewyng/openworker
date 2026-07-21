@@ -138,6 +138,7 @@ const CONNECTORS = {
   connectors: [
     { name: "browser", title: "Browser", icon: "B", blurb: "Headless browser.", auth: "none", two_way: false, channels: false, available: true, brand_color: "#6b7280", logo: "", fields: [], instructions: [], connected: true, account: null, enabled: true, allowed_users: [], tools: [], managed: false, managed_profile: false },
     { name: "telegram", title: "Telegram", icon: "T", blurb: "Two-way Telegram messaging.", auth: "bot_token", two_way: true, channels: true, available: true, brand_color: "#229ed9", logo: "telegram", fields: [{ key: "bot_token", label: "Bot token", secret: true, required: true, help: "", placeholder: "123456:ABC…" }], instructions: [], connected: false, account: null, enabled: false, allowed_users: [], tools: [], managed: false, managed_profile: false },
+    { name: "obsidian", title: "Obsidian", icon: "\u25c8", blurb: "Search, read, and write notes in your local vault \u2014 no account needed.", auth: "folder", two_way: false, channels: false, available: true, brand_color: "#7c3aed", logo: "obsidian", fields: [{ key: "vault_path", label: "Vault folder", secret: false, required: true, help: "The folder holding your notes.", placeholder: "~/Documents/MyVault", kind: "folder" }], instructions: ["Pick your vault folder \u2014 no account, no keys."], connected: false, account: null, enabled: false, allowed_users: [], tools: [], managed: false, managed_profile: false },
     // Managed-capable connector (one-click via cloud when signed in; manual paste otherwise).
     // Carries pre-connect detail copy (§38): about + access + tools drive available-detail.spec.ts.
     { name: "gmail", title: "Gmail", icon: "✉", blurb: "Search, summarize, draft, and send email.", about: "Search, summarize, and send over your Gmail.", access: ["Reads and searches your mail.", "Sends email as you.", "Never deletes mail or changes account settings."], auth: "oauth", two_way: false, channels: false, available: true, brand_color: "#ea4335", logo: "gmail", fields: [{ key: "access_token", label: "OAuth access token", secret: true, required: true, help: "", placeholder: "" }], instructions: [], connected: false, account: null, enabled: false, allowed_users: [], tools: [{ name: "gmail_search", label: "Search mail", kind: "read", description: "Search messages.", enabled: true, requires_approval: false }, { name: "gmail_send", label: "Send email", kind: "write", description: "Send a message.", enabled: true, requires_approval: true }], managed: true, managed_profile: false },
@@ -1028,6 +1029,14 @@ export async function mockApi(page: import("@playwright/test").Page) {
       if (Array.isArray(b.hidden_fields))
         hubspotState.hidden_fields = b.hidden_fields.map((f: string) => f.trim().toLowerCase());
       return json({ ok: true, hidden_fields: [...hubspotState.hidden_fields] });
+    }
+    if (p.endsWith("/v1/connectors/obsidian/connect") && m === "POST") {
+      const path = String(req.postDataJSON()?.fields?.vault_path || "");
+      if (!path) return json({ ok: false, error: "pick your vault folder" });
+      if (!path.includes("Vault")) return json({ ok: false, error: "that folder isn't an Obsidian vault" });
+      const row = CONNECTORS.connectors.find((c: any) => c.name === "obsidian");
+      if (row) { row.connected = true; row.enabled = true; row.account = "MyVault"; }
+      return json({ ok: true, account: "MyVault" });
     }
     if (p.endsWith("/v1/connectors"))
       return json({
