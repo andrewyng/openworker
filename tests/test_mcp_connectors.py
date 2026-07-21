@@ -228,3 +228,50 @@ def test_prepare_mcp_tools_gates_by_session_pin_and_toggles(tmp_path, monkeypatc
     # Session gating: a session whose effective set excludes monday gets nothing.
     monkeypatch.setattr(manager, "effective_connectors", lambda sid, agent=None: set())
     assert asyncio.run(manager.prepare_mcp_tools("s2")) == []
+
+
+def test_stale_token_reauth_never_opens_a_browser_mid_turn(tmp_path, monkeypatch):
+    """Tokens PRESENT but the vendor rejects the refresh → the SDK wants a browser
+    re-auth. Non-interactive contexts refuse (InteractiveAuthRequired, often
+    wrapped in an ExceptionGroup by the anyio transport): the session skips the
+    server and the failure is recorded — owner-hit 2026-07-20: an Atlassian
+    authorize page opened at app LAUNCH from a background session start."""
+    from coworker.mcp import oauth as mcp_oauth
+
+    _state(tmp_path, monkeypatch)
+    manager = SessionManager(data_dir=tmp_path / "data")
+    put_global_server(
+        "granola",
+        {"url": "https://mcp.granola.ai/mcp", "auth": "oauth", "enabled": True},
+    )
+    manager.secrets.put("mcp-oauth:granola", {"tokens": {"access_token": "stale"}})
+
+    async def refuses(server):
+        raise ExceptionGroup(
+            "transport", [mcp_oauth.InteractiveAuthRequired("sign-in required")]
+        )
+
+    monkeypatch.setattr(manager.mcp, "ensure", refuses)
+    assert asyncio.run(manager.prepare_mcp_tools("s1")) == []
+    assert "sign-in required" in manager._mcp_errors["granola"]
+
+
+def test_non_interactive_auth_wiring_refuses_the_browser():
+    """build_auth(interactive=False) must never open a browser: its redirect
+    handler raises (keeping the authorize URL for the GUI's reopen affordance),
+    and is_auth_required() finds the marker bare, wrapped, or chained."""
+    import pytest
+
+    from coworker.mcp import oauth as mcp_oauth
+
+    with pytest.raises(mcp_oauth.InteractiveAuthRequired):
+        asyncio.run(mcp_oauth._refuse_browser("https://vendor/authorize?x=1"))
+    assert mcp_oauth.last_authorize_url == "https://vendor/authorize?x=1"
+
+    bare = mcp_oauth.InteractiveAuthRequired("x")
+    assert mcp_oauth.is_auth_required(bare)
+    assert mcp_oauth.is_auth_required(ExceptionGroup("g", [ValueError(), bare]))
+    chained = RuntimeError("wrapped")
+    chained.__cause__ = bare
+    assert mcp_oauth.is_auth_required(chained)
+    assert not mcp_oauth.is_auth_required(ValueError("no"))

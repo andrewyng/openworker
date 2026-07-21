@@ -87,6 +87,31 @@ class SecretStoreTokenStorage(TokenStorage):
         self._merge({"client_info": info.model_dump(mode="json", exclude_none=True)})
 
 
+class InteractiveAuthRequired(RuntimeError):
+    """The server wants a browser sign-in, but this context must not open one.
+
+    Interactive OAuth (browser + loopback wait) is an explicit-connect-only
+    privilege: a background context that hit this — an engine turn, a tools
+    listing — raises instead, and the caller skips the server. Without this, a
+    server whose refresh token the vendor rejected (Atlassian rotates them
+    aggressively) would hijack the user's browser from ANY code path that
+    touched it — owner-hit 2026-07-20: an authorize page opened at app launch.
+    """
+
+
+def is_auth_required(exc: BaseException) -> bool:
+    """True if InteractiveAuthRequired is anywhere in the exception tree — the SDK
+    transport runs in anyio task groups, so it often arrives wrapped in an
+    ExceptionGroup (or chained as a cause) rather than bare."""
+    if isinstance(exc, InteractiveAuthRequired):
+        return True
+    for sub in getattr(exc, "exceptions", None) or []:  # ExceptionGroup
+        if is_auth_required(sub):
+            return True
+    cause = exc.__cause__ or exc.__context__
+    return is_auth_required(cause) if cause is not None else False
+
+
 # -- single-slot interactive flow ------------------------------------------------
 _pending: Optional[asyncio.Future] = None
 # The last authorize URL we sent the user to — surfaced over REST so the GUI can offer
@@ -113,6 +138,22 @@ async def _open_browser(url: str) -> None:
     await asyncio.get_running_loop().run_in_executor(None, webbrowser.open, url)
 
 
+async def _refuse_browser(url: str) -> None:
+    """Non-interactive redirect handler: never open a browser, but keep the URL so
+    the GUI's "reopen sign-in page" affordance still works after the refusal."""
+    global last_authorize_url
+    last_authorize_url = url
+    raise InteractiveAuthRequired(
+        "sign-in required — reconnect this server from its page"
+    )
+
+
+async def _refuse_callback() -> tuple[str, Optional[str]]:
+    raise InteractiveAuthRequired(
+        "sign-in required — reconnect this server from its page"
+    )
+
+
 async def _wait_for_callback() -> tuple[str, Optional[str]]:
     global _pending
     if _pending is not None and not _pending.done():
@@ -130,9 +171,18 @@ async def _wait_for_callback() -> tuple[str, Optional[str]]:
 
 
 def build_auth(
-    server_name: str, server_url: str, secrets: SecretStore
+    server_name: str,
+    server_url: str,
+    secrets: SecretStore,
+    *,
+    interactive: bool = True,
 ) -> OAuthClientProvider:
-    """The httpx auth for one OAuth MCP server (pass as streamablehttp_client(auth=…))."""
+    """The httpx auth for one OAuth MCP server (pass as streamablehttp_client(auth=…)).
+
+    `interactive=False` still uses stored tokens and silent refresh, but the moment
+    the SDK wants a browser authorization it raises InteractiveAuthRequired instead
+    of opening one — only explicit connect actions pass True.
+    """
     metadata = OAuthClientMetadata.model_validate(
         {
             "client_name": CLIENT_NAME,
@@ -147,8 +197,8 @@ def build_auth(
         server_url=server_url,
         client_metadata=metadata,
         storage=SecretStoreTokenStorage(server_name, secrets),
-        redirect_handler=_open_browser,
-        callback_handler=_wait_for_callback,
+        redirect_handler=_open_browser if interactive else _refuse_browser,
+        callback_handler=_wait_for_callback if interactive else _refuse_callback,
     )
 
 

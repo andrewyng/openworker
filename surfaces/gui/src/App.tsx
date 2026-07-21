@@ -7,6 +7,8 @@ import {
   getRecentWorkspaces,
   getSessionMessages,
   getSessions,
+  announceAutomationsChanged,
+  connectEvents,
   getSettings,
   getPersonas,
   getInbox,
@@ -811,6 +813,33 @@ export function App() {
     setSessionId(newId());
   };
   // Inbox → session: the item carries its session's workspace/agent, so open it directly.
+  // UX-026: 5s top-right toast when a SCHEDULED automation run starts (never for
+  // manual Run-now — the user is already watching). Rides the app-wide /ws/events
+  // stream; View run opens the run's live session.
+  const [runToast, setRunToast] = useState<{
+    title: string; sessionId: string; workspace: string; agent: string; time: string;
+  } | null>(null);
+  useEffect(() => {
+    const stop = connectEvents((msg) => {
+      if (msg.type !== "automation_run_started") return;
+      const d = (msg.data ?? {}) as Record<string, string>;
+      setRunToast({
+        title: d.task_title || "Automation",
+        sessionId: d.session_id || "",
+        workspace: d.workspace || "",
+        agent: d.agent || "cowork",
+        time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+      });
+      announceAutomationsChanged(); // the Scheduled band's badge is now stale
+    });
+    return stop;
+  }, []);
+  useEffect(() => {
+    if (!runToast) return;
+    const t = window.setTimeout(() => setRunToast(null), 5000);
+    return () => window.clearTimeout(t);
+  }, [runToast]);
+
   const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
   const selectSession = async (id: string, ws: string, ag: string) => {
     setSurface("session"); // selecting a conversation always returns to the conversation view
@@ -1043,6 +1072,45 @@ export function App() {
       )}
       {/* Desktop-only auto-update prompt (15s after boot, then every 30 min; inert in browser). */}
       <UpdateBanner />
+      {/* UX-026: automation-start toast — quiet panel, neutral dot/drain, accent only
+          on the action (rev 2); auto-dismisses with the 5s drain bar. */}
+      {runToast && (
+        <div
+          className="fixed top-3 right-3 z-[45] w-[290px] bg-panel border border-line rounded-xl shadow-lg px-3.5 pt-3 pb-2.5"
+          data-testid="automation-toast"
+        >
+          <div className="flex items-center gap-2 text-[12.5px] font-semibold">
+            <span className="w-[7px] h-[7px] rounded-full bg-faint toast-pulse" />
+            Automation started
+          </div>
+          <div className="text-[12.5px] text-muted mt-0.5 ml-[15px] truncate">
+            {runToast.title} · {runToast.time} run
+          </div>
+          <div className="flex items-center justify-between ml-[15px] mt-1.5">
+            <button
+              className="text-[12.5px] text-accent font-medium"
+              data-testid="toast-view-run"
+              onClick={() => {
+                selectSession(runToast.sessionId, runToast.workspace, runToast.agent);
+                setRunToast(null);
+              }}
+            >
+              View run ›
+            </button>
+            <button
+              className="text-[12px] text-faint px-0.5"
+              data-testid="toast-dismiss"
+              title="Dismiss"
+              onClick={() => setRunToast(null)}
+            >
+              ✕
+            </button>
+          </div>
+          <div className="absolute left-3 right-3 bottom-1 h-[2px] rounded bg-line overflow-hidden">
+            <span className="block h-full bg-faint toast-drain" />
+          </div>
+        </div>
+      )}
       {/* When collapsed, a thin left-edge zone peeks the nav back as a floating overlay. */}
       {navCollapsed && (
         <div

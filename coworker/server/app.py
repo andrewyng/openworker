@@ -1657,6 +1657,24 @@ def create_app(manager: SessionManager) -> FastAPI:
         finally:
             manager.unregister_session_client(session_id, ws.send_json)
 
+    @app.websocket("/ws/events")
+    async def ws_events(ws: WebSocket) -> None:
+        """App-wide event stream (session-independent): the GUI keeps one open for
+        pushes like automation_run_started (the UX-026 toast). Read-only — inbound
+        frames are ignored; the receive loop just detects disconnect."""
+        if not _origin_allowed(ws.headers.get("origin")):
+            await ws.close(code=1008)
+            return
+        await ws.accept()
+        manager.register_event_client(ws.send_json)
+        try:
+            while True:
+                await ws.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            manager.unregister_event_client(ws.send_json)
+
     return app
 
 

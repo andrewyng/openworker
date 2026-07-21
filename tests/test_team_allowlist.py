@@ -212,3 +212,52 @@ def test_rest_allow_with_team_and_workspaces_field(tmp_path):
         "/v1/connectors/slack/disallow", json={"user_id": "U_W", "team_id": "T1"}
     )
     assert r.json()["allowed_users"] == []
+
+
+# -- installer pre-add on managed install (UX-027) --------------------------------
+def test_managed_install_preadds_the_installer(tmp_path):
+    from coworker.connectors.setup import managed_connect_slack_install
+
+    s = SecretStore(tmp_path / "secrets.json")
+    managed_connect_slack_install(
+        s, {"team_id": "T1", "access_token": "xoxb-t1", "slack_user_id": "U_ME"}
+    )
+    assert s.get("slack:team:T1")["allowed_users"] == ["U_ME"]
+    src = SessionSource("slack", "T1/C1", user_id="U_ME", team_id="T1")
+    assert is_authorized(load_settings(s)["slack"], src) is True
+
+
+def test_reinstall_preserves_the_existing_allow_list(tmp_path):
+    from coworker.connectors.setup import managed_connect_slack_install
+
+    s = SecretStore(tmp_path / "secrets.json")
+    s.put(
+        "slack:team:T1",
+        {
+            "bot_token": "xoxb-old",
+            "allowed_users": ["U_ANNA", "U_ME"],
+            "sender_name": "Rohit",
+        },
+    )
+    managed_connect_slack_install(
+        s, {"team_id": "T1", "access_token": "xoxb-new", "slack_user_id": "U_ME"}
+    )
+    profile = s.get("slack:team:T1")
+    assert profile["allowed_users"] == ["U_ANNA", "U_ME"]
+    assert profile["bot_token"] == "xoxb-new"
+    assert profile["sender_name"] == "Rohit"
+
+
+def test_workspace_listing_carries_installer_identity(tmp_path):
+    from coworker.connectors.setup import (
+        _slack_workspaces,
+        managed_connect_slack_install,
+    )
+
+    s = SecretStore(tmp_path / "secrets.json")
+    managed_connect_slack_install(
+        s, {"team_id": "T1", "access_token": "xoxb-t1", "slack_user_id": "U_ME"}
+    )
+    (w,) = _slack_workspaces(s)
+    assert w["installer_user_id"] == "U_ME"
+    assert w["installer_name"] == ""

@@ -1341,6 +1341,37 @@ export function announceAutomationsChanged() {
   window.dispatchEvent(new CustomEvent(AUTOMATIONS_CHANGED));
 }
 
+/** App-wide event stream (/ws/events): session-independent server pushes — today
+ * automation_run_started (the UX-026 toast). Quietly reconnects while the app is
+ * open; the returned cleanup stops it for good. */
+export function connectEvents(
+  onEvent: (msg: { type: string; data?: Record<string, unknown> }) => void
+): () => void {
+  let ws: WebSocket | null = null;
+  let timer: number | null = null;
+  let closed = false;
+  const open = () => {
+    if (closed) return;
+    ws = new WebSocket(`${wsBase()}/ws/events`);
+    ws.onmessage = (e) => {
+      try {
+        onEvent(JSON.parse(e.data));
+      } catch {
+        /* malformed frame — ignore */
+      }
+    };
+    ws.onclose = () => {
+      if (!closed) timer = window.setTimeout(open, 5000);
+    };
+  };
+  open();
+  return () => {
+    closed = true;
+    if (timer !== null) window.clearTimeout(timer);
+    ws?.close();
+  };
+}
+
 /** Advance the automation's seen mark — clears its unseen-runs badge (UX-023). */
 export async function markAutomationSeen(id: string): Promise<{ ok: boolean }> {
   const res = await fetch(`${httpBase()}/v1/automations/${id}/seen`, { method: "POST" });

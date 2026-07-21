@@ -184,6 +184,10 @@ def _slack_workspaces(secrets: SecretStore) -> list[dict[str, Any]]:
             "domain": profile.get("domain") or "",
             "allowed_users": list(profile.get("allowed_users") or []),
             "allow_all": bool(profile.get("allow_all")),
+            # Who installed (authed_user) — the GUI marks their chip "you" and
+            # keys the post-connect card's "your mentions get through" line.
+            "installer_user_id": profile.get("slack_user_id") or "",
+            "installer_name": profile.get("sender_name") or "",
         }
         for team_id, profile in sorted(
             _slack_team_profiles(secrets), key=lambda t: t[0]
@@ -414,6 +418,15 @@ def managed_connect_slack_install(
     bot_token = form.get("access_token", "")
     if not team_id or not bot_token:
         return {"ok": False, "error": "missing team_id or bot token"}
+    # A reinstall replaces the token but must not reset authorization state.
+    existing = secrets.get(f"slack:team:{team_id}") or {}
+    allowed = set(existing.get("allowed_users") or [])
+    installer = form.get("slack_user_id", "")
+    if installer:
+        # Pre-add the installer (UX-027): connecting the workspace is consent to
+        # talk to your own bot — without this, the connector's very first mention
+        # comes from the installer and parks.
+        allowed.add(installer)
     secrets.put(
         f"slack:team:{team_id}",
         {
@@ -423,7 +436,7 @@ def managed_connect_slack_install(
             "bot_user_id": form.get("bot_user_id", ""),
             # The INSTALLER's Slack member id (authed_user) — who this workspace's
             # outbound posts speak for (attribution.py resolves + caches the name).
-            "slack_user_id": form.get("slack_user_id", ""),
+            "slack_user_id": installer,
             "team_id": team_id,
             "account": form.get("account", ""),
             # The workspace's slack.com subdomain (broker resolves it via auth.test)
@@ -431,6 +444,9 @@ def managed_connect_slack_install(
             "domain": form.get("team_domain", ""),
             "scope": form.get("scope", ""),
             "connection_id": form.get("connection_id", ""),
+            "allowed_users": sorted(allowed),
+            "allow_all": bool(existing.get("allow_all")),
+            "sender_name": existing.get("sender_name", ""),
         },
     )
     default = secrets.get("slack:default") or {}

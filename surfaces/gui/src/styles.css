@@ -1354,3 +1354,9 @@ html[data-theme="dark"] :not(.connector-badge) > .connector-icon[data-dark-mark]
 .art-chip-meta b { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .art-chip-meta span { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .art-chip-open { margin-left: 8px; flex: none; font-size: 11.5px; color: var(--accent); font-weight: 500; }
+
+/* ---- UX-026: automation-start toast (top-right, 5s; schedule-fired runs only) ---- */
+.toast-pulse { animation: toast-pulse 1.2s ease infinite; }
+@keyframes toast-pulse { 50% { opacity: .35; } }
+.toast-drain { animation: toast-drain 5s linear forwards; }
+@keyframes toast-drain { to { width: 0; } }
