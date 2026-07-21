@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    coworker_desktop_lib::run();
+    openworker_desktop_lib::run();
 }

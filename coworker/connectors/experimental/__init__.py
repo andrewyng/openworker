@@ -2,7 +2,7 @@
 
 Connectors in this package are hidden behind the experimental-connectors setting, require an
 explicit per-connector risk acknowledgment to connect, and are stripped from official desktop
-builds by packaging/coworker-server.spec (set COWORKER_EXPERIMENTAL=1 at build time to include
+builds by packaging/openworker-server.spec (set COWORKER_EXPERIMENTAL=1 at build time to include
 them in a self-built binary).
 
 To add one: define a `ConnectorDescriptor` with a `risk_notice` that states the concrete

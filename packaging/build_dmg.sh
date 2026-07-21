@@ -69,9 +69,9 @@ if [ -n "${APPLE_CERTIFICATE:-}" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   security list-keychains -d user -s "$KC" login.keychain-db
 fi
 
-echo "==> [1/5] PyInstaller: bundling coworker-server ($TRIPLE)"
+echo "==> [1/5] PyInstaller: bundling openworker-server ($TRIPLE)"
 "$PLATFORM/.venv/bin/pyinstaller" --noconfirm --clean \
-  --distpath "$HERE/dist" --workpath "$HERE/build" "$HERE/coworker-server.spec"
+  --distpath "$HERE/dist" --workpath "$HERE/build" "$HERE/openworker-server.spec"
 
 echo "==> [2/5] staging sidecar resources"
 # Onedir bundle (exe + _internal/) ships via Tauri `resources` as Contents/Resources/sidecar/
@@ -80,14 +80,14 @@ echo "==> [2/5] staging sidecar resources"
 # once clobbered another worktree's venv console script, caught 2026-07-11); also clears any
 # stale onefile binary from pre-onedir builds.
 mkdir -p "$GUI/src-tauri/binaries"
-rm -rf "$GUI/src-tauri/binaries/sidecar" "$GUI/src-tauri/binaries/coworker-server-$TRIPLE"
+rm -rf "$GUI/src-tauri/binaries/sidecar" "$GUI/src-tauri/binaries/openworker-server-$TRIPLE"
 # -L (dereference): Tauri's resource bundler flattens symlinks into duplicate REAL files.
 # Python.framework's symlinks (Python -> Versions/Current/Python, …) therefore arrive in
 # the .app as standalone copies whose framework-context signatures don't validate outside
 # the bundle — notarization rejected them twice (submissions f73463f3, ca30027a,
 # 2026-07-16). Dereferencing at staging makes what we SIGN byte-identical to what tauri
 # COPIES, and every Mach-O below gets a plain file signature that stands alone.
-cp -RL "$HERE/dist/coworker-server" "$GUI/src-tauri/binaries/sidecar"
+cp -RL "$HERE/dist/openworker-server" "$GUI/src-tauri/binaries/sidecar"
 if [ -n "$(find "$GUI/src-tauri/binaries/sidecar" -type l | head -1)" ]; then
   echo "ERROR: symlinks survived sidecar staging — tauri would flatten them into unsigned copies" >&2
   exit 1
@@ -103,7 +103,7 @@ if [ -n "$(find "$GUI/src-tauri/binaries/sidecar" -type d -name "*.framework" | 
   echo "ERROR: a .framework appeared in the sidecar — it cannot pass notarization in this layout" >&2
   exit 1
 fi
-chmod +x "$GUI/src-tauri/binaries/sidecar/coworker-server"
+chmod +x "$GUI/src-tauri/binaries/sidecar/openworker-server"
 
 # Sign the sidecar's Mach-O files BEFORE tauri build: `tauri build` signs the .app (sealing
 # resources into its signature) but does NOT sign nested binaries inside resources — unsigned
@@ -117,14 +117,14 @@ if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   # tree is fully dereferenced, so each file must validate standalone — that is exactly
   # what the notary service checks). Entitlements only on the entrypoint
   # (disable-library-validation: the bundled python.org dylibs carry another Team ID).
-  find "$SIDECAR" -type f ! -name "coworker-server" \
+  find "$SIDECAR" -type f ! -name "openworker-server" \
     ! -name "*.py" ! -name "*.pyc" ! -name "*.txt" ! -name "*.pem" ! -name "*.json" \
     -print0 | while IFS= read -r -d '' f; do
     file -b "$f" | grep -q "Mach-O" || continue
     codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp --options runtime "$f"
   done
   codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp --options runtime \
-    --entitlements "$GUI/src-tauri/entitlements.plist" "$SIDECAR/coworker-server"
+    --entitlements "$GUI/src-tauri/entitlements.plist" "$SIDECAR/openworker-server"
 fi
 
 echo "==> [3/5] tauri build (.app)"

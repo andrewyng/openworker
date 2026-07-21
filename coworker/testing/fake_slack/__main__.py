@@ -4,7 +4,7 @@
 
 Prints the ``SLACK_API_URL`` to export plus curl examples for the control API, then serves
 until interrupted. Point the dev server at it by exporting ``SLACK_API_URL`` before starting
-``coworker-server`` and connecting Slack with any fake ``xoxb-``/``xapp-`` tokens.
+``openworker-server`` and connecting Slack with any fake ``xoxb-``/``xapp-`` tokens.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def main() -> None:
     print("Point the app at it:")
     print(f"  export SLACK_API_URL={base}/api/")
     print(
-        "  # then start coworker-server and connect Slack with any xoxb-/xapp- tokens"
+        "  # then start openworker-server and connect Slack with any xoxb-/xapp- tokens"
     )
     print()
     print("Drive scenarios via the control API:")

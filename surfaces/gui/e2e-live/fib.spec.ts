@@ -14,7 +14,7 @@ const EXPECTED = ["144", "377", "987", "4181"];
 
 test("live: agent writes fib.md to its scratch workspace, verified on disk", async ({ page }) => {
   const scratchBase = await scratchBaseIfReady();
-  test.skip(!scratchBase, "live backend not ready — start coworker-server and configure a model");
+  test.skip(!scratchBase, "live backend not ready — start openworker-server and configure a model");
 
   await startCoworkSession(page);
   await selectMode(page, "Full access"); // run the write without an approval gate

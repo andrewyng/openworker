@@ -17,7 +17,7 @@ bash platform/packaging/setup_dev_env.sh   # → platform/.venv (server + this r
    or add one later in the app's Settings):
    ```bash
    cd platform
-   ./.venv/bin/coworker-server --cwd /path/to/your/project --port 8765
+   ./.venv/bin/openworker-server --cwd /path/to/your/project --port 8765
    ```
 2. **Start the UI:**
    ```bash
@@ -33,7 +33,7 @@ Open http://localhost:5173. The UI talks to `http://127.0.0.1:8765` (override wi
 
 The Tauri shell wraps the same UI and supervises the Python server itself — no separate
 terminal. It needs the Rust toolchain (`rustup`) plus the venv from the bootstrap step;
-in dev it finds the server at `platform/.venv/bin/coworker-server` automatically (a
+in dev it finds the server at `platform/.venv/bin/openworker-server` automatically (a
 packaged sidecar binary is only produced by the release scripts in `platform/packaging/`).
 
 ```bash

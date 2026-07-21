@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// LIVE smoke config — runs against the REAL backend (coworker-server on :8765) and a REAL model.
+// LIVE smoke config — runs against the REAL backend (openworker-server on :8765) and a REAL model.
 // Deliberately separate from playwright.config.ts (testDir ./e2e), so `npm run e2e` and CI never
 // pick these up. Run manually with `npm run e2e:live` when the backend is up and a model is set.
 // Nondeterministic and costs a few model tokens per run — a confidence smoke, not an assertion gate.

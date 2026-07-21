@@ -8,7 +8,7 @@ import { newestFile, scratchBaseIfReady, sendTask, startCoworkSession } from "./
 
 test("live: a write blocks on an approval card, then completes once approved", async ({ page }) => {
   const scratchBase = await scratchBaseIfReady();
-  test.skip(!scratchBase, "live backend not ready — start coworker-server and configure a model");
+  test.skip(!scratchBase, "live backend not ready — start openworker-server and configure a model");
 
   // Unique filename per run so the "doesn't exist before approval" check can't see a prior run's file.
   const name = `hello-${Date.now()}.txt`;

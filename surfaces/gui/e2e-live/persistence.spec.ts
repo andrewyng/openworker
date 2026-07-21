@@ -8,7 +8,7 @@ import { scratchBaseIfReady, selectMode, sendTask, startCoworkSession } from "./
 
 test("live: a session's transcript and artifact survive a page reload", async ({ page }) => {
   const scratchBase = await scratchBaseIfReady();
-  test.skip(!scratchBase, "live backend not ready — start coworker-server and configure a model");
+  test.skip(!scratchBase, "live backend not ready — start openworker-server and configure a model");
 
   const token = `PERSIST-${Date.now()}`;
   // Unique filename — appears early in the session title (so it survives title truncation and is a

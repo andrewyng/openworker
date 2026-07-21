@@ -1444,7 +1444,7 @@ def register_descriptor(descriptor: ConnectorDescriptor) -> None:
 
 
 # Experimental connectors live in a separate package so release builds can exclude the code
-# entirely (see packaging/coworker-server.spec). When the package is absent this is a no-op.
+# entirely (see packaging/openworker-server.spec). When the package is absent this is a no-op.
 try:
     from .experimental import EXPERIMENTAL_DESCRIPTORS as _EXPERIMENTAL
 except ImportError:
