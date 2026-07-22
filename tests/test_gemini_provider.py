@@ -604,3 +604,33 @@ def test_convert_signature_parts_validate_as_sdk_types():
     )
     part = types_mod.Part.model_validate(contents[-1]["parts"][0])
     assert part.thought_signature == b"sig"
+
+
+def test_thought_summaries_requested_and_surfaced_as_reasoning():
+    response = _response(
+        [
+            _thought_part("plotting a plan", sig=None),
+            SimpleNamespace(text="the answer", function_call=None, thought_signature=None),
+        ]
+    )
+    client = _FakeClient(response=response)
+    provider = GeminiProvider(client=client)
+    turn = provider.complete(model="gemini-3.6-flash", messages=[{"role": "user", "content": "x"}])
+
+    # We ask for summaries on every gemini-* model…
+    assert client.kwargs["config"]["thinking_config"] == {"include_thoughts": True}
+    # …and thought parts land as reasoning, never as answer text.
+    assert turn.text == "the answer" and turn.reasoning == "plotting a plan"
+
+
+def test_stream_yields_reasoning_deltas_for_thought_parts():
+    chunks = [
+        _response([_thought_part("mull ")], finish_reason=None),
+        _response([_thought_part("it over")], finish_reason=None),
+        _response([_text_part("done")], finish_reason="STOP"),
+    ]
+    provider = GeminiProvider(client=_FakeClient(chunks=chunks))
+    out = list(provider.stream(model="gemini-3.6-flash", messages=[{"role": "user", "content": "x"}]))
+    assert [c.reasoning_delta for c in out if c.reasoning_delta] == ["mull ", "it over"]
+    final = out[-1].turn
+    assert final.text == "done" and final.reasoning == "mull it over"

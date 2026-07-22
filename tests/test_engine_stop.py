@@ -276,3 +276,80 @@ def test_interrupt_hook_fires(tmp_path):
     )
     engine.request_interrupt()
     assert fired == [True]
+
+
+class ReasoningStreamProvider(ProviderClient):
+    """Streams thinking deltas, then answer text — a DeepSeek-style reasoning model."""
+
+    def complete(self, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    def capabilities(self, model):
+        return ModelCapabilities()
+
+    def stream(self, *, model, messages, tools=None, **settings):
+        yield StreamChunk(reasoning_delta="hmm, ")
+        yield StreamChunk(reasoning_delta="let me think")
+        yield StreamChunk(text_delta="the answer")
+        yield StreamChunk(
+            turn=AssistantTurn(
+                text="the answer", finish_reason="stop", reasoning="hmm, let me think"
+            )
+        )
+
+
+def test_reasoning_streams_persists_and_never_reaches_providers(tmp_path):
+    engine = TurnEngine(
+        provider=ReasoningStreamProvider(),
+        registry=ToolRegistry(),
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="deepseek:deepseek-v4-pro",
+    )
+
+    async def run():
+        return [ev async for ev in engine.run("go")]
+
+    events = asyncio.run(run())
+    deltas = [ev.data["text"] for ev in events if ev.type == EventType.REASONING_DELTA]
+    assert deltas == ["hmm, ", "let me think"]
+    final = next(ev for ev in events if ev.type == EventType.ASSISTANT_MESSAGE)
+    assert final.data["reasoning"] == "hmm, let me think"
+    persisted = engine.messages[-1]
+    assert persisted["reasoning"] == "hmm, let me think"
+    # Display-only: stripped from every provider feed.
+    assert all("reasoning" not in m for m in engine._outbound_messages())
+
+
+def test_stop_during_thinking_keeps_partial_reasoning(tmp_path):
+    class EndlessThinkingProvider(ProviderClient):
+        def complete(self, **kwargs):  # pragma: no cover
+            raise NotImplementedError
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+        def stream(self, *, model, messages, tools=None, **settings):
+            for i in range(200):
+                yield StreamChunk(reasoning_delta=f"t{i} ")
+                time.sleep(0.01)
+            yield StreamChunk(turn=AssistantTurn(text="done", finish_reason="stop"))
+
+    engine = TurnEngine(
+        provider=EndlessThinkingProvider(),
+        registry=ToolRegistry(),
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+    )
+
+    async def run():
+        events = []
+        async for ev in engine.run("go"):
+            events.append(ev)
+            if ev.type == EventType.REASONING_DELTA and len(events) > 3:
+                engine.request_interrupt()
+        return events
+
+    events = asyncio.run(run())
+    assert events[-1].type == EventType.INTERRUPTED
+    partial = engine.messages[-2]  # [-1] is the interrupted notice
+    assert partial["role"] == "assistant" and partial["reasoning"].startswith("t0 ")

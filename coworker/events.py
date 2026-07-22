@@ -14,6 +14,7 @@ from typing import Any
 class EventType(str, Enum):
     TURN_START = "turn_start"
     ASSISTANT_DELTA = "assistant_delta"
+    REASONING_DELTA = "reasoning_delta"  # model thinking text (display-only, never replayed)
     ASSISTANT_MESSAGE = "assistant_message"
     TOOL_PROPOSED = "tool_proposed"
     PERMISSION_REQUIRED = "permission_required"

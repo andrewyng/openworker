@@ -296,8 +296,23 @@ class TurnEngine:
 
             turn: Optional[AssistantTurn] = None
             streamed: list[str] = []
+            streamed_reasoning: list[str] = []
+
+            def _partial_turn() -> AssistantTurn:
+                # What the user watched arrive — text and thinking, NO tool calls (any
+                # half-formed calls would either orphan or execute against the stop).
+                return AssistantTurn(
+                    text="".join(streamed) or None,
+                    reasoning="".join(streamed_reasoning) or None,
+                )
+
             try:
                 async for chunk in self._astream():
+                    if chunk.reasoning_delta:
+                        streamed_reasoning.append(chunk.reasoning_delta)
+                        yield Event(
+                            EventType.REASONING_DELTA, {"text": chunk.reasoning_delta}
+                        )
                     if chunk.text_delta:
                         streamed.append(chunk.text_delta)
                         yield Event(
@@ -306,12 +321,10 @@ class TurnEngine:
                     if chunk.turn is not None:
                         turn = chunk.turn
             except Exception as exc:  # provider failure
-                # Same contract as the stop path below: the partial text the user
-                # watched arrive survives the failure (no tool calls — none finalized).
-                if streamed:
-                    self.messages.append(
-                        _assistant_message(AssistantTurn(text="".join(streamed)))
-                    )
+                # Same contract as the stop path below: the partial the user watched
+                # arrive survives the failure.
+                if streamed or streamed_reasoning:
+                    self.messages.append(_assistant_message(_partial_turn()))
                 friendly = friendly_model_error(self.model, exc)
                 payload = {
                     "error": friendly or str(exc),
@@ -323,13 +336,9 @@ class TurnEngine:
                 yield Event(EventType.ERROR, payload)
                 return
             if self._cancel.is_set() and turn is None:
-                # Stopped mid-stream: persist exactly what the user watched arrive —
-                # the partial text, NO tool calls (any half-formed calls would either
-                # orphan or execute against the user's explicit stop).
-                if streamed:
-                    self.messages.append(
-                        _assistant_message(AssistantTurn(text="".join(streamed)))
-                    )
+                # Stopped mid-stream: persist exactly what the user watched arrive.
+                if streamed or streamed_reasoning:
+                    self.messages.append(_assistant_message(_partial_turn()))
                 self._append_notice("interrupted")
                 yield Event(EventType.INTERRUPTED, {"iterations": iterations})
                 return
@@ -337,10 +346,13 @@ class TurnEngine:
                 turn = AssistantTurn()
 
             self.messages.append(_assistant_message(turn))
-            yield Event(
-                EventType.ASSISTANT_MESSAGE,
-                {"text": turn.text, "tool_calls": [tc.name for tc in turn.tool_calls]},
-            )
+            payload: dict[str, Any] = {
+                "text": turn.text,
+                "tool_calls": [tc.name for tc in turn.tool_calls],
+            }
+            if turn.reasoning:
+                payload["reasoning"] = turn.reasoning
+            yield Event(EventType.ASSISTANT_MESSAGE, payload)
 
             if not turn.tool_calls:
                 if self._steering:
@@ -866,10 +878,10 @@ class TurnEngine:
         persisted/replayed.
         """
         # Strip the display-only sidecars — `source` (connector cards), `_display`
-        # (e.g. filter-hidden counts), and `ts` (append-time timestamps) — copying only
-        # messages that carry one. Whole `notice` messages (error/interrupted markers)
-        # are display-only too: dropped entirely.
-        _SIDECARS = ("source", "_display", "ts")
+        # (e.g. filter-hidden counts), `ts` (append-time timestamps), and `reasoning`
+        # (thinking text) — copying only messages that carry one. Whole `notice` messages
+        # (error/interrupted/model-switch markers) are display-only too: dropped entirely.
+        _SIDECARS = ("source", "_display", "ts", "reasoning")
         out = [
             (
                 {k: v for k, v in msg.items() if k not in _SIDECARS}
@@ -968,6 +980,10 @@ def _assistant_message(turn: AssistantTurn) -> dict[str, Any]:
         "content": turn.text or "",
         "ts": time.time(),
     }
+    if turn.reasoning:
+        # Display-only thinking text — rendered by the GUI, stripped for every provider
+        # (`_outbound_messages`); provider-private replay blocks go via `extras` instead.
+        message["reasoning"] = turn.reasoning
     if turn.extras:
         # Provider-private sidecars (e.g. `_gemini` thought signatures) persist with the
         # message; the owning provider reattaches them, the rest strip them (base.py).

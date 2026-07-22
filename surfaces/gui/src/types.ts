@@ -3,6 +3,7 @@ export type EventType =
   | "inbound"
   | "turn_start"
   | "assistant_delta"
+  | "reasoning_delta"
   | "assistant_message"
   | "tool_proposed"
   | "permission_required"
@@ -78,7 +79,7 @@ export type Item =
   // (ConnectorMessageCard) instead of a plain user bubble. Generalizes to any connector via the
   // registry — no per-connector special-casing.
   | { kind: "connector"; source: MessageSource }
-  | { kind: "assistant"; text: string; ts?: number }
+  | { kind: "assistant"; text: string; ts?: number; reasoning?: string }
   // `hidden` = results the user's privacy filters removed before the agent saw them
   // (from the tool message's `_display` sidecar; the agent-visible content has no trace).
   // `standingRule` = the task-scoped rule that auto-allowed this call ("tool → target").

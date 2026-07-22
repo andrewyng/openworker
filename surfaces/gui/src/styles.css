@@ -1561,3 +1561,21 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb {
 }
 html[data-platform="windows"] ::-webkit-scrollbar-thumb:hover,
 html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: var(--faint); }
+
+/* -- thinking (reasoning trace) disclosure — model-layer roadmap item 4 ----------- */
+.thinking { margin: 2px 0 4px; }
+.thinking-head {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--faint);
+  background: none; border: none; padding: 2px 0; cursor: pointer;
+}
+.thinking-head:hover { color: var(--muted); }
+.thinking-caret { transition: transform 0.15s; transform: rotate(-90deg); }
+.thinking-caret.open { transform: rotate(0); }
+.thinking-live { animation: boot-pulse 1.4s ease-in-out infinite; }
+.thinking-body {
+  font-size: 12px; line-height: 1.55; color: var(--muted);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  border-left: 2px solid var(--line); padding: 4px 0 4px 10px; margin: 4px 0 6px 4px;
+  max-height: 280px; overflow-y: auto;
+}

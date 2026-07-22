@@ -37,8 +37,13 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
       if (typeof m.ts === "number") user.ts = m.ts;
       if (user.text || user.attachments?.length) items.push(user);
     } else if (m.role === "assistant") {
-      if (m.content)
-        items.push({ kind: "assistant", text: m.content, ...(typeof m.ts === "number" ? { ts: m.ts } : {}) });
+      if (m.content || m.reasoning)
+        items.push({
+          kind: "assistant",
+          text: m.content || "",
+          ...(typeof m.ts === "number" ? { ts: m.ts } : {}),
+          ...(m.reasoning ? { reasoning: m.reasoning } : {}),
+        });
       for (const tc of m.tool_calls || []) {
         let args: any = {};
         try {

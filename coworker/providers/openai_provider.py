@@ -51,6 +51,14 @@ def _pin_reasoning_effort(kwargs: dict[str, Any]) -> None:
         kwargs.setdefault("reasoning_effort", "none")
 
 
+def _delta_reasoning(obj: Any) -> Optional[str]:
+    """Thinking text off a delta/message: `reasoning_content` (DeepSeek, GLM, Kimi, and
+    most compat vendors) or `reasoning` (xAI, OpenRouter). Extra response fields survive
+    the OpenAI SDK's models (extra="allow"), so plain getattr sees them."""
+    value = getattr(obj, "reasoning_content", None) or getattr(obj, "reasoning", None)
+    return value if isinstance(value, str) and value else None
+
+
 def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop provider-private message sidecars (underscore-prefixed keys, e.g. `_gemini`
     thought signatures — see providers/base.py): they belong to other providers, and the
@@ -165,6 +173,7 @@ class OpenAIProvider(ProviderClient):
             tool_calls=tool_calls,
             finish_reason=getattr(choice, "finish_reason", None),
             raw=response,
+            reasoning=_delta_reasoning(message),
         )
 
     def capabilities(self, model: str) -> ModelCapabilities:
@@ -190,6 +199,7 @@ class OpenAIProvider(ProviderClient):
         client = self._ensure_client()
 
         text_parts: list[str] = []
+        reasoning_parts: list[str] = []
         tool_accum: dict[int, dict[str, str]] = {}
         finish_reason = None
 
@@ -209,6 +219,10 @@ class OpenAIProvider(ProviderClient):
             choice = choices[0]
             delta = getattr(choice, "delta", None)
             if delta is not None:
+                reasoning = _delta_reasoning(delta)
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+                    yield StreamChunk(reasoning_delta=reasoning)
                 content = getattr(delta, "content", None)
                 if content:
                     text_parts.append(content)
@@ -247,6 +261,7 @@ class OpenAIProvider(ProviderClient):
                 text=text,
                 tool_calls=tool_calls,
                 finish_reason=finish_reason,
+                reasoning="".join(reasoning_parts) or None,
             )
         )
 

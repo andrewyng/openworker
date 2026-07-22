@@ -50,6 +50,32 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
   );
 }
 
+// Reasoning-model thinking text (model-layer roadmap item 4): a quiet disclosure —
+// collapsed by default, the trace one click away. `live` = still streaming (pulsing label);
+// App renders that variant above the transcript, this one rides a finalized assistant item.
+export function ThinkingBlock({ text, live }: { text: string; live?: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="thinking">
+      <button
+        className="thinking-head"
+        onClick={() => setOpen((v) => !v)}
+        data-testid="thinking-toggle"
+      >
+        <Icon name="chevronDown" size={12} className={"thinking-caret" + (open ? " open" : "")} />
+        <span className={live ? "thinking-live" : undefined}>
+          {live ? "Thinking…" : "Thought process"}
+        </span>
+      </button>
+      {open && (
+        <div className="thinking-body" data-testid="thinking-body">
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
 type ToolItem = Extract<Item, { kind: "tool" }>;
 type ApprovalItem = Extract<Item, { kind: "approval" }>;
 type AssistantItem = Extract<Item, { kind: "assistant" }>;
@@ -72,6 +98,8 @@ function buildRows(items: TurnItem[]): TurnRow[] {
   // same-name tool that doesn't have one yet (approvals may stream before or after their call).
   const rows: TurnRow[] = items
     .filter((it): it is ToolItem | AssistantItem => it.kind !== "approval")
+    // Thinking-only assistant items (no text) carry nothing narratable — skip the row.
+    .filter((it) => it.kind !== "assistant" || it.text)
     .map((it) =>
       it.kind === "assistant" ? { type: "narr" as const, text: it.text } : { type: "step" as const, tool: it },
     );
@@ -363,9 +391,17 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
               </div>
             );
           case "assistant":
+            // Thinking-only item (stopped mid-reasoning): just the disclosure, no bubble.
+            if (!item.text && item.reasoning)
+              return (
+                <div key={bi}>
+                  <ThinkingBlock text={item.reasoning} />
+                </div>
+              );
             return (
               <div className="group bubble-assistant" key={bi}>
                 <div className="who">assistant</div>
+                {item.reasoning && <ThinkingBlock text={item.reasoning} />}
                 <Markdown text={item.text} />
                 <BubbleMeta text={item.text} ts={item.ts} align="left" />
               </div>
