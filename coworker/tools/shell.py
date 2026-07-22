@@ -151,6 +151,9 @@ class LocalExecutor(Executor):
         self._is_windows = _IS_WINDOWS
         self._bg_tasks: dict[str, _BackgroundTask] = {}
         self._bg_counter = 0
+        # Set by interrupt_now() (user Stop) — run()'s read loop treats it like an
+        # early deadline, so the in-flight foreground command dies within one tick.
+        self._abort = threading.Event()
 
         # Pick a native shell per-OS. POSIX drives bash line-by-line; Windows drives
         # PowerShell in `-Command -` mode, which is a true stdin REPL (executes
@@ -224,6 +227,7 @@ class LocalExecutor(Executor):
             )
 
         timeout = timeout or self.default_timeout
+        self._abort.clear()
         # Run the command, then emit a marker line with exit code + cwd.
         self._proc.stdin.write(command + "\n")
         self._proc.stdin.write(self._trailer())
@@ -232,10 +236,16 @@ class LocalExecutor(Executor):
         deadline = time.monotonic() + timeout
         interrupted = False
         timed_out = False
+        aborted = False
         exit_code: Optional[int] = None
         lines: list[str] = []
 
         while True:
+            if self._abort.is_set():
+                # User Stop: reuse the deadline path this tick (interrupt-and-resync on
+                # POSIX, decisive shell kill on Windows) instead of waiting out the timeout.
+                aborted = True
+                deadline = time.monotonic()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 if self._is_windows:
@@ -279,8 +289,19 @@ class LocalExecutor(Executor):
             # Keep the TAIL: builds and test runners put the verdict at the end.
             output = output[-self.max_output_chars :]
         return self._result(
-            command, exit_code, output, timed_out=timed_out, truncated=truncated
+            command,
+            exit_code,
+            output,
+            timed_out=timed_out,
+            truncated=truncated,
+            error="interrupted by user" if aborted else None,
         )
+
+    def interrupt_now(self) -> None:
+        """User Stop: make an in-flight foreground `run()` bail on its next read tick
+        (≤0.5s). Thread-safe; a no-op when nothing is running. Background tasks are
+        left alone — they're explicitly fire-and-forget."""
+        self._abort.set()
 
     # -- background tasks ---------------------------------------------------------
     def run_background(self, command: str) -> dict[str, Any]:

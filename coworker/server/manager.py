@@ -3276,7 +3276,9 @@ class SessionManager:
         engine = self._engines.pop(session_id, None)
         if engine is not None:
             try:
-                engine.interrupt()
+                # (was engine.interrupt() — a method that never existed; the AttributeError
+                # was silently swallowed, so deleting a running session never stopped it.)
+                engine.request_interrupt()
             except Exception:
                 pass
         record = self.session_store.load(session_id)
