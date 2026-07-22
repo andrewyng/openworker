@@ -92,6 +92,39 @@ def test_stop_mid_stream_keeps_partial_text(tmp_path):
     assert "tool_calls" not in last
 
 
+class FailingStreamProvider(ProviderClient):
+    """Streams a few deltas, then dies — a provider outage mid-answer."""
+
+    def complete(self, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    def capabilities(self, model):
+        return ModelCapabilities()
+
+    def stream(self, *, model, messages, tools=None, **settings):
+        yield StreamChunk(text_delta="partial ")
+        yield StreamChunk(text_delta="answer")
+        raise RuntimeError("provider went away")
+
+
+def test_provider_error_mid_stream_keeps_partial_text(tmp_path):
+    engine = TurnEngine(
+        provider=FailingStreamProvider(),
+        registry=ToolRegistry(),
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+    )
+
+    async def run():
+        return [ev async for ev in engine.run("go")]
+
+    events = asyncio.run(run())
+    assert events[-1].type == EventType.ERROR
+    last = engine.messages[-1]
+    assert last["role"] == "assistant" and last["content"] == "partial answer"
+    assert "tool_calls" not in last
+
+
 def test_stop_while_awaiting_approval(tmp_path):
     async def never_answers(_req):
         await asyncio.Event().wait()  # a pending approval card nobody answers

@@ -154,7 +154,14 @@ export function App() {
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
-  const [streaming, setStreaming] = useState("");
+  const [streaming, setStreamingState] = useState("");
+  // Ref mirror of `streaming`: the WS handler closure is built once per socket and can't read
+  // fresh state — the interrupted/error flush below needs the live buffer at event time.
+  const streamingRef = useRef("");
+  const setStreaming = (value: string | ((s: string) => string)) => {
+    streamingRef.current = typeof value === "function" ? value(streamingRef.current) : value;
+    setStreamingState(streamingRef.current);
+  };
   const [todo, setTodo] = useState<TodoItem[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
@@ -514,6 +521,16 @@ export function App() {
     if (gatesWorkspace(agent) && !workspace) return; // Code needs a folder (gate handles it)
     const handleEvent = (ev: WsEvent) => {
       const d = ev.data || {};
+      // An interrupted/errored turn never emits assistant_message, so its streamed partial
+      // would otherwise live only in the ephemeral buffer until the next turn_start wipes it
+      // (owner-hit 2026-07-22). Promote it to a durable transcript item — the engine persists
+      // the same text server-side, so the live view and a session reload now agree.
+      const flushPartialStream = () => {
+        const partial = streamingRef.current;
+        if (!partial) return;
+        setStreaming("");
+        setItems((p) => [...p, { kind: "assistant", text: partial, ts: Date.now() / 1000 }]);
+      };
       switch (ev.type) {
         case "ready":
           setConnected(true);
@@ -622,9 +639,11 @@ export function App() {
             setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Stopped: max iterations reached." }]);
           break;
         case "interrupted":
+          flushPartialStream();
           setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Interrupted." }]);
           break;
         case "error":
+          flushPartialStream();
           setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Error: " + (d.error || "unknown") }]);
           break;
         case "turn_done":
