@@ -1544,3 +1544,20 @@ html[data-theme="dark"] .hiw-sticky { background: #eab308; color: #3d2c05; }
 @keyframes toast-pulse { 50% { opacity: .35; } }
 .toast-drain { animation: toast-drain 5s linear forwards; }
 @keyframes toast-drain { to { width: 0; } }
+
+/* ============ Windows (WebView2) polish ============ */
+/* Classic Windows scrollbars consume ~17px of layout width that macOS's overlay
+   scrollbars don't — panels tuned on Mac ended up cramped/misaligned (caught
+   2026-07-21). Thin, quiet scrollbars matching the app's neutral palette; scoped
+   to data-platform so macOS keeps its native overlay behavior. */
+html[data-platform="windows"] ::-webkit-scrollbar,
+html[data-platform="linux"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+html[data-platform="windows"] ::-webkit-scrollbar-track,
+html[data-platform="linux"] ::-webkit-scrollbar-track { background: transparent; }
+html[data-platform="windows"] ::-webkit-scrollbar-thumb,
+html[data-platform="linux"] ::-webkit-scrollbar-thumb {
+  background: var(--line-strong); border-radius: 5px;
+  border: 2px solid transparent; background-clip: content-box;
+}
+html[data-platform="windows"] ::-webkit-scrollbar-thumb:hover,
+html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: var(--faint); }
