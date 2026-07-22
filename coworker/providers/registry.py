@@ -107,7 +107,13 @@ def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Key resolution stays in AnthropicProvider/resolve_api_key (explicit → env → SecretStore),
     # deferred to first call so the provider can be built before a key exists.
     api_key = ((profile or {}).get("api_key") or "").strip() or None
-    return AnthropicProvider(api_key=api_key, secrets=secrets)
+    try:
+        thinking_budget = int(str((profile or {}).get("thinking_budget") or "").strip())
+    except ValueError:
+        thinking_budget = 0
+    return AnthropicProvider(
+        api_key=api_key, secrets=secrets, thinking_budget=thinking_budget
+    )
 
 
 def _build_gemini(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -218,6 +224,13 @@ DESCRIPTORS: list[ProviderDescriptor] = [
                 "Anthropic API key",
                 secret=True,
                 placeholder="sk-ant-…",
+            ),
+            ProviderField(
+                "thinking_budget",
+                "Extended thinking budget (tokens, optional)",
+                required=False,
+                placeholder="e.g. 8192 — blank = off",
+                help="Turns on Claude's extended thinking for every request, with this token budget. The thought process shows in the transcript.",
             ),
         ],
         build=_build_anthropic,

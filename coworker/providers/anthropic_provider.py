@@ -10,6 +10,11 @@ from chat.completions in ways the converters must absorb:
 - Tool results are `tool_result` blocks that must ALL land in the single next user message —
   N consecutive `role:"tool"` messages collapse into one user message here.
 - `max_tokens` is required.
+- Extended thinking (opt-in via the provider profile's `thinking_budget` field): responses
+  carry `thinking`/`redacted_thinking` blocks that MUST be replayed verbatim (signatures
+  and all) ahead of the same turn's tool_use blocks when returning tool results — they ride
+  the canonical assistant message as the `_anthropic` sidecar and are reattached here. The
+  thinking text also lands on `AssistantTurn.reasoning` for display.
 """
 
 from __future__ import annotations
@@ -48,7 +53,11 @@ _SETTINGS_WHITELIST = {
     "top_k",
     "stop_sequences",
     "metadata",
+    "thinking",
 }
+
+# Sampling knobs the API rejects alongside extended thinking (temperature must stay 1).
+_THINKING_INCOMPATIBLE = ("temperature", "top_p", "top_k")
 
 _DATA_URL_RE = re.compile(
     r"^data:(image/[a-z0-9.+-]+);base64,(.+)$", re.IGNORECASE | re.DOTALL
@@ -193,6 +202,9 @@ def convert_messages(
                 converted.append({"role": "user", "content": blocks})
         elif role == "assistant":
             blocks = []
+            # Replay thinking/redacted_thinking blocks VERBATIM, ahead of the turn's own
+            # blocks — required whenever the turn's tool calls are being answered.
+            blocks.extend((message.get("_anthropic") or {}).get("blocks") or [])
             text = message.get("content")
             if isinstance(text, str) and text:
                 blocks.append({"type": "text", "text": text})
@@ -257,6 +269,19 @@ def convert_tools(tools: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]
     return converted
 
 
+def _reasoning_text(thinking_blocks: list[dict[str, Any]]) -> Optional[str]:
+    """Display text for the GUI's disclosure — thinking text only (redacted stays opaque)."""
+    text = "".join(
+        b.get("thinking", "") for b in thinking_blocks if b.get("type") == "thinking"
+    )
+    return text or None
+
+
+def _thinking_extras(thinking_blocks: list[dict[str, Any]]) -> dict[str, Any]:
+    """Raw blocks → the `_anthropic` sidecar convert_messages replays (empty when none)."""
+    return {"_anthropic": {"blocks": thinking_blocks}} if thinking_blocks else {}
+
+
 class AnthropicProvider(ProviderClient):
     def __init__(
         self,
@@ -265,14 +290,17 @@ class AnthropicProvider(ProviderClient):
         default_model: str = "claude-sonnet-4-6",
         api_key: Optional[str] = None,
         secrets: Any = None,
+        thinking_budget: Optional[int] = None,
     ):
         # Mirrors OpenAIProvider: the SDK client is built lazily so engines can be assembled
         # before any key exists; the key resolves at call time (explicit → env → SecretStore).
-        # Tests inject a `client` directly.
+        # Tests inject a `client` directly. `thinking_budget` (tokens, from the provider
+        # profile's optional field) opts every request into extended thinking.
         self._client = client
         self._api_key = api_key
         self._secrets = secrets
         self.default_model = default_model
+        self.thinking_budget = thinking_budget or 0
 
     def _ensure_client(self) -> Any:
         if self._client is None:
@@ -301,6 +329,20 @@ class AnthropicProvider(ProviderClient):
             stop = settings["stop"]
             settings["stop_sequences"] = [stop] if isinstance(stop, str) else list(stop)
         filtered = {k: v for k, v in settings.items() if k in _SETTINGS_WHITELIST}
+        if self.thinking_budget > 0:
+            filtered.setdefault(
+                "thinking",
+                {"type": "enabled", "budget_tokens": self.thinking_budget},
+            )
+        thinking = filtered.get("thinking") or {}
+        if thinking.get("type") == "enabled":
+            # Budget must fit under max_tokens, and sampling knobs are rejected.
+            budget = int(thinking.get("budget_tokens") or 0)
+            floor = max(DEFAULT_MAX_TOKENS, budget + 4096)
+            if int(filtered.get("max_tokens") or 0) <= budget:
+                filtered["max_tokens"] = floor
+            for key in _THINKING_INCOMPATIBLE:
+                filtered.pop(key, None)
         filtered.setdefault("max_tokens", DEFAULT_MAX_TOKENS)
         kwargs: dict[str, Any] = {"model": model, "messages": converted, **filtered}
         if system:
@@ -324,6 +366,7 @@ class AnthropicProvider(ProviderClient):
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
+        thinking_blocks: list[dict[str, Any]] = []
         for block in getattr(response, "content", None) or []:
             kind = getattr(block, "type", None)
             if kind == "text":
@@ -336,12 +379,29 @@ class AnthropicProvider(ProviderClient):
                         arguments=dict(getattr(block, "input", None) or {}),
                     )
                 )
+            elif kind == "thinking":
+                thinking_blocks.append(
+                    {
+                        "type": "thinking",
+                        "thinking": getattr(block, "thinking", "") or "",
+                        "signature": getattr(block, "signature", "") or "",
+                    }
+                )
+            elif kind == "redacted_thinking":
+                thinking_blocks.append(
+                    {
+                        "type": "redacted_thinking",
+                        "data": getattr(block, "data", "") or "",
+                    }
+                )
         stop_reason = getattr(response, "stop_reason", None)
         return AssistantTurn(
             text="".join(text_parts) or None,
             tool_calls=tool_calls,
             finish_reason=_STOP_REASON_MAP.get(stop_reason, stop_reason),
             raw=response,
+            reasoning=_reasoning_text(thinking_blocks),
+            extras=_thinking_extras(thinking_blocks),
         )
 
     def capabilities(self, model: str) -> ModelCapabilities:
@@ -363,17 +423,33 @@ class AnthropicProvider(ProviderClient):
 
         text_parts: list[str] = []
         tool_accum: dict[int, dict[str, str]] = {}
+        # Thinking blocks accumulate per stream index and must be replayed verbatim later,
+        # so both the text and the signature_delta tail are collected (in block order).
+        thinking_accum: dict[int, dict[str, Any]] = {}
         stop_reason = None
 
         for event in client.messages.create(**kwargs):
             kind = getattr(event, "type", None)
             if kind == "content_block_start":
                 block = getattr(event, "content_block", None)
-                if getattr(block, "type", None) == "tool_use":
+                block_kind = getattr(block, "type", None)
+                if block_kind == "tool_use":
                     tool_accum[getattr(event, "index", 0)] = {
                         "id": getattr(block, "id", "") or "",
                         "name": getattr(block, "name", "") or "",
                         "json": "",
+                    }
+                elif block_kind == "thinking":
+                    thinking_accum[getattr(event, "index", 0)] = {
+                        "type": "thinking",
+                        "thinking": getattr(block, "thinking", "") or "",
+                        "signature": getattr(block, "signature", "") or "",
+                    }
+                elif block_kind == "redacted_thinking":
+                    # Arrives whole — opaque data, no deltas.
+                    thinking_accum[getattr(event, "index", 0)] = {
+                        "type": "redacted_thinking",
+                        "data": getattr(block, "data", "") or "",
                     }
             elif kind == "content_block_delta":
                 delta = getattr(event, "delta", None)
@@ -387,7 +463,18 @@ class AnthropicProvider(ProviderClient):
                     acc = tool_accum.get(getattr(event, "index", 0))
                     if acc is not None:
                         acc["json"] += getattr(delta, "partial_json", "") or ""
-                # thinking/signature deltas are ignored
+                elif delta_kind == "thinking_delta":
+                    acc = thinking_accum.get(getattr(event, "index", 0))
+                    thought = getattr(delta, "thinking", "") or ""
+                    if acc is not None and thought:
+                        acc["thinking"] += thought
+                        yield StreamChunk(reasoning_delta=thought)
+                elif delta_kind == "signature_delta":
+                    acc = thinking_accum.get(getattr(event, "index", 0))
+                    if acc is not None:
+                        acc["signature"] = (acc.get("signature") or "") + (
+                            getattr(delta, "signature", "") or ""
+                        )
             elif kind == "message_delta":
                 reason = getattr(getattr(event, "delta", None), "stop_reason", None)
                 if reason:
@@ -401,11 +488,14 @@ class AnthropicProvider(ProviderClient):
                     id=acc["id"], name=acc["name"], arguments=_parse_args(acc["json"])
                 )
             )
+        thinking_blocks = [thinking_accum[i] for i in sorted(thinking_accum)]
 
         yield StreamChunk(
             turn=AssistantTurn(
                 text="".join(text_parts) or None,
                 tool_calls=tool_calls,
                 finish_reason=_STOP_REASON_MAP.get(stop_reason, stop_reason),
+                reasoning=_reasoning_text(thinking_blocks),
+                extras=_thinking_extras(thinking_blocks),
             )
         )
