@@ -526,3 +526,100 @@ def test_convert_malformed_file_part_becomes_text_note():
         "type": "text",
         "text": "[unsupported file attachment]",
     }
+
+
+# -- extended thinking (model-layer roadmap item 4, phase 3) ------------------------
+
+
+def test_thinking_budget_enables_thinking_and_drops_sampling_knobs():
+    client = _FakeClient(response=_text_response())
+    provider = AnthropicProvider(client=client, thinking_budget=8192)
+    provider.complete(
+        model="claude-fable-5",
+        messages=[{"role": "user", "content": "x"}],
+        temperature=0.2,
+        top_p=0.9,
+    )
+    assert client.kwargs["thinking"] == {"type": "enabled", "budget_tokens": 8192}
+    assert client.kwargs["max_tokens"] > 8192
+    assert "temperature" not in client.kwargs and "top_p" not in client.kwargs
+    # Off by default: no budget → no thinking param.
+    client2 = _FakeClient(response=_text_response())
+    AnthropicProvider(client=client2).complete(
+        model="claude-fable-5", messages=[{"role": "user", "content": "x"}]
+    )
+    assert "thinking" not in client2.kwargs
+
+
+def test_complete_parses_thinking_blocks_into_reasoning_and_sidecar():
+    response = SimpleNamespace(
+        content=[
+            SimpleNamespace(type="thinking", thinking="pondering...", signature="SIG1"),
+            SimpleNamespace(type="redacted_thinking", data="OPAQUE"),
+            SimpleNamespace(type="text", text="the answer"),
+        ],
+        stop_reason="end_turn",
+    )
+    provider = AnthropicProvider(client=_FakeClient(response=response), thinking_budget=4096)
+    turn = provider.complete(model="claude-fable-5", messages=[{"role": "user", "content": "x"}])
+    assert turn.text == "the answer"
+    assert turn.reasoning == "pondering..."  # redacted stays out of the display text
+    assert turn.extras["_anthropic"]["blocks"] == [
+        {"type": "thinking", "thinking": "pondering...", "signature": "SIG1"},
+        {"type": "redacted_thinking", "data": "OPAQUE"},
+    ]
+
+
+def test_stream_accumulates_thinking_and_signature():
+    events = [
+        SimpleNamespace(
+            type="content_block_start",
+            index=0,
+            content_block=SimpleNamespace(type="thinking", thinking="", signature=""),
+        ),
+        _delta(0, type="thinking_delta", thinking="step one. "),
+        _delta(0, type="thinking_delta", thinking="step two."),
+        _delta(0, type="signature_delta", signature="SIGSTREAM"),
+        SimpleNamespace(type="content_block_stop", index=0),
+        SimpleNamespace(
+            type="content_block_start",
+            index=1,
+            content_block=SimpleNamespace(type="text"),
+        ),
+        _delta(1, type="text_delta", text="done"),
+        SimpleNamespace(
+            type="message_delta", delta=SimpleNamespace(stop_reason="end_turn")
+        ),
+    ]
+    provider = AnthropicProvider(client=_FakeClient(events=events), thinking_budget=4096)
+    chunks = list(provider.stream(model="m", messages=[{"role": "user", "content": "x"}]))
+    assert [c.reasoning_delta for c in chunks if c.reasoning_delta] == ["step one. ", "step two."]
+    final = chunks[-1].turn
+    assert final.text == "done" and final.reasoning == "step one. step two."
+    assert final.extras["_anthropic"]["blocks"] == [
+        {"type": "thinking", "thinking": "step one. step two.", "signature": "SIGSTREAM"}
+    ]
+
+
+def test_convert_replays_thinking_blocks_ahead_of_tool_use():
+    _, msgs = convert_messages(
+        [
+            {"role": "user", "content": "go"},
+            {
+                "role": "assistant",
+                "content": "",
+                "_anthropic": {
+                    "blocks": [
+                        {"type": "thinking", "thinking": "plan", "signature": "S"},
+                    ]
+                },
+                "tool_calls": [
+                    {"id": "t1", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "t1", "content": "ok"},
+        ]
+    )
+    assistant = msgs[1]["content"]
+    assert assistant[0] == {"type": "thinking", "thinking": "plan", "signature": "S"}
+    assert assistant[1]["type"] == "tool_use"
