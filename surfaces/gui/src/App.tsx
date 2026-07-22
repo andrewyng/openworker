@@ -1051,7 +1051,7 @@ export function App() {
           </div>
         )}
         <div className="boot-mark">✦</div>
-        <div className="boot-text">{resumedExisting ? "Restoring your session…" : "Starting coworker…"}</div>
+        <div className="boot-text">{resumedExisting ? "Restoring your session…" : "Starting OpenWorker…"}</div>
       </div>
     );
   }
