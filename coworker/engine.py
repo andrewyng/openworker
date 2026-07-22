@@ -896,6 +896,10 @@ def _assistant_message(turn: AssistantTurn) -> dict[str, Any]:
         "content": turn.text or "",
         "ts": time.time(),
     }
+    if turn.extras:
+        # Provider-private sidecars (e.g. `_gemini` thought signatures) persist with the
+        # message; the owning provider reattaches them, the rest strip them (base.py).
+        message.update(turn.extras)
     if turn.tool_calls:
         message["tool_calls"] = [
             {

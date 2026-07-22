@@ -29,6 +29,11 @@ class AssistantTurn:
     tool_calls: list[ToolCall] = field(default_factory=list)
     finish_reason: Optional[str] = None
     raw: Any = field(default=None, repr=False, compare=False)
+    # Provider-private sidecars to persist on the canonical assistant message
+    # (underscore-prefixed keys, e.g. `_gemini` thought signatures). Contract: the
+    # owning provider consumes its own key when converting history; every other
+    # provider must strip or ignore foreign underscore keys before its wire call.
+    extras: dict[str, Any] = field(default_factory=dict)
 
     @property
     def has_tool_calls(self) -> bool:

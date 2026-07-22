@@ -501,3 +501,106 @@ def test_convert_pdf_file_part_to_inline_data():
         "inline_data": {"mime_type": "application/pdf", "data": "JVBERi0="}
     }
     assert parts[2] == {"text": "[unsupported file attachment]"}
+
+# -- Gemini 3 thought signatures (2026-07 roadmap item 2) ---------------------------
+
+
+def _sig_call_part(name, args, sig):
+    return SimpleNamespace(
+        text=None,
+        function_call=SimpleNamespace(name=name, args=args),
+        thought_signature=sig,
+    )
+
+
+def _thought_part(text, sig=None):
+    return SimpleNamespace(
+        text=text, function_call=None, thought=True, thought_signature=sig
+    )
+
+
+def test_complete_captures_signatures_and_filters_thought_parts():
+    response = _response(
+        [
+            _thought_part("secret reasoning", sig=b"tsig"),
+            SimpleNamespace(text="the answer", function_call=None, thought_signature=None),
+            _sig_call_part("run_shell", {"command": "ls"}, b"csig"),
+        ]
+    )
+    provider = GeminiProvider(client=_FakeClient(response=response))
+    turn = provider.complete(model="m", messages=[{"role": "user", "content": "x"}])
+
+    assert turn.text == "the answer"  # thought text never leaks into the answer
+    assert turn.tool_calls[0].name == "run_shell"
+    import base64
+
+    sidecar = turn.extras["_gemini"]
+    assert sidecar["text_sig"] == base64.b64encode(b"tsig").decode()
+    assert sidecar["call_sigs"] == [base64.b64encode(b"csig").decode()]
+
+
+def test_complete_without_signatures_has_no_extras():
+    response = _response([_text_part("plain")])
+    provider = GeminiProvider(client=_FakeClient(response=response))
+    turn = provider.complete(model="m", messages=[{"role": "user", "content": "x"}])
+    assert turn.extras == {}
+
+
+def test_stream_accumulates_signatures_across_chunks():
+    chunks = [
+        _response([_text_part("hi ")], finish_reason=None),
+        _response([_sig_call_part("t1", {}, b"s1")], finish_reason=None),
+        _response([_sig_call_part("t2", {}, None)], finish_reason="STOP"),
+    ]
+    provider = GeminiProvider(client=_FakeClient(chunks=chunks))
+    final = list(provider.stream(model="m", messages=[{"role": "user", "content": "x"}]))[-1].turn
+    import base64
+
+    assert [c.name for c in final.tool_calls] == ["t1", "t2"]
+    assert final.extras["_gemini"]["call_sigs"] == [
+        base64.b64encode(b"s1").decode(),
+        None,
+    ]
+
+
+def test_convert_reattaches_signatures_to_parts():
+    system, contents = convert_messages(
+        [
+            {"role": "user", "content": "do it"},
+            {
+                "role": "assistant",
+                "content": "on it",
+                "_gemini": {"text_sig": "dHNpZw==", "call_sigs": [None, "Y3NpZw=="]},
+                "tool_calls": [
+                    {"id": "call_0", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+                    {"id": "call_1", "type": "function", "function": {"name": "b", "arguments": "{}"}},
+                ],
+            },
+        ]
+    )
+    parts = contents[-1]["parts"]
+    assert parts[0] == {"text": "on it", "thought_signature": "dHNpZw=="}
+    assert "thought_signature" not in parts[1]  # first call had no signature
+    assert parts[2]["function_call"]["name"] == "b"
+    assert parts[2]["thought_signature"] == "Y3NpZw=="
+
+
+def test_convert_signature_parts_validate_as_sdk_types():
+    """The dict parts we emit (base64-string signatures) must round-trip through the real
+    SDK Part model — its base64 bytes-validation is what decodes them on send."""
+    types_mod = pytest.importorskip("google.genai.types")
+    _, contents = convert_messages(
+        [
+            {"role": "user", "content": "go"},
+            {
+                "role": "assistant",
+                "content": "",
+                "_gemini": {"text_sig": None, "call_sigs": ["c2ln"]},
+                "tool_calls": [
+                    {"id": "call_0", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+                ],
+            },
+        ]
+    )
+    part = types_mod.Part.model_validate(contents[-1]["parts"][0])
+    assert part.thought_signature == b"sig"

@@ -10,10 +10,16 @@ must absorb:
   back by name (an id→name map built from the assistant turns during conversion).
 - Tool parameter schemas are an OpenAPI 3.0 subset: unsupported JSON Schema keys
   (`additionalProperties`, `$schema`, …) must be stripped or the API rejects the request.
+- Gemini 3 thought signatures: response parts carry `thought_signature` (bytes) that MUST
+  be echoed back on the same parts in later requests — tool loops break without them. They
+  ride the canonical assistant message as the `_gemini` sidecar (base64 strings; the SDK's
+  `val_json_bytes="base64"` decodes them on send) and are reattached here. Parts flagged
+  `thought` are reasoning summaries, never answer text.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from typing import Any, Optional
@@ -194,22 +200,28 @@ def convert_messages(
             if parts:
                 converted.append({"role": "user", "parts": parts})
         elif role == "assistant":
+            sidecar = message.get("_gemini") or {}
+            call_sigs = sidecar.get("call_sigs") or []
             parts = []
             text = message.get("content")
             if isinstance(text, str) and text:
-                parts.append({"text": text})
-            for call in message.get("tool_calls") or []:
+                part: dict[str, Any] = {"text": text}
+                if sidecar.get("text_sig"):
+                    part["thought_signature"] = sidecar["text_sig"]
+                parts.append(part)
+            for i, call in enumerate(message.get("tool_calls") or []):
                 function = call.get("function") or {}
                 name = function.get("name") or ""
                 call_names[call.get("id") or ""] = name
-                parts.append(
-                    {
-                        "function_call": {
-                            "name": name,
-                            "args": _parse_args(function.get("arguments")),
-                        }
+                part = {
+                    "function_call": {
+                        "name": name,
+                        "args": _parse_args(function.get("arguments")),
                     }
-                )
+                }
+                if i < len(call_sigs) and call_sigs[i]:
+                    part["thought_signature"] = call_sigs[i]
+                parts.append(part)
             if parts:
                 converted.append({"role": "model", "parts": parts})
         elif role == "tool":
@@ -278,21 +290,45 @@ def convert_tools(tools: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]
     return [{"function_declarations": declarations}] if declarations else []
 
 
-def _parse_candidate(response: Any) -> tuple[list[str], list[ToolCall], Optional[str]]:
-    """Pull text parts, function calls (with synthesized ids), and the finish reason out of a
-    GenerateContentResponse (or one streamed chunk of it)."""
+def _sig_str(part: Any) -> Optional[str]:
+    """A part's thought signature as a base64 string (jsonl-safe; the SDK's base64 bytes
+    validation turns it back into the original bytes on send)."""
+    sig = getattr(part, "thought_signature", None)
+    if not sig:
+        return None
+    if isinstance(sig, (bytes, bytearray)):
+        return base64.b64encode(bytes(sig)).decode("ascii")
+    return str(sig)
+
+
+def _signature_extras(
+    text_sig: Optional[str], call_sigs: list[Optional[str]]
+) -> dict[str, Any]:
+    """Captured signatures → the `_gemini` assistant-message sidecar (empty when none)."""
+    if not text_sig and not any(call_sigs):
+        return {}
+    return {"_gemini": {"text_sig": text_sig, "call_sigs": call_sigs}}
+
+
+def _parse_candidate(
+    response: Any,
+) -> tuple[list[str], list[ToolCall], Optional[str], tuple[Optional[str], list[Optional[str]]]]:
+    """Pull answer text parts, function calls (with synthesized ids), the finish reason, and
+    thought signatures out of a GenerateContentResponse (or one streamed chunk of it).
+    Parts flagged `thought` are reasoning summaries — their signature is kept, their text is
+    NOT answer text."""
     texts: list[str] = []
     calls: list[ToolCall] = []
     finish = None
+    text_sig: Optional[str] = None
+    call_sigs: list[Optional[str]] = []
     candidates = getattr(response, "candidates", None) or []
     if not candidates:
-        return texts, calls, finish
+        return texts, calls, finish, (text_sig, call_sigs)
     candidate = candidates[0]
     content = getattr(candidate, "content", None)
     for part in getattr(content, "parts", None) or []:
-        text = getattr(part, "text", None)
-        if text:
-            texts.append(text)
+        sig = _sig_str(part)
         function_call = getattr(part, "function_call", None)
         if function_call is not None:
             calls.append(
@@ -302,10 +338,19 @@ def _parse_candidate(response: Any) -> tuple[list[str], list[ToolCall], Optional
                     arguments=dict(getattr(function_call, "args", None) or {}),
                 )
             )
+            call_sigs.append(sig)
+            continue
+        if sig:
+            text_sig = sig
+        if getattr(part, "thought", False):
+            continue
+        text = getattr(part, "text", None)
+        if text:
+            texts.append(text)
     raw_finish = getattr(candidate, "finish_reason", None)
     if raw_finish is not None:
         finish = getattr(raw_finish, "name", None) or str(raw_finish)
-    return texts, calls, finish
+    return texts, calls, finish, (text_sig, call_sigs)
 
 
 def _map_finish(finish: Optional[str], has_calls: bool) -> Optional[str]:
@@ -384,7 +429,7 @@ class GeminiProvider(ProviderClient):
             model=model, messages=messages, tools=tools, settings=settings
         )
         response = self._ensure_client().models.generate_content(**kwargs)
-        texts, calls, finish = _parse_candidate(response)
+        texts, calls, finish, (text_sig, call_sigs) = _parse_candidate(response)
         tool_calls = [
             ToolCall(id=f"call_{i}", name=c.name, arguments=c.arguments)
             for i, c in enumerate(calls)
@@ -394,6 +439,7 @@ class GeminiProvider(ProviderClient):
             tool_calls=tool_calls,
             finish_reason=_map_finish(finish, bool(tool_calls)),
             raw=response,
+            extras=_signature_extras(text_sig, call_sigs),
         )
 
     def capabilities(self, model: str) -> ModelCapabilities:
@@ -415,15 +461,22 @@ class GeminiProvider(ProviderClient):
         text_parts: list[str] = []
         calls: list[ToolCall] = []
         finish = None
+        text_sig: Optional[str] = None
+        call_sigs: list[Optional[str]] = []
 
         # Unlike Anthropic, function_call parts arrive whole (args are a complete dict per
         # part), so there is no JSON accumulation — just collect parts across chunks.
         for chunk in client.models.generate_content_stream(**kwargs):
-            texts, chunk_calls, chunk_finish = _parse_candidate(chunk)
+            texts, chunk_calls, chunk_finish, (chunk_sig, chunk_call_sigs) = (
+                _parse_candidate(chunk)
+            )
             for text in texts:
                 text_parts.append(text)
                 yield StreamChunk(text_delta=text)
             calls.extend(chunk_calls)
+            call_sigs.extend(chunk_call_sigs)
+            if chunk_sig:
+                text_sig = chunk_sig
             if chunk_finish:
                 finish = chunk_finish
 
@@ -436,5 +489,6 @@ class GeminiProvider(ProviderClient):
                 text="".join(text_parts) or None,
                 tool_calls=tool_calls,
                 finish_reason=_map_finish(finish, bool(tool_calls)),
+                extras=_signature_extras(text_sig, call_sigs),
             )
         )

@@ -237,7 +237,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
             ),
         ],
         build=_build_gemini,
-        recommended_model="gemini-2.5-flash",
+        recommended_model="gemini-3.6-flash",
         env_key="GEMINI_API_KEY",
     ),
     # OpenAI-compatible vendors, listed as first-class providers so users don't need to know the

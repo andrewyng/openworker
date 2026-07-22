@@ -415,3 +415,19 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
         # full ids in the matrix must round-trip: prefix + bare == matrix key
         base = next(f for f in d.fields if f.key == "base_url")
         assert base.default.startswith("https://")
+
+
+def test_foreign_sidecars_stripped_from_outbound_messages():
+    """Provider-private sidecars (`_gemini` thought signatures et al) must never reach the
+    OpenAI wire — it and its compat servers reject unknown message fields."""
+    client = _FakeClient(_response(content="ok"))
+    provider = OpenAIProvider(client=client)
+    provider.complete(
+        model="gpt-5.5",
+        messages=[
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "prev", "_gemini": {"call_sigs": ["x"]}},
+        ],
+    )
+    sent = client.chat.completions.calls[0]["messages"]
+    assert sent[1] == {"role": "assistant", "content": "prev"}
