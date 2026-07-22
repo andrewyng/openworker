@@ -568,9 +568,11 @@ export async function mockApi(page: import("@playwright/test").Page) {
     send("ready");
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
+    let hadTurn = false; // a user_message landed — set_model is now a mid-session switch
     ws.onMessage((raw) => {
       const msg = JSON.parse(String(raw));
       if (msg.type === "user_message") {
+        hadTurn = true;
         send("turn_start", { input: msg.text });
         if (/run a tool/i.test(msg.text)) {
           pendingTool = "run_shell";
@@ -703,6 +705,14 @@ export async function mockApi(page: import("@playwright/test").Page) {
         }
         send("interrupted", {});
         send("turn_done");
+      } else if (msg.type === "set_model") {
+        // Mid-session switch: the server applies it and broadcasts the persisted marker.
+        // Like the real server, the FIRST bind (fresh session) is silent.
+        if (hadTurn)
+          send("model_changed", {
+            model: msg.model,
+            text: `Model switched to ${msg.model}`,
+          });
       } else if (msg.type === "retry") {
         // Like the real engine: re-runs with NO new user message (turn_start input is empty).
         send("turn_start", { input: "" });

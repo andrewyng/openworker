@@ -68,3 +68,17 @@ describe("itemsFromMessages notices", () => {
     ]);
   });
 });
+
+describe("itemsFromMessages model switch", () => {
+  it("replays the persisted model_switch marker as an info notice", () => {
+    const items = itemsFromMessages([
+      { role: "user", content: "hi" },
+      { role: "notice", kind: "model_switch", text: "Model switched to Kimi K2.6 · Moonshot" },
+    ] as any);
+    expect(items[1]).toEqual({
+      kind: "notice",
+      tone: "info",
+      text: "Model switched to Kimi K2.6 · Moonshot",
+    });
+  });
+});

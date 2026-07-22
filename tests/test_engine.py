@@ -381,3 +381,61 @@ def test_provider_extras_persist_on_message_and_survive_outbound(tmp_path):
     outbound = engine._outbound_messages()[-1]
     assert outbound["_gemini"] == {"text_sig": "c2ln", "call_sigs": []}
     assert "ts" not in outbound  # display sidecars still stripped
+
+
+def test_switch_model_appends_notice_only_midsession(tmp_path):
+    engine, _ = _engine(tmp_path, [_text_turn("ok")])
+    # Fresh session: first bind is silent.
+    assert engine.switch_model("zai:glm-5.2") is None
+    assert engine.model == "zai:glm-5.2"
+    _collect(engine, "hi")
+    # Same model: no-op.
+    assert engine.switch_model("zai:glm-5.2") is None
+    # Real mid-session switch: persisted marker with the matrix label.
+    text = engine.switch_model("kimi:kimi-k2.6")
+    assert "Kimi K2.6" in text and engine.model == "kimi:kimi-k2.6"
+    notice = engine.messages[-1]
+    assert notice["role"] == "notice" and notice["kind"] == "model_switch"
+    assert all(m.get("role") != "notice" for m in engine._outbound_messages())
+
+
+def test_switch_model_warns_when_images_meet_text_only_model(tmp_path):
+    class NoVisionProvider(ScriptedProvider):
+        def capabilities(self, model):
+            return ModelCapabilities(vision=False)
+
+    engine, _ = _engine(tmp_path, [_text_turn("ok")])
+    engine.provider = NoVisionProvider([_text_turn("ok")])
+    engine.messages.append(
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+            ],
+        }
+    )
+    text = engine.switch_model("zai:glm-5.2")
+    assert "images" in text  # degradation is called out in the marker
+
+
+def test_outbound_replaces_images_for_non_vision_models(tmp_path):
+    class NoVisionProvider(ScriptedProvider):
+        def capabilities(self, model):
+            return ModelCapabilities(vision=False)
+
+    engine, _ = _engine(tmp_path, [_text_turn("ok")])
+    engine.provider = NoVisionProvider([_text_turn("ok")])
+    engine.messages.append(
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+            ],
+        }
+    )
+    parts = engine._outbound_messages()[-1]["content"]
+    assert all(p["type"] != "image_url" for p in parts)
+    assert "not viewable" in parts[-1]["text"]
+    assert engine.messages[-1]["content"][1]["type"] == "image_url"  # history untouched

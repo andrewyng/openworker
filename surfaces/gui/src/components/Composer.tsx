@@ -49,7 +49,6 @@ interface Props {
   // The model is FIXED once the session has history (§17): the picker renders ONLY on a fresh
   // session; after the first turn the fact lives in the topbar subtitle (§22) — no
   // interactive-then-disabled control.
-  modelLocked?: boolean;
   running: boolean;
   connected: boolean;
   // False when the default model's provider has no key — the composer shows a "connect a model"
@@ -461,8 +460,9 @@ export function Composer(props: Props) {
 
           <span className="ml-auto" />
 
-          {/* model — a quiet chip on a FRESH session only; once the session has history the
-              fact moves up to the topbar subtitle (§17 expressed spatially). */}
+          {/* model — a quiet chip, now for the session's whole life (§17 rev 2026-07-22:
+              mid-session switching shipped, so the picker stays actionable; the topbar
+              subtitle still states the current model). */}
           {!dictation?.recording && (needsModel ? (
             <button
               className="pill model-warn chip"
@@ -473,20 +473,17 @@ export function Composer(props: Props) {
               <span className="pill-label">No model</span>
               <span className="model-warn-ico" aria-hidden>⚠</span>
             </button>
+          ) : modelsLoaded ? (
+            <Dropdown value={props.model} options={modelOptions} onChange={props.onModelChange} align="right" />
           ) : (
-            !props.modelLocked &&
-              (modelsLoaded ? (
-                <Dropdown value={props.model} options={modelOptions} onChange={props.onModelChange} align="right" />
-              ) : (
-                <button
-                  className="pill chip text-faint cursor-default"
-                  disabled
-                  data-testid="models-loading"
-                  title="Fetching the model list from the server"
-                >
-                  <span className="pill-label">Loading models…</span>
-                </button>
-              ))
+            <button
+              className="pill chip text-faint cursor-default"
+              disabled
+              data-testid="models-loading"
+              title="Fetching the model list from the server"
+            >
+              <span className="pill-label">Loading models…</span>
+            </button>
           ))}
 
           {/* mic — immediately before send (owner call, DMG #28 walkthrough) */}

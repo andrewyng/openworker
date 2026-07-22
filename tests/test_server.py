@@ -614,33 +614,38 @@ def test_ws_session_resume_via_store(tmp_path):
     assert any(s["session_id"] == "keep" and s["messages"] > 0 for s in sessions)
 
 
-def test_ws_first_message_binds_the_session_model_then_locks(tmp_path):
-    """The FIRST user_message's model binds the session (race-proof across reconnects — found
-    2026-07-04: a new cowork session reconnects to adopt its scratch dir, which could drop a
-    queued set_model and leave the engine on a stale/resumed model). After the first turn the
-    model is FIXED for the session's life: later message models and set_model are ignored
-    (owner call, 2026-07-04 — mixed-model transcripts invite provider-quirk breakage).
-    """
-    client = _client(tmp_path, [_text("ok"), _text("ok again"), _text("still ok")])
+def test_ws_first_message_binds_then_midsession_switch_persists_notice(tmp_path):
+    """The FIRST user_message's model binds the session silently (race-proof across
+    reconnects — found 2026-07-04). Mid-session rebinds are ALLOWED (roadmap item 3,
+    2026-07-22, supersedes the 07-04 lock): the switch lands as a persisted model_switch
+    notice and a model_changed broadcast, and the next turn runs on the new model."""
+    # 4 turns: 3 user turns + the autotitle's fire-and-forget complete() after turn 1.
+    client = _client(
+        tmp_path, [_text("ok"), _text("Session title"), _text("ok again"), _text("still ok")]
+    )
     with client.websocket_connect("/ws/session/model-per-msg") as ws:
         ready = ws.receive_json()
         assert ready["type"] == "ready"
-        default_model = ready["data"]["model"]
         ws.send_json({"type": "user_message", "text": "hi", "model": "zai:glm-5.2"})
-        _drain(ws)
+        assert "model_changed" not in _drain(ws)  # first bind is silent
         # message WITHOUT a model keeps the bound one (no silent reset to default)
         ws.send_json({"type": "user_message", "text": "again"})
         _drain(ws)
-        # locked: neither a different message model nor set_model can rebind mid-session
         ws.send_json({"type": "set_model", "model": "kimi:kimi-k2.6"})
-        ws.send_json(
-            {"type": "user_message", "text": "switch?", "model": "kimi:kimi-k2.6"}
-        )
+        changed = ws.receive_json()
+        assert changed["type"] == "model_changed"
+        assert changed["data"]["model"] == "kimi:kimi-k2.6"
+        assert "Kimi" in changed["data"]["text"]
+        ws.send_json({"type": "user_message", "text": "switched now"})
         _drain(ws)
     mgr = client.app.state.manager
     engine = mgr._engines["model-per-msg"]
-    assert engine.model == "zai:glm-5.2"
-    assert engine.model != default_model
+    assert engine.model == "kimi:kimi-k2.6"
+    # The marker is persisted between the turns; the provider never sees it.
+    messages = client.get("/v1/sessions/model-per-msg/messages").json()["messages"]
+    notices = [m for m in messages if m["role"] == "notice"]
+    assert [n["kind"] for n in notices] == ["model_switch"]
+    assert all(m.get("role") != "notice" for m in engine._outbound_messages())
 
 
 def test_session_messages_prefers_the_live_engine(tmp_path):

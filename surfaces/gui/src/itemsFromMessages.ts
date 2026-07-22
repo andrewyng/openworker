@@ -59,13 +59,15 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
         });
       }
     } else if (m.role === "notice") {
-      // Persisted turn-ending marker (engine `_append_notice`): error/interrupted survive
+      // Persisted markers (engine `_append_notice`): error/interrupted/model-switch survive
       // reload exactly like the live view rendered them. An error notice is retriable —
       // the Transcript only offers the button when it's the transcript tail.
       items.push(
         m.kind === "interrupted"
           ? { kind: "notice", tone: "warn", text: "Interrupted." }
-          : { kind: "notice", tone: "warn", text: "Error: " + (m.text || "unknown"), retriable: true },
+          : m.kind === "model_switch"
+            ? { kind: "notice", tone: "info", text: m.text || "Model switched" }
+            : { kind: "notice", tone: "warn", text: "Error: " + (m.text || "unknown"), retriable: true },
       );
     }
     // system messages are omitted; tool-result messages are folded into the tool row above

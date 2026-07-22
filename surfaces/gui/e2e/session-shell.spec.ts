@@ -44,7 +44,8 @@ test("facts subtitle: absent on a fresh session, persona · model after the firs
   await expect(page.getByRole("button", { name: "About this persona" })).toHaveCount(0);
   await expect(page.locator(".dd").filter({ hasText: "Claude Opus 4.8" })).toBeVisible();
 
-  // First turn → the model chip leaves the composer; the facts move up to the subtitle.
+  // First turn → the facts move up to the subtitle; the picker STAYS in the composer
+  // (§17 rev 2026-07-22: mid-session model switching shipped, so it remains actionable).
   const box = page.getByPlaceholder(/Ask the coworker/);
   await box.fill("hello");
   await page.getByRole("button", { name: "Send" }).click();
@@ -52,7 +53,7 @@ test("facts subtitle: absent on a fresh session, persona · model after the firs
 
   const sub = page.getByTestId("session-subtitle");
   await expect(sub).toContainText("Coworker · Claude Opus 4.8");
-  await expect(page.locator(".dd").filter({ hasText: "Claude Opus 4.8" })).toHaveCount(0);
+  await expect(page.locator(".dd").filter({ hasText: "Claude Opus 4.8" })).toBeVisible();
 
   // The subtitle is the session's fixed facts — clicking it opens the coworker (persona) page,
   // replacing the old topbar sliders button.
