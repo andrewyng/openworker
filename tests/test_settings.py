@@ -157,3 +157,20 @@ def test_scratch_base_setting_persists_and_drives_provisioning(tmp_path, monkeyp
     assert reborn.get_settings()["scratch_base"] == str(base)
     scratch = reborn._provision_scratch("sess-xyz")
     assert Path(scratch) == (base / "sess-xyz").resolve() and Path(scratch).is_dir()
+
+
+def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):
+    """`ollama:*` entries show only while a local Ollama answers — keyless must not mean
+    always-present (a stray ollama:<junk> pref would otherwise render forever)."""
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    manager.add_model("ollama:llama3.3")
+
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: False)
+    assert "ollama:llama3.3" not in manager.get_settings()["models"]
+
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
+    assert "ollama:llama3.3" in manager.get_settings()["models"]

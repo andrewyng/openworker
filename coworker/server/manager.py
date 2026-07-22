@@ -1550,6 +1550,31 @@ class SessionManager:
         self._save_prefs()
         return {"ok": True, "dm_session": self.dm_session()}
 
+    def _ollama_alive(self) -> bool:
+        """Best-effort local-Ollama liveness, cached 30s (get_settings runs on every GUI
+        fetch — no 2s probe inline). Keyless is not the same as PRESENT: `ollama:*` picker
+        entries render only when an Ollama actually answers, so a machine with no Ollama
+        never shows phantom local models (e.g. a stray pasted string saved as a model id,
+        caught 2026-07-21)."""
+        import time
+
+        now = time.monotonic()
+        cached = getattr(self, "_ollama_alive_cache", None)
+        if cached and now - cached[0] < 30:
+            return cached[1]
+        profile = self.secrets.get("provider:ollama") or {}
+        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
+        if base.endswith("/v1"):
+            base = base[: -len("/v1")]
+        try:
+            import httpx
+
+            alive = httpx.get(base + "/api/tags", timeout=0.8).status_code == 200
+        except Exception:
+            alive = False
+        self._ollama_alive_cache = (now, alive)
+        return alive
+
     def _ollama_models(self) -> list[str]:
         """Live list of models pulled into the configured Ollama server (via its native
         `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama isn't
@@ -1632,11 +1657,15 @@ class SessionManager:
         # Only surface models whose provider is actually configured — the composer picker
         # reflects exactly what's connected. The active default is always kept selectable
         # (it's hidden behind the "No model" state until a provider is connected anyway).
-        selectable = [
-            m
-            for m in self._curated_models()
-            if self._provider_configured(self._model_provider(m))
-        ]
+        # Ollama is keyless, so "configured" is meaningless there — its models show only
+        # while a local Ollama answers (cached liveness probe).
+        def _selectable(m: str) -> bool:
+            provider = self._model_provider(m)
+            if provider == "ollama":
+                return self._ollama_alive()
+            return self._provider_configured(provider)
+
+        selectable = [m for m in self._curated_models() if _selectable(m)]
         if self.model not in selectable:
             selectable.insert(0, self.model)
         from ..providers.matrix import model_labels
