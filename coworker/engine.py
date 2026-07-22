@@ -73,6 +73,9 @@ class TurnEngine:
         question_asker: Optional[
             Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
         ] = None,
+        # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
+        # executor's kill for a running shell command.
+        interrupt_hooks: Optional[list[Callable[[], None]]] = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -111,10 +114,38 @@ class TurnEngine:
         # tool_call.id → the standing rule that auto-allowed it ("tool → target"), so the
         # TOOL_FINISHED event can carry the note to the tool card (§25).
         self._standing_notes: dict[str, str] = {}
+        self._interrupt_hooks: list[Callable[[], None]] = list(interrupt_hooks or [])
 
     # -- external controls ------------------------------------------------------
     def request_interrupt(self) -> None:
+        """Stop the turn as soon as possible, from ANY state: mid-stream (the producer
+        thread drops the stream between chunks), mid-tool (interrupt hooks kill the
+        running command), awaiting an approval/question/plan (the await resolves as
+        interrupted), or between iterations (the loop checkpoint). Every pending
+        tool_call still gets a tool-error result so the history never carries orphans
+        (hosted templates reject them, and durable-resume would re-prompt them)."""
         self._cancel.set()
+        for hook in self._interrupt_hooks:
+            try:
+                hook()
+            except Exception:
+                pass  # best-effort: a dead executor must not block the stop
+
+    async def _interruptible(self, coro: Any, interrupted: Any) -> Any:
+        """Await `coro`, but resolve early with `interrupted` if the user stops the
+        turn. The pending task is cancelled so an answered-later Inbox card no-ops."""
+        task = asyncio.ensure_future(coro)
+        cancel_wait = asyncio.ensure_future(self._cancel.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {task, cancel_wait}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if task in done:
+                return task.result()
+            task.cancel()
+            return interrupted
+        finally:
+            cancel_wait.cancel()
 
     def queue_steering(
         self, text: str, source: Optional[dict[str, Any]] = None
@@ -202,9 +233,11 @@ class TurnEngine:
             iterations += 1
 
             turn: Optional[AssistantTurn] = None
+            streamed: list[str] = []
             try:
                 async for chunk in self._astream():
                     if chunk.text_delta:
+                        streamed.append(chunk.text_delta)
                         yield Event(
                             EventType.ASSISTANT_DELTA, {"text": chunk.text_delta}
                         )
@@ -219,6 +252,16 @@ class TurnEngine:
                 if friendly:
                     payload["raw"] = str(exc)
                 yield Event(EventType.ERROR, payload)
+                return
+            if self._cancel.is_set() and turn is None:
+                # Stopped mid-stream: persist exactly what the user watched arrive —
+                # the partial text, NO tool calls (any half-formed calls would either
+                # orphan or execute against the user's explicit stop).
+                if streamed:
+                    self.messages.append(
+                        _assistant_message(AssistantTurn(text="".join(streamed)))
+                    )
+                yield Event(EventType.INTERRUPTED, {"iterations": iterations})
                 return
             if turn is None:
                 turn = AssistantTurn()
@@ -269,6 +312,10 @@ class TurnEngine:
                 for chunk in provider.stream(
                     model=model, messages=messages, tools=tools, **settings
                 ):
+                    # User pressed Stop: drop the stream between chunks (reading the
+                    # asyncio.Event's flag from a thread is safe; we only read).
+                    if self._cancel.is_set():
+                        break
                     loop.call_soon_threadsafe(queue.put_nowait, ("chunk", chunk))
             except Exception as exc:  # surfaced to the awaiting consumer
                 loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
@@ -277,7 +324,18 @@ class TurnEngine:
 
         loop.run_in_executor(None, produce)
         while True:
-            kind, payload = await queue.get()
+            # Race the queue against Stop so a stalled stream (no chunks arriving —
+            # the pre-first-token wait, a wedged connection) can't hold the turn.
+            get_task = asyncio.ensure_future(queue.get())
+            cancel_task = asyncio.ensure_future(self._cancel.wait())
+            done, _ = await asyncio.wait(
+                {get_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            cancel_task.cancel()
+            if get_task not in done:
+                get_task.cancel()
+                return  # interrupted — the producer exits on its own next chunk
+            kind, payload = get_task.result()
             if kind == "chunk":
                 yield payload
             elif kind == "error":
@@ -293,6 +351,10 @@ class TurnEngine:
         run concurrently; everything else runs one at a time in call order."""
         cleared: list[ToolCall] = []
         for tool_call in tool_calls:
+            if self._cancel.is_set():
+                # Stopped: every remaining call still gets an answer (no orphans).
+                yield self._interrupted_tool(tool_call)
+                continue
             yield Event(
                 EventType.TOOL_PROPOSED,
                 {"name": tool_call.name, "arguments": tool_call.arguments},
@@ -340,10 +402,26 @@ class TurnEngine:
                 yield self._record_result(tool_call, result, status)
 
         for tool_call in serial:
+            if self._cancel.is_set():
+                yield self._interrupted_tool(tool_call)
+                continue
             yield Event(EventType.TOOL_STARTED, {"name": tool_call.name})
             self._audit(tool_call, stage="started")
             result, status = await asyncio.to_thread(self._execute_sync, tool_call)
             yield self._record_result(tool_call, result, status)
+
+    def _interrupted_tool(self, tool_call: ToolCall) -> Event:
+        """The stop-path answer for a call that will not run: a tool-error result in the
+        history (hosted chat templates reject orphaned tool_calls, and durable-resume
+        would otherwise re-prompt it) + the finished event for the tool card."""
+        self.messages.append(_tool_error_message(tool_call, "interrupted by user"))
+        self._audit(
+            tool_call, stage="finished", status="interrupted", reason="user stop"
+        )
+        return Event(
+            EventType.TOOL_FINISHED,
+            {"name": tool_call.name, "status": "interrupted", "reason": "stopped"},
+        )
 
     def _parallel_safe(self, tool_call: ToolCall) -> bool:
         # Only metadata-declared low-risk tools (reads, searches, git queries) run
@@ -398,17 +476,23 @@ class TurnEngine:
                 },
             )
             self._audit(tool_call, stage="approval_requested", reason=decision.reason)
-            outcome = await self.approver(
-                PermissionRequest(
-                    tool_name=tool_call.name,
-                    arguments=tool_call.arguments,
-                    metadata=metadata,
-                    reason=decision.reason,
-                    tool_call_id=tool_call.id,
-                )
+            outcome = await self._interruptible(
+                self.approver(
+                    PermissionRequest(
+                        tool_name=tool_call.name,
+                        arguments=tool_call.arguments,
+                        metadata=metadata,
+                        reason=decision.reason,
+                        tool_call_id=tool_call.id,
+                    )
+                ),
+                interrupted=ApprovalOutcome.DENY,
             )
             if outcome is ApprovalOutcome.DENY:
-                allowed, reason = False, "denied by user"
+                allowed, reason = (
+                    False,
+                    "interrupted by user" if self._cancel.is_set() else "denied by user",
+                )
                 self._audit(
                     tool_call,
                     stage="approval_resolved",
@@ -554,7 +638,10 @@ class TurnEngine:
         else:
             yield Event(EventType.PLAN_PROPOSED, {"plan": plan})
             self._audit(tool_call, stage="plan_proposed")
-            result = await self.plan_approver(dict(args), tool_call.id) or {
+            result = await self._interruptible(
+                self.plan_approver(dict(args), tool_call.id),
+                interrupted={"approved": False, "error": "interrupted by user"},
+            ) or {
                 "approved": False,
                 "error": "no response",
             }
@@ -615,7 +702,10 @@ class TurnEngine:
                 stage="directory_requested",
                 reason=str(args.get("reason", "")),
             )
-            result = await self.directory_requester(dict(args), tool_call.id) or {
+            result = await self._interruptible(
+                self.directory_requester(dict(args), tool_call.id),
+                interrupted={"granted": False, "error": "interrupted by user"},
+            ) or {
                 "granted": False,
                 "error": "no response",
             }
@@ -656,7 +746,10 @@ class TurnEngine:
             # The asker is mode-aware (attended → live inline prompt; unattended → Inbox), so it
             # owns surfacing the question. The engine just awaits the answer.
             self._audit(tool_call, stage="question_requested", reason=question)
-            result = await self.question_asker(dict(args), tool_call.id) or {
+            result = await self._interruptible(
+                self.question_asker(dict(args), tool_call.id),
+                interrupted={"answer": "", "error": "interrupted by user"},
+            ) or {
                 "answer": "",
                 "error": "no response",
             }

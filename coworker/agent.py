@@ -308,6 +308,8 @@ def build_engine(
         model=model,
         instructions=instructions,
         approver=approver,
+        # Stop kills the in-flight foreground shell command, not just the loop.
+        interrupt_hooks=[executor.interrupt_now] if executor is not None else None,
         max_iterations=(
             max_iterations if max_iterations is not None else config.max_iterations
         ),
