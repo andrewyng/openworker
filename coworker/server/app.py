@@ -1508,11 +1508,23 @@ def create_app(manager: SessionManager) -> FastAPI:
                 }
             return {"approved": True, "mode": resp.get("mode") or "interactive"}
 
-        def _model_locked() -> bool:
-            # The model is chosen until the first real turn, then fixed for the session's life
-            # (system message doesn't count as history). Enforced HERE, not just in the GUI,
-            # so API callers and message races can't rebind a running conversation.
-            return any(m.get("role") != "system" for m in engine.messages)
+        async def _apply_model(model: Optional[str]) -> None:
+            # Mid-session rebind is allowed (roadmap item 3, supersedes the 2026-07-04
+            # lock): history is canonical and providers convert per call. A real switch
+            # appends a persisted notice; broadcast it so live views render the marker
+            # and update their header. Never rebind mid-turn — the running loop reads
+            # `engine.model` per iteration and a mixed turn is exactly the breakage the
+            # old lock existed to prevent.
+            if not model or manager.is_running(session_id):
+                return
+            notice = engine.switch_model(model)
+            if notice is None:  # same model, or first bind on a fresh session
+                return
+            manager.persist_session(session_id)
+            await manager.broadcast_session(
+                session_id,
+                {"type": "model_changed", "data": {"model": model, "text": notice}},
+            )
 
         def _resolve_pending(resolution: str) -> None:
             # Live WS responses resolve THE session's single pending prompt (one at a time, since the
@@ -1641,20 +1653,14 @@ def create_app(manager: SessionManager) -> FastAPI:
                     except ValueError:
                         pass
                 elif kind == "set_model":
-                    model = message.get("model")
-                    if model and not _model_locked():
-                        engine.model = model
+                    await _apply_model(message.get("model"))
                 elif kind == "user_message":
                     text = (message.get("text") or "").strip()
                     attachments = message.get("attachments") or []
-                    # The composer sends its visible model with every message — the FIRST one
-                    # binds the session's model (race-proof across reconnects; see api.ts
-                    # Session.userMessage). After that the model is FIXED for the session's
-                    # life (owner call, 2026-07-04): mixed-model transcripts invite
-                    # provider-quirk breakage. Start a new session to switch.
-                    model = message.get("model")
-                    if model and not _model_locked():
-                        engine.model = model
+                    # The composer sends its visible model with every message — the FIRST
+                    # one binds the session (race-proof across reconnects; see api.ts
+                    # Session.userMessage), later ones may switch it (notice persisted).
+                    await _apply_model(message.get("model"))
                     if text or attachments:
                         content = build_user_content(text, attachments)
                         asyncio.create_task(run_turn(content))

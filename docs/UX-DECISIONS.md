@@ -281,6 +281,15 @@ the HTML mock), **Built** (in the real React/Python app).
   cover what the transcript already uses (tool-calling always; vision iff images are in history;
   reseller/vendor quirks vetted via the model matrix), with an explicit affordance + warning.
   Also covers the provider-died-mid-session case. Until then: start a new session.
+- **REVISED (owner, 2026-07-22): mid-session switching SHIPPED** — the "future" above, built.
+  The composer picker now stays actionable for the session's whole life; a switch lands as a
+  persisted `model_switch` info marker in the transcript ("Model switched to <label>", with a
+  degradation warning when history holds images the target can't see — those go out as visible
+  placeholders, mirroring the PDF fallback). Still server-enforced sanely: first bind is silent,
+  rebinds are refused mid-turn, and the marker is history the provider never sees. Grounding
+  that unlocked it: history is canonical OpenAI shape with per-call provider conversion, and the
+  Gemini 3 signature sidecar work proved cross-model histories replay cleanly (live-drilled
+  A→B→A, 2026-07-22). Also the recovery path for provider-died and poisoned-template sessions.
 
 ---
 

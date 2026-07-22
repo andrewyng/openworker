@@ -177,6 +177,43 @@ class TurnEngine:
         async for event in self._loop():
             yield event
 
+    def switch_model(self, model: str) -> Optional[str]:
+        """Rebind the session's model mid-conversation (roadmap item 3). History is
+        canonical OpenAI shape and every provider converts per call, so the switch is just
+        the field write — plus a persisted notice marking WHERE it happened, with a
+        degradation warning when history carries images the new model can't see (those are
+        sent as placeholders — see `_outbound_messages`). Returns the notice text, or None
+        when nothing changed (same model, or first bind on a fresh session)."""
+        if not model or model == self.model:
+            return None
+        had_history = any(m.get("role") != "system" for m in self.messages)
+        self.model = model
+        if not had_history:
+            return None
+        from .providers.matrix import model_labels
+
+        text = f"Model switched to {model_labels().get(model, model)}"
+        try:
+            caps = self.provider.capabilities(model)
+        except Exception:
+            caps = None
+        if (
+            caps is not None
+            and not getattr(caps, "vision", False)
+            and self._history_has_images()
+        ):
+            text += " — earlier images can't be read by this model"
+        self._append_notice("model_switch", text)
+        return text
+
+    def _history_has_images(self) -> bool:
+        return any(
+            isinstance(p, dict) and p.get("type") == "image_url"
+            for msg in self.messages
+            if isinstance(msg.get("content"), list)
+            for p in msg["content"]
+        )
+
     def _append_notice(self, kind: str, text: Optional[str] = None) -> None:
         """Persist a turn-ending marker (error/interrupted) as a display-only `notice`
         message: it survives reload like the transcript does, but `_outbound_messages`
@@ -861,6 +898,41 @@ class TurnEngine:
                         {
                             **msg,
                             "content": pdf_support.adapt_content(msg["content"], caps),
+                        }
+                        if isinstance(msg.get("content"), list)
+                        else msg
+                    )
+                    for msg in out
+                ]
+
+        # Images get the same per-turn treatment: a model without vision receives a visible
+        # placeholder instead of a payload it would reject. Like the PDF path, this re-decides
+        # per call, so a mid-session switch to/from a vision model always does the right thing.
+        if any(
+            isinstance(p, dict) and p.get("type") == "image_url"
+            for msg in out
+            if isinstance(msg.get("content"), list)
+            for p in msg["content"]
+        ):
+            caps = self.provider.capabilities(self.model)
+            if not getattr(caps, "vision", False):
+                placeholder = {
+                    "type": "text",
+                    "text": "[image attachment — not viewable by this model]",
+                }
+                out = [
+                    (
+                        {
+                            **msg,
+                            "content": [
+                                (
+                                    placeholder
+                                    if isinstance(p, dict)
+                                    and p.get("type") == "image_url"
+                                    else p
+                                )
+                                for p in msg["content"]
+                            ],
                         }
                         if isinstance(msg.get("content"), list)
                         else msg

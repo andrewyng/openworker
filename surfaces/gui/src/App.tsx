@@ -638,6 +638,12 @@ export function App() {
           if (d.status === "max_iterations_exceeded")
             setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Stopped: max iterations reached." }]);
           break;
+        case "model_changed":
+          // Mid-session switch (server-applied): update the header fact and drop the
+          // persisted marker into the live transcript (replay renders it from history).
+          if (d.model) setModel(d.model);
+          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || "Model switched" }]);
+          break;
         case "interrupted":
           flushPartialStream();
           setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Interrupted." }]);
@@ -812,6 +818,7 @@ export function App() {
     sessionRef.current?.setMode(m);
   };
   const changeModel = (m: string) => {
+    if (running) return; // the server refuses mid-turn rebinds — don't let the header lie
     setModel(m);
     sessionRef.current?.setModel(m);
   };
@@ -1451,7 +1458,6 @@ export function App() {
               model={model}
               models={models}
               modelLabels={modelLabels}
-              modelLocked={items.length > 0}
               running={running}
               connected={connected}
               modelReady={modelReady}
