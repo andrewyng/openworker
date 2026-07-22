@@ -33,7 +33,7 @@ import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
 import { streamMode } from "./streamGate";
 import { InboxItemCard } from "./components/InboxItemCard";
-import { isTauri, startWindowDrag } from "./tauri";
+import { isTauri, platformOS, startWindowDrag } from "./tauri";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
@@ -1027,7 +1027,10 @@ export function App() {
   // tauri-overlay class + draws fake traffic lights at the real position) so the top-left can be
   // tuned in the preview without a DMG build. Never active in the real app (isTauri() short-circuits).
   const simOverlay = !desktop && new URLSearchParams(window.location.search).has("overlay");
-  const overlay = desktop || simOverlay;
+  // Overlay layout is macOS-ONLY: Windows/Linux keep the native title bar, so the mac
+  // compensations (traffic-light insets, lowered top strips) must not apply there —
+  // they rendered as misalignments under Windows' native bar (caught 2026-07-21).
+  const overlay = (desktop && platformOS() === "macos") || simOverlay;
   const beginWindowDrag = (event: PointerEvent) => {
     if (!desktop || event.button !== 0) return;
     startWindowDrag();

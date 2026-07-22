@@ -577,7 +577,10 @@ pub fn run() {
     let http = format!("http://127.0.0.1:{port}");
     let ws = format!("ws://127.0.0.1:{port}");
     // Debug-format yields a quoted JS string literal.
-    let inject = format!("window.__COWORKER_HTTP__={http:?};window.__COWORKER_WS__={ws:?};");
+    let inject = format!(
+        "window.__COWORKER_HTTP__={http:?};window.__COWORKER_WS__={ws:?};window.__OCW_PLATFORM__={:?};",
+        std::env::consts::OS
+    );
 
     tauri::Builder::default()
         // MUST be the first plugin: when a second launch happens (e.g. the user relaunches

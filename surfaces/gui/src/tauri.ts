@@ -6,6 +6,16 @@
 export const isTauri = (): boolean =>
   typeof (globalThis as any).__TAURI__ !== "undefined";
 
+// "macos" | "windows" | "linux" — injected by the shell (std::env::consts::OS) before the
+// SPA loads; userAgent fallback covers browser dev. The macOS overlay-titlebar layout (and
+// its traffic-light compensations) must NEVER apply on Windows, which keeps its native
+// title bar (alignment bug, caught on Windows 2026-07-21).
+export const platformOS = (): string => {
+  const injected = (globalThis as any).__OCW_PLATFORM__;
+  if (typeof injected === "string" && injected) return injected;
+  return /mac/i.test(navigator.userAgent) ? "macos" : /win/i.test(navigator.userAgent) ? "windows" : "linux";
+};
+
 export type DictationStatus = {
   recording: boolean;
   model_installed: boolean;
