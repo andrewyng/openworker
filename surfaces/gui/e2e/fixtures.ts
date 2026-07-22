@@ -567,6 +567,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
       ws.send(JSON.stringify({ type, data }));
     send("ready");
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
+    let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
     ws.onMessage((raw) => {
       const msg = JSON.parse(String(raw));
       if (msg.type === "user_message") {
@@ -651,11 +652,12 @@ export async function mockApi(page: import("@playwright/test").Page) {
         if (/stream the epic/i.test(msg.text)) {
           let ticks = 0;
           const line = "The epic scrolls ever onward, line upon line upon line. ";
-          const timer = setInterval(() => {
+          epicTimer = setInterval(() => {
             ticks += 1;
             send("assistant_delta", { text: line.repeat(3) + "\n\n" });
             if (ticks >= 40) {
-              clearInterval(timer);
+              clearInterval(epicTimer!);
+              epicTimer = null;
               send("assistant_message", { text: ("The epic concludes. " + line).repeat(20) });
               send("turn_done");
             }
@@ -685,6 +687,15 @@ export async function mockApi(page: import("@playwright/test").Page) {
           // The decision echoes back so specs can pin what rode the wire (e.g. always_task).
           send("assistant_message", { text: `Done via ${pendingTool} [decision=${msg.decision}]` });
         }
+        send("turn_done");
+      } else if (msg.type === "interrupt") {
+        // Stop mid-stream: like the real engine, end the turn with `interrupted` and
+        // NO assistant_message — the client owns promoting the partial into the transcript.
+        if (epicTimer) {
+          clearInterval(epicTimer);
+          epicTimer = null;
+        }
+        send("interrupted", {});
         send("turn_done");
       }
     });

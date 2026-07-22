@@ -244,6 +244,12 @@ class TurnEngine:
                     if chunk.turn is not None:
                         turn = chunk.turn
             except Exception as exc:  # provider failure
+                # Same contract as the stop path below: the partial text the user
+                # watched arrive survives the failure (no tool calls — none finalized).
+                if streamed:
+                    self.messages.append(
+                        _assistant_message(AssistantTurn(text="".join(streamed)))
+                    )
                 friendly = friendly_model_error(self.model, exc)
                 payload = {
                     "error": friendly or str(exc),
