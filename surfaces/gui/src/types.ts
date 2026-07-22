@@ -114,4 +114,4 @@ export type Item =
       multi?: boolean;
       resolved?: string;
     }
-  | { kind: "notice"; tone: "info" | "warn"; text: string };
+  | { kind: "notice"; tone: "info" | "warn"; text: string; retriable?: boolean };

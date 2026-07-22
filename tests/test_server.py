@@ -323,6 +323,38 @@ def test_ws_simple_turn(tmp_path):
         assert "turn_end" in types
 
 
+def test_ws_error_persists_notice_and_retry_reruns(tmp_path):
+    class FlakyProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, *, model, messages, tools=None, **settings):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("outage")
+            return _text("recovered")
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    manager = SessionManager(workspace=tmp_path, provider=FlakyProvider())
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/flaky") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "user_message", "text": "hello"})
+        assert "error" in _drain(ws)
+        # The error survives as a persisted notice (reload shows what happened)…
+        messages = client.get("/v1/sessions/flaky/messages").json()["messages"]
+        assert messages[-1]["role"] == "notice" and messages[-1]["kind"] == "error"
+        # …and retry re-runs the turn without a new user message.
+        ws.send_json({"type": "retry"})
+        types = _drain(ws)
+        assert "turn_start" in types and "assistant_message" in types
+    messages = client.get("/v1/sessions/flaky/messages").json()["messages"]
+    assert messages[-1]["role"] == "assistant" and messages[-1]["content"] == "recovered"
+    assert sum(1 for m in messages if m["role"] == "user") == 1
+
+
 # -- origin gate (local-API hardening): a browser page on a foreign origin must not be able to
 # read the API cross-origin or open the driving WebSocket. -------------------------------------
 

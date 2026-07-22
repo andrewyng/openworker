@@ -177,6 +177,31 @@ class TurnEngine:
         async for event in self._loop():
             yield event
 
+    def _append_notice(self, kind: str, text: Optional[str] = None) -> None:
+        """Persist a turn-ending marker (error/interrupted) as a display-only `notice`
+        message: it survives reload like the transcript does, but `_outbound_messages`
+        drops the role so no provider ever sees it."""
+        notice: dict[str, Any] = {"role": "notice", "kind": kind, "ts": time.time()}
+        if text:
+            notice["text"] = text
+        self.messages.append(notice)
+
+    async def retry(self) -> AsyncIterator[Event]:
+        """Re-run the model loop after a provider error — no new user message; the failed
+        turn's input is already the tail of history. Guarded on the tail being an error
+        notice so a stray retry frame can't re-answer a completed turn."""
+        last = self.messages[-1] if self.messages else None
+        if not (
+            isinstance(last, dict)
+            and last.get("role") == "notice"
+            and last.get("kind") == "error"
+        ):
+            return
+        self._cancel.clear()
+        yield Event(EventType.TURN_START, {"input": ""})
+        async for event in self._loop():
+            yield event
+
     async def resume(self) -> AsyncIterator[Event]:
         """Continue a turn that was suspended at a prompt and persisted — durable resume after a
         restart (or engine eviction). Re-process the trailing assistant message's UNANSWERED
@@ -257,6 +282,7 @@ class TurnEngine:
                 }
                 if friendly:
                     payload["raw"] = str(exc)
+                self._append_notice("error", friendly or str(exc))
                 yield Event(EventType.ERROR, payload)
                 return
             if self._cancel.is_set() and turn is None:
@@ -267,6 +293,7 @@ class TurnEngine:
                     self.messages.append(
                         _assistant_message(AssistantTurn(text="".join(streamed)))
                     )
+                self._append_notice("interrupted")
                 yield Event(EventType.INTERRUPTED, {"iterations": iterations})
                 return
             if turn is None:
@@ -294,6 +321,7 @@ class TurnEngine:
             yield Event(EventType.ITERATION_END, {"iteration": iterations})
 
             if self._cancel.is_set():
+                self._append_notice("interrupted")
                 yield Event(EventType.INTERRUPTED, {"iterations": iterations})
                 return
             if self._steering:
@@ -802,7 +830,8 @@ class TurnEngine:
         """
         # Strip the display-only sidecars — `source` (connector cards), `_display`
         # (e.g. filter-hidden counts), and `ts` (append-time timestamps) — copying only
-        # messages that carry one.
+        # messages that carry one. Whole `notice` messages (error/interrupted markers)
+        # are display-only too: dropped entirely.
         _SIDECARS = ("source", "_display", "ts")
         out = [
             (
@@ -811,6 +840,7 @@ class TurnEngine:
                 else msg
             )
             for msg in self.messages
+            if msg.get("role") != "notice"
         ]
         # PDF attachments (stored as `file` parts) are adapted to the ACTIVE model right
         # here — never in the persisted history — so a mid-session model switch always

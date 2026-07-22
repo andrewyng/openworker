@@ -86,10 +86,18 @@ def test_stop_mid_stream_keeps_partial_text(tmp_path):
     assert events[-1].type == EventType.INTERRUPTED
     # Far fewer than the full 200 chunks were consumed…
     assert provider.chunks_produced < 100
-    # …and the partial text the user watched is persisted, with no tool calls.
-    last = engine.messages[-1]
-    assert last["role"] == "assistant" and last["content"].startswith("w0 ")
-    assert "tool_calls" not in last
+    # …and the partial text the user watched is persisted, with no tool calls,
+    # capped by the interrupted marker (display-only notice role).
+    assert engine.messages[-1] == {
+        "role": "notice",
+        "kind": "interrupted",
+        "ts": engine.messages[-1]["ts"],
+    }
+    partial = engine.messages[-2]
+    assert partial["role"] == "assistant" and partial["content"].startswith("w0 ")
+    assert "tool_calls" not in partial
+    # The notice never reaches a provider.
+    assert all(m.get("role") != "notice" for m in engine._outbound_messages())
 
 
 class FailingStreamProvider(ProviderClient):
@@ -120,9 +128,72 @@ def test_provider_error_mid_stream_keeps_partial_text(tmp_path):
 
     events = asyncio.run(run())
     assert events[-1].type == EventType.ERROR
-    last = engine.messages[-1]
-    assert last["role"] == "assistant" and last["content"] == "partial answer"
-    assert "tool_calls" not in last
+    notice = engine.messages[-1]
+    assert notice["role"] == "notice" and notice["kind"] == "error"
+    assert "provider went away" in notice["text"]
+    partial = engine.messages[-2]
+    assert partial["role"] == "assistant" and partial["content"] == "partial answer"
+    assert "tool_calls" not in partial
+
+
+class FlakyProvider(ProviderClient):
+    """Fails the first N stream calls, then answers — a provider outage that recovers."""
+
+    def __init__(self, failures=1):
+        self._failures = failures
+        self.calls = 0
+
+    def complete(self, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    def capabilities(self, model):
+        return ModelCapabilities()
+
+    def stream(self, *, model, messages, tools=None, **settings):
+        self.calls += 1
+        if self.calls <= self._failures:
+            raise RuntimeError("outage")
+        yield StreamChunk(turn=AssistantTurn(text="recovered", finish_reason="stop"))
+
+
+def test_retry_reruns_failed_turn_without_new_user_message(tmp_path):
+    provider = FlakyProvider(failures=1)
+    engine = TurnEngine(
+        provider=provider,
+        registry=ToolRegistry(),
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+    )
+
+    async def scenario():
+        first = [ev async for ev in engine.run("hello")]
+        second = [ev async for ev in engine.retry()]
+        return first, second
+
+    first, second = asyncio.run(scenario())
+    assert first[-1].type == EventType.ERROR
+    assert second[-1].type == EventType.TURN_END
+    # Exactly one user message — retry re-runs, it doesn't re-ask.
+    assert sum(1 for m in engine.messages if m.get("role") == "user") == 1
+    assert engine.messages[-1]["content"] == "recovered"
+
+
+def test_retry_is_noop_unless_tail_is_error_notice(tmp_path):
+    engine = TurnEngine(
+        provider=OneTurnProvider(AssistantTurn(text="done", finish_reason="stop")),
+        registry=ToolRegistry(),
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+    )
+
+    async def scenario():
+        async for _ in engine.run("hello"):
+            pass
+        return [ev async for ev in engine.retry()]
+
+    # A completed session must not grow a second answer from a stray retry frame.
+    assert asyncio.run(scenario()) == []
+    assert engine.messages[-1]["content"] == "done"
 
 
 def test_stop_while_awaiting_approval(tmp_path):
