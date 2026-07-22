@@ -646,6 +646,12 @@ export async function mockApi(page: import("@playwright/test").Page) {
           });
           return;
         }
+        // A turn that dies on a provider error; the follow-up {type:"retry"} recovers.
+        if (/fail the turn/i.test(msg.text)) {
+          send("error", { error: "model unreachable" });
+          send("turn_done");
+          return;
+        }
         // A deliberately SLOW multi-second stream (~40 ticks × 120ms) so specs can
         // interact mid-turn — the follow/pin scroll contract (FB-004) is untestable
         // against the instant echo below.
@@ -696,6 +702,11 @@ export async function mockApi(page: import("@playwright/test").Page) {
           epicTimer = null;
         }
         send("interrupted", {});
+        send("turn_done");
+      } else if (msg.type === "retry") {
+        // Like the real engine: re-runs with NO new user message (turn_start input is empty).
+        send("turn_start", { input: "" });
+        send("assistant_message", { text: "Recovered after retry." });
         send("turn_done");
       }
     });

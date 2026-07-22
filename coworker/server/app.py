@@ -1576,12 +1576,13 @@ def create_app(manager: SessionManager) -> FastAPI:
             "iteration_end",
         }
 
-        async def run_turn(content) -> None:
+        async def run_turn(content, *, retry: bool = False) -> None:
             manager.mark_running(
                 session_id
             )  # busy → self-wakes steer instead of colliding
             try:
-                async for event in engine.run(content):
+                events = engine.retry() if retry else engine.run(content)
+                async for event in events:
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.
                     await manager.broadcast_session(
@@ -1629,6 +1630,11 @@ def create_app(manager: SessionManager) -> FastAPI:
                     _resolve_pending(str(message.get("answer", "")))
                 elif kind == "interrupt":
                     engine.request_interrupt()
+                elif kind == "retry":
+                    # Re-run after a provider error (engine guards on the error-notice
+                    # tail, so a stray frame is a no-op that still ends with turn_done).
+                    if not manager.is_running(session_id):
+                        asyncio.create_task(run_turn(None, retry=True))
                 elif kind == "set_mode":
                     try:
                         engine.permissions.mode = Mode(message.get("mode"))

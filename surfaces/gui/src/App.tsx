@@ -644,7 +644,10 @@ export function App() {
           break;
         case "error":
           flushPartialStream();
-          setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Error: " + (d.error || "unknown") }]);
+          setItems((p) => [
+            ...p,
+            { kind: "notice", tone: "warn", text: "Error: " + (d.error || "unknown"), retriable: true },
+          ]);
           break;
         case "turn_done":
           setRunning(false);
@@ -799,6 +802,11 @@ export function App() {
   const prefillComposer = (text: string, attachments?: Attachment[]) =>
     setComposerPrefill((p) => ({ text, attachments, nonce: (p?.nonce ?? 0) + 1 }));
   const interrupt = () => sessionRef.current?.interrupt();
+  const retry = () => {
+    // Optimistic running: turn_start confirms; a rejected retry still ends in turn_done.
+    setRunning(true);
+    sessionRef.current?.retry();
+  };
   const changeMode = (m: string) => {
     setMode(m);
     sessionRef.current?.setMode(m);
@@ -1400,6 +1408,7 @@ export function App() {
                     items={items}
                     onApprove={approve}
                     running={running}
+                    onRetry={retry}
                     // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
                     // group (header when collapsed, quiet line when expanded) — never as a
                     // floating paragraph.

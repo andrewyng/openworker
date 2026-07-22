@@ -48,3 +48,23 @@ describe("itemsFromMessages timestamps", () => {
     ]);
   });
 });
+
+describe("itemsFromMessages notices", () => {
+  it("replays persisted error/interrupted markers; only errors are retriable", () => {
+    const items = itemsFromMessages([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "partial ans" },
+      { role: "notice", kind: "interrupted", ts: 1752969720 },
+      { role: "user", content: "again" },
+      { role: "notice", kind: "error", text: "model down", ts: 1752969724 },
+    ] as any);
+
+    expect(items).toEqual([
+      { kind: "user", text: "hi" },
+      { kind: "assistant", text: "partial ans" },
+      { kind: "notice", tone: "warn", text: "Interrupted." },
+      { kind: "user", text: "again" },
+      { kind: "notice", tone: "warn", text: "Error: model down", retriable: true },
+    ]);
+  });
+});

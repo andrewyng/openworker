@@ -280,9 +280,12 @@ interface Props {
   running?: boolean;
   // Sub-threshold streamed text (streamGate mode "quiet") — handed to the live turn group.
   streamingText?: string;
+  // Re-run the failed turn (no new user message). Offered only on a retriable notice that
+  // is the transcript tail of an idle session — anywhere else the error is history.
+  onRetry?: () => void;
 }
 
-export function Transcript({ items, running, streamingText }: Props) {
+export function Transcript({ items, running, streamingText, onRetry }: Props) {
   // §33 grouping: a turn = the maximal run of assistant/tool/resolved-approval items between
   // breakers (user, connector, notices, plan/dir requests…). Trailing assistant texts are the
   // ANSWER and render as bubbles after the group; interior assistant texts are narration and
@@ -396,6 +399,11 @@ export function Transcript({ items, running, streamingText }: Props) {
             return (
               <div className={"notice " + (item.tone === "warn" ? "warn" : "")} key={bi}>
                 {item.text}
+                {item.retriable && !running && onRetry && block.i === items.length - 1 && (
+                  <button className="btn ml-2" data-testid="notice-retry" onClick={onRetry}>
+                    Retry
+                  </button>
+                )}
               </div>
             );
           default:

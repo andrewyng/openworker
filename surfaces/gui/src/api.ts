@@ -1746,6 +1746,12 @@ export class Session {
     this.send({ type: "interrupt" });
   }
 
+  // Re-run a turn that ended in a provider error — no new user message; the server
+  // guards on the history tail so a stray frame is a no-op.
+  retry() {
+    this.send({ type: "retry" });
+  }
+
   setMode(mode: string) {
     this.send({ type: "set_mode", mode });
   }
