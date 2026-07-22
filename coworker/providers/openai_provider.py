@@ -51,6 +51,20 @@ def _pin_reasoning_effort(kwargs: dict[str, Any]) -> None:
         kwargs.setdefault("reasoning_effort", "none")
 
 
+def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop provider-private message sidecars (underscore-prefixed keys, e.g. `_gemini`
+    thought signatures — see providers/base.py): they belong to other providers, and the
+    OpenAI wire (and its compat servers) rejects unknown message fields."""
+    return [
+        (
+            {k: v for k, v in m.items() if not k.startswith("_")}
+            if any(k.startswith("_") for k in m)
+            else m
+        )
+        for m in messages
+    ]
+
+
 _MAX_TOKENS_ERROR = "'max_tokens' is not supported"
 
 
@@ -122,7 +136,11 @@ class OpenAIProvider(ProviderClient):
         tools: Optional[list[dict[str, Any]]] = None,
         **settings: Any,
     ) -> AssistantTurn:
-        kwargs: dict[str, Any] = {"model": model, "messages": messages, **settings}
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": _strip_foreign_sidecars(messages),
+            **settings,
+        }
         if tools:
             kwargs["tools"] = tools
         _pin_reasoning_effort(kwargs)
@@ -162,7 +180,7 @@ class OpenAIProvider(ProviderClient):
     ):
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": _strip_foreign_sidecars(messages),
             "stream": True,
             **settings,
         }

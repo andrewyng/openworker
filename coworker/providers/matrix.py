@@ -62,6 +62,12 @@ MATRIX: dict[str, ModelEntry] = {
     "anthropic:claude-haiku-4-5": ModelEntry(
         "Claude Haiku 4.5 · Anthropic", _AGENTIC_VISION
     ),
+    # Gemini 3 (thought signatures required in tool loops — carried via the `_gemini`
+    # message sidecar, see gemini_provider.py; ids from the vendor catalog 2026-07-22).
+    "gemini:gemini-3.1-pro-preview": ModelEntry(
+        "Gemini 3.1 Pro · Google", _AGENTIC_VISION
+    ),
+    "gemini:gemini-3.6-flash": ModelEntry("Gemini 3.6 Flash · Google", _AGENTIC_VISION),
     "gemini:gemini-2.5-pro": ModelEntry("Gemini 2.5 Pro · Google", _AGENTIC_VISION),
     "gemini:gemini-2.5-flash": ModelEntry("Gemini 2.5 Flash · Google", _AGENTIC_VISION),
     # -- direct OpenAI-compatible vendors ----------------------------------------
