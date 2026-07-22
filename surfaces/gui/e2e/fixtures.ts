@@ -648,6 +648,27 @@ export async function mockApi(page: import("@playwright/test").Page) {
           });
           return;
         }
+        // A reasoning model's turn: thinking deltas tick in slowly, then the answer —
+        // the assistant_message carries the full trace like the real engine's payload.
+        if (/think hard/i.test(msg.text)) {
+          const thoughts = ["Weighing options. ", "Comparing tradeoffs. ", "Settling it. "];
+          let tick = 0;
+          const timer = setInterval(() => {
+            if (tick < thoughts.length) {
+              send("reasoning_delta", { text: thoughts[tick] });
+              tick += 1;
+              return;
+            }
+            clearInterval(timer);
+            send("assistant_delta", { text: "Decision made." });
+            send("assistant_message", {
+              text: "Decision made.",
+              reasoning: thoughts.join(""),
+            });
+            send("turn_done");
+          }, 120);
+          return;
+        }
         // A turn that dies on a provider error; the follow-up {type:"retry"} recovers.
         if (/fail the turn/i.test(msg.text)) {
           send("error", { error: "model unreachable" });

@@ -431,3 +431,26 @@ def test_foreign_sidecars_stripped_from_outbound_messages():
     )
     sent = client.chat.completions.calls[0]["messages"]
     assert sent[1] == {"role": "assistant", "content": "prev"}
+
+
+def test_stream_reasoning_content_deltas():
+    """DeepSeek-style thinking: reasoning_content deltas surface as reasoning chunks and
+    land on the final turn — never mixed into the answer text."""
+    def rchunk(text):
+        delta = SimpleNamespace(content=None, tool_calls=None, reasoning_content=text)
+        return SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=None)])
+
+    chunks = [rchunk("hmm "), rchunk("okay."), _chunk(content="Answer"), _chunk(finish="stop")]
+    provider = OpenAIProvider(client=_StreamClient(chunks))
+    out = list(provider.stream(model="deepseek-v4-pro", messages=[]))
+    assert [c.reasoning_delta for c in out if c.reasoning_delta] == ["hmm ", "okay."]
+    final = out[-1].turn
+    assert final.text == "Answer" and final.reasoning == "hmm okay."
+
+
+def test_complete_picks_up_reasoning_content():
+    message = SimpleNamespace(content="Answer", tool_calls=None, reasoning_content="deep thought")
+    choice = SimpleNamespace(message=message, finish_reason="stop")
+    provider = OpenAIProvider(client=_FakeClient(SimpleNamespace(choices=[choice])))
+    turn = provider.complete(model="deepseek-v4-pro", messages=[{"role": "user", "content": "x"}])
+    assert turn.text == "Answer" and turn.reasoning == "deep thought"

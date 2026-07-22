@@ -82,3 +82,15 @@ describe("itemsFromMessages model switch", () => {
     });
   });
 });
+
+describe("itemsFromMessages reasoning", () => {
+  it("attaches the reasoning sidecar to assistant items; thinking-only messages still render", () => {
+    const items = itemsFromMessages([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "answer", reasoning: "let me think" },
+      { role: "assistant", content: "", reasoning: "stopped mid-thought" },
+    ] as any);
+    expect(items[1]).toEqual({ kind: "assistant", text: "answer", reasoning: "let me think" });
+    expect(items[2]).toEqual({ kind: "assistant", text: "", reasoning: "stopped mid-thought" });
+  });
+});

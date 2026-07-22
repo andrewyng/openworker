@@ -36,7 +36,7 @@ import { InboxItemCard } from "./components/InboxItemCard";
 import { isTauri, platformOS, startWindowDrag } from "./tauri";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
-import { Transcript } from "./components/Transcript";
+import { ThinkingBlock, Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
 import { Markdown } from "./components/Markdown";
 import { SearchModal } from "./components/SearchModal";
@@ -161,6 +161,14 @@ export function App() {
   const setStreaming = (value: string | ((s: string) => string)) => {
     streamingRef.current = typeof value === "function" ? value(streamingRef.current) : value;
     setStreamingState(streamingRef.current);
+  };
+  // The turn's live thinking text (reasoning_delta events) — same ref-mirror pattern.
+  // Folded onto the assistant item when the message finalizes; cleared on turn_start.
+  const [reasoningStream, setReasoningStreamState] = useState("");
+  const reasoningRef = useRef("");
+  const setReasoningStream = (value: string) => {
+    reasoningRef.current = value;
+    setReasoningStreamState(value);
   };
   const [todo, setTodo] = useState<TodoItem[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -527,9 +535,19 @@ export function App() {
       // the same text server-side, so the live view and a session reload now agree.
       const flushPartialStream = () => {
         const partial = streamingRef.current;
-        if (!partial) return;
+        const thinking = reasoningRef.current;
+        if (!partial && !thinking) return;
         setStreaming("");
-        setItems((p) => [...p, { kind: "assistant", text: partial, ts: Date.now() / 1000 }]);
+        setReasoningStream("");
+        setItems((p) => [
+          ...p,
+          {
+            kind: "assistant",
+            text: partial,
+            ts: Date.now() / 1000,
+            ...(thinking ? { reasoning: thinking } : {}),
+          },
+        ]);
       };
       switch (ev.type) {
         case "ready":
@@ -542,6 +560,7 @@ export function App() {
         case "turn_start":
           setRunning(true);
           setStreaming("");
+          setReasoningStream("");
           // Background-delivered turns (channel message, self-wake, durable resume) have no local
           // send(), so the triggering message isn't in `items` yet — surface it. A connector message
           // carries a structured `source` (§3.1) → render the rich card; otherwise a plain user item.
@@ -566,10 +585,27 @@ export function App() {
         case "assistant_delta":
           setStreaming((s) => s + (d.text || ""));
           break;
-        case "assistant_message":
-          if (d.text) setItems((p) => [...p, { kind: "assistant", text: d.text, ts: Date.now() / 1000 }]);
-          setStreaming(""); // finalized into items (or empty tool-only turn)
+        case "reasoning_delta":
+          setReasoningStream(reasoningRef.current + (d.text || ""));
           break;
+        case "assistant_message": {
+          // The event's reasoning is authoritative (covers background-delivered turns);
+          // the local buffer is the fallback for older servers.
+          const reasoning = d.reasoning || reasoningRef.current;
+          if (d.text || reasoning)
+            setItems((p) => [
+              ...p,
+              {
+                kind: "assistant",
+                text: d.text || "",
+                ts: Date.now() / 1000,
+                ...(reasoning ? { reasoning } : {}),
+              },
+            ]);
+          setStreaming(""); // finalized into items (or empty tool-only turn)
+          setReasoningStream("");
+          break;
+        }
         case "tool_proposed":
           if (d.name === "todo_write" && (d.arguments?.todos || d.arguments?.items))
             setTodo(normalizeTodos(d.arguments.todos ?? d.arguments.items));
@@ -1421,7 +1457,16 @@ export function App() {
                     // floating paragraph.
                     streamingText={streamMode(streaming, items, running) === "quiet" ? streaming : undefined}
                   />
+                  {/* Live thinking (reasoning models): a quiet collapsed block that streams the
+                      trace for anyone who expands it; folds into the answer's disclosure when
+                      the message finalizes. */}
+                  {running && reasoningStream && !streaming && (
+                    <div className="transcript">
+                      <ThinkingBlock text={reasoningStream} live />
+                    </div>
+                  )}
                   {running &&
+                    !reasoningStream &&
                     (!streaming || streamMode(streaming, items, running) === "hold") &&
                     !lastItemIsAssistant(items) && <WaitingForAgent />}
                   {streaming && streamMode(streaming, items, running) === "answer" && (

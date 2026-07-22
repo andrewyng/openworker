@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+from dataclasses import dataclass, field as dataclass_field
 from typing import Any, Optional
 
 from .base import (
@@ -310,47 +311,55 @@ def _signature_extras(
     return {"_gemini": {"text_sig": text_sig, "call_sigs": call_sigs}}
 
 
-def _parse_candidate(
-    response: Any,
-) -> tuple[list[str], list[ToolCall], Optional[str], tuple[Optional[str], list[Optional[str]]]]:
-    """Pull answer text parts, function calls (with synthesized ids), the finish reason, and
-    thought signatures out of a GenerateContentResponse (or one streamed chunk of it).
-    Parts flagged `thought` are reasoning summaries — their signature is kept, their text is
-    NOT answer text."""
-    texts: list[str] = []
-    calls: list[ToolCall] = []
-    finish = None
+@dataclass
+class _Parsed:
+    """One GenerateContentResponse (or streamed chunk), split into our concerns."""
+
+    texts: list[str] = dataclass_field(default_factory=list)
+    thoughts: list[str] = dataclass_field(default_factory=list)  # `thought` summary parts
+    calls: list[ToolCall] = dataclass_field(default_factory=list)
+    finish: Optional[str] = None
     text_sig: Optional[str] = None
-    call_sigs: list[Optional[str]] = []
+    call_sigs: list[Optional[str]] = dataclass_field(default_factory=list)
+
+
+def _parse_candidate(response: Any) -> _Parsed:
+    """Pull answer text, thought summaries, function calls (ids synthesized by the caller),
+    the finish reason, and thought signatures out of a response or streamed chunk. Parts
+    flagged `thought` are reasoning — their signature is kept, their text never joins the
+    answer."""
+    out = _Parsed()
     candidates = getattr(response, "candidates", None) or []
     if not candidates:
-        return texts, calls, finish, (text_sig, call_sigs)
+        return out
     candidate = candidates[0]
     content = getattr(candidate, "content", None)
     for part in getattr(content, "parts", None) or []:
         sig = _sig_str(part)
         function_call = getattr(part, "function_call", None)
         if function_call is not None:
-            calls.append(
+            out.calls.append(
                 ToolCall(
-                    id="",  # synthesized by the caller (needs the running count)
+                    id="",
                     name=getattr(function_call, "name", "") or "",
                     arguments=dict(getattr(function_call, "args", None) or {}),
                 )
             )
-            call_sigs.append(sig)
+            out.call_sigs.append(sig)
             continue
         if sig:
-            text_sig = sig
-        if getattr(part, "thought", False):
-            continue
+            out.text_sig = sig
         text = getattr(part, "text", None)
+        if getattr(part, "thought", False):
+            if text:
+                out.thoughts.append(text)
+            continue
         if text:
-            texts.append(text)
+            out.texts.append(text)
     raw_finish = getattr(candidate, "finish_reason", None)
     if raw_finish is not None:
-        finish = getattr(raw_finish, "name", None) or str(raw_finish)
-    return texts, calls, finish, (text_sig, call_sigs)
+        out.finish = getattr(raw_finish, "name", None) or str(raw_finish)
+    return out
 
 
 def _map_finish(finish: Optional[str], has_calls: bool) -> Optional[str]:
@@ -409,6 +418,11 @@ class GeminiProvider(ProviderClient):
         config: dict[str, Any] = {
             k: v for k, v in settings.items() if k in _SETTINGS_WHITELIST
         }
+        # Thinking models (2.5+/3.x — all our curated ids) think by default; ask for the
+        # thought SUMMARIES too so the GUI can show them. Parse-side keeps them out of
+        # answer text (`thought` parts → reasoning).
+        if model.startswith("gemini-"):
+            config["thinking_config"] = {"include_thoughts": True}
         if system:
             config["system_instruction"] = system
         if tools:
@@ -429,17 +443,18 @@ class GeminiProvider(ProviderClient):
             model=model, messages=messages, tools=tools, settings=settings
         )
         response = self._ensure_client().models.generate_content(**kwargs)
-        texts, calls, finish, (text_sig, call_sigs) = _parse_candidate(response)
+        parsed = _parse_candidate(response)
         tool_calls = [
             ToolCall(id=f"call_{i}", name=c.name, arguments=c.arguments)
-            for i, c in enumerate(calls)
+            for i, c in enumerate(parsed.calls)
         ]
         return AssistantTurn(
-            text="".join(texts) or None,
+            text="".join(parsed.texts) or None,
             tool_calls=tool_calls,
-            finish_reason=_map_finish(finish, bool(tool_calls)),
+            finish_reason=_map_finish(parsed.finish, bool(tool_calls)),
             raw=response,
-            extras=_signature_extras(text_sig, call_sigs),
+            reasoning="".join(parsed.thoughts) or None,
+            extras=_signature_extras(parsed.text_sig, parsed.call_sigs),
         )
 
     def capabilities(self, model: str) -> ModelCapabilities:
@@ -459,6 +474,7 @@ class GeminiProvider(ProviderClient):
         client = self._ensure_client()
 
         text_parts: list[str] = []
+        thought_parts: list[str] = []
         calls: list[ToolCall] = []
         finish = None
         text_sig: Optional[str] = None
@@ -467,18 +483,19 @@ class GeminiProvider(ProviderClient):
         # Unlike Anthropic, function_call parts arrive whole (args are a complete dict per
         # part), so there is no JSON accumulation — just collect parts across chunks.
         for chunk in client.models.generate_content_stream(**kwargs):
-            texts, chunk_calls, chunk_finish, (chunk_sig, chunk_call_sigs) = (
-                _parse_candidate(chunk)
-            )
-            for text in texts:
+            parsed = _parse_candidate(chunk)
+            for thought in parsed.thoughts:
+                thought_parts.append(thought)
+                yield StreamChunk(reasoning_delta=thought)
+            for text in parsed.texts:
                 text_parts.append(text)
                 yield StreamChunk(text_delta=text)
-            calls.extend(chunk_calls)
-            call_sigs.extend(chunk_call_sigs)
-            if chunk_sig:
-                text_sig = chunk_sig
-            if chunk_finish:
-                finish = chunk_finish
+            calls.extend(parsed.calls)
+            call_sigs.extend(parsed.call_sigs)
+            if parsed.text_sig:
+                text_sig = parsed.text_sig
+            if parsed.finish:
+                finish = parsed.finish
 
         tool_calls = [
             ToolCall(id=f"call_{i}", name=c.name, arguments=c.arguments)
@@ -489,6 +506,7 @@ class GeminiProvider(ProviderClient):
                 text="".join(text_parts) or None,
                 tool_calls=tool_calls,
                 finish_reason=_map_finish(finish, bool(tool_calls)),
+                reasoning="".join(thought_parts) or None,
                 extras=_signature_extras(text_sig, call_sigs),
             )
         )
