@@ -24,6 +24,10 @@ class SessionRecord:
     # Folders added to the session beyond its primary scratch dir, each {path, writable, label}.
     # The primary scratch is re-provisioned at engine build, so only these extras are persisted.
     extra_roots: list[dict[str, Any]] = field(default_factory=list)
+    # "Always allow" approvals granted in this session ({tools: [...], commands: [...]}) —
+    # session-scoped by design, but the session outlives the process, so they must too
+    # (owner-hit 2026-07-22: grants forgotten on every restart).
+    grants: dict[str, Any] = field(default_factory=dict)
     pinned: bool = False
     archived: bool = False
     # Where the session came from, when not user-started (§31): machine key + display label

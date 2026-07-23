@@ -716,3 +716,38 @@ def test_provider_set_and_remove_roundtrip(tmp_path):
     assert not prov["zai"]["key_set_at"]
 
     assert not client.delete("/v1/providers/nope").json()["ok"]
+
+
+def test_always_allow_grants_survive_restart(tmp_path):
+    """"Always allow" is session-scoped, and the session outlives the process — a restart
+    (fresh manager over the same store) must not re-ask for an approved command
+    (owner-hit 2026-07-22 on the 0.1.6 walkthrough)."""
+
+    def _shell_turns():
+        return ScriptedProvider(
+            [
+                _tool("run_shell", {"command": "uname -a"}, call_id="c1"),
+                _text("done"),
+            ]
+        )
+
+    def _run_turn(client, expect_prompts):
+        with client.websocket_connect("/ws/session/grants1?agent=cowork") as ws:
+            assert ws.receive_json()["type"] == "ready"
+            ws.send_json({"type": "user_message", "text": "run it"})
+            asked = 0
+            while True:
+                ev = ws.receive_json()
+                if ev["type"] == "permission_required":
+                    asked += 1
+                    ws.send_json({"type": "approval", "decision": "always_command"})
+                if ev["type"] == "turn_done":
+                    break
+            assert asked == expect_prompts
+
+    mgr = SessionManager(workspace=None, provider=_shell_turns())
+    _run_turn(TestClient(create_app(mgr)), expect_prompts=1)
+
+    # "Restart": new manager + engine rebuilt from the persisted record.
+    mgr2 = SessionManager(workspace=None, provider=_shell_turns())
+    _run_turn(TestClient(create_app(mgr2)), expect_prompts=0)
