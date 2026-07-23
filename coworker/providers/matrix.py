@@ -79,6 +79,7 @@ MATRIX: dict[str, ModelEntry] = {
     "qwen:qwen3-max": ModelEntry("Qwen3 Max · Alibaba"),
     "xai:grok-4.3": ModelEntry("Grok 4.3 · xAI"),
     "mistral:mistral-large-latest": ModelEntry("Mistral Large · Mistral"),
+    "upstage:solar-open2": ModelEntry("Solar Open 2 · Upstage"),
     "upstage:solar-pro3": ModelEntry("Solar Pro 3 · Upstage"),
     # -- resellers (their model namespaces, verbatim) -----------------------------
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
