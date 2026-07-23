@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-_DOW = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+_DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
 
 def _now() -> float:
