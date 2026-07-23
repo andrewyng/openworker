@@ -134,17 +134,22 @@ def _rel(path: str, root: Path) -> str:
         return path
 
 
+# One `path:line:text` match line. The path part must tolerate a Windows drive prefix:
+# a naive split(":", 2) on `C:\ws\a.py:12:text` yields file="C", line="\ws\a.py" — every
+# match garbled on Windows, where rg (invoked with an absolute base) echoes absolute paths.
+_RG_LINE = re.compile(r"^(?P<file>(?:[A-Za-z]:)?[^:]*):(?P<line>\d+):(?P<text>.*)$")
+
+
 def _parse_rg(stdout: str, root: Path, n: int) -> dict[str, Any]:
     matches: list[dict[str, Any]] = []
     for line in stdout.splitlines():
-        parts = line.split(":", 2)
-        if len(parts) == 3:
-            f, ln, txt = parts
+        m = _RG_LINE.match(line)
+        if m:
             matches.append(
                 {
-                    "file": _rel(f, root),
-                    "line": int(ln) if ln.isdigit() else 0,
-                    "text": txt[:300],
+                    "file": _rel(m["file"], root),
+                    "line": int(m["line"]),
+                    "text": m["text"][:300],
                 }
             )
         if len(matches) >= n:

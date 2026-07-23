@@ -13,7 +13,7 @@ import pytest
 
 from coworker.tools.files import file_tools
 from coworker.tools.git import git_tools
-from coworker.tools.search import _py_grep, search_tools
+from coworker.tools.search import _parse_rg, _py_grep, search_tools
 from coworker.web.fetch import _html_to_text, make_web_fetch_tool
 
 
@@ -64,6 +64,29 @@ def test_ripgrep_uses_the_same_ignored_dirs_as_the_python_fallback(tmp_path, mon
 def test_grep_rejects_path_escape(tmp_path):
     grep = search_tools(str(tmp_path))[0]
     assert "escapes" in grep(pattern="x", path="../..")["error"]
+
+
+def test_parse_rg_posix_paths_and_colons_in_text(tmp_path):
+    root = tmp_path.resolve()
+    out = f"{root}/src/a.py:12:url = 'http://x:8080'\n"
+    res = _parse_rg(out, root, 100)
+    assert res["count"] == 1
+    m = res["matches"][0]
+    assert m["file"] == "src/a.py"
+    assert m["line"] == 12
+    assert m["text"] == "url = 'http://x:8080'"
+
+
+def test_parse_rg_windows_drive_paths(tmp_path):
+    """rg on Windows echoes absolute paths (`C:\\ws\\a.py:12:text`); a naive
+    split(':', 2) turned the drive letter into the filename and lost the line number."""
+    out = "C:\\ws\\src\\a.py:12:def hello():\n"
+    res = _parse_rg(out, tmp_path.resolve(), 100)
+    assert res["count"] == 1
+    m = res["matches"][0]
+    assert m["file"] == "C:\\ws\\src\\a.py"  # not 'C'
+    assert m["line"] == 12
+    assert m["text"] == "def hello():"
 
 
 def test_py_grep_fallback_skips_ignored_dirs(tmp_path):
