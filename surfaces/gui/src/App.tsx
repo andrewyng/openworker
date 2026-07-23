@@ -28,7 +28,7 @@ import {
   type SurfaceVisibility,
 } from "./api";
 import type { ApprovalDecision, Attachment, Item, SessionInfo, TodoItem, WsEvent } from "./types";
-import { isProjectScoped, shortPersonaName } from "./personaScope";
+import { isProjectScoped } from "./personaScope";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
 import { streamMode } from "./streamGate";
@@ -1076,9 +1076,7 @@ export function App() {
   const pendingDirReq = [...items].reverse().find((i) => i.kind === "dirreq" && !i.resolved);
   const pendingPlan = [...items].reverse().find((i) => i.kind === "planreq" && !i.resolved);
   const pendingQuestion = [...items].reverse().find((i) => i.kind === "question" && !i.resolved);
-  // Topbar trim: the active persona's short display name (mock's "· SRE persona").
-  const personaName = shortPersonaName(personaOf(agent)?.name, agent);
-  // Facts subtitle (§22): the session's FIXED facts, not controls — persona · model (+ the
+  // Facts subtitle (§22): the session's FIXED facts, not controls — model (+ the
   // workspace folder for project-scoped sessions). Renders only once the session has history;
   // until then the model is still choosable in the composer, so there's no locked fact to state.
   const hasHistory = items.length > 0;
@@ -1087,7 +1085,9 @@ export function App() {
   const modelDisplay =
     modelLabels[model]?.split(" · ")[0] ||
     (model.includes(":") ? model.split(":").slice(1).join(":") : model);
-  const subtitleParts = [personaName, modelDisplay];
+  // Persona name dropped for this release (owner ask 2026-07-22): personas are hidden,
+  // so "Coworker" read as noise. The model (+ project folder) are the real fixed facts.
+  const subtitleParts = [modelDisplay];
   if (isProjectScoped(personaOf(agent)) && workspace) subtitleParts.push(baseName(workspace));
   const activeInfo = sessions.find((s) => s.session_id === sessionId);
   const activeTitle = activeInfo?.title || "New session";
@@ -1343,16 +1343,12 @@ export function App() {
             >
               {activeTitle}
             </span>
+            {/* Plain facts, no affordance: the persona page it used to open is hidden for
+                this release (owner ask 2026-07-22). */}
             {hasHistory && (
-              <button
-                className="title-sub"
-                data-testid="session-subtitle"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={agent !== "chat" ? () => openPersona(agent, "session") : undefined}
-                title={agent !== "chat" ? "About this coworker" : undefined}
-              >
+              <span className="title-sub" data-testid="session-subtitle">
                 {subtitleParts.join(" · ")}
-              </button>
+              </span>
             )}
           </div>
           {/* Right: session-settings icon (§23) + panel toggle. Model/mode/persona chrome is

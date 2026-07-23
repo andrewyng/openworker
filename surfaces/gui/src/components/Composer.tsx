@@ -15,12 +15,14 @@ import {
   type DictationStatus,
 } from "../tauri";
 
+// Plan + Custom hidden for this release (owner ask 2026-07-22): Plan's approval flow isn't
+// polished enough to ship, and Custom (config.toml auto-allow rules) is a power-user mode
+// with no in-app explanation. The server still honors both — a session already in one of
+// those modes keeps working; the picker just doesn't offer them.
 const PERMISSION_OPTIONS: Option[] = [
   { value: "discuss", label: "Discuss", description: "Chat and explore — no edits or commands" },
-  { value: "plan", label: "Plan", description: "Explore read-only, propose a plan for approval, then build" },
   { value: "interactive", label: "Ask for approval", description: "Ask before edits and commands" },
   { value: "auto", label: "Full access", description: "Run everything without asking" },
-  { value: "custom", label: "Custom", description: "Use auto-allow rules from config.toml" },
 ];
 
 // No hardcoded model fallback: until the server supplies the list (a few seconds after a

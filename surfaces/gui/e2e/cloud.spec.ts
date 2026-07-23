@@ -63,23 +63,19 @@ test("signed in: account row shows the name; one-click appears; sign out from th
   await expect(page.getByTestId("account-row")).toContainText("Not signed in");
 });
 
-test("telemetry toggle: lives in Settings, signed-in only, default on, opt-out round-trips", async ({
+test("telemetry/Privacy card is gone from Settings (owner ask 2026-07-22), signed in or out", async ({
   page,
 }) => {
-  // Signed out: Settings has no toggle at all — nothing is sent, nothing to configure.
   await page.goto("/");
   await page.getByTestId("account-row").click();
   await page.getByTestId("account-menu").getByRole("button", { name: "Settings" }).click();
   await expect(page.getByRole("heading", { name: "General" })).toBeVisible();
   await expect(page.getByTestId("telemetry-toggle")).toHaveCount(0);
+  await expect(page.getByText("Privacy", { exact: true })).toHaveCount(0);
 
   await signIn(page);
   await page.getByTestId("account-row").click();
   await page.getByTestId("account-menu").getByRole("button", { name: "Settings" }).click();
-  const toggle = page.getByTestId("telemetry-toggle");
-  await expect(toggle).toBeChecked({ timeout: 10_000 }); // default-on when signed in
-  await expect(page.getByText("never your prompts, files, or connector")).toBeVisible();
-
-  await toggle.uncheck();
-  await expect(toggle).not.toBeChecked(); // survives the status re-fetch (persisted)
+  await expect(page.getByTestId("telemetry-toggle")).toHaveCount(0);
+  await expect(page.getByText("Privacy", { exact: true })).toHaveCount(0);
 });
