@@ -77,6 +77,40 @@ def test_inbound_freetext_answer_to_question(tmp_path):
     assert res is True and store.get(q.id).resolution == "us-east-1"
 
 
+def test_reply_intent_reads_leading_word_not_substrings(tmp_path):
+    """Intent is read from the reply's leading word/emoji only. A substring (or even
+    word-boundary search-anywhere) test both clobbered free-text answers AND inverted a
+    NEGATED approval — "I cannot approve this yet" contains the standalone word "approve"
+    and, allow checked first, would resolve to allow and execute a declined action."""
+    # Negated approvals must NEVER resolve to allow. inbox_approver treats any non-allow/
+    # always resolution as a denial, so free text here is the fail-safe outcome.
+    store = InboxStore(tmp_path / "a.json")
+    for reply in ("I cannot approve this yet", "please do not approve", "I disapprove"):
+        item = store.add_approval("s1", "Deploy?", inbox="ops")
+        assert resolve_from_reply(f"{reply} [ow:{item.id}]", store.resolve) is True
+        assert store.get(item.id).resolution != "allow", reply
+    # A leading rejection word still classifies as deny.
+    item2 = store.add_approval("s1", "Deploy?", inbox="ops")
+    assert resolve_from_reply(f"no, do not [ow:{item2.id}]", store.resolve) is True
+    assert store.get(item2.id).resolution == "deny"
+
+    # A question answer whose non-leading words contain "no"/"yes" stays free text.
+    store2 = InboxStore(tmp_path / "b.json")
+    for answer in ("use option A now", "that is a known issue", "yesterday's build"):
+        q = store2.add_question("s1", "What happened?")
+        assert resolve_from_reply(f"{answer} [ow:{q.id}]", store2.resolve) is True
+        assert store2.get(q.id).resolution == answer
+
+    # Leading intent words and emoji still classify.
+    store3 = InboxStore(tmp_path / "c.json")
+    for reply, expected in [("yes", "allow"), ("Yes, go ahead", "allow"),
+                            ("approve", "allow"), ("👍 sure", "allow"),
+                            ("No.", "deny"), ("deny this", "deny"), ("❌", "deny")]:
+        it = store3.add_approval("s1", "Deploy?", inbox="ops")
+        assert resolve_from_reply(f"{reply} [ow:{it.id}]", store3.resolve) is True
+        assert store3.get(it.id).resolution == expected, reply
+
+
 def test_reply_without_token_is_ignored(tmp_path):
     store = InboxStore(tmp_path / "inbox.json")
     assert resolve_from_reply("random chatter", store.resolve) is None
