@@ -57,6 +57,27 @@ def test_format_memories_shows_ids(tmp_path):
     assert f"[#{item.id}]" in rendered  # ids let the agent update/forget
 
 
+def test_memory_semantic_search(tmp_path):
+    store = _store(tmp_path)
+    store.add("prefers tab indentation for python", workspace="/proj")
+    store.add("always deploy on Tuesdays", workspace="/proj")
+    store.add("use 2-space indent everywhere", scope=Scope.GLOBAL)
+
+    # Query for indentation preference should rank indentation memories first
+    results = store.search("indentation preferences", workspace="/proj", limit=2)
+    assert len(results) == 2
+    assert "indentation" in results[0].content or "indent" in results[0].content
+
+
+def test_format_memories_respects_limit(tmp_path):
+    store = _store(tmp_path)
+    store.add("fact one", workspace="/proj")
+    store.add("fact two", workspace="/proj")
+    rendered = format_memories(store.list(workspace="/proj"), limit=1)
+    assert "fact one" in rendered
+    assert "fact two" not in rendered
+
+
 # -- remember tool --------------------------------------------------------------
 
 
