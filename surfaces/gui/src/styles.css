@@ -10,6 +10,7 @@
   font-family: "Manrope", -apple-system, system-ui, sans-serif;
   font-weight: 700;
   letter-spacing: -0.015em;
+  white-space: nowrap; /* the BETA chip rides the same line, never wraps under */
 }
 
 :root {
@@ -1584,14 +1585,16 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
    bundle/artifact names — those feed the updater) --------------------------------- */
 .beta-tag {
   display: inline-block;
-  margin-left: 6px;
-  padding: 1px 6px;
+  margin-left: 5px;
+  padding: 0.5px 4.5px;
   border-radius: 999px;
   border: 1px solid var(--line-strong);
   background: var(--paper);
   color: var(--muted);
-  font-size: 9.5px;
+  font-size: 8.5px;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  vertical-align: 2px;
+  letter-spacing: 0.07em;
+  /* Raised toward the cap line — superscript-ish without true `super` (which reads
+     fussy on a pill); small + high keeps the wordmark the star. */
+  vertical-align: 3px;
 }
