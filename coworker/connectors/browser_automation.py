@@ -324,8 +324,27 @@ def _snapshot(page, max_chars: int) -> dict[str, Any]:
     }
 
 
-def make_browser_automation_tools() -> list[Callable[..., Any]]:
+def make_browser_automation_tools(
+    roots: Optional[list[Any]] = None,
+) -> list[Callable[..., Any]]:
     tools: list[Callable[..., Any]] = []
+
+    def _confine_screenshot_path(raw: str) -> tuple[Optional[Path], Optional[dict]]:
+        """Resolve a caller-supplied screenshot path inside a WRITABLE granted root.
+        browser_screenshot is registered read-kind so it never hits the approval prompt;
+        without this, a model-controlled `path` writes PNG bytes over ANY file (e.g. a
+        secrets store under $HOME). Mirrors the confinement every other write tool uses
+        (github_clone, email downloads). Relative paths resolve against the primary root."""
+        writable = [Path(r.path) for r in (roots or []) if getattr(r, "writable", False)]
+        if not writable:
+            return None, {"error": "no writable session directory for the screenshot"}
+        p = Path(raw).expanduser()
+        cand = (p if p.is_absolute() else writable[0] / p).resolve()
+        if not any(cand.is_relative_to(root.resolve()) for root in writable):
+            return None, {
+                "error": f"{cand} is outside the session's writable directories"
+            }
+        return cand, None
 
     def browser_open_url(
         url: str, wait_until: str = "domcontentloaded"
@@ -530,16 +549,21 @@ def make_browser_automation_tools() -> list[Callable[..., Any]]:
     )
 
     def browser_screenshot(path: str = "") -> dict[str, Any]:
+        # Confine an explicit destination to the session's writable roots BEFORE opening the
+        # browser (fail fast, and keep it testable without Playwright). No path → the fixed
+        # temp scratch file, which the model can't point anywhere.
+        if path:
+            out, err = _confine_screenshot_path(path)
+            if err:
+                return err
+        else:
+            out = Path(tempfile.gettempdir()) / "coworker-browser-screenshot.png"
+
         def run(page):
-            out = (
-                Path(path).expanduser()
-                if path
-                else Path(tempfile.gettempdir()) / "coworker-browser-screenshot.png"
-            )
-            out = out.resolve()
-            out.parent.mkdir(parents=True, exist_ok=True)
-            page.screenshot(path=str(out), full_page=True)
-            return {"ok": True, "path": str(out), "url": page.url}
+            dest = out.resolve()
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(dest), full_page=True)
+            return {"ok": True, "path": str(dest), "url": page.url}
 
         return _BROWSER.call("screenshot", run)
 
