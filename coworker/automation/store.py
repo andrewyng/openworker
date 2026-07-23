@@ -32,8 +32,12 @@ def compute_next_run(
             dt = datetime.fromisoformat(sched.fire_at)
         except ValueError:
             return None
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=_tz(sched.timezone))
+        tz = _tz(sched.timezone)
+        if dt.tzinfo is None and tz is not None:
+            dt = dt.replace(tzinfo=tz)
+        # Naive local dt: datetime.timestamp() interprets it in the machine's zone and is
+        # DST-aware for the actual fire DATE (via the C library), so a "once" task set in
+        # summer for a winter date fires at the right wall-clock instead of an hour off.
         ts = dt.timestamp()
         return ts if (task.run_count == 0 and ts > now) else None
     # cron
@@ -43,19 +47,25 @@ def compute_next_run(
         return None
     if task.max_runs is not None and task.run_count >= task.max_runs:
         return None
-    base = datetime.fromtimestamp(now, tz=_tz(sched.timezone))
+    tz = _tz(sched.timezone)
+    # Local: a naive base makes croniter compute in local wall-clock and .timestamp() apply
+    # the correct DST offset per occurrence. A named zone anchors the base in that zone.
+    base = datetime.fromtimestamp(now) if tz is None else datetime.fromtimestamp(now, tz=tz)
     return croniter(sched.cron, base).get_next(datetime).timestamp()
 
 
 def _tz(name: str):
-    """Resolve a schedule timezone. 'local'/empty → the machine's local zone (right for a
-    local-first tool: when you say '8:05 PM' you mean *your* clock, not UTC)."""
+    """Resolve a schedule timezone to a DST-aware tzinfo, or None for the machine's local
+    zone. None (not a fixed-offset tzinfo) is deliberate: naive datetimes let .timestamp()/
+    the C library apply local DST at the fire date. A frozen `datetime.now().astimezone()`
+    offset baked in whatever offset was in effect at compute time and misfired across a DST
+    boundary. An unknown IANA name falls back to local (None) rather than raising."""
     if not name or name.lower() == "local":
-        return datetime.now().astimezone().tzinfo
+        return None
     try:
         return ZoneInfo(name)
     except Exception:
-        return datetime.now().astimezone().tzinfo
+        return None
 
 
 def _epoch_now() -> float:
