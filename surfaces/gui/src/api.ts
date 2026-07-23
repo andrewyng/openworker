@@ -1265,6 +1265,7 @@ export function detectProvider(apiKey: string): string | null {
   if (!key) return null;
   if (key.startsWith("sk-ant-")) return "anthropic";
   if (key.startsWith("AIza")) return "gemini";
+  if (key.startsWith("sk-tr-")) return "trustedrouter";
   if (key.startsWith("sk-") || key.startsWith("sk_")) return "openai";
   return null;
 }
@@ -1771,4 +1772,3 @@ export class Session {
     this.ws.close();
   }
 }
-

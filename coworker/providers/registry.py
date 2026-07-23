@@ -8,8 +8,9 @@ model string and builds (and caches) its client from the matching SecretStore pr
 
 Today: `openai` (the default, with an optional custom endpoint that covers Azure OpenAI's
 `/openai/v1` and any OpenAI-compliant gateway), `anthropic` (native Messages API via
-`AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), and `ollama`
-(local, OpenAI-compatible `/v1`). Bedrock/Vertex auth for Claude is future work.
+`AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `trustedrouter`
+(OpenAI-compatible multi-model routing), and `ollama` (local, OpenAI-compatible `/v1`).
+Bedrock/Vertex auth for Claude is future work.
 """
 
 from __future__ import annotations
@@ -307,6 +308,17 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="mistral-large-latest",
         env_key="MISTRAL_API_KEY",
     ),
+    _compat(
+        "trustedrouter",
+        "TrustedRouter",
+        base_url="https://api.trustedrouter.com/v1",
+        recommended_model="trustedrouter/auto",
+        env_key="TRUSTEDROUTER_API_KEY",
+        endpoint_help=(
+            "TrustedRouter's attested OpenAI-compatible API. Create a key at "
+            "https://trustedrouter.com/console/api-keys."
+        ),
+    ),
     # Resellers: many labs' models behind one key, using THEIR model namespaces (the curated
     # ids + display labels live in providers/matrix.py). TODO: add Groq and OpenRouter here
     # (+ their matrix rows) once the current provider surface is tested — deliberately
@@ -380,6 +392,8 @@ def detect_provider(api_key: str) -> Optional[str]:
         return "anthropic"
     if key.startswith("AIza"):
         return "gemini"
+    if key.startswith("sk-tr-"):
+        return "trustedrouter"
     if key.startswith(("sk-", "sk_")):
         return "openai"
     return None

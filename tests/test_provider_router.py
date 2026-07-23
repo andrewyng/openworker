@@ -115,6 +115,9 @@ def test_router_routes_and_strips_prefix(monkeypatch):
     router.complete(model="gpt-5.5", messages=[])  # bare → default openai
     assert state["latest"]["openai"].models == ["gpt-5.5"]
 
+    router.complete(model="trustedrouter:trustedrouter/auto", messages=[])
+    assert state["latest"]["trustedrouter"].models == ["trustedrouter/auto"]
+
 
 def test_router_caches_and_invalidates(monkeypatch):
     state = _patch_build(monkeypatch)
@@ -410,6 +413,10 @@ def test_provider_builders(monkeypatch):
     assert o._base_url == "https://my.azure.example/openai/v1"
     assert build_provider_client("openai", {}, None)._base_url is None
 
+    tr = build_provider_client("trustedrouter", {"api_key": "sk-tr-v1-test"}, None)
+    assert tr._api_key == "sk-tr-v1-test"
+    assert tr._base_url == "https://api.trustedrouter.com/v1"
+
 
 def test_anthropic_gemini_capabilities():
     for m in ("anthropic:claude-sonnet-4-6", "gemini:gemini-2.5-flash"):
@@ -498,6 +505,7 @@ def test_provider_suggested_models(tmp_path, monkeypatch):
     mgr = SessionManager(data_dir=tmp_path)
     provs = {p["name"]: p for p in mgr.get_providers()}
     assert "gpt-5.5" in provs["openai"]["suggested_models"]
+    assert "trustedrouter/auto" in provs["trustedrouter"]["suggested_models"]
     # ollama suggestions are bare names (no `ollama:` prefix); empty when unconfigured
     sugg = provs["ollama"]["suggested_models"]
     assert isinstance(sugg, list)

@@ -16,6 +16,7 @@ from coworker.providers import detect_provider, verify_provider_key
     [
         ("sk-ant-api03-abc", "anthropic"),
         ("AIzaSyAbc123", "gemini"),
+        ("sk-tr-v1-abc", "trustedrouter"),
         ("sk-proj-abc", "openai"),
         ("sk_live_abc", "openai"),
         ("", None),
@@ -56,6 +57,14 @@ def test_verify_openai_custom_endpoint(monkeypatch):
     )
     # trailing slash trimmed, /models appended to the custom endpoint
     assert cap["url"] == "https://gw.example/openai/v1/models"
+
+
+def test_verify_trustedrouter_uses_attested_api(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("trustedrouter", api_key="sk-tr-v1-test") == {"ok": True}
+    assert cap["url"] == "https://api.trustedrouter.com/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer sk-tr-v1-test"
 
 
 def test_verify_bad_key_is_invalid(monkeypatch):

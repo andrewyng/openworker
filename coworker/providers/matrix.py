@@ -79,6 +79,24 @@ MATRIX: dict[str, ModelEntry] = {
     "qwen:qwen3-max": ModelEntry("Qwen3 Max · Alibaba"),
     "xai:grok-4.3": ModelEntry("Grok 4.3 · xAI"),
     "mistral:mistral-large-latest": ModelEntry("Mistral Large · Mistral"),
+    # -- multi-model gateways ---------------------------------------------------
+    # The first prefix selects OpenWorker's provider; the remaining slash-delimited id is sent
+    # unchanged to TrustedRouter's OpenAI-compatible API.
+    "trustedrouter:trustedrouter/auto": ModelEntry(
+        "Auto · TrustedRouter (automatic fallback)"
+    ),
+    "trustedrouter:trustedrouter/zdr": ModelEntry(
+        "ZDR · TrustedRouter (zero-retention routes)"
+    ),
+    "trustedrouter:trustedrouter/e2e": ModelEntry(
+        "E2E · TrustedRouter (confidential routes)"
+    ),
+    "trustedrouter:trustedrouter/cheap": ModelEntry(
+        "Cheap · TrustedRouter (cost-optimized)"
+    ),
+    "trustedrouter:trustedrouter/plato": ModelEntry(
+        "Plato · TrustedRouter (open-weight advisor)"
+    ),
     # -- resellers (their model namespaces, verbatim) -----------------------------
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
     "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together"),
