@@ -14,7 +14,7 @@ from coworker.secrets import SecretStore
 
 
 def test_resolve_api_key_prefers_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-123")
+    monkeypatch.setenv("OPENAI_API_KEY", " \tsk-env-123\n")
     secrets = SecretStore(path=tmp_path / "secrets.json")
     secrets.put("provider:openai", {"type": "api_key", "api_key": "sk-store-999"})
     assert resolve_api_key(secrets) == "sk-env-123"
@@ -24,8 +24,23 @@ def test_resolve_api_key_falls_back_to_store(monkeypatch, tmp_path):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     secrets = SecretStore(path=tmp_path / "secrets.json")
     assert resolve_api_key(secrets) is None
-    secrets.put("provider:openai", {"type": "api_key", "api_key": "sk-store-999"})
+    secrets.put("provider:openai", {"type": "api_key", "api_key": "\nsk-store-999 "})
     assert resolve_api_key(secrets) == "sk-store-999"
+
+
+def test_whitespace_only_env_key_is_not_configured(tmp_path, monkeypatch):
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("OPENAI_API_KEY", " \t\n")
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+
+    settings = manager.get_settings()
+    openai = next(p for p in manager.get_providers() if p["name"] == "openai")
+
+    assert settings["has_key"] is False
+    assert settings["source"] is None
+    assert openai["configured"] is False
 
 
 def test_settings_rest_roundtrip(tmp_path, monkeypatch):

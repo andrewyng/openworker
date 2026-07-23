@@ -460,16 +460,18 @@ def test_registry_builds_native_gemini_provider():
 def test_resolve_api_key_env_then_secrets(monkeypatch):
     from coworker.providers.gemini_provider import resolve_api_key
 
-    monkeypatch.setenv("GEMINI_API_KEY", "AIza-env")
+    monkeypatch.setenv("GEMINI_API_KEY", " \tAIza-env\n")
     assert resolve_api_key() == "AIza-env"
-    monkeypatch.delenv("GEMINI_API_KEY")
-    monkeypatch.setenv("GOOGLE_API_KEY", "AIza-google")  # the SDK's own env convention
+    # A blank primary env var must not shadow the SDK's fallback convention.
+    monkeypatch.setenv("GEMINI_API_KEY", " \t")
+    monkeypatch.setenv("GOOGLE_API_KEY", "\nAIza-google ")  # the SDK's own env convention
     assert resolve_api_key() == "AIza-google"
+    monkeypatch.delenv("GEMINI_API_KEY")
     monkeypatch.delenv("GOOGLE_API_KEY")
 
     class _Secrets:
         def get(self, name):
-            return {"api_key": "AIza-stored"} if name == "provider:gemini" else None
+            return {"api_key": " AIza-stored\n"} if name == "provider:gemini" else None
 
     assert resolve_api_key(_Secrets()) == "AIza-stored"
     assert resolve_api_key(None) is None
