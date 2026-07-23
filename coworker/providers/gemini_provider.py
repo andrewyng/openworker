@@ -90,12 +90,13 @@ def resolve_api_key(secrets: Any = None) -> Optional[str]:
     convention) first, else the SecretStore `provider:gemini` profile (`{api_key}`)."""
     import os
 
-    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if key:
-        return key
+    for env_name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        key = (os.environ.get(env_name) or "").strip()
+        if key:
+            return key
     if secrets is not None:
         profile = secrets.get("provider:gemini") or {}
-        return profile.get("api_key") or None
+        return str(profile.get("api_key") or "").strip() or None
     return None
 
 

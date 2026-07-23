@@ -28,12 +28,12 @@ def resolve_api_key(secrets: Any = None) -> Optional[str]:
     """
     import os
 
-    key = os.environ.get("OPENAI_API_KEY")
+    key = (os.environ.get("OPENAI_API_KEY") or "").strip()
     if key:
         return key
     if secrets is not None:
         profile = secrets.get("provider:openai") or {}
-        return profile.get("api_key") or None
+        return str(profile.get("api_key") or "").strip() or None
     return None
 
 

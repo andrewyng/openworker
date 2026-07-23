@@ -1323,8 +1323,8 @@ class SessionManager:
         for d in provider_descriptors():
             profile = self.secrets.get(f"provider:{d.name}") or {}
             if d.needs_key:
-                configured = bool(profile.get("api_key")) or bool(
-                    d.env_key and os.environ.get(d.env_key)
+                configured = bool(str(profile.get("api_key") or "").strip()) or bool(
+                    d.env_key and (os.environ.get(d.env_key) or "").strip()
                 )
             else:
                 configured = True  # keyless (Ollama) — usable out of the box
@@ -1524,8 +1524,8 @@ class SessionManager:
         if not d.needs_key:
             return True  # keyless (Ollama)
         profile = self.secrets.get(f"provider:{name}") or {}
-        return bool(profile.get("api_key")) or bool(
-            d.env_key and os.environ.get(d.env_key)
+        return bool(str(profile.get("api_key") or "").strip()) or bool(
+            d.env_key and (os.environ.get(d.env_key) or "").strip()
         )
 
     # -- settings / prefs (model API key, default model, onboarding) -------------
@@ -1661,8 +1661,9 @@ class SessionManager:
         """Model-access + UI status. Never returns the key; `source` says where it comes from."""
         import os
 
-        env_key = bool(os.environ.get("OPENAI_API_KEY"))
-        stored = bool((self.secrets.get("provider:openai") or {}).get("api_key"))
+        env_key = bool((os.environ.get("OPENAI_API_KEY") or "").strip())
+        stored_key = (self.secrets.get("provider:openai") or {}).get("api_key")
+        stored = bool(str(stored_key or "").strip())
         # Only surface models whose provider is actually configured — the composer picker
         # reflects exactly what's connected. The active default is always kept selectable
         # (it's hidden behind the "No model" state until a provider is connected anyway).
