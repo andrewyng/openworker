@@ -1670,6 +1670,47 @@ export async function getSlackStatus(): Promise<SlackStatus> {
   return res.json();
 }
 
+
+// -- web search provider (tavily / brave / duckduckgo)
+export interface WebSearchProviderInfo {
+  name: string;
+  requires_key: boolean;
+  /** Usable right now (keyless, or has store/env key). */
+  configured: boolean;
+  has_key: boolean;
+  /** "store" | "env" | null — never the secret value. */
+  key_source: string | null;
+}
+export interface WebSearchSettings {
+  provider: string;
+  /** Active provider has a usable key (store or env). Always false for keyless. */
+  has_key: boolean;
+  key_source: string | null;
+  providers: WebSearchProviderInfo[];
+}
+export async function getWebSearch(): Promise<WebSearchSettings> {
+  const res = await fetch(`${httpBase()}/v1/web-search`);
+  return res.json();
+}
+export async function setWebSearch(
+  provider: string,
+  apiKey?: string,
+): Promise<{
+  ok: boolean;
+  error?: string;
+  provider?: string;
+  has_key?: boolean;
+  key_source?: string | null;
+}> {
+  const body: Record<string, string> = { provider };
+  if (apiKey) body.api_key = apiKey;
+  const res = await fetch(`${httpBase()}/v1/web-search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
 export type Handlers = {
   onEvent: (event: WsEvent) => void;
   onOpen?: () => void;

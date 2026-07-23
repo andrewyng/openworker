@@ -99,10 +99,21 @@ class SecretStore:
     # -- reads ------------------------------------------------------------------
     def get(self, profile: str) -> Optional[dict[str, Any]]:
         """Return a profile with `${VAR}` refs resolved, or None if absent."""
-        data = self._read().get(profile)
+        data = self.get_raw(profile)
         if data is None:
             return None
         return self.resolve(data)
+
+    def get_raw(self, profile: str) -> Optional[dict[str, Any]]:
+        """Return a profile exactly as stored — `${VAR}` refs are left unresolved.
+
+        Use this for merge/write paths so a later `put` does not materialize env refs into
+        plaintext secrets. Prefer `get()` for runtime use (tools, API clients).
+        """
+        data = self._read().get(profile)
+        if data is None:
+            return None
+        return data if isinstance(data, dict) else None
 
     def resolve(self, value: Any) -> Any:
         """Resolve `${VAR}` refs in a value (recursively) from env + the local `.env`."""
