@@ -214,6 +214,17 @@ class TurnEngine:
             for p in msg["content"]
         )
 
+    def _tail_is_retriable_error(self) -> bool:
+        """True when the history tail is an error notice, looking through any model_switch
+        notices appended after it (a switch must not consume the retry)."""
+        for message in reversed(self.messages):
+            if message.get("role") != "notice":
+                return False
+            if message.get("kind") == "model_switch":
+                continue
+            return message.get("kind") == "error"
+        return False
+
     def _append_notice(self, kind: str, text: Optional[str] = None) -> None:
         """Persist a turn-ending marker (error/interrupted) as a display-only `notice`
         message: it survives reload like the transcript does, but `_outbound_messages`
@@ -226,13 +237,10 @@ class TurnEngine:
     async def retry(self) -> AsyncIterator[Event]:
         """Re-run the model loop after a provider error — no new user message; the failed
         turn's input is already the tail of history. Guarded on the tail being an error
-        notice so a stray retry frame can't re-answer a completed turn."""
-        last = self.messages[-1] if self.messages else None
-        if not (
-            isinstance(last, dict)
-            and last.get("role") == "notice"
-            and last.get("kind") == "error"
-        ):
+        notice so a stray retry frame can't re-answer a completed turn. Trailing
+        model_switch notices don't break the guard — switching models and THEN retrying
+        is the intended recovery path (owner-hit 2026-07-23)."""
+        if not self._tail_is_retriable_error():
             return
         self._cancel.clear()
         yield Event(EventType.TURN_START, {"input": ""})

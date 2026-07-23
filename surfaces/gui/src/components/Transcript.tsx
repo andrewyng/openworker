@@ -313,6 +313,19 @@ interface Props {
   onRetry?: () => void;
 }
 
+// The transcript index whose notice gets the Retry button: the tail error notice, looking
+// through info notices after it (model switches must not consume the retry — switching
+// models and THEN retrying is the intended recovery path). -1 when the tail is anything else.
+export function retryAnchor(items: Item[]): number {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind !== "notice") return -1;
+    if (it.retriable) return i;
+    if (it.tone !== "info") return -1;
+  }
+  return -1;
+}
+
 export function Transcript({ items, running, streamingText, onRetry }: Props) {
   // §33 grouping: a turn = the maximal run of assistant/tool/resolved-approval items between
   // breakers (user, connector, notices, plan/dir requests…). Trailing assistant texts are the
@@ -435,7 +448,7 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
             return (
               <div className={"notice " + (item.tone === "warn" ? "warn" : "")} key={bi}>
                 {item.text}
-                {item.retriable && !running && onRetry && block.i === items.length - 1 && (
+                {item.retriable && !running && onRetry && block.i === retryAnchor(items) && (
                   <button className="btn ml-2" data-testid="notice-retry" onClick={onRetry}>
                     Retry
                   </button>

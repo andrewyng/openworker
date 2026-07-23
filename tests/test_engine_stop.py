@@ -353,3 +353,35 @@ def test_stop_during_thinking_keeps_partial_reasoning(tmp_path):
     assert events[-1].type == EventType.INTERRUPTED
     partial = engine.messages[-2]  # [-1] is the interrupted notice
     assert partial["role"] == "assistant" and partial["reasoning"].startswith("t0 ")
+
+
+def test_retry_survives_model_switches(tmp_path):
+    """Error → switch models (one or more times) → Retry must still re-run, on the NEW
+    model (owner-hit 2026-07-23: the switch notices consumed the retry guard)."""
+    provider = FlakyProvider(failures=1)
+    engine = TurnEngine(
+        provider=provider,
+        registry=ToolRegistry(),
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gemini:gemini-3.6-flash",
+    )
+
+    async def scenario():
+        first = [ev async for ev in engine.run("hello")]
+        assert engine.switch_model("gemini:gemini-3.1-pro-preview") is not None
+        assert engine.switch_model("gpt-5.6-sol") is not None
+        second = [ev async for ev in engine.retry()]
+        return first, second
+
+    first, second = asyncio.run(scenario())
+    assert first[-1].type == EventType.ERROR
+    assert second[-1].type == EventType.TURN_END
+    assert engine.model == "gpt-5.6-sol"
+    assert engine.messages[-1]["content"] == "recovered"
+    # Still exactly one user message; and a completed session stays retry-proof.
+    assert sum(1 for m in engine.messages if m.get("role") == "user") == 1
+    assert asyncio.run(_drain_retry(engine)) == []
+
+
+async def _drain_retry(engine):
+    return [ev async for ev in engine.retry()]
