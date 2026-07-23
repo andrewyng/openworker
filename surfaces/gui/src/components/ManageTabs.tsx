@@ -824,7 +824,21 @@ export function ConnectSetup({
       )}
       {c.managed && !c.mcp && !manualOnly && (
         <div className="space-y-2" data-testid="managed-connect">
-          {cloud?.signed_in ? (
+          {c.managed_paused ? (
+            // One-click temporarily off (e.g. Google pending CASA verification):
+            // a visibly-parked button, and the manual path below stays fully live.
+            <>
+              <button className={BTN_ACCENT + " opacity-50"} disabled data-testid="managed-coming-soon">
+                {`Connect ${c.title} with one click`}
+                <span className="ml-2 text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-white/25">
+                  Coming soon
+                </span>
+              </button>
+              <div className="text-[11.5px] text-faint">
+                One-click sign-in is coming soon — connect manually below for now:
+              </div>
+            </>
+          ) : cloud?.signed_in ? (
             <button className={BTN_ACCENT} onClick={oneClick} disabled={waiting}>
               {waiting ? "Check your browser…" : `Connect ${c.title} with one click`}
             </button>
@@ -837,7 +851,7 @@ export function ConnectSetup({
             // possibly-signed-in user (FB-013); the host keeps polling.
             <CloudStatusPending />
           )}
-          {cloud?.signed_in && (
+          {!c.managed_paused && cloud?.signed_in && (
             <div className="text-[11.5px] text-faint">or connect manually:</div>
           )}
         </div>

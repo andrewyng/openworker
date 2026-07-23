@@ -30,7 +30,9 @@ def test_cloud_status_signed_out(client):
 
 
 def test_connect_managed_requires_sign_in(client):
-    body = client.post("/v1/connectors/gmail/connect-managed").json()
+    # notion, not gmail: the Google trio is managed_paused (CASA pending) and its
+    # guard fires before the sign-in check — see test_google_one_click_paused….
+    body = client.post("/v1/connectors/notion/connect-managed").json()
     assert not body["ok"]
     assert "not signed in" in body["error"]
 
