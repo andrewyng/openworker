@@ -162,6 +162,53 @@ describe("ApprovalCard — §35 shapes", () => {
     expect(screen.getByText(/stays on this Mac/)).toBeTruthy();
     expect(screen.getByText("Always allow this command")).toBeTruthy();
   });
+
+  it("renders a visual diff block when unified diff or patch arguments are provided", () => {
+    const patch = `--- a/config.py\n+++ b/config.py\n@@ -1,3 +1,4 @@\n-import os\n+import sys\n+import os`;
+    render(
+      <ApprovalCard
+        item={sendApproval({
+          name: "apply_patch",
+          args: { path: "config.py", patch },
+          category: undefined,
+        })}
+        onApprove={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText(/preview/));
+    const diffBox = screen.getByTestId("approval-diff-box");
+    expect(diffBox).toBeTruthy();
+    expect(screen.getByText("Diff Preview")).toBeTruthy();
+    expect(screen.getByText("+2")).toBeTruthy();
+    expect(screen.getByText("-1")).toBeTruthy();
+    expect(screen.getByText("import sys")).toBeTruthy();
+    expect(screen.getByText("import os")).toBeTruthy();
+  });
+
+  it("renders a visual diff block when replace_in_file receives old_string and new_string", () => {
+    render(
+      <ApprovalCard
+        item={sendApproval({
+          name: "replace_in_file",
+          args: {
+            path: "server.py",
+            old_string: "PORT = 8000",
+            new_string: "PORT = 8765",
+          },
+          category: undefined,
+        })}
+        onApprove={vi.fn()}
+      />,
+    );
+    // Row mode peek preview button
+    fireEvent.click(screen.getByText(/preview/));
+    const diffBox = screen.getByTestId("approval-diff-box");
+    expect(diffBox).toBeTruthy();
+    expect(screen.getByText("+1")).toBeTruthy();
+    expect(screen.getByText("-1")).toBeTruthy();
+    expect(screen.getByText("PORT = 8000")).toBeTruthy();
+    expect(screen.getByText("PORT = 8765")).toBeTruthy();
+  });
 });
 
 describe("InboxItemCard — Allow every time on parked run approvals", () => {
