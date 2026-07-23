@@ -23,14 +23,19 @@ DEFAULT_INBOX = "default"
 # to OpenWorker (2026-07-22); the legacy [ocw:…] spelling stays parseable so replies to
 # messages sent before the rename still resolve.
 _ID_TOKEN = re.compile(r"\[o(?:c)?w:([0-9a-f]{6,})\]")
-# Intent words are matched on WORD BOUNDARIES, not as bare substrings. A substring test
-# reads "I disapprove" as approve (contains "approve") and inverts a rejection into an
-# execute, and "no" hides inside note/not/now/cannot/known so ordinary free-text answers
-# to a question get clobbered into "deny". `\b…\b` matches the standalone word only.
-_ALLOW_RE = re.compile(r"\b(?:approve|allow|yes)\b")
-_DENY_RE = re.compile(r"\b(?:deny|reject|no)\b")
+# Intent is read from the reply's LEADING word/emoji, not from a substring (or even a
+# word-boundary) search anywhere in the message. A substring test read "no" inside
+# note/not/cannot and "yes" inside yesterday, clobbering free-text answers; and a
+# search-anywhere test (even word-boundary) still inverts a NEGATED approval — "I cannot
+# approve this yet" contains the standalone word "approve" and, with allow checked first,
+# resolves as allow and executes the action the user declined. Keying off the first token
+# makes "Yes, go ahead" / "No." / "approve" / 👍 classify while every other phrasing falls
+# through to free text — which inbox_approver maps to deny, the fail-safe for an approval gate.
+_ALLOW_WORDS = frozenset({"approve", "allow", "yes"})
+_DENY_WORDS = frozenset({"deny", "reject", "no"})
 _ALLOW_EMOJI = ("👍", "✅")
 _DENY_EMOJI = ("👎", "❌")
+_LEADING_WORD = re.compile(r"[a-z]+")
 
 
 @dataclass
@@ -137,12 +142,18 @@ def resolve_from_reply(
     if not m:
         return None
     item_id = m.group(1)
-    body = _ID_TOKEN.sub("", reply)  # strip the correlation token before intent/answer parsing
-    lowered = body.lower()
-    if _ALLOW_RE.search(lowered) or any(e in body for e in _ALLOW_EMOJI):
+    body = _ID_TOKEN.sub("", reply).strip()  # drop the correlation token, then read intent
+    if body.startswith(_ALLOW_EMOJI):
         resolution = "allow"
-    elif _DENY_RE.search(lowered) or any(e in body for e in _DENY_EMOJI):
+    elif body.startswith(_DENY_EMOJI):
         resolution = "deny"
     else:
-        resolution = body.strip()  # free-text answer to a question
+        lead = _LEADING_WORD.match(body.lower())
+        word = lead.group(0) if lead else ""
+        if word in _ALLOW_WORDS:
+            resolution = "allow"
+        elif word in _DENY_WORDS:
+            resolution = "deny"
+        else:
+            resolution = body  # free-text answer to a question
     return resolve(item_id, resolution)
