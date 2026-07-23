@@ -25,12 +25,13 @@ test("composer: send-gating, + attach menu, Mode menu", async ({ page }) => {
   await page.locator(".fixed.inset-0.z-30").click();
   await expect(page.getByRole("button", { name: "Photo or image" })).toHaveCount(0);
 
-  // Mode menu (workspace personas only): the five permission options with the current one
-  // marked, plus the Unattended/send-to-Inbox toggle at the bottom (§22).
+  // Mode menu: the three shipped permission options with the current one marked, plus the
+  // Unattended/send-to-Inbox toggle (§22). Plan + Custom hidden for this release (2026-07-22).
   await page.getByRole("button", { name: "Mode", exact: true }).click();
   const menu = page.getByTestId("mode-menu");
   await expect(menu.getByText("Discuss")).toBeVisible();
-  await expect(menu.getByText("Explore read-only, propose a plan")).toBeVisible();
+  await expect(menu.getByText("Plan", { exact: true })).toHaveCount(0);
+  await expect(menu.getByText("Custom", { exact: true })).toHaveCount(0);
   // The current mode is marked with a ✓.
   await expect(menu.locator("button").filter({ hasText: "Ask for approval" })).toContainText("✓");
   await expect(menu.getByRole("switch", { name: "Send approvals to the Inbox" })).toBeVisible();

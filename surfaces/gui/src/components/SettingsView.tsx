@@ -1,14 +1,10 @@
 import { useEffect, useState } from "react";
 import {
-  CLOUD_CHANGED,
-  getCloudStatus,
   getSettings,
-  setCloudTelemetry,
   setOnboarded,
   setPdfSettings,
   setScratchBase,
   setSessionsPeek,
-  type CloudStatus,
   type ModelSettings,
   type PdfSettings,
 } from "../api";
@@ -428,8 +424,6 @@ function AppearanceSection() {
 
       <FilesCard />
 
-      <TelemetryCard />
-
       {desktop && (
         <div className={CARD + " p-4"}>
           <div className={FIELD_LABEL + " mb-2.5"}>Always-on</div>
@@ -524,46 +518,8 @@ function UpdateInline() {
   );
 }
 
-// -- Telemetry (moved here from the retired Connectors-page cloud strip, §26) -----
-function TelemetryCard() {
-  const [cloud, setCloud] = useState<CloudStatus | null>(null);
-  const [telemetry, setTelemetry] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    const load = () => getCloudStatus().then(setCloud).catch(() => {});
-    load();
-    // Sign-in/out lands out-of-band (browser flow, account row) — refetch on the announce.
-    window.addEventListener(CLOUD_CHANGED, load);
-    return () => window.removeEventListener(CLOUD_CHANGED, load);
-  }, []);
-
-  // Signed out there is nothing to toggle — telemetry is a no-op without a cloud session.
-  if (!cloud?.signed_in) return null;
-  return (
-    <div className={CARD + " p-4 mb-4"}>
-      <div className={FIELD_LABEL + " mb-2.5"}>Privacy</div>
-      <label className="flex items-start gap-3 py-1 select-none">
-        <input
-          type="checkbox"
-          className="mt-0.5"
-          checked={telemetry ?? cloud.telemetry_enabled !== false}
-          data-testid="telemetry-toggle"
-          onChange={async (e) => {
-            setTelemetry(e.target.checked);
-            await setCloudTelemetry(e.target.checked);
-          }}
-        />
-        <span>
-          <span className="block text-[13px] text-ink">Help improve OpenWorker</span>
-          <span className="block text-[12px] text-muted">
-            Which coworker type was started and when; never your prompts, files, or connector
-            data. Signed-out installs send nothing regardless.
-          </span>
-        </span>
-      </label>
-    </div>
-  );
-}
+// Telemetry/Privacy card removed for this release (owner ask 2026-07-22); the
+// setCloudTelemetry API stays for a future opt-out surface.
 
 // -- Sidebar density -------------------------------------------------------------
 // -- Token savings (PDF attachments; owner ask, 2026-07-17) ---------------------
