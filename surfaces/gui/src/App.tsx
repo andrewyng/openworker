@@ -437,6 +437,10 @@ export function App() {
           // flip to the real session. Cowork ignores default_workspace (a Code concept).
           if (h.default_workspace && gatesWorkspace(agent)) setWorkspace(h.default_workspace);
           else await resumeLastOrGate();
+          // The mount-time loadSettings races the sidecar boot and swallows its failure —
+          // on a cold start that left "Loading models…" stuck until the user visited
+          // Settings (owner-hit 2026-07-23). Health just answered, so this one lands.
+          loadSettings();
           if (!cancelled) setBooting(false);
         })
         .catch(() => {
@@ -1123,7 +1127,11 @@ export function App() {
             <span /><span /><span />
           </div>
         )}
-        <div className="boot-mark">✦</div>
+        {/* The real OpenWorker mark (6-point star, same as the app/tray icon) — the old
+            ✦ text glyph was a 4-point sparkle that read as another product's logo. */}
+        <div className="boot-mark">
+          <Icon name="logo" size={38} />
+        </div>
         <div className="boot-text">{resumedExisting ? "Restoring your session…" : "Starting OpenWorker…"}</div>
       </div>
     );
