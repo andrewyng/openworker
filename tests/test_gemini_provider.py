@@ -634,3 +634,66 @@ def test_stream_yields_reasoning_deltas_for_thought_parts():
     assert [c.reasoning_delta for c in out if c.reasoning_delta] == ["mull ", "it over"]
     final = out[-1].turn
     assert final.text == "done" and final.reasoning == "mull it over"
+
+
+def test_sanitize_coerces_union_types():
+    """Vendor MCP schemas use JSON-Schema union types (owner-hit 2026-07-23: monday's
+    compareValue `type: ['string','number']` 400'd every Gemini turn). Nullable unions
+    become `nullable`, multi-type unions become anyOf."""
+    cleaned = _sanitize_schema(
+        {
+            "type": "object",
+            "properties": {
+                "compareValue": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": ["string", "number"]}},
+                    ]
+                },
+                "maybe": {"type": ["string", "null"]},
+                "nothing": {"type": ["null"]},
+            },
+        }
+    )
+    items = cleaned["properties"]["compareValue"]["anyOf"][1]["items"]
+    assert items == {"anyOf": [{"type": "string"}, {"type": "number"}]}
+    assert cleaned["properties"]["maybe"] == {"type": "string", "nullable": True}
+    assert cleaned["properties"]["nothing"] == {"nullable": True}
+
+
+def test_union_type_schema_validates_as_sdk_config():
+    """The exact failing shape must pass the SDK's GenerateContentConfig validation."""
+    types_mod = pytest.importorskip("google.genai.types")
+    tools = convert_tools(
+        [
+            {
+                "type": "function",
+                "function": {
+                    "name": "mcp__monday__search",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filters": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "compareValue": {
+                                            "anyOf": [
+                                                {"type": "string"},
+                                                {"type": "number"},
+                                                {"type": "array", "items": {"type": "string"}},
+                                                {"type": "array", "items": {"type": ["string", "number"]}},
+                                            ]
+                                        }
+                                    },
+                                },
+                            }
+                        },
+                    },
+                },
+            }
+        ]
+    )
+    config = types_mod.GenerateContentConfig.model_validate({"tools": tools})
+    assert config.tools
