@@ -766,3 +766,25 @@ def test_google_one_click_paused_but_manual_alive(tmp_path):
 
     refused = client.post("/v1/connectors/gmail/connect-managed", json={}).json()
     assert refused["ok"] is False and "coming soon" in refused["error"]
+
+
+def test_set_provider_persists_extra_fields(tmp_path):
+    """Non-secret descriptor extras (anthropic thinking_budget) round-trip: saved into the
+    profile, echoed by get_providers for form prefill, cleared by an empty save."""
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    assert manager.set_provider(
+        "anthropic", {"api_key": "sk-ant-test", "thinking_budget": "8192"}
+    )["ok"]
+    providers = {p["name"]: p for p in manager.get_providers()}
+    assert providers["anthropic"]["values"]["thinking_budget"] == "8192"
+
+    from coworker.providers.registry import build_provider_client
+
+    built = build_provider_client(
+        "anthropic", manager.secrets.get("provider:anthropic"), manager.secrets
+    )
+    assert built.thinking_budget == 8192
+
+    manager.set_provider("anthropic", {"thinking_budget": ""})
+    providers = {p["name"]: p for p in manager.get_providers()}
+    assert "thinking_budget" not in providers["anthropic"]["values"]

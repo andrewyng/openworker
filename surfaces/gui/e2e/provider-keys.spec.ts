@@ -52,3 +52,21 @@ test("a configured provider's form opens with the saved state, no plaintext key"
   await expect(page.getByTestId("set-field-api_key")).toHaveValue("");
   await expect(page.getByTestId("set-field-api_key")).toHaveAttribute("placeholder", "••••••••");
 });
+
+test("non-secret extras blur-save on a configured provider (thinking budget)", async ({
+  page,
+}) => {
+  // Owner-hit 2026-07-23: typed a thinking budget, left Settings, value silently never
+  // saved — the Test button was the form's only save path. Blur now saves extras.
+  await openModels(page);
+  await page.getByTestId("set-provider-anthropic").click();
+  const budget = page.getByTestId("set-field-thinking_budget");
+  await budget.fill("8192");
+  await budget.blur();
+  await expect(page.getByTestId("set-field-saved-thinking_budget")).toBeVisible();
+
+  // Leave and come back: the value survived (served from the provider's stored values).
+  await page.getByTestId("set-back").click();
+  await page.getByTestId("set-provider-anthropic").click();
+  await expect(page.getByTestId("set-field-thinking_budget")).toHaveValue("8192");
+});

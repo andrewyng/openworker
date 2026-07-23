@@ -84,6 +84,11 @@ export interface ProviderSetupState {
   removeKey: () => Promise<void>;
   cancelBackTimer: () => void;
   statusFor: (p: ProviderInfo, opts?: { lastUsed?: boolean }) => ReactNode;
+  // Blur-save for non-secret fields on an already-configured provider (the Test button is
+  // the KEY's save path; extras like anthropic's thinking_budget must not need a re-test —
+  // owner-hit 2026-07-23: the budget silently never saved).
+  saveField: (key: string) => Promise<void>;
+  fieldSaved: string | null; // field key flashing "✓ Saved"
 }
 
 export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetupState {
@@ -100,6 +105,9 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   // Unsaved per-provider input survives switching cards (owner complaint 2026-07-16).
   const [drafts, setDrafts] = useState<Record<string, Record<string, string>>>({});
   const backTimer = useRef<number | null>(null);
+  // Which non-secret field just blur-saved (flashes "✓ Saved" in the input).
+  const [fieldSaved, setFieldSaved] = useState<string | null>(null);
+  const fieldSavedTimer = useRef<number | null>(null);
 
   const refreshProviders = () =>
     getProviders()
@@ -167,6 +175,26 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     return true;
   };
 
+  // Blur-save for non-secret fields when the provider is already configured: extras like
+  // anthropic's thinking_budget must persist without a key re-test (owner-hit 2026-07-23 —
+  // typed, left Settings, silently never saved). Secrets keep the explicit Test-to-save
+  // contract; unconfigured providers save everything on their first Test.
+  const saveField = async (key: string) => {
+    if (!sel || !info?.configured) return;
+    const spec = info.fields.find((f) => f.key === key);
+    if (!spec || spec.secret) return;
+    const current = (fields[key] || "").trim();
+    const stored = (info.values?.[key] || "").trim();
+    if (current === stored) return;
+    const res = await setProvider(sel, { [key]: current }).catch(() => ({ ok: false }));
+    if (!res.ok) return;
+    await refreshProviders();
+    opts?.onSaved?.();
+    setFieldSaved(key);
+    if (fieldSavedTimer.current) window.clearTimeout(fieldSavedTimer.current);
+    fieldSavedTimer.current = window.setTimeout(() => setFieldSaved(null), 1400);
+  };
+
   // Settings-only: forget the stored key; the card reverts to "Not set up".
   const removeKey = async () => {
     if (!sel) return;
@@ -227,6 +255,8 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     backToGallery,
     runTestAndSave,
     removeKey,
+    saveField,
+    fieldSaved,
     cancelBackTimer: () => {
       if (backTimer.current) window.clearTimeout(backTimer.current);
     },
@@ -320,7 +350,16 @@ export function ProviderForm({
                   value={ps.fields[f.key] || ""}
                   data-testid={`${tp}-field-${f.key}`}
                   onChange={(e) => ps.setFieldValue(f.key, e.target.value)}
+                  onBlur={f.secret ? undefined : () => void ps.saveField(f.key)}
                 />
+                {ps.fieldSaved === f.key && (
+                  <span
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
+                    data-testid={`${tp}-field-saved-${f.key}`}
+                  >
+                    ✓ Saved
+                  </span>
+                )}
                 {/* §39: state lives IN the field — no status lines below. */}
                 {ps.savedState && f.secret && (
                   <span
@@ -399,14 +438,25 @@ export function ProviderForm({
         return (
           <div className="mt-4">
             <label className={label}>{ep.label}</label>
-            <input
-              className={input + " border-line"}
-              type="text"
-              placeholder={ep.placeholder}
-              value={ps.fields[ep.key] || ""}
-              data-testid={`${tp}-field-${ep.key}`}
-              onChange={(e) => ps.setFieldValue(ep.key, e.target.value)}
-            />
+            <div className="relative">
+              <input
+                className={input + " border-line"}
+                type="text"
+                placeholder={ep.placeholder}
+                value={ps.fields[ep.key] || ""}
+                data-testid={`${tp}-field-${ep.key}`}
+                onChange={(e) => ps.setFieldValue(ep.key, e.target.value)}
+                onBlur={() => void ps.saveField(ep.key)}
+              />
+              {ps.fieldSaved === ep.key && (
+                <span
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
+                  data-testid={`${tp}-field-saved-${ep.key}`}
+                >
+                  ✓ Saved
+                </span>
+              )}
+            </div>
             {ep.help && <p className="text-[11.5px] text-faint mt-1">{ep.help}</p>}
           </div>
         );
