@@ -740,9 +740,9 @@ const SEARCH_HELP: Record<string, string> = {
   brave: "Brave Search API. Requires an API key.",
 };
 
-const SEARCH_KEY_URLS: Record<string, string> = {
-  tavily: "https://app.tavily.com/home",
-  brave: "https://brave.com/search/api/",
+const SEARCH_KEY_HELP: Record<string, { url: string; label: string }> = {
+  tavily: { url: "https://app.tavily.com/home", label: "app.tavily.com" },
+  brave: { url: "https://brave.com/search/api/", label: "brave.com/search/api" },
 };
 
 const SEARCH_LOGOS: Record<string, string> = {
@@ -916,22 +916,20 @@ function WebSearchSection() {
       {needsKey && (
         <div className={CARD + " p-4 mb-4"}>
           <div className={FIELD_LABEL}>API key · {searchLabel(selected)}</div>
-          <div className={FIELD_HELP}>
-            Keys are stored only on this machine
-            {SEARCH_KEY_URLS[selected] ? (
-              <>
-                .{" "}
-                <span
-                  className="text-accent underline underline-offset-2 cursor-pointer"
-                  onClick={() => openExternal(SEARCH_KEY_URLS[selected])}
-                >
-                  Get a {searchLabel(selected)} API key →
-                </span>
-              </>
-            ) : (
-              "."
-            )}
-          </div>
+          <div className={FIELD_HELP}>Keys are stored only on this machine.</div>
+          {SEARCH_KEY_HELP[selected] && (
+            <p className="text-[11.5px] text-faint mt-2">
+              No key yet?{" "}
+              <button
+                type="button"
+                className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
+                onClick={() => openExternal(SEARCH_KEY_HELP[selected].url)}
+              >
+                Create one at {SEARCH_KEY_HELP[selected].label} ↗
+              </button>{" "}
+              — takes about a minute.
+            </p>
+          )}
 
           <div className="flex items-center gap-2 mt-3">
             <input
