@@ -53,20 +53,21 @@ test("a configured provider's form opens with the saved state, no plaintext key"
   await expect(page.getByTestId("set-field-api_key")).toHaveAttribute("placeholder", "••••••••");
 });
 
-test("non-secret extras blur-save on a configured provider (thinking budget)", async ({
+test("non-secret fields blur-save on a configured provider (ollama endpoint)", async ({
   page,
 }) => {
-  // Owner-hit 2026-07-23: typed a thinking budget, left Settings, value silently never
-  // saved — the Test button was the form's only save path. Blur now saves extras.
+  // Owner-hit 2026-07-23 (as the thinking-budget field, since folded into a default):
+  // the Test button was the form's only save path — typing into a non-secret field and
+  // leaving Settings silently discarded it. Blur now saves.
   await openModels(page);
-  await page.getByTestId("set-provider-anthropic").click();
-  const budget = page.getByTestId("set-field-thinking_budget");
-  await budget.fill("8192");
-  await budget.blur();
-  await expect(page.getByTestId("set-field-saved-thinking_budget")).toBeVisible();
+  await page.getByTestId("set-provider-ollama").click();
+  const endpoint = page.getByTestId("set-field-base_url");
+  await endpoint.fill("http://127.0.0.1:9999");
+  await endpoint.blur();
+  await expect(page.getByTestId("set-field-saved-base_url")).toBeVisible();
 
   // Leave and come back: the value survived (served from the provider's stored values).
   await page.getByTestId("set-back").click();
-  await page.getByTestId("set-provider-anthropic").click();
-  await expect(page.getByTestId("set-field-thinking_budget")).toHaveValue("8192");
+  await page.getByTestId("set-provider-ollama").click();
+  await expect(page.getByTestId("set-field-base_url")).toHaveValue("http://127.0.0.1:9999");
 });

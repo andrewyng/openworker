@@ -35,6 +35,12 @@ from .capabilities import capabilities_for
 # Required by the Messages API; a ceiling, not a spend target.
 DEFAULT_MAX_TOKENS = 16000
 
+# Extended thinking is ON by default (owner call 2026-07-23: no user-facing setting —
+# most users wouldn't know what a budget is; a per-turn composer control is future work).
+# The provider profile's `thinking_budget` remains a hidden override: a number replaces
+# the default, 0 disables thinking entirely.
+DEFAULT_THINKING_BUDGET = 8192
+
 # Anthropic stop_reason → the engine's OpenAI-shaped finish_reason vocabulary.
 _STOP_REASON_MAP = {
     "end_turn": "stop",
