@@ -11,9 +11,8 @@ falls back to the conservative heuristics in ``capabilities.py`` at their own ri
 degraded results. Ids verified against vendor/reseller catalogs on 2026-07-04; refresh the
 reseller rows when catalogs rotate (they rename on every model generation).
 
-Resellers: Together + Fireworks for now. TODO: add Groq and OpenRouter entries here AND their
-descriptors in ``registry.py`` once the current provider surface is tested — deliberately
-deferred to bound how much needs verifying at once.
+Resellers: Together, Fireworks, Groq, and OpenRouter. Each uses their own model namespaces;
+descriptors live in ``registry.py``.
 """
 
 from __future__ import annotations
@@ -102,6 +101,25 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "fireworks:accounts/fireworks/models/llama4-maverick-instruct-basic": ModelEntry(
         "Llama 4 Maverick · via Fireworks"
+    ),
+    # -- Groq (LPU inference) ---------------------------------------------------
+    "groq:llama-4-maverick-17b-128e-instruct": ModelEntry(
+        "Llama 4 Maverick · via Groq"
+    ),
+    "groq:deepseek-r1-distill-llama-70b": ModelEntry(
+        "DeepSeek R1 Distill 70B · via Groq"
+    ),
+    "groq:qwen-qwq-32b": ModelEntry("Qwen QwQ 32B · via Groq"),
+    # -- OpenRouter (multi-provider gateway) ------------------------------------
+    "openrouter:anthropic/claude-sonnet-4-6": ModelEntry(
+        "Claude Sonnet 4.6 · via OpenRouter", _AGENTIC_VISION
+    ),
+    "openrouter:google/gemini-2.5-flash": ModelEntry(
+        "Gemini 2.5 Flash · via OpenRouter", _AGENTIC_VISION
+    ),
+    "openrouter:deepseek/deepseek-r1": ModelEntry("DeepSeek R1 · via OpenRouter"),
+    "openrouter:meta-llama/llama-4-maverick": ModelEntry(
+        "Llama 4 Maverick · via OpenRouter"
     ),
 }
 
