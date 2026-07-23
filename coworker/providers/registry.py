@@ -308,9 +308,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="MISTRAL_API_KEY",
     ),
     # Resellers: many labs' models behind one key, using THEIR model namespaces (the curated
-    # ids + display labels live in providers/matrix.py). TODO: add Groq and OpenRouter here
-    # (+ their matrix rows) once the current provider surface is tested — deliberately
-    # deferred to bound how much needs verifying at once (owner call, 2026-07-04).
+    # ids + display labels live in providers/matrix.py).
     _compat(
         "together",
         "Together AI",
@@ -324,6 +322,21 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         base_url="https://api.fireworks.ai/inference/v1",
         recommended_model="accounts/fireworks/models/glm-5p2",
         env_key="FIREWORKS_API_KEY",
+    ),
+    _compat(
+        "groq",
+        "Groq",
+        base_url="https://api.groq.com/openai/v1",
+        recommended_model="llama-4-maverick-17b-128e-instruct",
+        env_key="GROQ_API_KEY",
+    ),
+    _compat(
+        "openrouter",
+        "OpenRouter",
+        base_url="https://openrouter.ai/api/v1",
+        recommended_model="anthropic/claude-sonnet-4-6",
+        env_key="OPENROUTER_API_KEY",
+        endpoint_help="Prefilled with OpenRouter's official endpoint. Supports 300+ models from all major providers behind one key.",
     ),
     ProviderDescriptor(
         name="ollama",
