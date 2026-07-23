@@ -111,11 +111,21 @@ class ConversationStore:
         path = self._file(sid)
         if not path.exists():
             return None
-        return [
-            json.loads(line)
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        # Tolerate a corrupt/truncated line rather than failing the whole load. An append
+        # interrupted mid-write (crash, disk full) leaves one malformed trailing line; a
+        # bare `json.loads` in a comprehension would raise JSONDecodeError and make load()
+        # throw every time thereafter — bricking that session on every surface that opens
+        # it. Skip the bad line(s) and keep the recoverable history. (Every other JSON read
+        # in this module is already tolerant; this one was the outlier.)
+        messages: list[dict] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                messages.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return messages
 
     def _count(self, sid: str) -> int:
         path = self._file(sid)
