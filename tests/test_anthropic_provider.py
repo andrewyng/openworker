@@ -32,6 +32,8 @@ class _FakeClient:
             return response
 
         self.messages = SimpleNamespace(create=create)
+        # Fable/Mythos route through the beta endpoint (server-side refusal fallback).
+        self.beta = SimpleNamespace(messages=SimpleNamespace(create=create))
 
 
 def _text_response(text="hello", stop_reason="end_turn"):
@@ -292,7 +294,7 @@ def test_complete_parses_tool_use_blocks():
         ("tool_use", "tool_calls"),
         ("max_tokens", "length"),
         ("stop_sequence", "stop"),
-        ("refusal", "stop"),
+        # "refusal" no longer maps — it raises (see test_whole_chain_refusal_raises…)
         ("something_new", "something_new"),  # unknown passes through
     ],
 )
@@ -531,19 +533,33 @@ def test_convert_malformed_file_part_becomes_text_note():
 # -- extended thinking (model-layer roadmap item 4, phase 3) ------------------------
 
 
-def test_thinking_budget_enables_thinking_and_drops_sampling_knobs():
+def test_thinking_config_is_model_family_aware():
+    """API drift (owner-hit 2026-07-23): budget_tokens 400s on the Claude 5/4.7+ family
+    ('use thinking.type.adaptive'); older models still need enabled+budget. display
+    must be summarized on the new family or the trace text arrives empty."""
+    for model in ("claude-fable-5", "claude-opus-4-8", "claude-sonnet-4-6"):
+        client = _FakeClient(response=_text_response())
+        AnthropicProvider(client=client, thinking_budget=8192).complete(
+            model=model,
+            messages=[{"role": "user", "content": "x"}],
+            temperature=0.2,
+            top_p=0.9,
+        )
+        assert client.kwargs["thinking"] == {"type": "adaptive", "display": "summarized"}, model
+        assert "budget_tokens" not in str(client.kwargs["thinking"]), model
+        assert "temperature" not in client.kwargs and "top_p" not in client.kwargs, model
+
     client = _FakeClient(response=_text_response())
-    provider = AnthropicProvider(client=client, thinking_budget=8192)
-    provider.complete(
-        model="claude-fable-5",
+    AnthropicProvider(client=client, thinking_budget=8192).complete(
+        model="claude-haiku-4-5",
         messages=[{"role": "user", "content": "x"}],
         temperature=0.2,
-        top_p=0.9,
     )
     assert client.kwargs["thinking"] == {"type": "enabled", "budget_tokens": 8192}
     assert client.kwargs["max_tokens"] > 8192
-    assert "temperature" not in client.kwargs and "top_p" not in client.kwargs
-    # Off by default: no budget → no thinking param.
+    assert "temperature" not in client.kwargs
+
+    # Off (hidden override 0): no thinking param on any family.
     client2 = _FakeClient(response=_text_response())
     AnthropicProvider(client=client2).complete(
         model="claude-fable-5", messages=[{"role": "user", "content": "x"}]
@@ -634,3 +650,35 @@ def test_thinking_defaults_on_with_hidden_profile_override():
     assert build_provider_client("anthropic", {}, None).thinking_budget == DEFAULT_THINKING_BUDGET
     assert build_provider_client("anthropic", {"thinking_budget": "2048"}, None).thinking_budget == 2048
     assert build_provider_client("anthropic", {"thinking_budget": "0"}, None).thinking_budget == 0
+
+
+def test_fable_requests_carry_server_side_fallback():
+    """Fable/Mythos classifiers can decline benign-adjacent requests — every call opts
+    into the server-side fallback so Opus 4.8 re-serves declines in the same call."""
+    client = _FakeClient(response=_text_response())
+    AnthropicProvider(client=client, thinking_budget=8192).complete(
+        model="claude-fable-5", messages=[{"role": "user", "content": "x"}]
+    )
+    assert client.kwargs["betas"] == ["server-side-fallback-2026-06-01"]
+    assert client.kwargs["fallbacks"] == [{"model": "claude-opus-4-8"}]
+
+    # Other models stay on the plain endpoint with no fallback params.
+    client2 = _FakeClient(response=_text_response())
+    AnthropicProvider(client=client2).complete(
+        model="claude-opus-4-8", messages=[{"role": "user", "content": "x"}]
+    )
+    assert "betas" not in client2.kwargs and "fallbacks" not in client2.kwargs
+
+
+def test_whole_chain_refusal_raises_friendly_error():
+    """A refusal that survives the fallback chain must surface as an error (notice +
+    Retry in the GUI) — not a silent blank reply (owner-hit 2026-07-23)."""
+    refused = SimpleNamespace(
+        content=[],
+        stop_reason="refusal",
+        stop_details=SimpleNamespace(category="cyber", explanation="blocked"),
+    )
+    provider = AnthropicProvider(client=_FakeClient(response=refused), thinking_budget=8192)
+    with pytest.raises(RuntimeError) as err:
+        provider.complete(model="claude-fable-5", messages=[{"role": "user", "content": "x"}])
+    assert "safety filter" in str(err.value) and "cyber" in str(err.value)

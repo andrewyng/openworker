@@ -80,6 +80,7 @@ MATRIX: dict[str, ModelEntry] = {
     "xai:grok-4.3": ModelEntry("Grok 4.3 · xAI"),
     "mistral:mistral-large-latest": ModelEntry("Mistral Large · Mistral"),
     # -- resellers (their model namespaces, verbatim) -----------------------------
+    "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
     "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together"),
     "together:moonshotai/Kimi-K2.6": ModelEntry("Kimi K2.6 · via Together"),
     "together:deepseek-ai/DeepSeek-V4-Pro": ModelEntry(

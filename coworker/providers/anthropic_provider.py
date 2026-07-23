@@ -38,8 +38,58 @@ DEFAULT_MAX_TOKENS = 16000
 # Extended thinking is ON by default (owner call 2026-07-23: no user-facing setting —
 # most users wouldn't know what a budget is; a per-turn composer control is future work).
 # The provider profile's `thinking_budget` remains a hidden override: a number replaces
-# the default, 0 disables thinking entirely.
+# the default, 0 disables thinking (where the model allows disabling).
 DEFAULT_THINKING_BUDGET = 8192
+
+# API drift (2026): thinking config is MODEL-FAMILY specific.
+# - Pre-4.6 models (Haiku 4.5, Sonnet 4.5, Opus 4.5 and older): thinking needs
+#   {"type": "enabled", "budget_tokens": N}.
+# - 4.6+ and the Claude 5 family (Fable/Mythos 5, Opus 4.8/4.7, Sonnet 5, the 4.6 pair):
+#   budget_tokens is deprecated/REMOVED (hard 400 on 4.7+: '"thinking.type.enabled" is
+#   not supported for this model') — use {"type": "adaptive"}. Fable 5 thinking is
+#   always on and can't be disabled. `display: "summarized"` is required to get trace
+#   text on 4.7+ (default "omitted" streams thinking blocks with EMPTY text).
+_BUDGET_THINKING_PREFIXES = (
+    "claude-haiku-4-5",
+    "claude-sonnet-4-5",
+    "claude-opus-4-5",
+    "claude-opus-4-1",
+    "claude-opus-4-0",
+    "claude-sonnet-4-0",
+    "claude-3",
+    "claude-2",
+)
+
+
+def _uses_budget_thinking(model: str) -> bool:
+    return model.startswith(_BUDGET_THINKING_PREFIXES)
+
+
+# Fable/Mythos 5 run safety classifiers that can decline benign-adjacent requests
+# (HTTP 200, stop_reason "refusal", empty or partial content). Recommended posture is
+# the server-side fallback: the API re-serves the declined request on Opus 4.8 within
+# the same call. Beta header + param, beta messages endpoint.
+_FALLBACK_BETA = "server-side-fallback-2026-06-01"
+_FALLBACK_MODEL = "claude-opus-4-8"
+
+
+def _needs_refusal_fallback(model: str) -> bool:
+    return model.startswith(("claude-fable", "claude-mythos"))
+
+
+def _raise_on_refusal(stop_reason: Any, raw: Any) -> None:
+    """A refusal that survived the fallback chain becomes a normal provider error —
+    the engine persists it as an error notice with Retry, instead of a silent blank."""
+    if stop_reason != "refusal":
+        return
+    details = getattr(raw, "stop_details", None)
+    category = getattr(details, "category", None)
+    suffix = f" (category: {category})" if category else ""
+    raise RuntimeError(
+        "Claude's safety filter declined this request"
+        + suffix
+        + " — try rephrasing, or switch model and press Retry."
+    )
 
 # Anthropic stop_reason → the engine's OpenAI-shaped finish_reason vocabulary.
 _STOP_REASON_MAP = {
@@ -335,18 +385,25 @@ class AnthropicProvider(ProviderClient):
             stop = settings["stop"]
             settings["stop_sequences"] = [stop] if isinstance(stop, str) else list(stop)
         filtered = {k: v for k, v in settings.items() if k in _SETTINGS_WHITELIST}
-        if self.thinking_budget > 0:
-            filtered.setdefault(
-                "thinking",
-                {"type": "enabled", "budget_tokens": self.thinking_budget},
-            )
+        if self.thinking_budget > 0 and "thinking" not in filtered:
+            if _uses_budget_thinking(model):
+                filtered["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": self.thinking_budget,
+                }
+            else:
+                # 4.6+/Claude 5 family: adaptive only (budget_tokens 400s on 4.7+);
+                # display opt-in or the trace text arrives empty.
+                filtered["thinking"] = {"type": "adaptive", "display": "summarized"}
         thinking = filtered.get("thinking") or {}
         if thinking.get("type") == "enabled":
-            # Budget must fit under max_tokens, and sampling knobs are rejected.
+            # Budget must fit under max_tokens.
             budget = int(thinking.get("budget_tokens") or 0)
             floor = max(DEFAULT_MAX_TOKENS, budget + 4096)
             if int(filtered.get("max_tokens") or 0) <= budget:
                 filtered["max_tokens"] = floor
+        if thinking.get("type") in ("enabled", "adaptive"):
+            # Sampling knobs are rejected alongside thinking (and removed outright on 4.7+).
             for key in _THINKING_INCOMPATIBLE:
                 filtered.pop(key, None)
         filtered.setdefault("max_tokens", DEFAULT_MAX_TOKENS)
@@ -368,7 +425,15 @@ class AnthropicProvider(ProviderClient):
         kwargs = self._request_kwargs(
             model=model, messages=messages, tools=tools, settings=settings
         )
-        response = self._ensure_client().messages.create(**kwargs)
+        client = self._ensure_client()
+        if _needs_refusal_fallback(model):
+            response = client.beta.messages.create(
+                **kwargs,
+                betas=[_FALLBACK_BETA],
+                fallbacks=[{"model": _FALLBACK_MODEL}],
+            )
+        else:
+            response = client.messages.create(**kwargs)
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
@@ -401,6 +466,7 @@ class AnthropicProvider(ProviderClient):
                     }
                 )
         stop_reason = getattr(response, "stop_reason", None)
+        _raise_on_refusal(stop_reason, response)
         return AssistantTurn(
             text="".join(text_parts) or None,
             tool_calls=tool_calls,
@@ -426,6 +492,14 @@ class AnthropicProvider(ProviderClient):
         )
         kwargs["stream"] = True
         client = self._ensure_client()
+        if _needs_refusal_fallback(model):
+            events = client.beta.messages.create(
+                **kwargs,
+                betas=[_FALLBACK_BETA],
+                fallbacks=[{"model": _FALLBACK_MODEL}],
+            )
+        else:
+            events = client.messages.create(**kwargs)
 
         text_parts: list[str] = []
         tool_accum: dict[int, dict[str, str]] = {}
@@ -434,7 +508,8 @@ class AnthropicProvider(ProviderClient):
         thinking_accum: dict[int, dict[str, Any]] = {}
         stop_reason = None
 
-        for event in client.messages.create(**kwargs):
+        last_message_delta: Any = None
+        for event in events:
             kind = getattr(event, "type", None)
             if kind == "content_block_start":
                 block = getattr(event, "content_block", None)
@@ -482,10 +557,12 @@ class AnthropicProvider(ProviderClient):
                             getattr(delta, "signature", "") or ""
                         )
             elif kind == "message_delta":
-                reason = getattr(getattr(event, "delta", None), "stop_reason", None)
+                last_message_delta = getattr(event, "delta", None)
+                reason = getattr(last_message_delta, "stop_reason", None)
                 if reason:
                     stop_reason = reason
 
+        _raise_on_refusal(stop_reason, last_message_delta)
         tool_calls = []
         for index in sorted(tool_accum):
             acc = tool_accum[index]
