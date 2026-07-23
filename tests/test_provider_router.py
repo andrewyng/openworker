@@ -332,7 +332,9 @@ def test_manager_curated_models(tmp_path, monkeypatch):
     assert "anthropic:claude-opus-4-8" in models
     assert "gpt-4o" not in models  # no OpenAI seed anywhere
 
-    added = mgr.add_model("ollama:qwen2.5-coder:32b")  # keyless provider → selectable
+    # Custom Ollama models are shown only while the local service is reachable.
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
+    added = mgr.add_model("ollama:qwen2.5-coder:32b")
     assert added["ok"] and "ollama:qwen2.5-coder:32b" in added["models"]
 
     n = len(mgr.get_settings()["models"])
