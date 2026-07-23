@@ -30,6 +30,16 @@ def _load_roots(raw: Optional[str]) -> list[dict]:
     return value if isinstance(value, list) else []
 
 
+def _load_grants(raw: Optional[str]) -> dict:
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def _display_title(row: sqlite3.Row) -> Optional[str]:
     """Title precedence for every read path: a manual rename (renamed=1) always wins,
     then the generated auto_title, then the first-line snapshot `save()` wrote."""
@@ -84,6 +94,7 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN origin_label TEXT",
             "ALTER TABLE sessions ADD COLUMN auto_title TEXT",
             "ALTER TABLE sessions ADD COLUMN renamed INTEGER DEFAULT 0",
+            "ALTER TABLE sessions ADD COLUMN grants TEXT",
         ):
             try:
                 self._conn.execute(ddl)
@@ -180,13 +191,13 @@ class ConversationStore:
             title = record.title or title_from(record.messages)
             self._conn.execute(
                 """
-                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, CURRENT_TIMESTAMP)
+                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace, model = excluded.model, mode = excluded.mode,
                     title = COALESCE(sessions.title, excluded.title), agent = excluded.agent,
                     n_msgs = excluded.n_msgs, messages = NULL, extra_roots = excluded.extra_roots,
-                    updated_at = CURRENT_TIMESTAMP
+                    grants = excluded.grants, updated_at = CURRENT_TIMESTAMP
                 """,
                 (
                     sid,
@@ -197,6 +208,7 @@ class ConversationStore:
                     record.agent,
                     len(record.messages),
                     json.dumps(record.extra_roots or []),
+                    json.dumps(record.grants or {}),
                 ),
             )
             self._conn.commit()
@@ -228,6 +240,7 @@ class ConversationStore:
             extra_roots=_load_roots(
                 row["extra_roots"] if "extra_roots" in row.keys() else None
             ),
+            grants=_load_grants(row["grants"] if "grants" in row.keys() else None),
             pinned=bool(row["pinned"]),
             archived=bool(row["archived"]),
             origin=row["origin"],

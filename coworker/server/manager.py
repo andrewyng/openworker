@@ -85,6 +85,13 @@ _SCOPES = {s.value for s in Scope}
 logger = logging.getLogger("coworker.manager")
 
 
+def _grants_of(engine) -> dict[str, Any]:
+    """The engine's session-scoped "Always allow" approvals, in persistable shape."""
+    tools = sorted(getattr(engine.permissions, "session_allow_tools", None) or ())
+    commands = sorted(getattr(engine.permissions, "session_allow_commands", None) or ())
+    return {"tools": tools, "commands": commands} if (tools or commands) else {}
+
+
 def _approval_body(request) -> str:
     """Approval card body: the tool's reason (if any) plus a compact preview of its args, so a
     mirrored 'Run `write_file`?' shows the path/content rather than just the tool name.
@@ -384,6 +391,8 @@ class SessionManager:
             engine.permissions.task_rules.setdefault("send_message", set()).add(
                 thread_target
             )
+        if record is not None and record.grants:
+            self._apply_grants(engine, record.grants)
         self._engines[session_id] = engine
         if is_new_session:
             self._emit_session_created(session_id, agent_name)
@@ -2393,7 +2402,7 @@ class SessionManager:
             else:
                 await self.gateway.deliver(
                     target,
-                    f"{body}\n(Open the app to respond.)\n[ocw:{item.id}]".strip(),
+                    f"{body}\n(Open the app to respond.)\n[ow:{item.id}]".strip(),
                 )
         except Exception:
             pass
@@ -2429,7 +2438,7 @@ class SessionManager:
     # -- inbox replies over messaging connectors --------------------------------
     def _resolve_inbox_reply(self, event) -> bool:
         """Try to handle an inbound Slack/Telegram message as an Inbox reply. Returns True if the
-        message carried an `[ocw:<id>]` token (so it's consumed here, not routed as a new turn) —
+        message carried an `[ow:<id>]` token (so it's consumed here, not routed as a new turn) —
         resolving the item also releases any agent suspended on it."""
         from ..inbox_routing import resolve_from_reply
 
@@ -2591,7 +2600,7 @@ class SessionManager:
 
     # -- mention router (§31) ----------------------------------------------------
     async def _route_mention(self, event, ms: MessageSource, subs) -> None:
-        """@ocw tagged in a channel. A subscribed (user-connected) coworker owns the channel
+        """@OpenWorker tagged in a channel. A subscribed (user-connected) coworker owns the channel
         and must answer; otherwise the per-thread coworker session handles it — spawned on the
         first tag, steered by follow-ups (deduped on the thread target)."""
         from ..connectors.base import format_target
@@ -2975,8 +2984,18 @@ class SessionManager:
                 title=title_from(engine.messages),
                 agent=getattr(engine, "agent_name", "code"),
                 extra_roots=self._extra_roots_of(engine),
+                grants=_grants_of(engine),
             )
         )
+
+    @staticmethod
+    def _apply_grants(engine: TurnEngine, grants: dict[str, Any]) -> None:
+        """Re-apply a reloaded session's persisted "Always allow" approvals — they're
+        session-scoped, and the session outlives the process (owner-hit 2026-07-22)."""
+        for tool in grants.get("tools") or []:
+            engine.permissions.allow_tool_for_session(str(tool))
+        for command in grants.get("commands") or []:
+            engine.permissions.allow_command_for_session(str(command))
 
     @staticmethod
     def _extra_roots_of(engine: TurnEngine) -> list[dict[str, Any]]:
