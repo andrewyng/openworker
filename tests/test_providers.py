@@ -381,6 +381,8 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         "together:zai-org/GLM-5.2",
         "together:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
         "fireworks:accounts/fireworks/models/kimi-k2p6",
+        "groq:llama-4-maverick-17b-128e-instruct",
+        "openrouter:anthropic/claude-sonnet-4-6",
     ):
         caps = capabilities_for(mid)
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
@@ -407,7 +409,7 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
     from coworker.providers.matrix import models_for_provider
     from coworker.providers.registry import get_descriptor
 
-    for name in ("together", "fireworks"):
+    for name in ("together", "fireworks", "groq", "openrouter"):
         d = get_descriptor(name)
         assert d is not None and d.needs_key
         curated = models_for_provider(name)
