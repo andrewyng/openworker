@@ -12,12 +12,26 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 from pathlib import Path
 from typing import Optional
 
 from .sessions import SessionRecord
+
+# A session id becomes a filename (`<id>.jsonl`) and a scratch dir name, so it must be a
+# single, benign path component. Every legitimate id is hex or a `__run__`/`__task__`-
+# prefixed hex string, so this charset is a superset of what we generate; it excludes the
+# path separators and dots (`/`, `\`, `..`) a client-supplied id would need to escape the
+# store. Session ids arrive from client-controlled surfaces (the `/ws/session/{id}` route,
+# REST paths), so without this an id like `../../evil` writes `<base>/evil.jsonl` outside
+# `conversations/`.
+_SAFE_SESSION_ID = re.compile(r"\A[A-Za-z0-9_-]{1,128}\Z")
+
+
+def is_safe_session_id(sid: str) -> bool:
+    return bool(isinstance(sid, str) and _SAFE_SESSION_ID.match(sid))
 
 
 def _load_roots(raw: Optional[str]) -> list[dict]:
@@ -105,7 +119,15 @@ class ConversationStore:
 
     # -- file helpers -----------------------------------------------------------
     def _file(self, sid: str) -> Path:
-        return self.conv_dir / f"{sid}.jsonl"
+        # Single chokepoint for every conversation-file path. Reject ids that aren't a
+        # safe path component, then confirm the resolved path stays inside conv_dir — so
+        # a crafted id can never read or clobber a file outside the store.
+        if not is_safe_session_id(sid):
+            raise ValueError(f"unsafe session id: {sid!r}")
+        path = (self.conv_dir / f"{sid}.jsonl").resolve()
+        if path.parent != self.conv_dir.resolve():
+            raise ValueError(f"unsafe session id: {sid!r}")
+        return path
 
     def _read_jsonl(self, sid: str) -> Optional[list[dict]]:
         path = self._file(sid)
