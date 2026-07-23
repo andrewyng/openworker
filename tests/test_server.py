@@ -769,22 +769,13 @@ def test_google_one_click_paused_but_manual_alive(tmp_path):
 
 
 def test_set_provider_persists_extra_fields(tmp_path):
-    """Non-secret descriptor extras (anthropic thinking_budget) round-trip: saved into the
+    """Non-secret descriptor extras (ollama's endpoint) round-trip: saved into the
     profile, echoed by get_providers for form prefill, cleared by an empty save."""
     manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
-    assert manager.set_provider(
-        "anthropic", {"api_key": "sk-ant-test", "thinking_budget": "8192"}
-    )["ok"]
+    assert manager.set_provider("ollama", {"base_url": "http://127.0.0.1:9999"})["ok"]
     providers = {p["name"]: p for p in manager.get_providers()}
-    assert providers["anthropic"]["values"]["thinking_budget"] == "8192"
+    assert providers["ollama"]["values"]["base_url"] == "http://127.0.0.1:9999"
 
-    from coworker.providers.registry import build_provider_client
-
-    built = build_provider_client(
-        "anthropic", manager.secrets.get("provider:anthropic"), manager.secrets
-    )
-    assert built.thinking_budget == 8192
-
-    manager.set_provider("anthropic", {"thinking_budget": ""})
+    manager.set_provider("ollama", {"base_url": ""})
     providers = {p["name"]: p for p in manager.get_providers()}
-    assert "thinking_budget" not in providers["anthropic"]["values"]
+    assert "base_url" not in providers["ollama"]["values"]

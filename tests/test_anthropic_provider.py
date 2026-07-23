@@ -623,3 +623,14 @@ def test_convert_replays_thinking_blocks_ahead_of_tool_use():
     assistant = msgs[1]["content"]
     assert assistant[0] == {"type": "thinking", "thinking": "plan", "signature": "S"}
     assert assistant[1]["type"] == "tool_use"
+
+
+def test_thinking_defaults_on_with_hidden_profile_override():
+    """No user-facing setting (owner call 2026-07-23): thinking is ON by default; the
+    profile's thinking_budget stays a hidden override, 0 = off."""
+    from coworker.providers.anthropic_provider import DEFAULT_THINKING_BUDGET
+    from coworker.providers.registry import build_provider_client
+
+    assert build_provider_client("anthropic", {}, None).thinking_budget == DEFAULT_THINKING_BUDGET
+    assert build_provider_client("anthropic", {"thinking_budget": "2048"}, None).thinking_budget == 2048
+    assert build_provider_client("anthropic", {"thinking_budget": "0"}, None).thinking_budget == 0

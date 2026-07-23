@@ -106,11 +106,15 @@ def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
 def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Key resolution stays in AnthropicProvider/resolve_api_key (explicit → env → SecretStore),
     # deferred to first call so the provider can be built before a key exists.
+    # thinking_budget: hidden profile override — absent/invalid → the default (ON),
+    # explicit 0 → off (see DEFAULT_THINKING_BUDGET).
+    from .anthropic_provider import DEFAULT_THINKING_BUDGET
+
     api_key = ((profile or {}).get("api_key") or "").strip() or None
     try:
         thinking_budget = int(str((profile or {}).get("thinking_budget") or "").strip())
     except ValueError:
-        thinking_budget = 0
+        thinking_budget = DEFAULT_THINKING_BUDGET
     return AnthropicProvider(
         api_key=api_key, secrets=secrets, thinking_budget=thinking_budget
     )
@@ -225,13 +229,8 @@ DESCRIPTORS: list[ProviderDescriptor] = [
                 secret=True,
                 placeholder="sk-ant-…",
             ),
-            ProviderField(
-                "thinking_budget",
-                "Extended thinking budget (tokens, optional)",
-                required=False,
-                placeholder="e.g. 8192 — blank = off",
-                help="Turns on Claude's extended thinking for every request, with this token budget. The thought process shows in the transcript.",
-            ),
+            # No thinking_budget field (owner call 2026-07-23): extended thinking is
+            # on by default; the profile key stays a hidden override (0 = off).
         ],
         build=_build_anthropic,
         recommended_model="claude-fable-5",
