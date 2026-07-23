@@ -2036,6 +2036,89 @@ def make_integration_tools(
         )
     )
 
+    def linear_update_issue(
+        issue_id: str,
+        title: str = "",
+        description: str = "",
+        state_name: str = "",
+        assignee_id: str = "",
+    ) -> dict[str, Any]:
+        profile, err = _profile(secrets, "linear", "api_key")
+        if err:
+            return err
+        input_fields: dict[str, Any] = {}
+        if title:
+            input_fields["title"] = title
+        if description:
+            input_fields["description"] = description
+        if state_name:
+            input_fields["stateName"] = state_name
+        if assignee_id:
+            input_fields["assigneeId"] = assignee_id
+        if not input_fields:
+            return {"error": "provide at least one field to update"}
+        gql = (
+            "mutation($id: String!, $input: IssueUpdateInput!) {"
+            " issueUpdate(id: $id, input: $input) {"
+            " success issue { identifier title url state { name } } } }"
+        )
+        return _linear_gql(
+            profile["api_key"], gql, {"id": issue_id, "input": input_fields}
+        )
+
+    linear_update_issue.__name__ = "linear_update_issue"
+    tools.append(
+        _attach(
+            linear_update_issue,
+            _schema(
+                "linear_update_issue",
+                "Update a Linear issue (title, description, state, or assignee). Requires user approval.",
+                {
+                    "issue_id": {"type": "string", "description": "Issue ID or key like ENG-123"},
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "state_name": {"type": "string", "description": "Target state name, e.g. 'In Progress', 'Done'"},
+                    "assignee_id": {"type": "string"},
+                },
+                ["issue_id"],
+            ),
+            approval=True,
+            caps=["linear", "write"],
+        )
+    )
+
+    def linear_add_comment(issue_id: str, body: str) -> dict[str, Any]:
+        profile, err = _profile(secrets, "linear", "api_key")
+        if err:
+            return err
+        gql = (
+            "mutation($input: CommentCreateInput!) { commentCreate(input: $input) {"
+            " success comment { id url } } }"
+        )
+        return _linear_gql(
+            profile["api_key"],
+            gql,
+            {"input": {"issueId": issue_id, "body": body}},
+        )
+
+    linear_add_comment.__name__ = "linear_add_comment"
+    tools.append(
+        _attach(
+            linear_add_comment,
+            _schema(
+                "linear_add_comment",
+                "Add a comment to a Linear issue. Requires user approval.",
+                {
+                    "issue_id": {"type": "string", "description": "Issue ID or key"},
+                    "body": {"type": "string", "description": "Comment body (Markdown)"},
+                },
+                ["issue_id", "body"],
+            ),
+            approval=True,
+            caps=["linear", "write"],
+        )
+    )
+
     def gitlab_search(
         query: str, scope: str = "issues", max_results: int = 10
     ) -> dict[str, Any]:
