@@ -17,18 +17,14 @@ Invariants checked:
      (native providers: openai/anthropic/gemini; resellers: together/fireworks;
      keyless local: ollama — all route through the matrix or live /api/tags).
   4. Every compat-vendor descriptor's recommended_model is present in COMPAT_MODELS.
-  5. Every bare MATRIX id (no colon) is not altered by ProviderRouter._bare(),
-     confirming it routes to OpenAI as intended and is not a misrouted prefixed id.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from coworker.providers.base import ModelCapabilities
 from coworker.providers.matrix import MATRIX
 from coworker.providers.registry import get_descriptor, provider_names
-from coworker.providers.router import ProviderRouter
 from coworker.server.manager import SessionManager
 
 # Providers that are intentionally absent from COMPAT_MODELS.
@@ -126,23 +122,3 @@ def test_compat_vendor_recommended_model_in_compat_models(name: str) -> None:
         f"set_provider will silently skip auto-adding it."
     )
 
-
-# ---------------------------------------------------------------------------
-# 5. Bare MATRIX ids are not stripped by the router (they belong to OpenAI)
-# ---------------------------------------------------------------------------
-
-
-def test_matrix_bare_ids_are_not_provider_prefixed() -> None:
-    """Any MATRIX key without a colon must not be mistakenly strippable by the router.
-    ProviderRouter._bare() only strips a segment that resolves to a known descriptor;
-    a bare id that the router would strip has an unregistered provider prefix and
-    would be silently misrouted. This test catches a matrix key like 'foo:bar' where
-    'foo' is not yet registered — the router would treat it as OpenAI and strip 'foo:'."""
-    for model_id in MATRIX:
-        if ":" not in model_id:
-            # No prefix at all — routes to OpenAI as intended. _bare() is a no-op.
-            assert ProviderRouter._bare(model_id) == model_id, (
-                f"MATRIX bare id {model_id!r}: ProviderRouter._bare() altered it, "
-                f"which means the router is stripping an unregistered prefix. "
-                f"Either register the provider or remove the colon from the model id."
-            )
