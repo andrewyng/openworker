@@ -8,6 +8,8 @@ Ask it to prepare a customer brief, untangle your week, draft a report, or check
 
 It runs on your machine and doesn't lock you into any model: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider — or run fully local with Ollama. Your data leaves your machine only through the model and integrations *you* choose.
 
+**Website:** [openworker.com](https://openworker.com)
+
 ## Download
 
 [**⬇ macOS (Apple Silicon)**](https://github.com/andrewyng/openworker/releases/latest/download/OpenWorker-macos-arm64.dmg)
