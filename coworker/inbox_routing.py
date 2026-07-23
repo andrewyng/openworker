@@ -23,6 +23,14 @@ DEFAULT_INBOX = "default"
 # to OpenWorker (2026-07-22); the legacy [ocw:…] spelling stays parseable so replies to
 # messages sent before the rename still resolve.
 _ID_TOKEN = re.compile(r"\[o(?:c)?w:([0-9a-f]{6,})\]")
+# Intent words are matched on WORD BOUNDARIES, not as bare substrings. A substring test
+# reads "I disapprove" as approve (contains "approve") and inverts a rejection into an
+# execute, and "no" hides inside note/not/now/cannot/known so ordinary free-text answers
+# to a question get clobbered into "deny". `\b…\b` matches the standalone word only.
+_ALLOW_RE = re.compile(r"\b(?:approve|allow|yes)\b")
+_DENY_RE = re.compile(r"\b(?:deny|reject|no)\b")
+_ALLOW_EMOJI = ("👍", "✅")
+_DENY_EMOJI = ("👎", "❌")
 
 
 @dataclass
@@ -129,11 +137,12 @@ def resolve_from_reply(
     if not m:
         return None
     item_id = m.group(1)
-    lowered = reply.lower()
-    if any(w in lowered for w in ("approve", "allow", "yes", "👍", "✅")):
+    body = _ID_TOKEN.sub("", reply)  # strip the correlation token before intent/answer parsing
+    lowered = body.lower()
+    if _ALLOW_RE.search(lowered) or any(e in body for e in _ALLOW_EMOJI):
         resolution = "allow"
-    elif any(w in lowered for w in ("deny", "reject", "no", "👎", "❌")):
+    elif _DENY_RE.search(lowered) or any(e in body for e in _DENY_EMOJI):
         resolution = "deny"
     else:
-        resolution = _ID_TOKEN.sub("", reply).strip()  # free-text answer to a question
+        resolution = body.strip()  # free-text answer to a question
     return resolve(item_id, resolution)
