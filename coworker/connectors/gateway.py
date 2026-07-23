@@ -44,7 +44,7 @@ class Gateway:
         )
         self._handler = handler
         # Tried before the handler: if an inbound message is an Inbox reply (carries an
-        # [ocw:<id>] token), it resolves the item and is consumed — not routed as a new turn.
+        # [ow:<id>] token), it resolves the item and is consumed — not routed as a new turn.
         self._reply_resolver = reply_resolver
         # A button click on an interactive prompt (resolves an Inbox item by id).
         self._interaction_handler = interaction_handler

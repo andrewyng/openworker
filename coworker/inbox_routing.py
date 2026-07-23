@@ -19,9 +19,10 @@ from pathlib import Path
 from typing import Callable, Optional
 
 DEFAULT_INBOX = "default"
-_ID_TOKEN = re.compile(
-    r"\[ocw:([0-9a-f]{6,})\]"
-)  # embeds the item id in a delivered message
+# Embeds the item id in a delivered message. Emitted as [ow:…] since the bot's rebrand
+# to OpenWorker (2026-07-22); the legacy [ocw:…] spelling stays parseable so replies to
+# messages sent before the rename still resolve.
+_ID_TOKEN = re.compile(r"\[o(?:c)?w:([0-9a-f]{6,})\]")
 
 
 @dataclass
@@ -111,7 +112,7 @@ def deliver(item, binding: InboxBinding, sender: Optional[Sender]) -> bool:
     channel message was sent."""
     if not binding.channel or sender is None:
         return False
-    text = f"{item.title}\n{item.body}\n[ocw:{item.id}]".strip()
+    text = f"{item.title}\n{item.body}\n[ow:{item.id}]".strip()
     sender(binding.channel, binding.target, text)
     return True
 
@@ -121,7 +122,7 @@ def resolve_from_reply(
 ) -> Optional[bool]:
     """Correlate an inbound channel reply to its item (by the embedded id) and resolve it.
 
-    Looks for the ``[ocw:<id>]`` token and an allow/deny intent; falls back to treating the whole
+    Looks for the ``[ow:<id>]`` token (or legacy ``[ocw:…]``) and an allow/deny intent; falls back to treating the whole
     message as a free-text answer. ``resolve(item_id, resolution)`` is the InboxStore.resolve.
     Returns the resolve() result, or None if no item id was found."""
     m = _ID_TOKEN.search(reply or "")

@@ -495,7 +495,7 @@ export function AutomationQuickstart({
                     />
                   </div>
                   <p className="text-[11px] text-warnInk mt-1">
-                    The bot must be a member of the channel — invite @ocw in Slack if it isn't.
+                    The bot must be a member of the channel — invite @OpenWorker in Slack if it isn't.
                   </p>
                 </>
               )}

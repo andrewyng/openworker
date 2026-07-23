@@ -82,7 +82,7 @@ def _send_slack(
         return SendResult(True, message_id=data.get("ts"))
     err = data.get("error") or "slack send failed"
     if err == "not_in_channel":
-        err = "not_in_channel — invite @ocw to the channel in Slack, then retry"
+        err = "not_in_channel — invite @OpenWorker to the channel in Slack, then retry"
     return SendResult(False, error=err)
 
 

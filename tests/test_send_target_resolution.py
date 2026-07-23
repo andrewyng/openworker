@@ -173,7 +173,7 @@ def test_unknown_ambiguous_and_not_member_names_error_actionably(tmp_path, monke
         },
     )
     secrets.delete("slack:team:T2")
-    assert "invite @ocw" in tool("slack:#private-ops", "Hi")["error"]
+    assert "invite @OpenWorker" in tool("slack:#private-ops", "Hi")["error"]
 
 
 def test_send_file_resolves_names_too(tmp_path, monkeypatch):
