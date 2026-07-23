@@ -1579,3 +1579,19 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
   border-left: 2px solid var(--line); padding: 4px 0 4px 10px; margin: 4px 0 6px 4px;
   max-height: 280px; overflow-y: auto;
 }
+
+/* -- BETA tag (quiet gray chip beside the wordmark; presentation-only, never in
+   bundle/artifact names — those feed the updater) --------------------------------- */
+.beta-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  vertical-align: 2px;
+}

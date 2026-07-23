@@ -1118,7 +1118,7 @@ export function App() {
         {overlay && (
           <div className="titlebar-drag" data-tauri-drag-region>
             <span className="titlebar-brand brand-wordmark">
-              <Icon name="logo" size={13} className="mark" /> OpenWorker
+              <Icon name="logo" size={13} className="mark" /> OpenWorker<span className="beta-tag">BETA</span>
             </span>
           </div>
         )}
@@ -1132,7 +1132,10 @@ export function App() {
         <div className="boot-mark">
           <Icon name="logo" size={38} />
         </div>
-        <div className="boot-text">{resumedExisting ? "Restoring your session…" : "Starting OpenWorker…"}</div>
+        <div className="boot-text">
+          {resumedExisting ? "Restoring your session…" : "Starting OpenWorker…"}
+          <span className="beta-tag">BETA</span>
+        </div>
       </div>
     );
   }
