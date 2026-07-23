@@ -117,23 +117,47 @@ def deliver(item, binding: InboxBinding, sender: Optional[Sender]) -> bool:
     return True
 
 
+# Decision keywords for a channel reply. Matched against the reply's LEADING word/emoji
+# only (see _reply_intent): substring matching anywhere turned free-text answers like
+# "I have no preference — use us-east-1" into a deny, and worse, "I cannot approve this"
+# into an allow (allow words are checked first). Leading-word intent keeps "Yes, go
+# ahead" / "No." / "👍" working; everything else is a free-text answer, which the
+# approval path already maps to deny — the safe default for an approval gate.
+_ALLOW_WORDS = frozenset({"approve", "allow", "yes"})
+_DENY_WORDS = frozenset({"deny", "reject", "no"})
+_ALLOW_EMOJI = ("👍", "✅")
+_DENY_EMOJI = ("👎", "❌")
+_TOKEN_TRIM = ".,!?:;'\"()"
+
+
+def _reply_intent(text: str) -> Optional[str]:
+    """Allow/deny intent from the first word (or emoji) of a reply, else None."""
+    first = text.split()[0] if text.split() else ""
+    if first.startswith(_ALLOW_EMOJI):  # startswith: tolerate skin-tone modifiers
+        return "allow"
+    if first.startswith(_DENY_EMOJI):
+        return "deny"
+    word = first.strip(_TOKEN_TRIM).lower()
+    if word in _ALLOW_WORDS:
+        return "allow"
+    if word in _DENY_WORDS:
+        return "deny"
+    return None
+
+
 def resolve_from_reply(
     reply: str, resolve: Callable[[str, str], bool]
 ) -> Optional[bool]:
     """Correlate an inbound channel reply to its item (by the embedded id) and resolve it.
 
-    Looks for the ``[ow:<id>]`` token (or legacy ``[ocw:…]``) and an allow/deny intent; falls back to treating the whole
-    message as a free-text answer. ``resolve(item_id, resolution)`` is the InboxStore.resolve.
+    Looks for the ``[ow:<id>]`` token (or legacy ``[ocw:…]``) and an allow/deny intent in the
+    reply's leading word; falls back to treating the whole message as a free-text answer.
+    ``resolve(item_id, resolution)`` is the InboxStore.resolve.
     Returns the resolve() result, or None if no item id was found."""
     m = _ID_TOKEN.search(reply or "")
     if not m:
         return None
     item_id = m.group(1)
-    lowered = reply.lower()
-    if any(w in lowered for w in ("approve", "allow", "yes", "👍", "✅")):
-        resolution = "allow"
-    elif any(w in lowered for w in ("deny", "reject", "no", "👎", "❌")):
-        resolution = "deny"
-    else:
-        resolution = _ID_TOKEN.sub("", reply).strip()  # free-text answer to a question
+    text = _ID_TOKEN.sub("", reply).strip()
+    resolution = _reply_intent(text) or text  # free-text answer to a question
     return resolve(item_id, resolution)
