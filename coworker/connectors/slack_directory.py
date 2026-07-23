@@ -10,7 +10,7 @@ Slack API notes: `users.list` is Tier-2 (~20 req/min) and Slack's own guidance
 is to cache it — one paginated sweep per workspace per TTL, filtered locally.
 Private channels only appear where the bot is a MEMBER (API constraint — the
 GUI words it honestly); public channels carry `is_member` so the picker can
-hint "invite @ocw in Slack" instead of silently failing to listen.
+hint "invite @OpenWorker in Slack" instead of silently failing to listen.
 """
 
 from __future__ import annotations
@@ -157,7 +157,7 @@ def list_channels(
     refresh: bool = False,
 ) -> dict[str, Any]:
     """Channels the token can see: all public ones, private only where the bot
-    is a member. `is_member` lets the GUI hint "invite @ocw" for the rest."""
+    is a member. `is_member` lets the GUI hint "invite @OpenWorker" for the rest."""
     token = _bot_token(secrets, team_id)
     if not token:
         return {"ok": False, "error": "workspace not connected"}

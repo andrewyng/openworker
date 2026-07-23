@@ -46,7 +46,7 @@ def test_deliver_to_channel_embeds_item_id(tmp_path):
 
     assert deliver(item, routing.binding_for("ops"), sender) is True
     assert sent["channel"] == "slack" and sent["target"] == "#ops"
-    assert f"[ocw:{item.id}]" in sent["text"]
+    assert f"[ow:{item.id}]" in sent["text"]  # rebrand: emits [ow:…] since 2026-07-22
 
 
 def test_in_app_only_binding_delivers_nothing(tmp_path):
@@ -64,8 +64,8 @@ def test_in_app_only_binding_delivers_nothing(tmp_path):
 def test_inbound_reply_resolves_correct_item(tmp_path):
     store = InboxStore(tmp_path / "inbox.json")
     item = store.add_approval("s1", "Deploy?", inbox="ops")
-    # An inbound "approve [ocw:<id>]" resolves exactly that item.
-    ok = resolve_from_reply(f"approve [ocw:{item.id}]", store.resolve)
+    # Current token spelling…
+    ok = resolve_from_reply(f"approve [ow:{item.id}]", store.resolve)
     assert ok is True
     assert store.get(item.id).resolution == "allow"
 
@@ -73,10 +73,18 @@ def test_inbound_reply_resolves_correct_item(tmp_path):
 def test_inbound_freetext_answer_to_question(tmp_path):
     store = InboxStore(tmp_path / "inbox.json")
     q = store.add_question("s1", "Which region?")
-    res = resolve_from_reply(f"us-east-1 [ocw:{q.id}]", store.resolve)
+    res = resolve_from_reply(f"us-east-1 [ow:{q.id}]", store.resolve)
     assert res is True and store.get(q.id).resolution == "us-east-1"
 
 
 def test_reply_without_token_is_ignored(tmp_path):
     store = InboxStore(tmp_path / "inbox.json")
     assert resolve_from_reply("random chatter", store.resolve) is None
+
+
+def test_inbound_legacy_ocw_token_still_resolves(tmp_path):
+    """Replies to messages sent BEFORE the @OpenWorker rename carry [ocw:…] — must keep working."""
+    store = InboxStore(tmp_path / "inbox.json")
+    item = store.add_approval("s1", "Deploy?", inbox="ops")
+    assert resolve_from_reply(f"deny [ocw:{item.id}]", store.resolve) is True
+    assert store.get(item.id).resolution == "deny"

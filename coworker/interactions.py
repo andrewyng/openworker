@@ -2,7 +2,7 @@
 
 When an Inbox item is mirrored to a channel, discrete choices (approve/deny, an ask_user option)
 render as **buttons**. The item id rides in each button's value, so a click resolves the exact
-item — no `[ocw:id]`-in-reply fragility, no thread tracking. Free-text answers aren't offered over
+item — no `[ow:id]`-in-reply fragility, no thread tracking. Free-text answers aren't offered over
 messaging (the user opens the app for those).
 
 Provider-agnostic: a `Button` is `(label, value)`; each adapter renders it natively (Slack Block

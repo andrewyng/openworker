@@ -10,7 +10,7 @@ busy→steer / idle→background-turn path as self-wake — no live socket requi
 gateway's `format_target` / `parse_target`.
 
 NOTE: this is *not* Inbox routing. Routing mirrors an agent's approvals/questions OUT to a
-DM/channel (request↔reply, `[ocw:id]`-correlated); a subscription brings a channel's messages IN
+DM/channel (request↔reply, `[ow:id]`-correlated); a subscription brings a channel's messages IN
 (broadcast). Keep them on different channels — pointing your Inbox at a channel you also subscribe
 to conflates the two directions.
 """

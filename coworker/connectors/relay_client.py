@@ -329,7 +329,7 @@ class SlackRelayAdapter(BasePlatformAdapter):
             return
         channel = mapped.source.chat_id  # bare channel id before qualification
         # Resolve friendly names with THIS workspace's bot token (cached per team),
-        # mirroring the Socket-Mode adapter — so cards read "@ocw"/"Rohit"/"#ocw-test"
+        # mirroring the Socket-Mode adapter — so cards read "@OpenWorker"/"Rohit"/"#ocw-test"
         # not raw U…/C… ids. Best-effort: ids fall through on failure.
         if not mapped.source.user_name:
             mapped.source.user_name = await self._display_name(
