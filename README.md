@@ -6,7 +6,7 @@
 
 **AI that gets your everyday tasks done.** OpenWorker is an open-source AI coworker that lives on your desktop and delivers **finished work**, not just chat: a polished document, a Slack reply with the numbers, an updated calendar, a triaged inbox.
 
-It runs on your machine and doesn't lock you into any model: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider, or run fully local with Ollama. Your data leaves your machine only through the model and integrations *you* choose.
+It runs on your machine and doesn't lock you into a single AI provider: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider, or run entirely locally with Ollama. Your data leaves your machine only when you send it to the model providers and integrations *you* choose.
 
 [![How OpenWorker works](docs/assets/how-it-works.png)](https://openworker.com)
 
