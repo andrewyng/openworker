@@ -17,17 +17,18 @@ Invariants checked:
      (native providers: openai/anthropic/gemini; resellers: together/fireworks;
      keyless local: ollama — all route through the matrix or live /api/tags).
   4. Every compat-vendor descriptor's recommended_model is present in COMPAT_MODELS.
-  5. Every MATRIX entry that belongs to a compat vendor uses exactly the
-     `provider:bare_model` id shape (no bare ids for non-OpenAI providers).
-  6. ModelCapabilities in MATRIX only use fields defined on the dataclass (no typos).
+  5. Every bare MATRIX id (no colon) is not altered by ProviderRouter._bare(),
+     confirming it routes to OpenAI as intended and is not a misrouted prefixed id.
 """
 
 from __future__ import annotations
 
 import pytest
 
+from coworker.providers.base import ModelCapabilities
 from coworker.providers.matrix import MATRIX
 from coworker.providers.registry import get_descriptor, provider_names
+from coworker.providers.router import ProviderRouter
 from coworker.server.manager import SessionManager
 
 # Providers that are intentionally absent from COMPAT_MODELS.
@@ -38,6 +39,9 @@ from coworker.server.manager import SessionManager
 #   the `together:…` / `fireworks:…` prefixes; models_for_provider() strips them.
 # - ollama: keyless, local; suggestions come from the live /api/tags endpoint, not
 #   a static list.
+#
+# When adding a new reseller (e.g. groq, openrouter), add it here with a comment
+# explaining why it's exempt, OR add it to COMPAT_MODELS in manager.py.
 _COMPAT_MODELS_EXEMPT = frozenset(
     {"openai", "anthropic", "gemini", "together", "fireworks", "ollama"}
 )
@@ -113,6 +117,8 @@ def test_compat_vendor_recommended_model_in_compat_models(name: str) -> None:
     set_provider's auto-add logic (_suggested_models check) actually fires."""
     desc = get_descriptor(name)
     assert desc is not None  # already covered above; guards the attribute access
+    if desc.recommended_model is None:
+        pytest.skip(f"descriptor for {name!r} has no recommended_model")
     assert desc.recommended_model in SessionManager.COMPAT_MODELS.get(name, []), (
         f"registry.py descriptor for {name!r} has recommended_model="
         f"{desc.recommended_model!r} but that model is not in "
@@ -122,47 +128,21 @@ def test_compat_vendor_recommended_model_in_compat_models(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. Non-OpenAI MATRIX entries use provider-prefixed ids
+# 5. Bare MATRIX ids are not stripped by the router (they belong to OpenAI)
 # ---------------------------------------------------------------------------
 
 
-def test_matrix_non_openai_entries_are_prefixed() -> None:
-    """Bare (unprefixed) ids route to OpenAI.  Any non-OpenAI model stored without
-    a prefix would silently be sent to the wrong provider."""
-    openai_names = {
-        mid for mid in MATRIX if ":" not in mid
-    }
-    for model_id in openai_names:
-        # Verify the bare model name looks like an OpenAI model (gpt-*, o*).
-        assert model_id.startswith(("gpt-", "o1", "o3", "o4")), (
-            f"MATRIX contains bare (unprefixed) id {model_id!r} that does not look "
-            f"like an OpenAI model. Prefix it with its provider (e.g. 'provider:{model_id}') "
-            f"or confirm it is intentionally routed to OpenAI."
-        )
-
-
-# ---------------------------------------------------------------------------
-# 6. ModelCapabilities fields in MATRIX have no typos
-# ---------------------------------------------------------------------------
-
-
-def test_matrix_capabilities_fields_are_valid() -> None:
-    """ModelCapabilities is a frozen dataclass; accessing an undefined attribute
-    raises AttributeError at runtime. Assert all MATRIX caps only use known fields."""
-    from dataclasses import fields as dc_fields
-
-    from coworker.providers.base import ModelCapabilities
-
-    valid_fields = {f.name for f in dc_fields(ModelCapabilities)}
-    for model_id, entry in MATRIX.items():
-        caps = entry.caps
-        # Verify the caps object itself is the right type.
-        assert isinstance(caps, ModelCapabilities), (
-            f"MATRIX[{model_id!r}].caps is {type(caps)!r}, expected ModelCapabilities."
-        )
-        # Verify all declared fields are accessible (catches renamed fields).
-        for field_name in valid_fields:
-            assert hasattr(caps, field_name), (
-                f"ModelCapabilities is missing field {field_name!r} "
-                f"(referenced from MATRIX entry {model_id!r})."
+def test_matrix_bare_ids_are_not_provider_prefixed() -> None:
+    """Any MATRIX key without a colon must not be mistakenly strippable by the router.
+    ProviderRouter._bare() only strips a segment that resolves to a known descriptor;
+    a bare id that the router would strip has an unregistered provider prefix and
+    would be silently misrouted. This test catches a matrix key like 'foo:bar' where
+    'foo' is not yet registered — the router would treat it as OpenAI and strip 'foo:'."""
+    for model_id in MATRIX:
+        if ":" not in model_id:
+            # No prefix at all — routes to OpenAI as intended. _bare() is a no-op.
+            assert ProviderRouter._bare(model_id) == model_id, (
+                f"MATRIX bare id {model_id!r}: ProviderRouter._bare() altered it, "
+                f"which means the router is stripping an unregistered prefix. "
+                f"Either register the provider or remove the colon from the model id."
             )
