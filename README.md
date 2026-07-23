@@ -62,7 +62,7 @@ OpenWorker is local-first. Everything lives on your machine: the agent loop, you
 
 ## Run from source
 
-Prerequisites: Python 3.10+, Node 20+, and (for the desktop shell) the Rust toolchain via [rustup](https://rustup.rs/).
+Prerequisites: Python 3.11+, Node 20+, and (for the desktop shell) the Rust toolchain via [rustup](https://rustup.rs/).
 
 ```shell
 git clone https://github.com/andrewyng/openworker
