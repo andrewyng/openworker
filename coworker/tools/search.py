@@ -1,7 +1,7 @@
 """Fast code search (`grep`) — ripgrep when available, a Python walk otherwise.
 
-ripgrep respects `.gitignore`, so it skips `node_modules`/`target`/`dist` automatically; the
-fallback skips a hardcoded set of heavy dirs. Read-only, workspace-scoped. Returns file:line:text.
+Both engines skip known dependency/build directories, while ripgrep also respects `.gitignore`.
+Read-only, workspace-scoped. Returns file:line:text.
 """
 
 from __future__ import annotations
@@ -98,6 +98,11 @@ def search_tools(workspace: str) -> list:
             ]
             if glob:
                 cmd += ["--glob", glob]
+            # ripgrep only skips these directories when a matching ignore file happens
+            # to exist. Keep its behavior aligned with the Python fallback for every
+            # workspace, including directories that are not Git repositories.
+            for ignored_dir in sorted(_IGNORE_DIRS):
+                cmd += ["--glob", f"!**/{ignored_dir}/**"]
             cmd.append(str(base))
             try:
                 out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
