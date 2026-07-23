@@ -96,6 +96,10 @@ def search_tools(workspace: str) -> list:
                 "-e",
                 pattern,
             ]
+            # Do not rely solely on a workspace's .gitignore: the Python fallback
+            # always omits these generated/dependency directories too.
+            for ignored in sorted(_IGNORE_DIRS):
+                cmd += ["--glob", f"!**/{ignored}/**"]
             if glob:
                 cmd += ["--glob", glob]
             cmd.append(str(base))

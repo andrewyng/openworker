@@ -7,6 +7,7 @@ against temp dirs (git_log needs a real `git`, which the dev box has).
 from __future__ import annotations
 
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -37,6 +38,25 @@ def test_grep_finds_matches_and_respects_glob(tmp_path):
     only_py = grep(pattern="hello", glob="*.py")
     assert all(m["file"].endswith(".py") for m in only_py["matches"])
     assert only_py["matches"][0]["line"] == 1
+
+
+def test_ripgrep_uses_the_same_ignored_dirs_as_the_python_fallback(tmp_path, monkeypatch):
+    import coworker.tools.search as search
+
+    commands = []
+    monkeypatch.setattr(search.shutil, "which", lambda name: "rg")
+    monkeypatch.setattr(
+        search.subprocess,
+        "run",
+        lambda cmd, **kwargs: commands.append(cmd)
+        or SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+
+    search_tools(str(tmp_path))[0](pattern="hello")
+
+    assert commands
+    for ignored in search._IGNORE_DIRS:
+        assert f"!**/{ignored}/**" in commands[0]
 
 
 def test_grep_rejects_path_escape(tmp_path):
