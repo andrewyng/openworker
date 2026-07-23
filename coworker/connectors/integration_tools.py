@@ -3276,6 +3276,190 @@ def make_integration_tools(
         )
     )
 
+    # -- obsidian (local vault — plain files, no network; obsidian_tools.py) --
+
+    def _obsidian_vault():
+        from pathlib import Path
+
+        profile, err = _profile(secrets, "obsidian", "vault_path")
+        if err:
+            return None, err
+        vault = Path(profile["vault_path"]).expanduser()
+        if not (vault / ".obsidian").is_dir():
+            return None, {
+                "error": "vault folder is missing or moved — reconnect Obsidian"
+            }
+        return vault, None
+
+    def obsidian_search_notes(
+        query: str, tag: str = "", max_results: int = 10
+    ) -> dict[str, Any]:
+        vault, err = _obsidian_vault()
+        if err:
+            return err
+        from . import obsidian_tools
+
+        return obsidian_tools.search_notes(
+            vault, query, tag=tag, max_results=max_results
+        )
+
+    obsidian_search_notes.__name__ = "obsidian_search_notes"
+    tools.append(
+        _attach(
+            obsidian_search_notes,
+            _schema(
+                "obsidian_search_notes",
+                "Search Obsidian vault notes by title, tag, or content.",
+                {
+                    "query": {"type": "string"},
+                    "tag": {"type": "string"},
+                    "max_results": {"type": "integer"},
+                },
+                ["query"],
+            ),
+            caps=["obsidian", "read"],
+        )
+    )
+
+    def obsidian_read_note(note: str) -> dict[str, Any]:
+        vault, err = _obsidian_vault()
+        if err:
+            return err
+        from . import obsidian_tools
+
+        return obsidian_tools.read_note(vault, note)
+
+    obsidian_read_note.__name__ = "obsidian_read_note"
+    tools.append(
+        _attach(
+            obsidian_read_note,
+            _schema(
+                "obsidian_read_note",
+                "Read one note by title, relative path, or [[wikilink]].",
+                {"note": {"type": "string"}},
+                ["note"],
+            ),
+            caps=["obsidian", "read"],
+        )
+    )
+
+    def obsidian_list_notes(folder: str = "", max_results: int = 30) -> dict[str, Any]:
+        vault, err = _obsidian_vault()
+        if err:
+            return err
+        from . import obsidian_tools
+
+        return obsidian_tools.list_notes(vault, folder=folder, max_results=max_results)
+
+    obsidian_list_notes.__name__ = "obsidian_list_notes"
+    tools.append(
+        _attach(
+            obsidian_list_notes,
+            _schema(
+                "obsidian_list_notes",
+                "List recently modified notes, optionally within one folder.",
+                {"folder": {"type": "string"}, "max_results": {"type": "integer"}},
+                [],
+            ),
+            caps=["obsidian", "read"],
+        )
+    )
+
+    def obsidian_backlinks(note: str) -> dict[str, Any]:
+        vault, err = _obsidian_vault()
+        if err:
+            return err
+        from . import obsidian_tools
+
+        return obsidian_tools.backlinks(vault, note)
+
+    obsidian_backlinks.__name__ = "obsidian_backlinks"
+    tools.append(
+        _attach(
+            obsidian_backlinks,
+            _schema(
+                "obsidian_backlinks",
+                "List the notes that [[wikilink]] to a given note.",
+                {"note": {"type": "string"}},
+                ["note"],
+            ),
+            caps=["obsidian", "read"],
+        )
+    )
+
+    def obsidian_daily_note(date: str = "") -> dict[str, Any]:
+        vault, err = _obsidian_vault()
+        if err:
+            return err
+        from . import obsidian_tools
+
+        return obsidian_tools.daily_note(vault, date=date)
+
+    obsidian_daily_note.__name__ = "obsidian_daily_note"
+    tools.append(
+        _attach(
+            obsidian_daily_note,
+            _schema(
+                "obsidian_daily_note",
+                "Read the daily note for today, or for a YYYY-MM-DD date.",
+                {"date": {"type": "string"}},
+                [],
+            ),
+            caps=["obsidian", "read"],
+        )
+    )
+
+    def obsidian_write_note(
+        note: str, content: str, mode: str = "append"
+    ) -> dict[str, Any]:
+        vault, err = _obsidian_vault()
+        if err:
+            return err
+        from . import obsidian_tools
+
+        return obsidian_tools.write_note(vault, note, content, mode=mode)
+
+    obsidian_write_note.__name__ = "obsidian_write_note"
+    tools.append(
+        _attach(
+            obsidian_write_note,
+            _schema(
+                "obsidian_write_note",
+                "Append to, create, or overwrite a vault note (mode: append | create | overwrite).",
+                {
+                    "note": {"type": "string"},
+                    "content": {"type": "string"},
+                    "mode": {"type": "string"},
+                },
+                ["note", "content"],
+            ),
+            approval=True,
+            caps=["obsidian", "write"],
+        )
+    )
+
+    def open_in_obsidian(note: str) -> dict[str, Any]:
+        vault, err = _obsidian_vault()
+        if err:
+            return err
+        from . import obsidian_tools
+
+        return obsidian_tools.open_in_obsidian(vault, note)
+
+    open_in_obsidian.__name__ = "open_in_obsidian"
+    tools.append(
+        _attach(
+            open_in_obsidian,
+            _schema(
+                "open_in_obsidian",
+                "Open a note in the user's Obsidian app (obsidian:// hand-off).",
+                {"note": {"type": "string"}},
+                ["note"],
+            ),
+            caps=["obsidian", "read"],
+        )
+    )
+
     # -- attio (managed OAuth or API key, multi-workspace) --
 
     def attio_list_objects(account: str = "") -> dict[str, Any]:

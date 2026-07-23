@@ -155,6 +155,7 @@ const CONNECTORS = {
     // (two-mode modal). Neither needs cloud sign-in.
     { name: "monday", title: "monday.com", icon: "▦", blurb: "Read boards and items, track work, create items and post updates.", aliases: ["project management", "tasks", "boards"], auth: "oauth", two_way: false, channels: false, available: true, brand_color: "#6161ff", logo: "monday", mcp: true, fields: [], instructions: ["One click connects via monday.com sign-in in your browser.", "Sign-in is fully local — tokens stay on this Mac."], connected: false, account: null, enabled: false, allowed_users: [], tools: [{ name: "mcp__monday__get_board_info", label: "Read board", kind: "read", description: "Read a board's columns and groups.", enabled: true, requires_approval: false }, { name: "mcp__monday__create_item", label: "Create item", kind: "write", description: "Create an item on a board.", enabled: true, requires_approval: true }], managed: false, managed_profile: false },
     { name: "jira", title: "Jira", icon: "◆", blurb: "Search, summarize, create, and update issues.", aliases: ["issues", "tickets", "atlassian"], auth: "api_token", two_way: false, channels: false, available: true, brand_color: "#0052cc", logo: "jira", mcp: true, fields: [{ key: "base_url", label: "Atlassian site URL", secret: false, required: true, help: "", placeholder: "" }, { key: "email", label: "Account email", secret: false, required: true, help: "", placeholder: "" }, { key: "api_token", label: "API token", secret: true, required: true, help: "", placeholder: "" }], instructions: [], connected: false, account: null, enabled: false, allowed_users: [], tools: [], managed: false, managed_profile: false },
+    { name: "obsidian", title: "Obsidian", icon: "\u25c8", blurb: "Search, read, and write notes in your local vault \u2014 no account needed.", auth: "folder", two_way: false, channels: false, available: true, brand_color: "#7c3aed", logo: "obsidian", fields: [{ key: "vault_path", label: "Vault folder", secret: false, required: true, help: "The folder holding your notes.", placeholder: "~/Documents/MyVault", kind: "folder" }], instructions: ["Pick your vault folder \u2014 no account, no keys."], connected: false, account: null, enabled: false, allowed_users: [], tools: [], managed: false, managed_profile: false },
   ],
 };
 
@@ -1085,6 +1086,14 @@ export async function mockApi(page: import("@playwright/test").Page) {
       if (Array.isArray(b.hidden_fields))
         hubspotState.hidden_fields = b.hidden_fields.map((f: string) => f.trim().toLowerCase());
       return json({ ok: true, hidden_fields: [...hubspotState.hidden_fields] });
+    }
+    if (p.endsWith("/v1/connectors/obsidian/connect") && m === "POST") {
+      const path = String(req.postDataJSON()?.fields?.vault_path || "");
+      if (!path) return json({ ok: false, error: "pick your vault folder" });
+      if (!path.includes("Vault")) return json({ ok: false, error: "that folder isn't an Obsidian vault" });
+      const row = CONNECTORS.connectors.find((c: any) => c.name === "obsidian");
+      if (row) { row.connected = true; row.enabled = true; row.account = "MyVault"; }
+      return json({ ok: true, account: "MyVault" });
     }
     if (p.endsWith("/v1/connectors"))
       return json({
