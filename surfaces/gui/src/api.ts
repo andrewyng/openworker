@@ -391,6 +391,7 @@ export interface Connector {
   unauthorized?: ParkedMessage[]; // parked messages from unallowed senders (§19)
   tools: ConnectorTool[];
   managed: boolean; // one-click managed OAuth available (needs cloud sign-in)
+  managed_paused?: boolean; // one-click temporarily off (e.g. Google CASA pending) — badge "Coming soon"
   managed_profile: boolean; // current profile came from managed OAuth (vs manual paste)
   mode?: string; // "relay" for the managed cloud path; "" for manual/token connect
   workspaces?: SlackWorkspace[]; // Slack only: connected workspaces (managed relay)

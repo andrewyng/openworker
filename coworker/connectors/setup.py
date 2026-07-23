@@ -97,6 +97,7 @@ def connector_list(secrets: SecretStore) -> list[dict[str, Any]]:
             "experimental": d.experimental,
             "risk_notice": d.risk_notice,
             "managed": d.managed,
+            "managed_paused": d.managed_paused,
             # Whether THIS profile came from managed OAuth (vs manual paste).
             "managed_profile": bool(profile.get("managed")),
             # "relay" for the managed cloud path; empty for manual/token connect.

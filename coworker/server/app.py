@@ -968,7 +968,15 @@ def create_app(manager: SessionManager) -> FastAPI:
 
         from .. import cloud
         from ..config import load_config
+        from ..connectors.descriptors import get_descriptor
 
+        d = get_descriptor(name)
+        if d is not None and d.managed_paused:
+            # GUI shows the Coming-soon state; this guard covers stale GUIs/API callers.
+            return {
+                "ok": False,
+                "error": f"one-click connect for {d.title} is coming soon — connect manually for now",
+            }
         access = str((body or {}).get("access") or "")
         flow = str((body or {}).get("flow") or "")  # github: "" install | "authorize"
         out = await asyncio.to_thread(

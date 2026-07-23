@@ -751,3 +751,18 @@ def test_always_allow_grants_survive_restart(tmp_path):
     # "Restart": new manager + engine rebuilt from the persisted record.
     mgr2 = SessionManager(workspace=None, provider=_shell_turns())
     _run_turn(TestClient(create_app(mgr2)), expect_prompts=0)
+
+
+def test_google_one_click_paused_but_manual_alive(tmp_path):
+    """CASA verification pending: Gmail/Calendar/Drive expose managed_paused (GUI badges
+    "Coming soon"), the managed-connect route refuses, and the manual fields stay."""
+    client = _client(tmp_path, [])
+    connectors = {c["name"]: c for c in client.get("/v1/connectors").json()["connectors"]}
+    for name in ("gmail", "google_calendar", "google_drive"):
+        c = connectors[name]
+        assert c["managed"] is True and c["managed_paused"] is True
+        assert c["fields"], f"{name} lost its manual fields"
+    assert connectors["slack"]["managed_paused"] is False  # only Google is paused
+
+    refused = client.post("/v1/connectors/gmail/connect-managed", json={}).json()
+    assert refused["ok"] is False and "coming soon" in refused["error"]

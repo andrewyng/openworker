@@ -82,6 +82,10 @@ class ConnectorDescriptor:
     # is an extra path, never a replacement (local-only open-source flow is
     # sacred).
     managed: bool = False
+    # One-click temporarily unavailable (e.g. Google pending CASA verification):
+    # the GUI shows a disabled button with a "Coming soon" badge, the server
+    # refuses begin_managed_connect, and the manual path is unaffected.
+    managed_paused: bool = False
     # Multi-account (accounts.py generic layer): the creds field that names an
     # account (e.g. "project_id"), or "@identity" = the validator's identity
     # string. Non-empty → profiles live at `<name>:account:<id>` and the
@@ -558,6 +562,8 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         ],
         available=True,
         managed=True,
+        # Google OAuth verification (CASA) pending — one-click off until it clears.
+        managed_paused=True,
     ),
     ConnectorDescriptor(
         name="google_calendar",
@@ -582,6 +588,7 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         ],
         available=True,
         managed=True,
+        managed_paused=True,  # same Google app as Gmail — paused until CASA clears
     ),
     ConnectorDescriptor(
         name="browser",
@@ -1119,12 +1126,13 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
             ),
         ],
         instructions=[
-            "One click connects via OpenWorker Cloud (recommended).",
-            "Manual: use a Google OAuth access token with Drive readonly scope.",
+            "Use a Google OAuth access token with Drive readonly scope.",
+            "Paste the access token below.",
         ],
         validate=_validate_google_drive,
         available=True,
         managed=True,
+        managed_paused=True,  # same Google app as Gmail — paused until CASA clears
         # Key each connected account by its Google email (the broker's `account`
         # field) so multiple Drive accounts list the same way Gmail's do, rather
         # than by the opaque `sub` that account_field="account_id" would use.

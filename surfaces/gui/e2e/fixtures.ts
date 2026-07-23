@@ -399,6 +399,10 @@ export async function mockApi(page: import("@playwright/test").Page) {
   });
   // Gmail — PER-TEST multi-account state (starts disconnected; managed connects add
   // mailboxes instantly, mirroring the backend's gmail:account:<email> profiles).
+  // NOTE: the real server currently sends managed_paused: true for the Google trio
+  // (CASA pending). The fixture keeps gmail UNPAUSED because the cloud-machinery specs
+  // use its one-click as their subject; the paused UI is covered by google-paused.spec.ts
+  // via a per-test connectors override.
   const gmailState = {
     accounts: [] as {
       email: string; default: boolean; managed: boolean; scopes: string; needs_reauth: boolean;

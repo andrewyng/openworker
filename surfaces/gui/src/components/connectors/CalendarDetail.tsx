@@ -46,13 +46,19 @@ export function CalendarDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
           </div>
         </div>
         <button
-          className={PILL_ACCENT}
+          className={PILL_ACCENT + (c.managed_paused ? " opacity-50" : "")}
           data-testid="add-account-btn"
           onClick={addAccount}
-          disabled={busy || !cloud?.signed_in}
-          title={cloud?.signed_in ? "" : "Sign in to OpenWorker Cloud first"}
+          disabled={busy || !cloud?.signed_in || c.managed_paused}
+          title={
+            c.managed_paused
+              ? "One-click Google sign-in is coming soon"
+              : cloud?.signed_in
+                ? ""
+                : "Sign in to OpenWorker Cloud first"
+          }
         >
-          {busy ? "Check your browser…" : "＋ Add account"}
+          {c.managed_paused ? "＋ Add account · Coming soon" : busy ? "Check your browser…" : "＋ Add account"}
         </button>
       </div>
 
