@@ -51,7 +51,7 @@ fn free_port() -> u16 {
 ///      builds used Tauri externalBin).
 ///   4. Dev fallback: the repo venv, relative to this crate (`src-tauri` → `platform/.venv`;
 ///      `bin/` on POSIX, `Scripts\` on Windows).
-fn server_bin() -> PathBuf {
+fn server_bin(product_name: Option<&str>) -> PathBuf {
     if let Ok(p) = std::env::var("COWORKER_SERVER_BIN") {
         return PathBuf::from(p);
     }
@@ -65,8 +65,20 @@ fn server_bin() -> PathBuf {
             // macOS: Contents/MacOS/<app> → Contents/Resources/sidecar/; Windows: resources
             // unpack next to the exe, so <install>/sidecar/.
             let mut candidates = vec![dir.join("sidecar").join(exe_name)];
-            if let Some(contents) = dir.parent() {
-                candidates.push(contents.join("Resources").join("sidecar").join(exe_name));
+            if let Some(parent) = dir.parent() {
+                // macOS: <bundle>/Contents/MacOS/<app> → Contents/Resources/sidecar/.
+                candidates.push(parent.join("Resources").join("sidecar").join(exe_name));
+                // Linux (AppImage / deb / rpm): the exe ships in usr/bin/ while Tauri
+                // unpacks `resources` to usr/lib/<productName>/ (NOT the cargo pkg name —
+                // verified in a built AppImage: usr/bin/openworker-desktop but
+                // usr/lib/OpenWorker/sidecar/). product_name comes from the Tauri config so
+                // this never desyncs from tauri.conf.json. Without this candidate the server
+                // is never found inside a bundled AppImage and the GUI stalls on "Starting
+                // coworker…".
+                #[cfg(target_os = "linux")]
+                if let Some(name) = product_name {
+                    candidates.push(parent.join("lib").join(name).join("sidecar").join(exe_name));
+                }
             }
             candidates.push(dir.join(exe_name)); // legacy onefile externalBin slot
             for c in candidates {
@@ -141,7 +153,8 @@ fn write_keep_awake_pref(enabled: bool) {
 // Cross-platform behind a uniform `start_keep_awake() -> Option<KeepAwakeGuard>`; dropping the
 // guard releases the hold. macOS uses the built-in `caffeinate`; Windows uses the
 // SetThreadExecutionState API (a dedicated thread holds ES_CONTINUOUS so the state survives
-// regardless of which Tauri worker thread toggled it); other platforms are a no-op.
+// regardless of which Tauri worker thread toggled it); Linux uses `systemd-inhibit` when
+// available, falling back to a no-op on systems without systemd (containers, some WSL setups).
 
 #[cfg(target_os = "macos")]
 struct KeepAwakeGuard(Child);
@@ -210,13 +223,43 @@ fn start_keep_awake() -> Option<KeepAwakeGuard> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-struct KeepAwakeGuard;
+struct KeepAwakeGuard(Option<Child>);
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+impl Drop for KeepAwakeGuard {
+    fn drop(&mut self) {
+        // Killing the child (systemd-inhibit) releases the sleep hold, mirroring macOS's
+        // caffeinate kill. None on the no-op fallback path.
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+        }
+    }
+}
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn start_keep_awake() -> Option<KeepAwakeGuard> {
-    // No portable built-in inhibitor on Linux; keep-awake is a no-op (the toggle still reflects
-    // state so the UI behaves, but the OS sleep policy is left to the user).
-    Some(KeepAwakeGuard)
+    // Try systemd-inhibit (present on virtually every modern Linux distro). `--mode=block`
+    // holds the inhibition for as long as the child (`sleep infinity`) is alive; killing the
+    // child here releases the hold, mirroring macOS's caffeinate.
+    // If systemd-inhibit is absent or spawn fails (containers, non-systemd distros, WSL without
+    // systemd), fall back to a no-op guard so the toggle still reflects state but the OS sleep
+    // policy is left to the user — same behaviour as before this change. Detection is runtime:
+    // there is no build-time guarantee systemd is present, so we probe instead of assuming.
+    Command::new("systemd-inhibit")
+        .args([
+            "--what=sleep",
+            "--why=OpenWorker is working",
+            "--mode=block",
+            "sleep",
+            "infinity",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()
+        .map(|child| KeepAwakeGuard(Some(child)))
+        .or_else(|| Some(KeepAwakeGuard(None)))
 }
 
 // -- native commands (invoked from the SPA via window.__TAURI__.core.invoke) -----------------
@@ -366,11 +409,32 @@ fn voice_input_compatibility() -> (bool, String, Option<String>) {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn voice_input_compatibility() -> (bool, String, Option<String>) {
-    (
-        false,
-        format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH),
-        Some("Voice Input is currently supported on macOS and Windows.".to_owned()),
-    )
+    // The STT engine (cpal ALSA backend + whisper-rs on CPU) builds and runs on Linux, so the
+    // only gate is whether a microphone is reachable. Probe cpal at runtime so voice input is
+    // offered on Linux desktops with audio input and cleanly disabled elsewhere (headless
+    // servers, containers without ALSA, WSL without an audio sink) — exactly the pattern the UI
+    // already handles via `supported` + `compatibility_reason`.
+    let arch = std::env::consts::ARCH;
+    let summary = format!("{} · {}", std::env::consts::OS, arch);
+    let (supported, reason) = if arch != "x86_64" && arch != "aarch64" {
+        (
+            false,
+            Some(format!(
+                "Voice Input is not built for the {arch} architecture on Linux."
+            )),
+        )
+    } else if !ocw_stt::input_device_available() {
+        (
+            false,
+            Some(
+                "No microphone is available. Connect an audio input device and check your sound settings."
+                    .to_owned(),
+            ),
+        )
+    } else {
+        (true, None)
+    };
+    (supported, summary, reason)
 }
 
 #[tauri::command]
@@ -620,7 +684,7 @@ pub fn run() {
         ])
         .setup(move |app| {
             // 1. Start the Python server sidecar on the chosen port (inherits our env).
-            let mut server_cmd = Command::new(server_bin());
+            let mut server_cmd = Command::new(server_bin(app.config().product_name.as_deref()));
             server_cmd
                 .args(["--host", "127.0.0.1", "--port", &port.to_string()])
                 // The sidecar self-exits if we die abruptly (dev-watcher restart, crash) —

@@ -35,6 +35,7 @@ import sys
 ARTIFACTS = {
     "OpenWorker-macos-arm64.app.tar.gz": "darwin-aarch64",
     "OpenWorker-windows-setup.exe": "windows-x86_64",
+    "OpenWorker-linux-x86_64.AppImage.tar.gz": "linux-x86_64",
 }
 
 
