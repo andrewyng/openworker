@@ -134,16 +134,24 @@ def _rel(path: str, root: Path) -> str:
         return path
 
 
+# ripgrep --no-heading --line-number emits "<path>:<line>:<text>". A positional
+# split(":", 2) mis-parses on Windows, where the absolute path starts with a
+# drive letter ("C:\...") whose colon looks like the field separator. Anchor on
+# the numeric ":<line>:" instead, so both the drive-letter colon and any colons
+# inside the matched text stay intact.
+_RG_LINE = re.compile(r"(.+?):(\d+):(.*)")
+
+
 def _parse_rg(stdout: str, root: Path, n: int) -> dict[str, Any]:
     matches: list[dict[str, Any]] = []
     for line in stdout.splitlines():
-        parts = line.split(":", 2)
-        if len(parts) == 3:
-            f, ln, txt = parts
+        m = _RG_LINE.match(line)
+        if m:
+            f, ln, txt = m.group(1), m.group(2), m.group(3)
             matches.append(
                 {
                     "file": _rel(f, root),
-                    "line": int(ln) if ln.isdigit() else 0,
+                    "line": int(ln),
                     "text": txt[:300],
                 }
             )
