@@ -98,8 +98,60 @@ class SQLiteMemoryStore(MemoryStore):
             self._conn.commit()
         return cursor.rowcount > 0
 
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        scope: Optional[Scope] = None,
+        workspace: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> list[MemoryItem]:
+        items = self.list(scope=scope, workspace=workspace, session_id=session_id)
+        if not items:
+            return []
+        if not query or not query.strip():
+            return items[:limit]
+
+        scored = []
+        for item in items:
+            score = _cosine_similarity(query, item.content)
+            scored.append((score, item))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [item for score, item in scored[:limit]]
+
     def close(self) -> None:
         self._conn.close()
+
+
+def _tokenize(text: str) -> list[str]:
+    import re
+    return [w.lower() for w in re.findall(r"\w+", text)]
+
+
+def _cosine_similarity(text1: str, text2: str) -> float:
+    import math
+    from collections import Counter
+
+    tokens1 = _tokenize(text1)
+    tokens2 = _tokenize(text2)
+    if not tokens1 or not tokens2:
+        return 0.0
+
+    vec1 = Counter(tokens1)
+    vec2 = Counter(tokens2)
+
+    intersection = set(vec1.keys()) & set(vec2.keys())
+    numerator = sum(vec1[x] * vec2[x] for x in intersection)
+
+    sum1 = sum(vec1[x] ** 2 for x in vec1.keys())
+    sum2 = sum(vec2[x] ** 2 for x in vec2.keys())
+    denominator = math.sqrt(sum1) * math.sqrt(sum2)
+
+    if not denominator:
+        return 0.0
+    return float(numerator) / denominator
 
 
 def _row_to_item(row: sqlite3.Row) -> MemoryItem:
