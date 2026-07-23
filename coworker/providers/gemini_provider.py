@@ -257,7 +257,11 @@ def convert_messages(
 
 
 def _sanitize_schema(schema: Any) -> Any:
-    """Strip JSON Schema keys Gemini's OpenAPI subset rejects (recursively)."""
+    """Strip JSON Schema keys Gemini's OpenAPI subset rejects (recursively), and coerce
+    list-valued `type` (JSON Schema union, e.g. ["string", "number"] — common in vendor
+    MCP tool schemas) into shapes the API accepts: null joins as `nullable`, a single
+    remaining type stays `type`, several become `anyOf` (owner-hit 2026-07-23: monday's
+    compareValue union 400'd every Gemini turn in sessions with MCP tools)."""
     if not isinstance(schema, dict):
         return schema
     cleaned: dict[str, Any] = {}
@@ -270,6 +274,14 @@ def _sanitize_schema(schema: Any) -> Any:
             cleaned[key] = _sanitize_schema(value)
         elif key == "anyOf" and isinstance(value, list):
             cleaned[key] = [_sanitize_schema(sub) for sub in value]
+        elif key == "type" and isinstance(value, list):
+            types = [t for t in value if t != "null"]
+            if len(value) != len(types):
+                cleaned["nullable"] = True
+            if len(types) == 1:
+                cleaned["type"] = types[0]
+            elif types:
+                cleaned["anyOf"] = [{"type": t} for t in types]
         else:
             cleaned[key] = value
     return cleaned
