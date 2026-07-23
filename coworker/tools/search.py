@@ -96,12 +96,13 @@ def search_tools(workspace: str) -> list:
                 "-e",
                 pattern,
             ]
-            # Do not rely solely on a workspace's .gitignore: the Python fallback
-            # always omits these generated/dependency directories too.
-            for ignored in sorted(_IGNORE_DIRS):
-                cmd += ["--glob", f"!**/{ignored}/**"]
             if glob:
                 cmd += ["--glob", glob]
+            # Do not rely solely on a workspace's .gitignore: the Python fallback
+            # always omits these generated/dependency directories too. Exclusions come
+            # last because ripgrep resolves conflicting globs with the later one winning.
+            for ignored in sorted(_IGNORE_DIRS):
+                cmd += ["--glob", f"!**/{ignored}/**"]
             cmd.append(str(base))
             try:
                 out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
