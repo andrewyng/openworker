@@ -40,6 +40,7 @@ export const PROVIDER_ORDER = [
   "openai",
   "gemini",
   "ollama",
+  "selfhosted",
   "fireworks",
   "together",
   "zai",

@@ -133,6 +133,26 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     return OpenAIProvider(api_key="ollama", base_url=base_url)
 
 
+def _build_self_hosted(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    # A user-run, OpenAI-compatible model server (vLLM, TGI, SGLang, LMDeploy, llama.cpp, …),
+    # typically GPU-backed. Both the endpoint and the key are deployment-specific, so BOTH come
+    # from this provider's own profile — never the OpenAI env/SecretStore fallback, so an OpenAI
+    # key is never sent to a self-hosted host. Built on demand (only when a `selfhosted:` model is
+    # selected), so we fail fast with a clear, named error. The base URL is used verbatim (like
+    # the OpenAI custom-endpoint field): include the `/v1` path yourself.
+    base_url = ((profile or {}).get("base_url") or "").strip()
+    api_key = ((profile or {}).get("api_key") or "").strip()
+    if not base_url:
+        raise RuntimeError(
+            "No endpoint configured for the self-hosted provider — add its URL in Settings ▸ Models."
+        )
+    if not api_key:
+        raise RuntimeError(
+            "No self-hosted API key configured — add it in Settings ▸ Models."
+        )
+    return OpenAIProvider(api_key=api_key, base_url=base_url)
+
+
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
     Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its
@@ -344,6 +364,38 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         # `ollama pull qwen3-coder:30b`.
         recommended_model="qwen3-coder:30b",
     ),
+    # A self-hosted, OpenAI-compatible model server (vLLM, TGI, SGLang, LMDeploy, …), usually
+    # GPU-backed. Unlike the direct vendors above, both the endpoint and the key are
+    # deployment-specific, so BOTH are required, user-entered fields with no prefilled default.
+    # Models are user-specific (not in the curated matrix), so they carry the conservative
+    # capability defaults — add them as `selfhosted:<your-model-id>`.
+    ProviderDescriptor(
+        name="selfhosted",
+        title="Self-hosted (GPU)",
+        needs_key=True,
+        fields=[
+            ProviderField(
+                "base_url",
+                "Endpoint URL",
+                secret=False,
+                required=True,
+                placeholder="https://my-gpu-host:8000/v1",
+                help="Your server's OpenAI-compatible base URL — include the /v1 path "
+                "(vLLM, TGI, SGLang, LMDeploy, llama.cpp server, …).",
+            ),
+            ProviderField(
+                "api_key",
+                "API key",
+                secret=True,
+                required=True,
+                help="Sent as an Authorization: Bearer token. If your server doesn't check "
+                "keys, enter any non-empty value.",
+            ),
+        ],
+        build=_build_self_hosted,
+        blurb="Point OpenWorker at your own OpenAI-compatible model server — typically GPU-backed. "
+        "Add its URL and a key, then add models as selfhosted:<model-id>.",
+    ),
 ]
 
 _BY_NAME = {d.name: d for d in DESCRIPTORS}
@@ -400,6 +452,14 @@ def verify_provider_key(
 
     d = _BY_NAME.get(name) or _BY_NAME["openai"]
     key = (api_key or "").strip()
+    # A provider whose endpoint is a required field with no prefilled default (self-hosted) has
+    # no sane fallback URL — probing api.openai.com with its key would be wrong (and leak the
+    # key to the wrong host), so require the URL up front.
+    requires_endpoint = any(
+        f.key == "base_url" and f.required and not f.default for f in d.fields
+    )
+    if requires_endpoint and not (base_url or "").strip():
+        return {"ok": False, "error": f"Enter the endpoint URL to test {d.title}."}
     try:
         if name == "anthropic":
             resp = httpx.get(

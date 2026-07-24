@@ -71,6 +71,37 @@ def test_build_ollama_client_uses_base_url(monkeypatch):
     assert captured["api_key"] == "ollama"  # placeholder, Ollama ignores it
 
 
+def test_build_self_hosted_passes_url_and_key_verbatim(monkeypatch):
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    client = build_provider_client(
+        "selfhosted",
+        {"base_url": "https://gpu-host:8000/v1", "api_key": "sk-local"},
+        secrets=None,
+    )
+    client._ensure_client()  # type: ignore[attr-defined]
+    # Both are deployment-specific and passed through as-is (no /v1 auto-append, no fallback).
+    assert captured["base_url"] == "https://gpu-host:8000/v1"
+    assert captured["api_key"] == "sk-local"
+
+
+def test_build_self_hosted_requires_url_and_key():
+    import pytest
+
+    # Missing endpoint or key fails fast with a named error, never a silent openai.com fallback.
+    with pytest.raises(RuntimeError, match="endpoint"):
+        build_provider_client("selfhosted", {"api_key": "sk-local"}, None)
+    with pytest.raises(RuntimeError, match="self-hosted API key"):
+        build_provider_client(
+            "selfhosted", {"base_url": "https://gpu-host:8000/v1"}, None
+        )
+
+
 # -- router routing -------------------------------------------------------------
 class _Recorder(ProviderClient):
     def __init__(self, name: str):
@@ -137,6 +168,9 @@ def test_router_bare_only_strips_known_provider():
         r._bare("ollama:qwen2.5-coder:32b") == "qwen2.5-coder:32b"
     )  # strip provider, keep tag
     assert r._bare("gpt-5.5") == "gpt-5.5"
+    # self-hosted is a known provider, so its prefix routes and is stripped
+    assert r._provider_name("selfhosted:llama-3.1-70b") == "selfhosted"
+    assert r._bare("selfhosted:llama-3.1-70b") == "llama-3.1-70b"
     # a colon that isn't a provider (version tag) must NOT be split — else OpenAI gets "32b"
     assert r._bare("qwen2.5-coder:32b") == "qwen2.5-coder:32b"
     assert r._provider_name("qwen2.5-coder:32b") == "openai"  # unknown prefix → default
