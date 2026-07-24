@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from .anthropic_provider import AnthropicProvider
+from .apple_foundation_provider import AppleFoundationProvider
 from .base import ProviderClient
 from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider
@@ -133,6 +134,11 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     return OpenAIProvider(api_key="ollama", base_url=base_url)
 
 
+def _build_apple(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    del profile, secrets
+    return AppleFoundationProvider()
+
+
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
     Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its
@@ -194,6 +200,15 @@ def _compat(
 
 
 DESCRIPTORS: list[ProviderDescriptor] = [
+    ProviderDescriptor(
+        name="apple",
+        title="Apple Foundation Models (on-device)",
+        needs_key=False,
+        fields=[],
+        build=_build_apple,
+        recommended_model="system",
+        blurb="Experimental, private on-device model. Requires a compatible Mac with Apple Intelligence enabled; never falls back to cloud.",
+    ),
     ProviderDescriptor(
         name="openai",
         title="OpenAI",
@@ -396,6 +411,15 @@ def verify_provider_key(
     pattern connectors use to validate tokens. Transient: callers pass the key directly so a user
     can Test before saving. Never raises; returns {ok, error?}.
     """
+    if name == "apple":
+        status = AppleFoundationProvider().availability()
+        if status.available:
+            return {"ok": True}
+        return {
+            "ok": False,
+            "error": status.detail or "Apple Foundation Models is unavailable.",
+        }
+
     import httpx
 
     d = _BY_NAME.get(name) or _BY_NAME["openai"]

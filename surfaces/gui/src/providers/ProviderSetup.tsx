@@ -212,6 +212,19 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   };
 
   const statusFor = (p: ProviderInfo, o?: { lastUsed?: boolean }) => {
+    if (p.availability) {
+      return (
+        <span
+          className={
+            "block text-[11.5px] font-medium truncate " +
+            (p.availability.available ? "text-ok" : "text-warnInk")
+          }
+          title={p.availability.detail || undefined}
+        >
+          {p.availability.available ? "✓ Available on this Mac" : "Unavailable on this Mac"}
+        </span>
+      );
+    }
     if (p.configured && p.needs_key) {
       const used = o?.lastUsed ? relTime(p.last_used_at) : null;
       return (
@@ -406,7 +419,14 @@ export function ProviderForm({
           — takes about a minute.
         </p>
       )}
-      {info && !info.needs_key && (
+      {info?.name === "apple" && (
+        <p className="text-[11.5px] text-faint mt-2">
+          {info.availability?.available
+            ? "Ready to run privately on this Mac. No API key or cloud account is used."
+            : info.availability?.detail || "Apple Foundation Models is unavailable on this Mac."}
+        </p>
+      )}
+      {info && !info.needs_key && info.name !== "apple" && (
         <p className="text-[11.5px] text-faint mt-2">
           No API key needed — Ollama runs models on this Mac.{" "}
           <button

@@ -1322,7 +1322,21 @@ class SessionManager:
         out: list[dict[str, Any]] = []
         for d in provider_descriptors():
             profile = self.secrets.get(f"provider:{d.name}") or {}
-            if d.needs_key:
+            availability: dict[str, Any] | None = None
+            if d.name == "apple":
+                # Keyless does not mean usable: expose a concrete local reason so
+                # the picker never promises a cloud fallback on unsupported Macs.
+                from ..providers.apple_foundation_provider import AppleFoundationProvider
+
+                state = AppleFoundationProvider().availability()
+                availability = {
+                    "available": state.available,
+                    "code": state.code,
+                    "detail": state.detail,
+                    "context_size": state.context_size,
+                }
+                configured = state.available
+            elif d.needs_key:
                 configured = bool(profile.get("api_key")) or bool(
                     d.env_key and os.environ.get(d.env_key)
                 )
@@ -1339,6 +1353,7 @@ class SessionManager:
                     "configured": configured,
                     "values": values,
                     "suggested_models": self._suggested_models(d.name),
+                    "availability": availability,
                     # Key hygiene for the Settings pane: when the key was saved (date, stamped
                     # by set_provider) and when the provider last served a completion (epoch,
                     # stamped by the router's on_use hook). Absent for env-only config.
@@ -1521,6 +1536,10 @@ class SessionManager:
         d = get_descriptor(name)
         if d is None:
             return False
+        if name == "apple":
+            from ..providers.apple_foundation_provider import AppleFoundationProvider
+
+            return AppleFoundationProvider().availability().available
         if not d.needs_key:
             return True  # keyless (Ollama)
         profile = self.secrets.get(f"provider:{name}") or {}

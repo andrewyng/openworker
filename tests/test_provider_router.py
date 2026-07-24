@@ -310,6 +310,31 @@ def test_manager_provider_config(tmp_path, monkeypatch):
     assert mgr.set_provider("nope", {})["ok"] is False  # unknown provider rejected
 
 
+def test_manager_exposes_apple_runtime_availability(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        "coworker.providers.apple_foundation_provider.AppleFoundationProvider.availability",
+        lambda self: SimpleNamespace(
+            available=False,
+            code="unsupported_os",
+            detail="Requires macOS 26",
+            context_size=None,
+        ),
+    )
+    from coworker.server.manager import SessionManager
+
+    apple = {
+        p["name"]: p for p in SessionManager(data_dir=tmp_path).get_providers()
+    }["apple"]
+    assert apple["configured"] is False
+    assert apple["availability"] == {
+        "available": False,
+        "code": "unsupported_os",
+        "detail": "Requires macOS 26",
+        "context_size": None,
+    }
+
+
 def test_manager_curated_models(tmp_path, monkeypatch):
     """No seed list: the picker is the curated matrix filtered to key-holding providers,
     plus user-added custom ids. A fresh install shows only the (not-yet-usable) default.
@@ -320,10 +345,15 @@ def test_manager_curated_models(tmp_path, monkeypatch):
     for d in provider_descriptors():  # ambient dev-shell keys must not leak in
         if d.env_key:
             monkeypatch.delenv(d.env_key, raising=False)
+    monkeypatch.setattr(
+        "coworker.providers.apple_foundation_provider.AppleFoundationProvider.availability",
+        lambda self: SimpleNamespace(available=False),
+    )
     from coworker.server.manager import SessionManager
 
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: False)
     mgr = SessionManager(data_dir=tmp_path)
-    # no provider keys → nothing but the always-selectable default
+    # No live local provider or cloud key: only the selectable default remains.
     assert mgr.get_settings()["models"] == [mgr.model]
 
     # a provider key unlocks exactly that provider's matrix models
@@ -332,8 +362,9 @@ def test_manager_curated_models(tmp_path, monkeypatch):
     assert "anthropic:claude-opus-4-8" in models
     assert "gpt-4o" not in models  # no OpenAI seed anywhere
 
-    added = mgr.add_model("ollama:qwen2.5-coder:32b")  # keyless provider → selectable
-    assert added["ok"] and "ollama:qwen2.5-coder:32b" in added["models"]
+    added = mgr.add_model("ollama:qwen2.5-coder:32b")
+    assert added["ok"]
+    assert "ollama:qwen2.5-coder:32b" not in added["models"]
 
     n = len(mgr.get_settings()["models"])
     mgr.add_model("ollama:qwen2.5-coder:32b")  # idempotent

@@ -22,6 +22,14 @@ def capabilities_for(model: str) -> ModelCapabilities:
     provider = model.split(":", 1)[0].lower() if ":" in model else ""
     name = model.split(":", 1)[-1].lower()  # strip a provider prefix if present
 
+    if provider == "apple":
+        # Runtime availability is checked by AppleFoundationProvider; PDFs remain
+        # on OpenWorker's fallback path and Apple tool turns are deliberately not
+        # token-streamed so approvals stay engine-owned.
+        return ModelCapabilities(
+            tools=True, vision=False, pdf=False, parallel_tool_calls=False, streaming=True
+        )
+
     # Ollama (local) models vary widely and many fake/mishandle parallel tool calls — assume
     # tools work (we only point at tool-capable models) but stay conservative otherwise.
     if provider == "ollama":

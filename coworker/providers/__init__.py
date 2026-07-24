@@ -1,4 +1,5 @@
 from .anthropic_provider import AnthropicProvider
+from .apple_foundation_provider import AppleAvailability, AppleFoundationProvider
 from .base import (
     AssistantTurn,
     ModelCapabilities,
@@ -28,6 +29,8 @@ __all__ = [
     "StreamChunk",
     "ToolCall",
     "AnthropicProvider",
+    "AppleAvailability",
+    "AppleFoundationProvider",
     "GeminiProvider",
     "OpenAIProvider",
     "resolve_api_key",
