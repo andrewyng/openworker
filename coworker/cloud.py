@@ -116,21 +116,26 @@ def complete_login(
     if pending is None or float(pending["created"]) < _now() - _PENDING_TTL:
         return {"ok": False, "error": "unknown or expired sign-in attempt"}
 
-    resp = httpx.post(
-        f"https://{config.cloud_auth_domain}/oauth/token",
-        data={
-            "grant_type": "authorization_code",
-            "client_id": config.cloud_client_id,
-            "code": code,
-            "code_verifier": pending["verifier"],
-            # MUST byte-match begin_login's authorize redirect_uri (RFC 6749 §4.1.3) — the
-            # broker bounce, not the loopback. The bounce change (eda23c9) updated only the
-            # authorize leg; the stale loopback here made Auth0 reject every exchange
-            # ("token exchange failed" on all sign-ins from 07-09 to 07-11).
-            "redirect_uri": config.cloud_base_url.rstrip("/") + "/v1/auth/callback",
-        },
-        timeout=15,
-    )
+    try:
+        resp = httpx.post(
+            f"https://{config.cloud_auth_domain}/oauth/token",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": config.cloud_client_id,
+                "code": code,
+                "code_verifier": pending["verifier"],
+                # MUST byte-match begin_login's authorize redirect_uri (RFC 6749 §4.1.3) — the
+                # broker bounce, not the loopback. The bounce change (eda23c9) updated only the
+                # authorize leg; the stale loopback here made Auth0 reject every exchange
+                # ("token exchange failed" on all sign-ins from 07-09 to 07-11).
+                "redirect_uri": config.cloud_base_url.rstrip("/") + "/v1/auth/callback",
+            },
+            timeout=15,
+        )
+    except httpx.HTTPError as exc:
+        # Surface the reason (SSL verify failure, timeout, DNS) on the error page instead
+        # of letting it escape as an opaque uvicorn 500 with no browser-visible cause.
+        return {"ok": False, "error": f"token exchange failed: {exc}"}
     if resp.status_code != 200:
         return {"ok": False, "error": "token exchange failed"}
     _store_cloud_tokens(secrets, resp.json())
