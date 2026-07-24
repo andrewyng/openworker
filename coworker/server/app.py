@@ -135,6 +135,7 @@ from .manager import SessionManager
 def create_app(manager: SessionManager) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        manager.collect_tool_output_orphans()
         try:
             live = (
                 await manager.start_gateway()
@@ -508,6 +509,34 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.get("/v1/sessions/{session_id}/messages")
     def session_messages(session_id: str) -> dict[str, Any]:
         return {"messages": manager.session_messages(session_id)}
+
+    @app.get("/v1/sessions/{session_id}/tool-outputs/{output_ref}")
+    def tool_output(
+        session_id: str,
+        output_ref: str,
+        offset_bytes: int = 0,
+        limit_bytes: int = 4000,
+    ) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        from ..tool_outputs import ToolOutputStoreError, is_valid_output_ref
+
+        if not is_valid_output_ref(output_ref):
+            raise HTTPException(status_code=400, detail="invalid output reference")
+        if manager.session_store.load(session_id) is None and session_id not in manager._engines:
+            raise HTTPException(status_code=404, detail="session not found")
+        try:
+            store = manager.tool_output_store(session_id, create=False)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="tool output not found")
+        try:
+            return store.read(output_ref, offset_bytes, limit_bytes)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="tool output not found")
+        except ToolOutputStoreError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
 
     @app.patch("/v1/sessions/{session_id}")
     def session_patch(session_id: str, body: dict) -> dict[str, Any]:

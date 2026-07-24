@@ -379,6 +379,7 @@ class SessionManager:
             routing_targets=self._routing_targets(session_id, agent),
             # Per-session connection hierarchy: expose only effective-enabled connectors' tools.
             connector_filter=self.effective_connectors(session_id, agent_name),
+            tool_output_store=self.tool_output_store(session_id),
         )
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
@@ -1663,6 +1664,7 @@ class SessionManager:
 
         env_key = bool(os.environ.get("OPENAI_API_KEY"))
         stored = bool((self.secrets.get("provider:openai") or {}).get("api_key"))
+
         # Only surface models whose provider is actually configured — the composer picker
         # reflects exactly what's connected. The active default is always kept selectable
         # (it's hidden behind the "No model" state until a provider is connected anyway).
@@ -2378,6 +2380,7 @@ class SessionManager:
             # Scheduled runs respect the same per-session connection hierarchy as live sessions:
             # expose only the persona's effective-enabled connectors' tools (§4.3).
             connector_filter=self.effective_connectors(session_id, task.agent),
+            tool_output_store=self.tool_output_store(session_id),
         )
         self._seed_task_permissions(engine, task)
         return engine
@@ -3300,6 +3303,19 @@ class SessionManager:
                 engine.request_interrupt()
             except Exception:
                 pass
+            try:
+                executor = getattr(engine, "executor", None)
+                if executor is not None:
+                    executor.close_background_tasks()
+            except Exception:
+                pass
+        try:
+            # Always attempt cleanup — even when the conversation record is already gone.
+            self.tool_output_store(session_id, create=False).delete_all()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
         record = self.session_store.load(session_id)
         ok = self.session_store.delete(session_id)
         # Deleting a session is the one implicit unsubscribe (otherwise subscriptions are permanent).
@@ -3327,6 +3343,45 @@ class SessionManager:
             except OSError:
                 pass  # a stale/foreign path must not fail the delete
         return {"ok": ok, "session_id": session_id}
+
+    def tool_output_store(self, session_id: str, *, create: bool = True):
+        from ..tool_outputs import SessionToolOutputStore
+
+        return SessionToolOutputStore(self._data_base, session_id, create=create)
+
+    def collect_tool_output_orphans(self, grace_seconds: float = 24 * 60 * 60) -> int:
+        """Delete hashed output dirs older than grace with no session record and no live engine.
+
+        Never evicts outputs for known or live sessions. Per-directory errors are swallowed
+        so one bad path cannot abort startup.
+        """
+        from ..tool_outputs import session_output_key
+
+        root = self._data_base / "tool-outputs"
+        if not root.is_dir():
+            return 0
+        known = {session_output_key(r.session_id) for r in self.session_store.list()}
+        live = {session_output_key(sid) for sid in self._engines}
+        preserve = known | live
+        removed = 0
+        now = time.time()
+        for child in root.iterdir():
+            try:
+                if (
+                    not child.is_dir()
+                    or len(child.name) != 64
+                    or any(char not in "0123456789abcdef" for char in child.name)
+                ):
+                    continue
+                if child.name in preserve:
+                    continue
+                if now - child.stat().st_mtime < grace_seconds:
+                    continue
+                shutil.rmtree(child)
+                removed += 1
+            except OSError:
+                pass
+        return removed
 
     # -- provider proxy ---------------------------------------------------------
     def provider_complete(self, model, messages, tools=None):

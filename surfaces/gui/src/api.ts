@@ -93,6 +93,42 @@ export async function getSessionMessages(sessionId: string): Promise<Conversatio
   return (await res.json()).messages ?? [];
 }
 
+export interface ToolOutputPage {
+  output_ref: string;
+  offset_bytes: number;
+  content: string;
+  next_offset_bytes: number | null;
+  complete: boolean;
+  total_chars: number;
+  total_bytes: number;
+  sha256: string;
+}
+
+export async function getToolOutput(
+  sessionId: string,
+  outputRef: string,
+  offsetBytes = 0,
+  limitBytes = 4000,
+): Promise<ToolOutputPage> {
+  const q = new URLSearchParams({
+    offset_bytes: String(offsetBytes),
+    limit_bytes: String(limitBytes),
+  });
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/tool-outputs/${encodeURIComponent(outputRef)}?${q}`,
+  );
+  if (!res.ok) {
+    let detail = "could not load tool output";
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      // Keep the stable fallback for an empty or non-JSON server response.
+    }
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
 export async function renameSession(sessionId: string, title: string): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}`, {
     method: "PATCH",
@@ -1771,4 +1807,3 @@ export class Session {
     this.ws.close();
   }
 }
-

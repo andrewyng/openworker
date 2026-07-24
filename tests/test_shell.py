@@ -12,6 +12,7 @@ import time
 
 import pytest
 
+import coworker.tools.shell as shell_module
 from coworker.permissions import PermissionEngine
 from coworker.tools import ToolRegistry
 from coworker.tools.shell import LocalExecutor, shell_tools
@@ -68,15 +69,43 @@ def test_timeout_kills_command(executor):
     assert executor.run("echo alive")["output"].strip().endswith("alive")
 
 
-def test_large_output_truncated_keeps_tail(tmp_path):
+def test_large_output_is_preserved_for_engine_projection(tmp_path):
     ex = LocalExecutor(cwd=tmp_path, max_output_chars=200, default_timeout=10)
     try:
         result = ex.run(PRINT_1000)
-        assert result["truncated"] is True
-        assert len(result["output"]) <= 200
-        # the END survives (where test/build verdicts live), the head is dropped
+        assert result["truncated"] is False
+        assert len(result["output"]) > 200
+        # Both ends survive; the engine projects large output for model context.
         assert "line1000" in result["output"]
-        assert "line1\n" not in result["output"]
+        assert "line1\n" in result["output"]
+    finally:
+        ex.close()
+
+
+def test_capture_quota_preserves_head_and_tail_and_marks_partial(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(shell_module, "_MAX_FOREGROUND_RETAINED_BYTES", 1024)
+    if _WIN:
+        command = (
+            '$s = "HEAD_SENTINEL" + ("x" * 3000) + "TAIL_SENTINEL"; '
+            "[Console]::Write($s)"
+        )
+    else:
+        command = (
+            "python3 -c \"import sys; "
+            "sys.stdout.write('HEAD_SENTINEL' + 'x'*3000 + 'TAIL_SENTINEL')\""
+        )
+    ex = LocalExecutor(cwd=tmp_path, default_timeout=10)
+    try:
+        result = ex.run(command)
+        assert result["truncated"] is True
+        assert result["retained_complete"] is False
+        assert result["discarded_bytes"] > 0
+        assert result["retained_bytes"] <= 1024
+        assert "HEAD_SENTINEL" in result["output"]
+        assert "TAIL_SENTINEL" in result["output"]
+        assert "discarded by shell capture quota" in result["output"]
     finally:
         ex.close()
 
@@ -181,3 +210,91 @@ def test_background_unknown_task_errors(executor):
     assert (
         "unknown task" in reg.execute("shell_task_kill", {"task_id": "bg-99"})["error"]
     )
+
+
+def test_background_large_output_is_recoverable(tmp_path):
+    # Emit more than the old foreground cap; capture must retain head/middle/tail.
+    if _WIN:
+        cmd = (
+            '$s = ("A" * 5000) + "MIDDLE_BG_SENTINEL" + ("Z" * 5000); '
+            "Write-Output $s"
+        )
+    else:
+        cmd = "python3 -c \"print('A'*5000 + 'MIDDLE_BG_SENTINEL' + 'Z'*5000)\""
+    ex = LocalExecutor(cwd=tmp_path, capture_dir=tmp_path / "caps", default_timeout=15)
+    try:
+        reg = ToolRegistry()
+        reg.register_all(shell_tools(ex))
+        started = reg.execute("run_shell", {"command": cmd, "run_in_background": True})
+        acc, res = _poll_output(reg, started["task_id"], until_status="exited", deadline=15)
+        assert res["status"] == "exited"
+        assert "MIDDLE_BG_SENTINEL" in acc
+        task = ex._bg_tasks[started["task_id"]]
+        retained = task.read_retained(0, 20_000).decode("utf-8", errors="replace")
+        assert "MIDDLE_BG_SENTINEL" in retained
+        assert retained.startswith("A") or "AAAA" in retained
+        # Kill must not delete retained capture.
+        reg.execute("shell_task_kill", {"task_id": started["task_id"]})
+        assert task.capture_path.is_file()
+        again = reg.execute("shell_task_output", {"task_id": started["task_id"]})
+        assert again["output"] == ""
+    finally:
+        ex.close()
+
+
+def test_background_polls_are_incremental(tmp_path):
+    if _WIN:
+        cmd = "Write-Output one; Start-Sleep -Milliseconds 200; Write-Output two"
+    else:
+        cmd = "echo one; sleep 0.2; echo two"
+    ex = LocalExecutor(cwd=tmp_path, capture_dir=tmp_path / "caps", default_timeout=10)
+    try:
+        reg = ToolRegistry()
+        reg.register_all(shell_tools(ex))
+        started = reg.execute("run_shell", {"command": cmd, "run_in_background": True})
+        seen = []
+        end = time.monotonic() + 8
+        while time.monotonic() < end:
+            res = reg.execute("shell_task_output", {"task_id": started["task_id"]})
+            if res["output"]:
+                seen.append(res["output"])
+            if res["status"] == "exited":
+                break
+            time.sleep(0.05)
+        joined = "".join(seen)
+        assert "one" in joined and "two" in joined
+        # No duplicate whole stream across polls.
+        assert joined.count("one") == 1
+    finally:
+        ex.close()
+
+
+def test_rebuilt_executor_uses_a_fresh_capture_file(tmp_path):
+    capture_dir = tmp_path / "caps"
+    first = LocalExecutor(cwd=tmp_path, capture_dir=capture_dir)
+    second = None
+    try:
+        first_task = first.run_background(QUICK_ECHO)
+        task_one = first._bg_tasks[first_task["task_id"]]
+        task_one.proc.wait(timeout=10)
+        second = LocalExecutor(cwd=tmp_path, capture_dir=capture_dir)
+        second_task = second.run_background(QUICK_ECHO)
+        task_two = second._bg_tasks[second_task["task_id"]]
+        task_two.proc.wait(timeout=10)
+        assert first_task["task_id"] == second_task["task_id"] == "bg-1"
+        assert task_one.capture_path != task_two.capture_path
+    finally:
+        first.close()
+        if second is not None:
+            second.close()
+
+
+def test_close_background_tasks_stops_detached_process(tmp_path):
+    ex = LocalExecutor(cwd=tmp_path, capture_dir=tmp_path / "caps")
+    try:
+        started = ex.run_background(ECHO_THEN_SLEEP)
+        task = ex._bg_tasks[started["task_id"]]
+        ex.close_background_tasks()
+        assert task.proc.poll() is not None
+    finally:
+        ex.close()

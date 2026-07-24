@@ -73,6 +73,7 @@ class TurnEngine:
         question_asker: Optional[
             Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
         ] = None,
+        tool_output_store: Any = None,
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
         interrupt_hooks: Optional[list[Callable[[], None]]] = None,
@@ -103,6 +104,13 @@ class TurnEngine:
         # (answerable inline in a live session or from the Inbox when unattended). None on surfaces
         # that can't ask (the tool then no-ops).
         self.question_asker = question_asker
+        self.tool_output_store = tool_output_store
+        self._tool_projector = None
+        self._ephemeral_output_dir = None  # TemporaryDirectory when store is ephemeral
+        if tool_output_store is not None:
+            from .tool_outputs import ToolResultProjector
+
+            self._tool_projector = ToolResultProjector(tool_output_store)
         self.audit_context: dict[str, Any] = {}
         if instructions and not (
             self.messages and self.messages[0].get("role") == "system"
@@ -582,7 +590,9 @@ class TurnEngine:
             if outcome is ApprovalOutcome.DENY:
                 allowed, reason = (
                     False,
-                    "interrupted by user" if self._cancel.is_set() else "denied by user",
+                    "interrupted by user"
+                    if self._cancel.is_set()
+                    else "denied by user",
                 )
                 self._audit(
                     tool_call,
@@ -649,7 +659,33 @@ class TurnEngine:
         if isinstance(result, dict) and "_display" in result:
             display = result.get("_display") or None
             result = {k: v for k, v in result.items() if k != "_display"}
-        message = _tool_result_message(tool_call, result)
+        projected: Any = result
+        stored = None
+        try:
+            if self._tool_projector is not None:
+                outcome = self._tool_projector.project(
+                    tool_call.id, tool_call.name, result
+                )
+                projected, stored = outcome.model_value, outcome.stored
+        except Exception:
+            from .tool_outputs import serialize_tool_result
+
+            try:
+                original_chars: int | None = len(serialize_tool_result(result))
+            except Exception:
+                original_chars = None
+            projected = {
+                "error": "tool output could not be retained",
+                "recoverable": False,
+                **(
+                    {"original_chars": original_chars}
+                    if original_chars is not None
+                    else {}
+                ),
+            }
+            stored = None
+            status = "error"
+        message = _tool_result_message(tool_call, projected)
         if display:
             message["_display"] = display
         self.messages.append(message)
@@ -668,12 +704,29 @@ class TurnEngine:
                 status="hidden",
                 reason=" · ".join(parts) + " by privacy filters",
             )
+        spill_meta = (
+            {
+                "output_ref": stored.ref,
+                "original_chars": stored.chars,
+                "truncated": True,
+                "content_complete": stored.content_complete,
+            }
+            if stored
+            else {}
+        )
         self._audit(
             tool_call,
             stage="finished",
             status=status,
-            result=result,
-            result_preview=_preview(result),
+            # Never audit the full raw result — only the (possibly projected) model value.
+            result_preview=_preview(projected),
+            projected_chars=len(_serialize_result(projected)),
+            resource=(
+                str(result["url"])
+                if isinstance(result, dict) and result.get("url")
+                else ""
+            ),
+            **spill_meta,
         )
         rule = self._standing_notes.pop(tool_call.id, "")
         return Event(
@@ -681,7 +734,8 @@ class TurnEngine:
             {
                 "name": tool_call.name,
                 "status": status,
-                "result_preview": _preview(result),
+                "result_preview": _preview(projected),
+                **spill_meta,
                 **({"display": display} if display else {}),
                 **({"standing_rule": rule} if rule else {}),
             },
@@ -1016,6 +1070,10 @@ def _tool_result_message(tool_call: ToolCall, result: Any) -> dict[str, Any]:
         "content": content,
         "ts": time.time(),
     }
+
+
+def _serialize_result(result: Any) -> str:
+    return result if isinstance(result, str) else json.dumps(result, default=str)
 
 
 def _tool_error_message(tool_call: ToolCall, reason: str) -> dict[str, Any]:

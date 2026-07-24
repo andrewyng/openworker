@@ -50,6 +50,16 @@ def test_registry_execute_unknown_tool(tmp_path):
         reg.execute("nope", {})
 
 
+def test_registry_can_reserve_an_internal_tool_name():
+    def internal_tool():
+        return "internal"
+
+    reg = ToolRegistry()
+    reg.register(internal_tool)
+    with pytest.raises(ValueError, match="reserved or already registered"):
+        reg.register(internal_tool, replace=False)
+
+
 # -- PermissionEngine -----------------------------------------------------------
 
 

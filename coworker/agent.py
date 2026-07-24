@@ -132,6 +132,7 @@ def build_engine(
     channel_buffer: Optional[Any] = None,
     routing_targets: Optional[list[str]] = None,
     connector_filter: Optional[set[str]] = None,
+    tool_output_store: Optional[Any] = None,
 ) -> TurnEngine:
     ws = Path(workspace).expanduser().resolve() if workspace else None
     if agent.needs_workspace and ws is None:
@@ -148,8 +149,32 @@ def build_engine(
         root_list = []
 
     config = load_config(ws)
+
+    # Every production surface gets a session-scoped output store. Manager passes one;
+    # direct callers get a durable store when session_id is known, otherwise an ephemeral
+    # TemporaryDirectory cleaned up with the engine.
+    ephemeral_output_dir = None
+    if tool_output_store is None:
+        import tempfile
+        import uuid as _uuid
+
+        from .tool_outputs import SessionToolOutputStore
+
+        if session_id:
+            tool_output_store = SessionToolOutputStore(state_dir(), session_id)
+        else:
+            ephemeral_output_dir = tempfile.TemporaryDirectory(
+                prefix="ow-tool-outputs-"
+            )
+            tool_output_store = SessionToolOutputStore(
+                ephemeral_output_dir.name, _uuid.uuid4().hex
+            )
+
+    capture_dir = getattr(tool_output_store, "captures_dir", None)
     executor = (
-        LocalExecutor(cwd=ws) if (agent.needs_workspace and ws is not None) else None
+        LocalExecutor(cwd=ws, capture_dir=capture_dir)
+        if (agent.needs_workspace and ws is not None)
+        else None
     )
     todo = TodoList()
     context = AgentContext(
@@ -278,6 +303,11 @@ def build_engine(
     # plan mode via set_mode, and the registry is fixed at build); the engine rejects the
     # call whenever the session isn't actually in plan mode.
     registry.register(propose_plan_tool())
+    # Internal retrieval must be registered last and may not silently replace (or be
+    # replaced by) an agent, connector, MCP, memory, or skill tool with the same name.
+    from .tool_outputs import read_tool_output_tool
+
+    registry.register(read_tool_output_tool(tool_output_store), replace=False)
 
     # Per-turn ephemeral context, appended to the latest user message since mid-thread system
     # messages aren't reliable across providers. Two producers: the plan-mode reminder (mode can
@@ -320,6 +350,7 @@ def build_engine(
         directory_requester=directory_requester,
         plan_approver=plan_approver,
         question_asker=question_asker,
+        tool_output_store=tool_output_store,
     )
     engine.executor = executor  # type: ignore[attr-defined]
     engine.todo = todo  # type: ignore[attr-defined]
@@ -331,6 +362,8 @@ def build_engine(
         "workspace": str(ws) if ws else "",
     }
     engine.skill_loader = skill_loader  # type: ignore[attr-defined]
+    if ephemeral_output_dir is not None:
+        engine._ephemeral_output_dir = ephemeral_output_dir
     return engine
 
 
