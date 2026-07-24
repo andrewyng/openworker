@@ -25,7 +25,7 @@ const HEALTH = { status: "ok", default_workspace: null, model: "anthropic:claude
 const SETTINGS = {
   provider: "openai",
   model: "anthropic:claude-opus-4-8",
-  models: ["anthropic:claude-opus-4-8", "gpt-5.5", "gpt-4o", "gpt-4o-mini", "o3-mini"],
+  models: ["anthropic:claude-opus-4-8", "apple:system", "gpt-5.5", "gpt-4o", "gpt-4o-mini", "o3-mini"],
   has_key: true,
   model_ready: true,
   source: "store",
@@ -44,6 +44,7 @@ const SETTINGS = {
   // Curated-matrix display names (subset — mirrors /v1/settings.model_labels).
   model_labels: {
     "anthropic:claude-opus-4-8": "Claude Opus 4.8 · Anthropic",
+    "apple:system": "Apple Foundation Model · on-device (experimental)",
     "zai:glm-5.2": "GLM-5.2 · Z AI",
   },
 };
@@ -325,6 +326,8 @@ const PRIMARY_ROOT = { path: "/Users/test/OpenWorker/launch-note", writable: tru
 const baseName = (p: string) => p.split("/").filter(Boolean).pop() || p;
 
 const PROVIDERS = [
+  // Apple: hardware/OS availability is authoritative; no key or manual detect step.
+  { name: "apple", title: "Apple Foundation Models (on-device)", needs_key: false, fields: [], configured: true, values: {}, suggested_models: ["system"], recommended_model: "system", availability: { available: true, code: "available", detail: null, context_size: 4096 }, key_set_at: null, last_used_at: null },
   // openai: configured + used (drives the "Last used" sub-line and the status dot).
   { name: "openai", title: "OpenAI", needs_key: true, fields: [{ key: "api_key", label: "OpenAI API key", secret: true, required: true, help: "", placeholder: "sk-…" }], configured: true, values: {}, suggested_models: ["gpt-5.5"], key_set_at: "2026-06-12", last_used_at: Math.floor(Date.now() / 1000) - 7200 },
   // anthropic: configured but never used ("Not used yet").

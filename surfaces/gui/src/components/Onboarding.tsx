@@ -45,7 +45,9 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
   const [skipConfirm, setSkipConfirm] = useState(false);
 
   const anyReady =
-    ps.providers.some((p) => p.configured && p.needs_key) || ps.keylessOk.size > 0;
+    ps.providers.some(
+      (p) => (p.configured && p.needs_key) || p.availability?.available,
+    ) || ps.keylessOk.size > 0;
   // In the form with typed-but-untested input, Next verifies+saves first (tester
   // catch 2026-07-12: a manual Test-then-Continue two-step reads as a puzzle).
   const nextFromForm = !!ps.sel && ps.dirty && ps.secretFilled;

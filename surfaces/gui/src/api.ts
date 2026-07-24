@@ -1219,6 +1219,12 @@ export interface ProviderInfo {
   blurb?: string; // one-line note under the title ("Uses X's OpenAI-compatible API…")
   key_set_at?: string | null; // ISO date the key was last (re)saved — absent for env-only config
   last_used_at?: number | null; // epoch secs the provider last served a completion
+  availability?: {
+    available: boolean;
+    code: string;
+    detail: string | null;
+    context_size: number | null;
+  } | null;
 }
 
 export async function getProviders(): Promise<ProviderInfo[]> {
@@ -1771,4 +1777,3 @@ export class Session {
     this.ws.close();
   }
 }
-

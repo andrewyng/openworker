@@ -12,7 +12,7 @@
 #   - A Python venv at .venv (repo root) with this package installed editable, plus the
 #     build-only deps:
 #       python3 -m venv .venv
-#       .venv/bin/pip install -e . pyinstaller tzdata typer
+#       .venv/bin/pip install -e ".[apple-foundation-models]" pyinstaller tzdata typer
 #     `typer` is needed only at BUILD time: PyInstaller walks the `mcp` package and
 #     `mcp.cli` calls sys.exit() at import if typer is absent, which aborts the freeze.
 #     (aisuite installs like any other dependency — git-pinned in pyproject.toml.)
@@ -45,6 +45,10 @@ APP="OpenWorker"
 VERSION="$(node -p "require('$GUI/src-tauri/tauri.conf.json').version")"
 TRIPLE="$(rustc -vV | sed -n 's/host: //p')"   # e.g. aarch64-apple-darwin
 ARCH="${TRIPLE%%-*}"
+# The release sidecar contains the optional, prebuilt Apple bridge.  The SDK is
+# never imported on unsupported machines, but it must be collected and signed
+# when producing a macOS distributable.
+export COWORKER_APPLE_FOUNDATION_MODELS="${COWORKER_APPLE_FOUNDATION_MODELS:-1}"
 
 # CI keychain bootstrap: on a fresh runner the Developer ID cert exists only as the
 # APPLE_CERTIFICATE secret (base64 .p12) — import it into a throwaway keychain so the

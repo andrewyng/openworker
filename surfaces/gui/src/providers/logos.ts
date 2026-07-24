@@ -39,6 +39,7 @@ export const PROVIDER_ORDER = [
   "anthropic",
   "openai",
   "gemini",
+  "apple",
   "ollama",
   "fireworks",
   "together",

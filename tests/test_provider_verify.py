@@ -90,6 +90,27 @@ def test_verify_ollama_uses_v1_models_no_key(monkeypatch):
     assert "headers" not in cap  # keyless
 
 
+def test_verify_apple_uses_local_availability(monkeypatch):
+    monkeypatch.setattr(
+        "coworker.providers.registry.AppleFoundationProvider.availability",
+        lambda self: SimpleNamespace(available=True, detail=None),
+    )
+    assert verify_provider_key("apple") == {"ok": True}
+
+
+def test_verify_unavailable_apple_returns_local_reason(monkeypatch):
+    monkeypatch.setattr(
+        "coworker.providers.registry.AppleFoundationProvider.availability",
+        lambda self: SimpleNamespace(
+            available=False, detail="Apple Intelligence is off."
+        ),
+    )
+    assert verify_provider_key("apple") == {
+        "ok": False,
+        "error": "Apple Intelligence is off.",
+    }
+
+
 def test_verify_network_error_is_clean(monkeypatch):
     _patch_get(monkeypatch, raise_exc=ConnectionError("boom"))
     res = verify_provider_key("openai", api_key="sk-x")

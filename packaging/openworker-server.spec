@@ -76,6 +76,18 @@ for pkg in ("slack_bolt", "telegram"):  # [messaging] extra — optional
     except Exception:
         pass
 
+# Apple Foundation Models is an optional source-built Swift bridge.  Official
+# macOS release builds opt in after building and signing it; unsupported builds
+# must remain able to start without the package being installed.
+if sys.platform == "darwin" and os.environ.get("COWORKER_APPLE_FOUNDATION_MODELS") == "1":
+    try:
+        d, b, h = collect_all("apple_fm_sdk")
+        datas += d
+        binaries += b
+        hiddenimports += h
+    except Exception as exc:
+        raise SystemExit("Apple Foundation Models packaging requested but apple-fm-sdk is missing") from exc
+
 a = Analysis(
     [os.path.join(PACKAGING, "server_entry.py")],
     pathex=[ROOT],

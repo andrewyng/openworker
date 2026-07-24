@@ -41,6 +41,10 @@ class ModelEntry:
 
 MATRIX: dict[str, ModelEntry] = {
     # -- first-party ------------------------------------------------------------
+    "apple:system": ModelEntry(
+        "Apple Foundation Model · on-device (experimental)",
+        ModelCapabilities(tools=True, vision=False, pdf=False, parallel_tool_calls=False, streaming=True),
+    ),
     # GPT-5.6 (2026-07-09): number = generation, Sol/Terra/Luna = capability tiers.
     # Bare "gpt-5.6" aliases to Sol server-side; we list the explicit tier ids only.
     # Rolling out — accounts without access get a friendly error (providers/errors.py).

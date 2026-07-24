@@ -37,6 +37,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio", "httpx"]
+# Apple ships this as a source distribution that compiles a Swift bridge. Keep
+# it optional and Darwin-only so ordinary installs never need Xcode.
+apple-foundation-models = ["apple-fm-sdk==0.2.1; sys_platform == 'darwin'"]
 # Inbound messaging listeners (outbound send_message needs only httpx, already a core dep).
 # aiohttp is slack-bolt's Socket Mode transport at runtime (and the FakeSlack test harness
 # drives the real handler) — declare it so CI installs it, not just transitively.

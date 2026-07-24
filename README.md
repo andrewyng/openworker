@@ -6,7 +6,7 @@
 
 **AI that gets your everyday tasks done.** OpenWorker is an open-source AI coworker that lives on your desktop and delivers **finished work**, not just chat: a polished document, a Slack reply with the numbers, an updated calendar, a triaged inbox.
 
-It runs on your machine and doesn't lock you into any model: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider, or run fully local with Ollama. Your data leaves your machine only through the model and integrations *you* choose.
+It runs on your machine and doesn't lock you into any model: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider, or run fully local with Ollama. On compatible Macs, the experimental Apple Foundation Models provider runs through Apple Intelligence without an API key or cloud fallback. Your data leaves your machine only through the model and integrations *you* choose.
 
 [![How OpenWorker works](docs/assets/how-it-works.png)](https://openworker.com)
 
@@ -52,7 +52,7 @@ Under the hood:
 
 Model access is yours: pick a provider, paste your key, switch anytime. Supported out of the box:
 
-**OpenAI · Anthropic · Google Gemini · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI)** - plus open-weight models via **Together** and **Fireworks**, and fully local models via **Ollama**.
+**OpenAI · Anthropic · Google Gemini · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI)** - plus open-weight models via **Together** and **Fireworks**, fully local models via **Ollama**, and experimental on-device **Apple Foundation Models** on compatible Macs.
 
 A curated model list marks what we've verified for tool-calling work. Adding any model string works at your own risk.
 
@@ -71,6 +71,8 @@ cd openworker
 # 1. One-time bootstrap - creates the Python venv at .venv
 #    (on Windows, run from Git Bash or WSL)
 bash packaging/setup_dev_env.sh
+# Optional on macOS 26+ with Xcode 26+:
+# .venv/bin/pip install -e ".[apple-foundation-models]"
 
 # 2. Start the local agent server
 .venv/bin/openworker-server --cwd ~/some/project --port 8765

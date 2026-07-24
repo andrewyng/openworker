@@ -46,7 +46,9 @@ jobs:
           # No Intel macOS target: macos-13 (the last Intel runner image) is deprecated and
           # its queue waits run to hours, which blocks the release job. Intel Macs are
           # 2020-and-earlier hardware — revisit only if beta users actually ask.
-          - os: macos-latest # Apple Silicon
+          # Apple Foundation Models' Swift bridge requires the macOS 26 SDK.
+          # Pin the runner: `macos-latest` still points at macOS 15.
+          - os: macos-26 # Apple Silicon
             slug: macos-arm64
           - os: windows-latest
             slug: windows
@@ -79,8 +81,11 @@ jobs:
           python -m venv .venv
           if [ "$RUNNER_OS" = "Windows" ]; then VPY=.venv/Scripts/python; else VPY=.venv/bin/python; fi
           "$VPY" -m pip install --upgrade pip
-          "$VPY" -m pip install -e . pyinstaller typer tzdata
+          "$VPY" -m pip install -e ".[apple-foundation-models]" pyinstaller typer tzdata
           "$VPY" -c "import aisuite, coworker"  # fail fast if either import breaks
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            "$VPY" -c "import apple_fm_sdk"
+          fi
 
       - name: npm ci
         working-directory: surfaces/gui
