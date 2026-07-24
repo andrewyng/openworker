@@ -319,6 +319,13 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="TOGETHER_API_KEY",
     ),
     _compat(
+        "anyrouter",
+        "AnyRouter",
+        base_url="https://anyrouter.dev/api/v1",
+        recommended_model="anyrouter/agent",
+        env_key="ANYROUTER_API_KEY",
+    ),
+    _compat(
         "fireworks",
         "Fireworks AI",
         base_url="https://api.fireworks.ai/inference/v1",
@@ -378,6 +385,8 @@ def detect_provider(api_key: str) -> Optional[str]:
         return None
     if key.startswith("sk-ant-"):
         return "anthropic"
+    if key.startswith("sk-ar-"):
+        return "anyrouter"
     if key.startswith("AIza"):
         return "gemini"
     if key.startswith(("sk-", "sk_")):
