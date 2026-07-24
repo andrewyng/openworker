@@ -82,6 +82,110 @@ export function scopeNote(
 const PREVIEW_LINES = 5;
 const PREVIEW_CHARS = 420;
 
+export interface DiffLine {
+  type: "add" | "del" | "hdr" | "ctx";
+  content: string;
+}
+
+export function parseDiffLines(args: any): DiffLine[] | null {
+  if (!args || typeof args !== "object") return null;
+
+  // Case 1: Unified diff or patch string
+  const diffStr = args.patch || args.diff || args.unified_diff || args.changes;
+  if (typeof diffStr === "string" && diffStr.trim().length > 0) {
+    const rawLines = diffStr.split("\n");
+    return rawLines.map((line) => {
+      if (
+        line.startsWith("+++") ||
+        line.startsWith("---") ||
+        line.startsWith("@@") ||
+        line.startsWith("diff --git")
+      ) {
+        return { type: "hdr", content: line };
+      }
+      if (line.startsWith("+")) {
+        return { type: "add", content: line };
+      }
+      if (line.startsWith("-")) {
+        return { type: "del", content: line };
+      }
+      return { type: "ctx", content: line };
+    });
+  }
+
+  // Case 2: Replace in file (support all parameter aliases)
+  const oldStr =
+    args.old_string ??
+    args.old_str ??
+    args.old_content ??
+    args.old_text ??
+    args.target_content ??
+    args.original ??
+    args.search ??
+    args.find ??
+    args.old;
+  const newStr =
+    args.new_string ??
+    args.new_str ??
+    args.new_content ??
+    args.new_text ??
+    args.replacement_content ??
+    args.replacement ??
+    args.replace ??
+    args.new;
+
+  if (typeof oldStr === "string" || typeof newStr === "string") {
+    const lines: DiffLine[] = [];
+    if (typeof oldStr === "string" && oldStr.trim().length > 0) {
+      oldStr.split("\n").forEach((l) =>
+        lines.push({ type: "del", content: "-" + (l.startsWith("-") ? l.slice(1) : l) }),
+      );
+    }
+    if (typeof newStr === "string" && newStr.trim().length > 0) {
+      newStr.split("\n").forEach((l) =>
+        lines.push({ type: "add", content: "+" + (l.startsWith("+") ? l.slice(1) : l) }),
+      );
+    }
+    if (lines.length > 0) return lines;
+  }
+
+  return null;
+}
+
+export function DiffPreviewBlock({ lines }: { lines: DiffLine[] }) {
+  const [all, setAll] = useState(false);
+  const clipped = lines.length > PREVIEW_LINES;
+  const shown = all || !clipped ? lines : lines.slice(0, PREVIEW_LINES);
+
+  const addCount = lines.filter((l) => l.type === "add").length;
+  const delCount = lines.filter((l) => l.type === "del").length;
+
+  return (
+    <div className="approval-diff-box" data-testid="approval-diff-box">
+      <div className="approval-diff-stats">
+        <span className="diff-tag">Diff Preview</span>
+        {addCount > 0 && <span className="diff-add-count">+{addCount}</span>}
+        {delCount > 0 && <span className="diff-del-count">-{delCount}</span>}
+      </div>
+      <div className="approval-diff-body">
+        {shown.map((line, idx) => (
+          <div key={idx} className={`approval-diff-line line-${line.type}`}>
+            <span className="diff-line-prefix">
+              {line.type === "add" ? "+" : line.type === "del" ? "-" : line.type === "hdr" ? "@" : " "}
+            </span>
+            <span className="diff-line-text">{line.content.replace(/^[+-]/, "")}</span>
+          </div>
+        ))}
+      </div>
+      {clipped && (
+        <button className="approval-prev-more" onClick={() => setAll((v) => !v)}>
+          {all ? "show less" : `show all ${lines.length} diff lines`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function PreviewBlock({ text, mono = true }: { text: string; mono?: boolean }) {
   const [all, setAll] = useState(false);
   const lines = text.split("\n");
@@ -199,12 +303,15 @@ export function ApprovalCard({
   // §35 compact row: routine workspace writes — one line, preview expands inline from the
   // tool args. Standing/grant flows keep the full card (they carry §25 consent weight).
   const content = typeof item.args?.content === "string" ? item.args.content : "";
+  const diffLines = parseDiffLines(item.args);
+  const hasPreview = !!(diffLines || content || shortArgs(item.args));
+
   if (FILE_WRITES.has(item.name) && !offerStanding && !grants.length && !item.resolved) {
     return (
       <div className={"approval approval-row" + dock} data-testid="approval-row">
         <div className="approval-row-line">
           <TitleText line={title} />
-          {content && (
+          {hasPreview && (
             <button className="approval-peek" onClick={() => setPeek((v) => !v)}>
               preview {peek ? "▴" : "▾"}
             </button>
@@ -212,7 +319,14 @@ export function ApprovalCard({
           <span className="spacer" />
           <Buttons item={item} onApprove={onApprove} runTask={runTask} primaryLabel="Allow" />
         </div>
-        {peek && content && <PreviewBlock text={content} />}
+        {peek &&
+          (diffLines ? (
+            <DiffPreviewBlock lines={diffLines} />
+          ) : content ? (
+            <PreviewBlock text={content} />
+          ) : (
+            <PreviewBlock text={shortArgs(item.args)} />
+          ))}
         {reason && <div className="approval-reason">{reason}</div>}
       </div>
     );
@@ -234,7 +348,9 @@ export function ApprovalCard({
       {item.name === "run_shell" && item.args?.command && (
         <PreviewBlock text={String(item.args.command)} />
       )}
-      {FILE_WRITES.has(item.name) && content && <PreviewBlock text={content} />}
+      {FILE_WRITES.has(item.name) && (
+        diffLines ? <DiffPreviewBlock lines={diffLines} /> : content ? <PreviewBlock text={content} /> : null
+      )}
       {item.name === "send_file" && (
         <>
           <span className="approval-filechip">

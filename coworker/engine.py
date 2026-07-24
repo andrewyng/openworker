@@ -76,6 +76,7 @@ class TurnEngine:
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
         interrupt_hooks: Optional[list[Callable[[], None]]] = None,
+        max_context_tokens: int = 32000,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -83,6 +84,7 @@ class TurnEngine:
         self.model = model
         self.approver = approver or _deny_all
         self.max_iterations = max_iterations
+        self.max_context_tokens = max_context_tokens
         self.model_settings = dict(model_settings or {})
         self.messages: list[dict[str, Any]] = list(messages or [])
         self.audit_sink = audit_sink
@@ -963,23 +965,83 @@ class TurnEngine:
         context = (
             self.context_provider() if self.context_provider is not None else ""
         ) or ""
-        if not context:
-            return out
-        block = f"\n\n<system-context>\n{context}\n</system-context>"
-        for i in range(len(out) - 1, -1, -1):
-            if out[i].get("role") != "user":
-                continue
-            msg = dict(out[i])
-            content = msg.get("content")
-            if isinstance(content, str):
-                msg["content"] = content + block
-            elif isinstance(content, list):  # content-parts (text + images)
-                msg["content"] = [*content, {"type": "text", "text": block}]
-            else:
-                msg["content"] = block
-            out[i] = msg
+        if context:
+            block = f"\n\n<system-context>\n{context}\n</system-context>"
+            for i in range(len(out) - 1, -1, -1):
+                if out[i].get("role") != "user":
+                    continue
+                msg = dict(out[i])
+                content = msg.get("content")
+                if isinstance(content, str):
+                    msg["content"] = content + block
+                elif isinstance(content, list):  # content-parts (text + images)
+                    msg["content"] = [*content, {"type": "text", "text": block}]
+                else:
+                    msg["content"] = block
+                out[i] = msg
+                break
+
+        max_toks = getattr(self, "max_context_tokens", 32000)
+        return _trim_context_for_model(out, max_tokens=max_toks)
+
+
+def _estimate_message_tokens(msg: dict[str, Any]) -> int:
+    content = msg.get("content")
+    if isinstance(content, str):
+        return max(1, len(content) // 4)
+    elif isinstance(content, list):
+        total = 0
+        for part in content:
+            if isinstance(part, dict) and "text" in part:
+                total += max(1, len(part["text"]) // 4)
+            elif isinstance(part, str):
+                total += max(1, len(part) // 4)
+        return max(1, total)
+    return 10
+
+
+def _trim_context_for_model(
+    messages: list[dict[str, Any]], max_tokens: int = 32000
+) -> list[dict[str, Any]]:
+    if not messages or max_tokens <= 0:
+        return messages
+
+    total_tokens = sum(_estimate_message_tokens(m) for m in messages)
+    if total_tokens <= max_tokens:
+        return messages
+
+    # Always keep system instructions at index 0 (if role == "system")
+    system_msg = messages[0] if messages[0].get("role") == "system" else None
+    start_idx = 1 if system_msg else 0
+
+    # Always keep the latest 2 user/assistant messages at the tail
+    tail_count = min(2, len(messages) - start_idx)
+    head_msgs = [system_msg] if system_msg else []
+    tail_msgs = messages[len(messages) - tail_count :] if tail_count > 0 else []
+
+    middle_msgs = messages[start_idx : len(messages) - tail_count]
+    if not middle_msgs:
+        return messages
+
+    trimmed_middle: list[dict[str, Any]] = []
+    current_tokens = sum(_estimate_message_tokens(m) for m in head_msgs + tail_msgs)
+
+    for m in reversed(middle_msgs):
+        t = _estimate_message_tokens(m)
+        if current_tokens + t <= max_tokens:
+            trimmed_middle.insert(0, m)
+            current_tokens += t
+        else:
+            trimmed_middle.insert(
+                0,
+                {
+                    "role": "user",
+                    "content": "[Earlier conversation context trimmed to fit model token limit]",
+                },
+            )
             break
-        return out
+
+    return head_msgs + trimmed_middle + tail_msgs
 
 
 def _assistant_message(turn: AssistantTurn) -> dict[str, Any]:
