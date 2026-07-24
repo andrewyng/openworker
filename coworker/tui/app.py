@@ -117,6 +117,7 @@ class CoworkerApp(App):
             provider=self._provider,
             memory_store=self._memory_store,
             messages=self._resume_messages,
+            session_id=self._session_id,
         )
         self._write(
             f"[b]coworker · code[/b]  ·  model {self.model}  ·  mode {self.mode.value}"
@@ -182,7 +183,13 @@ class CoworkerApp(App):
         elif event.type is EventType.TOOL_FINISHED:
             status = data.get("status")
             tag = "green" if status == "ok" else "red"
-            extra = data.get("result_preview") or data.get("reason") or ""
+            if data.get("truncated") and data.get("output_ref"):
+                chars = data.get("original_chars")
+                extra = (
+                    f"retained locally ({chars} chars)" if chars else "retained locally"
+                )
+            else:
+                extra = data.get("result_preview") or data.get("reason") or ""
             self._write(
                 f"  [{tag}]✓ {data['name']} · {status}[/{tag}] {_short(extra, 100)}"
             )
@@ -229,6 +236,7 @@ class CoworkerApp(App):
                     mode=self.mode,
                     approver=self._approve,
                     provider=self._provider,
+                    session_id=self._session_id,
                 )
             self.query_one("#log", RichLog).clear()
             self.rendered.clear()
