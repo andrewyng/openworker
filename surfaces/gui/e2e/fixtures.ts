@@ -507,6 +507,9 @@ export async function mockApi(page: import("@playwright/test").Page) {
       hidden_fields: [...hubspotState.hidden_fields],
     };
   };
+  // Default model — PER-TEST state, since a composer pick now persists it (App.changeModel).
+  // /v1/health and /v1/settings both report it, exactly like the server's `manager.model`.
+  let defaultModel = HEALTH.model;
   // Installed personas — mutable so enable/surface/delete round-trip through the UI.
   const personas: any[] = PERSONAS.personas.map((p) => ({ ...p }));
   // Sessions — mutable so archive (PATCH), rename (PATCH), and delete round-trip.
@@ -569,7 +572,8 @@ export async function mockApi(page: import("@playwright/test").Page) {
   await page.routeWebSocket(/\/ws\/session\//, (ws) => {
     const send = (type: string, data: Record<string, unknown> = {}) =>
       ws.send(JSON.stringify({ type, data }));
-    send("ready");
+    // A fresh session binds the persisted default, like `manager.get_engine` does.
+    send("ready", { model: defaultModel });
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
     let hadTurn = false; // a user_message landed — set_model is now a mid-session switch
@@ -805,8 +809,15 @@ export async function mockApi(page: import("@playwright/test").Page) {
       return json(i >= 0 ? sessions[i] : PINNED_SESSION);
     }
 
-    if (p.endsWith("/v1/health")) return json(HEALTH);
-    if (p.endsWith("/v1/settings")) return json(SETTINGS);
+    if (p.endsWith("/v1/health")) return json({ ...HEALTH, model: defaultModel });
+    if (p.endsWith("/v1/settings")) return json({ ...SETTINGS, model: defaultModel });
+    if (p.endsWith("/v1/settings/default-model") && m === "POST") {
+      // Like the server: the default is PERSISTED, so /v1/health and /v1/settings both
+      // report it from here on — that's what makes a composer pick outlive the session.
+      const picked = String((req.postDataJSON() || {}).model || "");
+      if (picked) defaultModel = picked;
+      return json({ ok: true, ...SETTINGS, model: defaultModel });
+    }
     if (p.endsWith("/v1/settings/pdf") && m === "POST") {
       Object.assign(SETTINGS, req.postDataJSON());
       return json({

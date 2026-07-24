@@ -18,6 +18,7 @@ import {
   deleteSession,
   renameSession,
   runAutomation,
+  setDefaultModel,
   setSessionFlags,
   setUnattended,
   Session,
@@ -861,6 +862,14 @@ export function App() {
     if (running) return; // the server refuses mid-turn rebinds — don't let the header lie
     setModel(m);
     sessionRef.current?.setModel(m);
+    // Sticky (2026-07-24): an explicit pick in the composer is also the default for NEW
+    // sessions. Without this the pick was session-scoped only, so every "New session"
+    // silently snapped back to whatever `set_provider` stamped as the default — a
+    // custom-model user had to re-pick every single time. Resuming an existing session is
+    // unaffected: the server replays that session's own model from its record.
+    // Fire-and-forget: the picker must not block on the round trip, and a failed write
+    // only costs stickiness (the session itself already switched over the socket).
+    setDefaultModel(m).catch(() => {});
   };
 
   const startNewSession = (forAgent?: string) => {
