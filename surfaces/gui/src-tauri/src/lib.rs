@@ -154,7 +154,7 @@ fn write_keep_awake_pref(enabled: bool) {
 // guard releases the hold. macOS uses the built-in `caffeinate`; Windows uses the
 // SetThreadExecutionState API (a dedicated thread holds ES_CONTINUOUS so the state survives
 // regardless of which Tauri worker thread toggled it); Linux uses `systemd-inhibit` when
-// available, falling back to a no-op on systems without systemd (containers, some WSL setups).
+// available. Unsupported systems leave the setting off rather than claiming a hold exists.
 
 #[cfg(target_os = "macos")]
 struct KeepAwakeGuard(Child);
@@ -222,30 +222,23 @@ fn start_keep_awake() -> Option<KeepAwakeGuard> {
     })
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-struct KeepAwakeGuard(Option<Child>);
+#[cfg(target_os = "linux")]
+struct KeepAwakeGuard(Child);
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
 impl Drop for KeepAwakeGuard {
     fn drop(&mut self) {
-        // Killing the child (systemd-inhibit) releases the sleep hold, mirroring macOS's
-        // caffeinate kill. None on the no-op fallback path.
-        if let Some(mut child) = self.0.take() {
-            let _ = child.kill();
-        }
+        // Killing systemd-inhibit releases the sleep hold, mirroring macOS's caffeinate kill.
+        let _ = self.0.kill();
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
 fn start_keep_awake() -> Option<KeepAwakeGuard> {
     // Try systemd-inhibit (present on virtually every modern Linux distro). `--mode=block`
     // holds the inhibition for as long as the child (`sleep infinity`) is alive; killing the
     // child here releases the hold, mirroring macOS's caffeinate.
-    // If systemd-inhibit is absent or spawn fails (containers, non-systemd distros, WSL without
-    // systemd), fall back to a no-op guard so the toggle still reflects state but the OS sleep
-    // policy is left to the user — same behaviour as before this change. Detection is runtime:
-    // there is no build-time guarantee systemd is present, so we probe instead of assuming.
-    Command::new("systemd-inhibit")
+    let mut child = Command::new("systemd-inhibit")
         .args([
             "--what=sleep",
             "--why=OpenWorker is working",
@@ -257,9 +250,27 @@ fn start_keep_awake() -> Option<KeepAwakeGuard> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .ok()
-        .map(|child| KeepAwakeGuard(Some(child)))
-        .or_else(|| Some(KeepAwakeGuard(None)))
+        .ok()?;
+
+    // A missing login1 service can let the process spawn but fail immediately. Only report the
+    // setting as active after systemd-inhibit has remained alive long enough to acquire its hold.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    match child.try_wait() {
+        Ok(None) => Some(KeepAwakeGuard(child)),
+        Ok(Some(_)) => None,
+        Err(_) => {
+            let _ = child.kill();
+            None
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+struct KeepAwakeGuard;
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn start_keep_awake() -> Option<KeepAwakeGuard> {
+    None
 }
 
 // -- native commands (invoked from the SPA via window.__TAURI__.core.invoke) -----------------
@@ -407,7 +418,7 @@ fn voice_input_compatibility() -> (bool, String, Option<String>) {
     (supported, format!("{version} · x64"), reason)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
 fn voice_input_compatibility() -> (bool, String, Option<String>) {
     // The STT engine (cpal ALSA backend + whisper-rs on CPU) builds and runs on Linux, so the
     // only gate is whether a microphone is reachable. Probe cpal at runtime so voice input is
@@ -435,6 +446,15 @@ fn voice_input_compatibility() -> (bool, String, Option<String>) {
         (true, None)
     };
     (supported, summary, reason)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn voice_input_compatibility() -> (bool, String, Option<String>) {
+    (
+        false,
+        format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH),
+        Some("Voice Input is not supported on this operating system.".to_owned()),
+    )
 }
 
 #[tauri::command]
@@ -584,7 +604,11 @@ async fn download_update(
     // (Guard scope stays sync: a std MutexGuard must not live across an await.)
     {
         let slot = pending.0.lock().unwrap();
-        if slot.as_ref().map(|(v, _)| v == &update.version).unwrap_or(false) {
+        if slot
+            .as_ref()
+            .map(|(v, _)| v == &update.version)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
     }
@@ -745,6 +769,7 @@ pub fn run() {
 
             // 2. Build the window, injecting the sidecar endpoints before the SPA loads.
             //    Overlay title bar (macOS): traffic lights float over the edge-to-edge UI.
+            #[allow(unused_mut)] // Mutated only by the macOS-specific title-bar configuration.
             let mut builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("OpenWorker")

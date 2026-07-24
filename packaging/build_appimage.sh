@@ -26,7 +26,7 @@
 #       dnf install webkit2gtk4.1-devel gtk3-devel libappindicator-gtk3-devel \
 #                   librsvg2-devel libsoup3-devel patchelf alsa-lib-devel
 #     Debian/Ubuntu:
-#       apt install libwebkit2gtk-4.1-dev libgtk-3-dev libappindicator3-dev \
+#       apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
 #                   librsvg2-dev libsoup-3.0-dev patchelf libasound2-dev
 #     `alsa-lib-devel` / `libasound2-dev` is required by cpal (the STT sidecar's audio
 #     backend) — without alsa.pc the `ocw-stt` crate fails to compile.

@@ -1,8 +1,9 @@
-# Desktop release builds — macOS (.dmg, arm64 + Intel) and Windows (.msi + NSIS .exe).
+# Desktop release builds — macOS (.dmg, arm64), Windows (.msi + NSIS .exe), and Linux
+# (.AppImage, x86-64).
 #
-# CI calls the SAME scripts developers run locally (packaging/build_dmg.sh and
-# build_windows.ps1); this file only provisions the toolchain (Node, Rust, a Python venv at
-# .venv with PyInstaller) and publishes the results.
+# CI calls the SAME scripts developers run locally (packaging/build_dmg.sh,
+# build_windows.ps1, and build_appimage.sh); this file only provisions the toolchain (Node,
+# Rust, a Python venv at .venv with PyInstaller) and publishes the results.
 #
 # Triggers:
 #   - tag push `v*`  → builds all targets and attaches them to a DRAFT GitHub Release
@@ -50,6 +51,11 @@ jobs:
             slug: macos-arm64
           - os: windows-latest
             slug: windows
+          # Ubuntu 22.04 keeps the Linux release's glibc ABI floor conservative. ARM64 remains
+          # source-portable, but the initial published Linux release is explicitly x86-64 only.
+          - os: ubuntu-22.04
+            slug: linux-x86_64
+            arch: x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +75,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            libxdo-dev \
+            patchelf \
+            libasound2-dev \
+            wget
 
       - name: Set up the sidecar venv (.venv)
         # The build scripts expect a venv at .venv with the package + PyInstaller.
@@ -120,6 +146,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: ./packaging/build_windows.ps1
 
+      - name: Build AppImage (Linux x86-64)
+        if: runner.os == 'Linux'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: ./packaging/build_appimage.sh
+
       - name: Stage artifacts (versioned + stable names)
         run: |
           mkdir -p out
@@ -131,9 +164,9 @@ jobs:
             cp "$BUNDLE"/msi/*.msi out/OpenWorker-windows.msi
             # Updater signature for the NSIS installer (present only when the updater key
             # secret is configured). The .sig signs CONTENT, so the stable rename is safe.
-            SIG=$(ls "$BUNDLE"/nsis/*.exe.sig 2>/dev/null | head -1 || true)
+            SIG=$(find "$BUNDLE/nsis" -maxdepth 1 -type f -name '*.exe.sig' -print -quit 2>/dev/null || true)
             [ -n "$SIG" ] && cp "$SIG" out/OpenWorker-windows-setup.exe.sig
-          else
+          elif [ "$RUNNER_OS" = "macOS" ]; then
             cp "$BUNDLE"/dmg/*.dmg out/
             cp "$BUNDLE"/dmg/*.dmg out/OpenWorker-${{ matrix.slug }}.dmg
             # macOS updater artifact: the signed .app tarball the installed app swaps in.
@@ -141,6 +174,22 @@ jobs:
               cp "$BUNDLE"/macos/OpenWorker.app.tar.gz out/OpenWorker-${{ matrix.slug }}.app.tar.gz
               cp "$BUNDLE"/macos/OpenWorker.app.tar.gz.sig out/OpenWorker-${{ matrix.slug }}.app.tar.gz.sig
             fi
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            APPIMAGE=("$BUNDLE"/appimage/*.AppImage)
+            [ -f "${APPIMAGE[0]}" ]
+            cp "${APPIMAGE[0]}" out/
+            cp "${APPIMAGE[0]}" out/OpenWorker-linux-x86_64.AppImage
+
+            UPDATER=("$BUNDLE"/appimage/*.AppImage.tar.gz)
+            if [ -f "${UPDATER[0]}" ]; then
+              cp "${UPDATER[0]}" out/OpenWorker-linux-x86_64.AppImage.tar.gz
+              if [ -f "${UPDATER[0]}.sig" ]; then
+                cp "${UPDATER[0]}.sig" out/OpenWorker-linux-x86_64.AppImage.tar.gz.sig
+              fi
+            fi
+          else
+            echo "::error::unsupported release runner: $RUNNER_OS"
+            exit 1
           fi
           ls -la out
 

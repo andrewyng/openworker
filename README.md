@@ -18,6 +18,30 @@ It runs on your machine and doesn't lock you into any model: bring your own API 
 [**⬇ Windows 10/11 (x64)**](https://download.openworker.com/windows)
 <sub>builds are not yet code-signed, so SmartScreen will warn; signing is in progress</sub>
 
+[**⬇ Linux AppImage (x86-64)**](https://github.com/andrewyng/openworker/releases/latest/download/OpenWorker-linux-x86_64.AppImage)
+<sub>Ubuntu 22.04+ and other glibc-based distributions with WebKitGTK 4.1</sub>
+
+On Linux, make the download executable before launching it:
+
+```shell
+chmod +x OpenWorker-linux-x86_64.AppImage
+./OpenWorker-linux-x86_64.AppImage
+```
+
+Supported hosts include Ubuntu 22.04 or newer and current Debian, Fedora, Arch, and derivative
+distributions that provide glibc and WebKitGTK 4.1. The host must also provide GTK 3, libsoup 3,
+and ALSA. For example, Debian/Ubuntu packages these as `libwebkit2gtk-4.1-0`, `libgtk-3-0`,
+`libsoup-3.0-0`, and `libasound2`. Voice input uses ALSA directly or through PipeWire's ALSA
+compatibility layer. Keep awake uses `systemd-inhibit` and therefore requires systemd/logind; if
+no inhibitor can be acquired, the toggle remains off rather than claiming to be active.
+
+NixOS does not run AppImages directly. Use `appimage-run`:
+
+```shell
+nix shell nixpkgs#appimage-run --command \
+  appimage-run ./OpenWorker-linux-x86_64.AppImage
+```
+
 Open the app, add a model key (or point it at Ollama), and ask for something real.
 
 ## How it works
@@ -62,7 +86,7 @@ OpenWorker is local-first. Everything lives on your machine: the agent loop, you
 
 ## Run from source
 
-Prerequisites: Python 3.10+, Node 20+, and (for the desktop shell) the Rust toolchain via [rustup](https://rustup.rs/).
+Prerequisites: Python 3.10+, Node 20+, and (for the desktop shell) the Rust toolchain via [rustup](https://rustup.rs/). Linux desktop builds also need the Tauri and ALSA development packages listed in [`packaging/build_appimage.sh`](packaging/build_appimage.sh).
 
 ```shell
 git clone https://github.com/andrewyng/openworker
@@ -84,7 +108,51 @@ npm run dev        # browser UI on the Vite dev port
 
 To run the full desktop app instead of the browser UI, replace step 3 with `npm run tauri dev` (from `surfaces/gui/`) - the Tauri shell launches the window and supervises the server itself.
 
-Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gui` (GUI unit + hermetic end-to-end). Desktop bundles are built with `packaging/build_dmg.sh` / `packaging/build_windows.ps1`.
+Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gui` (GUI unit + hermetic end-to-end). Desktop bundles are built with `packaging/build_dmg.sh`, `packaging/build_windows.ps1`, or `packaging/build_appimage.sh`.
+
+### Linux release testing
+
+Linux releases use two deliberately different environments:
+
+| Environment | Purpose |
+|---|---|
+| Ubuntu 22.04 GitHub Actions | Reproducible x86-64 release build with a conservative glibc ABI floor |
+| Dubnium/NixOS + Hyprland | Hostile consumer/runtime compatibility test under Wayland and NixOS |
+
+Automated release checks:
+
+```shell
+# Python backend
+.venv/bin/pytest
+
+# React GUI
+cd surfaces/gui
+npm test
+npm run e2e
+
+# Rust
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
+
+# Package (from the repository root)
+cd ../..
+./packaging/build_appimage.sh
+```
+
+The NixOS/Hyprland smoke test runs the versioned artifact with `appimage-run` and verifies that:
+
+```shell
+nix shell nixpkgs#appimage-run --command \
+  appimage-run ./OpenWorker_0.1.6_amd64.AppImage
+```
+
+- The AppImage starts under Wayland, discovers its bundled sidecar, and progresses past “Starting coworker…”.
+- `~/.config/coworker/logs/openworker-server.log` contains no startup errors.
+- The portal folder picker, file tools, terminal tools, tray hide/reopen, and single-instance focus work.
+- Quitting terminates the Python sidecar; voice works through PipeWire/ALSA and disables cleanly without a microphone.
+- Autostart creates a valid XDG entry, paths containing spaces work, and moving the AppImage does not break startup.
+- `systemd-inhibit --list` shows OpenWorker only while keep awake is enabled, and the entry disappears after disabling it or quitting.
 
 ## Repository layout
 
@@ -93,7 +161,7 @@ Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gu
 | `coworker/` | Python backend - agent engine, model providers, connectors, MCP client, memory, automations |
 | `surfaces/gui/` | Desktop app - React UI + Tauri shell that supervises the server |
 | `stt/` | Speech-to-text sidecar (Rust) for voice input |
-| `packaging/` | Installer builds (macOS DMG, Windows), auto-update manifest, dev bootstrap |
+| `packaging/` | Installer builds (macOS DMG, Windows, Linux AppImage), auto-update manifest, dev bootstrap |
 | `docs/` | Design specs and decision logs |
 | `tests/` | Backend test suite |
 
