@@ -108,15 +108,17 @@ def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # deferred to first call so the provider can be built before a key exists.
     # thinking_budget: hidden profile override — absent/invalid → the default (ON),
     # explicit 0 → off (see DEFAULT_THINKING_BUDGET).
+    # base_url: optional proxy endpoint (AWS Bedrock, Azure, enterprise gateways).
     from .anthropic_provider import DEFAULT_THINKING_BUDGET
 
     api_key = ((profile or {}).get("api_key") or "").strip() or None
+    base_url = ((profile or {}).get("base_url") or "").strip() or None
     try:
         thinking_budget = int(str((profile or {}).get("thinking_budget") or "").strip())
     except ValueError:
         thinking_budget = DEFAULT_THINKING_BUDGET
     return AnthropicProvider(
-        api_key=api_key, secrets=secrets, thinking_budget=thinking_budget
+        api_key=api_key, base_url=base_url, secrets=secrets, thinking_budget=thinking_budget
     )
 
 
@@ -228,6 +230,14 @@ DESCRIPTORS: list[ProviderDescriptor] = [
                 "Anthropic API key",
                 secret=True,
                 placeholder="sk-ant-…",
+            ),
+            ProviderField(
+                "base_url",
+                "Custom endpoint (optional)",
+                secret=False,
+                required=False,
+                placeholder="https://…",
+                help="Route through an enterprise proxy (AWS Bedrock, Azure, or any Anthropic-compatible gateway). Leave blank for api.anthropic.com.",
             ),
             # No thinking_budget field (owner call 2026-07-23): extended thinking is
             # on by default; the profile key stays a hidden override (0 = off).
