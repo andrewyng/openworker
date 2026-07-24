@@ -268,6 +268,11 @@ export function Composer(props: Props) {
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    // While composing with an IME (e.g. 中文注音/拼音選字), Enter confirms the candidate —
+    // not a send. `isComposing` covers modern browsers/WebKit; keyCode 229 covers IMEs that
+    // report the keystroke as "being processed" (older Safari, some Windows IMEs). Without
+    // this guard, pressing Enter to pick a character fires the message mid-composition.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
