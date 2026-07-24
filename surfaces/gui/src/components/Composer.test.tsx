@@ -57,4 +57,30 @@ describe("Composer Enter-to-send + IME composition", () => {
     fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  it("does NOT send on the WebKit ordering (compositionend then Enter, isComposing:false)", () => {
+    // Safari/WebKit fires the committing keydown AFTER compositionend, so isComposing is false
+    // on that Enter (WebKit bug 165004). composingRef must still swallow it.
+    const onSend = vi.fn();
+    render(<Composer {...props({ onSend })} />);
+    type("你好");
+    fireEvent.compositionStart(box());
+    fireEvent.compositionEnd(box());
+    fireEvent.keyDown(box(), { key: "Enter", isComposing: false, keyCode: 13 });
+    expect(onSend).not.toHaveBeenCalled();
+    expect(box().value).toBe("你好");
+  });
+
+  it("sends again once the composition-end guard releases", async () => {
+    const onSend = vi.fn();
+    render(<Composer {...props({ onSend })} />);
+    type("你好");
+    fireEvent.compositionStart(box());
+    fireEvent.compositionEnd(box());
+    // composingRef resets on the next tick (setTimeout 0); a later send-Enter must work.
+    await new Promise((r) => setTimeout(r, 0));
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith("你好", []);
+  });
 });
