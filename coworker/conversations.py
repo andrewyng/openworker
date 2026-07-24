@@ -184,9 +184,16 @@ class ConversationStore:
             if len(record.messages) > existing:
                 self._append(sid, record.messages[existing:])
             elif len(record.messages) < existing:  # rare; not append-only
-                with open(self._file(sid), "w", encoding="utf-8") as f:
+                # Atomic rewrite: write the full log to a temp file, then replace in one
+                # step. An in-place open(..., "w") truncates the file immediately, so a
+                # crash mid-rewrite would erase the conversation history (same
+                # tmp-then-replace pattern as subscriptions.ChannelBuffer._save).
+                path = self._file(sid)
+                tmp = path.with_suffix(".tmp")
+                with open(tmp, "w", encoding="utf-8") as f:
                     for m in record.messages:
                         f.write(json.dumps(m) + "\n")
+                tmp.replace(path)
 
             title = record.title or title_from(record.messages)
             self._conn.execute(
