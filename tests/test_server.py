@@ -56,6 +56,24 @@ def test_chat_completions_openai_shape(tmp_path):
     assert body["choices"][0]["message"]["content"] == "hello world"
     assert body["choices"][0]["finish_reason"] == "stop"
 
+def test_tool_output_route_is_paged_and_session_scoped(tmp_path):
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    manager.session_store.save(
+        SessionRecord(
+            session_id="one",
+            workspace=str(tmp_path),
+            model="m",
+            mode="interactive",
+            agent="cowork",
+        )
+    )
+    record = manager.tool_output_store("one").put("call", "tool", "hello durable output")
+    client = TestClient(create_app(manager))
+    page = client.get(f"/v1/sessions/one/tool-outputs/{record.ref}?limit_bytes=5")
+    assert page.status_code == 200 and page.json()["content"] == "hello"
+    assert client.get(f"/v1/sessions/two/tool-outputs/{record.ref}").status_code == 404
+    assert client.get("/v1/sessions/one/tool-outputs/not-a-reference").status_code == 400
+
 
 def test_agents_and_memory_rest(tmp_path):
     client = _client(tmp_path, [])
@@ -779,3 +797,82 @@ def test_set_provider_persists_extra_fields(tmp_path):
     manager.set_provider("ollama", {"base_url": ""})
     providers = {p["name"]: p for p in manager.get_providers()}
     assert "base_url" not in providers["ollama"]["values"]
+
+
+def test_tool_output_route_security_and_deletion(tmp_path):
+    from coworker.conversations import SessionRecord
+
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    manager.session_store.save(
+        SessionRecord(
+            session_id="keep",
+            workspace=str(tmp_path),
+            model="m",
+            mode="interactive",
+            agent="cowork",
+        )
+    )
+    store = manager.tool_output_store("keep")
+    record = store.put("call", "tool", "abcdefghijklmnopqrstuvwxyz")
+    client = TestClient(create_app(manager))
+
+    assert client.get(f"/v1/sessions/keep/tool-outputs/{record.ref}?offset_bytes=-1").status_code == 400
+    assert client.get(f"/v1/sessions/keep/tool-outputs/{record.ref}?limit_bytes=0").status_code == 400
+    assert client.get(f"/v1/sessions/keep/tool-outputs/{record.ref}?limit_bytes=999999").status_code == 400
+    assert client.get("/v1/sessions/keep/tool-outputs/out_" + ("a" * 32)).status_code == 404
+    assert client.get("/v1/sessions/keep/tool-outputs/out_notvalid").status_code == 400
+    assert client.get("/v1/sessions/keep/tool-outputs/out_" + ("a" * 31)).status_code == 400
+
+    page = client.get(f"/v1/sessions/keep/tool-outputs/{record.ref}?limit_bytes=8").json()
+    assert page["content"] == "abcdefgh" and page["complete"] is False
+
+    (store.directory / f"{record.ref}.json").write_text("{", encoding="utf-8")
+    assert (
+        client.get(f"/v1/sessions/keep/tool-outputs/{record.ref}").status_code
+        == 409
+    )
+
+    assert client.delete("/v1/sessions/keep").json()["ok"] is True
+    assert client.get(f"/v1/sessions/keep/tool-outputs/{record.ref}").status_code == 404
+
+
+def test_tool_output_orphan_gc(tmp_path):
+    import os
+    import time
+    from coworker.conversations import SessionRecord
+    from coworker.tool_outputs import session_output_key
+
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    manager.session_store.save(
+        SessionRecord(
+            session_id="live",
+            workspace=str(tmp_path),
+            model="m",
+            mode="interactive",
+            agent="cowork",
+        )
+    )
+    manager.tool_output_store("live").put("c", "t", "keep-me")
+    orphan = manager.tool_output_store("orphan-old")
+    orphan.put("c", "t", "drop-me")
+    # Age the orphan directory past grace.
+    stale = orphan.directory
+    old = time.time() - 48 * 60 * 60
+    os.utime(stale, (old, old))
+    removed = manager.collect_tool_output_orphans(grace_seconds=24 * 60 * 60)
+    assert removed == 1
+    assert not stale.exists()
+    assert (manager._data_base / "tool-outputs" / session_output_key("live")).is_dir()
+
+
+def test_tool_output_orphan_gc_ignores_non_hash_directory(tmp_path):
+    import os
+    import time
+
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    unrelated = manager._data_base / "tool-outputs" / ("g" * 64)
+    unrelated.mkdir(parents=True)
+    old = time.time() - 48 * 60 * 60
+    os.utime(unrelated, (old, old))
+    assert manager.collect_tool_output_orphans(grace_seconds=0) == 0
+    assert unrelated.is_dir()
