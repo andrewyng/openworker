@@ -268,6 +268,9 @@ export function Composer(props: Props) {
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    // Enter is also used to confirm candidates while composing with a CJK IME.
+    // Do not submit until the composition has finished.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
