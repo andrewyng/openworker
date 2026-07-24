@@ -234,6 +234,13 @@ export function AutomationQuickstart({
   };
 
   const startConnect = async (name: string) => {
+    // Bail early if managed OAuth is paused for this connector — connectManaged
+    // rejects, its error is silently caught, and the UI would otherwise sit in
+    // "waiting" forever. The row-level render now surfaces a Settings link for
+    // this case, but keep a defensive no-op here so any other caller is safe.
+    const paused = connState(name)?.managed_paused;
+    if (paused) return;
+
     if (!cloud?.signed_in) {
       setPendingConn(name); // the pane appears; sign-in completes it
       return;
@@ -381,6 +388,27 @@ export function AutomationQuickstart({
                   </span>
                   {c?.connected ? (
                     <span className="text-[12.5px] text-ok">✓ Connected</span>
+                  ) : c?.managed_paused ? (
+                    // Managed broker is paused (e.g. Google CASA pending): the Connect
+                    // button would silently fail (connectManaged rejects, we swallow it,
+                    // UI enters "waiting" forever). Send users to the Manage tab where
+                    // the manual field entry stays live — same UX as ManageTabs §managed.
+                    <span
+                      className="text-[12px] text-muted inline-flex items-center gap-1.5"
+                      data-testid={`ob-connect-paused-${name}`}
+                    >
+                      One-click paused ·{" "}
+                      <a
+                        href="#/manage/connectors"
+                        className="underline hover:text-ink"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          window.location.hash = "#/manage/connectors";
+                        }}
+                      >
+                        Connect manually in Settings
+                      </a>
+                    </span>
                   ) : flow ? (
                     <span className="inline-flex items-center gap-2 text-[12px] text-muted">
                       <Spinner />
