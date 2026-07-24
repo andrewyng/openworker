@@ -213,7 +213,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
                 secret=False,
                 required=False,
                 placeholder="https://…/openai/v1",
-                help="For Azure OpenAI, OpenRouter, vLLM, or any OpenAI-compliant server. Leave blank for api.openai.com.",
+                help="For Azure OpenAI, OpenRouter, vLLM, ConductAI Guard (https://proxy.conductai.ai), or any OpenAI-compliant server. Leave blank for api.openai.com.",
             ),
         ],
         build=_build_openai,
