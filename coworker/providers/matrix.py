@@ -289,6 +289,15 @@ MATRIX: dict[str, ModelEntry] = {
     "together:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": ModelEntry(
         "Llama 4 Maverick · via Together", _AGENTIC, 1_000_000
     ),
+    "anyrouter:anyrouter/free": ModelEntry("Free (preset) · via AnyRouter"),
+    "anyrouter:anyrouter/agent": ModelEntry("Agent (preset) · via AnyRouter"),
+    "anyrouter:moonshotai/kimi-k3": ModelEntry("Kimi K3 · via AnyRouter"),
+    "anyrouter:google/gemini-3.6-flash": ModelEntry(
+        "Gemini 3.6 Flash · via AnyRouter"
+    ),
+    "anyrouter:google/gemini-3.5-flash-lite": ModelEntry(
+        "Gemini 3.5 Flash Lite · via AnyRouter"
+    ),
     # fireworks.ai/models/fireworks/glm-5p2 lists "1040k tokens" (read 2026-09-08).
     "fireworks:accounts/fireworks/models/glm-5p2": ModelEntry(
         "GLM-5.2 · via Fireworks", _AGENTIC, 1_040_000
