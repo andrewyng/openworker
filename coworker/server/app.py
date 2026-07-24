@@ -28,8 +28,8 @@ from fastapi.middleware.cors import CORSMiddleware
 # allowed — the gate targets browsers, which always attach an unforgeable Origin.
 _ALLOWED_ORIGIN_RE = re.compile(
     r"^(tauri://localhost"
-    r"|https?://localhost(:\d+)?"
-    r"|https?://127\.0\.0\.1(:\d+)?"
+    r"|https?://localhost:(8765|1420)"
+    r"|https?://127\.0\.0\.1:(8765|1420)"
     r"|https?://tauri\.localhost)$"
 )
 
