@@ -124,8 +124,26 @@ def _ensure_ca_bundle() -> None:
         pass
 
 
+def _use_system_trust_store() -> None:
+    """Verify TLS against the OS trust store (Keychain/Schannel) instead of certifi alone.
+    Corporate networks commonly re-sign outbound TLS (Palo Alto/Zscaler-style SSL inspection)
+    with a private CA that IT installs into the OS trust store but that certifi has never heard
+    of. The user's browser connects fine, while every httpx call in the sidecar — most visibly
+    the sign-in token exchange in cloud.complete_login() — dies with CERTIFICATE_VERIFY_FAILED.
+    truststore (the approach pip ships since 24.2) patches ssl.SSLContext to consult the OS
+    verifier; certifi/SSL_CERT_FILE anchors still work on top of it.
+    """
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+    except Exception:
+        pass
+
+
 def main(argv=None) -> None:
     _ensure_ca_bundle()
+    _use_system_trust_store()
     cfg = load_config()  # global config supplies defaults
     parser = argparse.ArgumentParser(prog="openworker-server")
     parser.add_argument("--cwd", default=None, help="optional seed/default workspace")
