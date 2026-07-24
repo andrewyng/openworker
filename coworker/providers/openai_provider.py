@@ -76,6 +76,53 @@ def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, An
 _MAX_TOKENS_ERROR = "'max_tokens' is not supported"
 
 
+class UpstreamConnectionError(RuntimeError):
+    """The upstream OpenAI-compatible endpoint dropped the connection or timed out
+    mid-response. Distinct from param/auth/quota errors: retrying the same request
+    is often the right move, so surface a clear, user-facing message while
+    preserving the underlying exception via `__cause__` for logs."""
+
+
+# httpx/openai exception types raised when the peer closes a streaming response
+# early (Zscaler timeout, provider-side idle-out, upstream crash). Compared by
+# class name because the SDK version pinning shifts between users.
+_UPSTREAM_DROP_MARKERS = (
+    "RemoteProtocolError",  # httpx: "peer closed connection without sending complete message body"
+    "ReadError",            # httpx: mid-stream read failure
+    "ReadTimeout",          # httpx: idle-out mid-stream
+    "APIConnectionError",   # openai SDK's httpx wrapper
+    "APITimeoutError",      # openai SDK: timeout during a request
+    "IncompleteRead",       # http.client / urllib3
+)
+
+
+def _is_upstream_drop(exc: BaseException) -> bool:
+    name = type(exc).__name__
+    if name in _UPSTREAM_DROP_MARKERS:
+        return True
+    # Match on message too — some SDK versions wrap the httpx error in a generic
+    # Exception whose class name doesn't hit the list above.
+    text = str(exc).lower()
+    return (
+        "peer closed connection" in text
+        or "incomplete chunked read" in text
+        or "connection was closed" in text
+    )
+
+
+def _reraise_if_upstream_drop(exc: BaseException, *, streaming: bool) -> None:
+    """If `exc` is a connection-drop error, re-raise as UpstreamConnectionError with
+    a clear user-facing message. Otherwise return, letting the caller re-raise the
+    original. The original exception is chained via `raise ... from exc`."""
+    if not _is_upstream_drop(exc):
+        return
+    kind = "streaming response" if streaming else "response"
+    raise UpstreamConnectionError(
+        f"Upstream model provider closed the {kind} early. "
+        "Retry, or try a different model."
+    ) from exc
+
+
 def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
     """Kwargs for the one retry an unsupported-parameter error earns, or re-raise.
 
@@ -160,9 +207,16 @@ class OpenAIProvider(ProviderClient):
                 response = client.chat.completions.create(**kwargs)
                 break
             except Exception as exc:
+                # Connection drops are NOT param-fixable — re-raise with a clear
+                # message before _param_fix_retry surfaces the raw httpx string.
+                _reraise_if_upstream_drop(exc, streaming=False)
                 kwargs = _param_fix_retry(kwargs, exc)
         else:
-            response = client.chat.completions.create(**kwargs)
+            try:
+                response = client.chat.completions.create(**kwargs)
+            except Exception as exc:
+                _reraise_if_upstream_drop(exc, streaming=False)
+                raise
         choice = response.choices[0]
         message = choice.message
         text = getattr(message, "content", None)
@@ -209,10 +263,31 @@ class OpenAIProvider(ProviderClient):
                 chunks = client.chat.completions.create(**kwargs)
                 break
             except Exception as exc:
+                _reraise_if_upstream_drop(exc, streaming=True)
                 kwargs = _param_fix_retry(kwargs, exc)
         else:
-            chunks = client.chat.completions.create(**kwargs)
-        for chunk in chunks:
+            try:
+                chunks = client.chat.completions.create(**kwargs)
+            except Exception as exc:
+                _reraise_if_upstream_drop(exc, streaming=True)
+                raise
+
+        # Iterator-time drops: peer can close mid-stream after `.create()` returns
+        # cleanly. Wrap the loop so the raw httpx `RemoteProtocolError` becomes an
+        # UpstreamConnectionError with the same user-facing message.
+        try:
+            iterator = iter(chunks)
+        except TypeError:
+            iterator = chunks  # already an iterator
+
+        while True:
+            try:
+                chunk = next(iterator)
+            except StopIteration:
+                break
+            except Exception as exc:
+                _reraise_if_upstream_drop(exc, streaming=True)
+                raise
             choices = getattr(chunk, "choices", None)
             if not choices:
                 continue
