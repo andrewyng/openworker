@@ -49,7 +49,7 @@ class Config:
     auto_allow: list[str] = field(default_factory=list)
     host: str = "127.0.0.1"
     port: int = 8765
-    # Web search provider: "duckduckgo" (keyless default) | "tavily" | "brave" (need a key).
+    # Web search provider: "duckduckgo" (keyless default) | "tavily" | "brave" | "firecrawl" (need a key).
     web_search_provider: str = "duckduckgo"
     # OpenWorker Cloud (sign-in + managed connectors). Config, never constants:
     # dev/staging/BYO-VPC deployments point these at their own instances.
