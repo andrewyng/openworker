@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import asyncio
 import threading
 import time
@@ -439,3 +440,222 @@ def test_outbound_replaces_images_for_non_vision_models(tmp_path):
     assert all(p["type"] != "image_url" for p in parts)
     assert "not viewable" in parts[-1]["text"]
     assert engine.messages[-1]["content"][1]["type"] == "image_url"  # history untouched
+
+
+# -- durable tool outputs -------------------------------------------------------
+
+
+def test_large_tool_result_projects_envelope(tmp_path):
+    from coworker.tool_outputs import SessionToolOutputStore, ToolOutputPolicy
+
+    policy = ToolOutputPolicy(inline_limit_chars=80, preview_chars=40, min_disk_headroom_bytes=0)
+    store = SessionToolOutputStore(tmp_path, "eng", policy)
+    sentinel = "MIDDLE_SENTINEL_UNIQUE"
+    payload = "H" * 200 + sentinel + "T" * 200
+
+    def big_tool():
+        return payload
+
+    big_tool.__name__ = "big_tool"
+    big_tool.__coworker_schema__ = {
+        "type": "function",
+        "function": {"name": "big_tool", "parameters": {"type": "object", "properties": {}}},
+    }
+    big_tool.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="big_tool", category="files", risk_level="low", capabilities=["read"], requires_approval=False
+    )
+
+    provider = ScriptedProvider([_tool_turn("big_tool", {}, "c1"), _text_turn("done")])
+    registry = ToolRegistry()
+    registry.register(big_tool)
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+        tool_output_store=store,
+        max_iterations=4,
+    )
+    events = _collect(engine, "go")
+    finished = [e for e in events if e.type is EventType.TOOL_FINISHED][0]
+    assert finished.data["truncated"] is True
+    assert finished.data["output_ref"].startswith("out_")
+    tool_msg = next(m for m in engine.messages if m.get("role") == "tool")
+    body = json.loads(tool_msg["content"])
+    assert body["output_ref"] == finished.data["output_ref"]
+    assert sentinel not in body["preview"]
+    assert provider.calls >= 2
+    assert sentinel in serialize_join(store, body["output_ref"])
+
+
+def serialize_join(store, ref):
+    parts, offset = [], 0
+    while True:
+        page = store.read(ref, offset)
+        parts.append(page["content"])
+        if page["complete"]:
+            break
+        offset = page["next_offset_bytes"]
+    return "".join(parts)
+
+
+def test_read_tool_output_never_recurses(tmp_path):
+    from coworker.tool_outputs import SessionToolOutputStore, ToolOutputPolicy, read_tool_output_tool
+
+    policy = ToolOutputPolicy(
+        inline_limit_chars=500,
+        preview_chars=100,
+        read_max_bytes=8_000,
+        min_disk_headroom_bytes=0,
+    )
+    store = SessionToolOutputStore(tmp_path, "eng", policy)
+    record = store.put("c", "t", "Q" * 5000)
+    tool = read_tool_output_tool(store)
+    registry = ToolRegistry()
+    registry.register(tool)
+    provider = ScriptedProvider(
+        [_tool_turn("read_tool_output", {"output_ref": record.ref, "limit_bytes": 4000}, "r1"), _text_turn("ok")]
+    )
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+        tool_output_store=store,
+    )
+    _collect(engine, "read")
+    tool_msg = next(m for m in engine.messages if m.get("role") == "tool")
+    body = json.loads(tool_msg["content"])
+    assert "output_ref" in body and body.get("truncated") is not True
+    assert "content" in body
+
+
+def test_display_sidecar_survives_projection(tmp_path):
+    from coworker.tool_outputs import SessionToolOutputStore, ToolOutputPolicy
+
+    store = SessionToolOutputStore(
+        tmp_path, "eng", ToolOutputPolicy(inline_limit_chars=10, preview_chars=6, min_disk_headroom_bytes=0)
+    )
+
+    def noisy():
+        return {"data": "Z" * 100, "_display": {"hidden_by_filters": 2}}
+
+    noisy.__name__ = "noisy"
+    noisy.__coworker_schema__ = {
+        "type": "function",
+        "function": {"name": "noisy", "parameters": {"type": "object", "properties": {}}},
+    }
+    noisy.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="noisy", category="files", risk_level="low", capabilities=["read"], requires_approval=False
+    )
+    provider = ScriptedProvider([_tool_turn("noisy", {}, "n1"), _text_turn("ok")])
+    registry = ToolRegistry()
+    registry.register(noisy)
+    audits = []
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+        tool_output_store=store,
+        audit_sink=audits.append,
+    )
+    events = _collect(engine, "go")
+    finished = next(e for e in events if e.type is EventType.TOOL_FINISHED)
+    assert finished.data["display"]["hidden_by_filters"] == 2
+    tool_msg = next(m for m in engine.messages if m.get("role") == "tool")
+    assert tool_msg["_display"]["hidden_by_filters"] == 2
+    assert "_display" not in json.loads(tool_msg["content"])
+    assert all("ZZZZ" not in json.dumps(a) for a in audits)
+
+
+def test_denied_call_creates_no_blob(tmp_path):
+    from coworker.tool_outputs import SessionToolOutputStore, ToolOutputPolicy, ToolResultProjector
+
+    store = SessionToolOutputStore(tmp_path, "eng", ToolOutputPolicy(min_disk_headroom_bytes=0))
+
+    async def deny(_req):
+        return ApprovalOutcome.DENY
+
+    engine, _ = _engine(
+        tmp_path,
+        [
+            _tool_turn("write_file", {"path": "new.py", "content": "x"}),
+            _text_turn("ok, skipped it"),
+        ],
+        approver=deny,
+    )
+    engine.tool_output_store = store
+    engine._tool_projector = ToolResultProjector(store)
+    _collect(engine, "create new.py")
+    assert store.list_references() == set()
+
+
+def test_retention_failure_is_bounded_error(tmp_path):
+    from coworker.tool_outputs import SessionToolOutputStore, ToolOutputPolicy, ToolResultProjector
+
+    store = SessionToolOutputStore(
+        tmp_path,
+        "eng",
+        ToolOutputPolicy(inline_limit_chars=10, preview_chars=6, max_single_output_bytes=20, min_disk_headroom_bytes=0),
+    )
+
+    def huge():
+        return "X" * 500
+
+    huge.__name__ = "huge"
+    huge.__coworker_schema__ = {
+        "type": "function",
+        "function": {"name": "huge", "parameters": {"type": "object", "properties": {}}},
+    }
+    huge.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="huge", category="files", risk_level="low", capabilities=["read"], requires_approval=False
+    )
+    provider = ScriptedProvider([_tool_turn("huge", {}, "h1"), _text_turn("ok")])
+    registry = ToolRegistry()
+    registry.register(huge)
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+        tool_output_store=store,
+    )
+    events = _collect(engine, "go")
+    finished = next(e for e in events if e.type is EventType.TOOL_FINISHED)
+    assert finished.data["status"] == "error"
+    body = json.loads(next(m for m in engine.messages if m.get("role") == "tool")["content"])
+    assert body["recoverable"] is False
+    assert "could not be retained" in body["error"]
+
+
+def test_unserializable_result_becomes_bounded_error(tmp_path):
+    from coworker.tool_outputs import SessionToolOutputStore, ToolOutputPolicy
+
+    store = SessionToolOutputStore(
+        tmp_path,
+        "eng",
+        ToolOutputPolicy(
+            inline_limit_chars=80,
+            preview_chars=40,
+            min_disk_headroom_bytes=0,
+        ),
+    )
+    circular = []
+    circular.append(circular)
+    engine, _ = _engine(tmp_path, [_text_turn("unused")])
+    engine.tool_output_store = store
+    from coworker.tool_outputs import ToolResultProjector
+
+    engine._tool_projector = ToolResultProjector(store)
+    event = engine._record_result(
+        ToolCall(id="circular", name="example", arguments={}),
+        circular,
+        "ok",
+    )
+    assert event.data["status"] == "error"
+    body = json.loads(engine.messages[-1]["content"])
+    assert body == {
+        "error": "tool output could not be retained",
+        "recoverable": False,
+    }
