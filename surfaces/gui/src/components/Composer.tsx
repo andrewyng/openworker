@@ -92,6 +92,11 @@ export function Composer(props: Props) {
   const fileInput = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const noticeTimer = useRef<number | null>(null);
+  // Tracks the IME composition session ourselves. Safari/WebKit (Tauri's macOS webview) fires
+  // the committing keydown AFTER compositionend, so KeyboardEvent.isComposing is already false
+  // on that Enter (WebKit bug 165004). The ref is reset one tick after compositionend (see the
+  // textarea handler below) so that commit-Enter is still swallowed, but a later send-Enter is not.
+  const composingRef = useRef(false);
 
   // Rejected-attachment notice: visible ~8s, then clears (or on ✕).
   const showAttachNotice = (message: string) => {
@@ -268,6 +273,12 @@ export function Composer(props: Props) {
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    // Enter during IME composition (e.g. 中文注音/拼音選字) confirms a candidate — not a send.
+    // `composingRef` is the primary signal (covers Safari/WebKit, where the committing keydown
+    // arrives after compositionend with isComposing already false — WebKit bug 165004).
+    // `e.nativeEvent.isComposing` covers Chrome/Firefox; `keyCode === 229` covers IMEs that
+    // report the keystroke as "being processed" (older Safari, some Windows IMEs).
+    if (composingRef.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
@@ -394,6 +405,17 @@ export function Composer(props: Props) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKey}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            // Defer the reset one tick: WebKit fires the committing keydown right after this,
+            // with isComposing already false (WebKit bug 165004). The short delay keeps the guard
+            // armed long enough to swallow that Enter, then releases it for the next send-Enter.
+            window.setTimeout(() => {
+              composingRef.current = false;
+            }, 0);
+          }}
           onPaste={onPaste}
           rows={1}
         />
