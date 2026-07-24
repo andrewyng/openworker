@@ -206,3 +206,96 @@ describe("humanizeTool", () => {
     expect(line.obj).toContain("Old plan");
   });
 });
+
+describe("durable tool output card", () => {
+  it("shows retained affordance and pages on load more", async () => {
+    const ref = "out_" + "b".repeat(32);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any) => {
+      const url = String(input);
+      const u = new URL(url, "http://local");
+      const offset = Number(u.searchParams.get("offset_bytes") || 0);
+      const body =
+        offset === 0
+          ? {
+              output_ref: ref,
+              offset_bytes: 0,
+              content: "PAGE_ONE ",
+              next_offset_bytes: 9,
+              complete: false,
+              total_chars: 18,
+              total_bytes: 18,
+              sha256: "x",
+            }
+          : {
+              output_ref: ref,
+              offset_bytes: 9,
+              content: "PAGE_TWO",
+              next_offset_bytes: null,
+              complete: true,
+              total_chars: 18,
+              total_bytes: 18,
+              sha256: "x",
+            };
+      return { ok: true, json: async () => body } as Response;
+    });
+
+    const items: Item[] = [
+      { kind: "user", text: "go" },
+      {
+        kind: "tool",
+        id: "t1",
+        name: "run_shell",
+        args: { command: "echo" },
+        status: "ok",
+        preview: "HEAD…TAIL",
+        truncated: true,
+        outputRef: ref,
+        originalChars: 18,
+      },
+      { kind: "assistant", text: "done" },
+    ];
+    const { container } = render(
+      <Transcript items={items} onApprove={vi.fn()} sessionId="sess-1" />,
+    );
+    fireEvent.click(container.querySelector("summary.stepgroup-head")!);
+    expect(screen.getByTestId("tool-output-retained")).toBeTruthy();
+    fireEvent.click(screen.getByText("raw"));
+    expect(screen.getByTestId("tool-output-actions").textContent).toMatch(/Full output retained locally/);
+    fireEvent.click(screen.getByTestId("tool-output-load-more"));
+    await waitFor(() => expect(screen.getByText(/PAGE_ONE/)).toBeTruthy());
+    fireEvent.click(screen.getByTestId("tool-output-load-more"));
+    await waitFor(() => expect(screen.getByTestId("tool-output-complete")).toBeTruthy());
+    expect(screen.getByText(/PAGE_TWO/)).toBeTruthy();
+    fetchSpy.mockRestore();
+  });
+
+  it("surfaces a non-fatal fetch error", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: false,
+      json: async () => ({ detail: "tool output not found" }),
+    } as Response);
+    const items: Item[] = [
+      { kind: "user", text: "go" },
+      {
+        kind: "tool",
+        id: "t1",
+        name: "run_shell",
+        args: {},
+        status: "ok",
+        preview: "x",
+        truncated: true,
+        outputRef: "out_" + "c".repeat(32),
+        originalChars: 10,
+      },
+      { kind: "assistant", text: "done" },
+    ];
+    const { container } = render(
+      <Transcript items={items} onApprove={vi.fn()} sessionId="sess-1" />,
+    );
+    fireEvent.click(container.querySelector("summary.stepgroup-head")!);
+    fireEvent.click(screen.getByText("raw"));
+    fireEvent.click(screen.getByTestId("tool-output-load-more"));
+    await waitFor(() => expect(screen.getByTestId("tool-output-error")).toBeTruthy());
+    fetchSpy.mockRestore();
+  });
+});

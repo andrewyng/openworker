@@ -671,6 +671,13 @@ export function App() {
               d.result_preview || d.reason,
               d.display?.hidden_by_filters,
               d.standing_rule,
+              d.output_ref
+                ? {
+                    outputRef: d.output_ref,
+                    originalChars: d.original_chars,
+                    truncated: !!d.truncated,
+                  }
+                : undefined,
             ),
           );
           // Refresh the right rail when something it shows may have changed: browser state, or a
@@ -1470,6 +1477,7 @@ export function App() {
                     onApprove={approve}
                     running={running}
                     onRetry={retry}
+                    sessionId={sessionId}
                     // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
                     // group (header when collapsed, quiet line when expanded) — never as a
                     // floating paragraph.
@@ -1665,6 +1673,7 @@ function updateLastTool(
   preview?: string,
   hidden?: number,
   standingRule?: string,
+  durable?: { outputRef: string; originalChars?: number; truncated?: boolean },
 ): Item[] {
   const copy = [...items];
   for (let i = copy.length - 1; i >= 0; i--) {
@@ -1676,6 +1685,13 @@ function updateLastTool(
         preview,
         ...(hidden ? { hidden } : {}),
         ...(standingRule ? { standingRule } : {}),
+        ...(durable
+          ? {
+              outputRef: durable.outputRef,
+              originalChars: durable.originalChars,
+              truncated: durable.truncated,
+            }
+          : {}),
       };
       break;
     }
