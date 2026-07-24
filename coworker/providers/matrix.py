@@ -91,6 +91,15 @@ MATRIX: dict[str, ModelEntry] = {
     "together:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": ModelEntry(
         "Llama 4 Maverick · via Together"
     ),
+    "anyrouter:anyrouter/free": ModelEntry("Free (preset) · via AnyRouter"),
+    "anyrouter:anyrouter/agent": ModelEntry("Agent (preset) · via AnyRouter"),
+    "anyrouter:moonshotai/kimi-k3": ModelEntry("Kimi K3 · via AnyRouter"),
+    "anyrouter:google/gemini-3.6-flash": ModelEntry(
+        "Gemini 3.6 Flash · via AnyRouter"
+    ),
+    "anyrouter:google/gemini-3.5-flash-lite": ModelEntry(
+        "Gemini 3.5 Flash Lite · via AnyRouter"
+    ),
     "fireworks:accounts/fireworks/models/glm-5p2": ModelEntry(
         "GLM-5.2 · via Fireworks"
     ),
