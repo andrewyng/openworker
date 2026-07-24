@@ -13,6 +13,7 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
   // Index tool results by tool_call_id so replayed tool rows can show their output
   // (the live view gets this from `tool_finished` events; on replay it's the `role:"tool"` msgs).
   const results: Record<string, string> = {};
+  const durable: Record<string, any> = {};
   // `_display` sidecar on a tool message = user-facing metadata the agent never saw
   // (e.g. how many hits the privacy filters hid) — surfaces on the tool card.
   const hiddenCounts: Record<string, number> = {};
@@ -20,6 +21,11 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
     if (m.role === "tool" && m.tool_call_id) {
       results[m.tool_call_id] =
         typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+      try {
+        durable[m.tool_call_id] = JSON.parse(results[m.tool_call_id]);
+      } catch {
+        // Ordinary text tool results are not JSON envelopes.
+      }
       const hidden = Number(m._display?.hidden_by_filters || 0);
       if (hidden > 0) hiddenCounts[m.tool_call_id] = hidden;
     }
@@ -53,13 +59,25 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
         }
         const preview = results[tc.id];
         const hidden = hiddenCounts[tc.id];
+        const output = durable[tc.id];
+        const envelope =
+          output && typeof output === "object" && typeof output.output_ref === "string"
+            ? output
+            : null;
         items.push({
           kind: "tool",
           id: tc.id,
           name: tc.function?.name,
           args,
           status: "ok",
-          preview,
+          preview: envelope?.preview ? String(envelope.preview) : preview,
+          ...(envelope
+            ? {
+                outputRef: envelope.output_ref,
+                originalChars: envelope.original_chars,
+                truncated: true,
+              }
+            : {}),
           ...(hidden ? { hidden } : {}),
         });
       }

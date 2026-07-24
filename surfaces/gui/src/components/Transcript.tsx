@@ -5,6 +5,7 @@ import { humanizeAsk, humanizeTool, type HumanLine } from "../humanize";
 import { Markdown } from "./Markdown";
 import { ConnectorMessageCard } from "./ConnectorMessageCard";
 import { Icon } from "./Icon";
+import { getToolOutput } from "../api";
 
 // Hover affordances for a message bubble (FB-005): copy the raw text + the message's time.
 // Lives in a ZERO-HEIGHT strip under the bubble (absolute, inside the transcript's 20px gap)
@@ -155,10 +156,44 @@ function LineText({ line }: { line: HumanLine }) {
   );
 }
 
-function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }) {
+function StepRow({
+  tool,
+  approval,
+  sessionId,
+}: {
+  tool: ToolItem;
+  approval?: ApprovalItem;
+  sessionId?: string;
+}) {
   const [raw, setRaw] = useState(false);
+  const [pages, setPages] = useState<string[]>([]);
+  const [nextOffset, setNextOffset] = useState(0);
+  const [complete, setComplete] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const running = tool.status === "…";
   const failed = tool.status !== "ok" && !running;
+  const retained = !!(tool.truncated && tool.outputRef && sessionId);
+
+  const loadMore = async () => {
+    if (!sessionId || !tool.outputRef || loading || complete) return;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const page = await getToolOutput(sessionId, tool.outputRef, nextOffset);
+      setPages((p) => [...p, page.content]);
+      if (page.complete || page.next_offset_bytes == null) {
+        setComplete(true);
+      } else {
+        setNextOffset(page.next_offset_bytes);
+      }
+    } catch (err: any) {
+      setLoadError(String(err?.message || err || "could not load tool output"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div>
       <div className="group flex items-baseline gap-2 px-2 py-0.5 rounded-lg hover:bg-paper" data-testid="turn-step">
@@ -185,6 +220,15 @@ function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }
             {tool.hidden} hidden
           </span>
         )}
+        {retained && (
+          <span
+            className="text-[11px] text-faint shrink-0"
+            data-testid="tool-output-retained"
+            title="Complete output is retained locally and can be loaded without adding it to model context."
+          >
+            retained
+          </span>
+        )}
         {failed && <span className="text-[11px] text-danger shrink-0">{tool.status}</span>}
         {!running && (
           <button
@@ -199,7 +243,39 @@ function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }
         <pre className="ml-8 mr-2 my-1 px-2.5 py-1.5 rounded-lg border border-line bg-paper font-mono text-[11.5px] leading-relaxed text-muted whitespace-pre-wrap break-words max-h-56 overflow-auto">
           {`${tool.name}  ${shortArgs(tool.args)}`}
           {tool.preview ? `\n→ ${tool.preview.length > 1500 ? tool.preview.slice(0, 1500) + "\n…" : tool.preview}` : ""}
+          {pages.length > 0 ? `\n\n—— retained output ——\n${pages.join("")}` : ""}
         </pre>
+      )}
+      {raw && retained && (
+        <div
+          className="ml-8 mr-2 mb-1 flex flex-wrap items-center gap-2 text-[11px] text-faint"
+          data-testid="tool-output-actions"
+        >
+          <span>
+            Full output retained locally
+            {typeof tool.originalChars === "number"
+              ? ` · ${tool.originalChars.toLocaleString()} chars`
+              : ""}
+          </span>
+          {!complete && (
+            <button
+              className="cursor-pointer hover:text-muted underline-offset-2 hover:underline disabled:opacity-50"
+              data-testid="tool-output-load-more"
+              disabled={loading}
+              onClick={loadMore}
+            >
+              {loading ? "Loading…" : pages.length ? "Load more" : "View full output"}
+            </button>
+          )}
+          {complete && pages.length > 0 && (
+            <span data-testid="tool-output-complete">complete</span>
+          )}
+          {loadError && (
+            <span className="text-danger" data-testid="tool-output-error">
+              {loadError}
+            </span>
+          )}
+        </div>
       )}
     </div>
   );
@@ -209,12 +285,14 @@ function TurnGroup({
   items,
   live,
   streamingText,
+  sessionId,
 }: {
   items: TurnItem[];
   live?: boolean;
   // Sub-threshold streamed text belongs to THIS group (§33 ref #3): collapsed → it rides
   // the header as the live line; expanded → the small quiet line under the steps.
   streamingText?: string;
+  sessionId?: string;
 }) {
   // Turns start COLLAPSED, running or not (owner call 2026-07-14) — the header's live
   // line is the pulse; expanding is opt-in.
@@ -280,7 +358,7 @@ function TurnGroup({
                 {approvalChip(row.approval.resolved)}
               </div>
             ) : (
-              <StepRow tool={row.tool} approval={row.approval} key={i} />
+              <StepRow tool={row.tool} approval={row.approval} sessionId={sessionId} key={i} />
             ),
           )}
           {streamingText && (
@@ -311,6 +389,8 @@ interface Props {
   // Re-run the failed turn (no new user message). Offered only on a retriable notice that
   // is the transcript tail of an idle session — anywhere else the error is history.
   onRetry?: () => void;
+  // Needed to page retained tool outputs without putting them back into model context.
+  sessionId?: string;
 }
 
 // The transcript index whose notice gets the Retry button: the tail error notice, looking
@@ -326,7 +406,7 @@ export function retryAnchor(items: Item[]): number {
   return -1;
 }
 
-export function Transcript({ items, running, streamingText, onRetry }: Props) {
+export function Transcript({ items, running, streamingText, onRetry, sessionId }: Props) {
   // §33 grouping: a turn = the maximal run of assistant/tool/resolved-approval items between
   // breakers (user, connector, notices, plan/dir requests…). Trailing assistant texts are the
   // ANSWER and render as bubbles after the group; interior assistant texts are narration and
@@ -376,6 +456,7 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
               items={block.turn}
               live={block.live}
               streamingText={block.live && bi === lastTurnIndex ? streamingText : undefined}
+              sessionId={sessionId}
               key={bi}
             />
           );

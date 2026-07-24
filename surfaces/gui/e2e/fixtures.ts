@@ -757,6 +757,23 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // session-scoped (id-agnostic — any session resolves to the same fixture).
     // POST = the per-session mute override (§32 Access toggles) — flip the shared state so
     // the section's reload sees the change.
+    if (/\/v1\/sessions\/[^/]+\/tool-outputs\/[^/]+$/.test(p)) {
+      const offset = Number(new URL(req.url()).searchParams.get("offset_bytes") || 0);
+      const full = "HEAD_SENTINEL" + "x".repeat(200) + "MIDDLE_SENTINEL" + "y".repeat(200) + "TAIL_SENTINEL";
+      const limit = Number(new URL(req.url()).searchParams.get("limit_bytes") || 4000);
+      const slice = full.slice(offset, offset + limit);
+      const next = offset + slice.length;
+      return json({
+        output_ref: p.split("/").pop(),
+        offset_bytes: offset,
+        content: slice,
+        next_offset_bytes: next >= full.length ? null : next,
+        complete: next >= full.length,
+        total_chars: full.length,
+        total_bytes: full.length,
+        sha256: "fixture",
+      });
+    }
     if (/\/v1\/sessions\/[^/]+\/connections$/.test(p)) {
       if (m === "POST") {
         const b = req.postDataJSON() || {};
