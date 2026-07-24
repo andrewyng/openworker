@@ -8,6 +8,20 @@
 import type { ConversationMessage } from "./api";
 import type { Attachment, Item } from "./types";
 
+const OUTPUT_REF = /^out_[0-9a-f]{32}$/;
+
+function retainedOutputEnvelope(value: any): any | null {
+  return value &&
+    typeof value === "object" &&
+    value.output_ref_version === 1 &&
+    value.truncated === true &&
+    typeof value.output_ref === "string" &&
+    OUTPUT_REF.test(value.output_ref) &&
+    typeof value.preview === "string"
+    ? value
+    : null;
+}
+
 export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
   const items: Item[] = [];
   // Index tool results by tool_call_id so replayed tool rows can show their output
@@ -60,10 +74,7 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
         const preview = results[tc.id];
         const hidden = hiddenCounts[tc.id];
         const output = durable[tc.id];
-        const envelope =
-          output && typeof output === "object" && typeof output.output_ref === "string"
-            ? output
-            : null;
+        const envelope = retainedOutputEnvelope(output);
         items.push({
           kind: "tool",
           id: tc.id,
@@ -76,6 +87,7 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
                 outputRef: envelope.output_ref,
                 originalChars: envelope.original_chars,
                 truncated: true,
+                contentComplete: envelope.content_complete !== false,
               }
             : {}),
           ...(hidden ? { hidden } : {}),

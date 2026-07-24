@@ -12,6 +12,7 @@ import time
 
 import pytest
 
+import coworker.tools.shell as shell_module
 from coworker.permissions import PermissionEngine
 from coworker.tools import ToolRegistry
 from coworker.tools.shell import LocalExecutor, shell_tools
@@ -77,6 +78,34 @@ def test_large_output_is_preserved_for_engine_projection(tmp_path):
         # Both ends survive; the engine projects large output for model context.
         assert "line1000" in result["output"]
         assert "line1\n" in result["output"]
+    finally:
+        ex.close()
+
+
+def test_capture_quota_preserves_head_and_tail_and_marks_partial(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(shell_module, "_MAX_FOREGROUND_RETAINED_BYTES", 1024)
+    if _WIN:
+        command = (
+            '$s = "HEAD_SENTINEL" + ("x" * 3000) + "TAIL_SENTINEL"; '
+            "[Console]::Write($s)"
+        )
+    else:
+        command = (
+            "python3 -c \"import sys; "
+            "sys.stdout.write('HEAD_SENTINEL' + 'x'*3000 + 'TAIL_SENTINEL')\""
+        )
+    ex = LocalExecutor(cwd=tmp_path, default_timeout=10)
+    try:
+        result = ex.run(command)
+        assert result["truncated"] is True
+        assert result["retained_complete"] is False
+        assert result["discarded_bytes"] > 0
+        assert result["retained_bytes"] <= 1024
+        assert "HEAD_SENTINEL" in result["output"]
+        assert "TAIL_SENTINEL" in result["output"]
+        assert "discarded by shell capture quota" in result["output"]
     finally:
         ex.close()
 

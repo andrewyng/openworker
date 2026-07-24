@@ -709,6 +709,7 @@ class TurnEngine:
                 "output_ref": stored.ref,
                 "original_chars": stored.chars,
                 "truncated": True,
+                "content_complete": stored.content_complete,
             }
             if stored
             else {}

@@ -671,6 +671,7 @@ export function App() {
                     outputRef: d.output_ref,
                     originalChars: d.original_chars,
                     truncated: !!d.truncated,
+                    contentComplete: d.content_complete !== false,
                   }
                 : undefined,
             ),
@@ -1656,7 +1657,12 @@ function updateLastTool(
   preview?: string,
   hidden?: number,
   standingRule?: string,
-  durable?: { outputRef: string; originalChars?: number; truncated?: boolean },
+  durable?: {
+    outputRef: string;
+    originalChars?: number;
+    truncated?: boolean;
+    contentComplete?: boolean;
+  },
 ): Item[] {
   const copy = [...items];
   for (let i = copy.length - 1; i >= 0; i--) {
@@ -1673,6 +1679,7 @@ function updateLastTool(
               outputRef: durable.outputRef,
               originalChars: durable.originalChars,
               truncated: durable.truncated,
+              contentComplete: durable.contentComplete,
             }
           : {}),
       };

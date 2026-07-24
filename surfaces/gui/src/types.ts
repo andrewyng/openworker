@@ -95,6 +95,7 @@ export type Item =
       outputRef?: string;
       originalChars?: number;
       truncated?: boolean;
+      contentComplete?: boolean;
     }
   | {
       kind: "approval";

@@ -174,6 +174,7 @@ function StepRow({
   const running = tool.status === "…";
   const failed = tool.status !== "ok" && !running;
   const retained = !!(tool.truncated && tool.outputRef && sessionId);
+  const contentComplete = tool.contentComplete !== false;
 
   const loadMore = async () => {
     if (!sessionId || !tool.outputRef || loading || complete) return;
@@ -224,9 +225,13 @@ function StepRow({
           <span
             className="text-[11px] text-faint shrink-0"
             data-testid="tool-output-retained"
-            title="Complete output is retained locally and can be loaded without adding it to model context."
+            title={
+              contentComplete
+                ? "Complete output is retained locally and can be loaded without adding it to model context."
+                : "The retained head and tail can be loaded locally, but the source exceeded its capture quota."
+            }
           >
-            retained
+            {contentComplete ? "retained" : "retained (partial)"}
           </span>
         )}
         {failed && <span className="text-[11px] text-danger shrink-0">{tool.status}</span>}
@@ -252,7 +257,7 @@ function StepRow({
           data-testid="tool-output-actions"
         >
           <span>
-            Full output retained locally
+            {contentComplete ? "Full output retained locally" : "Partial output retained locally"}
             {typeof tool.originalChars === "number"
               ? ` · ${tool.originalChars.toLocaleString()} chars`
               : ""}
@@ -268,7 +273,9 @@ function StepRow({
             </button>
           )}
           {complete && pages.length > 0 && (
-            <span data-testid="tool-output-complete">complete</span>
+            <span data-testid="tool-output-complete">
+              {contentComplete ? "complete" : "all retained bytes loaded"}
+            </span>
           )}
           {loadError && (
             <span className="text-danger" data-testid="tool-output-error">
@@ -358,7 +365,12 @@ function TurnGroup({
                 {approvalChip(row.approval.resolved)}
               </div>
             ) : (
-              <StepRow tool={row.tool} approval={row.approval} sessionId={sessionId} key={i} />
+              <StepRow
+                tool={row.tool}
+                approval={row.approval}
+                sessionId={sessionId}
+                key={`tool:${sessionId || ""}:${row.tool.id}:${row.tool.outputRef || ""}`}
+              />
             ),
           )}
           {streamingText && (

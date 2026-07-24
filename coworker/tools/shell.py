@@ -31,6 +31,7 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections import deque
 from pathlib import Path
 from typing import Any, Optional
 
@@ -44,8 +45,10 @@ _IS_WINDOWS = sys.platform == "win32"
 # a model-requested timeout can't wedge the turn for more than ten minutes.
 _DEFAULT_TIMEOUT = 120.0
 _MAX_TIMEOUT = 600.0
-# Leave headroom for the JSON shell-result wrapper and worst-case JSON escaping
-# before the projector's 64 MiB per-result retention ceiling.
+# Foreground commands remain bounded before their result reaches the engine. If a command
+# exceeds this capture quota, preserve both ends (where invocations and verdicts tend to
+# appear) and report the omitted byte count explicitly. The projector carries that
+# incompleteness into its envelope instead of claiming the original stream is recoverable.
 _MAX_FOREGROUND_RETAINED_BYTES = 8 * 1024 * 1024
 _MAX_SESSION_CAPTURE_BYTES = 512 * 1024 * 1024
 
@@ -374,9 +377,12 @@ class LocalExecutor(Executor):
         timed_out = False
         aborted = False
         exit_code: Optional[int] = None
-        lines: list[str] = []
-        retained_bytes = 0
-        discarded_bytes = 0
+        head_limit = _MAX_FOREGROUND_RETAINED_BYTES // 2
+        tail_limit = _MAX_FOREGROUND_RETAINED_BYTES - head_limit
+        head = bytearray()
+        tail: deque[bytes] = deque()
+        tail_bytes = 0
+        total_output_bytes = 0
 
         while True:
             if self._abort.is_set():
@@ -420,28 +426,44 @@ class LocalExecutor(Executor):
                     self.cwd = cwd
                 break
             encoded = item.encode("utf-8")
-            remaining = _MAX_FOREGROUND_RETAINED_BYTES - retained_bytes
-            if remaining <= 0:
-                discarded_bytes += len(encoded)
-                continue
-            if len(encoded) <= remaining:
-                lines.append(item)
-                retained_bytes += len(encoded)
-                continue
-            kept = encoded[:remaining]
-            while kept:
-                try:
-                    lines.append(kept.decode("utf-8"))
-                    break
-                except UnicodeDecodeError as exc:
-                    kept = kept[: exc.start]
-            retained_bytes += len(kept)
-            discarded_bytes += len(encoded) - len(kept)
+            total_output_bytes += len(encoded)
+            if len(head) < head_limit:
+                take = min(head_limit - len(head), len(encoded))
+                head.extend(encoded[:take])
+                encoded = encoded[take:]
+            if encoded:
+                tail.append(encoded)
+                tail_bytes += len(encoded)
+                overflow = tail_bytes - tail_limit
+                while overflow > 0 and tail:
+                    oldest = tail[0]
+                    if len(oldest) <= overflow:
+                        tail.popleft()
+                        tail_bytes -= len(oldest)
+                        overflow -= len(oldest)
+                    else:
+                        tail[0] = oldest[overflow:]
+                        tail_bytes -= overflow
+                        overflow = 0
 
-        output = "".join(lines)
-        # Retain the full result. The engine's session-scoped output projector,
-        # not the executor, bounds model context without destroying evidence.
-        truncated = discarded_bytes > 0
+        truncated = total_output_bytes > _MAX_FOREGROUND_RETAINED_BYTES
+        tail_raw = b"".join(tail)
+        if truncated:
+            head_text, head_bytes = _decode_utf8_head(bytes(head))
+            tail_text, decoded_tail_bytes = _decode_utf8_tail(tail_raw)
+            retained_bytes = head_bytes + decoded_tail_bytes
+            discarded_bytes = max(0, total_output_bytes - retained_bytes)
+            output = (
+                head_text
+                + f"\n\n[... {discarded_bytes} bytes discarded by shell capture quota ...]\n\n"
+                + tail_text
+            )
+        else:
+            raw = bytes(head) + tail_raw
+            output = raw.decode("utf-8", errors="replace")
+            retained_bytes = total_output_bytes
+            discarded_bytes = 0
+
         result = self._result(
             command,
             exit_code,
@@ -612,6 +634,27 @@ class LocalExecutor(Executor):
         return result
 
 
+def _decode_utf8_head(raw: bytes) -> tuple[str, int]:
+    """Decode a prefix, dropping only a trailing split UTF-8 character."""
+    while raw:
+        try:
+            return raw.decode("utf-8"), len(raw)
+        except UnicodeDecodeError as exc:
+            if exc.reason != "unexpected end of data":
+                return raw.decode("utf-8", errors="replace"), len(raw)
+            raw = raw[: exc.start]
+    return "", 0
+
+
+def _decode_utf8_tail(raw: bytes) -> tuple[str, int]:
+    """Decode a suffix, dropping only leading UTF-8 continuation bytes."""
+    start = 0
+    while start < len(raw) and raw[start] & 0xC0 == 0x80:
+        start += 1
+    kept = raw[start:]
+    return kept.decode("utf-8", errors="replace"), len(kept)
+
+
 def _parse_exit_code(line: str, marker: str) -> Optional[int]:
     parts = line.strip().split()
     try:
@@ -634,9 +677,10 @@ _RUN_SHELL_SCHEMA = {
         "name": "run_shell",
         "description": (
             "Run a shell command in the persistent session (cwd and env persist across "
-            "calls). Large output is retained in full and projected by the engine for "
-            "model context. Set run_in_background for long-running processes like "
-            "dev servers, then poll with shell_task_output."
+            "calls). Large output is projected by the engine for model context; output "
+            "beyond the shell capture quota preserves both ends and is marked partial. "
+            "Set run_in_background for long-running processes like dev servers, then "
+            "poll with shell_task_output."
         ),
         "parameters": {
             "type": "object",

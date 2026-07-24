@@ -183,9 +183,6 @@ def build_engine(
 
     registry = ToolRegistry()
     registry.register_all(agent.build_tools(context))
-    from .tool_outputs import read_tool_output_tool
-
-    registry.register(read_tool_output_tool(tool_output_store))
     # MCP / connector tools (supplied by the manager) carry their own metadata + schema.
     if extra_tools:
         registry.register_all(extra_tools)
@@ -306,6 +303,11 @@ def build_engine(
     # plan mode via set_mode, and the registry is fixed at build); the engine rejects the
     # call whenever the session isn't actually in plan mode.
     registry.register(propose_plan_tool())
+    # Internal retrieval must be registered last and may not silently replace (or be
+    # replaced by) an agent, connector, MCP, memory, or skill tool with the same name.
+    from .tool_outputs import read_tool_output_tool
+
+    registry.register(read_tool_output_tool(tool_output_store), replace=False)
 
     # Per-turn ephemeral context, appended to the latest user message since mid-thread system
     # messages aren't reliable across providers. Two producers: the plan-mode reminder (mode can

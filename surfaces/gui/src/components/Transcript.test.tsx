@@ -298,4 +298,74 @@ describe("durable tool output card", () => {
     await waitFor(() => expect(screen.getByTestId("tool-output-error")).toBeTruthy());
     fetchSpy.mockRestore();
   });
+
+  it("labels quota-limited source output as partial", () => {
+    const items: Item[] = [
+      {
+        kind: "tool",
+        id: "t1",
+        name: "run_shell",
+        args: {},
+        status: "ok",
+        preview: "HEAD…TAIL",
+        truncated: true,
+        outputRef: "out_" + "d".repeat(32),
+        originalChars: 8000,
+        contentComplete: false,
+      },
+    ];
+    const { container } = render(
+      <Transcript items={items} onApprove={vi.fn()} sessionId="sess-1" />,
+    );
+    fireEvent.click(container.querySelector("summary.stepgroup-head")!);
+    expect(screen.getByTestId("tool-output-retained").textContent).toContain("partial");
+    fireEvent.click(screen.getByText("raw"));
+    expect(screen.getByTestId("tool-output-actions").textContent).toContain(
+      "Partial output retained locally",
+    );
+  });
+
+  it("drops loaded pages when the session or output identity changes", async () => {
+    const firstRef = "out_" + "e".repeat(32);
+    const secondRef = "out_" + "f".repeat(32);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        output_ref: firstRef,
+        offset_bytes: 0,
+        content: "SESSION_ONE_PRIVATE_OUTPUT",
+        next_offset_bytes: null,
+        complete: true,
+        total_chars: 26,
+        total_bytes: 26,
+        sha256: "x",
+      }),
+    } as Response);
+    const retained = (ref: string): Item[] => [
+      {
+        kind: "tool",
+        id: "same-position",
+        name: "run_shell",
+        args: {},
+        status: "ok",
+        preview: "preview",
+        truncated: true,
+        outputRef: ref,
+        contentComplete: true,
+      },
+    ];
+    const view = render(
+      <Transcript items={retained(firstRef)} onApprove={vi.fn()} sessionId="sess-1" />,
+    );
+    fireEvent.click(view.container.querySelector("summary.stepgroup-head")!);
+    fireEvent.click(screen.getByText("raw"));
+    fireEvent.click(screen.getByTestId("tool-output-load-more"));
+    await waitFor(() => expect(screen.getByText(/SESSION_ONE_PRIVATE_OUTPUT/)).toBeTruthy());
+
+    view.rerender(
+      <Transcript items={retained(secondRef)} onApprove={vi.fn()} sessionId="sess-2" />,
+    );
+    expect(screen.queryByText(/SESSION_ONE_PRIVATE_OUTPUT/)).toBeNull();
+    fetchSpy.mockRestore();
+  });
 });
