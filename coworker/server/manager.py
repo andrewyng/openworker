@@ -1409,6 +1409,7 @@ class SessionManager:
     # 2026-07-04; refresh alongside `recommended_model` in providers/registry.py).
     COMPAT_MODELS = {
         "zai": ["glm-5.2", "glm-4.6"],
+        "zai-coding": ["glm-4.6", "glm-4.5"],
         "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro"],
         "kimi": ["kimi-k2.6", "kimi-k2.5"],
         "minimax": ["MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M3"],
