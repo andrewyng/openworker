@@ -345,6 +345,7 @@ class AnthropicProvider(ProviderClient):
         *,
         default_model: str = "claude-sonnet-4-6",
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         secrets: Any = None,
         thinking_budget: Optional[int] = None,
     ):
@@ -352,8 +353,11 @@ class AnthropicProvider(ProviderClient):
         # before any key exists; the key resolves at call time (explicit → env → SecretStore).
         # Tests inject a `client` directly. `thinking_budget` (tokens, from the provider
         # profile's optional field) opts every request into extended thinking.
+        # `base_url` allows routing through enterprise proxies (AWS Bedrock, Azure, or any
+        # Anthropic-compatible gateway such as ConductAI's Guard proxy).
         self._client = client
         self._api_key = api_key
+        self._base_url = base_url or None
         self._secrets = secrets
         self.default_model = default_model
         self.thinking_budget = thinking_budget or 0
@@ -369,7 +373,10 @@ class AnthropicProvider(ProviderClient):
                     "No Anthropic API key configured. Set ANTHROPIC_API_KEY in the environment, "
                     "or add your key in Manage → Configure Models."
                 )
-            self._client = Anthropic(api_key=key)
+            kwargs: dict = {"api_key": key}
+            if self._base_url:
+                kwargs["base_url"] = self._base_url
+            self._client = Anthropic(**kwargs)
         return self._client
 
     def _request_kwargs(

@@ -241,6 +241,12 @@ const MCP_PRESETS: { name: string; label: string; blurb: string; config: Record<
     blurb: "Meeting notes & transcripts — sign in with your Granola account.",
     config: { type: "http", url: "https://mcp.granola.ai/mcp", auth: "oauth" },
   },
+  {
+    name: "conduct-guard",
+    label: "ConductAI Guard",
+    blurb: "Enterprise AI governance — policy enforcement, PII redaction, spend metering, and SOC 2 audit trail for every tool call.",
+    config: { type: "sse", url: "https://api.conductai.ai/guard/mcp", auth: "oauth" },
+  },
 ];
 
 export function McpTab() {
