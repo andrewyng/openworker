@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from .anthropic_provider import AnthropicProvider
+from .apple_foundation_provider import AppleFoundationProvider
 from .base import ProviderClient
 from .bedrock_provider import BedrockProvider
 from .gemini_provider import GeminiProvider
@@ -307,6 +308,11 @@ def _build_openrouter_account(profile: dict[str, Any], secrets: Any) -> Provider
     if not api_key:
         raise RuntimeError("OpenRouter account not signed in — sign in under Models & Keys.")
     return OpenAIProvider(api_key=api_key, base_url=OPENROUTER_BASE_URL)
+
+
+def _build_apple(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    del profile, secrets
+    return AppleFoundationProvider()
 
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
@@ -969,6 +975,16 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         endpoint_help="Prefilled with SiliconFlow's international endpoint. China mainland: https://api.siliconflow.cn/v1 (keys from cloud.siliconflow.cn).",
     ),
     ProviderDescriptor(
+        name="apple",
+        title="Apple Foundation Models (on-device)",
+        needs_key=False,
+        fields=[],
+        build=_build_apple,
+        recommended_model="system",
+        kind="local",
+        blurb="Experimental, private on-device model. Requires a compatible Mac with Apple Intelligence enabled; never falls back to cloud.",
+    ),
+    ProviderDescriptor(
         name="ollama",
         title="Ollama",
         needs_key=False,
@@ -1231,6 +1247,9 @@ def descriptor_configured(d: ProviderDescriptor, profile: dict[str, Any]) -> boo
     a stored or env key. Multi-field cloud providers (no `api_key` field, e.g. Bedrock):
     every required field present — their actual credentials may be ambient (~/.aws, ADC).
     """
+    if d.name == "apple":
+        # Keyless, but only usable where the OS offers the on-device model.
+        return AppleFoundationProvider().availability().available
     if d.auth == "oauth":
         # Signed in = a stored token set, or the key a sign-in issued (OpenRouter).
         profile = profile or {}
@@ -1506,6 +1525,15 @@ def verify_provider_key(
     user can Test before saving. Never raises; returns {ok, error?}. Multi-field cloud providers
     (Bedrock, Vertex) take their whole form via `fields`; everyone else uses api_key/base_url.
     """
+    if name == "apple":
+        status = AppleFoundationProvider().availability()
+        if status.available:
+            return {"ok": True}
+        return {
+            "ok": False,
+            "error": status.detail or "Apple Foundation Models is unavailable.",
+        }
+
     import httpx
 
     d = descriptor or _BY_NAME.get(name) or _BY_NAME["openai"]

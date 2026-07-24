@@ -26,6 +26,9 @@ test("provider gallery: cards wear their state; Next arms off stored credentials
   await expect(page.getByTestId("ob-provider-anthropic")).toContainText("✓ Connected");
   await expect(page.getByTestId("ob-provider-zai")).toContainText("Not set up");
   await expect(page.getByTestId("ob-provider-ollama")).toContainText("No key needed");
+  await expect(page.getByTestId("ob-provider-apple")).toContainText(
+    "Available on this Mac",
+  );
   // Recognition-first order: anthropic before openai before the OpenAI-compat tail.
   const names = await page
     .getByTestId("ob-provider-gallery")

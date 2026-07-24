@@ -2585,6 +2585,13 @@ export interface ProviderInfo {
   account?: string | null; // signed-in account label (email or id)
   authorizing?: boolean;
   last_error?: string | null;
+  // Apple Foundation Models only: whether this Mac can run it, and why not.
+  availability?: {
+    available: boolean;
+    code: string;
+    detail: string | null;
+    context_size: number | null;
+  } | null;
 }
 
 // -- ChatGPT-subscription provider sign-in (OAuth; tokens never reach the GUI) ------

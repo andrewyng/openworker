@@ -45,7 +45,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest # Apple Silicon
+          # Apple Foundation Models' Swift bridge needs the macOS 26 SDK, so pin the
+          # Apple Silicon runner instead of relying on whatever `macos-latest` points at.
+          - os: macos-26 # Apple Silicon
             slug: macos-arm64
           # Intel macOS: macos-13 retired in Dec 2025; macos-15-intel replaced it and is
           # the LAST x86_64 image Actions will offer (available until Aug 2027). Builds
@@ -86,6 +88,8 @@ jobs:
           # openshell: grpcio, without which the macOS sidecar cannot use OpenShell
           # sandboxes (build_dmg.sh refuses to build without it). Not used on Windows.
           if [ "$RUNNER_OS" = "Windows" ]; then EXTRAS=bedrock; else EXTRAS=bedrock,openshell; fi
+          # Apple Foundation Models: an optional Swift bridge that only runs on Apple Silicon.
+          if [ "$RUNNER_OS" = "macOS" ] && [ "$(uname -m)" = "arm64" ]; then EXTRAS="$EXTRAS,apple-foundation-models"; fi
           # Intel Mac: cryptography ships no wheel for it any more, so pip builds it from
           # source against Homebrew's OpenSSL, linked dynamically. PyInstaller then bundles
           # that libssl AND Python's own older one under the same name, the old one wins,
@@ -96,6 +100,9 @@ jobs:
           fi
           "$VPY" -m pip install -e ".[$EXTRAS]" pyinstaller typer tzdata
           "$VPY" -c "import aisuite, coworker"  # fail fast if either import breaks
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            "$VPY" -c "import apple_fm_sdk"
+          fi
 
       - name: npm ci
         working-directory: surfaces/gui
