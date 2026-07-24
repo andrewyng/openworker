@@ -394,6 +394,29 @@ def test_create_automation_grants_and_revoke(tmp_path, monkeypatch):
 # -- scheduler: a suspended run must not stall the loop ---------------------------
 
 
+async def test_scheduler_claims_due_task_before_spawn_yields(tmp_path):
+    store = TaskStore(tmp_path / "auto.db")
+    task = _task(title="overlap")
+    store.save(task)
+    store._conn.execute(
+        "UPDATE scheduled_tasks SET next_run=1.0 WHERE id=?", (task.id,)
+    )
+    store._conn.commit()
+    gate = asyncio.Event()
+
+    async def runner(task, trigger):
+        await gate.wait()
+        return TaskRun(task_id=task.id, status="ok", trigger=trigger)
+
+    sched = Scheduler(store, runner)
+    # Neither await yields inside _tick, so the first spawned coroutine has not
+    # started when the second tick inspects the same overdue database row.
+    await sched._tick(trigger="catchup")
+    await sched._tick(trigger="schedule")
+    assert len(sched._spawned) == 1
+    await sched.stop()
+
+
 async def test_blocked_run_does_not_stall_other_tasks(tmp_path):
     store = TaskStore(tmp_path / "auto.db")
     blocked = _task(title="blocked")
