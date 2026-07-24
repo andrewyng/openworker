@@ -77,6 +77,29 @@ def test_large_envelope_has_head_tail_and_omission(tmp_path):
     assert "mmmmmmmmmm" not in env["preview"]
 
 
+def test_partial_source_is_disclosed_in_envelope(tmp_path):
+    store = SessionToolOutputStore(
+        tmp_path,
+        "s",
+        _policy(
+            inline_limit_chars=800,
+            preview_chars=40,
+            max_single_output_bytes=2_000,
+        ),
+    )
+    result = {
+        "output": "HEAD" + ("x" * 1000) + "TAIL",
+        "truncated": True,
+        "retained_complete": False,
+        "discarded_bytes": 500,
+    }
+    projected = ToolResultProjector(store).project("c", "run_shell", result)
+    assert projected.stored is not None
+    assert projected.stored.content_complete is False
+    assert projected.model_value["content_complete"] is False
+    assert "not fully recoverable" in projected.model_value["instruction"]
+
+
 def test_escape_heavy_preview_stays_within_inline_limit(tmp_path):
     policy = _policy(
         inline_limit_chars=600,
@@ -177,15 +200,21 @@ def test_concurrent_puts_are_distinct(tmp_path):
 
 def test_quota_and_headroom_failures(tmp_path):
     store = SessionToolOutputStore(
-        tmp_path, "s", _policy(max_single_output_bytes=20, max_session_output_bytes=50)
+        tmp_path, "s", _policy(max_single_output_bytes=20, max_session_output_bytes=700)
     )
     with pytest.raises(ToolOutputStoreError):
         store.put("c", "t", "x" * 40)
     store.put("c", "t", "x" * 10)
     store.put("c", "t", "y" * 10)
-    # Content + metadata for another 40-byte payload exceeds the session budget.
+    # Content + metadata count toward the session budget.
     with pytest.raises(ToolOutputStoreError):
-        store.put("c", "t", "z" * 40)
+        store.put("c", "t", "z" * 10)
+    used = store._used_bytes()
+    assert used == sum(
+        path.stat().st_size
+        for path in store.directory.iterdir()
+        if path.is_file() and path.suffix in {".txt", ".json"}
+    )
     tight = SessionToolOutputStore(
         tmp_path, "disk", _policy(min_disk_headroom_bytes=10**18)
     )
@@ -195,10 +224,21 @@ def test_quota_and_headroom_failures(tmp_path):
 
 def test_atomic_failure_leaves_no_reference(tmp_path):
     store = SessionToolOutputStore(tmp_path, "s", _policy())
-    with mock.patch.object(store, "_atomic_write", side_effect=OSError("boom")):
+    original = store._atomic_write
+    calls = 0
+
+    def fail_metadata(path, data):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("boom")
+        return original(path, data)
+
+    with mock.patch.object(store, "_atomic_write", side_effect=fail_metadata):
         with pytest.raises(OSError):
             store.put("c", "t", "payload")
     assert store.list_references() == set()
+    assert list(store.directory.glob("out_*")) == []
 
 
 def test_delete_all_and_create_false(tmp_path):

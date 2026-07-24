@@ -51,6 +51,7 @@ class StoredToolOutput:
     bytes: int
     sha256: str
     created_at: float
+    content_complete: bool = True
     schema_version: int = _SCHEMA_VERSION
 
 
@@ -138,6 +139,7 @@ class SessionToolOutputStore:
     def _used_bytes(self) -> int:
         total = 0
         paths = list(self.directory.glob("out_*.txt"))
+        paths.extend(self.directory.glob("out_*.json"))
         if self.captures_dir.is_dir():
             paths.extend(self.captures_dir.glob("*.log"))
         for path in paths:
@@ -147,8 +149,9 @@ class SessionToolOutputStore:
                 pass
         return total
 
-    def _ensure_quota(self, nbytes: int) -> None:
-        if nbytes > self.policy.max_single_output_bytes:
+    def _ensure_quota(self, nbytes: int, *, content_bytes: int | None = None) -> None:
+        single_bytes = nbytes if content_bytes is None else content_bytes
+        if single_bytes > self.policy.max_single_output_bytes:
             raise ToolOutputStoreError("tool output exceeds per-result quota")
         if self._used_bytes() + nbytes > self.policy.max_session_output_bytes:
             raise ToolOutputStoreError("tool output exceeds session quota")
@@ -177,11 +180,15 @@ class SessionToolOutputStore:
             raise
 
     def put(
-        self, tool_call_id: str, tool_name: str, serialized: str
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        serialized: str,
+        *,
+        content_complete: bool = True,
     ) -> StoredToolOutput:
         raw = serialized.encode("utf-8")
         with self._lock:
-            self._ensure_quota(len(raw))
             record = StoredToolOutput(
                 ref=f"out_{secrets.token_hex(16)}",
                 tool_call_id=str(tool_call_id),
@@ -190,14 +197,27 @@ class SessionToolOutputStore:
                 bytes=len(raw),
                 sha256=hashlib.sha256(raw).hexdigest(),
                 created_at=time.time(),
+                content_complete=content_complete,
             )
-            # Publish content first so a crash never leaves a metadata pointer without bytes.
-            self._atomic_write(self._path(record.ref, ".txt"), raw)
             meta = {**asdict(record), "schema_version": record.schema_version}
-            self._atomic_write(
-                self._path(record.ref, ".json"),
-                json.dumps(meta, sort_keys=True).encode("utf-8"),
+            meta_raw = json.dumps(meta, sort_keys=True).encode("utf-8")
+            self._ensure_quota(
+                len(raw) + len(meta_raw),
+                content_bytes=len(raw),
             )
+            content_path = self._path(record.ref, ".txt")
+            # Publish content first so a crash never leaves a metadata pointer without bytes.
+            self._atomic_write(content_path, raw)
+            try:
+                self._atomic_write(self._path(record.ref, ".json"), meta_raw)
+            except BaseException:
+                # A metadata failure must not leave an unreachable content blob consuming
+                # this known session's quota forever.
+                try:
+                    content_path.unlink()
+                except OSError:
+                    pass
+                raise
             return record
 
     def read(
@@ -313,6 +333,9 @@ class ToolResultProjector:
         self, tool_call_id: str, tool_name: str, result: Any
     ) -> ProjectedToolOutput:
         serialized = serialize_tool_result(result)
+        content_complete = not (
+            isinstance(result, dict) and result.get("retained_complete") is False
+        )
         # Retrieval must never spill recursively. The tool factory sizes pages to
         # the inline policy; this guard handles custom callers or corrupt results.
         if tool_name == "read_tool_output":
@@ -327,7 +350,12 @@ class ToolResultProjector:
             return ProjectedToolOutput(model_value=result, stored=None)
         if len(serialized) <= self.policy.inline_limit_chars:
             return ProjectedToolOutput(model_value=result, stored=None)
-        record = self.store.put(tool_call_id, tool_name, serialized)
+        record = self.store.put(
+            tool_call_id,
+            tool_name,
+            serialized,
+            content_complete=content_complete,
+        )
         preview_chars = self.policy.preview_chars
         while True:
             head = preview_chars // 2
@@ -345,10 +373,19 @@ class ToolResultProjector:
                 "original_chars": record.chars,
                 "original_bytes": record.bytes,
                 "sha256": record.sha256,
+                "content_complete": record.content_complete,
                 "preview": preview,
                 "instruction": (
-                    "Use read_tool_output with output_ref and offset_bytes to inspect "
-                    "the complete result."
+                    (
+                        "Use read_tool_output with output_ref and offset_bytes to inspect "
+                        "the complete result."
+                    )
+                    if record.content_complete
+                    else (
+                        "Use read_tool_output with output_ref and offset_bytes to inspect "
+                        "the retained portion. The source exceeded its capture quota, so "
+                        "the original output is not fully recoverable."
+                    )
                 ),
             }
             # JSON escaping can expand control characters and non-ASCII content.

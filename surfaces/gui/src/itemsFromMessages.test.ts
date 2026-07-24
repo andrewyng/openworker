@@ -101,6 +101,7 @@ describe("itemsFromMessages durable tool outputs", () => {
       output_ref_version: 1,
       output_ref: "out_" + "a".repeat(32),
       truncated: true,
+      content_complete: true,
       original_chars: 12000,
       preview: "HEAD\n\n[... omitted ...]\n\nTAIL",
     };
@@ -117,6 +118,7 @@ describe("itemsFromMessages durable tool outputs", () => {
     expect(tool.outputRef).toBe(envelope.output_ref);
     expect(tool.originalChars).toBe(12000);
     expect(tool.truncated).toBe(true);
+    expect(tool.contentComplete).toBe(true);
     expect(tool.preview).toContain("HEAD");
     expect(tool.preview).not.toContain("output_ref");
   });
@@ -132,6 +134,21 @@ describe("itemsFromMessages durable tool outputs", () => {
     ] as any);
     const tool = items.find((i: any) => i.kind === "tool") as any;
     expect(tool.preview).toBe("not-json {");
+    expect(tool.outputRef).toBeUndefined();
+  });
+
+  it("does not mistake an ordinary result containing output_ref for an envelope", () => {
+    const ordinary = { output_ref: "external-system-id", ok: true };
+    const items = itemsFromMessages([
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ id: "c1", function: { name: "connector_tool", arguments: "{}" } }],
+      },
+      { role: "tool", tool_call_id: "c1", content: JSON.stringify(ordinary) },
+    ] as any);
+    const tool = items.find((i: any) => i.kind === "tool") as any;
+    expect(tool.preview).toBe(JSON.stringify(ordinary));
     expect(tool.outputRef).toBeUndefined();
   });
 });
