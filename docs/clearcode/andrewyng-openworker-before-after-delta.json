@@ -1,0 +1,257 @@
+{
+  "schemaVersion": 1,
+  "comparable": true,
+  "claimBoundary": "This comparison describes scanner-observed repository evidence at two exact commits produced by the same scanner source and settings. A resolved finding means the rule evidence is absent in the current scan; it is not proof of runtime security, incident prevention, productivity, or financial value.",
+  "repository": {
+    "identity": "github.com/andrewyng/openworker",
+    "sameRepository": true
+  },
+  "generator": {
+    "name": "ClearCode Intelligence",
+    "version": "0.1.0",
+    "sourceDigest": "fad562fefa9f8da41755117e7a4c66a5d530d45e3fa8e7e41f1fc8fd6760baac",
+    "settingsDigest": "67beca315c40aeb9b0fa758488e5769a55d560896f600cdb88365be9e6b3c129"
+  },
+  "baseline": {
+    "commit": "db93d75bf634e3a855b29e00d8f5d677438cac1f",
+    "generatedAt": "2026-07-25T19:33:44.627Z",
+    "score": 69,
+    "confidence": 84,
+    "findings": 45,
+    "files": 436,
+    "analyzedFiles": 391,
+    "loc": 75301,
+    "dirty": false,
+    "shallow": false,
+    "source": "https://github.com/andrewyng/openworker"
+  },
+  "current": {
+    "commit": "602415a52adfc1adb762b85cc55bde3a2df24242",
+    "generatedAt": "2026-07-25T19:34:17.039Z",
+    "score": 77,
+    "confidence": 100,
+    "findings": 37,
+    "files": 443,
+    "analyzedFiles": 397,
+    "loc": 75475,
+    "dirty": false,
+    "shallow": false,
+    "source": "https://github.com/andrewyng/openworker"
+  },
+  "score": {
+    "before": 69,
+    "after": 77,
+    "change": 8
+  },
+  "dimensions": {
+    "Maintainability": {
+      "before": 33,
+      "after": 34,
+      "change": 1
+    },
+    "Security": {
+      "before": 63,
+      "after": 85,
+      "change": 22
+    },
+    "Architecture": {
+      "before": 100,
+      "after": 100,
+      "change": 0
+    },
+    "Open Source": {
+      "before": 91,
+      "after": 100,
+      "change": 9
+    },
+    "Delivery": {
+      "before": 73,
+      "after": 74,
+      "change": 1
+    },
+    "AI Governance": {
+      "before": 69,
+      "after": 95,
+      "change": 26
+    }
+  },
+  "findings": {
+    "before": 45,
+    "after": 37,
+    "change": -8,
+    "bySeverity": {
+      "critical": {
+        "before": 0,
+        "after": 0,
+        "change": 0
+      },
+      "high": {
+        "before": 11,
+        "after": 10,
+        "change": -1
+      },
+      "medium": {
+        "before": 22,
+        "after": 19,
+        "change": -3
+      },
+      "low": {
+        "before": 11,
+        "after": 7,
+        "change": -4
+      },
+      "info": {
+        "before": 1,
+        "after": 1,
+        "change": 0
+      }
+    },
+    "inventoryComplete": true,
+    "exactFingerprintMatches": 36,
+    "stableIdentityMatches": 1,
+    "persistingCount": 37,
+    "resolvedCount": 8,
+    "newCount": 0,
+    "resolved": [
+      {
+        "ruleId": "clearcode.security.dependency-vulnerability-xlsx",
+        "fingerprint": "18c0824fc12f",
+        "severity": "high",
+        "area": "Security",
+        "title": "Dependency vulnerability: xlsx",
+        "path": "surfaces/gui/package.json",
+        "line": 1,
+        "applicability": "direct",
+        "confidence": "medium"
+      },
+      {
+        "ruleId": "clearcode.open-source.dependency-automation-missing",
+        "fingerprint": "5f60baaa9974",
+        "severity": "medium",
+        "area": "Open Source",
+        "title": "Dependency automation missing",
+        "path": ".github/dependabot.yml",
+        "line": 1,
+        "applicability": "control",
+        "confidence": "high"
+      },
+      {
+        "ruleId": "clearcode.security.github-actions-use-mutable-references",
+        "fingerprint": "8800caf7c7f3",
+        "severity": "medium",
+        "area": "Security",
+        "title": "GitHub Actions use mutable references",
+        "path": ".github/workflows/ci.yml",
+        "line": 12,
+        "applicability": "control",
+        "confidence": "high"
+      },
+      {
+        "ruleId": "clearcode.security.security-policy-missing",
+        "fingerprint": "2373a66ca21c",
+        "severity": "medium",
+        "area": "Security",
+        "title": "Security policy missing",
+        "path": "SECURITY.md",
+        "line": 1,
+        "applicability": "control",
+        "confidence": "medium"
+      },
+      {
+        "ruleId": "clearcode.maintainability.editorconfig-missing",
+        "fingerprint": "5460c4e6384b",
+        "severity": "low",
+        "area": "Maintainability",
+        "title": "EditorConfig missing",
+        "path": ".editorconfig",
+        "line": 1,
+        "applicability": "control",
+        "confidence": "high"
+      },
+      {
+        "ruleId": "clearcode.delivery.git-attributes-missing",
+        "fingerprint": "354b7616d9df",
+        "severity": "low",
+        "area": "Delivery",
+        "title": "Git attributes missing",
+        "path": ".gitattributes",
+        "line": 1,
+        "applicability": "control",
+        "confidence": "medium"
+      },
+      {
+        "ruleId": "clearcode.security.workflow-token-permissions-are-implicit",
+        "fingerprint": "36eb948bff31",
+        "severity": "low",
+        "area": "Security",
+        "title": "Workflow token permissions are implicit",
+        "path": ".github/workflows/ci.yml",
+        "line": 1,
+        "applicability": "control",
+        "confidence": "high"
+      },
+      {
+        "ruleId": "clearcode.delivery.contribution-guide-missing",
+        "fingerprint": "af227a563c10",
+        "severity": "low",
+        "area": "Delivery",
+        "title": "Contribution guide missing",
+        "path": "CONTRIBUTING.md",
+        "line": 1,
+        "applicability": "control",
+        "confidence": "medium"
+      }
+    ],
+    "new": []
+  },
+  "controls": {
+    "mutableActionRefs": {
+      "before": 15,
+      "after": 0,
+      "change": -15
+    },
+    "implicitPermissionWorkflows": {
+      "before": 2,
+      "after": 0,
+      "change": -2
+    },
+    "dependencyVulnerabilities": {
+      "before": 1,
+      "after": 0,
+      "change": -1
+    },
+    "highDependencyVulnerabilities": {
+      "before": 1,
+      "after": 0,
+      "change": -1
+    },
+    "governanceGaps": {
+      "before": 6,
+      "after": 1,
+      "change": -5
+    }
+  },
+  "codebase": {
+    "files": {
+      "before": 436,
+      "after": 443,
+      "change": 7
+    },
+    "analyzedFiles": {
+      "before": 391,
+      "after": 397,
+      "change": 6
+    },
+    "loc": {
+      "before": 75301,
+      "after": 75475,
+      "change": 174
+    }
+  },
+  "limitations": [
+    "Scores are prioritization-model outputs, not certifications or measurements of exploitability.",
+    "Finding transitions cover the complete finding inventory in both reports.",
+    "Line-only movement is reconciled by rule, path, and title after exact fingerprint matching.",
+    "No dollar, time, productivity, or incident-avoidance claim is inferred from this comparison."
+  ]
+}
