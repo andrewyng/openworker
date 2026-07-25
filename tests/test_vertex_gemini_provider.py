@@ -60,7 +60,7 @@ def test_ensure_client_without_project_raises(monkeypatch):
 def test_vertex_gemini_descriptor_and_build():
     descriptor = get_descriptor("vertex-gemini")
     assert descriptor is not None
-    assert descriptor.title == "Vertex AI Gemini (Google Cloud)"
+    assert descriptor.title == "Gemini Enterprise (Vertex AI)"
     assert not descriptor.needs_key
 
     provider = build_provider_client(

@@ -267,7 +267,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
     ),
     ProviderDescriptor(
         name="vertex-gemini",
-        title="Vertex AI Gemini (Google Cloud)",
+        title="Gemini Enterprise (Vertex AI)",
         needs_key=False,
         fields=[
             ProviderField(
@@ -299,7 +299,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         build=_build_vertex_gemini,
         recommended_model="gemini-3.6-flash",
         env_key="GOOGLE_PROJECT_ID",
-        blurb="Connects to Gemini via Google Cloud Vertex AI using GCP project credentials or Application Default Credentials (ADC).",
+        blurb="Connects to Gemini via Gemini Enterprise (Vertex AI) using GCP project credentials or Application Default Credentials (ADC).",
     ),
     # OpenAI-compatible vendors, listed as first-class providers so users don't need to know the
     # "point the OpenAI slot at a different endpoint" trick (owner call, 2026-07-04). Each keeps
