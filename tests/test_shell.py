@@ -14,6 +14,7 @@ import pytest
 
 import coworker.tools.shell as shell_module
 from coworker.permissions import PermissionEngine
+from coworker.tool_outputs import SessionToolOutputStore, ToolOutputPolicy
 from coworker.tools import ToolRegistry
 from coworker.tools.shell import LocalExecutor, shell_tools
 
@@ -239,6 +240,38 @@ def test_background_large_output_is_recoverable(tmp_path):
         again = reg.execute("shell_task_output", {"task_id": started["task_id"]})
         assert again["output"] == ""
     finally:
+        ex.close()
+
+
+def test_background_capture_shares_session_quota_with_tool_outputs(tmp_path):
+    policy = ToolOutputPolicy(
+        max_single_output_bytes=2_000,
+        max_session_output_bytes=2_000,
+        min_disk_headroom_bytes=0,
+    )
+    store = SessionToolOutputStore(tmp_path, "shared-quota", policy)
+    store.put("call", "tool", "x" * 1_200)
+    command = (
+        '[Console]::Write("y" * 1500)'
+        if _WIN
+        else "printf 'y%.0s' {1..1500}"
+    )
+    ex = LocalExecutor(
+        cwd=tmp_path,
+        capture_dir=store.captures_dir,
+        capture_writer=store.append_capture,
+        max_capture_bytes=policy.max_single_output_bytes,
+    )
+    try:
+        started = ex.run_background(command)
+        task = ex._bg_tasks[started["task_id"]]
+        task.proc.wait(timeout=10)
+        task._reader.join(timeout=10)
+        assert task.retained_bytes > 0
+        assert task.discarded_bytes > 0
+        assert store._used_bytes() <= policy.max_session_output_bytes
+    finally:
+        ex.close_background_tasks()
         ex.close()
 
 

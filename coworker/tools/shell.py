@@ -33,7 +33,7 @@ import uuid
 from abc import ABC, abstractmethod
 from collections import deque
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import aisuite as ai
 
@@ -100,7 +100,8 @@ class _BackgroundTask:
         cwd: str,
         env: dict[str, str],
         capture_dir: Path,
-        reserve_bytes,
+        append_capture: Callable[[Path, bytes], int],
+        max_retained_bytes: int,
     ):
         self.id = task_id
         self.command = command
@@ -109,7 +110,8 @@ class _BackgroundTask:
         self.capture_path = (
             Path(capture_dir) / f"{task_id}-{uuid.uuid4().hex}.log"
         )
-        self._reserve_bytes = reserve_bytes
+        self._append_capture = append_capture
+        self._max_retained_bytes = max_retained_bytes
         self.capture_path.parent.mkdir(parents=True, exist_ok=True)
         if _IS_WINDOWS:
             argv = ["powershell.exe", "-NoProfile", "-Command", command]
@@ -136,7 +138,7 @@ class _BackgroundTask:
         self._retained_bytes = 0
         self._discarded_bytes = 0
         self._retained_complete = True
-        self._capture = open(self.capture_path, "ab")
+        self.capture_path.touch()
         try:
             restrict_to_user(self.capture_path, is_dir=False)
         except OSError:
@@ -146,40 +148,24 @@ class _BackgroundTask:
 
     def _read_loop(self) -> None:
         assert self.proc.stdout is not None
-        try:
-            while True:
-                chunk = self.proc.stdout.read(8192)
-                if not chunk:
-                    break
-                with self._lock:
-                    per_task_remaining = (
-                        self.MAX_RETAINED_BYTES - self._retained_bytes
-                    )
-                    remaining = self._reserve_bytes(
-                        min(len(chunk), max(0, per_task_remaining))
-                    )
-                    if remaining <= 0:
-                        self._discarded_bytes += len(chunk)
-                        self._retained_complete = False
-                        continue
-                    if len(chunk) > remaining:
-                        keep, drop = chunk[:remaining], chunk[remaining:]
-                        self._capture.write(keep)
-                        self._capture.flush()
-                        self._retained_bytes += len(keep)
-                        self._discarded_bytes += len(drop)
-                        self._retained_complete = False
-                    else:
-                        self._capture.write(chunk)
-                        self._capture.flush()
-                        self._retained_bytes += len(chunk)
-        finally:
+        while True:
+            chunk = self.proc.stdout.read(8192)
+            if not chunk:
+                break
             with self._lock:
-                try:
-                    self._capture.flush()
-                    self._capture.close()
-                except OSError:
-                    pass
+                per_task_remaining = self._max_retained_bytes - self._retained_bytes
+                requested = min(len(chunk), max(0, per_task_remaining))
+                retained = self._append_capture(
+                    self.capture_path, chunk[:requested]
+                )
+                if retained <= 0:
+                    self._discarded_bytes += len(chunk)
+                    self._retained_complete = False
+                    continue
+                self._retained_bytes += retained
+                if len(chunk) > retained:
+                    self._discarded_bytes += len(chunk) - retained
+                    self._retained_complete = False
 
     def read_new(self, *, max_bytes: int | None = None) -> str:
         """Return newly retained output since the last poll and advance the cursor."""
@@ -255,6 +241,8 @@ class LocalExecutor(Executor):
         default_timeout: float = _DEFAULT_TIMEOUT,
         max_output_chars: int = 20_000,
         capture_dir: Optional[str | Path] = None,
+        capture_writer: Optional[Callable[[Path, bytes], int]] = None,
+        max_capture_bytes: int = _BackgroundTask.MAX_RETAINED_BYTES,
     ) -> None:
         self.cwd = str(Path(cwd).expanduser().resolve())
         self.default_timeout = default_timeout
@@ -280,6 +268,8 @@ class LocalExecutor(Executor):
             for path in self._capture_dir.glob("*.log")
             if path.is_file()
         )
+        self._capture_writer = capture_writer or self._append_capture
+        self._max_capture_bytes = max_capture_bytes
         # Set by interrupt_now() (user Stop) — run()'s read loop treats it like an
         # early deadline, so the in-flight foreground command dies within one tick.
         self._abort = threading.Event()
@@ -293,13 +283,18 @@ class LocalExecutor(Executor):
         self._env = {**os.environ, **_NONINTERACTIVE_ENV, **(env or {})}
         self._spawn()
 
-    def _reserve_capture_bytes(self, requested: int) -> int:
-        """Atomically reserve part of the session-wide background capture budget."""
-        if requested <= 0:
+    def _append_capture(self, path: Path, data: bytes) -> int:
+        """Fallback capture writer for standalone executors without a session store."""
+        if not data:
             return 0
         with self._capture_quota_lock:
             remaining = _MAX_SESSION_CAPTURE_BYTES - self._capture_retained_bytes
-            granted = min(requested, max(0, remaining))
+            granted = min(len(data), max(0, remaining))
+            if granted <= 0:
+                return 0
+            with path.open("ab") as handle:
+                handle.write(data[:granted])
+                handle.flush()
             self._capture_retained_bytes += granted
             return granted
 
@@ -499,7 +494,8 @@ class LocalExecutor(Executor):
                 self.cwd,
                 self._env,
                 self._capture_dir,
-                self._reserve_capture_bytes,
+                self._capture_writer,
+                self._max_capture_bytes,
             )
         except OSError as exc:
             return {"error": f"failed to start background task: {exc}"}

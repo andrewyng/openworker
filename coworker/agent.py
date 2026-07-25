@@ -173,8 +173,18 @@ def build_engine(
             )
 
     capture_dir = getattr(tool_output_store, "captures_dir", None)
+    capture_writer = getattr(tool_output_store, "append_capture", None)
+    capture_policy = getattr(tool_output_store, "policy", None)
+    max_capture_bytes = getattr(
+        capture_policy, "max_single_output_bytes", 64 * 1024 * 1024
+    )
     executor = (
-        LocalExecutor(cwd=ws, capture_dir=capture_dir)
+        LocalExecutor(
+            cwd=ws,
+            capture_dir=capture_dir,
+            capture_writer=capture_writer,
+            max_capture_bytes=max_capture_bytes,
+        )
         if (agent.needs_workspace and ws is not None)
         else None
     )

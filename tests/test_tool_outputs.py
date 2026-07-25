@@ -324,3 +324,12 @@ def test_corrupt_content_length_is_controlled_error(tmp_path):
     (store.directory / f"{record.ref}.txt").write_text("changed", encoding="utf-8")
     with pytest.raises(ToolOutputStoreError, match="content is corrupt"):
         store.read(record.ref)
+
+
+def test_same_length_content_corruption_is_detected(tmp_path):
+    store = SessionToolOutputStore(tmp_path, "s", _policy())
+    record = store.put("c", "t", "hello")
+    content = store.directory / f"{record.ref}.txt"
+    content.write_text("jello", encoding="utf-8")
+    with pytest.raises(ToolOutputStoreError, match="content is corrupt"):
+        store.read(record.ref)

@@ -119,6 +119,7 @@ class SessionToolOutputStore:
         self.policy = policy or ToolOutputPolicy()
         self.session_id = session_id
         self._lock = threading.Lock()
+        self._verified_content: dict[str, tuple[int, int, int, int, int, str]] = {}
         self.directory = Path(root) / "tool-outputs" / session_output_key(session_id)
         if create:
             self.directory.mkdir(parents=True, exist_ok=True)
@@ -179,6 +180,53 @@ class SessionToolOutputStore:
                 pass
             raise
 
+    @staticmethod
+    def _content_signature(stat: os.stat_result) -> tuple[int, int, int, int, int]:
+        """Filesystem identity used to cache a successful content digest check."""
+        return (
+            stat.st_dev,
+            stat.st_ino,
+            stat.st_size,
+            stat.st_mtime_ns,
+            stat.st_ctime_ns,
+        )
+
+    def append_capture(self, path: Path, data: bytes) -> int:
+        """Append as much capture data as the shared session quota permits.
+
+        Tool-output blobs and background captures use this same lock and byte
+        accounting, so neither writer can independently consume the full session
+        allowance.
+        """
+        target = Path(path)
+        if (
+            target.parent != self.captures_dir
+            or target.suffix != ".log"
+            or not target.name
+        ):
+            raise ValueError("capture path is outside the session output store")
+        if not data:
+            return 0
+        with self._lock:
+            session_remaining = max(
+                0, self.policy.max_session_output_bytes - self._used_bytes()
+            )
+            try:
+                usage = shutil.disk_usage(self.directory)
+                disk_remaining = max(
+                    0, usage.free - self.policy.min_disk_headroom_bytes
+                )
+            except FileNotFoundError:
+                disk_remaining = session_remaining
+            granted = min(len(data), session_remaining, disk_remaining)
+            if granted <= 0:
+                return 0
+            with target.open("ab") as handle:
+                handle.write(data[:granted])
+                handle.flush()
+            restrict_to_user(target, is_dir=False)
+            return granted
+
     def put(
         self,
         tool_call_id: str,
@@ -218,6 +266,11 @@ class SessionToolOutputStore:
                 except OSError:
                     pass
                 raise
+            stat = content_path.stat()
+            self._verified_content[record.ref] = (
+                *self._content_signature(stat),
+                record.sha256,
+            )
             return record
 
     def read(
@@ -247,16 +300,22 @@ class SessionToolOutputStore:
             digest = str(info["sha256"])
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise ToolOutputStoreError("tool output metadata is corrupt") from exc
-        try:
-            actual_bytes = content_path.stat().st_size
-        except OSError as exc:
-            raise ToolOutputStoreError("tool output content is unavailable") from exc
-        if total_bytes != actual_bytes:
-            raise ToolOutputStoreError("tool output content is corrupt")
         if offset_bytes > total_bytes:
             raise ValueError("offset beyond output")
         try:
-            with content_path.open("rb") as stream:
+            with self._lock, content_path.open("rb") as stream:
+                stat = os.fstat(stream.fileno())
+                if total_bytes != stat.st_size:
+                    raise ToolOutputStoreError("tool output content is corrupt")
+                signature = self._content_signature(stat)
+                cached = self._verified_content.get(ref)
+                if cached != (*signature, digest):
+                    hasher = hashlib.sha256()
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        hasher.update(chunk)
+                    if not secrets.compare_digest(hasher.hexdigest(), digest):
+                        raise ToolOutputStoreError("tool output content is corrupt")
+                    self._verified_content[ref] = (*signature, digest)
                 if 0 < offset_bytes < total_bytes:
                     # Stored content is valid UTF-8. A byte offset is a boundary exactly
                     # when the byte at that position is not a continuation byte. Inspect
@@ -311,6 +370,7 @@ class SessionToolOutputStore:
         return refs
 
     def delete_all(self) -> None:
+        self._verified_content.clear()
         shutil.rmtree(self.directory, ignore_errors=True)
 
 
