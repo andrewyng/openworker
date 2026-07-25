@@ -322,6 +322,11 @@ def test_manager_curated_models(tmp_path, monkeypatch):
             monkeypatch.delenv(d.env_key, raising=False)
     from coworker.server.manager import SessionManager
 
+    # Ollama selectability rides a live localhost probe (_ollama_alive); pin it so the
+    # picker is deterministic in CI (no Ollama) as well as on dev machines that happen
+    # to run one. This test is about matrix/custom filtering, not local liveness.
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
+
     mgr = SessionManager(data_dir=tmp_path)
     # no provider keys → nothing but the always-selectable default
     assert mgr.get_settings()["models"] == [mgr.model]
