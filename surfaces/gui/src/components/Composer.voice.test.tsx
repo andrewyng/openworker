@@ -1,8 +1,9 @@
-// §37 voice input — the composer's side of the contract, driven through a mocked
-// __TAURI__ global (the mic is native-only; the browser build renders no mic at all).
+// §37 voice input — one composer contract backed by either native Tauri dictation
+// or the browser's speech-recognition API.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Composer } from "./Composer";
+import { resetBrowserVoiceCaptureForTests } from "../voice";
 
 const READY = {
   recording: false,
@@ -20,6 +21,49 @@ const NOT_READY = { ...READY, model_verified: false, test_passed: false };
 const RECORDING = { ...READY, recording: true };
 
 let invoke: ReturnType<typeof vi.fn>;
+let browserRecognition: MockSpeechRecognition | null;
+let getUserMedia: ReturnType<typeof vi.fn>;
+
+class MockSpeechRecognition {
+  continuous = false;
+  interimResults = false;
+  lang = "";
+  onstart: (() => void) | null = null;
+  onresult: ((event: any) => void) | null = null;
+  onerror: ((event: any) => void) | null = null;
+  onend: (() => void) | null = null;
+
+  constructor() {
+    browserRecognition = this;
+  }
+
+  start() {
+    this.onstart?.();
+  }
+
+  stop() {
+    const result = { 0: { transcript: "hello from the browser" }, length: 1, isFinal: true };
+    this.onresult?.({ resultIndex: 0, results: { 0: result, length: 1 } });
+    this.onend?.();
+  }
+
+  abort() {
+    this.onend?.();
+  }
+}
+
+const installBrowserVoice = () => {
+  delete (globalThis as any).__TAURI__;
+  browserRecognition = null;
+  (globalThis as any).webkitSpeechRecognition = MockSpeechRecognition;
+  getUserMedia = vi.fn(async () => ({
+    getTracks: () => [{ stop: vi.fn() }],
+  }));
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: { getUserMedia },
+  });
+};
 
 const props = (extra: Partial<Parameters<typeof Composer>[0]> = {}) => ({
   mode: "interactive",
@@ -34,7 +78,7 @@ const props = (extra: Partial<Parameters<typeof Composer>[0]> = {}) => ({
 });
 
 beforeEach(() => {
-  localStorage.removeItem("openwork-voice-capture-mode");
+  window.localStorage.removeItem("openwork-voice-capture-mode");
   invoke = vi.fn(async (cmd: string) => {
     if (cmd === "get_dictation_status") return READY;
     if (cmd === "start_dictation") return RECORDING;
@@ -42,19 +86,75 @@ beforeEach(() => {
     return null;
   });
   (globalThis as any).__TAURI__ = { core: { invoke }, event: { listen: async () => () => {} } };
+  browserRecognition = null;
+  getUserMedia = vi.fn();
 });
 
 afterEach(() => {
+  resetBrowserVoiceCaptureForTests();
   cleanup();
-  localStorage.removeItem("openwork-voice-capture-mode");
+  window.localStorage.removeItem("openwork-voice-capture-mode");
   delete (globalThis as any).__TAURI__;
+  delete (globalThis as any).SpeechRecognition;
+  delete (globalThis as any).webkitSpeechRecognition;
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: undefined,
+  });
 });
 
 describe("Composer voice input (§37)", () => {
-  it("renders no mic at all outside the desktop app", () => {
+  it("keeps a visible disabled mic when browser speech recognition is unavailable", async () => {
     delete (globalThis as any).__TAURI__;
     render(<Composer {...props()} />);
-    expect(screen.queryByLabelText(/dictation|Voice Input/)).toBeNull();
+    const mic = await screen.findByLabelText("Voice input unavailable in this browser");
+    expect(mic.hasAttribute("disabled")).toBe(true);
+    expect(mic.getAttribute("title")).toContain("does not provide speech recognition");
+  });
+
+  it("uses browser speech recognition to create an editable dictation draft", async () => {
+    installBrowserVoice();
+    render(<Composer {...props()} />);
+
+    fireEvent.click(await screen.findByLabelText("Start dictation"));
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+    await waitFor(() => expect(browserRecognition).not.toBeNull());
+    expect(browserRecognition?.continuous).toBe(true);
+    expect(browserRecognition?.interimResults).toBe(true);
+
+    fireEvent.click(await screen.findByLabelText("Stop dictation"));
+    const box = screen.getByPlaceholderText(/Ask the coworker/) as HTMLTextAreaElement;
+    await waitFor(() => expect(box.value).toBe("hello from the browser"));
+  });
+
+  it("auto-submits a browser voice discussion with trusted metadata", async () => {
+    installBrowserVoice();
+    const onSend = vi.fn();
+    render(<Composer {...props({ onSend })} />);
+
+    fireEvent.click(await screen.findByLabelText("Voice input mode"));
+    expect(screen.getByText(/Transcription is managed by your browser/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Voice discussion/ }));
+    fireEvent.click(screen.getByLabelText("Start voice discussion"));
+    fireEvent.click(await screen.findByLabelText("Stop voice discussion"));
+
+    await waitFor(() =>
+      expect(onSend).toHaveBeenCalledWith(
+        "hello from the browser",
+        undefined,
+        { inputMode: "voice_discussion" },
+      ),
+    );
+  });
+
+  it("surfaces browser microphone permission failures without wedging the mic", async () => {
+    installBrowserVoice();
+    getUserMedia.mockRejectedValue(new DOMException("Denied", "NotAllowedError"));
+    render(<Composer {...props()} />);
+
+    fireEvent.click(await screen.findByLabelText("Start dictation"));
+    expect((await screen.findByRole("alert")).textContent).toContain("Microphone access was blocked");
+    expect(screen.getByLabelText("Start dictation").hasAttribute("disabled")).toBe(false);
   });
 
   it("not ready → muted mic deep-links to Settings instead of recording", async () => {
@@ -120,7 +220,7 @@ describe("Composer voice input (§37)", () => {
         { inputMode: "voice_discussion" },
       ),
     );
-    expect(localStorage.getItem("openwork-voice-capture-mode")).toBe("discussion");
+    expect(window.localStorage.getItem("openwork-voice-capture-mode")).toBe("discussion");
   });
 
   it("editing during voice discussion cancels auto-send and keeps an editable draft", async () => {

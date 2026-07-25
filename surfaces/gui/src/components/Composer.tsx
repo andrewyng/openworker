@@ -6,14 +6,15 @@ import { Dropdown, type Option } from "./Dropdown";
 import { Icon } from "./Icon";
 import { Toggle } from "./Toggle";
 import {
-  cancelDictation,
-  getDictationLevel,
-  getDictationStatus,
-  isTauri,
-  startDictation,
-  stopDictation,
-  type DictationStatus,
-} from "../tauri";
+  cancelVoiceCapture,
+  getVoiceLevel,
+  getVoiceRuntime,
+  getVoiceStatus,
+  startVoiceCapture,
+  stopVoiceCapture,
+  type VoiceRuntime,
+  type VoiceStatus,
+} from "../voice";
 
 // Plan + Custom hidden for this release (owner ask 2026-07-22): Plan's approval flow isn't
 // polished enough to ship, and Custom (config.toml auto-allow rules) is a power-user mode
@@ -29,7 +30,7 @@ type VoiceCaptureMode = "dictation" | "discussion";
 const VOICE_MODE_KEY = "openwork-voice-capture-mode";
 const getVoiceCaptureMode = (): VoiceCaptureMode => {
   try {
-    return localStorage.getItem(VOICE_MODE_KEY) === "discussion" ? "discussion" : "dictation";
+    return window.localStorage.getItem(VOICE_MODE_KEY) === "discussion" ? "discussion" : "dictation";
   } catch {
     return "dictation";
   }
@@ -96,7 +97,7 @@ export function Composer(props: Props) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragging, setDragging] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
-  const [dictation, setDictation] = useState<DictationStatus | null>(null);
+  const [dictation, setDictation] = useState<VoiceStatus | null>(null);
   const [dictationBusy, setDictationBusy] = useState<string | null>(null);
   const [dictationError, setDictationError] = useState<string | null>(null);
   const [dictationNotice, setDictationNotice] = useState<string | null>(null);
@@ -112,7 +113,7 @@ export function Composer(props: Props) {
   const changeVoiceMode = (mode: VoiceCaptureMode) => {
     setVoiceMode(mode);
     try {
-      localStorage.setItem(VOICE_MODE_KEY, mode);
+      window.localStorage.setItem(VOICE_MODE_KEY, mode);
     } catch {
       /* per-device preference is best effort */
     }
@@ -166,17 +167,16 @@ export function Composer(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.resetKey]);
 
-  // Dictation is intentionally native-only: the browser/dev build remains a local server client
-  // and never turns on the browser microphone or ships audio anywhere.
+  // Keep one composer contract for the local Tauri recorder and the browser's speech-recognition
+  // service. The adapter owns runtime-specific permission, capture, and transcription behavior.
   useEffect(() => {
-    if (!isTauri()) return;
     const refresh = (event?: Event) => {
-      const supplied = (event as CustomEvent<DictationStatus> | undefined)?.detail;
+      const supplied = (event as CustomEvent<VoiceStatus> | undefined)?.detail;
       if (supplied) {
         setDictation(supplied);
         return;
       }
-      void getDictationStatus().then((status) => status && setDictation(status));
+      void getVoiceStatus().then((status) => status && setDictation(status));
     };
     refresh();
     window.addEventListener("coworker:voice-input-changed", refresh);
@@ -205,7 +205,7 @@ export function Composer(props: Props) {
       return;
     }
     const timer = window.setInterval(() => {
-      getDictationLevel().then((level) => {
+      getVoiceLevel().then((level) => {
         if (typeof level === "number") setLevels((cur) => [...cur.slice(-13), level]);
       });
     }, 100);
@@ -217,10 +217,10 @@ export function Composer(props: Props) {
     const cancelOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      void cancelDictation()
+      void cancelVoiceCapture()
         .catch(() => undefined)
         .finally(() => {
-          void getDictationStatus().then((status) => status && setDictation(status));
+          void getVoiceStatus().then((status) => status && setDictation(status));
         });
     };
     window.addEventListener("keydown", cancelOnEscape);
@@ -321,7 +321,7 @@ export function Composer(props: Props) {
   };
 
   const toggleDictation = async () => {
-    if (!isTauri() || dictationBusy) return;
+    if (dictationBusy) return;
     setDictationError(null);
     setDictationNotice(null);
     try {
@@ -330,7 +330,7 @@ export function Composer(props: Props) {
         const shouldAutoSend =
           completedMode === "discussion" && autoSendVoiceTurn.current;
         setDictationBusy("Transcribing…");
-        const transcript = await stopDictation();
+        const transcript = await stopVoiceCapture();
         if (transcript === null) throw new Error("Could not transcribe your recording.");
         if (transcript.trim()) {
           if (shouldAutoSend) {
@@ -346,15 +346,16 @@ export function Composer(props: Props) {
         } else if (completedMode === "discussion") {
           throw new Error("No speech was detected. Try again and speak for a little longer.");
         }
-        setDictation(await getDictationStatus());
+        setDictation(await getVoiceStatus());
         if (!shouldAutoSend) textareaRef.current?.focus();
         return;
       }
 
-      const status = dictation || (await getDictationStatus());
+      const status = dictation || (await getVoiceStatus());
       if (!status) throw new Error("Voice dictation is unavailable.");
       if (!status.supported || !status.model_verified || !status.test_passed) {
-        props.onConfigureVoiceInput?.();
+        if (getVoiceRuntime() === "native") props.onConfigureVoiceInput?.();
+        else throw new Error(status.compatibility_reason || "Voice input is unavailable in this browser.");
         return;
       }
       if (voiceMode === "discussion" && props.modelReady === false) {
@@ -366,14 +367,14 @@ export function Composer(props: Props) {
       activeVoiceMode.current = voiceMode;
       autoSendVoiceTurn.current =
         voiceMode === "discussion" && !text.trim() && attachments.length === 0;
-      const recording = await startDictation();
+      const recording = await startVoiceCapture();
       if (!recording?.recording) throw new Error("Could not start the microphone.");
       setDictation(recording);
     } catch (error) {
       autoSendVoiceTurn.current = false;
       setDictationNotice(null);
       setDictationError(error instanceof Error ? error.message : "Voice dictation is unavailable.");
-      const status = await getDictationStatus();
+      const status = await getVoiceStatus();
       if (status) setDictation(status);
     } finally {
       setDictationBusy(null);
@@ -395,8 +396,17 @@ export function Composer(props: Props) {
   // composer isn't carrying a constant blue dot.
   const hasContent = text.trim().length > 0 || attachments.length > 0;
   const activeVoiceModeName = voiceModeName(activeVoiceMode.current);
+  const voiceRuntime = getVoiceRuntime();
+  const voiceUnavailable = voiceRuntime === "browser" && !!dictation && !dictation.supported;
+  const voiceUnavailableReason =
+    dictation?.compatibility_reason || "Voice input is unavailable in this browser.";
+  const voiceSetupLabel =
+    voiceRuntime === "native"
+      ? "Configure Voice Input in Settings"
+      : "Voice input unavailable in this browser";
   const voiceActionDisabled =
     !!dictationBusy ||
+    voiceUnavailable ||
     (!dictation?.recording &&
       voiceMode === "discussion" &&
       (!props.connected || props.running));
@@ -571,7 +581,7 @@ export function Composer(props: Props) {
 
           {/* Voice split control: the primary action records in the selected mode; the quiet
               chevron keeps editable Dictation and auto-submit Voice discussion one click apart. */}
-          {isTauri() && (
+          {dictation && (
             <div className="relative flex items-center">
               <button
                 className={
@@ -590,8 +600,12 @@ export function Composer(props: Props) {
                     : voiceReady
                       ? voiceMode === "discussion"
                         ? "Start voice discussion. The transcript sends when you stop."
-                        : "Start local voice dictation"
-                      : "Configure Voice Input in Settings")
+                        : voiceRuntime === "native"
+                          ? "Start local voice dictation"
+                          : "Start browser voice dictation"
+                      : voiceRuntime === "browser"
+                        ? voiceUnavailableReason
+                        : voiceSetupLabel)
                 }
                 aria-label={
                   dictation?.recording
@@ -600,7 +614,7 @@ export function Composer(props: Props) {
                       ? voiceMode === "discussion"
                         ? "Start voice discussion"
                         : "Start dictation"
-                      : "Configure Voice Input in Settings"
+                      : voiceSetupLabel
                 }
                 aria-disabled={
                   (!voiceReady && !dictation?.recording) ||
@@ -613,7 +627,8 @@ export function Composer(props: Props) {
                 <VoiceModePicker
                   mode={voiceMode}
                   onChange={changeVoiceMode}
-                  disabled={!!dictationBusy}
+                  disabled={!!dictationBusy || !dictation.supported}
+                  runtime={voiceRuntime}
                 />
               )}
             </div>
@@ -661,10 +676,12 @@ function VoiceModePicker({
   mode,
   onChange,
   disabled,
+  runtime,
 }: {
   mode: VoiceCaptureMode;
   onChange: (mode: VoiceCaptureMode) => void;
   disabled: boolean;
+  runtime: VoiceRuntime;
 }) {
   const [open, setOpen] = useState(false);
   const choose = (next: VoiceCaptureMode) => {
@@ -705,7 +722,10 @@ function VoiceModePicker({
               onClick={() => choose("discussion")}
             />
             <div className="mx-2 mt-1 border-t border-line px-0 pt-2 pb-1 text-[10.5px] leading-snug text-faint">
-              Clicking or typing in the composer keeps a discussion turn as an editable draft.
+              Clicking or typing in the composer keeps a discussion turn as an editable draft.{" "}
+              {runtime === "browser"
+                ? "Transcription is managed by your browser."
+                : "Desktop transcription stays on this device."}
             </div>
           </div>
         </>
