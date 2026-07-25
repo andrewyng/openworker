@@ -90,6 +90,24 @@ def test_verify_ollama_uses_v1_models_no_key(monkeypatch):
     assert "headers" not in cap  # keyless
 
 
+def test_verify_self_hosted_hits_custom_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    verify_provider_key(
+        "selfhosted", api_key="sk-local", base_url="https://gpu-host:8000/v1"
+    )
+    assert cap["url"] == "https://gpu-host:8000/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer sk-local"
+
+
+def test_verify_self_hosted_requires_endpoint(monkeypatch):
+    # No URL and no default endpoint → clear error, and NO probe (so the key can't leak to
+    # api.openai.com). httpx.get is left unpatched: if it were called the test would error out.
+    res = verify_provider_key("selfhosted", api_key="sk-local", base_url="")
+    assert res["ok"] is False
+    assert "endpoint URL" in res["error"]
+
+
 def test_verify_network_error_is_clean(monkeypatch):
     _patch_get(monkeypatch, raise_exc=ConnectionError("boom"))
     res = verify_provider_key("openai", api_key="sk-x")
