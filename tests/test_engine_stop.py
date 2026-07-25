@@ -385,3 +385,94 @@ def test_retry_survives_model_switches(tmp_path):
 
 async def _drain_retry(engine):
     return [ev async for ev in engine.retry()]
+
+
+class QuotaShapedProvider(ProviderClient):
+    """Fails with a body our error translator rewrites — the case where `raw` matters.
+
+    The text is verbatim from a Scaleway Generative APIs 429. It is a per-minute rate limit,
+    yet it is labelled INSUFFICIENT QUOTA and phrased "You exceeded your current quota" — the
+    same words OpenAI uses for an exhausted credit balance. friendly_model_error therefore
+    reports it as "out of quota", and the only way a user can tell otherwise is the original.
+    """
+
+    BODY = (
+        "Error code: 429 - {'status': 429, 'error': 'INSUFFICIENT QUOTA', 'message': 'You "
+        "exceeded your current quota of tokens per minute. Slow down your usage or increase "
+        "your quotas.'}"
+    )
+
+    def complete(self, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    def capabilities(self, model):
+        return ModelCapabilities()
+
+    def stream(self, *, model, messages, tools=None, **settings):
+        raise RuntimeError(self.BODY)
+        yield  # pragma: no cover - generator marker
+
+
+def _run_quota_turn(tmp_path):
+    engine = TurnEngine(
+        provider=QuotaShapedProvider(),
+        registry=ToolRegistry(),
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+    )
+
+    async def run():
+        return [ev async for ev in engine.run("go")]
+
+    return engine, asyncio.run(run())
+
+
+def test_rewritten_error_persists_the_providers_own_words(tmp_path):
+    """A rewrite must not be the only surviving account of the failure.
+
+    The rewrite is a guess at the cause; `raw` is evidence. Keeping evidence only in the
+    ERROR event means it dies with the socket, so a reloaded transcript shows a confident
+    sentence and nothing to check it against.
+    """
+    engine, events = _run_quota_turn(tmp_path)
+
+    assert events[-1].type == EventType.ERROR
+    assert events[-1].data["raw"] == QuotaShapedProvider.BODY
+
+    notice = engine.messages[-1]
+    assert notice["role"] == "notice" and notice["kind"] == "error"
+    # The rewrite is what the user reads first...
+    assert "out of quota" in notice["text"]
+    # ...and the provider's own words are recoverable after a reload, not just live.
+    assert notice["raw"] == QuotaShapedProvider.BODY
+    assert "tokens per minute" in notice["raw"]
+
+
+def test_raw_is_never_sent_to_a_provider(tmp_path):
+    """Notices are display-only. `raw` adds a field to one, so re-assert the boundary."""
+    engine, _ = _run_quota_turn(tmp_path)
+
+    outbound = engine._outbound_messages()
+    assert all(m.get("role") != "notice" for m in outbound)
+    assert not any("raw" in m for m in outbound)
+
+
+def test_untranslated_errors_store_no_redundant_raw(tmp_path):
+    """No rewrite, no `raw`: the notice text already IS the provider's message.
+
+    Storing it twice would bloat every persisted transcript for no gain.
+    """
+    engine = TurnEngine(
+        provider=FailingStreamProvider(),
+        registry=ToolRegistry(),
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+    )
+
+    async def run():
+        return [ev async for ev in engine.run("go")]
+
+    asyncio.run(run())
+    notice = engine.messages[-1]
+    assert "provider went away" in notice["text"]
+    assert "raw" not in notice

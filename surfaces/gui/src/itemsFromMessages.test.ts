@@ -94,3 +94,39 @@ describe("itemsFromMessages reasoning", () => {
     expect(items[2]).toEqual({ kind: "assistant", text: "", reasoning: "stopped mid-thought" });
   });
 });
+
+// A persisted error notice carries `raw` when the server rewrote the provider's message.
+// Reload must replay it, otherwise the rewrite is the only account of the failure that
+// survives and a wrong guess about the cause becomes unfalsifiable.
+describe("itemsFromMessages error raw", () => {
+  const SCALEWAY_429 =
+    "Error code: 429 - {'status': 429, 'error': 'INSUFFICIENT QUOTA', 'message': 'You " +
+    "exceeded your current quota of tokens per minute.'}";
+
+  it("replays the provider's own words alongside the rewrite", () => {
+    const items = itemsFromMessages([
+      { role: "user", content: "review it" },
+      { role: "notice", kind: "error", text: "out of quota for qwen", raw: SCALEWAY_429 },
+    ] as any);
+    expect(items[1]).toEqual({
+      kind: "notice",
+      tone: "warn",
+      text: "Error: out of quota for qwen",
+      retriable: true,
+      raw: SCALEWAY_429,
+    });
+  });
+
+  it("omits raw entirely when the server never rewrote anything", () => {
+    const items = itemsFromMessages([
+      { role: "notice", kind: "error", text: "connection reset by peer" },
+    ] as any);
+    expect(items[0]).toEqual({
+      kind: "notice",
+      tone: "warn",
+      text: "Error: connection reset by peer",
+      retriable: true,
+    });
+    expect("raw" in (items[0] as any)).toBe(false);
+  });
+});

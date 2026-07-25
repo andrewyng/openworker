@@ -205,6 +205,43 @@ function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }
   );
 }
 
+// A notice line (error / interrupted / model switch). Error notices may carry `raw`: the
+// provider's own message, kept because the server-side rewrite that replaced it names a cause
+// it inferred, and that inference can be wrong — a per-minute throttle worded as "quota" reads
+// as exhausted credits. Collapsed by default; the toggle matches the one on tool rows.
+function NoticeRow({ item, onRetry }: { item: Extract<Item, { kind: "notice" }>; onRetry?: () => void }) {
+  const [raw, setRaw] = useState(false);
+  return (
+    <div>
+      <div className={"notice group " + (item.tone === "warn" ? "warn" : "")}>
+        {item.text}
+        {onRetry && (
+          <button className="btn ml-2" data-testid="notice-retry" onClick={onRetry}>
+            Retry
+          </button>
+        )}
+        {!!item.raw && (
+          <button
+            className="ml-2 text-[11px] text-faint opacity-0 group-hover:opacity-100 cursor-pointer"
+            data-testid="notice-raw-toggle"
+            onClick={() => setRaw((v) => !v)}
+          >
+            raw
+          </button>
+        )}
+      </div>
+      {raw && !!item.raw && (
+        <pre
+          className="mx-2 my-1 px-2.5 py-1.5 rounded-lg border border-line bg-paper font-mono text-[11.5px] leading-relaxed text-muted whitespace-pre-wrap break-words max-h-56 overflow-auto"
+          data-testid="notice-raw"
+        >
+          {item.raw}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function TurnGroup({
   items,
   live,
@@ -446,14 +483,15 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
             );
           case "notice":
             return (
-              <div className={"notice " + (item.tone === "warn" ? "warn" : "")} key={bi}>
-                {item.text}
-                {item.retriable && !running && onRetry && block.i === retryAnchor(items) && (
-                  <button className="btn ml-2" data-testid="notice-retry" onClick={onRetry}>
-                    Retry
-                  </button>
-                )}
-              </div>
+              <NoticeRow
+                key={bi}
+                item={item}
+                onRetry={
+                  item.retriable && !running && onRetry && block.i === retryAnchor(items)
+                    ? onRetry
+                    : undefined
+                }
+              />
             );
           default:
             return null;
