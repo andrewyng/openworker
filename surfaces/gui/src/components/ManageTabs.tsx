@@ -77,11 +77,34 @@ const EXAMPLE = `{
 // per-provider ModelChecklist / read-only model preview (form view).
 export function ModelsTab() {
   const [settings, setSettings] = useState<ModelSettings | null>(null);
-  const refreshSettings = () => getSettings().then(setSettings).catch(() => setSettings(null));
+  const [settingsError, setSettingsError] = useState(false);
+  const refreshSettings = () => {
+    setSettingsError(false);
+    getSettings()
+      .then(setSettings)
+      .catch(() => {
+        setSettings(null);
+        setSettingsError(true);
+      });
+  };
   const ps = useProviderSetup({ onSaved: refreshSettings });
   useEffect(() => {
     refreshSettings();
   }, []);
+
+  if (settingsError) {
+    return (
+      <div className="text-[13px] text-muted space-y-3">
+        <div>
+          <p className="text-ink font-medium">Couldn&apos;t reach the agent server</p>
+          <p className="mt-1">Make sure OpenWorker is running, then try again.</p>
+        </div>
+        <button className={BTN_BORDERED} onClick={refreshSettings} data-testid="settings-retry">
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   if (!settings) return <div className="text-[13px] text-muted">Loading…</div>;
 
