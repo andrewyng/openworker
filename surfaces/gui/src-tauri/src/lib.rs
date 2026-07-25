@@ -20,8 +20,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use ocw_stt::{Dictation, DownloadProgress};
-use serde::Serialize;
+use ocw_stt::Dictation;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -29,6 +28,9 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt;
 use uuid::Uuid;
+
+mod voice;
+use voice::*;
 
 /// The sidecar server child — killed on exit (orphaned servers have bitten us before).
 struct ServerProcess(Mutex<Option<Child>>);
@@ -121,6 +123,47 @@ fn server_log_file() -> Option<std::fs::File> {
         let _ = std::fs::rename(&path, dir.join("openworker-server.log.old"));
     }
     std::fs::File::create(&path).ok()
+}
+
+fn spawn_server(port: u16, api_token: &str) -> Option<Child> {
+    let mut server_cmd = Command::new(server_bin());
+    server_cmd
+        .args(["--host", "127.0.0.1", "--port", &port.to_string()])
+        // The sidecar self-exits if we die abruptly (dev-watcher restart, crash).
+        .env("COWORKER_EXIT_WITH_PARENT", "1")
+        .env("COWORKER_PARENT_PID", std::process::id().to_string())
+        .env("COWORKER_API_TOKEN", api_token)
+        // The GUI has no console, so route the server to a real per-launch log.
+        .stdin(Stdio::null());
+
+    match server_log_file() {
+        Some(log) => {
+            if let Ok(err_clone) = log.try_clone() {
+                server_cmd
+                    .stdout(Stdio::from(log))
+                    .stderr(Stdio::from(err_clone));
+            } else {
+                server_cmd.stdout(Stdio::from(log)).stderr(Stdio::null());
+            }
+        }
+        None => {
+            server_cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        server_cmd.creation_flags(0x0800_0000);
+    }
+
+    match server_cmd.spawn() {
+        Ok(child) => Some(child),
+        Err(error) => {
+            eprintln!("[coworker] failed to start server sidecar: {error}");
+            None
+        }
+    }
 }
 
 fn read_keep_awake_pref() -> bool {
@@ -276,209 +319,23 @@ fn start_window_drag(window: tauri::WebviewWindow) -> bool {
     window.start_dragging().is_ok()
 }
 
-// -- local dictation ---------------------------------------------------------------------------
-// The actual microphone/model code lives in the Tauri-free `ocw-stt` crate. This shell owns the
-// macOS permission prompt and translates the reusable API into React-friendly Tauri commands.
-
-#[derive(Clone, Serialize)]
-struct VoiceInputStatus {
-    recording: bool,
-    model_installed: bool,
-    model_verified: bool,
-    test_passed: bool,
-    download_in_progress: bool,
-    model_name: &'static str,
-    model_bytes: u64,
-    supported: bool,
-    device_summary: String,
-    compatibility_reason: Option<String>,
-}
-
-fn voice_input_status(dictation: &Dictation) -> VoiceInputStatus {
-    let status = dictation.status();
-    let (supported, device_summary, compatibility_reason) = voice_input_compatibility();
-    VoiceInputStatus {
-        recording: status.recording,
-        model_installed: status.model_installed,
-        model_verified: status.model_verified,
-        test_passed: status.test_passed,
-        download_in_progress: status.download_in_progress,
-        model_name: status.model_name,
-        model_bytes: status.model_bytes,
-        supported,
-        device_summary,
-        compatibility_reason,
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn voice_input_compatibility() -> (bool, String, Option<String>) {
-    let version = Command::new("/usr/bin/sw_vers")
-        .arg("-productVersion")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .unwrap_or_else(|| "unknown version".to_owned());
-    let major = version
-        .split('.')
-        .next()
-        .and_then(|part| part.parse::<u32>().ok())
-        .unwrap_or(0);
-    let apple_silicon = std::env::consts::ARCH == "aarch64";
-    let supported = apple_silicon && major >= 12;
-    let architecture = if apple_silicon {
-        "Apple Silicon"
-    } else {
-        "Intel"
-    };
-    let summary = format!("macOS {version} · {architecture}");
-    let reason = if !apple_silicon {
-        Some("Voice Input currently requires an Apple Silicon Mac (M1 or newer).".to_owned())
-    } else if major < 12 {
-        Some("Voice Input requires macOS 12 or newer.".to_owned())
-    } else {
-        None
-    };
-    (supported, summary, reason)
-}
-
-#[cfg(target_os = "windows")]
-fn voice_input_compatibility() -> (bool, String, Option<String>) {
-    let version = Command::new("cmd")
-        .args(["/C", "ver"])
-        .output()
-        .ok()
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .unwrap_or_else(|| "Windows (unknown version)".to_owned());
-    let build = version
-        .split(|character: char| !character.is_ascii_digit() && character != '.')
-        .find(|part| part.matches('.').count() >= 2)
-        .and_then(|part| part.split('.').nth(2))
-        .and_then(|part| part.parse::<u32>().ok())
-        .unwrap_or(0);
-    let x64 = std::env::consts::ARCH == "x86_64";
-    let supported = x64 && build >= 19_045;
-    let reason = if !x64 {
-        Some("Voice Input currently requires a 64-bit x64 Windows PC.".to_owned())
-    } else if build < 19_045 {
-        Some("Voice Input requires Windows 10 22H2 or Windows 11.".to_owned())
-    } else {
-        None
-    };
-    (supported, format!("{version} · x64"), reason)
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn voice_input_compatibility() -> (bool, String, Option<String>) {
-    (
-        false,
-        format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH),
-        Some("Voice Input is currently supported on macOS and Windows.".to_owned()),
-    )
-}
-
-#[tauri::command]
-fn get_dictation_status(state: tauri::State<Arc<Dictation>>) -> VoiceInputStatus {
-    voice_input_status(&state)
-}
-
-#[tauri::command]
-async fn start_dictation(
-    state: tauri::State<'_, Arc<Dictation>>,
-) -> Result<VoiceInputStatus, String> {
-    // Off the main thread: opening the input device blocks on macOS's one-time microphone
-    // permission dialog (and CoreAudio device setup) — a sync command would freeze the UI
-    // behind the system prompt.
-    let (supported, _, reason) = voice_input_compatibility();
-    if !supported {
-        return Err(
-            reason.unwrap_or_else(|| "Voice Input is not supported on this device.".to_owned())
-        );
-    }
-    let dictation = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        dictation.start()?;
-        Ok::<VoiceInputStatus, String>(voice_input_status(&dictation))
-    })
-    .await
-    .map_err(|e| format!("Dictation failed to start: {e}"))?
-}
-
-#[tauri::command]
-async fn stop_dictation(state: tauri::State<'_, Arc<Dictation>>) -> Result<String, String> {
-    let dictation = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || dictation.stop_and_transcribe())
-        .await
-        .map_err(|e| format!("Dictation stopped unexpectedly: {e}"))?
-}
-
-#[tauri::command]
-fn cancel_dictation(state: tauri::State<Arc<Dictation>>) {
-    state.cancel();
-}
-
-#[tauri::command]
-async fn download_dictation_model(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, Arc<Dictation>>,
-) -> Result<VoiceInputStatus, String> {
-    let dictation = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        dictation.install_default_model_with_progress(|progress: DownloadProgress| {
-            let _ = app.emit("dictation-download-progress", progress);
-        })?;
-        Ok::<VoiceInputStatus, String>(voice_input_status(&dictation))
-    })
-    .await
-    .map_err(|e| format!("Voice model download stopped unexpectedly: {e}"))?
-}
-
-#[tauri::command]
-fn cancel_dictation_model_download(state: tauri::State<Arc<Dictation>>) {
-    state.cancel_model_download();
-}
-
-#[tauri::command]
-async fn verify_dictation_model(
-    state: tauri::State<'_, Arc<Dictation>>,
-) -> Result<VoiceInputStatus, String> {
-    let dictation = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        dictation.verify_default_model()?;
-        Ok::<VoiceInputStatus, String>(voice_input_status(&dictation))
-    })
-    .await
-    .map_err(|e| format!("Voice model verification stopped unexpectedly: {e}"))?
-}
-
-#[tauri::command]
-fn mark_dictation_test_passed(
-    state: tauri::State<Arc<Dictation>>,
-) -> Result<VoiceInputStatus, String> {
-    state.mark_test_passed()?;
-    Ok(voice_input_status(&state))
-}
-
-#[tauri::command]
-fn delete_dictation_model(state: tauri::State<Arc<Dictation>>) -> Result<VoiceInputStatus, String> {
-    state.delete_default_model()?;
-    Ok(voice_input_status(&state))
-}
-
-/// Instantaneous mic loudness (0..1) while a dictation is recording — the composer polls
-/// this to draw a real input-driven waveform instead of decorative bars (owner catch,
-/// DMG #28 walkthrough).
-#[tauri::command]
-fn dictation_level(state: tauri::State<Arc<Dictation>>) -> f32 {
-    state.input_level()
-}
-
 fn show_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
+    }
+}
+
+fn stop_managed_services(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<ServerProcess>() {
+        if let Some(mut child) = state.0.lock().unwrap().take() {
+            let _ = child.kill();
+        }
+    }
+    if let Some(state) = app.try_state::<KeepAwake>() {
+        // Dropping the guard releases the hold (caffeinate kill / execution-state clear).
+        drop(state.0.lock().unwrap().take());
     }
 }
 
@@ -525,7 +382,11 @@ async fn download_update(
     // (Guard scope stays sync: a std MutexGuard must not live across an await.)
     {
         let slot = pending.0.lock().unwrap();
-        if slot.as_ref().map(|(v, _)| v == &update.version).unwrap_or(false) {
+        if slot
+            .as_ref()
+            .map(|(v, _)| v == &update.version)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
     }
@@ -577,6 +438,71 @@ async fn install_update(
     app.restart();
 }
 
+fn setup_desktop(
+    app: &mut tauri::App,
+    port: u16,
+    api_token: &str,
+    inject: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let child = spawn_server(port, api_token);
+    app.manage(ServerProcess(Mutex::new(child)));
+
+    let keep_awake = if read_keep_awake_pref() {
+        start_keep_awake()
+    } else {
+        None
+    };
+    app.manage(KeepAwake(Mutex::new(keep_awake)));
+    app.manage(PendingUpdate(Mutex::new(None)));
+    app.manage(Arc::new(Dictation::new(state_dir().join("models"))));
+
+    let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("OpenWorker")
+        .inner_size(1360.0, 900.0)
+        .min_inner_size(980.0, 640.0)
+        .disable_drag_drop_handler()
+        .initialization_script(inject);
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(19.0, 24.0));
+    let window = builder.build()?;
+
+    let close_window = window.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            let _ = close_window.hide();
+            api.prevent_close();
+        }
+    });
+
+    let open_item = MenuItem::with_id(app, "open", "Open OpenWorker", true, None::<&str>)?;
+    let settings_item = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open_item, &settings_item, &quit_item])?;
+    let tray_icon = tauri::image::Image::new(include_bytes!("../icons/tray.rgba"), 44, 44);
+    TrayIconBuilder::new()
+        .tooltip("OpenWorker")
+        .icon(tray_icon)
+        .icon_as_template(true)
+        .menu(&menu)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open" => show_main(app),
+            "settings" => {
+                show_main(app);
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.emit("coworker:open-settings", ());
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+
+    Ok(())
+}
+
 pub fn run() {
     let port = free_port();
     let api_token = launch_token();
@@ -624,149 +550,14 @@ pub fn run() {
             clear_pending_update,
             install_update
         ])
-        .setup(move |app| {
-            // 1. Start the Python server sidecar on the chosen port (inherits our env).
-            let mut server_cmd = Command::new(server_bin());
-            server_cmd
-                .args(["--host", "127.0.0.1", "--port", &port.to_string()])
-                // The sidecar self-exits if we die abruptly (dev-watcher restart, crash) —
-                // belt-and-suspenders alongside the RunEvent::ExitRequested kill below.
-                // The explicit PID matters: under PyInstaller onefile the python process is a
-                // *grandchild* (bootloader in between), so getppid() never points at us and a
-                // reparenting check alone leaks both processes on quit.
-                .env("COWORKER_EXIT_WITH_PARENT", "1")
-                .env("COWORKER_PARENT_PID", std::process::id().to_string())
-                .env("COWORKER_API_TOKEN", &api_token)
-                // This GUI app has no console, so a console-subsystem child would inherit
-                // invalid std handles and crash a few seconds in when uvicorn writes its logs
-                // (the "Starting coworker…" freeze on Windows). Hand it real handles: the
-                // server's output goes to a log file so field issues are debuggable at all
-                // ("relay off, no messages" was undiagnosable with everything on /dev/null).
-                // One file per launch, previous run kept as .old.
-                .stdin(Stdio::null());
-            match server_log_file() {
-                Some(log) => {
-                    if let Ok(err_clone) = log.try_clone() {
-                        server_cmd
-                            .stdout(Stdio::from(log))
-                            .stderr(Stdio::from(err_clone));
-                    } else {
-                        server_cmd.stdout(Stdio::from(log)).stderr(Stdio::null());
-                    }
-                }
-                None => {
-                    server_cmd.stdout(Stdio::null()).stderr(Stdio::null());
-                }
-            }
-            // CREATE_NO_WINDOW: the sidecar is a console binary; without this a console window
-            // would flash when the GUI app spawns it on Windows.
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                server_cmd.creation_flags(0x0800_0000);
-            }
-            let child = match server_cmd.spawn() {
-                Ok(child) => Some(child),
-                Err(e) => {
-                    eprintln!("[coworker] failed to start server sidecar: {e}");
-                    None
-                }
-            };
-            app.manage(ServerProcess(Mutex::new(child)));
-
-            // Restore keep-awake from the last session.
-            let ka = if read_keep_awake_pref() {
-                start_keep_awake()
-            } else {
-                None
-            };
-            app.manage(KeepAwake(Mutex::new(ka)));
-            app.manage(PendingUpdate(Mutex::new(None)));
-            // Voice recordings are transient; only the explicitly installed local Whisper model
-            // lives in the existing application state directory.
-            app.manage(Arc::new(Dictation::new(state_dir().join("models"))));
-
-            // 2. Build the window, injecting the sidecar endpoints before the SPA loads.
-            //    Overlay title bar (macOS): traffic lights float over the edge-to-edge UI.
-            let mut builder =
-                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                    .title("OpenWorker")
-                    .inner_size(1360.0, 900.0)
-                    .min_inner_size(980.0, 640.0)
-                    // Let the WEBVIEW receive OS file drags: Tauri's own drag-drop handler
-                    // otherwise intercepts them, so the composer's HTML5 onDrop (attach by
-                    // dragging a file in) never fired in the desktop shell — browser dev
-                    // worked, DMGs didn't. main.tsx guards against drops outside the
-                    // composer navigating the page.
-                    .disable_drag_drop_handler()
-                    .initialization_script(&inject);
-            #[cfg(target_os = "macos")]
-            {
-                builder = builder
-                    .title_bar_style(tauri::TitleBarStyle::Overlay)
-                    .hidden_title(true)
-                    // Nudge the traffic lights down + in so they sit vertically centered in a
-                    // roomier top strip, aligned with the sidebar toggle and title rather than
-                    // jammed against the top edge.
-                    .traffic_light_position(tauri::LogicalPosition::new(19.0, 24.0));
-            }
-            let win = builder.build()?;
-
-            // Close-to-tray: hide instead of quitting so the sidecar keeps running.
-            let w = win.clone();
-            win.on_window_event(move |event| {
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    let _ = w.hide();
-                    api.prevent_close();
-                }
-            });
-
-            // 3. System tray: Open / Settings / Quit.
-            let open_i = MenuItem::with_id(app, "open", "Open OpenWorker", true, None::<&str>)?;
-            let settings_i = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open_i, &settings_i, &quit_i])?;
-
-            // A monochrome template icon (black + alpha, raw RGBA 44×44) so the menu bar tints
-            // it for light/dark automatically — not the full-color app icon.
-            let tray_icon = tauri::image::Image::new(include_bytes!("../icons/tray.rgba"), 44, 44);
-            TrayIconBuilder::new()
-                .tooltip("OpenWorker")
-                .icon(tray_icon)
-                .icon_as_template(true)
-                .menu(&menu)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "open" => show_main(app),
-                    "settings" => {
-                        show_main(app);
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.eval(
-                                "window.dispatchEvent(new CustomEvent('coworker:open-settings'))",
-                            );
-                        }
-                    }
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .build(app)?;
-
-            Ok(())
-        })
+        .setup(move |app| setup_desktop(app, port, &api_token, &inject))
         .build(tauri::generate_context!())
         .expect("error while building the OpenWorker desktop app")
         .run(|app, event| {
             // Also on Exit: belt-and-suspenders in case a quit path reaches teardown without
             // a preceding ExitRequested (observed with macOS Cmd+Q under the tray setup).
             if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
-                if let Some(state) = app.try_state::<ServerProcess>() {
-                    if let Some(mut child) = state.0.lock().unwrap().take() {
-                        let _ = child.kill();
-                    }
-                }
-                if let Some(state) = app.try_state::<KeepAwake>() {
-                    // Dropping the guard releases the hold (caffeinate kill / execution-state clear).
-                    drop(state.0.lock().unwrap().take());
-                }
+                stop_managed_services(app);
             }
         });
 }

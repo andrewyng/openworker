@@ -1,0 +1,601 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "ClearCode Intelligence",
+          "semanticVersion": "0.1.0",
+          "informationUri": "https://github.com/B11-Health/clearcode-intelligence",
+          "rules": [
+            {
+              "id": "clearcode.maintainability.large-file-hotspot",
+              "name": "clearcode.maintainability.large-file-hotspot",
+              "shortDescription": {
+                "text": "Large file hotspot"
+              },
+              "fullDescription": {
+                "text": "1969 non-empty lines make ownership, testing, and refactoring harder."
+              },
+              "help": {
+                "text": "Remediation: Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.\n\nVerification: Re-run the scan and review surfaces/gui/src/App.tsx:1 for the corrected pattern.",
+                "markdown": "**Remediation:** Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.\n\n**Verification:** Re-run the scan and review surfaces/gui/src/App.tsx:1 for the corrected pattern."
+              },
+              "properties": {
+                "area": "Maintainability",
+                "defaultSeverity": "high",
+                "precision": "high",
+                "tags": [
+                  "clearcode",
+                  "maintainability",
+                  "production"
+                ]
+              }
+            },
+            {
+              "id": "clearcode.maintainability.function-complexity-hotspot-app",
+              "name": "clearcode.maintainability.function-complexity-hotspot-app",
+              "shortDescription": {
+                "text": "Function complexity hotspot: App"
+              },
+              "fullDescription": {
+                "text": "App spans 1691 non-empty lines with 402 decision token(s) and a 75.1/100 modeled complexity score."
+              },
+              "help": {
+                "text": "Remediation: Split App around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.\n\nVerification: Run the affected test suite and re-scan surfaces/gui/src/App.tsx:196; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
+                "markdown": "**Remediation:** Split App around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.\n\n**Verification:** Run the affected test suite and re-scan surfaces/gui/src/App.tsx:196; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper."
+              },
+              "properties": {
+                "area": "Maintainability",
+                "defaultSeverity": "high",
+                "precision": "high",
+                "tags": [
+                  "clearcode",
+                  "maintainability",
+                  "production"
+                ]
+              }
+            },
+            {
+              "id": "clearcode.maintainability.function-complexity-hotspot-sidebar",
+              "name": "clearcode.maintainability.function-complexity-hotspot-sidebar",
+              "shortDescription": {
+                "text": "Function complexity hotspot: Sidebar"
+              },
+              "fullDescription": {
+                "text": "Sidebar spans 1020 non-empty lines with 204 decision token(s) and a 69.9/100 modeled complexity score."
+              },
+              "help": {
+                "text": "Remediation: Split Sidebar around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.\n\nVerification: Run the affected test suite and re-scan surfaces/gui/src/components/Sidebar.tsx:104; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
+                "markdown": "**Remediation:** Split Sidebar around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.\n\n**Verification:** Run the affected test suite and re-scan surfaces/gui/src/components/Sidebar.tsx:104; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper."
+              },
+              "properties": {
+                "area": "Maintainability",
+                "defaultSeverity": "high",
+                "precision": "high",
+                "tags": [
+                  "clearcode",
+                  "maintainability",
+                  "production"
+                ]
+              }
+            },
+            {
+              "id": "clearcode.maintainability.function-complexity-hotspot-composer",
+              "name": "clearcode.maintainability.function-complexity-hotspot-composer",
+              "shortDescription": {
+                "text": "Function complexity hotspot: Composer"
+              },
+              "fullDescription": {
+                "text": "Composer spans 434 non-empty lines with 144 decision token(s) and a 60.8/100 modeled complexity score."
+              },
+              "help": {
+                "text": "Remediation: Split Composer around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.\n\nVerification: Run the affected test suite and re-scan surfaces/gui/src/components/Composer.tsx:82; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
+                "markdown": "**Remediation:** Split Composer around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.\n\n**Verification:** Run the affected test suite and re-scan surfaces/gui/src/components/Composer.tsx:82; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper."
+              },
+              "properties": {
+                "area": "Maintainability",
+                "defaultSeverity": "high",
+                "precision": "high",
+                "tags": [
+                  "clearcode",
+                  "maintainability",
+                  "production"
+                ]
+              }
+            },
+            {
+              "id": "clearcode.delivery.contributor-concentration-risk",
+              "name": "clearcode.delivery.contributor-concentration-risk",
+              "shortDescription": {
+                "text": "Contributor concentration risk"
+              },
+              "fullDescription": {
+                "text": "90% of recent commits came from one contributor."
+              },
+              "help": {
+                "text": "Remediation: Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.\n\nVerification: Re-run the scan and confirm the repository-level signal improves.",
+                "markdown": "**Remediation:** Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.\n\n**Verification:** Re-run the scan and confirm the repository-level signal improves."
+              },
+              "properties": {
+                "area": "Delivery",
+                "defaultSeverity": "medium",
+                "precision": "medium",
+                "tags": [
+                  "clearcode",
+                  "delivery",
+                  "repository"
+                ]
+              }
+            },
+            {
+              "id": "clearcode.maintainability.duplicate-implementation-block",
+              "name": "clearcode.maintainability.duplicate-implementation-block",
+              "shortDescription": {
+                "text": "Duplicate implementation block"
+              },
+              "fullDescription": {
+                "text": "1 duplicate cluster(s), up to 5 repeated blocks across 1 component(s), increase change cost."
+              },
+              "help": {
+                "text": "Remediation: Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.\n\nVerification: Re-run the scan and review tests/test_automation.py:299 for the corrected pattern.",
+                "markdown": "**Remediation:** Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.\n\n**Verification:** Re-run the scan and review tests/test_automation.py:299 for the corrected pattern."
+              },
+              "properties": {
+                "area": "Maintainability",
+                "defaultSeverity": "low",
+                "precision": "high",
+                "tags": [
+                  "clearcode",
+                  "maintainability",
+                  "test"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "automationDetails": {
+        "id": "clearcode/andrewyng/openworker/bbb806ce5453335d64ef163f9d5586544398c7e8"
+      },
+      "originalUriBaseIds": {
+        "%SRCROOT%": {
+          "uri": "file:///"
+        }
+      },
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "endTimeUtc": "2026-07-25T23:09:42.424Z",
+          "properties": {
+            "repository": "https://github.com/andrewyng/openworker",
+            "commit": "bbb806ce5453335d64ef163f9d5586544398c7e8",
+            "shallow": false
+          }
+        }
+      ],
+      "results": [
+        {
+          "ruleId": "clearcode.maintainability.large-file-hotspot",
+          "level": "error",
+          "message": {
+            "text": "Large file hotspot. Impact: 1969 non-empty lines make ownership, testing, and refactoring harder."
+          },
+          "partialFingerprints": {
+            "clearCodeFingerprint": "4578e657c1fb"
+          },
+          "properties": {
+            "area": "Maintainability",
+            "severity": "high",
+            "confidence": "high",
+            "scope": "production",
+            "applicability": "direct",
+            "effort": "L",
+            "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
+            "verification": "Re-run the scan and review surfaces/gui/src/App.tsx:1 for the corrected pattern.",
+            "proposedOwner": "engineering-maintainer",
+            "owner": null,
+            "managementStatus": "unassigned"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "surfaces/gui/src/App.tsx",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "clearcode.maintainability.large-file-hotspot",
+          "level": "error",
+          "message": {
+            "text": "Large file hotspot. Impact: 1748 non-empty lines make ownership, testing, and refactoring harder."
+          },
+          "partialFingerprints": {
+            "clearCodeFingerprint": "d77a8601f4f1"
+          },
+          "properties": {
+            "area": "Maintainability",
+            "severity": "high",
+            "confidence": "high",
+            "scope": "production",
+            "applicability": "direct",
+            "effort": "L",
+            "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
+            "verification": "Re-run the scan and review coworker/server/app.py:1 for the corrected pattern.",
+            "proposedOwner": "engineering-maintainer",
+            "owner": null,
+            "managementStatus": "unassigned"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "coworker/server/app.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "clearcode.maintainability.large-file-hotspot",
+          "level": "error",
+          "message": {
+            "text": "Large file hotspot. Impact: 3490 non-empty lines make ownership, testing, and refactoring harder."
+          },
+          "partialFingerprints": {
+            "clearCodeFingerprint": "86cc50927642"
+          },
+          "properties": {
+            "area": "Maintainability",
+            "severity": "high",
+            "confidence": "high",
+            "scope": "production",
+            "applicability": "direct",
+            "effort": "L",
+            "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
+            "verification": "Re-run the scan and review coworker/server/manager.py:1 for the corrected pattern.",
+            "proposedOwner": "engineering-maintainer",
+            "owner": null,
+            "managementStatus": "unassigned"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "coworker/server/manager.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "clearcode.maintainability.function-complexity-hotspot-app",
+          "level": "error",
+          "message": {
+            "text": "Function complexity hotspot: App. Impact: App spans 1691 non-empty lines with 402 decision token(s) and a 75.1/100 modeled complexity score."
+          },
+          "partialFingerprints": {
+            "clearCodeFingerprint": "dfcf0068e42b"
+          },
+          "properties": {
+            "area": "Maintainability",
+            "severity": "high",
+            "confidence": "high",
+            "scope": "production",
+            "applicability": "direct",
+            "effort": "L",
+            "remediation": "Split App around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.",
+            "verification": "Run the affected test suite and re-scan surfaces/gui/src/App.tsx:196; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
+            "proposedOwner": "engineering-maintainer",
+            "owner": null,
+            "managementStatus": "unassigned"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "surfaces/gui/src/App.tsx",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 196
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "clearcode.maintainability.function-complexity-hotspot-sidebar",
+          "level": "error",
+          "message": {
+            "text": "Function complexity hotspot: Sidebar. Impact: Sidebar spans 1020 non-empty lines with 204 decision token(s) and a 69.9/100 modeled complexity score."
+          },
+          "partialFingerprints": {
+            "clearCodeFingerprint": "dac04a49b380"
+          },
+          "properties": {
+            "area": "Maintainability",
+            "severity": "high",
+            "confidence": "high",
+            "scope": "production",
+            "applicability": "direct",
+            "effort": "L",
+            "remediation": "Split Sidebar around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.",
+            "verification": "Run the affected test suite and re-scan surfaces/gui/src/components/Sidebar.tsx:104; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
+            "proposedOwner": "engineering-maintainer",
+            "owner": null,
+            "managementStatus": "unassigned"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "surfaces/gui/src/components/Sidebar.tsx",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 104
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "clearcode.maintainability.function-complexity-hotspot-composer",
+          "level": "error",
+          "message": {
+            "text": "Function complexity hotspot: Composer. Impact: Composer spans 434 non-empty lines with 144 decision token(s) and a 60.8/100 modeled complexity score."
+          },
+          "partialFingerprints": {
+            "clearCodeFingerprint": "b62ed91db169"
+          },
+          "properties": {
+            "area": "Maintainability",
+            "severity": "high",
+            "confidence": "high",
+            "scope": "production",
+            "applicability": "direct",
+            "effort": "L",
+            "remediation": "Split Composer around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.",
+            "verification": "Run the affected test suite and re-scan surfaces/gui/src/components/Composer.tsx:82; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
+            "proposedOwner": "engineering-maintainer",
+            "owner": null,
+            "managementStatus": "unassigned"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "surfaces/gui/src/components/Composer.tsx",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 82
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "clearcode.delivery.contributor-concentration-risk",
+          "level": "warning",
+          "message": {
+            "text": "Contributor concentration risk. Impact: 90% of recent commits came from one contributor."
+          },
+          "partialFingerprints": {
+            "clearCodeFingerprint": "3873428d0802"
+          },
+          "properties": {
+            "area": "Delivery",
+            "severity": "medium",
+            "confidence": "medium",
+            "scope": "repository",
+            "applicability": "review",
+            "effort": "M",
+            "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
+            "verification": "Re-run the scan and confirm the repository-level signal improves.",
+            "proposedOwner": "engineering-maintainer",
+            "owner": null,
+            "managementStatus": "unassigned"
+          }
+        },
+        {
+          "ruleId": "clearcode.maintainability.large-file-hotspot",
+          "level": "warning",
+          "message": {
+            "text": "Large file hotspot. Impact: 1117 non-empty lines make ownership, testing, and refactoring harder."
+          },
+          "partialFingerprints": {
+            "clearCodeFingerprint": "d37151b531c9"
+          },
+          "properties": {
+            "area": "Maintainability",
+            "severity": "medium",
+            "confidence": "high",
+            "scope": "production",
+            "applicability": "direct",
+            "effort": "L",
+            "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
+            "verification": "Re-run the scan and review surfaces/gui/src/components/Sidebar.tsx:1 for the corrected pattern.",
+            "proposedOwner": "engineering-maintainer",
+            "owner": null,
+            "managementStatus": "unassigned"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "surfaces/gui/src/components/Sidebar.tsx",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "clearcode.maintainability.duplicate-implementation-block",
+          "level": "note",
+          "message": {
+            "text": "Duplicate implementation block. Impact: 1 duplicate cluster(s), up to 5 repeated blocks across 1 component(s), increase change cost."
+          },
+          "partialFingerprints": {
+            "clearCodeFingerprint": "d4863e4762f8"
+          },
+          "properties": {
+            "area": "Maintainability",
+            "severity": "low",
+            "confidence": "high",
+            "scope": "test",
+            "applicability": "contextual",
+            "effort": "S",
+            "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
+            "verification": "Re-run the scan and review tests/test_automation.py:299 for the corrected pattern.",
+            "proposedOwner": "engineering-maintainer",
+            "owner": null,
+            "managementStatus": "unassigned"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "tests/test_automation.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 299
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "clearcode.maintainability.duplicate-implementation-block",
+          "level": "note",
+          "message": {
+            "text": "Duplicate implementation block. Impact: 3 duplicate cluster(s), up to 3 repeated blocks across 1 component(s), increase change cost."
+          },
+          "partialFingerprints": {
+            "clearCodeFingerprint": "a2c01317d611"
+          },
+          "properties": {
+            "area": "Maintainability",
+            "severity": "low",
+            "confidence": "high",
+            "scope": "production",
+            "applicability": "direct",
+            "effort": "M",
+            "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
+            "verification": "Re-run the scan and review coworker/connectors/browser_automation.py:29 for the corrected pattern.",
+            "proposedOwner": "engineering-maintainer",
+            "owner": null,
+            "managementStatus": "unassigned"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "coworker/connectors/browser_automation.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 29
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "clearcode.maintainability.duplicate-implementation-block",
+          "level": "note",
+          "message": {
+            "text": "Duplicate implementation block. Impact: 1 duplicate cluster(s), up to 3 repeated blocks across 1 component(s), increase change cost."
+          },
+          "partialFingerprints": {
+            "clearCodeFingerprint": "efe6ddeb2b81"
+          },
+          "properties": {
+            "area": "Maintainability",
+            "severity": "low",
+            "confidence": "high",
+            "scope": "production",
+            "applicability": "direct",
+            "effort": "M",
+            "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
+            "verification": "Re-run the scan and review coworker/providers/anthropic_provider.py:24 for the corrected pattern.",
+            "proposedOwner": "engineering-maintainer",
+            "owner": null,
+            "managementStatus": "unassigned"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "coworker/providers/anthropic_provider.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 24
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "clearcode.maintainability.duplicate-implementation-block",
+          "level": "note",
+          "message": {
+            "text": "Duplicate implementation block. Impact: 1 duplicate cluster(s), up to 3 repeated blocks across 1 component(s), increase change cost."
+          },
+          "partialFingerprints": {
+            "clearCodeFingerprint": "b9b3650872b9"
+          },
+          "properties": {
+            "area": "Maintainability",
+            "severity": "low",
+            "confidence": "high",
+            "scope": "test",
+            "applicability": "contextual",
+            "effort": "S",
+            "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
+            "verification": "Re-run the scan and review tests/test_message_source.py:25 for the corrected pattern.",
+            "proposedOwner": "engineering-maintainer",
+            "owner": null,
+            "managementStatus": "unassigned"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "tests/test_message_source.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 25
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

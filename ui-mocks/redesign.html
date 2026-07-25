@@ -837,7 +837,17 @@
     datadog:    { label: 'Datadog',    icon: 'DD_ICON' },
     default:    { label: 'Connector',  icon: 'PLUG_ICON' },   // fallback
   };
-  document.body.innerHTML = document.body.innerHTML.replace(/\{\{(\w+)\}\}/g, (m, k) => ICONS[k] || m);
+  // Replace fixed icon placeholders without reparsing the page through innerHTML.
+  const iconWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const iconPlaceholders = [];
+  while (iconWalker.nextNode()) {
+    const match = iconWalker.currentNode.nodeValue.trim().match(/^\{\{(\w+)\}\}$/);
+    if (match && ICONS[match[1]]) iconPlaceholders.push([iconWalker.currentNode, match[1]]);
+  }
+  iconPlaceholders.forEach(([textNode, key]) => {
+    const svg = new DOMParser().parseFromString(ICONS[key], 'image/svg+xml').documentElement;
+    textNode.replaceWith(document.importNode(svg, true));
+  });
 
   // view switch (session / integrations / persona)
   const views = {
@@ -889,9 +899,18 @@
     grouped = !grouped;
     document.getElementById('list-flat').classList.toggle('hidden', grouped);
     document.getElementById('list-grouped').classList.toggle('hidden', !grouped);
-    document.getElementById('layoutIcon').innerHTML = grouped
-      ? '<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/>'
-      : '<path d="M3 5h18M3 12h18M3 19h18"/>';
+    const svgNode = (name, attrs) => {
+      const node = document.createElementNS('http://www.w3.org/2000/svg', name);
+      Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
+      return node;
+    };
+    const layoutIcon = document.getElementById('layoutIcon');
+    layoutIcon.replaceChildren(...(grouped
+      ? [
+          svgNode('rect', { x: '3', y: '4', width: '18', height: '6', rx: '1.5' }),
+          svgNode('rect', { x: '3', y: '14', width: '18', height: '6', rx: '1.5' }),
+        ]
+      : [svgNode('path', { d: 'M3 5h18M3 12h18M3 19h18' })]));
     layoutBtn.title = grouped ? 'Grouped by persona — tap for flat' : 'Flat — tap to group by persona';
   });
 

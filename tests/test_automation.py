@@ -92,10 +92,17 @@ def test_store_runs_history(tmp_path):
     store = TaskStore(tmp_path / "auto.db")
     t = _task()
     store.save(t)
-    store.add_run(TaskRun(task_id=t.id, status="ok", result_text="hi"))
-    store.add_run(TaskRun(task_id=t.id, status="error", error="boom"))
+    # Timestamps can tie at clock resolution; the most recently stored run must
+    # still be first because the UI derives its latest status from this order.
+    started_at = 123.0
+    store.add_run(
+        TaskRun(task_id=t.id, status="ok", result_text="hi", started_at=started_at)
+    )
+    store.add_run(
+        TaskRun(task_id=t.id, status="error", error="boom", started_at=started_at)
+    )
     runs = store.runs(t.id)
-    assert len(runs) == 2 and runs[0].status in ("ok", "error")
+    assert [run.status for run in runs] == ["error", "ok"]
 
 
 # -- scheduler loop ------------------------------------------------------------

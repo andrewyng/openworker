@@ -20,12 +20,17 @@ test("collapse hides the sidebar and reclaims the width; reveal button docks it 
   await expect(app).not.toHaveClass(/nav-collapsed/);
 });
 
-test("⌘B toggles the sidebar collapse", async ({ page }) => {
+test("the platform shortcut toggles the sidebar collapse", async ({ page }) => {
   await page.goto("/");
   const app = page.locator(".app");
-  await page.keyboard.press("Meta+b");
+  // Wait for the boot splash to hand off before sending the shortcut. Without
+  // this readiness assertion, a fast keypress can land before App registers
+  // its keydown listener and make the test timing-dependent.
+  await expect(page.locator(".sidebar")).toBeVisible();
+  const modifier = process.platform === "darwin" ? "Meta" : "Control";
+  await page.keyboard.press(`${modifier}+b`);
   await expect(app).toHaveClass(/nav-collapsed/);
-  await page.keyboard.press("Meta+b");
+  await page.keyboard.press(`${modifier}+b`);
   await expect(app).not.toHaveClass(/nav-collapsed/);
 });
 

@@ -1,0 +1,510 @@
+/* Manrope — the wordmark typeface, self-hosted (bundled woff2, no external font call). */
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../fonts/manrope-700.woff2") format("woff2");
+}
+.brand-wordmark {
+  font-family:
+    "Manrope",
+    -apple-system,
+    system-ui,
+    sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  white-space: nowrap; /* the BETA chip rides the same line, never wraps under */
+}
+
+:root {
+  color-scheme: light;
+  --paper: #f5f6f7; /* cool light gray — reads "tool", not "writing app" */
+  --panel: #ffffff;
+  --ink: #17191c;
+  --muted: #5b616b;
+  --faint: #9aa1aa;
+  --line: #e8eaed;
+  --line-strong: #d8dce1;
+  --accent: #2563eb; /* cobalt — our signature, distinct from the coral-leaning tools */
+  --accent-soft: #e9f0fd;
+  --ok: #2f7d57;
+  --ok-soft: #eef6f0;
+  --ok-line: #cfe6d6;
+  --ok-dot: #3f9c5a; /* brighter green for small status dots */
+  --warn-ink: #b45309;
+  --warn-soft: #fef3c7;
+  --danger: #b91c1c;
+  --danger-soft: #f9e7e5;
+  --teal-ink: #0f766e; /* connector approval badges */
+  --teal-line: #cfebea;
+  --teal-soft: #edfafa;
+  --solid: #e9ebf0; /* user bubble — a soft neutral fill (was near-black; too heavy in light) */
+  --on-solid: #1f2227;
+  --glass: rgba(255, 255, 255, 0.9); /* frosted bars over content */
+  --glass-strong: rgba(255, 255, 255, 0.96);
+  --glass-soft: rgba(255, 255, 255, 0.78);
+  --scrim: rgba(29, 27, 24, 0.32); /* modal / gate overlays */
+  --check-a: #f0f1f3; /* image-viewer checkerboard */
+  --check-b: #fafbfc;
+  /* Headings are sans now (was a Palatino serif) — less editorial, more product. */
+  --serif: var(--sans);
+  --sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  /* The right rail's width while reading an artifact (wider than the 332px inspector). */
+  --artifact-rail-w: min(62vw, 960px);
+}
+
+/* Dark palette. `data-theme` is set on <html> by an inline script in index.html (pre-paint)
+   and kept current by src/theme.ts (Light / Dark / Auto-as-system, stored in localStorage). */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #131417;
+  --panel: #1c1e22;
+  --ink: #e6e8eb;
+  --muted: #9aa1ab;
+  --faint: #62686f;
+  --line: #2a2d33;
+  --line-strong: #3a3e46;
+  --accent: #4c8dff; /* lifted cobalt — keeps contrast on dark panels */
+  --accent-soft: #1c2a44;
+  --ok: #58b07f;
+  --ok-soft: #1a2b21;
+  --ok-line: #2c4736;
+  --ok-dot: #4dac72;
+  --warn-ink: #e8b04b;
+  --warn-soft: #36280f;
+  --danger: #f07067;
+  --danger-soft: #3d2422;
+  --teal-ink: #46c0b2;
+  --teal-line: #1f4a45;
+  --teal-soft: #11302d;
+  --solid: #2e3138;
+  --on-solid: #e6e8eb;
+  --glass: rgba(28, 30, 34, 0.9);
+  --glass-strong: rgba(28, 30, 34, 0.96);
+  --glass-soft: rgba(28, 30, 34, 0.78);
+  --scrim: rgba(0, 0, 0, 0.5);
+  --check-a: #25272c;
+  --check-b: #1c1e22;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  font-family: var(--sans);
+  color: var(--ink);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 264px 1fr;
+  grid-template-rows: minmax(
+    0,
+    1fr
+  ); /* row fills viewport AND allows children to shrink */
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ---------- sidebar ---------- */
+/* Base sidebar chrome lives in Sidebar.tsx (Tailwind, mock-parity). This rule only anchors the
+   grid column + the tauri-overlay overrides below; the `.brand` class is kept on the header as a
+   hook for the overlay hide rule. */
+.sidebar {
+  min-height: 0;
+}
+
+/* ---------- collapsible left nav (⌘B + hover-peek) ---------- */
+/* Collapsed: the grid column goes to 0 so the content reclaims the width; the sidebar slides
+   off-screen. Hovering the left edge (.nav-hover-zone) adds .nav-peek, floating it back OVER the
+   content as an overlay with a shadow. */
+/* Single column when collapsed: the sidebar is taken out of flow (absolute), so the main content
+   must occupy the whole grid — a leading 0-width column would swallow it instead. */
+.app.nav-collapsed {
+  grid-template-columns: 1fr;
+}
+.app.nav-collapsed .sidebar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 264px;
+  z-index: 60;
+  transform: translateX(-100%);
+  transition: transform 0.18s ease;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.16);
+}
+.app.nav-collapsed.nav-peek .sidebar {
+  transform: translateX(0);
+}
+/* Thin left-edge zone that triggers the peek while collapsed. Starts BELOW the topbar row so the
+   peek can never fire while the cursor is on the collapsed cluster's [sidebar][+][search] icons
+   (§22 build note; the cluster's sidebar button docks the nav on click instead). */
+.nav-hover-zone {
+  position: fixed;
+  top: 48px;
+  left: 0;
+  bottom: 0;
+  width: 14px;
+  z-index: 55;
+}
+/* Reveal button while collapsed. Positioned to land EXACTLY on the brand's pin button (.nav-pin-btn,
+   14px/14px inside the brand row) so peeking the nav puts the pin under the cursor — no travel. */
+.nav-reveal-btn {
+  position: fixed;
+  top: 10px; /* center (10+14) aligns with the topbar title in the browser build */
+  left: 14px;
+  z-index: 58;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--faint);
+  background: transparent;
+}
+.nav-reveal-btn:hover {
+  color: var(--ink);
+  background: var(--paper);
+}
+/* On desktop, both the brand row and the reveal button shift right to clear the traffic lights
+   (and down to align with them in their lowered position — see traffic_light_position in lib.rs). */
+/* Desktop overlay: the whole top strip sits lower (center ~30) to line up with the lowered
+   traffic lights — reveal/pin, the wordmark, and the topbar title all on that line. */
+.app.tauri-overlay .nav-reveal-btn {
+  top: 13px;
+  left: 84px;
+}
+.app.tauri-overlay .main-topbar {
+  padding-top: 9px;
+}
+/* The session topbar's collapsed-state cluster is INLINE (§22), so only the overlay build pads
+   it — to clear the traffic lights. */
+.app.nav-collapsed.tauri-overlay .main-topbar {
+  padding-left: 84px;
+}
+/* Full-page sub-navs (Settings / Connectors) start at the window top; while the main nav is
+   collapsed, the fixed reveal button (and, in the overlay build, the traffic lights) float over
+   that corner — push the sub-nav header below the strip so they never overlap. */
+.app.nav-collapsed .page-subnav {
+  padding-top: 48px;
+}
+.app.nav-collapsed.tauri-overlay .page-subnav {
+  padding-top: 56px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--paper);
+  padding: 4px;
+  border-radius: 10px;
+}
+.tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.tab.active {
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.tab.disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* -- Channel subscriptions: the per-session composer chip + popover -------- */
+.sub-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.chan-input {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+}
+.chan-input {
+  min-width: 220px;
+}
+.sub-chip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.wschip.sub-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.sub-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: 300px;
+  z-index: 40;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14);
+  padding: 12px;
+}
+.sub-pop-head {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.sub-pop-empty {
+  font-size: 12.5px;
+  padding: 2px 0 8px;
+}
+.sub-pop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+.sub-pop-chan {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sub-pop-x {
+  border: 0;
+  background: none;
+  color: var(--faint);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.sub-pop-x:hover {
+  color: var(--ink);
+}
+.sub-pop-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.sub-pop-add .chan-input {
+  min-width: 0;
+  flex: 1;
+}
+
+/* ---------- main ---------- */
+.main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(
+    --paper
+  ); /* plain paper, matching the mock (was a dotted graph texture) */
+}
+.main-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px 0 20px;
+  color: var(--ink);
+  user-select: none;
+  /* Edgeless glass (§22 amendment): no border, translucent tint + blur — invisible over the
+     flat paper at rest, frosts only when the transcript actually scrolls under it. */
+  background: color-mix(in srgb, var(--paper) 72%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 6;
+}
+.main.rail-open .main-topbar {
+  right: 332px;
+}
+/* Centered title column (§22, amended: the ⋯ menu removed — the nav row's hover cluster owns
+   pin/rename/archive/delete). Title + facts subtitle beneath.
+   ABSOLUTE centering (owner catch 2026-07-13: a long mention-spawned title painted over the
+   topbar icons): the flex sides can't guarantee clearance — the settings row's rest-state
+   glance occupies space by design, so every content-based flex floor over-reserves. Centering
+   on the BAR and capping against its width (100% here = the topbar, not the viewport — the
+   right rail sits outside it) makes the title ellipsize before it can reach either cluster:
+   332px ≈ 2 × (collapsed cluster + settings icon + gaps). */
+.main-title {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  height: 100%;
+  transform: translateX(-50%);
+  max-width: max(96px, calc(100% - 332px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+/* The overlay build pads the collapsed cluster past the traffic lights — reserve that too. */
+.app.nav-collapsed.tauri-overlay .main-title {
+  max-width: max(96px, calc(100% - 416px));
+}
+.main-title-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: min(460px, 100%);
+}
+.title-ghost {
+  color: var(--faint);
+  font-weight: 400;
+}
+/* The facts subtitle — fixed facts, not controls (persona · model · folder); click → coworker page. */
+.title-sub {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.25;
+  color: var(--faint);
+  max-width: min(460px, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.title-sub:hover {
+  color: var(--muted);
+}
+/* Equal-flex side regions keep the subtitle centered; they double as window-drag surfaces. */
+.main-topbar-side {
+  align-self: stretch;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.main-topbar-actions {
+  justify-content: flex-end;
+}
+.topbar-icon-btn {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.topbar-icon-btn:hover {
+  color: var(--ink);
+  background: var(--paper);
+}
+.app.tauri-overlay .main-title,
+.app.tauri-overlay .main-drag-fill {
+  -webkit-app-region: drag;
+}
+.app.tauri-overlay button,
+.app.tauri-overlay input,
+.app.tauri-overlay textarea,
+.app.tauri-overlay select,
+.app.tauri-overlay .topbar-icon-btn {
+  -webkit-app-region: no-drag;
+}
+.main-workspace {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.main-chat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  padding-top: 48px;
+}
+.main.rail-open .main-chat {
+  margin-right: 332px;
+}
+.main-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 8% 24px;
+}
+
+/* idle hero */
+.hero {
+  max-width: 720px;
+  margin: 6vh auto 0;
+}
+.greeting {
+  font-family: var(--serif);
+  font-size: 40px;
+  line-height: 1.1;
+  margin: 0 0 18px;
+}
+.greeting .mark {
+  color: var(--accent);
+  margin-right: 10px;
+}
+.suggestions {
+  margin-top: 40px;
+  display: flex;
+  flex-direction: column;
+}
+.suggest-head {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.suggest {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 6px;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 14.5px;
+}

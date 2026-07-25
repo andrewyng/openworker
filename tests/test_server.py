@@ -468,6 +468,9 @@ def test_server_sets_explicit_websocket_frame_limit(tmp_path, monkeypatch):
 
 def test_standalone_server_token_file_is_user_only(tmp_path, monkeypatch):
     import os
+    import stat
+    import subprocess
+    import sys
 
     from coworker.server import run as server_run
 
@@ -477,7 +480,16 @@ def test_standalone_server_token_file_is_user_only(tmp_path, monkeypatch):
         assert path == tmp_path / "coworker-state" / "sidecar-9876.token"
         assert path.read_text().strip() == os.environ["COWORKER_API_TOKEN"]
         assert len(path.read_text().strip()) == 64
-        assert (path.stat().st_mode & 0o777) == 0o600
+        if sys.platform == "win32":
+            acl = subprocess.run(
+                ["icacls", str(path)], capture_output=True, text=True
+            ).stdout
+            user = os.environ.get("USERNAME", "")
+            assert user and user in acl
+            assert "NT AUTHORITY\\SYSTEM" not in acl
+            assert "BUILTIN\\Administrators" not in acl
+        else:
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
     finally:
         path.unlink(missing_ok=True)
         os.environ.pop("COWORKER_API_TOKEN", None)
@@ -685,52 +697,48 @@ def test_workspace_command_trust_controls_live_engine(tmp_path):
     manager = SessionManager(
         workspace=None, data_dir=tmp_path / "data", provider=ScriptedProvider([])
     )
-    client = TestClient(create_app(manager))
+    with TestClient(create_app(manager)) as client:
+        with client.websocket_connect(
+            f"/ws/session/trust?workspace={quote(str(proj))}"
+        ) as ws:
+            ready = ws.receive_json()
+            policy = ready["data"]["command_trust"]
+            assert policy["required"] is True
+            assert policy["requested_commands"] == ["pytest"]
 
-    with client.websocket_connect(
-        f"/ws/session/trust?workspace={quote(str(proj))}"
-    ) as ws:
-        ready = ws.receive_json()
-        policy = ready["data"]["command_trust"]
-        assert policy["required"] is True
-        assert policy["requested_commands"] == ["pytest"]
+            engine = manager._engines["trust"]
+            before = engine.permissions.evaluate(
+                "run_shell", {"command": "pytest -q"}, None
+            )
+            assert not before.allowed and before.needs_user
+            # Workspace auto_allow remains ignored even after command trust.
+            assert "write_file" not in engine.permissions.auto_allow_tools
 
-        engine = manager._engines["trust"]
-        before = engine.permissions.evaluate(
-            "run_shell", {"command": "pytest -q"}, None
-        )
-        assert not before.allowed and before.needs_user
-        # Workspace auto_allow remains ignored even after command trust.
-        assert "write_file" not in engine.permissions.auto_allow_tools
+            trusted = client.post(
+                "/v1/workspaces/trust",
+                json={"path": str(proj), "trusted": True},
+            ).json()
+            assert trusted["ok"] and trusted["trusted"]
+            assert engine.permissions.evaluate(
+                "run_shell", {"command": "pytest -q"}, None
+            ).allowed
 
-        trusted = client.post(
-            "/v1/workspaces/trust",
-            json={"path": str(proj), "trusted": True},
-        ).json()
-        assert trusted["ok"] and trusted["trusted"]
-        assert engine.permissions.evaluate(
-            "run_shell", {"command": "pytest -q"}, None
-        ).allowed
+            listed = client.get("/v1/workspaces/trusted").json()["workspaces"]
+            assert [item["workspace"] for item in listed] == [str(proj.resolve())]
 
-        listed = client.get("/v1/workspaces/trusted").json()["workspaces"]
-        assert [item["workspace"] for item in listed] == [str(proj.resolve())]
-
-        revoked = client.post(
-            "/v1/workspaces/trust",
-            json={"path": str(proj), "trusted": False},
-        ).json()
-        assert revoked["ok"] and not revoked["trusted"]
-        after = engine.permissions.evaluate(
-            "run_shell", {"command": "pytest -q"}, None
-        )
-        assert not after.allowed and after.needs_user
+            revoked = client.post(
+                "/v1/workspaces/trust",
+                json={"path": str(proj), "trusted": False},
+            ).json()
+            assert revoked["ok"] and not revoked["trusted"]
+            after = engine.permissions.evaluate(
+                "run_shell", {"command": "pytest -q"}, None
+            )
+            assert not after.allowed and after.needs_user
 
     manager.workspace_trust.set_trusted(proj, True)
     proj.rename(tmp_path / "moved-project")
-    assert client.post(
-        "/v1/workspaces/trust",
-        json={"path": str(proj), "trusted": False},
-    ).json()["ok"]
+    assert manager.set_workspace_trust(proj, trusted=False)["ok"]
     assert manager.trusted_workspaces() == []
 
 

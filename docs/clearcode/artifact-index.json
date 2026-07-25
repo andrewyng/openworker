@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/andrewyng/openworker",
+  "baseline": {
+    "commit": "db93d75bf634e3a855b29e00d8f5d677438cac1f",
+    "score": 75,
+    "findings": 41,
+    "confidence": 84
+  },
+  "postRemediation": {
+    "commit": "bbb806ce5453335d64ef163f9d5586544398c7e8",
+    "score": 92,
+    "findings": 12,
+    "confidence": 100
+  },
+  "comparison": {
+    "comparable": true,
+    "scoreChange": 17,
+    "resolvedFindings": 29,
+    "introducedFindings": 0
+  },
+  "generator": {
+    "name": "ClearCode Intelligence",
+    "version": "0.1.0",
+    "sourceDigest": "e326855af2006bc8db60f21a75e17ac585521637adb016dd22b66cb63b82b1d4",
+    "settingsDigest": "3c833fd477ec8ab293692b8b152de71df0b15b30fcb1f7e65a9292ba6fec51fd"
+  },
+  "quality": {
+    "evidenceCompletePct": 100,
+    "publicArtifactsContainWorkstationPaths": false,
+    "pdfBannedContentHits": 0,
+    "pdfs": {
+      "baseline": {
+        "pages": 21,
+        "shortPagesUnder150Characters": 0
+      },
+      "postRemediation": {
+        "pages": 17,
+        "shortPagesUnder150Characters": 0
+      },
+      "delta": {
+        "pages": 18,
+        "shortPagesUnder150Characters": 0
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "path": "baseline-scan.json",
+      "bytes": 172813,
+      "sha256": "29e8af00101a4cbb48049583cc9a0a4ba5c3f874a11afb8ebd0e1d0a8e4ce936"
+    },
+    {
+      "path": "before-after-delta.json",
+      "bytes": 14787,
+      "sha256": "5646db35b4fa99d2d5aec2d74ea8be0225e9fb8ef99993bba67ce35f1c912510"
+    },
+    {
+      "path": "OpenWorker-ClearCode-Baseline-75.pdf",
+      "bytes": 449470,
+      "sha256": "af37f64e12ad7d31631d3626802da94b14ff311ca39ef3087e3da3efe56d684a"
+    },
+    {
+      "path": "OpenWorker-ClearCode-Delta-75-to-92.pdf",
+      "bytes": 412473,
+      "sha256": "9875b0630abd3bc6cd2180c87b72b196dcc9d4aa548d547c75ae16b421301099"
+    },
+    {
+      "path": "OpenWorker-ClearCode-Post-92.pdf",
+      "bytes": 402239,
+      "sha256": "2b49c68d23c82e4847ec95a0bb873a2e19c952c15a9bed34625a4b177cf022e8"
+    },
+    {
+      "path": "post-remediation-findings.sarif.json",
+      "bytes": 26389,
+      "sha256": "a0975414746c4a8a7ba1e2f43ac28c72a3bb3d76ecfe2db790629fe11bd5e5d5"
+    },
+    {
+      "path": "post-remediation-scan.json",
+      "bytes": 129595,
+      "sha256": "ce7d3dc3b946c735022149e92ba24776027aee1127101efcd52422d5717a1710"
+    }
+  ]
+}

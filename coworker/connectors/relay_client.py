@@ -54,6 +54,9 @@ TransportFactory = Callable[[], RelayTransport]
 # Slack errors that mean the BOT TOKEN is dead (uninstalled/revoked/suspended) —
 # distinct from transient network or method errors, which say nothing about it.
 _TOKEN_ERRORS = frozenset({"invalid_auth", "account_inactive", "token_revoked"})
+# Friendly Slack names are optional decoration. Never let a slow/unavailable Web
+# API hold inbound relay delivery behind it; stable user/channel IDs are a safe fallback.
+_SLACK_ENRICHMENT_TIMEOUT = 0.75
 TokenProvider = Callable[[], str]  # returns the current cloud sign-in JWT
 # team_id, channel, count -> list of raw Slack message dicts (newest last)
 HistoryFetcher = Callable[[str, str, int], Awaitable[list[dict]]]
@@ -331,18 +334,37 @@ class SlackRelayAdapter(BasePlatformAdapter):
         # Resolve friendly names with THIS workspace's bot token (cached per team),
         # mirroring the Socket-Mode adapter — so cards read "@OpenWorker"/"Rohit"/"#ocw-test"
         # not raw U…/C… ids. Best-effort: ids fall through on failure.
-        if not mapped.source.user_name:
-            mapped.source.user_name = await self._display_name(
-                team_id, mapped.source.user_id
+        try:
+            await asyncio.wait_for(
+                self._enrich_event(team_id, channel, mapped),
+                timeout=_SLACK_ENRICHMENT_TIMEOUT,
             )
-        if not mapped.source.chat_name:
-            mapped.source.chat_name = await self._channel_name(team_id, channel)
-        mapped.text = await self._resolve_mentions(team_id, mapped.text)
+        except TimeoutError:
+            logger.debug("slack event enrichment timed out for team %s", team_id)
+        except Exception:
+            logger.debug(
+                "slack event enrichment failed for team %s", team_id, exc_info=True
+            )
         # Team-qualify the reply handle so multi-workspace replies pick the right
         # per-team token.
         mapped.source.chat_id = qualify(team_id, channel)
         mapped.source.team_id = team_id
         await self.handle_message(mapped)
+
+    async def _enrich_event(self, team_id: str, channel: str, mapped) -> None:
+        """Resolve independent event decorations concurrently within the caller's bound."""
+        user_name, chat_name, text = await asyncio.gather(
+            self._display_name(team_id, mapped.source.user_id)
+            if not mapped.source.user_name
+            else asyncio.sleep(0, result=mapped.source.user_name),
+            self._channel_name(team_id, channel)
+            if not mapped.source.chat_name
+            else asyncio.sleep(0, result=mapped.source.chat_name),
+            self._resolve_mentions(team_id, mapped.text),
+        )
+        mapped.source.user_name = user_name
+        mapped.source.chat_name = chat_name
+        mapped.text = text
 
     async def _on_interactivity(self, frame: dict) -> None:
         interaction = frame.get("interaction") or {}

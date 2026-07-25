@@ -20,10 +20,12 @@ from coworker.secrets import SecretStore
 
 @pytest.fixture(autouse=True)
 def _no_slack_network(monkeypatch):
-    """Name/channel resolution is best-effort; unstubbed lookups must fail
-    instantly at a dead loopback port, never reach slack.com — a slow real
-    answer was blowing the 2s wait_dispatched window intermittently."""
-    monkeypatch.setenv("SLACK_API_URL", "http://127.0.0.1:9/")
+    """Make unstubbed enrichment truly hermetic on every OS."""
+
+    async def no_get(self, team_id, method, params):
+        return None
+
+    monkeypatch.setattr(SlackRelayAdapter, "_slack_get", no_get)
 
 
 TEAMS = {
@@ -133,6 +135,27 @@ async def test_relay_dispatches_team_qualified_event():
     assert ev.source.target == "slack:T1/C1"  # team-qualified reply handle
     assert ev.source.team_id == "T1"
     assert ev.text == "hi"
+
+
+async def test_relay_delivers_when_optional_enrichment_stalls(monkeypatch):
+    adapter = _adapter([_event_frame("T1", "C1", "U_ALICE")])
+
+    async def stalled_get(team_id, method, params):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(adapter, "_slack_get", stalled_get)
+    monkeypatch.setattr(relay_client, "_SLACK_ENRICHMENT_TIMEOUT", 0.01)
+    events = _collect(adapter)
+
+    await adapter.connect()
+    try:
+        await adapter.wait_dispatched(1, timeout=0.5)
+    finally:
+        await adapter.disconnect()
+
+    assert len(events) == 1
+    assert events[0].source.user_id == "U_ALICE"
+    assert events[0].source.user_name is None
 
 
 async def test_relay_resolves_names_and_mentions(monkeypatch):

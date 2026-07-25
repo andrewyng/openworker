@@ -6,6 +6,7 @@ against temp dirs (git_log needs a real `git`, which the dev box has).
 
 from __future__ import annotations
 
+import json
 import subprocess
 from types import SimpleNamespace
 
@@ -13,7 +14,7 @@ import pytest
 
 from coworker.tools.files import file_tools
 from coworker.tools.git import git_tools
-from coworker.tools.search import _py_grep, search_tools
+from coworker.tools.search import _parse_rg, _py_grep, search_tools
 from coworker.web.fetch import _html_to_text, make_web_fetch_tool
 
 
@@ -59,6 +60,33 @@ def test_ripgrep_uses_the_same_ignored_dirs_as_the_python_fallback(tmp_path, mon
     user_glob = commands[0].index("*.py")
     for ignored in search._IGNORE_DIRS:
         assert commands[0].index(f"!**/{ignored}/**") > user_glob
+
+
+def test_ripgrep_json_preserves_windows_drive_prefix(tmp_path):
+    source = tmp_path / "src" / "app.py"
+    event = json.dumps(
+        {
+            "type": "match",
+            "data": {
+                "path": {"text": str(source)},
+                "lines": {"text": "value = 'C:\\\\work:tree'\n"},
+                "line_number": 17,
+            },
+        }
+    )
+
+    parsed = _parse_rg(event, tmp_path.resolve(), 10)
+
+    assert parsed == {
+        "count": 1,
+        "matches": [
+            {
+                "file": str(source.relative_to(tmp_path)),
+                "line": 17,
+                "text": "value = 'C:\\\\work:tree'",
+            }
+        ],
+    }
 
 
 def test_grep_rejects_path_escape(tmp_path):

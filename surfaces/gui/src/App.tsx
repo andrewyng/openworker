@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
 import {
   announceInboxUnlock,
   finalizeAutomationRun,
@@ -28,13 +34,25 @@ import {
   type SurfaceVisibility,
   type WorkspaceCommandTrust,
 } from "./api";
-import type { ApprovalDecision, Attachment, Item, SessionInfo, TodoItem, WsEvent } from "./types";
+import type {
+  ApprovalDecision,
+  Attachment,
+  Item,
+  SessionInfo,
+  TodoItem,
+  WsEvent,
+} from "./types";
 import { isProjectScoped } from "./personaScope";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
 import { streamMode } from "./streamGate";
 import { InboxItemCard } from "./components/InboxItemCard";
-import { isTauri, platformOS, startWindowDrag } from "./tauri";
+import {
+  isTauri,
+  listenDesktopEvent,
+  platformOS,
+  startWindowDrag,
+} from "./tauri";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
@@ -58,7 +76,9 @@ import { PlanCard } from "./components/PlanCard";
 import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
 
 const newId = () =>
-  (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
+  (crypto as any).randomUUID
+    ? crypto.randomUUID().slice(0, 12)
+    : Math.random().toString(36).slice(2, 14);
 
 const SUGGESTIONS = [
   { ico: "⚙", text: "Run the test suite and summarize any failures." },
@@ -67,7 +87,12 @@ const SUGGESTIONS = [
 ];
 
 // Tools whose success means a new/changed file should show up under Artifacts right away.
-const FILE_WRITE_TOOLS = new Set(["write_file", "apply_patch", "apply_unified_diff", "replace_in_file"]);
+const FILE_WRITE_TOOLS = new Set([
+  "write_file",
+  "apply_patch",
+  "apply_unified_diff",
+  "replace_in_file",
+]);
 
 // Models sometimes pass todo items as bare strings instead of {content, status} objects (the
 // backend tool normalizes them the same way; the GUI reads the raw proposal args, so mirror it).
@@ -104,11 +129,19 @@ function readLastSessions(): Record<string, LastSession> {
   }
 }
 
-function rememberLastSession(agent: string, sessionId: string, workspace: string | null) {
+function rememberLastSession(
+  agent: string,
+  sessionId: string,
+  workspace: string | null,
+) {
   if (!agent || !sessionId) return;
   try {
     const all = readLastSessions();
-    all[agent] = { sessionId, workspace: workspace || "", updatedAt: Date.now() };
+    all[agent] = {
+      sessionId,
+      workspace: workspace || "",
+      updatedAt: Date.now(),
+    };
     localStorage.setItem(LAST_SESSION_KEY, JSON.stringify(all));
   } catch {
     /* localStorage may be unavailable; session restore is best effort. */
@@ -119,10 +152,15 @@ function sessionTs(s: SessionInfo): number {
   return Date.parse(s.updated_at || "") || Number(s.updated_at) || 0;
 }
 
-function resumeTargetForAgent(agent: string, sessions: SessionInfo[]): LastSession | null {
+function resumeTargetForAgent(
+  agent: string,
+  sessions: SessionInfo[],
+): LastSession | null {
   const remembered = readLastSessions()[agent];
   if (remembered?.sessionId) {
-    const live = sessions.find((s) => s.session_id === remembered.sessionId && s.agent === agent);
+    const live = sessions.find(
+      (s) => s.session_id === remembered.sessionId && s.agent === agent,
+    );
     if (live || remembered.workspace) {
       return {
         sessionId: remembered.sessionId,
@@ -132,12 +170,24 @@ function resumeTargetForAgent(agent: string, sessions: SessionInfo[]): LastSessi
     }
   }
   const recent = sessions
-    .filter((s) => s.agent === agent && s.session_id && !s.session_id.startsWith("__"))
+    .filter(
+      (s) =>
+        s.agent === agent && s.session_id && !s.session_id.startsWith("__"),
+    )
     .sort((a, b) => sessionTs(b) - sessionTs(a))[0];
-  return recent ? { sessionId: recent.session_id, workspace: recent.workspace || "", updatedAt: sessionTs(recent) } : null;
+  return recent
+    ? {
+        sessionId: recent.session_id,
+        workspace: recent.workspace || "",
+        updatedAt: sessionTs(recent),
+      }
+    : null;
 }
 
-function fallbackWorkspace(current: string | null, projects: RecentWorkspace[]): string {
+function fallbackWorkspace(
+  current: string | null,
+  projects: RecentWorkspace[],
+): string {
   if (current) return current;
   const existing = projects.find((p) => p.exists);
   return existing?.path || projects[0]?.path || "";
@@ -153,7 +203,11 @@ export function App() {
   const [model, setModel] = useState("gpt-5.6-sol");
   const [models, setModels] = useState<string[]>([]);
   const [modelLabels, setModelLabels] = useState<Record<string, string>>({});
-  const [surfaces, setSurfaces] = useState<SurfaceVisibility>({ cowork: true, chat: false, code: false });
+  const [surfaces, setSurfaces] = useState<SurfaceVisibility>({
+    cowork: true,
+    chat: false,
+    code: false,
+  });
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
@@ -163,7 +217,8 @@ export function App() {
   // fresh state — the interrupted/error flush below needs the live buffer at event time.
   const streamingRef = useRef("");
   const setStreaming = (value: string | ((s: string) => string)) => {
-    streamingRef.current = typeof value === "function" ? value(streamingRef.current) : value;
+    streamingRef.current =
+      typeof value === "function" ? value(streamingRef.current) : value;
     setStreamingState(streamingRef.current);
   };
   // The turn's live thinking text (reasoning_delta events) — same ref-mirror pattern.
@@ -181,7 +236,10 @@ export function App() {
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
   // to, driving the banner + "Back to runs". Best-effort — a run session without context still
   // shows a generic banner (detected by its __run__ id).
-  const [runContext, setRunContext] = useState<{ id: string; title: string } | null>(null);
+  const [runContext, setRunContext] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
   // Which automation the Automations surface opens on (set by the banner's Back link
   // or a sidebar Scheduled-band click). Cleared on leaving the surface: a remembered
   // id going stale (e.g. the automation was deleted) reopened a dead detail —
@@ -189,10 +247,12 @@ export function App() {
   const [scheduledOpenId, setScheduledOpenId] = useState<string | null>(null);
   const [gateCreate, setGateCreate] = useState(false);
   // Which Settings section the full-page Settings surface opens on (§ Settings-as-page).
-  const [settingsTab, setSettingsTab] = useState<"appearance" | "models" | "voice" | "personas">(
-    "appearance",
-  );
-  const openSettings = (tab: "appearance" | "models" | "voice" | "personas" = "appearance") => {
+  const [settingsTab, setSettingsTab] = useState<
+    "appearance" | "models" | "voice" | "personas"
+  >("appearance");
+  const openSettings = (
+    tab: "appearance" | "models" | "voice" | "personas" = "appearance",
+  ) => {
     setSettingsTab(tab);
     setSurface("settings");
   };
@@ -201,7 +261,13 @@ export function App() {
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
   const [surface, setSurface] = useState<
-    "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings"
+    | "session"
+    | "scheduled"
+    | "integrations"
+    | "audit"
+    | "inbox"
+    | "persona"
+    | "settings"
   >("session");
   // A remembered Scheduled-detail target must not outlive the surface (see the
   // scheduledOpenId comment above): nav re-entry lands on the list, never a
@@ -214,8 +280,13 @@ export function App() {
   const [personaViewId, setPersonaViewId] = useState<string>("");
   // Where the persona page returns on "back": the active session, or Settings ▸ Personas when it
   // was opened from there (persona config now lives in Settings).
-  const [personaViewReturn, setPersonaViewReturn] = useState<"session" | "settings">("session");
-  const openPersona = (id: string, from: "session" | "settings" = "session") => {
+  const [personaViewReturn, setPersonaViewReturn] = useState<
+    "session" | "settings"
+  >("session");
+  const openPersona = (
+    id: string,
+    from: "session" | "settings" = "session",
+  ) => {
     setPersonaViewReturn(from);
     setPersonaViewId(id);
     setSurface("persona");
@@ -225,7 +296,11 @@ export function App() {
   // Left-nav collapse (⌘B): when collapsed the sidebar leaves the grid so content reclaims the
   // width; hovering the left edge peeks it back as a floating overlay. Persisted per-device.
   const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
-    try { return localStorage.getItem(NAV_COLLAPSED_KEY) === "1"; } catch { return false; }
+    try {
+      return localStorage.getItem(NAV_COLLAPSED_KEY) === "1";
+    } catch {
+      return false;
+    }
   });
   const [navPeek, setNavPeek] = useState(false);
   // While an artifact preview is open we auto-collapse the nav (#3). Remember the pre-preview
@@ -233,7 +308,11 @@ export function App() {
   const navBeforePreview = useRef<boolean | null>(null);
   const setNavCollapsedPersist = useCallback((v: boolean) => {
     setNavCollapsed(v);
-    try { localStorage.setItem(NAV_COLLAPSED_KEY, v ? "1" : "0"); } catch { /* best effort */ }
+    try {
+      localStorage.setItem(NAV_COLLAPSED_KEY, v ? "1" : "0");
+    } catch {
+      /* best effort */
+    }
   }, []);
   const toggleNav = useCallback(() => {
     setNavPeek(false);
@@ -242,16 +321,20 @@ export function App() {
   }, [navCollapsed, setNavCollapsedPersist]);
   // #3: collapse the nav while a full artifact preview is open, restore it on close (unless the
   // user manually toggled meanwhile). The collapse is transient — it never overwrites the pref.
-  const onArtifactPreview = useCallback((open: boolean) => {
-    if (open) {
-      if (navBeforePreview.current === null) navBeforePreview.current = navCollapsed;
-      setNavPeek(false);
-      setNavCollapsed(true);
-    } else if (navBeforePreview.current !== null) {
-      setNavCollapsed(navBeforePreview.current);
-      navBeforePreview.current = null;
-    }
-  }, [navCollapsed]);
+  const onArtifactPreview = useCallback(
+    (open: boolean) => {
+      if (open) {
+        if (navBeforePreview.current === null)
+          navBeforePreview.current = navCollapsed;
+        setNavPeek(false);
+        setNavCollapsed(true);
+      } else if (navBeforePreview.current !== null) {
+        setNavCollapsed(navBeforePreview.current);
+        navBeforePreview.current = null;
+      }
+    },
+    [navCollapsed],
+  );
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
@@ -288,13 +371,19 @@ export function App() {
   // expanded sidebar owns its own instance; this one exists so search never disappears with it.
   const [searchOpen, setSearchOpen] = useState(false);
   // A pending composer prefill (text + attachments) pushed from the session start panel.
-  const [composerPrefill, setComposerPrefill] = useState<{ text: string; attachments?: Attachment[]; nonce: number }>();
+  const [composerPrefill, setComposerPrefill] = useState<{
+    text: string;
+    attachments?: Attachment[];
+    nonce: number;
+  }>();
 
   // Persona metadata drives workspace behavior by FAMILY, not by hardcoded id (so a DevOps/SecOps
   // code-family persona gates a folder like Code, and a knowledge persona starts orphan like Cowork).
   const [personas, setPersonas] = useState<Persona[] | null>(null);
   useEffect(() => {
-    getPersonas().then(setPersonas).catch(() => {});
+    getPersonas()
+      .then(setPersonas)
+      .catch(() => {});
   }, []);
   const personaOf = (a: string) => personas?.find((p) => p.id === a);
 
@@ -320,11 +409,14 @@ export function App() {
   };
   const resolveSessionInbox = async (id: string, resolution: string) => {
     await resolveInboxItem(id, resolution);
-    getInbox(sessionId, "pending").then(setSessionInbox).catch(() => setSessionInbox([]));
+    getInbox(sessionId, "pending")
+      .then(setSessionInbox)
+      .catch(() => setSessionInbox([]));
     refreshSessions(); // attention badge should drop right away
   };
   // Shows a working-area chip / project grouping. Persona's needs_workspace; fallback before load.
-  const needsWorkspace = (a: string) => personaOf(a)?.needs_workspace ?? needsWorkspaceFallback(a);
+  const needsWorkspace = (a: string) =>
+    personaOf(a)?.needs_workspace ?? needsWorkspaceFallback(a);
   // MUST pick a folder before starting — project-scoped personas (git-bound Code, project-bound
   // Ops). Scratch/deliverable personas start orphan: the server auto-provisions a per-conversation
   // scratch dir and reports it in the `ready` event.
@@ -333,11 +425,19 @@ export function App() {
     return p ? isProjectScoped(p) : gatesWorkspaceFallback(a);
   };
 
-  // The desktop tray's "Settings" item dispatches this on the window.
+  // The desktop tray's "Settings" item arrives through Tauri's typed event channel.
   useEffect(() => {
+    let disposed = false;
+    let unlisten = () => {};
     const open = () => openSettings("appearance");
-    window.addEventListener("coworker:open-settings", open);
-    return () => window.removeEventListener("coworker:open-settings", open);
+    void listenDesktopEvent("coworker:open-settings", open).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
+    });
+    return () => {
+      disposed = true;
+      unlisten();
+    };
   }, []);
 
   // "Run setup again" (from Settings) re-opens the wizard.
@@ -354,12 +454,20 @@ export function App() {
   // A prompt to auto-send once the next session connects (used by "Run now").
   const pendingPromptRef = useRef<string | null>(null);
   // The in-flight manual run to finalize after its first turn ({taskId, runId, sessionId}).
-  const activeRunRef = useRef<{ taskId: string; runId: string; sessionId: string } | null>(null);
+  const activeRunRef = useRef<{
+    taskId: string;
+    runId: string;
+    sessionId: string;
+  } | null>(null);
 
   // Fetch ALL sessions + known projects so the sidebar can group them.
   const refreshSessions = useCallback(() => {
-    getSessions().then(setSessions).catch(() => setSessions([]));
-    getRecentWorkspaces().then(setProjects).catch(() => setProjects([]));
+    getSessions()
+      .then(setSessions)
+      .catch(() => setSessions([]));
+    getRecentWorkspaces()
+      .then(setProjects)
+      .catch(() => setProjects([]));
   }, []);
 
   // initial: adopt the server's seed workspace if any, else force the gate.
@@ -379,10 +487,13 @@ export function App() {
   const resumeLastOrGate = async () => {
     let loadedSessions: SessionInfo[] = [];
     try {
-      loadedSessions = (await getSessions()).filter((s) => s.session_id && !s.session_id.startsWith("__"));
+      loadedSessions = (await getSessions()).filter(
+        (s) => s.session_id && !s.session_id.startsWith("__"),
+      );
       setSessions(loadedSessions);
       const sess = loadedSessions;
-      const ts = (s: SessionInfo) => Date.parse(s.updated_at || "") || Number(s.updated_at) || 0;
+      const ts = (s: SessionInfo) =>
+        Date.parse(s.updated_at || "") || Number(s.updated_at) || 0;
       const last = [...sess].sort((a, b) => ts(b) - ts(a))[0];
       if (last) {
         setResumedExisting(true);
@@ -392,7 +503,9 @@ export function App() {
           setBranch(null);
         }
         try {
-          setItems(itemsFromMessages(await getSessionMessages(last.session_id)));
+          setItems(
+            itemsFromMessages(await getSessionMessages(last.session_id)),
+          );
         } catch {
           setItems([]);
         }
@@ -439,7 +552,8 @@ export function App() {
           // initial sessionId would connect against an empty/stale workspace and the server
           // would provision a junk per-conversation scratch dir for it before resume could
           // flip to the real session. Cowork ignores default_workspace (a Code concept).
-          if (h.default_workspace && gatesWorkspace(agent)) setWorkspace(h.default_workspace);
+          if (h.default_workspace && gatesWorkspace(agent))
+            setWorkspace(h.default_workspace);
           else await resumeLastOrGate();
           // The mount-time loadSettings races the sidecar boot and swallows its failure —
           // on a cold start that left "Loading models…" stuck until the user visited
@@ -521,7 +635,10 @@ export function App() {
   // hidden surface), fall back to Cowork (always visible). Watches both agent and surfaces so it
   // corrects regardless of which settled last.
   useEffect(() => {
-    if ((agent === "chat" && !surfaces.chat) || (agent === "code" && !surfaces.code)) {
+    if (
+      (agent === "chat" && !surfaces.chat) ||
+      (agent === "code" && !surfaces.code)
+    ) {
       switchAgent("cowork");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -562,7 +679,8 @@ export function App() {
           setConnected(true);
           if (d.model) setModel(d.model);
           if (d.mode) setMode(d.mode);
-          if (d.command_trust?.required) setWorkspaceTrustRequest(d.command_trust);
+          if (d.command_trust?.required)
+            setWorkspaceTrustRequest(d.command_trust);
           // Cowork: adopt the server-provisioned scratch dir (only when we don't already have one).
           if (d.workspace) setWorkspace((cur) => cur || d.workspace);
           break;
@@ -578,7 +696,10 @@ export function App() {
             const src = d.source as MessageSource;
             setItems((p) => {
               const last = p[p.length - 1];
-              return last && last.kind === "connector" && last.source.ts === src.ts && last.source.text === src.text
+              return last &&
+                last.kind === "connector" &&
+                last.source.ts === src.ts &&
+                last.source.text === src.text
                 ? p
                 : [...p, { kind: "connector", source: src }];
             });
@@ -587,7 +708,14 @@ export function App() {
               const last = p[p.length - 1];
               return last && last.kind === "user" && last.text === d.input
                 ? p
-                : [...p, { kind: "user", text: d.input as string, ts: Date.now() / 1000 }];
+                : [
+                    ...p,
+                    {
+                      kind: "user",
+                      text: d.input as string,
+                      ts: Date.now() / 1000,
+                    },
+                  ];
             });
           }
           break;
@@ -616,11 +744,20 @@ export function App() {
           break;
         }
         case "tool_proposed":
-          if (d.name === "todo_write" && (d.arguments?.todos || d.arguments?.items))
+          if (
+            d.name === "todo_write" &&
+            (d.arguments?.todos || d.arguments?.items)
+          )
             setTodo(normalizeTodos(d.arguments.todos ?? d.arguments.items));
           setItems((p) => [
             ...p,
-            { kind: "tool", id: newId(), name: d.name, args: d.arguments, status: "…" },
+            {
+              kind: "tool",
+              id: newId(),
+              name: d.name,
+              args: d.arguments,
+              status: "…",
+            },
           ]);
           break;
         case "permission_required":
@@ -642,7 +779,12 @@ export function App() {
           if (unattendedRef.current) break;
           setItems((p) => [
             ...p,
-            { kind: "dirreq", reason: d.reason || "", path: d.path || "", writable: !!d.writable },
+            {
+              kind: "dirreq",
+              reason: d.reason || "",
+              path: d.path || "",
+              writable: !!d.writable,
+            },
           ]);
           break;
         case "plan_proposed":
@@ -675,35 +817,60 @@ export function App() {
           );
           // Refresh the right rail when something it shows may have changed: browser state, or a
           // file write that should appear under Artifacts immediately (not only after the turn).
-          if (String(d.name || "").startsWith("browser_") || FILE_WRITE_TOOLS.has(d.name)) {
+          if (
+            String(d.name || "").startsWith("browser_") ||
+            FILE_WRITE_TOOLS.has(d.name)
+          ) {
             setBrowserRefreshKey((k) => k + 1);
           }
           break;
         case "turn_end":
           if (d.status === "max_iterations_exceeded")
-            setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Stopped: max iterations reached." }]);
+            setItems((p) => [
+              ...p,
+              {
+                kind: "notice",
+                tone: "warn",
+                text: "Stopped: max iterations reached.",
+              },
+            ]);
           break;
         case "model_changed":
           // Mid-session switch (server-applied): update the header fact and drop the
           // persisted marker into the live transcript (replay renders it from history).
           if (d.model) setModel(d.model);
-          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || "Model switched" }]);
+          setItems((p) => [
+            ...p,
+            { kind: "notice", tone: "info", text: d.text || "Model switched" },
+          ]);
           break;
         case "interrupted":
           flushPartialStream();
-          setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Interrupted." }]);
+          setItems((p) => [
+            ...p,
+            { kind: "notice", tone: "warn", text: "Interrupted." },
+          ]);
           break;
         case "error":
           flushPartialStream();
           setItems((p) => [
             ...p,
-            { kind: "notice", tone: "warn", text: "Error: " + (d.error || "unknown"), retriable: true },
+            {
+              kind: "notice",
+              tone: "warn",
+              text: "Error: " + (d.error || "unknown"),
+              retriable: true,
+            },
           ]);
           break;
         case "input_rejected":
           setItems((p) => [
             ...p,
-            { kind: "notice", tone: "warn", text: d.error || "That message was rejected." },
+            {
+              kind: "notice",
+              tone: "warn",
+              text: d.error || "That message was rejected.",
+            },
           ]);
           break;
         case "turn_done":
@@ -732,7 +899,10 @@ export function App() {
         const p = pendingPromptRef.current;
         if (p) {
           pendingPromptRef.current = null;
-          setItems((prev) => [...prev, { kind: "user", text: p, ts: Date.now() / 1000 }]);
+          setItems((prev) => [
+            ...prev,
+            { kind: "user", text: p, ts: Date.now() / 1000 },
+          ]);
           sessionRef.current?.userMessage(p);
         }
       },
@@ -778,7 +948,8 @@ export function App() {
     const top = el.scrollTop;
     const atBottom = el.scrollHeight - top - el.clientHeight < 48;
     if (autoScrollingRef.current) {
-      if (atBottom) autoScrollingRef.current = false; // landed
+      if (atBottom)
+        autoScrollingRef.current = false; // landed
       else if (top >= lastScrollTopRef.current) {
         lastScrollTopRef.current = top; // still animating down — not the user
         return;
@@ -806,7 +977,9 @@ export function App() {
       setArtifactCount(0);
       return;
     }
-    getArtifacts(sessionId).then((a) => setArtifactCount(a.length)).catch(() => {});
+    getArtifacts(sessionId)
+      .then((a) => setArtifactCount(a.length))
+      .catch(() => {});
   }, [agent, surface, sessionId, browserRefreshKey]);
 
   // Keep the active session's pending Inbox items fresh (answer-in-context card). Loads on session
@@ -814,8 +987,12 @@ export function App() {
   useEffect(() => {
     if (surface !== "session") return;
     const load = () => {
-      getInbox(sessionId, "pending").then(setSessionInbox).catch(() => setSessionInbox([]));
-      getUnattended(sessionId).then(markUnattended).catch(() => markUnattended(false));
+      getInbox(sessionId, "pending")
+        .then(setSessionInbox)
+        .catch(() => setSessionInbox([]));
+      getUnattended(sessionId)
+        .then(markUnattended)
+        .catch(() => markUnattended(false));
     };
     load();
     const t = setInterval(load, 4000);
@@ -823,7 +1000,10 @@ export function App() {
   }, [surface, sessionId, browserRefreshKey, markUnattended]);
 
   const send = (text: string, attachments?: Attachment[]) => {
-    setItems((p) => [...p, { kind: "user", text, attachments, ts: Date.now() / 1000 }]);
+    setItems((p) => [
+      ...p,
+      { kind: "user", text, attachments, ts: Date.now() / 1000 },
+    ]);
     // The visible model rides along with the message (single source of truth per turn).
     sessionRef.current?.userMessage(text, attachments, model);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
@@ -846,7 +1026,11 @@ export function App() {
     sessionRef.current?.respondPlan(approved, mode, feedback);
     if (approved && mode) setMode(mode); // the server flips the live engine to this mode
   };
-  const respondDirectory = (granted: boolean, path?: string, writable?: boolean) => {
+  const respondDirectory = (
+    granted: boolean,
+    path?: string,
+    writable?: boolean,
+  ) => {
     setItems((p) => resolveLastDirReq(p, granted ? "granted" : "denied"));
     dropSessionInbox("directory");
     sessionRef.current?.respondDirectory(granted, path, writable);
@@ -857,7 +1041,11 @@ export function App() {
     sessionRef.current?.respondQuestion(answer);
   };
   const prefillComposer = (text: string, attachments?: Attachment[]) =>
-    setComposerPrefill((p) => ({ text, attachments, nonce: (p?.nonce ?? 0) + 1 }));
+    setComposerPrefill((p) => ({
+      text,
+      attachments,
+      nonce: (p?.nonce ?? 0) + 1,
+    }));
   const interrupt = () => sessionRef.current?.interrupt();
   const retry = () => {
     // Optimistic running: turn_start confirms; a rejected retry still ends in turn_done.
@@ -903,7 +1091,11 @@ export function App() {
   // manual Run-now — the user is already watching). Rides the app-wide /ws/events
   // stream; View run opens the run's live session.
   const [runToast, setRunToast] = useState<{
-    title: string; sessionId: string; workspace: string; agent: string; time: string;
+    title: string;
+    sessionId: string;
+    workspace: string;
+    agent: string;
+    time: string;
   } | null>(null);
   useEffect(() => {
     const stop = connectEvents((msg) => {
@@ -914,7 +1106,10 @@ export function App() {
         sessionId: d.session_id || "",
         workspace: d.workspace || "",
         agent: d.agent || "cowork",
-        time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+        time: new Date().toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit",
+        }),
       });
       announceAutomationsChanged(); // the Scheduled band's badge is now stale
     });
@@ -926,7 +1121,8 @@ export function App() {
     return () => window.clearTimeout(t);
   }, [runToast]);
 
-  const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
+  const openSessionFromInbox = (sid: string, ws: string, ag: string) =>
+    selectSession(sid, ws, ag);
   const selectSession = async (id: string, ws: string, ag: string) => {
     setSurface("session"); // selecting a conversation always returns to the conversation view
     setTodo([]);
@@ -950,8 +1146,12 @@ export function App() {
     setSurface("session");
     if (name === agent) return;
     rememberLastSession(agent, sessionId, workspace);
-    const knownSessions = sessions.length ? sessions : await getSessions().catch(() => []);
-    const knownProjects = projects.length ? projects : await getRecentWorkspaces().catch(() => []);
+    const knownSessions = sessions.length
+      ? sessions
+      : await getSessions().catch(() => []);
+    const knownProjects = projects.length
+      ? projects
+      : await getRecentWorkspaces().catch(() => []);
     const target = resumeTargetForAgent(name, knownSessions);
 
     setAgent(name);
@@ -992,7 +1192,9 @@ export function App() {
     }
 
     const id = newId();
-    const fallback = gatesWorkspace(name) ? fallbackWorkspace(inheritable, knownProjects) : "";
+    const fallback = gatesWorkspace(name)
+      ? fallbackWorkspace(inheritable, knownProjects)
+      : "";
     if (fallback && fallback !== workspace) {
       setWorkspace(fallback);
       setBranch(null);
@@ -1013,7 +1215,9 @@ export function App() {
     setStreaming("");
     setTodo([]);
     setSessionId(newId());
-    getRecentWorkspaces().then(setProjects).catch(() => {});
+    getRecentWorkspaces()
+      .then(setProjects)
+      .catch(() => {});
   };
   // "New project" lives under a project-scoped persona's accordion. Switch to that persona, start a
   // fresh session with no folder yet, and open the gate in create mode — so the gate's
@@ -1083,14 +1287,25 @@ export function App() {
     if (!r || !r.ok) return;
     pendingPromptRef.current = r.prompt;
     activeRunRef.current = { taskId, runId: r.run_id, sessionId: r.session_id };
-    openRunSession(r.session_id, r.workspace, r.agent, { id: taskId, title: title || "" });
+    openRunSession(r.session_id, r.workspace, r.agent, {
+      id: taskId,
+      title: title || "",
+    });
   };
 
   const idle = items.length === 0 && !streaming;
-  const pendingApproval = [...items].reverse().find((i) => i.kind === "approval" && !i.resolved);
-  const pendingDirReq = [...items].reverse().find((i) => i.kind === "dirreq" && !i.resolved);
-  const pendingPlan = [...items].reverse().find((i) => i.kind === "planreq" && !i.resolved);
-  const pendingQuestion = [...items].reverse().find((i) => i.kind === "question" && !i.resolved);
+  const pendingApproval = [...items]
+    .reverse()
+    .find((i) => i.kind === "approval" && !i.resolved);
+  const pendingDirReq = [...items]
+    .reverse()
+    .find((i) => i.kind === "dirreq" && !i.resolved);
+  const pendingPlan = [...items]
+    .reverse()
+    .find((i) => i.kind === "planreq" && !i.resolved);
+  const pendingQuestion = [...items]
+    .reverse()
+    .find((i) => i.kind === "question" && !i.resolved);
   // Facts subtitle (§22): the session's FIXED facts, not controls — model (+ the
   // workspace folder for project-scoped sessions). Renders only once the session has history;
   // until then the model is still choosable in the composer, so there's no locked fact to state.
@@ -1103,7 +1318,8 @@ export function App() {
   // Persona name dropped for this release (owner ask 2026-07-22): personas are hidden,
   // so "Coworker" read as noise. The model (+ project folder) are the real fixed facts.
   const subtitleParts = [modelDisplay];
-  if (isProjectScoped(personaOf(agent)) && workspace) subtitleParts.push(baseName(workspace));
+  if (isProjectScoped(personaOf(agent)) && workspace)
+    subtitleParts.push(baseName(workspace));
   const activeInfo = sessions.find((s) => s.session_id === sessionId);
   const activeTitle = activeInfo?.title || "New session";
 
@@ -1111,7 +1327,8 @@ export function App() {
   // Dev-only: `?overlay=1` simulates the desktop overlay layout in the browser (adds the
   // tauri-overlay class + draws fake traffic lights at the real position) so the top-left can be
   // tuned in the preview without a DMG build. Never active in the real app (isTauri() short-circuits).
-  const simOverlay = !desktop && new URLSearchParams(window.location.search).has("overlay");
+  const simOverlay =
+    !desktop && new URLSearchParams(window.location.search).has("overlay");
   // Overlay layout is macOS-ONLY: Windows/Linux keep the native title bar, so the mac
   // compensations (traffic-light insets, lowered top strips) must not apply there —
   // they rendered as misalignments under Windows' native bar (caught 2026-07-21).
@@ -1129,13 +1346,16 @@ export function App() {
         {overlay && (
           <div className="titlebar-drag" data-tauri-drag-region>
             <span className="titlebar-brand brand-wordmark">
-              <Icon name="logo" size={13} className="mark" /> OpenWorker<span className="beta-tag">BETA</span>
+              <Icon name="logo" size={13} className="mark" /> OpenWorker
+              <span className="beta-tag">BETA</span>
             </span>
           </div>
         )}
         {simOverlay && (
           <div className="sim-traffic-lights" aria-hidden="true">
-            <span /><span /><span />
+            <span />
+            <span />
+            <span />
           </div>
         )}
         {/* The real OpenWorker mark (6-point star, same as the app/tray icon) — the old
@@ -1163,7 +1383,9 @@ export function App() {
       {/* Dev-only fake traffic lights so ?overlay=1 previews the real desktop top-left. */}
       {simOverlay && (
         <div className="sim-traffic-lights" aria-hidden="true">
-          <span /><span /><span />
+          <span />
+          <span />
+          <span />
         </div>
       )}
       {/* Desktop-only auto-update prompt (15s after boot, then every 30 min; inert in browser). */}
@@ -1187,7 +1409,11 @@ export function App() {
               className="text-[12.5px] text-accent font-medium"
               data-testid="toast-view-run"
               onClick={() => {
-                selectSession(runToast.sessionId, runToast.workspace, runToast.agent);
+                selectSession(
+                  runToast.sessionId,
+                  runToast.workspace,
+                  runToast.agent,
+                );
                 setRunToast(null);
               }}
             >
@@ -1233,7 +1459,9 @@ export function App() {
         <Onboarding
           onDone={(next) => {
             setOnboarding(false);
-            getHealth().then((h) => setModel(h.model)).catch(() => {});
+            getHealth()
+              .then((h) => setModel(h.model))
+              .catch(() => {});
             loadSettings(); // pick up a model connected during setup (clears the composer chip)
             if (next === "gallery") {
               // The specialists tip: land on Settings ▸ Personas, where the Gallery link lives.
@@ -1308,296 +1536,354 @@ export function App() {
         <PersonaView
           personaId={personaViewId || agent}
           onBack={() =>
-            personaViewReturn === "settings" ? openSettings("personas") : setSurface("session")
+            personaViewReturn === "settings"
+              ? openSettings("personas")
+              : setSurface("session")
           }
           onOpenIntegrations={() => setSurface("integrations")}
         />
       ) : (
-      <div className={"main" + (surface === "session" && agent !== "chat" && !railHidden ? " rail-open" : "")}>
-        <div className="main-topbar">
-          {/* Left: the contextual cluster — [sidebar] [+ new session] [search] — rendered ONLY
+        <div
+          className={
+            "main" +
+            (surface === "session" && agent !== "chat" && !railHidden
+              ? " rail-open"
+              : "")
+          }
+        >
+          <div className="main-topbar">
+            {/* Left: the contextual cluster — [sidebar] [+ new session] [search] — rendered ONLY
               while the sidebar is collapsed (§22; the expanded sidebar already owns those
               actions). Clicks must not start a window drag. */}
-          <div className="main-topbar-side" onPointerDown={beginWindowDrag}>
-            {navCollapsed && (
-              <div
-                className="flex items-center gap-1"
-                data-testid="topbar-cluster"
-                onPointerDown={(e) => e.stopPropagation()}
-              >
-                <button
-                  className="topbar-icon-btn"
-                  onClick={toggleNav}
-                  aria-label="Show sidebar"
-                  title="Show sidebar (⌘B)"
+            <div className="main-topbar-side" onPointerDown={beginWindowDrag}>
+              {navCollapsed && (
+                <div
+                  className="flex items-center gap-1"
+                  data-testid="topbar-cluster"
+                  onPointerDown={(e) => e.stopPropagation()}
                 >
-                  <Icon name="sidebar" size={16} />
-                </button>
-                <button
-                  className="topbar-icon-btn"
-                  onClick={() => startNewSession()}
-                  aria-label="New session"
-                  title="New session"
-                >
-                  <Icon name="plus" size={16} />
-                </button>
-                <button
-                  className="topbar-icon-btn"
-                  onClick={() => setSearchOpen(true)}
-                  aria-label="Search"
-                  title="Search"
-                >
-                  <Icon name="search" size={16} />
-                </button>
-              </div>
-            )}
-            {/* §32: no session-settings row up here anymore — the §23 rest/hover/click glance
+                  <button
+                    className="topbar-icon-btn"
+                    onClick={toggleNav}
+                    aria-label="Show sidebar"
+                    title="Show sidebar (⌘B)"
+                  >
+                    <Icon name="sidebar" size={16} />
+                  </button>
+                  <button
+                    className="topbar-icon-btn"
+                    onClick={() => startNewSession()}
+                    aria-label="New session"
+                    title="New session"
+                  >
+                    <Icon name="plus" size={16} />
+                  </button>
+                  <button
+                    className="topbar-icon-btn"
+                    onClick={() => setSearchOpen(true)}
+                    aria-label="Search"
+                    title="Search"
+                  >
+                    <Icon name="search" size={16} />
+                  </button>
+                </div>
+              )}
+              {/* §32: no session-settings row up here anymore — the §23 rest/hover/click glance
                 machinery retired with the drawer. "What can this touch" lives permanently on
                 the rail's Access section header; the panel toggle is the one entry. */}
-          </div>
-          {/* Center: title + facts subtitle (§22, amended: the ⋯ menu removed — the nav row's
+            </div>
+            {/* Center: title + facts subtitle (§22, amended: the ⋯ menu removed — the nav row's
               hover cluster owns pin/rename/archive/delete). The title stays: with the sidebar
               collapsed it is the only session identifier, and it anchors the subtitle. */}
-          <div className="main-title" onPointerDown={beginWindowDrag}>
-            <span
-              className={"main-title-text" + (activeInfo ? "" : " title-ghost")}
-              title={activeTitle}
-            >
-              {activeTitle}
-            </span>
-            {/* Plain facts, no affordance: the persona page it used to open is hidden for
-                this release (owner ask 2026-07-22). */}
-            {hasHistory && (
-              <span className="title-sub" data-testid="session-subtitle">
-                {subtitleParts.join(" · ")}
+            <div className="main-title" onPointerDown={beginWindowDrag}>
+              <span
+                className={
+                  "main-title-text" + (activeInfo ? "" : " title-ghost")
+                }
+                title={activeTitle}
+              >
+                {activeTitle}
               </span>
-            )}
-          </div>
-          {/* Right: session-settings icon (§23) + panel toggle. Model/mode/persona chrome is
+              {/* Plain facts, no affordance: the persona page it used to open is hidden for
+                this release (owner ask 2026-07-22). */}
+              {hasHistory && (
+                <span className="title-sub" data-testid="session-subtitle">
+                  {subtitleParts.join(" · ")}
+                </span>
+              )}
+            </div>
+            {/* Right: session-settings icon (§23) + panel toggle. Model/mode/persona chrome is
               gone — the facts live in the subtitle, the controls in the composer (§22). */}
-          <div className="main-topbar-side main-topbar-actions" onPointerDown={beginWindowDrag}>
-            {agent === "cowork" && railHidden && artifactCount > 0 && (
-              <button
-                className="topbar-artifacts-btn"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setRailHidden(false)}
-                title="Show files this conversation produced"
-              >
-                <Icon name="file" size={14} />
-                <span>Artifacts</span>
-                <span className="topbar-artifacts-count">{artifactCount}</span>
-              </button>
-            )}
-            {/* §32: the panel toggle is the ONE session-panel entry, for every non-chat persona
+            <div
+              className="main-topbar-side main-topbar-actions"
+              onPointerDown={beginWindowDrag}
+            >
+              {agent === "cowork" && railHidden && artifactCount > 0 && (
+                <button
+                  className="topbar-artifacts-btn"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => setRailHidden(false)}
+                  title="Show files this conversation produced"
+                >
+                  <Icon name="file" size={14} />
+                  <span>Artifacts</span>
+                  <span className="topbar-artifacts-count">
+                    {artifactCount}
+                  </span>
+                </button>
+              )}
+              {/* §32: the panel toggle is the ONE session-panel entry, for every non-chat persona
                 (the rail now carries Access, so code-family gets it too). */}
-            {agent !== "chat" && (
-              <button
-                className="topbar-icon-btn"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setRailHidden((h) => !h)}
-                aria-label={railHidden ? "Show side panel" : "Hide side panel"}
-                title={railHidden ? "Show side panel" : "Hide side panel"}
-              >
-                <Icon name="sidebarRight" size={16} />
-              </button>
-            )}
+              {agent !== "chat" && (
+                <button
+                  className="topbar-icon-btn"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => setRailHidden((h) => !h)}
+                  aria-label={
+                    railHidden ? "Show side panel" : "Hide side panel"
+                  }
+                  title={railHidden ? "Show side panel" : "Hide side panel"}
+                >
+                  <Icon name="sidebarRight" size={16} />
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-        <div className={"main-workspace" + (railHidden ? " rail-hidden" : "")}>
-          <div className="main-chat">
-            {/* Automation-run context (owner ask 2026-07-04): a __run__ session looked like any
+          <div
+            className={"main-workspace" + (railHidden ? " rail-hidden" : "")}
+          >
+            <div className="main-chat">
+              {/* Automation-run context (owner ask 2026-07-04): a __run__ session looked like any
                 other chat with no way back to the runs list. Lives INSIDE the chat column (which
                 is padded to clear the absolute glass topbar — rendering above .main-workspace put
                 it underneath the topbar; owner-reported CSS bug). */}
-            {sessionId.startsWith("__run__") && (
-              <div
-                className="flex items-center gap-2 px-4 py-2 mb-1 rounded-lg text-[12.5px] border border-line bg-accentSoft/40"
-                data-testid="run-banner"
-              >
-                <Icon name="clock" size={14} className="text-accent shrink-0" />
-                <span className="truncate text-muted">
-                  Scheduled run
-                  {runContext?.title ? (
-                    <>
-                      {" — "}
-                      <span className="text-ink font-medium">{runContext.title}</span>
-                    </>
-                  ) : null}{" "}
-                  · started by an automation
-                </span>
-                <button
-                  className="ml-auto shrink-0 text-accent font-medium hover:underline"
-                  onClick={() => {
-                    if (runContext) setScheduledOpenId(runContext.id);
-                    setSurface("scheduled");
-                  }}
+              {sessionId.startsWith("__run__") && (
+                <div
+                  className="flex items-center gap-2 px-4 py-2 mb-1 rounded-lg text-[12.5px] border border-line bg-accentSoft/40"
+                  data-testid="run-banner"
                 >
-                  ← Back to runs
-                </button>
-              </div>
-            )}
-            <div className="main-scroll" ref={scrollRef} onScroll={handleScroll}>
-              {idle ? (
-                agent === "cowork" ? (
-                  <SessionIntro
-                    sessionId={sessionId}
-                    onOpenSessionSettings={openAccess}
-                    onPrefill={prefillComposer}
+                  <Icon
+                    name="clock"
+                    size={14}
+                    className="text-accent shrink-0"
                   />
+                  <span className="truncate text-muted">
+                    Scheduled run
+                    {runContext?.title ? (
+                      <>
+                        {" — "}
+                        <span className="text-ink font-medium">
+                          {runContext.title}
+                        </span>
+                      </>
+                    ) : null}{" "}
+                    · started by an automation
+                  </span>
+                  <button
+                    className="ml-auto shrink-0 text-accent font-medium hover:underline"
+                    onClick={() => {
+                      if (runContext) setScheduledOpenId(runContext.id);
+                      setSurface("scheduled");
+                    }}
+                  >
+                    ← Back to runs
+                  </button>
+                </div>
+              )}
+              <div
+                className="main-scroll"
+                ref={scrollRef}
+                onScroll={handleScroll}
+              >
+                {idle ? (
+                  agent === "cowork" ? (
+                    <SessionIntro
+                      sessionId={sessionId}
+                      onOpenSessionSettings={openAccess}
+                      onPrefill={prefillComposer}
+                    />
+                  ) : (
+                    <div className="hero">
+                      <h1 className="greeting">
+                        <span className="mark">✦</span>
+                        {agent === "chat"
+                          ? "How can I help?"
+                          : "Let's build something."}
+                      </h1>
+                      {needsWorkspace(agent) && (
+                        <div className="suggestions">
+                          <div className="suggest-head">Try a task</div>
+                          {SUGGESTIONS.map((s, i) => (
+                            <div
+                              className="suggest"
+                              key={i}
+                              onClick={() => workspace && send(s.text)}
+                            >
+                              <span className="ico">{s.ico}</span>
+                              {s.text}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
                 ) : (
-                  <div className="hero">
-                    <h1 className="greeting">
-                      <span className="mark">✦</span>
-                      {agent === "chat" ? "How can I help?" : "Let's build something."}
-                    </h1>
-                    {needsWorkspace(agent) && (
-                      <div className="suggestions">
-                        <div className="suggest-head">Try a task</div>
-                        {SUGGESTIONS.map((s, i) => (
-                          <div className="suggest" key={i} onClick={() => workspace && send(s.text)}>
-                            <span className="ico">{s.ico}</span>
-                            {s.text}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )
-              ) : (
-                <>
-                  <Transcript
-                    items={items}
-                    onApprove={approve}
-                    running={running}
-                    onRetry={retry}
-                    // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
-                    // group (header when collapsed, quiet line when expanded) — never as a
-                    // floating paragraph.
-                    streamingText={streamMode(streaming, items, running) === "quiet" ? streaming : undefined}
-                  />
-                  {/* Live thinking (reasoning models): a quiet collapsed block that streams the
+                  <>
+                    <Transcript
+                      items={items}
+                      onApprove={approve}
+                      running={running}
+                      onRetry={retry}
+                      // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
+                      // group (header when collapsed, quiet line when expanded) — never as a
+                      // floating paragraph.
+                      streamingText={
+                        streamMode(streaming, items, running) === "quiet"
+                          ? streaming
+                          : undefined
+                      }
+                    />
+                    {/* Live thinking (reasoning models): a quiet collapsed block that streams the
                       trace for anyone who expands it; folds into the answer's disclosure when
                       the message finalizes. */}
-                  {running && reasoningStream && !streaming && (
-                    <div className="transcript">
-                      <ThinkingBlock text={reasoningStream} live />
-                    </div>
-                  )}
-                  {running &&
-                    !reasoningStream &&
-                    (!streaming || streamMode(streaming, items, running) === "hold") &&
-                    !lastItemIsAssistant(items) && <WaitingForAgent />}
-                  {streaming && streamMode(streaming, items, running) === "answer" && (
-                    <div className="transcript">
-                      <div className="bubble-assistant">
-                        <div className="who">assistant</div>
-                        <Markdown text={streaming} />
-                        <span className="stream-cursor">▍</span>
+                    {running && reasoningStream && !streaming && (
+                      <div className="transcript">
+                        <ThinkingBlock text={reasoningStream} live />
                       </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
+                    )}
+                    {running &&
+                      !reasoningStream &&
+                      (!streaming ||
+                        streamMode(streaming, items, running) === "hold") &&
+                      !lastItemIsAssistant(items) && <WaitingForAgent />}
+                    {streaming &&
+                      streamMode(streaming, items, running) === "answer" && (
+                        <div className="transcript">
+                          <div className="bubble-assistant">
+                            <div className="who">assistant</div>
+                            <Markdown text={streaming} />
+                            <span className="stream-cursor">▍</span>
+                          </div>
+                        </div>
+                      )}
+                  </>
+                )}
+              </div>
 
-            {/* Scrolled up while the transcript is still growing → offer the way back down.
+              {/* Scrolled up while the transcript is still growing → offer the way back down.
                 Zero-height strip keeps the pill floating over the scroll area, above the
                 composer, without reserving layout space. */}
-            {!following && (running || !!streaming) && (
-              <div className="relative h-0 z-10">
-                <button
-                  className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-line bg-panel shadow-md text-[12px] text-muted hover:text-ink cursor-pointer whitespace-nowrap"
-                  data-testid="jump-to-latest"
-                  onClick={followLatest}
-                >
-                  <Icon name="chevronDown" size={13} />
-                  Jump to latest
-                </button>
-              </div>
-            )}
+              {!following && (running || !!streaming) && (
+                <div className="relative h-0 z-10">
+                  <button
+                    className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-line bg-panel shadow-md text-[12px] text-muted hover:text-ink cursor-pointer whitespace-nowrap"
+                    data-testid="jump-to-latest"
+                    onClick={followLatest}
+                  >
+                    <Icon name="chevronDown" size={13} />
+                    Jump to latest
+                  </button>
+                </div>
+              )}
 
-            <Composer
-              mode={mode}
-              model={model}
-              models={models}
-              modelLabels={modelLabels}
+              <Composer
+                mode={mode}
+                model={model}
+                models={models}
+                modelLabels={modelLabels}
+                running={running}
+                connected={connected}
+                modelReady={modelReady}
+                onConnectModel={openModelSetup}
+                onConfigureVoiceInput={() => openSettings("voice")}
+                onSend={send}
+                onInterrupt={interrupt}
+                onModeChange={changeMode}
+                onModelChange={changeModel}
+                workspace={needsWorkspace(agent) ? workspace || "" : undefined}
+                unattended={unattended}
+                onUnattendedChange={
+                  agent !== "chat" ? toggleUnattended : undefined
+                }
+                prefill={composerPrefill}
+                resetKey={sessionId}
+                placeholder={
+                  agent === "code"
+                    ? "Ask the coder to build, fix, or explain…  (drop or paste files)"
+                    : agent === "chat"
+                      ? "Ask anything…  (drop or paste files)"
+                      : "Ask the coworker…  (drop or paste files)"
+                }
+                approvalSlot={
+                  // Live inline cards are for ATTENDED sessions only; when Unattended the prompt is
+                  // parked in the Inbox and surfaced via the answer-in-context card below.
+                  !unattended && pendingPlan?.kind === "planreq" ? (
+                    <PlanCard item={pendingPlan} onRespond={respondPlan} />
+                  ) : !unattended && pendingDirReq?.kind === "dirreq" ? (
+                    <DirectoryRequestCard
+                      item={pendingDirReq}
+                      onRespond={respondDirectory}
+                    />
+                  ) : !unattended && pendingApproval?.kind === "approval" ? (
+                    <ApprovalCard
+                      item={pendingApproval}
+                      onApprove={approve}
+                      runTask={runContext}
+                      compact
+                    />
+                  ) : !unattended && pendingQuestion?.kind === "question" ? (
+                    // Live ask_user in an attended session — answer inline (reuses the Inbox card UI).
+                    <InboxItemCard
+                      item={{
+                        id: "live-question",
+                        session_id: sessionId,
+                        kind: "question",
+                        title: pendingQuestion.question,
+                        body: "",
+                        state: "pending",
+                        resolution: null,
+                        inbox: "default",
+                        created_at: "",
+                        resolved_at: null,
+                        options: pendingQuestion.options,
+                        allow_text: pendingQuestion.allow_text,
+                        multi: pendingQuestion.multi,
+                      }}
+                      onResolve={(_id, answer) => answerQuestion(answer)}
+                      compact
+                    />
+                  ) : sessionInbox[0] ? (
+                    // Unattended session blocked on an Inbox item — answer it in context.
+                    <InboxItemCard
+                      item={sessionInbox[0]}
+                      onResolve={resolveSessionInbox}
+                      compact
+                    />
+                  ) : undefined
+                }
+              />
+            </div>
+            <RightRail
+              active={surface === "session" && agent !== "chat" && !railHidden}
+              sessionId={sessionId}
+              refreshKey={browserRefreshKey}
+              toolNames={items
+                .filter((i) => i.kind === "tool")
+                .map((i: any) => i.name)}
+              todo={todo}
               running={running}
-              connected={connected}
-              modelReady={modelReady}
-              onConnectModel={openModelSetup}
-              onConfigureVoiceInput={() => openSettings("voice")}
-              onSend={send}
-              onInterrupt={interrupt}
-              onModeChange={changeMode}
-              onModelChange={changeModel}
-              workspace={needsWorkspace(agent) ? workspace || "" : undefined}
-              unattended={unattended}
-              onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}
-              prefill={composerPrefill}
-              resetKey={sessionId}
-              placeholder={
-                agent === "code"
-                  ? "Ask the coder to build, fix, or explain…  (drop or paste files)"
-                  : agent === "chat"
-                    ? "Ask anything…  (drop or paste files)"
-                    : "Ask the coworker…  (drop or paste files)"
-              }
-              approvalSlot={
-                // Live inline cards are for ATTENDED sessions only; when Unattended the prompt is
-                // parked in the Inbox and surfaced via the answer-in-context card below.
-                !unattended && pendingPlan?.kind === "planreq" ? (
-                  <PlanCard item={pendingPlan} onRespond={respondPlan} />
-                ) : !unattended && pendingDirReq?.kind === "dirreq" ? (
-                  <DirectoryRequestCard item={pendingDirReq} onRespond={respondDirectory} />
-                ) : !unattended && pendingApproval?.kind === "approval" ? (
-                  <ApprovalCard item={pendingApproval} onApprove={approve} runTask={runContext} compact />
-                ) : !unattended && pendingQuestion?.kind === "question" ? (
-                  // Live ask_user in an attended session — answer inline (reuses the Inbox card UI).
-                  <InboxItemCard
-                    item={{
-                      id: "live-question",
-                      session_id: sessionId,
-                      kind: "question",
-                      title: pendingQuestion.question,
-                      body: "",
-                      state: "pending",
-                      resolution: null,
-                      inbox: "default",
-                      created_at: "",
-                      resolved_at: null,
-                      options: pendingQuestion.options,
-                      allow_text: pendingQuestion.allow_text,
-                      multi: pendingQuestion.multi,
-                    }}
-                    onResolve={(_id, answer) => answerQuestion(answer)}
-                    compact
-                  />
-                ) : sessionInbox[0] ? (
-                  // Unattended session blocked on an Inbox item — answer it in context.
-                  <InboxItemCard item={sessionInbox[0]} onResolve={resolveSessionInbox} compact />
-                ) : undefined
-              }
+              onPreviewChange={onArtifactPreview}
+              showArtifacts={agent === "cowork"}
+              personaId={agent}
+              projectScoped={isProjectScoped(personaOf(agent))}
+              workspace={workspace || undefined}
+              branch={branch}
+              scratchPrimary={agent === "cowork"}
+              openAccessKey={accessKey}
+              onOpenIntegrations={() => setSurface("integrations")}
             />
-                  </div>
-          <RightRail
-            active={surface === "session" && agent !== "chat" && !railHidden}
-            sessionId={sessionId}
-            refreshKey={browserRefreshKey}
-            toolNames={items.filter((i) => i.kind === "tool").map((i: any) => i.name)}
-            todo={todo}
-            running={running}
-            onPreviewChange={onArtifactPreview}
-            showArtifacts={agent === "cowork"}
-            personaId={agent}
-            projectScoped={isProjectScoped(personaOf(agent))}
-            workspace={workspace || undefined}
-            branch={branch}
-            scratchPrimary={agent === "cowork"}
-            openAccessKey={accessKey}
-            onOpenIntegrations={() => setSurface("integrations")}
-          />
+          </div>
         </div>
-      </div>
       )}
 
       {/* Search from the collapsed-sidebar topbar cluster (the sidebar's own instance is
@@ -1683,7 +1969,10 @@ function updateLastTool(
   return copy;
 }
 
-function resolveLastApproval(items: Item[], decision: ApprovalDecision): Item[] {
+function resolveLastApproval(
+  items: Item[],
+  decision: ApprovalDecision,
+): Item[] {
   const copy = [...items];
   for (let i = copy.length - 1; i >= 0; i--) {
     const it = copy[i];
@@ -1695,7 +1984,10 @@ function resolveLastApproval(items: Item[], decision: ApprovalDecision): Item[] 
   return copy;
 }
 
-function resolveLastDirReq(items: Item[], resolved: "granted" | "denied"): Item[] {
+function resolveLastDirReq(
+  items: Item[],
+  resolved: "granted" | "denied",
+): Item[] {
   const copy = [...items];
   for (let i = copy.length - 1; i >= 0; i--) {
     const it = copy[i];
@@ -1707,7 +1999,10 @@ function resolveLastDirReq(items: Item[], resolved: "granted" | "denied"): Item[
   return copy;
 }
 
-function resolveLastPlan(items: Item[], resolved: "approved" | "rejected"): Item[] {
+function resolveLastPlan(
+  items: Item[],
+  resolved: "approved" | "rejected",
+): Item[] {
   const copy = [...items];
   for (let i = copy.length - 1; i >= 0; i--) {
     const it = copy[i];

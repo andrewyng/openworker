@@ -166,7 +166,8 @@ class TaskStore:
     def runs(self, task_id: str, *, limit: int = 50) -> list[TaskRun]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT data FROM task_runs WHERE task_id=? ORDER BY started_at DESC LIMIT ?",
+                "SELECT data FROM task_runs WHERE task_id=? "
+                "ORDER BY started_at DESC, rowid DESC LIMIT ?",
                 (task_id, limit),
             ).fetchall()
         return [TaskRun.from_dict(json.loads(r["data"])) for r in rows]

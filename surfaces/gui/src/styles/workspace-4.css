@@ -1,0 +1,46 @@
+/* ---- Desktop overlay title bar -------------------------------------------- */
+/* Traffic lights float over the UI (Tauri titleBarStyle: Overlay). The visible
+   app header/sidebar top padding provide the draggable area in the normal app. */
+.app.tauri-overlay {
+  padding-top: 0;
+}
+.boot-splash.tauri-overlay {
+  padding-top: 36px;
+}
+.titlebar-drag {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Sit the wordmark on the top strip's shared midline (a hair above the traffic lights'
+     y=30 center — owner-tuned on the DMG #28 walkthrough alongside the brand row and the
+     topbar cluster; keep all four -3px offsets in step). */
+  height: 48px;
+  padding-top: 9px;
+  z-index: 180;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  padding-left: 82px; /* clear the macOS traffic lights */
+  user-select: none;
+}
+.titlebar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  user-select: none;
+}
+.titlebar-brand .mark {
+  color: var(--accent);
+}
+/* The sidebar's brand row IS the desktop title bar (pin control + wordmark). On desktop the
+   traffic lights float top-left, so shift the row RIGHT (not down) to clear them and keep it at
+   the top — that puts the pin button just right of the lights, aligned with the reveal button.
+   The row is a drag region (data-tauri-drag-region in Sidebar.tsx), so this strip moves the window. */
+.app.tauri-overlay .sidebar .brand {
+  padding-top: 13px;
+  padding-left: 84px;
+}
