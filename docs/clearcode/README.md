@@ -66,6 +66,7 @@ the generated evidence package from changing the code commit it assesses.
 - Python: `uv run --group dev pytest -q` — 891 passed, 1 skipped.
 - Frontend: `npm test -- --run` — 69 tests passed.
 - Frontend: `npm run build` — production build passed.
+- Browser E2E: `npm run e2e` — 154 Chromium scenarios passed.
 - Rust/Tauri: `cargo fmt --check` and `cargo check` — both passed.
 - Dependencies: npm audit and pip-audit completed for both applicable
   ecosystems with zero known vulnerabilities reported at the remediated

@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-07-25T22:58:05.641Z",
-  "durationMs": 44928,
+  "generatedAt": "2026-07-25T23:09:42.424Z",
+  "durationMs": 104963,
   "repo": {
     "name": "andrewyng/openworker",
     "files": 489,
@@ -4526,6 +4526,11 @@
         "layer": "Frontend",
         "check": "npm run build",
         "result": "Production build passed"
+      },
+      {
+        "layer": "Browser E2E",
+        "check": "npm run e2e",
+        "result": "154 Chromium scenarios passed"
       },
       {
         "layer": "Rust/Tauri",
