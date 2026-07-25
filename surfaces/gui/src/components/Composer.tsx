@@ -12,6 +12,7 @@ import {
   getVoiceStatus,
   startVoiceCapture,
   stopVoiceCapture,
+  VOICE_INPUT_ERROR_EVENT,
   type VoiceRuntime,
   type VoiceStatus,
 } from "../voice";
@@ -109,6 +110,23 @@ export function Composer(props: Props) {
   const noticeTimer = useRef<number | null>(null);
   const activeVoiceMode = useRef<VoiceCaptureMode>("dictation");
   const autoSendVoiceTurn = useRef(false);
+  const captureEpoch = useRef(0);
+  const captureOriginKey = useRef<string | undefined>(undefined);
+  const previousResetKey = useRef(props.resetKey);
+  const voiceSendContext = useRef({
+    connected: props.connected,
+    running: props.running,
+    modelReady: props.modelReady,
+    resetKey: props.resetKey,
+    onSend: props.onSend,
+  });
+  voiceSendContext.current = {
+    connected: props.connected,
+    running: props.running,
+    modelReady: props.modelReady,
+    resetKey: props.resetKey,
+    onSend: props.onSend,
+  };
 
   const changeVoiceMode = (mode: VoiceCaptureMode) => {
     setVoiceMode(mode);
@@ -160,10 +178,25 @@ export function Composer(props: Props) {
   }, [props.prefill?.nonce]);
 
   // Clear the draft when the conversation changes, so a half-typed message / picked file doesn't
-  // bleed from one session into another.
+  // bleed from one session into another. Invalidate and cancel any capture owned by the previous
+  // conversation so a late transcript can never cross session boundaries.
   useEffect(() => {
+    const conversationChanged = previousResetKey.current !== props.resetKey;
+    previousResetKey.current = props.resetKey;
     setText("");
     setAttachments([]);
+    setDictationNotice(null);
+    setDictationError(null);
+    if (conversationChanged) {
+      captureEpoch.current += 1;
+      captureOriginKey.current = undefined;
+      autoSendVoiceTurn.current = false;
+      setDictationBusy(null);
+      setDictation((current) =>
+        current?.recording ? { ...current, recording: false } : current,
+      );
+      void cancelVoiceCapture().catch(() => undefined);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.resetKey]);
 
@@ -179,8 +212,25 @@ export function Composer(props: Props) {
       void getVoiceStatus().then((status) => status && setDictation(status));
     };
     refresh();
+    const reportError = (event: Event) => {
+      const message = (event as CustomEvent<string>).detail;
+      captureEpoch.current += 1;
+      captureOriginKey.current = undefined;
+      autoSendVoiceTurn.current = false;
+      setDictationBusy(null);
+      setDictationNotice(null);
+      setDictationError(message || "Browser voice input stopped unexpectedly.");
+    };
     window.addEventListener("coworker:voice-input-changed", refresh);
-    return () => window.removeEventListener("coworker:voice-input-changed", refresh);
+    window.addEventListener(VOICE_INPUT_ERROR_EVENT, reportError);
+    return () => {
+      window.removeEventListener("coworker:voice-input-changed", refresh);
+      window.removeEventListener(VOICE_INPUT_ERROR_EVENT, reportError);
+      captureEpoch.current += 1;
+      captureOriginKey.current = undefined;
+      autoSendVoiceTurn.current = false;
+      void cancelVoiceCapture().catch(() => undefined);
+    };
   }, []);
 
   useEffect(() => {
@@ -322,6 +372,7 @@ export function Composer(props: Props) {
 
   const toggleDictation = async () => {
     if (dictationBusy) return;
+    let operationEpoch = captureEpoch.current;
     setDictationError(null);
     setDictationNotice(null);
     try {
@@ -329,12 +380,25 @@ export function Composer(props: Props) {
         const completedMode = activeVoiceMode.current;
         const shouldAutoSend =
           completedMode === "discussion" && autoSendVoiceTurn.current;
+        operationEpoch = captureEpoch.current;
         setDictationBusy("Transcribing…");
         const transcript = await stopVoiceCapture();
+        const latest = voiceSendContext.current;
+        const captureIsCurrent =
+          operationEpoch === captureEpoch.current &&
+          captureOriginKey.current === latest.resetKey;
+        if (!captureIsCurrent) return;
+        const canAutoSend =
+          shouldAutoSend &&
+          latest.connected &&
+          !latest.running &&
+          latest.modelReady !== false;
+        autoSendVoiceTurn.current = false;
+        captureOriginKey.current = undefined;
         if (transcript === null) throw new Error("Could not transcribe your recording.");
         if (transcript.trim()) {
-          if (shouldAutoSend) {
-            props.onSend(transcript.trim(), undefined, { inputMode: "voice_discussion" });
+          if (canAutoSend) {
+            latest.onSend(transcript.trim(), undefined, { inputMode: "voice_discussion" });
             setText("");
             setAttachments([]);
           } else {
@@ -346,8 +410,9 @@ export function Composer(props: Props) {
         } else if (completedMode === "discussion") {
           throw new Error("No speech was detected. Try again and speak for a little longer.");
         }
-        setDictation(await getVoiceStatus());
-        if (!shouldAutoSend) textareaRef.current?.focus();
+        const latestStatus = await getVoiceStatus();
+        if (operationEpoch === captureEpoch.current) setDictation(latestStatus);
+        if (!canAutoSend) textareaRef.current?.focus();
         return;
       }
 
@@ -364,20 +429,32 @@ export function Composer(props: Props) {
       }
       if (voiceMode === "discussion" && (!props.connected || props.running)) return;
       setDictationBusy("Starting microphone…");
+      operationEpoch = captureEpoch.current + 1;
+      captureEpoch.current = operationEpoch;
+      captureOriginKey.current = voiceSendContext.current.resetKey;
       activeVoiceMode.current = voiceMode;
       autoSendVoiceTurn.current =
         voiceMode === "discussion" && !text.trim() && attachments.length === 0;
       const recording = await startVoiceCapture();
+      if (
+        operationEpoch !== captureEpoch.current ||
+        captureOriginKey.current !== voiceSendContext.current.resetKey
+      ) {
+        await cancelVoiceCapture().catch(() => undefined);
+        return;
+      }
       if (!recording?.recording) throw new Error("Could not start the microphone.");
       setDictation(recording);
     } catch (error) {
+      if (operationEpoch !== captureEpoch.current) return;
       autoSendVoiceTurn.current = false;
+      captureOriginKey.current = undefined;
       setDictationNotice(null);
       setDictationError(error instanceof Error ? error.message : "Voice dictation is unavailable.");
       const status = await getVoiceStatus();
-      if (status) setDictation(status);
+      if (status && operationEpoch === captureEpoch.current) setDictation(status);
     } finally {
-      setDictationBusy(null);
+      if (operationEpoch === captureEpoch.current) setDictationBusy(null);
     }
   };
 

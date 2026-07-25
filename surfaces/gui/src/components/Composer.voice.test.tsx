@@ -1,7 +1,7 @@
 // §37 voice input — one composer contract backed by either native Tauri dictation
 // or the browser's speech-recognition API.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Composer } from "./Composer";
 import { resetBrowserVoiceCaptureForTests } from "../voice";
 
@@ -32,6 +32,7 @@ class MockSpeechRecognition {
   onresult: ((event: any) => void) | null = null;
   onerror: ((event: any) => void) | null = null;
   onend: (() => void) | null = null;
+  abortCalls = 0;
 
   constructor() {
     browserRecognition = this;
@@ -48,6 +49,12 @@ class MockSpeechRecognition {
   }
 
   abort() {
+    this.abortCalls += 1;
+    this.onend?.();
+  }
+
+  fail(error: string) {
+    this.onerror?.({ error });
     this.onend?.();
   }
 }
@@ -160,6 +167,20 @@ describe("Composer voice input (§37)", () => {
     expect(screen.getByLabelText("Start dictation").hasAttribute("disabled")).toBe(false);
   });
 
+  it("surfaces browser recognition failures that happen after recording starts", async () => {
+    installBrowserVoice();
+    render(<Composer {...props()} />);
+
+    fireEvent.click(await screen.findByLabelText("Start dictation"));
+    await screen.findByLabelText("Stop dictation");
+    act(() => browserRecognition?.fail("network"));
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "speech recognition service could not be reached",
+    );
+    expect(screen.getByLabelText("Start dictation").hasAttribute("disabled")).toBe(false);
+  });
+
   it("not ready → muted mic deep-links to Settings instead of recording", async () => {
     invoke.mockImplementation(async (cmd: string) =>
       cmd === "get_dictation_status" ? NOT_READY : null,
@@ -241,5 +262,61 @@ describe("Composer voice input (§37)", () => {
     await waitFor(() => expect(box.value).toBe("Please check hello from the mic"));
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByText("Voice transcript kept as an editable draft.")).toBeTruthy();
+  });
+
+  it("keeps a completed discussion as a draft if the connection drops while recording", async () => {
+    const onSend = vi.fn();
+    const view = render(<Composer {...props({ onSend, resetKey: "session-a" })} />);
+
+    fireEvent.click(await screen.findByLabelText("Voice input mode"));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Voice discussion/ }));
+    fireEvent.click(screen.getByLabelText("Start voice discussion"));
+    await screen.findByLabelText("Stop voice discussion");
+
+    view.rerender(
+      <Composer {...props({ onSend, connected: false, resetKey: "session-a" })} />,
+    );
+    fireEvent.click(screen.getByLabelText("Stop voice discussion"));
+
+    const box = screen.getByPlaceholderText(/Ask the coworker/) as HTMLTextAreaElement;
+    await waitFor(() => expect(box.value).toBe("hello from the mic"));
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByText("Voice transcript kept as an editable draft.")).toBeTruthy();
+  });
+
+  it("cancels an active browser capture when the conversation changes", async () => {
+    installBrowserVoice();
+    const firstSend = vi.fn();
+    const secondSend = vi.fn();
+    const view = render(
+      <Composer {...props({ onSend: firstSend, resetKey: "session-a" })} />,
+    );
+
+    fireEvent.click(await screen.findByLabelText("Voice input mode"));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Voice discussion/ }));
+    fireEvent.click(screen.getByLabelText("Start voice discussion"));
+    await screen.findByLabelText("Stop voice discussion");
+    const activeRecognition = browserRecognition;
+
+    view.rerender(
+      <Composer {...props({ onSend: secondSend, resetKey: "session-b" })} />,
+    );
+
+    await waitFor(() => expect(activeRecognition?.abortCalls).toBe(1));
+    expect(firstSend).not.toHaveBeenCalled();
+    expect(secondSend).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Stop voice discussion")).toBeNull();
+  });
+
+  it("releases an active browser capture when the composer unmounts", async () => {
+    installBrowserVoice();
+    const view = render(<Composer {...props({ resetKey: "session-a" })} />);
+
+    fireEvent.click(await screen.findByLabelText("Start dictation"));
+    await screen.findByLabelText("Stop dictation");
+    const activeRecognition = browserRecognition;
+    view.unmount();
+
+    expect(activeRecognition?.abortCalls).toBe(1);
   });
 });

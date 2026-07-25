@@ -70,6 +70,8 @@ type BrowserVoiceSession = {
 
 let browserSession: BrowserVoiceSession | null = null;
 
+export const VOICE_INPUT_ERROR_EVENT = "coworker:voice-input-error";
+
 export const getVoiceRuntime = (): VoiceRuntime => (isTauri() ? "native" : "browser");
 
 const speechRecognitionConstructor = (): BrowserSpeechRecognitionConstructor | null => {
@@ -121,6 +123,15 @@ const publishBrowserStatus = () => {
   window.dispatchEvent(
     new CustomEvent<VoiceStatus>("coworker:voice-input-changed", {
       detail: browserStatus(),
+    }),
+  );
+};
+
+const publishBrowserError = (error: Error) => {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<string>(VOICE_INPUT_ERROR_EVENT, {
+      detail: error.message,
     }),
   );
 };
@@ -228,7 +239,15 @@ const configureBrowserRecognition = (session: BrowserVoiceSession) => {
     if (browserSession !== session) return;
     session.recognitionActive = false;
     if (session.stopRequested || session.cancelRequested || session.terminalError) {
+      const unobservedError =
+        session.terminalError &&
+        session.startSettled &&
+        !session.stopRequested &&
+        !session.cancelRequested
+          ? session.terminalError
+          : null;
       settleBrowserSession(session);
+      if (unobservedError) publishBrowserError(unobservedError);
       return;
     }
     restartBrowserRecognition(session);
