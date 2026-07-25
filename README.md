@@ -64,6 +64,8 @@ OpenWorker is local-first. Everything lives on your machine: the agent loop, you
 
 Prerequisites: Python 3.10+, Node 20+, and (for the desktop shell) the Rust toolchain via [rustup](https://rustup.rs/).
 
+> **Quickstart with `make`**: Run `make setup-all` to set up both backend and GUI, then `make server` in one terminal and `make gui` (or `make desktop`) in another. Run `make help` to see all available targets.
+
 ```shell
 git clone https://github.com/andrewyng/openworker
 cd openworker
@@ -89,7 +91,7 @@ desktop app uses an in-memory launch token instead and never writes it to disk.
 
 To run the full desktop app instead of the browser UI, replace step 3 with `npm run tauri dev` (from `surfaces/gui/`) - the Tauri shell launches the window and supervises the server itself.
 
-Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gui` (GUI unit + hermetic end-to-end). Desktop bundles are built with `packaging/build_dmg.sh` / `packaging/build_windows.ps1`.
+Tests: `make test` (or `.venv/bin/pytest`), `make test-gui` (`npm test`), and `make e2e` (`npm run e2e` in `surfaces/gui`). Run `make test-all` for the full suite. Desktop bundles are built with `make dmg` (or `packaging/build_dmg.sh` / `packaging/build_windows.ps1`).
 
 ## Repository layout
 
