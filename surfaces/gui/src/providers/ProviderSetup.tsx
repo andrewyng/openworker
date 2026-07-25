@@ -32,6 +32,10 @@ export const KEY_HELP: Record<string, { url: string; label: string }> = {
   qwen: { url: "https://modelstudio.console.alibabacloud.com", label: "alibabacloud.com" },
   minimax: { url: "https://platform.minimax.io", label: "platform.minimax.io" },
   xai: { url: "https://console.x.ai", label: "console.x.ai" },
+  // OpenCode: each picker entry stores its own api_key, but the deep link below
+  // opens the unified settings page either card links to.
+  opencode_zen: { url: "https://opencode.ai/zen", label: "opencode.ai/zen" },
+  opencode_go: { url: "https://opencode.ai/zen", label: "opencode.ai/zen" },
 };
 
 export type Verify = { state: "idle" | "testing" | "ok" | "error"; msg?: string };

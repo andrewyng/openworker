@@ -22,7 +22,10 @@ import qwen from "./logos/qwen.svg";
 import minimax from "./logos/minimax.svg";
 import xai from "./logos/xai.svg";
 import meta from "./logos/meta.svg";
+import opencode from "./logos/opencode.svg";
 
+// OpenCode carries a shared brand mark between its two picker entries (a single logo
+// file is reused under both names since both refer to the same vendor — opencode.ai).
 export const PROVIDER_LOGOS: Record<string, string> = {
   anthropic,
   openai,
@@ -41,6 +44,8 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   qwen,
   minimax,
   xai,
+  opencode_zen: opencode,
+  opencode_go: opencode,
 };
 
 export const PROVIDER_ORDER = [
@@ -55,6 +60,8 @@ export const PROVIDER_ORDER = [
   "fireworks",
   "together",
   "zai",
+  "opencode_zen",
+  "opencode_go",
   "kimi",
   "deepseek",
   "mistral",

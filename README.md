@@ -54,7 +54,11 @@ Under the hood:
 
 Model access is yours: pick a provider, paste your key, switch anytime. Supported out of the box:
 
-**OpenAI · Anthropic · Google Gemini · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI)** - plus open-weight models via **Together** and **Fireworks**, and fully local models via **Ollama**.
+**OpenAI · Anthropic · Google Gemini · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI) · OpenCode Zen · OpenCode Go** - plus open-weight models via **Together** and **Fireworks**, and fully local models via **Ollama**.
+
+OpenCode Zen and Go are independent OpenAI-compatible profiles. Use the qualified model ID syntax
+`opencode_zen:<model>` or `opencode_go:<model>` (for example, `opencode_zen:grok-4.5`); each profile
+uses its own endpoint and key, with `OPENCODE_API_KEY` available as a shared environment fallback.
 
 A curated model list marks what we've verified for tool-calling work. Adding any model string works at your own risk.
 
