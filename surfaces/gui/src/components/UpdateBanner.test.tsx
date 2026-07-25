@@ -46,6 +46,22 @@ describe("UpdateBanner", () => {
     expect(btn.disabled).toBe(false);
   });
 
+  it("renders the release notes (what the update contains) when present", async () => {
+    available = { version: "1.2.0", notes: "- Faster startup\n- Fixed calendar sync" };
+    render(<UpdateBanner />);
+    await advance(FIRST_CHECK_MS);
+    expect(screen.getByTestId("update-notes").textContent).toContain("Faster startup");
+    expect(screen.getByTestId("update-notes").textContent).toContain("Fixed calendar sync");
+  });
+
+  it("omits the notes block when the release ships no notes", async () => {
+    available = { version: "1.2.0", notes: "" };
+    render(<UpdateBanner />);
+    await advance(FIRST_CHECK_MS);
+    expect(screen.getByTestId("update-banner")).toBeTruthy();
+    expect(screen.queryByTestId("update-notes")).toBeNull();
+  });
+
   it("Later hides the banner and a same-version re-check keeps it hidden", async () => {
     render(<UpdateBanner />);
     await advance(FIRST_CHECK_MS);

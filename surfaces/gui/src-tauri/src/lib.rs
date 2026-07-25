@@ -495,6 +495,14 @@ struct UpdateInfo {
     notes: String,
 }
 
+/// The version currently running — the baseline the update check compares against.
+/// Read from the bundle metadata (tauri.conf.json `version`) so the "you're on vX"
+/// line and the check can never drift apart.
+#[tauri::command]
+fn app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 #[tauri::command]
 async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
     use tauri_plugin_updater::UpdaterExt;
@@ -619,6 +627,7 @@ pub fn run() {
             mark_dictation_test_passed,
             delete_dictation_model,
             dictation_level,
+            app_version,
             check_for_update,
             download_update,
             clear_pending_update,
