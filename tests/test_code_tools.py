@@ -41,7 +41,9 @@ def test_grep_finds_matches_and_respects_glob(tmp_path):
     assert only_py["matches"][0]["line"] == 1
 
 
-def test_ripgrep_uses_the_same_ignored_dirs_as_the_python_fallback(tmp_path, monkeypatch):
+def test_ripgrep_uses_the_same_ignored_dirs_as_the_python_fallback(
+    tmp_path, monkeypatch
+):
     import coworker.tools.search as search
 
     commands = []
@@ -151,6 +153,101 @@ def test_html_to_text_strips_scripts_and_tags():
     text = _html_to_text(html)
     assert "Hi" in text and "Body text" in text
     assert "bad()" not in text and "x{}" not in text
+
+
+class _ScrapingProvider:
+    """A provider that offers the optional `scrape` capability (only fastCRW does)."""
+
+    name = "scraper"
+
+    def __init__(self, text="# Title\n\nBody", url="https://example.com/final"):
+        self._text, self._url = text, url
+
+    def scrape(self, url):
+        return {"url": self._url, "text": self._text}
+
+
+def _stub_local_client(monkeypatch, calls):
+    """Replace httpx.Client so the local path is both observable and offline."""
+    import httpx
+
+    class _Client:
+        def __init__(self, **kw):
+            calls.append("constructed")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get(self, url):
+            return SimpleNamespace(
+                headers={"content-type": "text/html"},
+                text="<html><body><p>local path</p></body></html>",
+                url=url,
+                raise_for_status=lambda: None,
+            )
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+
+
+def test_web_fetch_uses_the_provider_scraper_when_one_exists(monkeypatch):
+    calls = []
+    _stub_local_client(monkeypatch, calls)
+    out = make_web_fetch_tool(provider=_ScrapingProvider())("https://example.com")
+    assert out["text"] == "# Title\n\nBody"
+    assert out["url"] == "https://example.com/final"
+    assert out["content_type"] == "text/markdown"
+    assert out["truncated"] is False
+    assert calls == []  # the local client was never constructed
+
+
+def test_web_fetch_uses_the_local_path_when_the_provider_cannot_scrape(monkeypatch):
+    calls = []
+    _stub_local_client(monkeypatch, calls)
+
+    class _SearchOnly:  # duckduckgo / tavily / brave — no `scrape` attribute
+        name = "search-only"
+
+    out = make_web_fetch_tool(provider=_SearchOnly())("https://example.com")
+    assert out["text"] == "local path"
+    assert out["content_type"] == "text/html"
+    assert calls == ["constructed"]
+
+
+def test_web_fetch_does_not_fall_back_to_the_local_path_on_a_scrape_error(monkeypatch):
+    # A failure-triggered fallback would let a chosen URL select which path runs.
+    calls = []
+    _stub_local_client(monkeypatch, calls)
+
+    class _Boom:
+        name = "boom"
+
+        def scrape(self, url):
+            raise RuntimeError("scrape API down")
+
+    out = make_web_fetch_tool(provider=_Boom())("https://example.com")
+    assert out["error"] == "fetch failed: scrape API down"
+    assert calls == []  # crucially, the local client never ran
+
+
+def test_web_fetch_scraped_text_respects_max_chars():
+    out = make_web_fetch_tool(provider=_ScrapingProvider(text="x" * 300))(
+        "https://example.com", max_chars=100
+    )
+    assert len(out["text"]) == 100 and out["truncated"] is True
+
+
+def test_web_fetch_scheme_guard_runs_before_any_provider(monkeypatch):
+    class _NeverCalled:
+        name = "never"
+
+        def scrape(self, url):  # pragma: no cover - must not run
+            raise AssertionError("scraper ran for a non-http scheme")
+
+    out = make_web_fetch_tool(provider=_NeverCalled())("file:///etc/passwd")
+    assert "http" in out["error"]
 
 
 # -- Code agent wiring ---------------------------------------------------------

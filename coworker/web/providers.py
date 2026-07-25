@@ -159,6 +159,44 @@ class FastCRWProvider(WebSearchProvider):
             raise RuntimeError(f"unexpected result shape (HTTP {resp.status_code})")
         return results
 
+    def scrape(self, url: str) -> dict[str, str]:
+        """Markdown for one page. Optional capability, duck-typed by web/fetch.py."""
+        import httpx
+
+        resp = httpx.post(
+            "https://api.fastcrw.com/v1/scrape",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            # deadlineMs is the server-side budget (max 60000). Keeping it under the
+            # client timeout means a slow page comes back as a message we can report
+            # rather than as a socket we hung up on.
+            json={
+                "url": url,
+                "formats": ["markdown"],
+                "onlyMainContent": True,
+                "deadlineMs": 15000,
+            },
+            timeout=_TIMEOUT,
+        )
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {}
+        if not isinstance(body, dict) or body.get("success") is not True:
+            err = body if isinstance(body, dict) else {}
+            raise RuntimeError(err.get("error") or f"HTTP {resp.status_code}")
+        data = body.get("data") or {}
+        meta = data.get("metadata") or {}
+        status = meta.get("statusCode")
+        if isinstance(status, int) and status >= 400:
+            # Follows the local path's raise_for_status(): an error page is not content,
+            # even though the scrape itself succeeded in fetching it. Weaker than the
+            # local check though — a JS-rendered page can report 200 for an origin 404.
+            raise RuntimeError(f"upstream HTTP {status}")
+        return {
+            "url": meta.get("sourceURL") or url,
+            "text": data.get("markdown") or "",
+        }
+
 
 _PROVIDERS = {
     "duckduckgo": DuckDuckGoProvider,

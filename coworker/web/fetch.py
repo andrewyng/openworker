@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import re
 from html.parser import HTMLParser
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 import aisuite as ai
+
+from ..secrets import SecretStore
 
 _MAX = 20000  # default chars returned
 
@@ -73,7 +75,22 @@ def _html_to_text(html: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(parser.parts))
 
 
-def make_web_fetch_tool() -> Callable[..., Any]:
+def make_web_fetch_tool(
+    secrets: Optional[SecretStore] = None,
+    *,
+    provider: Optional[Any] = None,
+) -> Callable[..., Any]:
+    """Build the `web_fetch` tool. `provider` overrides resolution (used by tests)."""
+
+    def _scraper():
+        """The configured web provider's page scraper, if it has one."""
+        try:
+            from .tool import resolve_provider
+
+            return getattr(provider or resolve_provider(secrets), "scrape", None)
+        except Exception:  # unconfigured, or a keyed provider with no key
+            return None
+
     def web_fetch(url: str, max_chars: int = _MAX) -> dict[str, Any]:
         if not isinstance(url, str) or not url.lower().startswith(
             ("http://", "https://")
@@ -81,6 +98,24 @@ def make_web_fetch_tool() -> Callable[..., Any]:
             return {"error": "url must start with http:// or https://"}
         cap = max_chars if isinstance(max_chars, int) and max_chars > 0 else _MAX
         cap = min(cap, 100000)
+        scrape = _scraper()
+        if scrape is not None:
+            try:
+                page = scrape(url)
+            except Exception as exc:
+                # Deliberately NOT a fallback to the local client below: a URL the
+                # scraper refuses would otherwise be a reliable way to pick which
+                # code path runs, and the two do not have the same reach.
+                return {"error": f"fetch failed: {exc}"}
+            text = page.get("text") or ""
+            return {
+                "url": page.get("url") or url,
+                # What `text` IS. Reporting the origin's type here would be wrong:
+                # the local branch below keys its stripping off exactly this field.
+                "content_type": "text/markdown",
+                "truncated": len(text) > cap,
+                "text": text[:cap],
+            }
         try:
             import httpx
 
