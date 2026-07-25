@@ -64,7 +64,7 @@ OpenWorker is local-first. Everything lives on your machine: the agent loop, you
 
 Prerequisites: Python 3.10+, Node 20+, and (for the desktop shell) the Rust toolchain via [rustup](https://rustup.rs/).
 
-> **Quickstart with `make`**: Run `make setup-all` to set up both backend and GUI, then `make server` in one terminal and `make gui` (or `make desktop`) in another. Run `make help` to see all available targets.
+> **Quickstart with `make`** (macOS, Linux, WSL): Run `make setup-all` to set up both backend and GUI, then `make server` in one terminal and `make gui` (or `make desktop`) in another. Run `make help` to see all available targets. On native Windows (PowerShell/cmd), use the step-by-step commands below.
 
 ```shell
 git clone https://github.com/andrewyng/openworker
