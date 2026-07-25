@@ -705,7 +705,7 @@ function VoiceModePicker({
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
           <div
-            className="absolute z-40 bottom-full mb-1 right-0 w-[280px] rounded-xl border border-line bg-panel shadow-2xl p-1.5"
+            className="voice-mode-menu absolute z-40 bottom-full mb-1.5 right-0 w-[304px] rounded-xl border border-lineStrong bg-panel p-2"
             role="menu"
             aria-label="Voice input mode"
           >
@@ -721,7 +721,7 @@ function VoiceModePicker({
               description="Send the transcript automatically when you stop speaking."
               onClick={() => choose("discussion")}
             />
-            <div className="mx-2 mt-1 border-t border-line px-0 pt-2 pb-1 text-[10.5px] leading-snug text-faint">
+            <div className="mx-2.5 mt-1.5 border-t border-line px-0 pt-2.5 pb-1.5 text-[10.5px] leading-[1.45] text-faint">
               Clicking or typing in the composer keeps a discussion turn as an editable draft.{" "}
               {runtime === "browser"
                 ? "Transcription is managed by your browser."
@@ -748,27 +748,27 @@ function VoiceModeOption({
   return (
     <button
       className={
-        "w-full rounded-lg px-2.5 py-2 text-left hover:bg-paper " +
-        (checked ? "bg-accentSoft/60" : "")
+        "voice-mode-option w-full rounded-[10px] px-3 py-2.5 text-left " +
+        (checked ? "is-selected" : "")
       }
       role="menuitemradio"
       aria-checked={checked}
       onClick={onClick}
     >
-      <span className="flex items-center gap-2">
+      <span className="flex items-start gap-3">
         <span
-          className={
-            "grid h-5 w-5 shrink-0 place-items-center rounded-full border " +
-            (checked ? "border-accent bg-accent text-white" : "border-lineStrong text-faint")
-          }
+          className="voice-mode-indicator mt-px grid h-6 w-6 shrink-0 place-items-center rounded-full border"
+          data-testid={checked ? "voice-mode-selected-indicator" : undefined}
         >
-          {checked ? "✓" : <Icon name="mic" size={11} />}
+          {checked ? <Icon name="check" size={14} /> : <Icon name="mic" size={12} />}
         </span>
-        <span>
-          <span className={"block text-[13px] " + (checked ? "font-medium text-accent" : "text-ink")}>
+        <span className="min-w-0">
+          <span className="voice-mode-label block text-[13.5px] leading-[1.25]">
             {label}
           </span>
-          <span className="mt-0.5 block text-[11px] leading-snug text-faint">{description}</span>
+          <span className="voice-mode-description mt-1 block text-[11.5px] leading-[1.4]">
+            {description}
+          </span>
         </span>
       </span>
     </button>

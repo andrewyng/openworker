@@ -134,6 +134,9 @@ describe("Composer voice input (§37)", () => {
 
     fireEvent.click(await screen.findByLabelText("Voice input mode"));
     expect(screen.getByText(/Transcription is managed by your browser/)).toBeTruthy();
+    const selectedIndicator = screen.getByTestId("voice-mode-selected-indicator");
+    expect(selectedIndicator.querySelector("svg")).toBeTruthy();
+    expect(selectedIndicator.textContent).toBe("");
     fireEvent.click(screen.getByRole("menuitemradio", { name: /Voice discussion/ }));
     fireEvent.click(screen.getByLabelText("Start voice discussion"));
     fireEvent.click(await screen.findByLabelText("Stop voice discussion"));
