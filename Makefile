@@ -1,7 +1,7 @@
 # OpenWorker Makefile
 # Convenience tasks for local setup, development, testing, and packaging.
 
-.PHONY: help setup setup-gui setup-all server gui desktop test test-gui e2e test-all dmg clean check-python check-node check-venv
+.PHONY: help setup setup-gui setup-all server gui desktop test test-gui e2e test-all dmg clean check-python check-node check-rust check-venv
 
 PORT ?= 8765
 CWD ?= .
@@ -25,6 +25,10 @@ check-python:
 check-node:
 	@command -v node >/dev/null 2>&1 || { echo "Error: node is required but not installed." >&2; exit 1; }
 	@command -v npm >/dev/null 2>&1 || { echo "Error: npm is required but not installed." >&2; exit 1; }
+
+## check-rust: Check if Rust/cargo is installed
+check-rust:
+	@command -v cargo >/dev/null 2>&1 || { echo "Error: Rust toolchain (cargo) is required but not installed. Install via https://rustup.rs" >&2; exit 1; }
 
 ## check-venv: Check if Python virtual environment exists
 check-venv:
@@ -53,7 +57,7 @@ gui: check-node
 	@cd $(GUI_DIR) && npm run dev
 
 ## desktop: Start the desktop app using Tauri dev
-desktop: check-node
+desktop: check-node check-rust check-venv
 	@cd $(GUI_DIR) && npm run tauri dev
 
 ## test: Run Python backend test suite
@@ -72,7 +76,7 @@ e2e: check-node
 test-all: test test-gui e2e
 
 ## dmg: Build macOS DMG package (macOS only)
-dmg:
+dmg: check-rust
 	@bash packaging/build_dmg.sh
 
 ## clean: Remove virtualenv, node_modules, build artifacts, and caches
