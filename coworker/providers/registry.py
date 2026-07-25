@@ -135,7 +135,7 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
-    Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its
+    Kimi, MiniMax, Qwen, xAI, Mistral, Upstage). The key is resolved from the vendor's OWN profile (or its
     env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a configured OpenAI
     key is never silently sent to a different vendor's endpoint. Missing key ⇒ fail fast with a
     vendor-named error (these are only built on demand, when one of their models is selected).
@@ -306,6 +306,13 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         base_url="https://api.mistral.ai/v1",
         recommended_model="mistral-large-latest",
         env_key="MISTRAL_API_KEY",
+    ),
+    _compat(
+        "upstage",
+        "Upstage (Solar)",
+        base_url="https://api.upstage.ai/v1",
+        recommended_model="solar-open2",
+        env_key="UPSTAGE_API_KEY",
     ),
     # Resellers: many labs' models behind one key, using THEIR model namespaces (the curated
     # ids + display labels live in providers/matrix.py). TODO: add Groq and OpenRouter here

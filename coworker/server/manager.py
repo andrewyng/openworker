@@ -1415,6 +1415,7 @@ class SessionManager:
         "qwen": ["qwen3-max", "qwen3-coder-plus", "qwen-plus"],
         "xai": ["grok-4.3", "grok-4"],
         "mistral": ["mistral-large-latest", "mistral-small-latest"],
+        "upstage": ["solar-open2", "solar-pro3", "solar-pro2", "solar-mini"],
     }
 
     def _suggested_models(self, name: str) -> list[str]:

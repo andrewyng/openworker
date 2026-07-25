@@ -18,6 +18,7 @@ import mistral from "./logos/mistral.svg";
 import qwen from "./logos/qwen.svg";
 import minimax from "./logos/minimax.svg";
 import xai from "./logos/xai.svg";
+import upstage from "./logos/upstage.svg";
 
 export const PROVIDER_LOGOS: Record<string, string> = {
   anthropic,
@@ -33,6 +34,7 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   qwen,
   minimax,
   xai,
+  upstage,
 };
 
 export const PROVIDER_ORDER = [
@@ -49,6 +51,7 @@ export const PROVIDER_ORDER = [
   "qwen",
   "minimax",
   "xai",
+  "upstage",
 ];
 
 export function providerRank(name: string): number {
