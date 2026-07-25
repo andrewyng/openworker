@@ -1575,6 +1575,12 @@ class SessionManager:
             return {"ok": False, "error": f"unknown provider: {name}"}
         fields = fields or {}
         profile = self.secrets.get(f"provider:{name}") or {}
+        # Keyless providers (Bedrock) authenticate from their own fields (AWS profile,
+        # region, explicit keys + session token), not an api_key — merge the stored
+        # profile under the just-entered form values so re-testing a saved provider works.
+        if name == "bedrock":
+            merged = {**profile, **{k: v for k, v in fields.items() if v}}
+            return verify_provider_key(name, fields=merged)
         api_key = (fields.get("api_key") or profile.get("api_key") or "").strip()
         if not api_key and d.env_key:
             api_key = os.environ.get(d.env_key, "").strip()
@@ -1746,6 +1752,13 @@ class SessionManager:
             provider = self._model_provider(m)
             if provider == "ollama":
                 return self._ollama_alive()
+            if provider == "bedrock":
+                # Bedrock is keyless but requires explicit setup. `secrets.get` returns
+                # None when never configured and {} when saved with all fields blank —
+                # the documented default-credential-chain mode (IAM role / env vars). An
+                # empty dict is a valid config, so gate on presence, not truthiness, or
+                # IAM-role users never see any Bedrock models.
+                return self.secrets.get("provider:bedrock") is not None
             return self._provider_configured(provider)
 
         selectable = [m for m in self._curated_models() if _selectable(m)]

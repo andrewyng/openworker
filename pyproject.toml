@@ -9,7 +9,7 @@ description = "Agent coworker platform — provider-agnostic agentic coworker ru
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.0",
-    "anthropic>=0.40",  # native Claude Messages API provider
+    "anthropic[bedrock]>=0.40",  # native Claude Messages API + AWS Bedrock (pulls boto3/botocore)
     "google-genai>=1.0",  # native Gemini provider
     "textual>=1.0",
     "fastapi>=0.110",

@@ -52,7 +52,9 @@ Under the hood:
 
 Model access is yours: pick a provider, paste your key, switch anytime. Supported out of the box:
 
-**OpenAI · Anthropic · Google Gemini · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI)** - plus open-weight models via **Together** and **Fireworks**, and fully local models via **Ollama**.
+**OpenAI · Anthropic · Google Gemini · AWS Bedrock · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI)** - plus open-weight models via **Together** and **Fireworks**, and fully local models via **Ollama**.
+
+**AWS Bedrock** — access Claude models on Bedrock using your existing AWS credentials. Supports SSO profiles, explicit access keys, and IAM roles. Configure your AWS profile and region in Settings → Models. Credentials are refreshed automatically when they rotate.
 
 A curated model list marks what we've verified for tool-calling work. Adding any model string works at your own risk.
 

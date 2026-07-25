@@ -61,8 +61,17 @@ _BUDGET_THINKING_PREFIXES = (
 )
 
 
+def _bedrock_base(model: str) -> str:
+    """Strip a Bedrock cross-region inference-profile prefix (`us.`, `eu.`, `apac.`, …)
+    and the `anthropic.` vendor segment so the family heuristics below — which match on
+    `claude-*` — also work for Bedrock ids like `us.anthropic.claude-haiku-4-5-…`."""
+    marker = "anthropic."
+    idx = model.find(marker)
+    return model[idx + len(marker) :] if idx != -1 else model
+
+
 def _uses_budget_thinking(model: str) -> bool:
-    return model.startswith(_BUDGET_THINKING_PREFIXES)
+    return _bedrock_base(model).startswith(_BUDGET_THINKING_PREFIXES)
 
 
 # Fable/Mythos 5 run safety classifiers that can decline benign-adjacent requests
@@ -74,6 +83,9 @@ _FALLBACK_MODEL = "claude-opus-4-8"
 
 
 def _needs_refusal_fallback(model: str) -> bool:
+    # Deliberately matches bare `claude-*` ids only. The server-side fallback beta is
+    # unavailable on Bedrock, so Bedrock ids (`us.anthropic.claude-…`) must NOT match —
+    # they never do, which is the behavior we want.
     return model.startswith(("claude-fable", "claude-mythos"))
 
 

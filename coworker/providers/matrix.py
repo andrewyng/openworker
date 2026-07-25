@@ -88,6 +88,13 @@ MATRIX: dict[str, ModelEntry] = {
     "qwen:qwen3-max": ModelEntry("Qwen3 Max · Alibaba"),
     "xai:grok-4.3": ModelEntry("Grok 4.3 · xAI"),
     "mistral:mistral-large-latest": ModelEntry("Mistral Large · Mistral"),
+    # -- AWS Bedrock (Claude via IAM credentials) ----------------------------------
+    "bedrock:us.anthropic.claude-opus-4-8": ModelEntry(
+        "Claude Opus 4.8 · Bedrock", _AGENTIC_VISION
+    ),
+    "bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0": ModelEntry(
+        "Claude Haiku 4.5 · Bedrock", _AGENTIC_VISION
+    ),
     # -- resellers (their model namespaces, verbatim) -----------------------------
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
     "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together"),

@@ -8,8 +8,9 @@ model string and builds (and caches) its client from the matching SecretStore pr
 
 Today: `openai` (the default, with an optional custom endpoint that covers Azure OpenAI's
 `/openai/v1` and any OpenAI-compliant gateway), `anthropic` (native Messages API via
-`AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), and `ollama`
-(local, OpenAI-compatible `/v1`). Bedrock/Vertex auth for Claude is future work.
+`AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `bedrock`
+(Claude via AWS IAM credentials — `BedrockProvider`), and `ollama`
+(local, OpenAI-compatible `/v1`).
 """
 
 from __future__ import annotations
@@ -124,6 +125,37 @@ def _build_gemini(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Same deferred-key contract as anthropic (GeminiProvider/resolve_api_key).
     api_key = ((profile or {}).get("api_key") or "").strip() or None
     return GeminiProvider(api_key=api_key, secrets=secrets)
+
+
+def _build_bedrock(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    from .bedrock_provider import BedrockProvider
+
+    aws_profile = ((profile or {}).get("aws_profile") or "").strip() or None
+    aws_region = ((profile or {}).get("aws_region") or "").strip() or "us-east-1"
+    aws_access_key_id = ((profile or {}).get("aws_access_key_id") or "").strip() or None
+    aws_secret_access_key = (
+        (profile or {}).get("aws_secret_access_key") or ""
+    ).strip() or None
+    aws_session_token = (
+        (profile or {}).get("aws_session_token") or ""
+    ).strip() or None
+    # Thinking is OFF by default on Bedrock (0) unless the user sets a budget in the
+    # hidden profile override. When set, the provider picks the right shape per model
+    # family (budget-style for Haiku 4.5, adaptive for 4.6+/Claude 5 — see
+    # AnthropicProvider._request_kwargs, which now handles Bedrock's `us.anthropic.` ids).
+    try:
+        thinking_budget = int(str((profile or {}).get("thinking_budget") or "").strip())
+    except ValueError:
+        thinking_budget = 0
+    return BedrockProvider(
+        aws_profile=aws_profile,
+        aws_region=aws_region,
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+        aws_session_token=aws_session_token,
+        secrets=secrets,
+        thinking_budget=thinking_budget,
+    )
 
 
 def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -251,6 +283,58 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         build=_build_gemini,
         recommended_model="gemini-3.6-flash",
         env_key="GEMINI_API_KEY",
+    ),
+    # AWS Bedrock — IAM auth (profile or explicit keys), no API key needed.
+    ProviderDescriptor(
+        name="bedrock",
+        title="AWS Bedrock (Claude)",
+        needs_key=False,
+        fields=[
+            ProviderField(
+                "aws_profile",
+                "AWS Profile",
+                secret=False,
+                required=False,
+                placeholder="default",
+                help="AWS profile from ~/.aws/credentials or ~/.aws/config (supports SSO). Leave blank for the default credential chain.",
+            ),
+            ProviderField(
+                "aws_region",
+                "AWS Region",
+                secret=False,
+                required=False,
+                placeholder="us-east-1",
+                default="us-east-1",
+                help="Bedrock region (e.g., us-east-1, us-west-2, eu-west-1).",
+            ),
+            ProviderField(
+                "aws_access_key_id",
+                "Access Key ID (optional)",
+                secret=False,
+                required=False,
+                placeholder="AKIA…",
+                help="Explicit AWS access key. Leave blank to use profile or default credential chain.",
+            ),
+            ProviderField(
+                "aws_secret_access_key",
+                "Secret Access Key (optional)",
+                secret=True,
+                required=False,
+                placeholder="",
+                help="Explicit AWS secret key. Required if Access Key ID is provided.",
+            ),
+            ProviderField(
+                "aws_session_token",
+                "Session Token (optional)",
+                secret=True,
+                required=False,
+                placeholder="",
+                help="Required for temporary credentials (SSO / assumed-role keys starting with ASIA…). Leave blank for long-lived keys.",
+            ),
+        ],
+        build=_build_bedrock,
+        recommended_model="us.anthropic.claude-opus-4-8",
+        blurb="Uses your AWS credentials (SSO profile, access keys, or IAM role) to access Claude models on Bedrock.",
     ),
     # OpenAI-compatible vendors, listed as first-class providers so users don't need to know the
     # "point the OpenAI slot at a different endpoint" trick (owner call, 2026-07-04). Each keeps
@@ -398,18 +482,56 @@ def verify_provider_key(
     *,
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
+    fields: Optional[dict[str, Any]] = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
     """Validate a provider's credentials with one cheap, read-only call (list models) — the same
     pattern connectors use to validate tokens. Transient: callers pass the key directly so a user
     can Test before saving. Never raises; returns {ok, error?}.
+
+    Bedrock is keyless (IAM auth), so it reads its credentials from `fields` (profile, region,
+    explicit keys + session token) rather than `api_key`.
     """
     import httpx
 
     d = _BY_NAME.get(name) or _BY_NAME["openai"]
     key = (api_key or "").strip()
+    fields = fields or {}
     try:
-        if name == "anthropic":
+        if name == "bedrock":
+            # Bedrock uses IAM auth — validate with STS GetCallerIdentity (cheapest
+            # read-only call that proves the credentials are live). Build the session
+            # from exactly the fields the user entered so the Test button exercises those
+            # credentials, not whatever ambient default-chain creds happen to exist.
+            import boto3
+
+            def _f(k: str) -> Optional[str]:
+                v = fields.get(k)
+                return v.strip() if isinstance(v, str) and v.strip() else None
+
+            session_kwargs: dict[str, Any] = {}
+            region = _f("aws_region")
+            if region:
+                session_kwargs["region_name"] = region
+            access_key = _f("aws_access_key_id")
+            secret_key = _f("aws_secret_access_key")
+            if access_key and secret_key:
+                # Explicit credentials (mutually exclusive with a profile — mirror the
+                # provider's precedence so Test matches real invocation).
+                session_kwargs["aws_access_key_id"] = access_key
+                session_kwargs["aws_secret_access_key"] = secret_key
+                token = _f("aws_session_token")
+                if token:
+                    session_kwargs["aws_session_token"] = token
+            else:
+                profile = _f("aws_profile")
+                if profile:
+                    session_kwargs["profile_name"] = profile
+            session = boto3.Session(**session_kwargs)
+            sts = session.client("sts")
+            sts.get_caller_identity()
+            return {"ok": True}
+        elif name == "anthropic":
             resp = httpx.get(
                 "https://api.anthropic.com/v1/models",
                 headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
@@ -439,6 +561,14 @@ def verify_provider_key(
                 timeout=timeout,
             )
     except Exception as exc:  # DNS/connection/timeout — never let it bubble to a 500
+        if name == "bedrock":
+            msg = str(exc)
+            if "InvalidClientTokenId" in msg or "SignatureDoesNotMatch" in msg or "credentials" in msg.lower():
+                return {"ok": False, "error": "Invalid AWS credentials."}
+            return {
+                "ok": False,
+                "error": f"Couldn't reach AWS Bedrock ({exc.__class__.__name__}).",
+            }
         return {
             "ok": False,
             "error": f"Couldn't reach {d.title} ({exc.__class__.__name__}).",
