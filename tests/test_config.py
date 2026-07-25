@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import stat
+import subprocess
+import sys
 from pathlib import Path
 
 from coworker.config import load_config
@@ -70,17 +74,32 @@ def test_workspace_trust_is_canonical_and_user_owned(tmp_path):
     real = tmp_path / "real"
     real.mkdir()
     alias = tmp_path / "alias"
-    alias.symlink_to(real, target_is_directory=True)
+    workspace = real
+    try:
+        alias.symlink_to(real, target_is_directory=True)
+        workspace = alias
+    except OSError:
+        if sys.platform != "win32":
+            raise
     store = WorkspaceTrustStore(tmp_path / "state" / "workspace_trust.json")
 
-    canonical = store.set_trusted(alias, True)
+    canonical = store.set_trusted(workspace, True)
     assert canonical == str(real.resolve())
     assert store.is_trusted(real)
     assert store.list() == [str(real.resolve())]
-    assert (store.path.stat().st_mode & 0o777) == 0o600
+    if sys.platform == "win32":
+        acl = subprocess.run(
+            ["icacls", str(store.path)], capture_output=True, text=True
+        ).stdout
+        user = os.environ.get("USERNAME", "")
+        assert user and user in acl
+        assert "NT AUTHORITY\\SYSTEM" not in acl
+        assert "BUILTIN\\Administrators" not in acl
+    else:
+        assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
 
     store.set_trusted(real, False)
-    assert not store.is_trusted(alias)
+    assert not store.is_trusted(workspace)
 
     store.path.write_text("[]")
     assert store.list() == []

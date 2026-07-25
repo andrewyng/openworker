@@ -166,6 +166,10 @@ async def test_ui_refresh_cross_cutting_e2e(fake_slack, tmp_path, monkeypatch):
                 agent="ops",
             )
         )
+        # Auto-title generation is a separate fire-and-forget provider call. Mark
+        # this purpose-built incident session as named so that unrelated task cannot
+        # race the Step 4 assertion that a muted message made no provider call.
+        assert mgr.session_store.rename(SID, "Deploy incident")
         mgr.subscriptions.subscribe(SID, f"slack:{CHANNEL}")
         assert mgr.set_inbox_binding(
             "ops-incidents", channel="slack", target=CHANNEL

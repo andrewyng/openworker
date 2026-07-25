@@ -215,7 +215,6 @@ def _slack_frame():
 async def test_one_hub_fans_out_to_both_adapters(monkeypatch):
     """THE step-3 invariant: slack + github share one relay socket; frames land
     on their own adapter by provider tag."""
-    monkeypatch.setenv("SLACK_API_URL", "http://127.0.0.1:9/")
     hub = RelayHub(
         "wss://relay.test/ws",
         lambda: "jwt",
@@ -227,6 +226,11 @@ async def test_one_hub_fans_out_to_both_adapters(monkeypatch):
         teams={"T1": {"bot_token": "xoxb-1", "bot_user_id": "UBOT"}},
         hub=hub,
     )
+
+    async def no_slack_get(team_id, method, params):
+        return None
+
+    monkeypatch.setattr(slack, "_slack_get", no_slack_get)
     github = GitHubRelayAdapter(hub, installs={"101": {"account_login": "acme"}})
     slack_events: list[MessageEvent] = []
     github_events: list[MessageEvent] = []

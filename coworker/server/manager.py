@@ -2438,6 +2438,19 @@ class SessionManager:
         await self.scheduler.stop()
         await self.stop_gateway()
         await self.mcp.aclose()
+        # Every workspace engine owns a persistent shell. Closing the web app must
+        # reap those children—on Windows they otherwise keep the workspace directory
+        # locked, and on every OS they outlive the server that created them.
+        closed_executors: set[int] = set()
+        for engine in self._engines.values():
+            executor = getattr(engine, "executor", None)
+            if executor is None or id(executor) in closed_executors:
+                continue
+            closed_executors.add(id(executor))
+            try:
+                executor.close()
+            except Exception:
+                logger.exception("failed to close session executor")
         self.audit_store.close()
 
     # -- automation (scheduled tasks) -------------------------------------------

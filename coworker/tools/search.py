@@ -6,7 +6,9 @@ fallback skips a hardcoded set of heavy dirs. Read-only, workspace-scoped. Retur
 
 from __future__ import annotations
 
+import base64
 import fnmatch
+import json
 import os
 import re
 import shutil
@@ -88,9 +90,7 @@ def search_tools(workspace: str) -> list:
         if rg:
             cmd = [
                 rg,
-                "--line-number",
-                "--no-heading",
-                "--color=never",
+                "--json",
                 "--max-count",
                 str(n),
                 "-e",
@@ -105,7 +105,14 @@ def search_tools(workspace: str) -> list:
                 cmd += ["--glob", f"!**/{ignored}/**"]
             cmd.append(str(base))
             try:
-                out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                out = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=30,
+                )
             except Exception as exc:
                 return {"error": f"grep failed: {exc}"}
             if out.returncode not in (0, 1):  # 1 = no matches
@@ -135,21 +142,46 @@ def _rel(path: str, root: Path) -> str:
 
 
 def _parse_rg(stdout: str, root: Path, n: int) -> dict[str, Any]:
+    """Parse ripgrep's structured stream without ambiguous path delimiters."""
     matches: list[dict[str, Any]] = []
-    for line in stdout.splitlines():
-        parts = line.split(":", 2)
-        if len(parts) == 3:
-            f, ln, txt = parts
+    for raw in stdout.splitlines():
+        try:
+            event = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if event.get("type") != "match":
+            continue
+        data = event.get("data") or {}
+        path = _rg_value(data.get("path"))
+        text = _rg_value(data.get("lines")).rstrip("\r\n")
+        line_number = data.get("line_number")
+        if path:
             matches.append(
                 {
-                    "file": _rel(f, root),
-                    "line": int(ln) if ln.isdigit() else 0,
-                    "text": txt[:300],
+                    "file": _rel(path, root),
+                    "line": line_number if isinstance(line_number, int) else 0,
+                    "text": text[:300],
                 }
             )
         if len(matches) >= n:
             break
     return {"count": len(matches), "matches": matches}
+
+
+def _rg_value(value: Any) -> str:
+    """Decode ripgrep's text or base64 JSON value."""
+    if not isinstance(value, dict):
+        return ""
+    text = value.get("text")
+    if isinstance(text, str):
+        return text
+    encoded = value.get("bytes")
+    if not isinstance(encoded, str):
+        return ""
+    try:
+        return base64.b64decode(encoded).decode("utf-8", errors="replace")
+    except (ValueError, TypeError):
+        return ""
 
 
 def _py_grep(

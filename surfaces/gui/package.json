@@ -20,7 +20,7 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "simple-icons": "^16.26.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
@@ -32,10 +32,10 @@
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.5.2",
     "jsdom": "^25.0.1",
-    "postcss": "^8.5.16",
+    "postcss": "^8.5.23",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.5.3",
-    "vite": "^5.4.0",
-    "vitest": "^2.1.9"
+    "vite": "^6.4.3",
+    "vitest": "^3.2.7"
   }
 }
