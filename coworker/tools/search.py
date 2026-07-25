@@ -91,6 +91,14 @@ def search_tools(workspace: str) -> list:
                 "--line-number",
                 "--no-heading",
                 "--color=never",
+                # Always print the filename (even for a single-file target) and
+                # NUL-separate it from `line:text`, so parsing never has to guess
+                # where the path ends — a Windows drive-letter colon (C:\ws\a.py),
+                # or a colon inside the matched text, would otherwise be taken as a
+                # field separator (issue #17). Without --with-filename a single-file
+                # search emits no path and no NUL, and the parser would drop it.
+                "--with-filename",
+                "--null",
                 "--max-count",
                 str(n),
                 "-e",
@@ -135,18 +143,23 @@ def _rel(path: str, root: Path) -> str:
 
 
 def _parse_rg(stdout: str, root: Path, n: int) -> dict[str, Any]:
+    # `rg --null` emits each match as `<path>\0<line>:<text>`. Splitting the path off
+    # on the NUL byte first means the colon inside a Windows drive letter (C:\...) is
+    # never confused with the line/text separators — the old `split(":", 2)` parsed
+    # `C:\ws\a.py:12:def f()` as file="C", line="\ws\a.py", text="12:def f()".
     matches: list[dict[str, Any]] = []
     for line in stdout.splitlines():
-        parts = line.split(":", 2)
-        if len(parts) == 3:
-            f, ln, txt = parts
-            matches.append(
-                {
-                    "file": _rel(f, root),
-                    "line": int(ln) if ln.isdigit() else 0,
-                    "text": txt[:300],
-                }
-            )
+        path, sep, rest = line.partition("\0")
+        if not sep:
+            continue
+        ln, _, txt = rest.partition(":")
+        matches.append(
+            {
+                "file": _rel(path, root),
+                "line": int(ln) if ln.isdigit() else 0,
+                "text": txt[:300],
+            }
+        )
         if len(matches) >= n:
             break
     return {"count": len(matches), "matches": matches}
