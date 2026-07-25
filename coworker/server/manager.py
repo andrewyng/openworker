@@ -1286,31 +1286,102 @@ class SessionManager:
 
     # -- web search -------------------------------------------------------------
     def get_web_search(self) -> dict[str, Any]:
-        from ..config import load_config
-        from ..web import provider_names
+        """Active web-search engine + per-provider key status for Settings.
 
-        profile = self.secrets.get("web_search:default") or {}
+        Never returns secret values. `has_key` / `key_source` reflect the *active*
+        provider (store or env). Each entry in `providers` carries its own status so the
+        UI can show Connected vs Needs key without clobbering keys when switching.
+        """
+        from ..config import load_config
+        from ..web import (
+            WEB_SEARCH_PROFILE,
+            key_source,
+            provider_names,
+            provider_requires_key,
+        )
+
+        profile = self.secrets.get(WEB_SEARCH_PROFILE) or {}
         provider = (
             profile.get("provider") or load_config().web_search_provider or "duckduckgo"
         )
+        src = key_source(profile, provider)
+        providers_out: list[dict[str, Any]] = []
+        for name in provider_names():
+            needs = provider_requires_key(name)
+            p_src = key_source(profile, name) if needs else None
+            providers_out.append(
+                {
+                    "name": name,
+                    "requires_key": needs,
+                    # Keyless engines are always usable; keyed ones need store or env.
+                    "configured": (not needs) or bool(p_src),
+                    "has_key": bool(p_src),
+                    "key_source": p_src,
+                }
+            )
         return {
             "provider": provider,
-            "has_key": bool(profile.get("api_key")),
-            "providers": provider_names(),
+            "has_key": bool(src),
+            "key_source": src,
+            "providers": providers_out,
         }
 
     def set_web_search(
         self, provider: str, api_key: Optional[str] = None
     ) -> dict[str, Any]:
-        from ..web import provider_names
+        """Select the active web-search provider and optionally store its API key.
+
+        Keys are kept *per provider* under `keys` so switching DuckDuckGo ↔ Tavily ↔ Brave
+        does not wipe credentials. Omitting `api_key` only changes the selection (existing
+        keys stay). Legacy single-`api_key` profiles are migrated into `keys` on write.
+        Merge reads use `get_raw` so `${VAR}` refs are not expanded into plaintext on disk.
+        """
+        from ..web import (
+            WEB_SEARCH_PROFILE,
+            key_source,
+            provider_names,
+            provider_requires_key,
+            stored_keys,
+        )
 
         if provider not in provider_names():
             return {"ok": False, "error": f"unknown provider: {provider}"}
-        profile: dict[str, Any] = {"provider": provider}
+
+        # Merge from unresolved store data so `${VAR}` refs stay refs (not plaintext).
+        existing = self.secrets.get_raw(WEB_SEARCH_PROFILE) or {}
+        keys = stored_keys(existing)
+        if isinstance(api_key, str):
+            api_key = api_key.strip()
+        else:
+            api_key = None
         if api_key:
-            profile["api_key"] = api_key
-        self.secrets.put("web_search:default", profile)
-        return {"ok": True, "provider": provider}
+            if not provider_requires_key(provider):
+                return {
+                    "ok": False,
+                    "error": f"{provider} does not use an API key",
+                }
+            keys[provider] = api_key
+
+        # Refuse to activate a key-required engine with neither a stored key nor env.
+        if provider_requires_key(provider):
+            # After optional write above, recompute availability including env.
+            probe = {"provider": provider, "keys": keys}
+            if not key_source(probe, provider):
+                return {
+                    "ok": False,
+                    "error": f"{provider} needs an API key",
+                    "provider": provider,
+                }
+
+        profile: dict[str, Any] = {"provider": provider, "keys": keys}
+        self.secrets.put(WEB_SEARCH_PROFILE, profile)
+        src = key_source(profile, provider)
+        return {
+            "ok": True,
+            "provider": provider,
+            "has_key": bool(src),
+            "key_source": src,
+        }
 
     # -- model providers (OpenAI, Ollama, …) ------------------------------------
     def get_providers(self) -> list[dict[str, Any]]:

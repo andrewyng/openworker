@@ -81,7 +81,8 @@ def test_build_provider_third_party_requires_key():
     assert isinstance(build_provider("brave", "brv-x"), BraveProvider)
 
 
-def test_tool_surfaces_missing_key_error(tmp_path):
+def test_tool_surfaces_missing_key_error(tmp_path, monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     secrets = SecretStore(tmp_path / "secrets.json")
     secrets.put("web_search:default", {"provider": "tavily"})  # no api_key
     out = make_web_search_tool(secrets)(
@@ -94,9 +95,71 @@ def test_resolve_provider_from_secretstore(tmp_path):
     from coworker.web import resolve_provider
 
     secrets = SecretStore(tmp_path / "secrets.json")
+    # Legacy single-key shape still works.
     secrets.put("web_search:default", {"provider": "tavily", "api_key": "tvly-123"})
     p = resolve_provider(secrets)
     assert p.name == "tavily" and p.api_key == "tvly-123"
+
+
+def test_resolve_provider_per_provider_keys(tmp_path, monkeypatch):
+    from coworker.web import resolve_provider
+
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.delenv("BRAVE_API_KEY", raising=False)
+    secrets = SecretStore(tmp_path / "secrets.json")
+    secrets.put(
+        "web_search:default",
+        {
+            "provider": "brave",
+            "keys": {"tavily": "tvly-keep", "brave": "brv-active"},
+        },
+    )
+    p = resolve_provider(secrets)
+    assert p.name == "brave" and p.api_key == "brv-active"
+    # Switching selection does not need a re-paste of Tavily's key.
+    secrets.put(
+        "web_search:default",
+        {"provider": "tavily", "keys": {"tavily": "tvly-keep", "brave": "brv-active"}},
+    )
+    p2 = resolve_provider(secrets)
+    assert p2.name == "tavily" and p2.api_key == "tvly-keep"
+
+
+def test_resolve_provider_env_fallback(tmp_path, monkeypatch):
+    from coworker.web import resolve_provider
+
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-from-env")
+    secrets = SecretStore(tmp_path / "secrets.json")
+    secrets.put("web_search:default", {"provider": "tavily", "keys": {}})
+    p = resolve_provider(secrets)
+    assert p.name == "tavily" and p.api_key == "tvly-from-env"
+
+
+def test_web_search_switch_preserves_env_refs(tmp_path, monkeypatch):
+    """Provider switches must not materialize `${VAR}` keys into plaintext on disk."""
+    from coworker.server.manager import SessionManager
+    from coworker.web import resolve_provider
+
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-real-secret")
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    secrets = SecretStore()
+    secrets.put(
+        "web_search:default",
+        {"provider": "tavily", "keys": {"tavily": "${TAVILY_API_KEY}"}},
+    )
+    mgr = SessionManager(data_dir=tmp_path / "data")
+
+    assert mgr.set_web_search("duckduckgo")["ok"]
+    raw = secrets.get_raw("web_search:default")
+    assert raw["provider"] == "duckduckgo"
+    assert raw["keys"]["tavily"] == "${TAVILY_API_KEY}"
+    assert "tvly-real-secret" not in secrets.path.read_text(encoding="utf-8")
+
+    # Re-select without re-pasting; runtime still resolves the ref.
+    assert mgr.set_web_search("tavily")["ok"]
+    p = resolve_provider(secrets)
+    assert p.name == "tavily" and p.api_key == "tvly-real-secret"
+    assert secrets.get_raw("web_search:default")["keys"]["tavily"] == "${TAVILY_API_KEY}"
 
 
 def test_web_search_rest(tmp_path, monkeypatch):
@@ -105,10 +168,20 @@ def test_web_search_rest(tmp_path, monkeypatch):
     from coworker.server.app import create_app
     from coworker.server.manager import SessionManager
 
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.delenv("BRAVE_API_KEY", raising=False)
     monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
     client = TestClient(create_app(SessionManager(data_dir=tmp_path / "data")))
 
-    assert client.get("/v1/web-search").json()["provider"] == "duckduckgo"
+    before = client.get("/v1/web-search").json()
+    assert before["provider"] == "duckduckgo"
+    assert before["has_key"] is False
+    # Structured provider rows for the Settings UI.
+    by_name = {p["name"]: p for p in before["providers"]}
+    assert by_name["duckduckgo"]["configured"] is True
+    assert by_name["duckduckgo"]["requires_key"] is False
+    assert by_name["tavily"]["configured"] is False
+
     assert (
         client.post(
             "/v1/web-search", json={"provider": "tavily", "api_key": "sk-secret-xyz"}
@@ -117,12 +190,26 @@ def test_web_search_rest(tmp_path, monkeypatch):
     )
     got = client.get("/v1/web-search").json()
     assert got["provider"] == "tavily" and got["has_key"] is True
+    assert got["key_source"] == "store"
     assert (
         "sk-secret-xyz" not in client.get("/v1/web-search").text
     )  # key never returned
     assert (
         client.post("/v1/web-search", json={"provider": "nope"}).json()["ok"] is False
     )
+    # Cannot activate a key-required engine with no key.
+    assert (
+        client.post("/v1/web-search", json={"provider": "brave"}).json()["ok"] is False
+    )
+    # Switching to DuckDuckGo keeps the Tavily key for later.
+    assert client.post("/v1/web-search", json={"provider": "duckduckgo"}).json()["ok"]
+    again = client.get("/v1/web-search").json()
+    assert again["provider"] == "duckduckgo"
+    tavily = next(p for p in again["providers"] if p["name"] == "tavily")
+    assert tavily["configured"] is True and tavily["has_key"] is True
+    # Re-select Tavily without re-pasting the key.
+    assert client.post("/v1/web-search", json={"provider": "tavily"}).json()["ok"]
+    assert client.get("/v1/web-search").json()["provider"] == "tavily"
 
 
 def test_engine_registers_web_search(tmp_path):

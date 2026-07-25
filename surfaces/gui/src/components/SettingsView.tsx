@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import {
   getSettings,
+  getWebSearch,
   setOnboarded,
   setPdfSettings,
   setScratchBase,
   setSessionsPeek,
   type ModelSettings,
+  setWebSearch,
   type PdfSettings,
+  type WebSearchProviderInfo,
+  type WebSearchSettings,
 } from "../api";
 import {
   cancelDictationModelDownload,
@@ -20,14 +24,15 @@ import {
   isTauri,
   listenDictationDownloadProgress,
   markDictationTestPassed,
+  openExternal,
   pickFolder,
-  setAutostart,
   setKeepAwake,
   startDictation,
   stopDictation,
   verifyDictationModel,
   type DictationDownloadProgress,
   type DictationStatus,
+  setAutostart,
 } from "../tauri";
 import { useThemePref } from "../theme";
 import { Icon } from "./Icon";
@@ -36,6 +41,9 @@ import { ModelsTab } from "./ManageTabs";
 import { GalleryModal } from "./GalleryModal";
 import { PersonasTab } from "./PersonasTab";
 import { showPersonas } from "../flags";
+import tavilyLogo from "./web-search-logos/tavily.svg";
+import braveLogo from "./web-search-logos/brave.svg";
+import ddgLogo from "./web-search-logos/duckduckgo.svg";
 
 // Settings, restructured (Option 2) into a full-page surface that mirrors IntegrationsView's shell:
 // a left sub-nav (Appearance · Files · Models · Personas) + centered panel, replacing the old
@@ -44,7 +52,7 @@ import { showPersonas } from "../flags";
 // Models + Personas host the existing tab components inside the page shell (field re-skin to follow).
 // "appearance" is the General tab's stable key — callers deep-link with it, so the
 // rename (UX-021) changed only the label. "files" folded into General as a card.
-type SetTab = "appearance" | "models" | "voice" | "personas";
+type SetTab = "appearance" | "models" | "search" | "voice" | "personas";
 
 const CARD = "rounded-xl2 border border-line bg-panel";
 const FIELD_LABEL = "text-[12.5px] font-medium text-ink";
@@ -55,9 +63,10 @@ const BTN_ACCENT = "text-[12.5px] px-3 py-2 rounded-lg bg-accent text-white shri
 const BTN_BORDERED =
   "text-[12.5px] px-3 py-2 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
 
-const SET_TABS: { key: SetTab; label: string; icon: "sliders" | "code" | "mic" | "sparkle" }[] = [
+const SET_TABS: { key: SetTab; label: string; icon: "sliders" | "code" | "search" | "mic" | "sparkle" }[] = [
   { key: "appearance", label: "General", icon: "sliders" },
   { key: "models", label: "Models", icon: "code" },
+  { key: "search", label: "Web search", icon: "search" },
   { key: "voice", label: "Voice input", icon: "mic" },
   { key: "personas", label: "Personas", icon: "sparkle" },
 ];
@@ -117,6 +126,8 @@ export function SettingsView({
                 <TokenSavingsCard />
               </div>
             </section>
+          ) : tab === "search" ? (
+            <WebSearchSection />
           ) : tab === "voice" ? (
             <VoiceInputSection />
           ) : (
@@ -153,7 +164,7 @@ function VoiceInputSection() {
   useEffect(() => {
     if (!desktop) return;
     let active = true;
-    let unlisten = () => {};
+    let unlisten = () => { };
     void listenDictationDownloadProgress((next) => {
       if (active) setProgress(next);
     }).then((stop) => {
@@ -688,31 +699,302 @@ function FilesCard() {
   return (
     <div className={CARD + " p-4 mb-4"}>
       <div className={FIELD_LABEL}>Files</div>
-        <div className="flex items-center gap-2 mt-2.5">
-          <input
-            className={INPUT}
-            type="text"
-            placeholder="~/OpenWorker"
-            value={scratchDraft}
-            spellCheck={false}
-            autoComplete="off"
-            onChange={(e) => setScratchDraft(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && saveScratch()}
-          />
-          {desktop && (
-            <button className={BTN_BORDERED} onClick={browseScratch} title="Pick a folder">
-              Browse
-            </button>
-          )}
-          <button className={BTN_ACCENT} onClick={saveScratch} disabled={!scratchDraft.trim()}>
-            Save
+      <div className="flex items-center gap-2 mt-2.5">
+        <input
+          className={INPUT}
+          type="text"
+          placeholder="~/OpenWorker"
+          value={scratchDraft}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(e) => setScratchDraft(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && saveScratch()}
+        />
+        {desktop && (
+          <button className={BTN_BORDERED} onClick={browseScratch} title="Pick a folder">
+            Browse
           </button>
-        </div>
+        )}
+        <button className={BTN_ACCENT} onClick={saveScratch} disabled={!scratchDraft.trim()}>
+          Save
+        </button>
+      </div>
       <div className={FIELD_HELP}>
         Each conversation gets its own folder under this location. Existing conversations keep their current
         folder; you can grant access to more folders inside any conversation.
       </div>
       {scratchMsg && <div className="text-[12.5px] text-muted mt-2.5">{scratchMsg}</div>}
     </div>
+  );
+}
+// -- Web search provider selector (tavily / brave / duckduckgo) · issue #51
+const SEARCH_LABELS: Record<string, string> = {
+  duckduckgo: "DuckDuckGo",
+  tavily: "Tavily",
+  brave: "Brave Search",
+};
+
+const SEARCH_HELP: Record<string, string> = {
+  duckduckgo: "Works with no API key. Good default for basic queries.",
+  tavily: "Curated, LLM-optimized results for agents. Requires an API key.",
+  brave: "Brave Search API. Requires an API key.",
+};
+
+const SEARCH_KEY_HELP: Record<string, { url: string; label: string }> = {
+  tavily: { url: "https://app.tavily.com/home", label: "app.tavily.com" },
+  brave: { url: "https://brave.com/search/api/", label: "brave.com/search/api" },
+};
+
+const SEARCH_LOGOS: Record<string, string> = {
+  duckduckgo: ddgLogo,
+  tavily: tavilyLogo,
+  brave: braveLogo,
+};
+
+const FALLBACK_PROVIDERS: WebSearchProviderInfo[] = [
+  { name: "duckduckgo", requires_key: false, configured: true, has_key: false, key_source: null },
+  { name: "tavily", requires_key: true, configured: false, has_key: false, key_source: null },
+  { name: "brave", requires_key: true, configured: false, has_key: false, key_source: null },
+];
+
+function searchLabel(name: string) {
+  return SEARCH_LABELS[name] || name;
+}
+
+function WebSearchSection() {
+  // Active provider on the server (what the agent uses).
+  const [active, setActive] = useState("duckduckgo");
+  // Provider the user is looking at in the list (may differ until save/activate).
+  const [selected, setSelected] = useState("duckduckgo");
+  const [providers, setProviders] = useState<WebSearchProviderInfo[]>(FALLBACK_PROVIDERS);
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const applySettings = (s: WebSearchSettings) => {
+    setActive(s.provider);
+    setSelected(s.provider);
+    if (Array.isArray(s.providers) && s.providers.length && typeof s.providers[0] === "object") {
+      setProviders(s.providers);
+    }
+  };
+
+  const refresh = () =>
+    getWebSearch()
+      .then(applySettings)
+      .catch(() => {
+        // Agent still works with defaults if the endpoint is unreachable.
+      });
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  const info = providers.find((p) => p.name === selected) || FALLBACK_PROVIDERS.find((p) => p.name === selected);
+  const needsKey = !!info?.requires_key;
+  const configured = !!info?.configured;
+  const isActive = active === selected;
+
+  const save = async (provider: string, key?: string) => {
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const res = await setWebSearch(provider, key);
+      if (!res.ok) throw new Error(res.error || "Could not save web search settings.");
+      const fresh = await getWebSearch();
+      applySettings(fresh);
+      // Keep focus on the provider the user just acted on (applySettings resets selection
+      // to active, which is correct after a successful activate/save).
+      setSelected(fresh.provider);
+      setApiKeyDraft("");
+      setMessage(`Using ${searchLabel(fresh.provider)}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectProvider = (name: string) => {
+    setSelected(name);
+    setApiKeyDraft("");
+    setMessage(null);
+    setError(null);
+    const row = providers.find((p) => p.name === name);
+    // Configured (or keyless) engines activate immediately — no extra Save click.
+    if (row?.configured && name !== active) {
+      void save(name);
+    }
+  };
+
+  const statusBadge = (p: WebSearchProviderInfo, isSelected: boolean) => {
+    if (active === p.name) {
+      if (!p.requires_key) {
+        return <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent">Active</span>;
+      }
+      return (
+        <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700">
+          Active · connected
+        </span>
+      );
+    }
+    if (!isSelected) {
+      if (p.configured && p.requires_key) {
+        return <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-green-50/80 text-green-700">Key saved</span>;
+      }
+      if (p.requires_key && !p.configured) {
+        return <span className="text-[11px] text-faint">Needs key</span>;
+      }
+      return null;
+    }
+    if (p.requires_key && !p.configured) {
+      return <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">Needs key</span>;
+    }
+    return null;
+  };
+
+  return (
+    <section>
+      <PanelHead
+        title="Web search"
+        sub="Which search engine your agent uses when it needs fresh information from the web."
+      />
+
+      <div className={CARD + " p-4 mb-4"}>
+        <div className={FIELD_LABEL}>Search provider</div>
+        <div className={FIELD_HELP}>
+          DuckDuckGo works with no setup. Tavily and Brave need an API key (stored only on this machine).
+        </div>
+
+        <div className="mt-3 space-y-2">
+          {providers.map((p) => {
+            const isSelected = selected === p.name;
+            const label = searchLabel(p.name);
+            const logoUrl = SEARCH_LOGOS[p.name];
+            return (
+              <div key={p.name}>
+                <button
+                  type="button"
+                  onClick={() => selectProvider(p.name)}
+                  disabled={saving}
+                  className={
+                    "w-full text-left rounded-lg border text-[13px] transition-colors " +
+                    (isSelected
+                      ? "border-accent bg-accent/5 text-accent font-medium"
+                      : "border-line bg-paper text-ink hover:border-lineStrong") +
+                    " flex items-center gap-3 px-3 py-2.5 disabled:opacity-60"
+                  }
+                >
+                  <span
+                    className="rounded-lg border border-line grid place-items-center shrink-0"
+                    style={{ width: 32, height: 32, background: "#f6f7f8" }}
+                  >
+                    {logoUrl ? (
+                      <img src={logoUrl} alt="" style={{ width: 20, height: 20 }} />
+                    ) : (
+                      <span className="text-[13px] font-semibold text-muted">{label[0]}</span>
+                    )}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block">{label}</span>
+                    {isSelected && (
+                      <span className="block text-[11.5px] font-normal text-muted mt-0.5 leading-snug">
+                        {SEARCH_HELP[p.name] || ""}
+                      </span>
+                    )}
+                  </span>
+                  {statusBadge(p, isSelected)}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {needsKey && (
+        <div className={CARD + " p-4 mb-4"}>
+          <div className={FIELD_LABEL}>API key · {searchLabel(selected)}</div>
+          <div className={FIELD_HELP}>Keys are stored only on this machine.</div>
+          {SEARCH_KEY_HELP[selected] && (
+            <p className="text-[11.5px] text-faint mt-2">
+              No key yet?{" "}
+              <button
+                type="button"
+                className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
+                onClick={() => openExternal(SEARCH_KEY_HELP[selected].url)}
+              >
+                Create one at {SEARCH_KEY_HELP[selected].label} ↗
+              </button>{" "}
+              — takes about a minute.
+            </p>
+          )}
+
+          <div className="flex items-center gap-2 mt-3">
+            <input
+              type="password"
+              className={INPUT}
+              placeholder={
+                configured
+                  ? info?.key_source === "env"
+                    ? "•••••••• (from environment)"
+                    : "•••••••• (key is saved)"
+                  : "Paste API key here"
+              }
+              value={apiKeyDraft}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(e) => {
+                setApiKeyDraft(e.target.value);
+                setMessage(null);
+                setError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && apiKeyDraft.trim()) void save(selected, apiKeyDraft.trim());
+              }}
+            />
+            <button
+              type="button"
+              className={BTN_ACCENT}
+              onClick={() => void save(selected, apiKeyDraft.trim() || undefined)}
+              disabled={
+                saving ||
+                // Unconfigured needs a paste; active+configured with no new key has nothing to do.
+                (!apiKeyDraft.trim() && (!configured || isActive))
+              }
+            >
+              {saving
+                ? "Saving…"
+                : apiKeyDraft.trim()
+                  ? "Save key"
+                  : configured && !isActive
+                    ? "Use this provider"
+                    : "Save key"}
+            </button>
+          </div>
+
+          {configured && !apiKeyDraft && (
+            <div className="text-[12px] text-green-700 mt-2">
+              {info?.key_source === "env"
+                ? `● Using ${searchLabel(selected)} via environment variable.`
+                : `● A key is saved for ${searchLabel(selected)}.`}
+              {isActive ? " This provider is active." : ""}
+            </div>
+          )}
+        </div>
+      )}
+
+      {message && (
+        <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2.5 text-[12px] text-green-700">
+          {message}
+        </div>
+      )}
+      {error && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-[12px] text-red-700">
+          {error}
+        </div>
+      )}
+    </section>
   );
 }

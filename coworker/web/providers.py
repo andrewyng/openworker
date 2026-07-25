@@ -126,3 +126,13 @@ def build_provider(name: str, api_key: Optional[str] = None) -> WebSearchProvide
 
 def provider_names() -> list[str]:
     return list(_PROVIDERS)
+
+
+def provider_requires_key(name: str) -> bool:
+    cls = _PROVIDERS.get(name)
+    return bool(cls and cls.requires_key)
+
+
+def env_key_name(name: str) -> str:
+    """Env var the runtime falls back to for a provider (e.g. tavily → TAVILY_API_KEY)."""
+    return f"{name.upper()}_API_KEY"

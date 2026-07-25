@@ -25,6 +25,15 @@ def test_env_ref_resolution(tmp_path, monkeypatch):
     assert store.get("slack:default")["bot_token"] == "from-env"
 
 
+def test_get_raw_leaves_refs(tmp_path, monkeypatch):
+    monkeypatch.setenv("MY_TOK", "from-env")
+    store = SecretStore(tmp_path / "secrets.json")
+    store.put("slack:default", {"type": "token", "bot_token": "${MY_TOK}"})
+    assert store.get_raw("slack:default")["bot_token"] == "${MY_TOK}"
+    assert store.get("slack:default")["bot_token"] == "from-env"
+    assert store.get_raw("missing") is None
+
+
 def test_dotenv_ref_resolution(tmp_path):
     (tmp_path / ".env").write_text('DOCS_TOKEN = "shhh"\n', encoding="utf-8")
     store = SecretStore(tmp_path / "secrets.json")
