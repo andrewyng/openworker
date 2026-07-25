@@ -149,7 +149,7 @@ def build_engine(
     else:
         root_list = []
 
-workspace_trusted = bool(ws and WorkspaceTrustStore().is_trusted(ws))
+    workspace_trusted = bool(ws and WorkspaceTrustStore().is_trusted(ws))
     config = load_config(ws, workspace_trusted=workspace_trusted)
 
     # Every production surface gets a session-scoped output store. Manager passes one;
