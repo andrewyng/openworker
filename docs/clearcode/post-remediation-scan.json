@@ -1,50 +1,47 @@
 {
-  "generatedAt": "2026-07-25T19:34:17.039Z",
-  "durationMs": 25762,
+  "generatedAt": "2026-07-25T22:58:05.641Z",
+  "durationMs": 44928,
   "repo": {
-    "path": "C:\\Users\\codeg\\openworker-remediation-602415",
     "name": "andrewyng/openworker",
-    "files": 443,
-    "analyzedFiles": 397,
-    "loc": 75475,
-    "analyzedTextLines": 82589,
-    "productionLoc": 51820,
+    "files": 489,
+    "analyzedFiles": 441,
+    "loc": 79827,
+    "analyzedTextLines": 86941,
+    "productionLoc": 56153,
     "testLoc": 21927,
-    "scanCoveragePct": 89.6,
+    "scanCoveragePct": 90.2,
     "branch": "HEAD",
-    "commit": "602415a52adfc1adb762b85cc55bde3a2df24242",
-    "commitDate": "2026-07-25T15:21:11-04:00",
+    "commit": "bbb806ce5453335d64ef163f9d5586544398c7e8",
+    "commitDate": "2026-07-25T18:17:13-04:00",
     "dirty": false,
     "shallow": false,
     "remote": "https://github.com/andrewyng/openworker.git",
     "source": "https://github.com/andrewyng/openworker",
-    "workspace": "C:\\Users\\codeg\\openworker-remediation-602415",
     "isRemote": false,
     "sourceKind": "local"
   },
   "score": {
-    "overall": 77,
-    "projected": 84.93276253029822,
-    "grade": "Good with targeted work",
+    "overall": 92,
+    "projected": 95.46410161513775,
+    "grade": "Strong",
     "dimensions": {
-      "Maintainability": 34,
-      "Security": 85,
+      "Maintainability": 71,
+      "Security": 100,
       "Architecture": 100,
       "Open Source": 100,
-      "Delivery": 74,
-      "AI Governance": 95
+      "Delivery": 93,
+      "AI Governance": 100
     },
     "severityCounts": {
-      "high": 10,
-      "medium": 19,
-      "low": 7,
-      "info": 1
+      "high": 6,
+      "medium": 2,
+      "low": 4
     },
-    "testRatio": 42.3,
-    "remediationDays": 63,
+    "testRatio": 39,
+    "remediationDays": 21,
     "remediationEffort": {
-      "lowDays": 35,
-      "highDays": 91,
+      "lowDays": 12,
+      "highDays": 29,
       "basis": "Engineering effort range inferred from finding size and applicability, grouped by remediation target to reduce double-counting; excludes discovery, release windows, and organization-specific coordination."
     },
     "opexDrag": null,
@@ -55,68 +52,68 @@
       "reason": "A defensible dollar estimate requires organization-specific labor rates, incident history, delivery volume, and change-failure data."
     },
     "integrationDrag": 18,
-    "safeFixes": 1,
+    "safeFixes": 0,
     "confidence": {
       "score": 100,
       "level": "high",
       "reasons": [
         "100% of findings include rule, fingerprint, impact, and source or repository evidence.",
         "2/2 applicable package-manager audit(s) completed successfully.",
-        "Git history includes 60 fetched commit(s)."
+        "Git history includes 62 fetched commit(s)."
       ]
     },
     "management": {
-      "totalFindings": 37,
-      "evidenceBackedFindings": 37,
+      "totalFindings": 12,
+      "evidenceBackedFindings": 12,
       "evidenceCoverage": 100,
-      "remediationSpecifiedFindings": 37,
+      "remediationSpecifiedFindings": 12,
       "remediationCoverage": 100,
       "ownedFindings": 0,
       "ownershipCoverage": 0,
       "managedFindings": 0,
-      "unownedFindings": 37,
-      "uncoveredFindings": 37,
+      "unownedFindings": 12,
+      "uncoveredFindings": 12,
       "coverage": 100,
-      "governanceMissing": 1
+      "governanceMissing": 0
     },
     "mna": {
       "valuationSignal": null,
       "cleanupReserve": null,
       "integrationDrag": 18,
-      "teamDependency": 93,
+      "teamDependency": 90,
       "ipExposure": 0
     }
   },
   "languages": [
     {
       "name": "Python",
-      "loc": 45454,
-      "pct": 60.2
+      "loc": 45764,
+      "pct": 57.3
     },
     {
       "name": "TypeScript",
-      "loc": 24976,
-      "pct": 33.1
-    },
-    {
-      "name": "HTML",
-      "loc": 1749,
-      "pct": 2.3
+      "loc": 26180,
+      "pct": 32.8
     },
     {
       "name": "CSS",
-      "loc": 1526,
-      "pct": 2
+      "loc": 4353,
+      "pct": 5.5
+    },
+    {
+      "name": "HTML",
+      "loc": 1768,
+      "pct": 2.2
     },
     {
       "name": "Rust",
-      "loc": 1341,
-      "pct": 1.8
+      "loc": 1333,
+      "pct": 1.7
     },
     {
       "name": "Shell",
       "loc": 276,
-      "pct": 0.4
+      "pct": 0.3
     },
     {
       "name": "PowerShell",
@@ -133,8 +130,8 @@
     "components": [
       {
         "name": "surfaces",
-        "files": 172,
-        "loc": 33751,
+        "files": 194,
+        "loc": 37774,
         "tests": 76,
         "config": 3,
         "incoming": 0,
@@ -143,8 +140,8 @@
       },
       {
         "name": "coworker",
-        "files": 121,
-        "loc": 29727,
+        "files": 143,
+        "loc": 30037,
         "tests": 0,
         "config": 0,
         "incoming": 520,
@@ -164,7 +161,7 @@
       {
         "name": "ui-mocks",
         "files": 4,
-        "loc": 1728,
+        "loc": 1747,
         "tests": 0,
         "config": 0,
         "incoming": 0,
@@ -433,15 +430,15 @@
   "git": {
     "enabled": true,
     "branch": "HEAD",
-    "headSha": "602415a52adfc1adb762b85cc55bde3a2df24242",
-    "headDate": "2026-07-25T15:21:11-04:00",
+    "headSha": "bbb806ce5453335d64ef163f9d5586544398c7e8",
+    "headDate": "2026-07-25T18:17:13-04:00",
     "remoteUrl": "https://github.com/andrewyng/openworker.git",
     "dirty": false,
     "shallow": false,
     "ownershipReliable": true,
-    "commits": 60,
+    "commits": 62,
     "contributors": 5,
-    "topContributorShare": 0.93,
+    "topContributorShare": 0.9,
     "topContributors": [
       {
         "name": "Rohit Prasad",
@@ -449,7 +446,7 @@
       },
       {
         "name": "boxing trainer",
-        "commits": 1
+        "commits": 3
       },
       {
         "name": "Fahad Siddiqui",
@@ -466,6 +463,11 @@
     ],
     "hotspots": [
       {
+        "path": "coworker/connectors/integration_tools.py",
+        "churn": 9272,
+        "contributors": 2
+      },
+      {
         "path": "surfaces/gui/package-lock.json",
         "churn": 6802,
         "contributors": 2
@@ -476,8 +478,13 @@
         "contributors": 1
       },
       {
-        "path": "coworker/connectors/integration_tools.py",
-        "churn": 4892,
+        "path": "docs/clearcode/andrewyng-openworker-scan.json",
+        "churn": 5894,
+        "contributors": 1
+      },
+      {
+        "path": "docs/clearcode/andrewyng-openworker-intelligence-report.html",
+        "churn": 3849,
         "contributors": 1
       },
       {
@@ -486,9 +493,34 @@
         "contributors": 2
       },
       {
+        "path": "surfaces/gui/src/api.ts",
+        "churn": 3734,
+        "contributors": 2
+      },
+      {
+        "path": "surfaces/gui/src/styles.css",
+        "churn": 3221,
+        "contributors": 2
+      },
+      {
         "path": "uv.lock",
         "churn": 3221,
         "contributors": 1
+      },
+      {
+        "path": "coworker/connectors/descriptors.py",
+        "churn": 2958,
+        "contributors": 2
+      },
+      {
+        "path": "surfaces/gui/src/App.tsx",
+        "churn": 2783,
+        "contributors": 2
+      },
+      {
+        "path": "coworker/connectors/tool_defs.py",
+        "churn": 2293,
+        "contributors": 2
       },
       {
         "path": "coworker/server/app.py",
@@ -496,49 +528,14 @@
         "contributors": 2
       },
       {
-        "path": "surfaces/gui/src/api.ts",
-        "churn": 1869,
-        "contributors": 1
-      },
-      {
-        "path": "surfaces/gui/src/App.tsx",
-        "churn": 1788,
-        "contributors": 1
-      },
-      {
-        "path": "tests/test_connectors.py",
-        "churn": 1727,
-        "contributors": 1
-      },
-      {
-        "path": "surfaces/gui/src/styles.css",
-        "churn": 1610,
-        "contributors": 1
-      },
-      {
-        "path": "stt/Cargo.lock",
-        "churn": 1559,
-        "contributors": 1
-      },
-      {
-        "path": "surfaces/gui/e2e/fixtures.ts",
-        "churn": 1517,
-        "contributors": 1
-      },
-      {
         "path": "surfaces/gui/src/components/Sidebar.tsx",
-        "churn": 1490,
-        "contributors": 1
+        "churn": 2034,
+        "contributors": 2
       },
       {
-        "path": "coworker/connectors/descriptors.py",
-        "churn": 1476,
+        "path": "docs/clearcode/andrewyng-openworker-findings.sarif.json",
+        "churn": 1789,
         "contributors": 1
-      },
-      {
-        "path": "tests/test_server.py",
-        "churn": 1216,
-        "contributors": 3
       }
     ],
     "couplingPairs": [
@@ -674,15 +671,15 @@
     "gitignore": true,
     "security": true,
     "contributing": true,
-    "codeowners": false,
+    "codeowners": true,
     "dependabot": true,
     "license": true
   },
   "standards": {
-    "overall": 73,
-    "ready": 2,
-    "watch": 3,
-    "blocked": 1,
+    "overall": 88,
+    "ready": 6,
+    "watch": 0,
+    "blocked": 0,
     "items": [
       {
         "id": "iso-9001",
@@ -692,18 +689,18 @@
         "summary": "Evidence that the repository can be changed through repeatable, governed engineering process.",
         "assessmentType": "repository-evidence-proxy",
         "claimBoundary": "This mapping identifies repository evidence signals only; it is not a certification, attestation, or control-effectiveness opinion.",
-        "score": 76,
-        "tone": "warn",
+        "score": 88,
+        "tone": "good",
         "evidence": [
           "Automated tests are present.",
           "CI workflow is present.",
           "Contribution workflow is documented.",
+          "Review ownership is explicit.",
           "Formatting and text normalization are governed.",
           "100% of findings contain traceable rule evidence."
         ],
         "gaps": [
-          "CODEOWNERS is missing.",
-          "10 critical/high finding(s) require management."
+          "6 critical/high finding(s) require management."
         ],
         "actions": [
           "Create CI/test gates",
@@ -719,19 +716,18 @@
         "summary": "Repository-level security governance, vulnerability management, and exposure control signals.",
         "assessmentType": "repository-evidence-proxy",
         "claimBoundary": "This mapping identifies repository evidence signals only; it is not a certification, attestation, or control-effectiveness opinion.",
-        "score": 86,
+        "score": 100,
         "tone": "good",
         "evidence": [
           "Security disclosure policy is present.",
           "Dependency update automation is present.",
           "No critical/high dependency vulnerabilities were detected.",
           "Dependency audit returned no vulnerability entries.",
+          "No source-level security findings are open.",
           "Ignore policy reduces accidental artifact exposure.",
-          "Security score is 85/100."
+          "Security score is 100/100."
         ],
-        "gaps": [
-          "2 source-level security finding(s) require triage."
-        ],
+        "gaps": [],
         "actions": [
           "Add security policy",
           "Enable dependency automation",
@@ -751,15 +747,15 @@
         "tone": "good",
         "evidence": [
           "Architecture score is 100/100.",
-          "Security score is 85/100.",
+          "Security score is 100/100.",
           "Tests support reliability validation.",
           "CI supports repeatable verification.",
           "No architecture cycles detected.",
-          "Critical complex unit share is 9.4%.",
-          "Very high decision share is 9.4%."
+          "Critical complex unit share is 4.2%.",
+          "Very high decision share is 5.2%."
         ],
         "gaps": [
-          "Maintainability score is 34/100."
+          "Maintainability score is 71/100."
         ],
         "actions": [
           "Reduce red-zone functions",
@@ -775,18 +771,18 @@
         "summary": "Controls for AI-assisted repository changes: traceability, human oversight, security, and release discipline.",
         "assessmentType": "repository-evidence-proxy",
         "claimBoundary": "This mapping identifies repository evidence signals only; it is not a certification, attestation, or control-effectiveness opinion.",
-        "score": 62,
-        "tone": "warn",
+        "score": 86,
+        "tone": "good",
         "evidence": [
-          "AI governance score is 95/100.",
+          "AI governance score is 100/100.",
           "100% traceable finding evidence.",
           "Security disclosure path exists for AI-assisted changes.",
-          "CI can verify AI-generated changes."
+          "CI can verify AI-generated changes.",
+          "Human review ownership is explicit.",
+          "No open source-level security findings."
         ],
         "gaps": [
-          "Human review ownership is not explicit.",
-          "2 source-level security finding(s) remain.",
-          "10 critical/high finding(s) need human review."
+          "6 critical/high finding(s) need human review."
         ],
         "actions": [
           "Require CI for AI changes",
@@ -802,18 +798,18 @@
         "summary": "Cloud trust readiness proxy for security, availability, change control, and evidence collection.",
         "assessmentType": "repository-evidence-proxy",
         "claimBoundary": "This mapping identifies repository evidence signals only; it is not a certification, attestation, or control-effectiveness opinion.",
-        "score": 72,
-        "tone": "warn",
+        "score": 86,
+        "tone": "good",
         "evidence": [
           "Security policy evidence is present.",
           "Change verification evidence is present.",
+          "Approval ownership evidence is present.",
           "Dependency monitoring evidence is present.",
           "No dependency vulnerability entries were detected.",
           "Regression testing evidence is present."
         ],
         "gaps": [
-          "Approval ownership evidence is missing.",
-          "Top contributor share is 93%, creating continuity risk."
+          "Top contributor share is 90%, creating continuity risk."
         ],
         "actions": [
           "Collect security/change-control evidence",
@@ -829,18 +825,18 @@
         "summary": "Advisory proxy for stricter environments such as aviation, automotive, medical, and embedded software.",
         "assessmentType": "repository-evidence-proxy",
         "claimBoundary": "This mapping identifies repository evidence signals only; it is not a certification, attestation, or control-effectiveness opinion.",
-        "score": 58,
-        "tone": "bad",
+        "score": 84,
+        "tone": "good",
         "evidence": [
           "Automated tests are present.",
           "CI verification is present.",
           "No dependency cycles detected.",
-          "Test ratio is 42.3%."
+          "Critical complex unit share is 4.2%.",
+          "Ownership gates are present.",
+          "Test ratio is 39%."
         ],
         "gaps": [
-          "10 critical/high finding(s) remain.",
-          "Critical complex unit share is 9.4%, above high-assurance tolerance.",
-          "Ownership gates are missing."
+          "6 critical/high finding(s) remain."
         ],
         "actions": [
           "Add traceable verification gates",
@@ -853,20 +849,20 @@
     "disclaimer": "These scores map visible repository artifacts to selected framework themes. They do not establish organizational process maturity, operating effectiveness, legal compliance, certification readiness, or audit assurance."
   },
   "tokenTechDebt": {
-    "score": 100,
+    "score": 99,
     "level": "High",
     "modelStatus": "relative-heuristic",
     "definition": "AI-assisted change context pressure is the relative search, reasoning, retry, and validation burden suggested by repository evidence.",
     "summary": "High relative context pressure: repository signals indicate where AI-assisted changes may require broader search, more reasoning, and stronger validation.",
     "claimBoundary": "This index is not a measured token count, productivity claim, time estimate, or provider-cost calculation. Collect comparable task telemetry before making before/after or financial claims.",
     "repoSignals": {
-      "totalLoc": 82589,
-      "analyzedFiles": 397,
-      "largeFiles": 14,
+      "totalLoc": 86941,
+      "analyzedFiles": 441,
+      "largeFiles": 4,
       "complexFiles": 7,
       "architectureEdges": 2,
       "architectureCycles": 0,
-      "testRatio": 42.3,
+      "testRatio": 39,
       "evidenceCoverage": 100,
       "riskyDependencySignals": 0,
       "suppressedFindings": 0
@@ -878,34 +874,13 @@
         "language": "Rust",
         "score": 100,
         "relativeContextPressure": 100,
-        "loc": 711,
-        "decisions": 89,
-        "findingWeight": 9,
+        "loc": 512,
+        "decisions": 61,
+        "findingWeight": 0,
         "churn": 0,
         "contributors": 0,
         "causes": [
-          "711 LOC",
-          "89 branch token(s)",
-          "9 finding weight"
-        ],
-        "remediation": "Split the file around explicit workflow or policy boundaries before asking agents for broad edits."
-      },
-      {
-        "path": "surfaces/gui/src/api.ts",
-        "component": "surfaces",
-        "language": "TypeScript",
-        "score": 100,
-        "relativeContextPressure": 100,
-        "loc": 1673,
-        "decisions": 258,
-        "findingWeight": 4,
-        "churn": 1869,
-        "contributors": 1,
-        "causes": [
-          "1673 LOC",
-          "258 branch token(s)",
-          "4 finding weight",
-          "1869 recent churn"
+          "61 branch token(s)"
         ],
         "remediation": "Split the file around explicit workflow or policy boundaries before asking agents for broad edits."
       },
@@ -915,17 +890,17 @@
         "language": "TypeScript",
         "score": 100,
         "relativeContextPressure": 100,
-        "loc": 1674,
-        "decisions": 349,
+        "loc": 1969,
+        "decisions": 366,
         "findingWeight": 8,
-        "churn": 1788,
-        "contributors": 1,
+        "churn": 2783,
+        "contributors": 2,
         "causes": [
-          "1674 LOC",
-          "349 branch token(s)",
-          "3 deferred marker(s)",
+          "1969 LOC",
+          "366 branch token(s)",
+          "1 deferred marker(s)",
           "8 finding weight",
-          "1788 recent churn"
+          "2783 recent churn"
         ],
         "remediation": "Split the file around explicit workflow or policy boundaries before asking agents for broad edits."
       },
@@ -935,35 +910,14 @@
         "language": "TypeScript",
         "score": 100,
         "relativeContextPressure": 100,
-        "loc": 152,
-        "decisions": 82,
-        "findingWeight": 3,
+        "loc": 233,
+        "decisions": 93,
+        "findingWeight": 0,
         "churn": 0,
         "contributors": 0,
         "causes": [
-          "82 branch token(s)",
-          "1 deferred marker(s)",
-          "3 finding weight"
-        ],
-        "remediation": "Split the file around explicit workflow or policy boundaries before asking agents for broad edits."
-      },
-      {
-        "path": "surfaces/gui/src/styles.css",
-        "component": "surfaces",
-        "language": "CSS",
-        "score": 100,
-        "relativeContextPressure": 100,
-        "loc": 1521,
-        "decisions": 21,
-        "findingWeight": 9,
-        "churn": 1610,
-        "contributors": 1,
-        "causes": [
-          "1521 LOC",
-          "31 dense line(s)",
-          "8 deferred marker(s)",
-          "9 finding weight",
-          "1610 recent churn"
+          "93 branch token(s)",
+          "1 deferred marker(s)"
         ],
         "remediation": "Split the file around explicit workflow or policy boundaries before asking agents for broad edits."
       },
@@ -1049,37 +1003,69 @@
         "remediation": "Split the file around explicit workflow or policy boundaries before asking agents for broad edits."
       },
       {
-        "path": "surfaces/gui/src/components/InboxConfigure.tsx",
-        "component": "surfaces",
-        "language": "TypeScript",
-        "score": 100,
-        "relativeContextPressure": 100,
-        "loc": 357,
-        "decisions": 42,
-        "findingWeight": 3,
-        "churn": 0,
-        "contributors": 0,
-        "causes": [
-          "42 branch token(s)",
-          "3 finding weight"
-        ],
-        "remediation": "Split the file around explicit workflow or policy boundaries before asking agents for broad edits."
-      },
-      {
         "path": "surfaces/gui/src/components/ManageTabs.tsx",
         "component": "surfaces",
         "language": "TypeScript",
         "score": 100,
         "relativeContextPressure": 100,
-        "loc": 851,
-        "decisions": 113,
-        "findingWeight": 6,
+        "loc": 475,
+        "decisions": 64,
+        "findingWeight": 0,
         "churn": 0,
         "contributors": 0,
         "causes": [
-          "851 LOC",
-          "113 branch token(s)",
-          "6 finding weight"
+          "64 branch token(s)"
+        ],
+        "remediation": "Split the file around explicit workflow or policy boundaries before asking agents for broad edits."
+      },
+      {
+        "path": "surfaces/gui/src/components/RightRail.tsx",
+        "component": "surfaces",
+        "language": "TypeScript",
+        "score": 100,
+        "relativeContextPressure": 100,
+        "loc": 547,
+        "decisions": 117,
+        "findingWeight": 0,
+        "churn": 0,
+        "contributors": 0,
+        "causes": [
+          "117 branch token(s)"
+        ],
+        "remediation": "Split the file around explicit workflow or policy boundaries before asking agents for broad edits."
+      },
+      {
+        "path": "surfaces/gui/src/components/ScheduledView.tsx",
+        "component": "surfaces",
+        "language": "TypeScript",
+        "score": 100,
+        "relativeContextPressure": 100,
+        "loc": 478,
+        "decisions": 62,
+        "findingWeight": 0,
+        "churn": 0,
+        "contributors": 0,
+        "causes": [
+          "62 branch token(s)"
+        ],
+        "remediation": "Split the file around explicit workflow or policy boundaries before asking agents for broad edits."
+      },
+      {
+        "path": "surfaces/gui/src/components/Sidebar.tsx",
+        "component": "surfaces",
+        "language": "TypeScript",
+        "score": 100,
+        "relativeContextPressure": 100,
+        "loc": 1117,
+        "decisions": 179,
+        "findingWeight": 7,
+        "churn": 2034,
+        "contributors": 2,
+        "causes": [
+          "1117 LOC",
+          "179 branch token(s)",
+          "7 finding weight",
+          "2034 recent churn"
         ],
         "remediation": "Split the file around explicit workflow or policy boundaries before asking agents for broad edits."
       }
@@ -1088,14 +1074,14 @@
       {
         "id": "complexity-drag",
         "label": "Complexity drag",
-        "value": "60.8 p95 complexity",
-        "points": 73.3,
+        "value": "46.2 p95 complexity",
+        "points": 61.1,
         "active": true,
         "note": "Dense control flow increases reasoning depth, diff size, and rewrite attempts.",
         "remediation": "Extract named functions around decision clusters and keep units small enough to review in one prompt.",
         "evidence": [
-          "surfaces/gui/src/App.tsx (349 branch token(s))",
-          "surfaces/gui/src/humanize.ts (82 branch token(s))",
+          "surfaces/gui/src/humanize.ts (93 branch token(s))",
+          "surfaces/gui/src/itemsFromMessages.ts (36 branch token(s))",
           "surfaces/gui/src/components/ApprovalCard.tsx (68 branch token(s))",
           "surfaces/gui/src/components/Composer.tsx (130 branch token(s))"
         ]
@@ -1103,46 +1089,45 @@
       {
         "id": "large-context-files",
         "label": "Large-context files",
-        "value": "14 large file(s)",
-        "points": 71.5,
+        "value": "4 large file(s)",
+        "points": 20,
         "active": true,
         "note": "Large and dense files consume prompt budget before the agent reaches the change point.",
         "remediation": "Split high-volume files by workflow, adapter, renderer, parser, or policy boundary.",
         "evidence": [
-          "surfaces/gui/src-tauri/src/lib.rs (711 LOC)",
-          "surfaces/gui/src/api.ts (1673 LOC)",
-          "surfaces/gui/src/App.tsx (1674 LOC)",
-          "surfaces/gui/src/styles.css (1521 LOC)"
-        ]
-      },
-      {
-        "id": "deferred-decisions",
-        "label": "Deferred decisions",
-        "value": "13 file(s) with deferred-work markers",
-        "points": 23.4,
-        "active": true,
-        "note": "Inline deferred-work notes and suppressions force agents to decide whether a path is intentional, stale, or unsafe.",
-        "remediation": "Convert deferred-work notes and suppressions into tracked tickets with owner, reason, expiry, and proof.",
-        "evidence": [
-          "surfaces/gui/src/App.tsx (3 marker(s))",
-          "surfaces/gui/src/humanize.ts (1 marker(s))",
-          "surfaces/gui/src/styles.css (8 marker(s))",
-          "surfaces/gui/src/components/RightRail.tsx (9 marker(s))"
+          "surfaces/gui/src/App.tsx (1969 LOC)",
+          "surfaces/gui/src/components/Sidebar.tsx (1117 LOC)",
+          "coworker/server/app.py (1748 LOC)",
+          "coworker/server/manager.py (3490 LOC)"
         ]
       },
       {
         "id": "tribal-knowledge",
         "label": "Tribal knowledge",
-        "value": "93% top contributor share",
-        "points": 9.5,
+        "value": "90% top contributor share",
+        "points": 8.8,
         "active": true,
         "note": "Concentrated ownership means more implicit context is missing from the repository itself.",
         "remediation": "Add CODEOWNERS, architecture notes, runbooks, and review rotation for hotspot components.",
         "evidence": [
+          "coworker/connectors/integration_tools.py",
           "surfaces/gui/package-lock.json",
           "surfaces/gui/src-tauri/Cargo.lock",
-          "coworker/connectors/integration_tools.py",
-          "coworker/server/manager.py"
+          "docs/clearcode/andrewyng-openworker-scan.json"
+        ]
+      },
+      {
+        "id": "deferred-decisions",
+        "label": "Deferred decisions",
+        "value": "3 file(s) with deferred-work markers",
+        "points": 5.4,
+        "active": true,
+        "note": "Inline deferred-work notes and suppressions force agents to decide whether a path is intentional, stale, or unsafe.",
+        "remediation": "Convert deferred-work notes and suppressions into tracked tickets with owner, reason, expiry, and proof.",
+        "evidence": [
+          "surfaces/gui/src/App.tsx (1 marker(s))",
+          "surfaces/gui/src/humanize.ts (1 marker(s))",
+          "coworker/providers/registry.py (1 marker(s))"
         ]
       }
     ],
@@ -1150,14 +1135,14 @@
       {
         "id": "complexity-drag",
         "label": "Complexity drag",
-        "value": "60.8 p95 complexity",
-        "points": 73.3,
+        "value": "46.2 p95 complexity",
+        "points": 61.1,
         "active": true,
         "note": "Dense control flow increases reasoning depth, diff size, and rewrite attempts.",
         "remediation": "Extract named functions around decision clusters and keep units small enough to review in one prompt.",
         "evidence": [
-          "surfaces/gui/src/App.tsx (349 branch token(s))",
-          "surfaces/gui/src/humanize.ts (82 branch token(s))",
+          "surfaces/gui/src/humanize.ts (93 branch token(s))",
+          "surfaces/gui/src/itemsFromMessages.ts (36 branch token(s))",
           "surfaces/gui/src/components/ApprovalCard.tsx (68 branch token(s))",
           "surfaces/gui/src/components/Composer.tsx (130 branch token(s))"
         ]
@@ -1165,46 +1150,45 @@
       {
         "id": "large-context-files",
         "label": "Large-context files",
-        "value": "14 large file(s)",
-        "points": 71.5,
+        "value": "4 large file(s)",
+        "points": 20,
         "active": true,
         "note": "Large and dense files consume prompt budget before the agent reaches the change point.",
         "remediation": "Split high-volume files by workflow, adapter, renderer, parser, or policy boundary.",
         "evidence": [
-          "surfaces/gui/src-tauri/src/lib.rs (711 LOC)",
-          "surfaces/gui/src/api.ts (1673 LOC)",
-          "surfaces/gui/src/App.tsx (1674 LOC)",
-          "surfaces/gui/src/styles.css (1521 LOC)"
-        ]
-      },
-      {
-        "id": "deferred-decisions",
-        "label": "Deferred decisions",
-        "value": "13 file(s) with deferred-work markers",
-        "points": 23.4,
-        "active": true,
-        "note": "Inline deferred-work notes and suppressions force agents to decide whether a path is intentional, stale, or unsafe.",
-        "remediation": "Convert deferred-work notes and suppressions into tracked tickets with owner, reason, expiry, and proof.",
-        "evidence": [
-          "surfaces/gui/src/App.tsx (3 marker(s))",
-          "surfaces/gui/src/humanize.ts (1 marker(s))",
-          "surfaces/gui/src/styles.css (8 marker(s))",
-          "surfaces/gui/src/components/RightRail.tsx (9 marker(s))"
+          "surfaces/gui/src/App.tsx (1969 LOC)",
+          "surfaces/gui/src/components/Sidebar.tsx (1117 LOC)",
+          "coworker/server/app.py (1748 LOC)",
+          "coworker/server/manager.py (3490 LOC)"
         ]
       },
       {
         "id": "tribal-knowledge",
         "label": "Tribal knowledge",
-        "value": "93% top contributor share",
-        "points": 9.5,
+        "value": "90% top contributor share",
+        "points": 8.8,
         "active": true,
         "note": "Concentrated ownership means more implicit context is missing from the repository itself.",
         "remediation": "Add CODEOWNERS, architecture notes, runbooks, and review rotation for hotspot components.",
         "evidence": [
+          "coworker/connectors/integration_tools.py",
           "surfaces/gui/package-lock.json",
           "surfaces/gui/src-tauri/Cargo.lock",
-          "coworker/connectors/integration_tools.py",
-          "coworker/server/manager.py"
+          "docs/clearcode/andrewyng-openworker-scan.json"
+        ]
+      },
+      {
+        "id": "deferred-decisions",
+        "label": "Deferred decisions",
+        "value": "3 file(s) with deferred-work markers",
+        "points": 5.4,
+        "active": true,
+        "note": "Inline deferred-work notes and suppressions force agents to decide whether a path is intentional, stale, or unsafe.",
+        "remediation": "Convert deferred-work notes and suppressions into tracked tickets with owner, reason, expiry, and proof.",
+        "evidence": [
+          "surfaces/gui/src/App.tsx (1 marker(s))",
+          "surfaces/gui/src/humanize.ts (1 marker(s))",
+          "coworker/providers/registry.py (1 marker(s))"
         ]
       },
       {
@@ -1224,30 +1208,27 @@
         "id": "evidence-gaps",
         "label": "Evidence gaps",
         "value": "100% traceable finding coverage",
-        "points": 1.4,
+        "points": 0.9,
         "active": false,
         "note": "Missing source evidence makes prompts longer and reviews less deterministic.",
         "remediation": "Attach code evidence, owner, impact, remediation path, and verification proof to every finding.",
         "evidence": [
-          "Large file hotspot (surfaces/gui/src/api.ts)",
           "Large file hotspot (surfaces/gui/src/App.tsx)",
-          "Large file hotspot (surfaces/gui/src/components/Sidebar.tsx)",
-          "Large file hotspot (coworker/server/app.py)"
+          "Large file hotspot (coworker/server/app.py)",
+          "Large file hotspot (coworker/server/manager.py)",
+          "Function complexity hotspot: App (surfaces/gui/src/App.tsx)"
         ]
       },
       {
         "id": "verification-drag",
         "label": "Verification drag",
-        "value": "42.3% test ratio",
+        "value": "39% test ratio",
         "points": 0,
         "active": false,
         "note": "Weak executable context forces agents to infer expected behavior and rerun more checks.",
         "remediation": "Add failure-mode tests around risky paths before asking agents to refactor them.",
         "evidence": [
-          "Deferred work concentration (surfaces/gui/src/styles.css)",
-          "Deferred work concentration (surfaces/gui/src/components/RightRail.tsx)",
-          "Contributor concentration risk",
-          "CODEOWNERS missing (CODEOWNERS)"
+          "Contributor concentration risk"
         ]
       },
       {
@@ -1283,56 +1264,18 @@
       "area": "Maintainability",
       "title": "Large file hotspot",
       "severity": "high",
-      "path": "surfaces/gui/src/api.ts",
-      "line": 1,
-      "impact": "1673 non-empty lines make ownership, testing, and refactoring harder.",
-      "evidence": [
-        {
-          "line": 1,
-          "text": "import type { SessionInfo, WsEvent } from \"./types\";",
-          "focus": true
-        },
-        {
-          "line": 2,
-          "text": "",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "ruleId": "clearcode.maintainability.large-file-hotspot",
-      "fingerprint": "007e3a52db12",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review surfaces/gui/src/api.ts:1 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-fedbb8e6e8af"
-    },
-    {
-      "effort": "L",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Large file hotspot",
-      "severity": "high",
       "path": "surfaces/gui/src/App.tsx",
       "line": 1,
-      "impact": "1674 non-empty lines make ownership, testing, and refactoring harder.",
+      "impact": "1969 non-empty lines make ownership, testing, and refactoring harder.",
       "evidence": [
         {
           "line": 1,
-          "text": "import { useCallback, useEffect, useRef, useState, type PointerEvent } from \"react\";",
+          "text": "import {",
           "focus": true
         },
         {
           "line": 2,
-          "text": "import {",
+          "text": "  useCallback,",
           "focus": false
         }
       ],
@@ -1350,44 +1293,6 @@
         "source": "scanner"
       },
       "id": "finding-f57078954ae1"
-    },
-    {
-      "effort": "L",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Large file hotspot",
-      "severity": "high",
-      "path": "surfaces/gui/src/components/Sidebar.tsx",
-      "line": 1,
-      "impact": "1335 non-empty lines make ownership, testing, and refactoring harder.",
-      "evidence": [
-        {
-          "line": 1,
-          "text": "import { useEffect, useMemo, useState, type ReactNode } from \"react\";",
-          "focus": true
-        },
-        {
-          "line": 2,
-          "text": "import {",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "ruleId": "clearcode.maintainability.large-file-hotspot",
-      "fingerprint": "d37151b531c9",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review surfaces/gui/src/components/Sidebar.tsx:1 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-d36d8cf8a545"
     },
     {
       "effort": "L",
@@ -1471,105 +1376,29 @@
       "scope": "production",
       "applicability": "direct",
       "area": "Maintainability",
-      "title": "Large file hotspot",
-      "severity": "high",
-      "path": "coworker/connectors/descriptors.py",
-      "line": 1,
-      "impact": "1385 non-empty lines make ownership, testing, and refactoring harder.",
-      "evidence": [
-        {
-          "line": 1,
-          "text": "\"\"\"Connector descriptors — data that drives the guided setup wizard.",
-          "focus": true
-        },
-        {
-          "line": 2,
-          "text": "",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "ruleId": "clearcode.maintainability.large-file-hotspot",
-      "fingerprint": "ae4fe700eaf9",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review coworker/connectors/descriptors.py:1 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-b225f694d0d0"
-    },
-    {
-      "effort": "L",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Large file hotspot",
-      "severity": "high",
-      "path": "coworker/connectors/integration_tools.py",
-      "line": 1,
-      "impact": "4516 non-empty lines make ownership, testing, and refactoring harder.",
-      "evidence": [
-        {
-          "line": 1,
-          "text": "\"\"\"Cowork-only connector tools for first-party integrations.",
-          "focus": true
-        },
-        {
-          "line": 2,
-          "text": "",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "ruleId": "clearcode.maintainability.large-file-hotspot",
-      "fingerprint": "f154a8a5d4e6",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review coworker/connectors/integration_tools.py:1 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-b4f051c28d7d"
-    },
-    {
-      "effort": "L",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
       "title": "Function complexity hotspot: App",
       "severity": "high",
       "path": "surfaces/gui/src/App.tsx",
-      "line": 146,
-      "impact": "App spans 1455 non-empty lines with 401 decision token(s) and a 74.3/100 modeled complexity score.",
+      "line": 196,
+      "impact": "App spans 1691 non-empty lines with 402 decision token(s) and a 75.1/100 modeled complexity score.",
       "evidence": [
         {
-          "line": 145,
+          "line": 195,
           "text": "",
           "focus": false
         },
         {
-          "line": 146,
+          "line": 196,
           "text": "export function App() {",
           "focus": true
         },
         {
-          "line": 147,
+          "line": 197,
           "text": "  const [workspace, setWorkspace] = useState<string | null>(null);",
           "focus": false
         },
         {
-          "line": 148,
+          "line": 198,
           "text": "  const [branch, setBranch] = useState<string | null>(null);",
           "focus": false
         }
@@ -1577,15 +1406,15 @@
       "confidence": "high",
       "symbol": "App",
       "metrics": {
-        "complexity": 74.3,
-        "nonEmptyLines": 1455,
-        "decisions": 401,
+        "complexity": 75.1,
+        "nonEmptyLines": 1691,
+        "decisions": 402,
         "parameters": 0
       },
       "remediation": "Split App around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.",
-      "verification": "Run the affected test suite and re-scan surfaces/gui/src/App.tsx:146; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
+      "verification": "Run the affected test suite and re-scan surfaces/gui/src/App.tsx:196; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
       "ruleId": "clearcode.maintainability.function-complexity-hotspot-app",
-      "fingerprint": "763c187e9ed1",
+      "fingerprint": "dfcf0068e42b",
       "evidenceType": "code-frame",
       "management": {
         "owner": null,
@@ -1594,7 +1423,7 @@
         "control": "scanner-recommendation",
         "source": "scanner"
       },
-      "id": "finding-0203833bf42e"
+      "id": "finding-1d2a551cf79a"
     },
     {
       "effort": "L",
@@ -1605,26 +1434,26 @@
       "title": "Function complexity hotspot: Sidebar",
       "severity": "high",
       "path": "surfaces/gui/src/components/Sidebar.tsx",
-      "line": 173,
-      "impact": "Sidebar spans 1083 non-empty lines with 204 decision token(s) and a 69.1/100 modeled complexity score.",
+      "line": 104,
+      "impact": "Sidebar spans 1020 non-empty lines with 204 decision token(s) and a 69.9/100 modeled complexity score.",
       "evidence": [
         {
-          "line": 172,
+          "line": 103,
           "text": "",
           "focus": false
         },
         {
-          "line": 173,
+          "line": 104,
           "text": "export function Sidebar(props: Props) {",
           "focus": true
         },
         {
-          "line": 174,
+          "line": 105,
           "text": "  const [searchModalOpen, setSearchModalOpen] = useState(false);",
           "focus": false
         },
         {
-          "line": 175,
+          "line": 106,
           "text": "  const [appMenuOpen, setAppMenuOpen] = useState(false);",
           "focus": false
         }
@@ -1632,15 +1461,15 @@
       "confidence": "high",
       "symbol": "Sidebar",
       "metrics": {
-        "complexity": 69.1,
-        "nonEmptyLines": 1083,
+        "complexity": 69.9,
+        "nonEmptyLines": 1020,
         "decisions": 204,
         "parameters": 1
       },
       "remediation": "Split Sidebar around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.",
-      "verification": "Run the affected test suite and re-scan surfaces/gui/src/components/Sidebar.tsx:173; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
+      "verification": "Run the affected test suite and re-scan surfaces/gui/src/components/Sidebar.tsx:104; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
       "ruleId": "clearcode.maintainability.function-complexity-hotspot-sidebar",
-      "fingerprint": "7876400c3d38",
+      "fingerprint": "dac04a49b380",
       "evidenceType": "code-frame",
       "management": {
         "owner": null,
@@ -1649,7 +1478,7 @@
         "control": "scanner-recommendation",
         "source": "scanner"
       },
-      "id": "finding-5278f8d5586f"
+      "id": "finding-bb869111cee3"
     },
     {
       "effort": "L",
@@ -1709,112 +1538,6 @@
     {
       "effort": "M",
       "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Delivery",
-      "title": "Deferred work concentration",
-      "severity": "medium",
-      "path": "surfaces/gui/src/styles.css",
-      "line": 558,
-      "impact": "8 TODO/FIXME/HACK markers indicate unresolved decisions in one file.",
-      "evidence": [
-        {
-          "line": 556,
-          "text": ".rail-muted { font-size: 12px; color: var(--faint); line-height: 1.45; overflow-wrap: anywhere; }",
-          "focus": false
-        },
-        {
-          "line": 557,
-          "text": ".rail-error { font-size: 12px; color: var(--accent); overflow-wrap: anywhere; }",
-          "focus": false
-        },
-        {
-          "line": 558,
-          "text": ".rail-todo-list { display: flex; flex-direction: column; gap: 9px; }",
-          "focus": true
-        },
-        {
-          "line": 559,
-          "text": ".rail-todo {",
-          "focus": false
-        },
-        {
-          "line": 560,
-          "text": "  display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; align-items: flex-start;",
-          "focus": false
-        }
-      ],
-      "ruleId": "clearcode.delivery.deferred-work-concentration",
-      "confidence": "medium",
-      "fingerprint": "d23dbf57b1c1",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review surfaces/gui/src/styles.css:558 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-e5eaa41f7aea"
-    },
-    {
-      "effort": "M",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Delivery",
-      "title": "Deferred work concentration",
-      "severity": "medium",
-      "path": "surfaces/gui/src/components/RightRail.tsx",
-      "line": 44,
-      "impact": "9 TODO/FIXME/HACK markers indicate unresolved decisions in one file.",
-      "evidence": [
-        {
-          "line": 42,
-          "text": "  refreshKey: number;",
-          "focus": false
-        },
-        {
-          "line": 43,
-          "text": "  toolNames: string[];",
-          "focus": false
-        },
-        {
-          "line": 44,
-          "text": "  todo: TodoItem[];",
-          "focus": true
-        },
-        {
-          "line": 45,
-          "text": "  running: boolean;",
-          "focus": false
-        },
-        {
-          "line": 46,
-          "text": "  // Fires when a full artifact preview opens/closes, so the app can auto-collapse the left nav",
-          "focus": false
-        }
-      ],
-      "ruleId": "clearcode.delivery.deferred-work-concentration",
-      "confidence": "medium",
-      "fingerprint": "a9b25e6cb4c4",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review surfaces/gui/src/components/RightRail.tsx:44 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-f2a1e4100b57"
-    },
-    {
-      "effort": "M",
-      "status": "raw",
       "scope": "repository",
       "applicability": "review",
       "area": "Delivery",
@@ -1822,7 +1545,7 @@
       "severity": "medium",
       "path": null,
       "line": null,
-      "impact": "93% of recent commits came from one contributor.",
+      "impact": "90% of recent commits came from one contributor.",
       "ruleId": "clearcode.delivery.contributor-concentration-risk",
       "confidence": "medium",
       "fingerprint": "3873428d0802",
@@ -1846,142 +1569,13 @@
       "area": "Maintainability",
       "title": "Large file hotspot",
       "severity": "medium",
-      "path": "surfaces/gui/src-tauri/src/lib.rs",
+      "path": "surfaces/gui/src/components/Sidebar.tsx",
       "line": 1,
-      "impact": "711 non-empty lines make ownership, testing, and refactoring harder.",
+      "impact": "1117 non-empty lines make ownership, testing, and refactoring harder.",
       "evidence": [
         {
           "line": 1,
-          "text": "//! OpenWorker desktop shell.",
-          "focus": true
-        },
-        {
-          "line": 2,
-          "text": "//!",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "ruleId": "clearcode.maintainability.large-file-hotspot",
-      "fingerprint": "e10dad2adc81",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review surfaces/gui/src-tauri/src/lib.rs:1 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-956243585804"
-    },
-    {
-      "effort": "M",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Dense lines reduce reviewability",
-      "severity": "medium",
-      "path": "surfaces/gui/src/styles.css",
-      "line": 185,
-      "impact": "31 lines exceed 140 characters, increasing scan and review effort.",
-      "evidence": [
-        {
-          "line": 183,
-          "text": "/* -- Channel subscriptions: the per-session composer chip + popover -------- */",
-          "focus": false
-        },
-        {
-          "line": 184,
-          "text": ".sub-chip { display: inline-flex; align-items: center; gap: 4px; }",
-          "focus": false
-        },
-        {
-          "line": 185,
-          "text": ".chan-input { font: inherit; font-size: 13px; padding: 6px 9px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); color: var(--ink); }",
-          "focus": true
-        },
-        {
-          "line": 186,
-          "text": ".chan-input { min-width: 220px; }",
-          "focus": false
-        },
-        {
-          "line": 187,
-          "text": ".sub-chip-wrap { position: relative; display: inline-flex; }",
-          "focus": false
-        }
-      ],
-      "ruleId": "clearcode.maintainability.dense-lines-reduce-reviewability",
-      "confidence": "high",
-      "fingerprint": "cb6756ee386f",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review surfaces/gui/src/styles.css:185 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-8834261cd5af"
-    },
-    {
-      "effort": "L",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Large declarative file",
-      "severity": "medium",
-      "path": "surfaces/gui/src/styles.css",
-      "line": 1,
-      "impact": "1521 non-empty lines concentrate a large declarative surface; review modularity and ownership before splitting it mechanically.",
-      "evidence": [
-        {
-          "line": 1,
-          "text": "/* Manrope — the wordmark typeface, self-hosted (bundled woff2, no external font call). */",
-          "focus": true
-        },
-        {
-          "line": 2,
-          "text": "@font-face {",
-          "focus": false
-        }
-      ],
-      "confidence": "medium",
-      "ruleId": "clearcode.maintainability.large-declarative-file",
-      "fingerprint": "eb13996a142a",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review surfaces/gui/src/styles.css:1 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-6080c5145046"
-    },
-    {
-      "effort": "L",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Large file hotspot",
-      "severity": "medium",
-      "path": "surfaces/gui/src/components/ManageTabs.tsx",
-      "line": 1,
-      "impact": "851 non-empty lines make ownership, testing, and refactoring harder.",
-      "evidence": [
-        {
-          "line": 1,
-          "text": "import { useEffect, useState } from \"react\";",
+          "text": "import { useEffect, useMemo, useState, type ReactNode } from \"react\";",
           "focus": true
         },
         {
@@ -1992,10 +1586,10 @@
       ],
       "confidence": "high",
       "ruleId": "clearcode.maintainability.large-file-hotspot",
-      "fingerprint": "d512d08a4487",
+      "fingerprint": "d37151b531c9",
       "evidenceType": "code-frame",
       "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review surfaces/gui/src/components/ManageTabs.tsx:1 for the corrected pattern.",
+      "verification": "Re-run the scan and review surfaces/gui/src/components/Sidebar.tsx:1 for the corrected pattern.",
       "management": {
         "owner": null,
         "proposedOwner": "engineering-maintainer",
@@ -2003,625 +1597,7 @@
         "control": "scanner-recommendation",
         "source": "scanner"
       },
-      "id": "finding-9043771209a8"
-    },
-    {
-      "effort": "M",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Dense lines reduce reviewability",
-      "severity": "medium",
-      "path": "surfaces/gui/src/components/SettingsView.tsx",
-      "line": 270,
-      "impact": "12 lines exceed 140 characters, increasing scan and review effort.",
-      "evidence": [
-        {
-          "line": 268,
-          "text": "        <div className=\"space-y-4\">",
-          "focus": false
-        },
-        {
-          "line": 269,
-          "text": "          <div className=\"rounded-xl border border-green-200 bg-green-50/70 px-4 py-3 text-[12.5px] text-green-800\">",
-          "focus": false
-        },
-        {
-          "line": 270,
-          "text": "            <span className=\"font-medium\">Private by design.</span> Audio is held in memory only while you record and is transcribed locally.",
-          "focus": true
-        },
-        {
-          "line": 271,
-          "text": "          </div>",
-          "focus": false
-        },
-        {
-          "line": 272,
-          "text": "",
-          "focus": false
-        }
-      ],
-      "ruleId": "clearcode.maintainability.dense-lines-reduce-reviewability",
-      "confidence": "high",
-      "fingerprint": "bd24f48111dd",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review surfaces/gui/src/components/SettingsView.tsx:270 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-357e14b707dc"
-    },
-    {
-      "effort": "L",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Large file hotspot",
-      "severity": "medium",
-      "path": "surfaces/gui/src/components/SettingsView.tsx",
-      "line": 1,
-      "impact": "718 non-empty lines make ownership, testing, and refactoring harder.",
-      "evidence": [
-        {
-          "line": 1,
-          "text": "import { useEffect, useState } from \"react\";",
-          "focus": true
-        },
-        {
-          "line": 2,
-          "text": "import {",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "ruleId": "clearcode.maintainability.large-file-hotspot",
-      "fingerprint": "2935b7346055",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review surfaces/gui/src/components/SettingsView.tsx:1 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-f52436f6d8e7"
-    },
-    {
-      "effort": "L",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Large file hotspot",
-      "severity": "medium",
-      "path": "coworker/engine.py",
-      "line": 1,
-      "impact": "956 non-empty lines make ownership, testing, and refactoring harder.",
-      "evidence": [
-        {
-          "line": 1,
-          "text": "\"\"\"TurnEngine — the owned agent loop.",
-          "focus": true
-        },
-        {
-          "line": 2,
-          "text": "",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "ruleId": "clearcode.maintainability.large-file-hotspot",
-      "fingerprint": "1456b7293117",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review coworker/engine.py:1 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-e1d008ec7a29"
-    },
-    {
-      "effort": "L",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Large file hotspot",
-      "severity": "medium",
-      "path": "coworker/connectors/email_tools.py",
-      "line": 1,
-      "impact": "765 non-empty lines make ownership, testing, and refactoring harder.",
-      "evidence": [
-        {
-          "line": 1,
-          "text": "\"\"\"Email (IMAP/SMTP) connector tools — app-password auth, stdlib only.",
-          "focus": true
-        },
-        {
-          "line": 2,
-          "text": "",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "ruleId": "clearcode.maintainability.large-file-hotspot",
-      "fingerprint": "b6c7806447ad",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review coworker/connectors/email_tools.py:1 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-3953d2a3f3c0"
-    },
-    {
-      "effort": "L",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Large file hotspot",
-      "severity": "medium",
-      "path": "coworker/connectors/tool_defs.py",
-      "line": 1,
-      "impact": "1172 non-empty lines make ownership, testing, and refactoring harder.",
-      "evidence": [
-        {
-          "line": 1,
-          "text": "\"\"\"Connector tool catalog and local enablement policy.\"\"\"",
-          "focus": true
-        },
-        {
-          "line": 2,
-          "text": "",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "ruleId": "clearcode.maintainability.large-file-hotspot",
-      "fingerprint": "4de15c76c900",
-      "evidenceType": "code-frame",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review coworker/connectors/tool_defs.py:1 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-dbd582ace0a0"
-    },
-    {
-      "effort": "M",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Function complexity hotspot: VoiceInputSection",
-      "severity": "medium",
-      "path": "surfaces/gui/src/components/SettingsView.tsx",
-      "line": 143,
-      "impact": "VoiceInputSection spans 193 non-empty lines with 77 decision token(s) and a 68/100 modeled complexity score.",
-      "evidence": [
-        {
-          "line": 142,
-          "text": "",
-          "focus": false
-        },
-        {
-          "line": 143,
-          "text": "function VoiceInputSection() {",
-          "focus": true
-        },
-        {
-          "line": 144,
-          "text": "  const [status, setStatus] = useState<DictationStatus | null>(null);",
-          "focus": false
-        },
-        {
-          "line": 145,
-          "text": "  const [progress, setProgress] = useState<DictationDownloadProgress | null>(null);",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "symbol": "VoiceInputSection",
-      "metrics": {
-        "complexity": 68,
-        "nonEmptyLines": 193,
-        "decisions": 77,
-        "parameters": 0
-      },
-      "remediation": "Split VoiceInputSection around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.",
-      "verification": "Run the affected test suite and re-scan surfaces/gui/src/components/SettingsView.tsx:143; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
-      "ruleId": "clearcode.maintainability.function-complexity-hotspot-voiceinputsection",
-      "fingerprint": "56f3f44d370c",
-      "evidenceType": "code-frame",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-d57482b38fc0"
-    },
-    {
-      "effort": "M",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Function complexity hotspot: run",
-      "severity": "medium",
-      "path": "surfaces/gui/src-tauri/src/lib.rs",
-      "line": 580,
-      "impact": "run spans 186 non-empty lines with 23 decision token(s) and a 64.5/100 modeled complexity score.",
-      "evidence": [
-        {
-          "line": 579,
-          "text": "",
-          "focus": false
-        },
-        {
-          "line": 580,
-          "text": "pub fn run() {",
-          "focus": true
-        },
-        {
-          "line": 581,
-          "text": "    let port = free_port();",
-          "focus": false
-        },
-        {
-          "line": 582,
-          "text": "    let api_token = launch_token();",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "symbol": "run",
-      "metrics": {
-        "complexity": 64.5,
-        "nonEmptyLines": 186,
-        "decisions": 23,
-        "parameters": 0
-      },
-      "remediation": "Split run around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.",
-      "verification": "Run the affected test suite and re-scan surfaces/gui/src-tauri/src/lib.rs:580; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
-      "ruleId": "clearcode.maintainability.function-complexity-hotspot-run",
-      "fingerprint": "be4e188bbf04",
-      "evidenceType": "code-frame",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-a0a816a902ee"
-    },
-    {
-      "effort": "M",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Function complexity hotspot: humanizeTool",
-      "severity": "medium",
-      "path": "surfaces/gui/src/humanize.ts",
-      "line": 29,
-      "impact": "humanizeTool spans 74 non-empty lines with 60 decision token(s) and a 56.9/100 modeled complexity score.",
-      "evidence": [
-        {
-          "line": 28,
-          "text": "",
-          "focus": false
-        },
-        {
-          "line": 29,
-          "text": "export function humanizeTool(name: string, args: any): HumanLine {",
-          "focus": true
-        },
-        {
-          "line": 30,
-          "text": "  const a = args && typeof args === \"object\" ? args : {};",
-          "focus": false
-        },
-        {
-          "line": 31,
-          "text": "  switch (name) {",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "symbol": "humanizeTool",
-      "metrics": {
-        "complexity": 56.9,
-        "nonEmptyLines": 74,
-        "decisions": 60,
-        "parameters": 2
-      },
-      "remediation": "Split humanizeTool around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.",
-      "verification": "Run the affected test suite and re-scan surfaces/gui/src/humanize.ts:29; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
-      "ruleId": "clearcode.maintainability.function-complexity-hotspot-humanizetool",
-      "fingerprint": "9a86a9bc3269",
-      "evidenceType": "code-frame",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-84acd8fc0cbc"
-    },
-    {
-      "effort": "M",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Function complexity hotspot: InboxRoutingCard",
-      "severity": "medium",
-      "path": "surfaces/gui/src/components/InboxConfigure.tsx",
-      "line": 56,
-      "impact": "InboxRoutingCard spans 100 non-empty lines with 34 decision token(s) and a 56/100 modeled complexity score.",
-      "evidence": [
-        {
-          "line": 55,
-          "text": "// the \"default\" route (sessions fall back to it); pick a channel separate from any you subscribe to.",
-          "focus": false
-        },
-        {
-          "line": 56,
-          "text": "function InboxRoutingCard() {",
-          "focus": true
-        },
-        {
-          "line": 57,
-          "text": "  const [recent, setRecent] = useState<RecentChannel[]>([]);",
-          "focus": false
-        },
-        {
-          "line": 58,
-          "text": "  const [connectors, setConnectors] = useState<Connector[]>([]);",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "symbol": "InboxRoutingCard",
-      "metrics": {
-        "complexity": 56,
-        "nonEmptyLines": 100,
-        "decisions": 34,
-        "parameters": 0
-      },
-      "remediation": "Split InboxRoutingCard around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.",
-      "verification": "Run the affected test suite and re-scan surfaces/gui/src/components/InboxConfigure.tsx:56; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
-      "ruleId": "clearcode.maintainability.function-complexity-hotspot-inboxroutingcard",
-      "fingerprint": "599413c59ece",
-      "evidenceType": "code-frame",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-ce7c170ee2c0"
-    },
-    {
-      "effort": "M",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Function complexity hotspot: ModelsTab",
-      "severity": "medium",
-      "path": "surfaces/gui/src/components/ManageTabs.tsx",
-      "line": 78,
-      "impact": "ModelsTab spans 89 non-empty lines with 24 decision token(s) and a 56/100 modeled complexity score.",
-      "evidence": [
-        {
-          "line": 77,
-          "text": "// per-provider ModelChecklist / read-only model preview (form view).",
-          "focus": false
-        },
-        {
-          "line": 78,
-          "text": "export function ModelsTab() {",
-          "focus": true
-        },
-        {
-          "line": 79,
-          "text": "  const [settings, setSettings] = useState<ModelSettings | null>(null);",
-          "focus": false
-        },
-        {
-          "line": 80,
-          "text": "  const refreshSettings = () => getSettings().then(setSettings).catch(() => setSettings(null));",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "symbol": "ModelsTab",
-      "metrics": {
-        "complexity": 56,
-        "nonEmptyLines": 89,
-        "decisions": 24,
-        "parameters": 0
-      },
-      "remediation": "Split ModelsTab around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.",
-      "verification": "Run the affected test suite and re-scan surfaces/gui/src/components/ManageTabs.tsx:78; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
-      "ruleId": "clearcode.maintainability.function-complexity-hotspot-modelstab",
-      "fingerprint": "8bbf19e9efcb",
-      "evidenceType": "code-frame",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-d7407a9ba7f3"
-    },
-    {
-      "effort": "M",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Function complexity hotspot: itemsFromMessages",
-      "severity": "medium",
-      "path": "surfaces/gui/src/itemsFromMessages.ts",
-      "line": 11,
-      "impact": "itemsFromMessages spans 71 non-empty lines with 37 decision token(s) and a 53.8/100 modeled complexity score.",
-      "evidence": [
-        {
-          "line": 10,
-          "text": "",
-          "focus": false
-        },
-        {
-          "line": 11,
-          "text": "export function itemsFromMessages(messages: ConversationMessage[]): Item[] {",
-          "focus": true
-        },
-        {
-          "line": 12,
-          "text": "  const items: Item[] = [];",
-          "focus": false
-        },
-        {
-          "line": 13,
-          "text": "  // Index tool results by tool_call_id so replayed tool rows can show their output",
-          "focus": false
-        }
-      ],
-      "confidence": "high",
-      "symbol": "itemsFromMessages",
-      "metrics": {
-        "complexity": 53.8,
-        "nonEmptyLines": 71,
-        "decisions": 37,
-        "parameters": 1
-      },
-      "remediation": "Split itemsFromMessages around explicit policy, state, or I/O boundaries while preserving its public contract; add focused tests for each extracted path.",
-      "verification": "Run the affected test suite and re-scan surfaces/gui/src/itemsFromMessages.ts:11; verify the function's decision count and modeled complexity both decrease without moving complexity into an untested helper.",
-      "ruleId": "clearcode.maintainability.function-complexity-hotspot-itemsfrommessages",
-      "fingerprint": "37831404425a",
-      "evidenceType": "code-frame",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-3ceb0002568a"
-    },
-    {
-      "effort": "S",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Security",
-      "title": "Webview script evaluation boundary",
-      "severity": "medium",
-      "path": "surfaces/gui/src-tauri/src/lib.rs",
-      "line": 743,
-      "impact": "This execution or data-handling boundary requires exploitability review before release.",
-      "evidence": [
-        {
-          "line": 741,
-          "text": "                        show_main(app);",
-          "focus": false
-        },
-        {
-          "line": 742,
-          "text": "                        if let Some(w) = app.get_webview_window(\"main\") {",
-          "focus": false
-        },
-        {
-          "line": 743,
-          "text": "                            let _ = w.eval(",
-          "focus": true
-        },
-        {
-          "line": 744,
-          "text": "                                \"window.dispatchEvent(new CustomEvent('coworker:open-settings'))\",",
-          "focus": false
-        },
-        {
-          "line": 745,
-          "text": "                            );",
-          "focus": false
-        }
-      ],
-      "confidence": "medium",
-      "ruleId": "clearcode.security.webview-script-evaluation-boundary",
-      "fingerprint": "790e91077424",
-      "evidenceType": "code-frame",
-      "remediation": "Triage exploitability, remove the unsafe pattern, add a regression test, and preserve scan evidence.",
-      "verification": "Re-run the scan and review surfaces/gui/src-tauri/src/lib.rs:743 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "security-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-9ac8e137f889"
-    },
-    {
-      "effort": "S",
-      "status": "raw",
-      "scope": "repository",
-      "applicability": "control",
-      "area": "Delivery",
-      "title": "CODEOWNERS missing",
-      "severity": "low",
-      "path": "CODEOWNERS",
-      "line": 1,
-      "evidenceType": "repository-presence-check",
-      "impact": "Code ownership makes reviews and escalation paths explicit during integration work.",
-      "autoFix": {
-        "action": "createCodeowners",
-        "label": "Create file"
-      },
-      "ruleId": "clearcode.delivery.codeowners-missing",
-      "confidence": "medium",
-      "fingerprint": "4442f3318d3d",
-      "remediation": "Apply the available Create file automation and verify the diff.",
-      "verification": "Re-run the ClearCode scan and confirm the automated change removed this finding without regressions.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "available-automation",
-        "source": "scanner"
-      },
-      "id": "finding-a905502daa8d"
+      "id": "finding-d36d8cf8a545"
     },
     {
       "effort": "S",
@@ -2650,22 +1626,22 @@
       "id": "finding-7d5d08780daa"
     },
     {
-      "effort": "S",
+      "effort": "M",
       "status": "raw",
-      "scope": "test",
-      "applicability": "contextual",
+      "scope": "production",
+      "applicability": "direct",
       "area": "Maintainability",
       "title": "Duplicate implementation block",
       "severity": "low",
-      "path": "tests/test_message_source.py",
-      "line": 25,
-      "impact": "1 duplicate cluster(s), up to 3 repeated blocks across 1 component(s), increase change cost.",
+      "path": "coworker/connectors/browser_automation.py",
+      "line": 29,
+      "impact": "3 duplicate cluster(s), up to 3 repeated blocks across 1 component(s), increase change cost.",
       "ruleId": "clearcode.maintainability.duplicate-implementation-block",
       "confidence": "high",
-      "fingerprint": "b9b3650872b9",
+      "fingerprint": "a2c01317d611",
       "evidenceType": "source-location",
       "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review tests/test_message_source.py:25 for the corrected pattern.",
+      "verification": "Re-run the scan and review coworker/connectors/browser_automation.py:29 for the corrected pattern.",
       "management": {
         "owner": null,
         "proposedOwner": "engineering-maintainer",
@@ -2673,7 +1649,7 @@
         "control": "scanner-recommendation",
         "source": "scanner"
       },
-      "id": "finding-0a1b137ce92c"
+      "id": "finding-7888bd48fea6"
     },
     {
       "effort": "M",
@@ -2702,177 +1678,52 @@
       "id": "finding-1cafeb13aa7d"
     },
     {
-      "effort": "M",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Duplicate implementation block",
-      "severity": "low",
-      "path": "coworker/connectors/browser_automation.py",
-      "line": 29,
-      "impact": "1 duplicate cluster(s), up to 3 repeated blocks across 1 component(s), increase change cost.",
-      "ruleId": "clearcode.maintainability.duplicate-implementation-block",
-      "confidence": "high",
-      "fingerprint": "a2c01317d611",
-      "evidenceType": "source-location",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review coworker/connectors/browser_automation.py:29 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-7888bd48fea6"
-    },
-    {
-      "effort": "M",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Duplicate implementation block",
-      "severity": "low",
-      "path": "coworker/connectors/browser_automation.py",
-      "line": 33,
-      "impact": "1 duplicate cluster(s), up to 3 repeated blocks across 1 component(s), increase change cost.",
-      "ruleId": "clearcode.maintainability.duplicate-implementation-block",
-      "confidence": "high",
-      "fingerprint": "8081ec745207",
-      "evidenceType": "source-location",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review coworker/connectors/browser_automation.py:33 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-901c906d07dc"
-    },
-    {
-      "effort": "M",
-      "status": "raw",
-      "scope": "production",
-      "applicability": "direct",
-      "area": "Maintainability",
-      "title": "Duplicate implementation block",
-      "severity": "low",
-      "path": "coworker/connectors/browser_automation.py",
-      "line": 34,
-      "impact": "1 duplicate cluster(s), up to 3 repeated blocks across 1 component(s), increase change cost.",
-      "ruleId": "clearcode.maintainability.duplicate-implementation-block",
-      "confidence": "high",
-      "fingerprint": "6192d0664037",
-      "evidenceType": "source-location",
-      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
-      "verification": "Re-run the scan and review coworker/connectors/browser_automation.py:34 for the corrected pattern.",
-      "management": {
-        "owner": null,
-        "proposedOwner": "engineering-maintainer",
-        "status": "unassigned",
-        "control": "scanner-recommendation",
-        "source": "scanner"
-      },
-      "id": "finding-706d678540c0"
-    },
-    {
       "effort": "S",
       "status": "raw",
-      "scope": "example",
+      "scope": "test",
       "applicability": "contextual",
-      "area": "Security",
-      "title": "Unsafe HTML injection boundary",
-      "severity": "info",
-      "path": "ui-mocks/redesign.html",
-      "line": 840,
-      "impact": "2 instances of this boundary were observed in the file. The pattern occurs in example or prototype. Confirm it cannot reach production inputs or packaged artifacts before treating it as exploitable.",
-      "evidence": [
-        {
-          "line": 838,
-          "text": "    default:    { label: 'Connector',  icon: 'PLUG_ICON' },   // fallback",
-          "focus": false
-        },
-        {
-          "line": 839,
-          "text": "  };",
-          "focus": false
-        },
-        {
-          "line": 840,
-          "text": "  document.body.innerHTML = document.body.innerHTML.replace(/\\{\\{(\\w+)\\}\\}/g, (m, k) => ICONS[k] || m);",
-          "focus": true
-        },
-        {
-          "line": 841,
-          "text": "",
-          "focus": false
-        },
-        {
-          "line": 842,
-          "text": "  // view switch (session / integrations / persona)",
-          "focus": false
-        }
-      ],
-      "confidence": "medium",
-      "ruleId": "clearcode.security.unsafe-html-injection-boundary",
-      "fingerprint": "1067f02d3bfe",
-      "evidenceType": "code-frame",
-      "remediation": "Triage exploitability, remove the unsafe pattern, add a regression test, and preserve scan evidence.",
-      "verification": "Re-run the scan and review ui-mocks/redesign.html:840 for the corrected pattern.",
+      "area": "Maintainability",
+      "title": "Duplicate implementation block",
+      "severity": "low",
+      "path": "tests/test_message_source.py",
+      "line": 25,
+      "impact": "1 duplicate cluster(s), up to 3 repeated blocks across 1 component(s), increase change cost.",
+      "ruleId": "clearcode.maintainability.duplicate-implementation-block",
+      "confidence": "high",
+      "fingerprint": "b9b3650872b9",
+      "evidenceType": "source-location",
+      "remediation": "Refactor the hotspot into a smaller, named unit and verify behavior with focused tests or checks.",
+      "verification": "Re-run the scan and review tests/test_message_source.py:25 for the corrected pattern.",
       "management": {
         "owner": null,
-        "proposedOwner": "security-maintainer",
+        "proposedOwner": "engineering-maintainer",
         "status": "unassigned",
         "control": "scanner-recommendation",
         "source": "scanner"
       },
-      "id": "finding-864ff8035f85"
+      "id": "finding-0a1b137ce92c"
     }
   ],
   "hotspots": [
     {
-      "path": "surfaces/gui/src/styles.css",
-      "component": "surfaces",
-      "loc": 1521,
-      "language": "CSS",
-      "findings": 9,
-      "churn": 1610,
-      "contributors": 1,
-      "risk": 130
-    },
-    {
       "path": "surfaces/gui/src/App.tsx",
       "component": "surfaces",
-      "loc": 1674,
+      "loc": 1969,
       "language": "TypeScript",
       "findings": 8,
-      "churn": 1788,
-      "contributors": 1,
-      "risk": 122
+      "churn": 2783,
+      "contributors": 2,
+      "risk": 125
     },
     {
       "path": "surfaces/gui/src/components/Sidebar.tsx",
       "component": "surfaces",
-      "loc": 1335,
+      "loc": 1117,
       "language": "TypeScript",
-      "findings": 8,
-      "churn": 1490,
-      "contributors": 1,
-      "risk": 121
-    },
-    {
-      "path": "coworker/connectors/integration_tools.py",
-      "component": "coworker",
-      "loc": 4516,
-      "language": "Python",
-      "findings": 4,
-      "churn": 4892,
-      "contributors": 1,
-      "risk": 98
+      "findings": 7,
+      "churn": 2034,
+      "contributors": 2,
+      "risk": 113
     },
     {
       "path": "coworker/server/manager.py",
@@ -2885,36 +1736,6 @@
       "risk": 96
     },
     {
-      "path": "surfaces/gui/src-tauri/src/lib.rs",
-      "component": "surfaces",
-      "loc": 711,
-      "language": "Rust",
-      "findings": 9,
-      "churn": 0,
-      "contributors": 0,
-      "risk": 95
-    },
-    {
-      "path": "surfaces/gui/src/components/SettingsView.tsx",
-      "component": "surfaces",
-      "loc": 718,
-      "language": "TypeScript",
-      "findings": 9,
-      "churn": 0,
-      "contributors": 0,
-      "risk": 95
-    },
-    {
-      "path": "surfaces/gui/src/api.ts",
-      "component": "surfaces",
-      "loc": 1673,
-      "language": "TypeScript",
-      "findings": 4,
-      "churn": 1869,
-      "contributors": 1,
-      "risk": 91
-    },
-    {
       "path": "coworker/server/app.py",
       "component": "coworker",
       "loc": 1748,
@@ -2923,36 +1744,6 @@
       "churn": 2080,
       "contributors": 2,
       "risk": 91
-    },
-    {
-      "path": "coworker/connectors/descriptors.py",
-      "component": "coworker",
-      "loc": 1385,
-      "language": "Python",
-      "findings": 4,
-      "churn": 1476,
-      "contributors": 1,
-      "risk": 89
-    },
-    {
-      "path": "surfaces/gui/src/components/ManageTabs.tsx",
-      "component": "surfaces",
-      "loc": 851,
-      "language": "TypeScript",
-      "findings": 6,
-      "churn": 0,
-      "contributors": 0,
-      "risk": 71
-    },
-    {
-      "path": "coworker/connectors/browser_automation.py",
-      "component": "coworker",
-      "loc": 503,
-      "language": "Python",
-      "findings": 6,
-      "churn": 0,
-      "contributors": 0,
-      "risk": 70
     },
     {
       "path": "surfaces/gui/package-lock.json",
@@ -2965,34 +1756,14 @@
       "risk": 69
     },
     {
-      "path": "tests/test_connectors.py",
-      "component": "tests",
-      "loc": 1412,
+      "path": "coworker/connectors/integration_tools.py",
+      "component": "coworker",
+      "loc": 444,
       "language": "Python",
       "findings": 0,
-      "churn": 1727,
-      "contributors": 1,
-      "risk": 58
-    },
-    {
-      "path": "surfaces/gui/e2e/fixtures.ts",
-      "component": "surfaces",
-      "loc": 1461,
-      "language": "TypeScript",
-      "findings": 0,
-      "churn": 1517,
-      "contributors": 1,
-      "risk": 57
-    },
-    {
-      "path": "tests/test_server.py",
-      "component": "tests",
-      "loc": 877,
-      "language": "Python",
-      "findings": 0,
-      "churn": 1216,
-      "contributors": 3,
-      "risk": 54
+      "churn": 9272,
+      "contributors": 2,
+      "risk": 61
     },
     {
       "path": "surfaces/gui/src/components/Composer.tsx",
@@ -3007,51 +1778,151 @@
     {
       "path": "coworker/connectors/tool_defs.py",
       "component": "coworker",
-      "loc": 1172,
+      "loc": 100,
       "language": "Python",
-      "findings": 3,
+      "findings": 0,
+      "churn": 2293,
+      "contributors": 2,
+      "risk": 50
+    },
+    {
+      "path": "coworker/connectors/descriptors.py",
+      "component": "coworker",
+      "loc": 58,
+      "language": "Python",
+      "findings": 0,
+      "churn": 2958,
+      "contributors": 2,
+      "risk": 49
+    },
+    {
+      "path": "surfaces/gui/src/styles.css",
+      "component": "surfaces",
+      "loc": 11,
+      "language": "CSS",
+      "findings": 0,
+      "churn": 3221,
+      "contributors": 2,
+      "risk": 44
+    },
+    {
+      "path": "surfaces/gui/src/api.ts",
+      "component": "surfaces",
+      "loc": 6,
+      "language": "TypeScript",
+      "findings": 0,
+      "churn": 3734,
+      "contributors": 2,
+      "risk": 42
+    },
+    {
+      "path": "coworker/providers/anthropic_provider.py",
+      "component": "coworker",
+      "loc": 526,
+      "language": "Python",
+      "findings": 2,
       "churn": 0,
       "contributors": 0,
-      "risk": 49
+      "risk": 38
+    },
+    {
+      "path": "coworker/connectors/browser_automation.py",
+      "component": "coworker",
+      "loc": 503,
+      "language": "Python",
+      "findings": 2,
+      "churn": 0,
+      "contributors": 0,
+      "risk": 38
+    },
+    {
+      "path": "tests/test_automation.py",
+      "component": "tests",
+      "loc": 359,
+      "language": "Python",
+      "findings": 2,
+      "churn": 0,
+      "contributors": 0,
+      "risk": 36
+    },
+    {
+      "path": "tests/test_message_source.py",
+      "component": "tests",
+      "loc": 210,
+      "language": "Python",
+      "findings": 2,
+      "churn": 0,
+      "contributors": 0,
+      "risk": 35
+    },
+    {
+      "path": "tests/test_connectors.py",
+      "component": "tests",
+      "loc": 1412,
+      "language": "Python",
+      "findings": 0,
+      "churn": 0,
+      "contributors": 0,
+      "risk": 25
+    },
+    {
+      "path": "surfaces/gui/e2e/fixtures.ts",
+      "component": "surfaces",
+      "loc": 1461,
+      "language": "TypeScript",
+      "findings": 0,
+      "churn": 0,
+      "contributors": 0,
+      "risk": 25
+    },
+    {
+      "path": "ui-mocks/redesign.html",
+      "component": "ui-mocks",
+      "loc": 879,
+      "language": "HTML",
+      "findings": 0,
+      "churn": 0,
+      "contributors": 0,
+      "risk": 24
     }
   ],
   "complexityField": [
     {
-      "path": "surfaces/gui/src/App.tsx::App@146",
+      "path": "surfaces/gui/src/App.tsx::App@196",
       "filePath": "surfaces/gui/src/App.tsx",
       "symbol": "App",
       "kind": "function",
-      "line": 146,
-      "endLine": 1639,
+      "line": 196,
+      "endLine": 1925,
       "parameters": 0,
       "component": "surfaces",
       "language": "TypeScript",
-      "loc": 1455,
-      "nonEmptyLines": 1455,
-      "decisions": 401,
+      "loc": 1691,
+      "nonEmptyLines": 1691,
+      "decisions": 402,
       "longLines": 1,
       "todos": 2,
       "consoleCalls": 0,
       "debugStatements": 0,
       "trailingWhitespace": 0,
       "securityHits": 0,
-      "churn": 1788,
-      "contributors": 1,
-      "complexity": 74.3,
-      "height": 61
+      "churn": 2783,
+      "contributors": 2,
+      "complexity": 75.1,
+      "height": 62
     },
     {
-      "path": "surfaces/gui/src/components/Sidebar.tsx::Sidebar@173",
+      "path": "surfaces/gui/src/components/Sidebar.tsx::Sidebar@104",
       "filePath": "surfaces/gui/src/components/Sidebar.tsx",
       "symbol": "Sidebar",
       "kind": "function",
-      "line": 173,
-      "endLine": 1286,
+      "line": 104,
+      "endLine": 1154,
       "parameters": 1,
       "component": "surfaces",
       "language": "TypeScript",
-      "loc": 1083,
-      "nonEmptyLines": 1083,
+      "loc": 1020,
+      "nonEmptyLines": 1020,
       "decisions": 204,
       "longLines": 0,
       "todos": 0,
@@ -3059,58 +1930,10 @@
       "debugStatements": 0,
       "trailingWhitespace": 0,
       "securityHits": 0,
-      "churn": 1490,
-      "contributors": 1,
-      "complexity": 69.1,
+      "churn": 2034,
+      "contributors": 2,
+      "complexity": 69.9,
       "height": 57
-    },
-    {
-      "path": "surfaces/gui/src/components/SettingsView.tsx::VoiceInputSection@143",
-      "filePath": "surfaces/gui/src/components/SettingsView.tsx",
-      "symbol": "VoiceInputSection",
-      "kind": "function",
-      "line": 143,
-      "endLine": 349,
-      "parameters": 0,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 193,
-      "nonEmptyLines": 193,
-      "decisions": 77,
-      "longLines": 10,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 68,
-      "height": 56
-    },
-    {
-      "path": "surfaces/gui/src-tauri/src/lib.rs::run@580",
-      "filePath": "surfaces/gui/src-tauri/src/lib.rs",
-      "symbol": "run",
-      "kind": "function",
-      "line": 580,
-      "endLine": 772,
-      "parameters": 0,
-      "component": "surfaces",
-      "language": "Rust",
-      "loc": 186,
-      "nonEmptyLines": 186,
-      "decisions": 23,
-      "longLines": 1,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 1,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 64.5,
-      "height": 53
     },
     {
       "path": "surfaces/gui/src/components/Composer.tsx::Composer@82",
@@ -3137,108 +1960,12 @@
       "height": 50
     },
     {
-      "path": "surfaces/gui/src/humanize.ts::humanizeTool@29",
-      "filePath": "surfaces/gui/src/humanize.ts",
-      "symbol": "humanizeTool",
-      "kind": "function",
-      "line": 29,
-      "endLine": 102,
-      "parameters": 2,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 74,
-      "nonEmptyLines": 74,
-      "decisions": 60,
-      "longLines": 0,
-      "todos": 1,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 56.9,
-      "height": 47
-    },
-    {
-      "path": "surfaces/gui/src/components/InboxConfigure.tsx::InboxRoutingCard@56",
-      "filePath": "surfaces/gui/src/components/InboxConfigure.tsx",
-      "symbol": "InboxRoutingCard",
-      "kind": "function",
-      "line": 56,
-      "endLine": 160,
-      "parameters": 0,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 100,
-      "nonEmptyLines": 100,
-      "decisions": 34,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 56,
-      "height": 46
-    },
-    {
-      "path": "surfaces/gui/src/components/ManageTabs.tsx::ModelsTab@78",
-      "filePath": "surfaces/gui/src/components/ManageTabs.tsx",
-      "symbol": "ModelsTab",
-      "kind": "function",
-      "line": 78,
-      "endLine": 172,
-      "parameters": 0,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 89,
-      "nonEmptyLines": 89,
-      "decisions": 24,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 56,
-      "height": 46
-    },
-    {
-      "path": "surfaces/gui/src/itemsFromMessages.ts::itemsFromMessages@11",
-      "filePath": "surfaces/gui/src/itemsFromMessages.ts",
-      "symbol": "itemsFromMessages",
-      "kind": "function",
-      "line": 11,
-      "endLine": 81,
-      "parameters": 1,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 71,
-      "nonEmptyLines": 71,
-      "decisions": 37,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 53.8,
-      "height": 44
-    },
-    {
-      "path": "surfaces/gui/src/components/InboxConfigure.tsx::SubscriptionsCard@209",
+      "path": "surfaces/gui/src/components/InboxConfigure.tsx::SubscriptionsCard@240",
       "filePath": "surfaces/gui/src/components/InboxConfigure.tsx",
       "symbol": "SubscriptionsCard",
       "kind": "function",
-      "line": 209,
-      "endLine": 324,
+      "line": 240,
+      "endLine": 355,
       "parameters": 0,
       "component": "surfaces",
       "language": "TypeScript",
@@ -3257,17 +1984,65 @@
       "height": 43
     },
     {
-      "path": "surfaces/gui/src/components/SettingsView.tsx::TokenSavingsCard@590",
-      "filePath": "surfaces/gui/src/components/SettingsView.tsx",
-      "symbol": "TokenSavingsCard",
+      "path": "surfaces/gui/src/components/InboxConfigure.tsx::useInboxRouting@78",
+      "filePath": "surfaces/gui/src/components/InboxConfigure.tsx",
+      "symbol": "useInboxRouting",
       "kind": "function",
-      "line": 590,
-      "endLine": 673,
+      "line": 78,
+      "endLine": 141,
       "parameters": 0,
       "component": "surfaces",
       "language": "TypeScript",
-      "loc": 79,
-      "nonEmptyLines": 79,
+      "loc": 61,
+      "nonEmptyLines": 61,
+      "decisions": 13,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 46.2,
+      "height": 38
+    },
+    {
+      "path": "surfaces/gui/src/humanize.ts::humanizeConnectedTool@119",
+      "filePath": "surfaces/gui/src/humanize.ts",
+      "symbol": "humanizeConnectedTool",
+      "kind": "function",
+      "line": 119,
+      "endLine": 156,
+      "parameters": 3,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 38,
+      "nonEmptyLines": 38,
+      "decisions": 24,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 45.2,
+      "height": 37
+    },
+    {
+      "path": "surfaces/gui/src/components/SettingsView.tsx::TokenSavingsCard@425",
+      "filePath": "surfaces/gui/src/components/SettingsView.tsx",
+      "symbol": "TokenSavingsCard",
+      "kind": "function",
+      "line": 425,
+      "endLine": 532,
+      "parameters": 0,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 103,
+      "nonEmptyLines": 103,
       "decisions": 10,
       "longLines": 0,
       "todos": 0,
@@ -3277,21 +2052,21 @@
       "securityHits": 0,
       "churn": 0,
       "contributors": 0,
-      "complexity": 44.4,
-      "height": 36
+      "complexity": 44.7,
+      "height": 37
     },
     {
-      "path": "surfaces/gui/src/components/SettingsView.tsx::UpdateInline@524",
+      "path": "surfaces/gui/src/components/SettingsView.tsx::UpdateInline@353",
       "filePath": "surfaces/gui/src/components/SettingsView.tsx",
       "symbol": "UpdateInline",
       "kind": "function",
-      "line": 524,
-      "endLine": 579,
+      "line": 353,
+      "endLine": 414,
       "parameters": 0,
       "component": "surfaces",
       "language": "TypeScript",
-      "loc": 53,
-      "nonEmptyLines": 53,
+      "loc": 59,
+      "nonEmptyLines": 59,
       "decisions": 12,
       "longLines": 0,
       "todos": 0,
@@ -3301,21 +2076,21 @@
       "securityHits": 0,
       "churn": 0,
       "contributors": 0,
-      "complexity": 41.8,
-      "height": 34
+      "complexity": 43.4,
+      "height": 36
     },
     {
-      "path": "surfaces/gui/src/components/SettingsView.tsx::FilesCard@714",
+      "path": "surfaces/gui/src/components/SettingsView.tsx::FilesCard@576",
       "filePath": "surfaces/gui/src/components/SettingsView.tsx",
       "symbol": "FilesCard",
       "kind": "function",
-      "line": 714,
-      "endLine": 778,
+      "line": 576,
+      "endLine": 651,
       "parameters": 0,
       "component": "surfaces",
       "language": "TypeScript",
-      "loc": 61,
-      "nonEmptyLines": 61,
+      "loc": 72,
+      "nonEmptyLines": 72,
       "decisions": 10,
       "longLines": 0,
       "todos": 0,
@@ -3325,8 +2100,56 @@
       "securityHits": 0,
       "churn": 0,
       "contributors": 0,
-      "complexity": 39.4,
-      "height": 32
+      "complexity": 42.5,
+      "height": 35
+    },
+    {
+      "path": "surfaces/gui/src/humanize.ts::humanizeFileTool@62",
+      "filePath": "surfaces/gui/src/humanize.ts",
+      "symbol": "humanizeFileTool",
+      "kind": "function",
+      "line": 62,
+      "endLine": 87,
+      "parameters": 3,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 26,
+      "nonEmptyLines": 26,
+      "decisions": 16,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 41.9,
+      "height": 34
+    },
+    {
+      "path": "surfaces/gui/src/components/SettingsView.tsx::TrustedWorkspacesCard@288",
+      "filePath": "surfaces/gui/src/components/SettingsView.tsx",
+      "symbol": "TrustedWorkspacesCard",
+      "kind": "function",
+      "line": 288,
+      "endLine": 351,
+      "parameters": 0,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 60,
+      "nonEmptyLines": 60,
+      "decisions": 9,
+      "longLines": 1,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 38.4,
+      "height": 31
     },
     {
       "path": "surfaces/gui/src/useRoots.ts::useRoots@8",
@@ -3353,17 +2176,41 @@
       "height": 31
     },
     {
-      "path": "surfaces/gui/src/components/ManageTabs.tsx::McpTab@246",
-      "filePath": "surfaces/gui/src/components/ManageTabs.tsx",
+      "path": "surfaces/gui/src/components/McpTab.tsx::McpTab@43",
+      "filePath": "surfaces/gui/src/components/McpTab.tsx",
       "symbol": "McpTab",
       "kind": "function",
-      "line": 246,
-      "endLine": 372,
+      "line": 43,
+      "endLine": 183,
       "parameters": 0,
       "component": "surfaces",
       "language": "TypeScript",
-      "loc": 118,
-      "nonEmptyLines": 118,
+      "loc": 132,
+      "nonEmptyLines": 132,
+      "decisions": 7,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 37.9,
+      "height": 31
+    },
+    {
+      "path": "surfaces/gui/src/components/SettingsView.tsx::AppearanceSection@182",
+      "filePath": "surfaces/gui/src/components/SettingsView.tsx",
+      "symbol": "AppearanceSection",
+      "kind": "function",
+      "line": 182,
+      "endLine": 286,
+      "parameters": 0,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 96,
+      "nonEmptyLines": 96,
       "decisions": 7,
       "longLines": 0,
       "todos": 0,
@@ -3401,18 +2248,18 @@
       "height": 30
     },
     {
-      "path": "surfaces/gui/src/components/SettingsView.tsx::TrustedWorkspacesCard@469",
-      "filePath": "surfaces/gui/src/components/SettingsView.tsx",
-      "symbol": "TrustedWorkspacesCard",
+      "path": "surfaces/gui/src-tauri/src/lib.rs::run@506",
+      "filePath": "surfaces/gui/src-tauri/src/lib.rs",
+      "symbol": "run",
       "kind": "function",
-      "line": 469,
-      "endLine": 522,
+      "line": 506,
+      "endLine": 563,
       "parameters": 0,
       "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 50,
-      "nonEmptyLines": 50,
-      "decisions": 9,
+      "language": "Rust",
+      "loc": 57,
+      "nonEmptyLines": 57,
+      "decisions": 8,
       "longLines": 1,
       "todos": 0,
       "consoleCalls": 0,
@@ -3421,22 +2268,22 @@
       "securityHits": 0,
       "churn": 0,
       "contributors": 0,
-      "complexity": 35.7,
+      "complexity": 35.3,
       "height": 29
     },
     {
-      "path": "surfaces/gui/src/components/SettingsView.tsx::AppearanceSection@390",
-      "filePath": "surfaces/gui/src/components/SettingsView.tsx",
-      "symbol": "AppearanceSection",
+      "path": "surfaces/gui/src/components/VoiceInputSection.tsx::useModelActions@128",
+      "filePath": "surfaces/gui/src/components/VoiceInputSection.tsx",
+      "symbol": "useModelActions",
       "kind": "function",
-      "line": 390,
-      "endLine": 467,
-      "parameters": 0,
+      "line": 128,
+      "endLine": 177,
+      "parameters": 1,
       "component": "surfaces",
       "language": "TypeScript",
-      "loc": 69,
-      "nonEmptyLines": 69,
-      "decisions": 7,
+      "loc": 46,
+      "nonEmptyLines": 46,
+      "decisions": 9,
       "longLines": 0,
       "todos": 0,
       "consoleCalls": 0,
@@ -3445,8 +2292,32 @@
       "securityHits": 0,
       "churn": 0,
       "contributors": 0,
-      "complexity": 34.8,
-      "height": 29
+      "complexity": 33.3,
+      "height": 27
+    },
+    {
+      "path": "surfaces/gui/src/humanize.ts::humanizePlanTool@90",
+      "filePath": "surfaces/gui/src/humanize.ts",
+      "symbol": "humanizePlanTool",
+      "kind": "function",
+      "line": 90,
+      "endLine": 116,
+      "parameters": 3,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 27,
+      "nonEmptyLines": 27,
+      "decisions": 10,
+      "longLines": 0,
+      "todos": 1,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 32.8,
+      "height": 27
     },
     {
       "path": "surfaces/gui/src/components/connectors/ConnectorsSection.tsx::ConnectorsSection@52",
@@ -3545,6 +2416,78 @@
       "height": 26
     },
     {
+      "path": "surfaces/gui/src/humanize.ts::humanizeShellTool@33",
+      "filePath": "surfaces/gui/src/humanize.ts",
+      "symbol": "humanizeShellTool",
+      "kind": "function",
+      "line": 33,
+      "endLine": 59,
+      "parameters": 3,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 27,
+      "nonEmptyLines": 27,
+      "decisions": 10,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 30.8,
+      "height": 25
+    },
+    {
+      "path": "surfaces/gui/src/itemsFromMessages.ts::assistantMessageItems@45",
+      "filePath": "surfaces/gui/src/itemsFromMessages.ts",
+      "symbol": "assistantMessageItems",
+      "kind": "function",
+      "line": 45,
+      "endLine": 71,
+      "parameters": 2,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 27,
+      "nonEmptyLines": 27,
+      "decisions": 10,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 30.6,
+      "height": 25
+    },
+    {
+      "path": "surfaces/gui/src/components/InboxConfigure.tsx::InboxRoutingCard@143",
+      "filePath": "surfaces/gui/src/components/InboxConfigure.tsx",
+      "symbol": "InboxRoutingCard",
+      "kind": "function",
+      "line": 143,
+      "endLine": 191,
+      "parameters": 0,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 49,
+      "nonEmptyLines": 49,
+      "decisions": 7,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 29.3,
+      "height": 24
+    },
+    {
       "path": "surfaces/gui/src/providers/ProviderSetup.tsx::openProvider@126",
       "filePath": "surfaces/gui/src/providers/ProviderSetup.tsx",
       "symbol": "openProvider",
@@ -3593,17 +2536,17 @@
       "height": 23
     },
     {
-      "path": "surfaces/gui/src/components/ManageTabs.tsx::save@464",
-      "filePath": "surfaces/gui/src/components/ManageTabs.tsx",
+      "path": "surfaces/gui/src/components/McpTab.tsx::save@292",
+      "filePath": "surfaces/gui/src/components/McpTab.tsx",
       "symbol": "save",
       "kind": "arrow",
-      "line": 464,
-      "endLine": 487,
+      "line": 292,
+      "endLine": 317,
       "parameters": 0,
       "component": "surfaces",
       "language": "TypeScript",
-      "loc": 24,
-      "nonEmptyLines": 24,
+      "loc": 26,
+      "nonEmptyLines": 26,
       "decisions": 9,
       "longLines": 0,
       "todos": 0,
@@ -3613,7 +2556,31 @@
       "securityHits": 0,
       "churn": 0,
       "contributors": 0,
-      "complexity": 27,
+      "complexity": 27.6,
+      "height": 23
+    },
+    {
+      "path": "surfaces/gui/src/components/VoiceInputSection.tsx::useMicrophoneTest@179",
+      "filePath": "surfaces/gui/src/components/VoiceInputSection.tsx",
+      "symbol": "useMicrophoneTest",
+      "kind": "function",
+      "line": 179,
+      "endLine": 208,
+      "parameters": 1,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 30,
+      "nonEmptyLines": 30,
+      "decisions": 8,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 26.6,
       "height": 22
     },
     {
@@ -3689,12 +2656,12 @@
       "height": 21
     },
     {
-      "path": "surfaces/gui/src/components/InboxConfigure.tsx::UnroutedTable@328",
+      "path": "surfaces/gui/src/components/InboxConfigure.tsx::UnroutedTable@359",
       "filePath": "surfaces/gui/src/components/InboxConfigure.tsx",
       "symbol": "UnroutedTable",
       "kind": "function",
-      "line": 328,
-      "endLine": 379,
+      "line": 359,
+      "endLine": 410,
       "parameters": 0,
       "component": "surfaces",
       "language": "TypeScript",
@@ -3761,12 +2728,12 @@
       "height": 20
     },
     {
-      "path": "coworker/engine.py::_astream@388",
+      "path": "coworker/engine.py::_astream@371",
       "filePath": "coworker/engine.py",
       "symbol": "_astream",
       "kind": "function",
-      "line": 388,
-      "endLine": 435,
+      "line": 371,
+      "endLine": 418,
       "parameters": 1,
       "component": "coworker",
       "language": "Python",
@@ -3857,6 +2824,30 @@
       "height": 17
     },
     {
+      "path": "surfaces/gui/src/components/ModelsTab.tsx::ModelsTab@21",
+      "filePath": "surfaces/gui/src/components/ModelsTab.tsx",
+      "symbol": "ModelsTab",
+      "kind": "function",
+      "line": 21,
+      "endLine": 65,
+      "parameters": 0,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 42,
+      "nonEmptyLines": 42,
+      "decisions": 4,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 20.6,
+      "height": 17
+    },
+    {
       "path": "surfaces/gui/src/components/ConnectorMessageCard.tsx::relativeTime@21",
       "filePath": "surfaces/gui/src/components/ConnectorMessageCard.tsx",
       "symbol": "relativeTime",
@@ -3905,12 +2896,12 @@
       "height": 17
     },
     {
-      "path": "surfaces/gui/src-tauri/src/lib.rs::cfg@314",
-      "filePath": "surfaces/gui/src-tauri/src/lib.rs",
+      "path": "surfaces/gui/src-tauri/src/voice.rs::cfg@43",
+      "filePath": "surfaces/gui/src-tauri/src/voice.rs",
       "symbol": "cfg",
       "kind": "function",
-      "line": 314,
-      "endLine": 344,
+      "line": 43,
+      "endLine": 73,
       "parameters": 1,
       "component": "surfaces",
       "language": "Rust",
@@ -3929,12 +2920,12 @@
       "height": 16
     },
     {
-      "path": "surfaces/gui/src/components/InboxConfigure.tsx::DmRouteCard@163",
+      "path": "surfaces/gui/src/components/InboxConfigure.tsx::DmRouteCard@194",
       "filePath": "surfaces/gui/src/components/InboxConfigure.tsx",
       "symbol": "DmRouteCard",
       "kind": "function",
-      "line": 163,
-      "endLine": 205,
+      "line": 194,
+      "endLine": 236,
       "parameters": 0,
       "component": "surfaces",
       "language": "TypeScript",
@@ -3950,6 +2941,30 @@
       "churn": 0,
       "contributors": 0,
       "complexity": 20.1,
+      "height": 16
+    },
+    {
+      "path": "surfaces/gui/src/itemsFromMessages.ts::indexToolResults@12",
+      "filePath": "surfaces/gui/src/itemsFromMessages.ts",
+      "symbol": "indexToolResults",
+      "kind": "function",
+      "line": 12,
+      "endLine": 25,
+      "parameters": 1,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 14,
+      "nonEmptyLines": 14,
+      "decisions": 7,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 20,
       "height": 16
     },
     {
@@ -3974,6 +2989,30 @@
       "churn": 3821,
       "contributors": 2,
       "complexity": 19.9,
+      "height": 16
+    },
+    {
+      "path": "surfaces/gui/src/humanize.ts::humanizeTool@159",
+      "filePath": "surfaces/gui/src/humanize.ts",
+      "symbol": "humanizeTool",
+      "kind": "function",
+      "line": 159,
+      "endLine": 169,
+      "parameters": 2,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 11,
+      "nonEmptyLines": 11,
+      "decisions": 7,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 19.4,
       "height": 16
     },
     {
@@ -4025,12 +3064,36 @@
       "height": 16
     },
     {
-      "path": "surfaces/gui/src-tauri/src/lib.rs::cfg@346",
-      "filePath": "surfaces/gui/src-tauri/src/lib.rs",
+      "path": "surfaces/gui/src/components/SettingsView.tsx::SidebarCard@534",
+      "filePath": "surfaces/gui/src/components/SettingsView.tsx",
+      "symbol": "SidebarCard",
+      "kind": "function",
+      "line": 534,
+      "endLine": 572,
+      "parameters": 0,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 36,
+      "nonEmptyLines": 36,
+      "decisions": 4,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 19,
+      "height": 16
+    },
+    {
+      "path": "surfaces/gui/src-tauri/src/voice.rs::cfg@75",
+      "filePath": "surfaces/gui/src-tauri/src/voice.rs",
       "symbol": "cfg",
       "kind": "function",
-      "line": 346,
-      "endLine": 370,
+      "line": 75,
+      "endLine": 99,
       "parameters": 1,
       "component": "surfaces",
       "language": "Rust",
@@ -4073,30 +3136,6 @@
       "height": 15
     },
     {
-      "path": "surfaces/gui/src/components/SettingsView.tsx::SidebarCard@675",
-      "filePath": "surfaces/gui/src/components/SettingsView.tsx",
-      "symbol": "SidebarCard",
-      "kind": "function",
-      "line": 675,
-      "endLine": 710,
-      "parameters": 0,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 33,
-      "nonEmptyLines": 33,
-      "decisions": 4,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 18.1,
-      "height": 15
-    },
-    {
       "path": "surfaces/gui/src/components/Transcript.tsx::flush@336",
       "filePath": "surfaces/gui/src/components/Transcript.tsx",
       "symbol": "flush",
@@ -4118,6 +3157,30 @@
       "churn": 0,
       "contributors": 0,
       "complexity": 18,
+      "height": 15
+    },
+    {
+      "path": "surfaces/gui/src/components/VoiceInputSection.tsx::VoiceInputSection@458",
+      "filePath": "surfaces/gui/src/components/VoiceInputSection.tsx",
+      "symbol": "VoiceInputSection",
+      "kind": "function",
+      "line": 458,
+      "endLine": 498,
+      "parameters": 0,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 40,
+      "nonEmptyLines": 40,
+      "decisions": 3,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 17.8,
       "height": 15
     },
     {
@@ -4145,6 +3208,54 @@
       "height": 15
     },
     {
+      "path": "surfaces/gui/src-tauri/src/voice.rs::pub@115",
+      "filePath": "surfaces/gui/src-tauri/src/voice.rs",
+      "symbol": "pub",
+      "kind": "function",
+      "line": 115,
+      "endLine": 135,
+      "parameters": 1,
+      "component": "surfaces",
+      "language": "Rust",
+      "loc": 21,
+      "nonEmptyLines": 21,
+      "decisions": 5,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 17.4,
+      "height": 14
+    },
+    {
+      "path": "surfaces/gui/src/tauri.ts::openExternal@164",
+      "filePath": "surfaces/gui/src/tauri.ts",
+      "symbol": "openExternal",
+      "kind": "function",
+      "line": 164,
+      "endLine": 176,
+      "parameters": 1,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 13,
+      "nonEmptyLines": 13,
+      "decisions": 6,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 17.4,
+      "height": 14
+    },
+    {
       "path": "surfaces/gui/src/connectors/ConnectorIcon.tsx::visualLabel@54",
       "filePath": "surfaces/gui/src/connectors/ConnectorIcon.tsx",
       "symbol": "visualLabel",
@@ -4166,30 +3277,6 @@
       "churn": 0,
       "contributors": 0,
       "complexity": 17.4,
-      "height": 14
-    },
-    {
-      "path": "surfaces/gui/src/api.ts::tick@512",
-      "filePath": "surfaces/gui/src/api.ts",
-      "symbol": "tick",
-      "kind": "arrow",
-      "line": 512,
-      "endLine": 519,
-      "parameters": 0,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 8,
-      "nonEmptyLines": 8,
-      "decisions": 6,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 1869,
-      "contributors": 1,
-      "complexity": 17.3,
       "height": 14
     },
     {
@@ -4238,54 +3325,6 @@
       "churn": 0,
       "contributors": 0,
       "complexity": 17.2,
-      "height": 14
-    },
-    {
-      "path": "surfaces/gui/src-tauri/src/lib.rs::start_dictation@387",
-      "filePath": "surfaces/gui/src-tauri/src/lib.rs",
-      "symbol": "start_dictation",
-      "kind": "function",
-      "line": 387,
-      "endLine": 406,
-      "parameters": 1,
-      "component": "surfaces",
-      "language": "Rust",
-      "loc": 20,
-      "nonEmptyLines": 20,
-      "decisions": 5,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 17.1,
-      "height": 14
-    },
-    {
-      "path": "surfaces/gui/src/tauri.ts::openExternal@128",
-      "filePath": "surfaces/gui/src/tauri.ts",
-      "symbol": "openExternal",
-      "kind": "function",
-      "line": 128,
-      "endLine": 138,
-      "parameters": 1,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 11,
-      "nonEmptyLines": 11,
-      "decisions": 6,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 16.9,
       "height": 14
     },
     {
@@ -4385,12 +3424,12 @@
       "height": 13
     },
     {
-      "path": "surfaces/gui/src-tauri/src/lib.rs::Ok@68",
+      "path": "surfaces/gui/src-tauri/src/lib.rs::Ok@70",
       "filePath": "surfaces/gui/src-tauri/src/lib.rs",
       "symbol": "Ok",
       "kind": "function",
-      "line": 68,
-      "endLine": 83,
+      "line": 70,
+      "endLine": 85,
       "parameters": 1,
       "component": "surfaces",
       "language": "Rust",
@@ -4433,26 +3472,26 @@
       "height": 13
     },
     {
-      "path": "surfaces/gui/src/api.ts::userMessage@1799",
-      "filePath": "surfaces/gui/src/api.ts",
-      "symbol": "userMessage",
-      "kind": "method",
-      "line": 1799,
-      "endLine": 1806,
-      "parameters": 3,
+      "path": "surfaces/gui/src/itemsFromMessages.ts::userMessageItems@27",
+      "filePath": "surfaces/gui/src/itemsFromMessages.ts",
+      "symbol": "userMessageItems",
+      "kind": "function",
+      "line": 27,
+      "endLine": 33,
+      "parameters": 1,
       "component": "surfaces",
       "language": "TypeScript",
-      "loc": 8,
-      "nonEmptyLines": 8,
-      "decisions": 5,
+      "loc": 7,
+      "nonEmptyLines": 7,
+      "decisions": 6,
       "longLines": 0,
       "todos": 0,
       "consoleCalls": 0,
       "debugStatements": 0,
       "trailingWhitespace": 0,
       "securityHits": 0,
-      "churn": 1869,
-      "contributors": 1,
+      "churn": 0,
+      "contributors": 0,
       "complexity": 15.8,
       "height": 13
     },
@@ -4468,6 +3507,30 @@
       "language": "TypeScript",
       "loc": 7,
       "nonEmptyLines": 7,
+      "decisions": 6,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 15.8,
+      "height": 13
+    },
+    {
+      "path": "surfaces/gui/src/api/connectors.ts::tick@273",
+      "filePath": "surfaces/gui/src/api/connectors.ts",
+      "symbol": "tick",
+      "kind": "arrow",
+      "line": 273,
+      "endLine": 280,
+      "parameters": 0,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 8,
+      "nonEmptyLines": 8,
       "decisions": 6,
       "longLines": 0,
       "todos": 0,
@@ -4553,6 +3616,30 @@
       "height": 13
     },
     {
+      "path": "surfaces/gui/src-tauri/src/lib.rs::spawn_server@128",
+      "filePath": "surfaces/gui/src-tauri/src/lib.rs",
+      "symbol": "spawn_server",
+      "kind": "function",
+      "line": 128,
+      "endLine": 167,
+      "parameters": 2,
+      "component": "surfaces",
+      "language": "Rust",
+      "loc": 37,
+      "nonEmptyLines": 37,
+      "decisions": 2,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 15.2,
+      "height": 12
+    },
+    {
       "path": "surfaces/gui/src/connectors/visuals.ts::visualFor@33",
       "filePath": "surfaces/gui/src/connectors/visuals.ts",
       "symbol": "visualFor",
@@ -4574,6 +3661,30 @@
       "churn": 0,
       "contributors": 0,
       "complexity": 15.1,
+      "height": 12
+    },
+    {
+      "path": "surfaces/gui/src/api/inbox.ts::getInbox@29",
+      "filePath": "surfaces/gui/src/api/inbox.ts",
+      "symbol": "getInbox",
+      "kind": "function",
+      "line": 29,
+      "endLine": 38,
+      "parameters": 2,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 10,
+      "nonEmptyLines": 10,
+      "decisions": 5,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 14.6,
       "height": 12
     },
     {
@@ -4601,17 +3712,17 @@
       "height": 12
     },
     {
-      "path": "surfaces/gui/src/App.tsx::rememberLastSession@107",
-      "filePath": "surfaces/gui/src/App.tsx",
-      "symbol": "rememberLastSession",
+      "path": "surfaces/gui/src/itemsFromMessages.ts::noticeMessageItem@73",
+      "filePath": "surfaces/gui/src/itemsFromMessages.ts",
+      "symbol": "noticeMessageItem",
       "kind": "function",
-      "line": 107,
-      "endLine": 116,
-      "parameters": 3,
+      "line": 73,
+      "endLine": 90,
+      "parameters": 1,
       "component": "surfaces",
       "language": "TypeScript",
-      "loc": 10,
-      "nonEmptyLines": 10,
+      "loc": 18,
+      "nonEmptyLines": 18,
       "decisions": 4,
       "longLines": 0,
       "todos": 0,
@@ -4619,10 +3730,58 @@
       "debugStatements": 0,
       "trailingWhitespace": 0,
       "securityHits": 0,
-      "churn": 1788,
-      "contributors": 1,
-      "complexity": 14.2,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 14.3,
       "height": 12
+    },
+    {
+      "path": "surfaces/gui/src/api/session.ts::userMessage@305",
+      "filePath": "surfaces/gui/src/api/session.ts",
+      "symbol": "userMessage",
+      "kind": "method",
+      "line": 305,
+      "endLine": 312,
+      "parameters": 3,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 8,
+      "nonEmptyLines": 8,
+      "decisions": 5,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 14.3,
+      "height": 12
+    },
+    {
+      "path": "surfaces/gui/src/itemsFromMessages.ts::replayItemsForMessage@92",
+      "filePath": "surfaces/gui/src/itemsFromMessages.ts",
+      "symbol": "replayItemsForMessage",
+      "kind": "function",
+      "line": 92,
+      "endLine": 107,
+      "parameters": 2,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 16,
+      "nonEmptyLines": 16,
+      "decisions": 4,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 14,
+      "height": 11
     },
     {
       "path": "surfaces/gui/src/components/SearchModal.tsx::row@87",
@@ -4646,30 +3805,6 @@
       "churn": 0,
       "contributors": 0,
       "complexity": 13.9,
-      "height": 11
-    },
-    {
-      "path": "surfaces/gui/src/api.ts::respondPlan@1818",
-      "filePath": "surfaces/gui/src/api.ts",
-      "symbol": "respondPlan",
-      "kind": "method",
-      "line": 1818,
-      "endLine": 1825,
-      "parameters": 3,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 8,
-      "nonEmptyLines": 8,
-      "decisions": 4,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 1869,
-      "contributors": 1,
-      "complexity": 13.5,
       "height": 11
     },
     {
@@ -4769,30 +3904,6 @@
       "height": 10
     },
     {
-      "path": "surfaces/gui/src/api.ts::open@1418",
-      "filePath": "surfaces/gui/src/api.ts",
-      "symbol": "open",
-      "kind": "arrow",
-      "line": 1418,
-      "endLine": 1431,
-      "parameters": 0,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 14,
-      "nonEmptyLines": 14,
-      "decisions": 3,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 1869,
-      "contributors": 1,
-      "complexity": 12.6,
-      "height": 10
-    },
-    {
       "path": "surfaces/gui/src/components/connectors/SlackDetail.tsx::pick@407",
       "filePath": "surfaces/gui/src/components/connectors/SlackDetail.tsx",
       "symbol": "pick",
@@ -4865,30 +3976,6 @@
       "height": 10
     },
     {
-      "path": "surfaces/gui/src/api.ts::constructor@1771",
-      "filePath": "surfaces/gui/src/api.ts",
-      "symbol": "constructor",
-      "kind": "method",
-      "line": 1771,
-      "endLine": 1780,
-      "parameters": 4,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 10,
-      "nonEmptyLines": 10,
-      "decisions": 3,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 1869,
-      "contributors": 1,
-      "complexity": 12.2,
-      "height": 10
-    },
-    {
       "path": "surfaces/gui/src/components/ApprovalCard.tsx::shortArgs@6",
       "filePath": "surfaces/gui/src/components/ApprovalCard.tsx",
       "symbol": "shortArgs",
@@ -4910,6 +3997,30 @@
       "churn": 0,
       "contributors": 0,
       "complexity": 12.1,
+      "height": 10
+    },
+    {
+      "path": "surfaces/gui/src/api/session.ts::respondPlan@329",
+      "filePath": "surfaces/gui/src/api/session.ts",
+      "symbol": "respondPlan",
+      "kind": "method",
+      "line": 329,
+      "endLine": 336,
+      "parameters": 3,
+      "component": "surfaces",
+      "language": "TypeScript",
+      "loc": 8,
+      "nonEmptyLines": 8,
+      "decisions": 4,
+      "longLines": 0,
+      "todos": 0,
+      "consoleCalls": 0,
+      "debugStatements": 0,
+      "trailingWhitespace": 0,
+      "securityHits": 0,
+      "churn": 0,
+      "contributors": 0,
+      "complexity": 12,
       "height": 10
     },
     {
@@ -4985,17 +4096,17 @@
       "height": 9
     },
     {
-      "path": "surfaces/gui/src-tauri/src/lib.rs::download_dictation_model@422",
-      "filePath": "surfaces/gui/src-tauri/src/lib.rs",
-      "symbol": "download_dictation_model",
+      "path": "surfaces/gui/src-tauri/src/voice.rs::pub@152",
+      "filePath": "surfaces/gui/src-tauri/src/voice.rs",
+      "symbol": "pub",
       "kind": "function",
-      "line": 422,
-      "endLine": 435,
-      "parameters": 2,
+      "line": 152,
+      "endLine": 166,
+      "parameters": 1,
       "component": "surfaces",
       "language": "Rust",
-      "loc": 14,
-      "nonEmptyLines": 14,
+      "loc": 15,
+      "nonEmptyLines": 15,
       "decisions": 3,
       "longLines": 0,
       "todos": 0,
@@ -5033,12 +4144,12 @@
       "height": 9
     },
     {
-      "path": "coworker/connectors/email_tools.py::_connect_imap@362",
+      "path": "coworker/connectors/email_tools.py::_connect_imap@47",
       "filePath": "coworker/connectors/email_tools.py",
       "symbol": "_connect_imap",
       "kind": "function",
-      "line": 362,
-      "endLine": 384,
+      "line": 47,
+      "endLine": 69,
       "parameters": 0,
       "component": "coworker",
       "language": "Python",
@@ -5079,258 +4190,18 @@
       "contributors": 2,
       "complexity": 10.8,
       "height": 9
-    },
-    {
-      "path": "surfaces/gui/src/components/GalleryModal.tsx::install@118",
-      "filePath": "surfaces/gui/src/components/GalleryModal.tsx",
-      "symbol": "install",
-      "kind": "arrow",
-      "line": 118,
-      "endLine": 130,
-      "parameters": 1,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 13,
-      "nonEmptyLines": 13,
-      "decisions": 3,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 10.6,
-      "height": 9
-    },
-    {
-      "path": "coworker/connectors/browser_automation.py::page@115",
-      "filePath": "coworker/connectors/browser_automation.py",
-      "symbol": "page",
-      "kind": "function",
-      "line": 115,
-      "endLine": 136,
-      "parameters": 1,
-      "component": "coworker",
-      "language": "Python",
-      "loc": 21,
-      "nonEmptyLines": 21,
-      "decisions": 2,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 10.6,
-      "height": 9
-    },
-    {
-      "path": "surfaces/gui/src/theme.ts::apply@22",
-      "filePath": "surfaces/gui/src/theme.ts",
-      "symbol": "apply",
-      "kind": "function",
-      "line": 22,
-      "endLine": 25,
-      "parameters": 1,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 4,
-      "nonEmptyLines": 4,
-      "decisions": 4,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 10.4,
-      "height": 9
-    },
-    {
-      "path": "coworker/providers/openai_provider.py::_iter_top_objects@399",
-      "filePath": "coworker/providers/openai_provider.py",
-      "symbol": "_iter_top_objects",
-      "kind": "function",
-      "line": 399,
-      "endLine": 410,
-      "parameters": 1,
-      "component": "coworker",
-      "language": "Python",
-      "loc": 12,
-      "nonEmptyLines": 12,
-      "decisions": 3,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 10.4,
-      "height": 9
-    },
-    {
-      "path": "surfaces/gui/src-tauri/src/lib.rs::cfg@196",
-      "filePath": "surfaces/gui/src-tauri/src/lib.rs",
-      "symbol": "cfg",
-      "kind": "function",
-      "line": 196,
-      "endLine": 215,
-      "parameters": 1,
-      "component": "surfaces",
-      "language": "Rust",
-      "loc": 20,
-      "nonEmptyLines": 20,
-      "decisions": 2,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 10.3,
-      "height": 8
-    },
-    {
-      "path": "surfaces/gui/src-tauri/src/lib.rs::verify_dictation_model@443",
-      "filePath": "surfaces/gui/src-tauri/src/lib.rs",
-      "symbol": "verify_dictation_model",
-      "kind": "function",
-      "line": 443,
-      "endLine": 453,
-      "parameters": 1,
-      "component": "surfaces",
-      "language": "Rust",
-      "loc": 11,
-      "nonEmptyLines": 11,
-      "decisions": 3,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 10.1,
-      "height": 8
-    },
-    {
-      "path": "surfaces/gui/src/components/ManageTabs.tsx::loadTools@378",
-      "filePath": "surfaces/gui/src/components/ManageTabs.tsx",
-      "symbol": "loadTools",
-      "kind": "arrow",
-      "line": 378,
-      "endLine": 389,
-      "parameters": 0,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 12,
-      "nonEmptyLines": 12,
-      "decisions": 3,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 10.1,
-      "height": 8
-    },
-    {
-      "path": "surfaces/gui/src/theme.ts::setThemePref@27",
-      "filePath": "surfaces/gui/src/theme.ts",
-      "symbol": "setThemePref",
-      "kind": "function",
-      "line": 27,
-      "endLine": 36,
-      "parameters": 1,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 10,
-      "nonEmptyLines": 10,
-      "decisions": 3,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 9.8,
-      "height": 8
-    },
-    {
-      "path": "surfaces/gui/src/components/PersonasTab.tsx::remove@67",
-      "filePath": "surfaces/gui/src/components/PersonasTab.tsx",
-      "symbol": "remove",
-      "kind": "arrow",
-      "line": 67,
-      "endLine": 76,
-      "parameters": 1,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 10,
-      "nonEmptyLines": 10,
-      "decisions": 3,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 9.8,
-      "height": 8
-    },
-    {
-      "path": "surfaces/gui/src/components/PersonaView.tsx::toggleDefault@69",
-      "filePath": "surfaces/gui/src/components/PersonaView.tsx",
-      "symbol": "toggleDefault",
-      "kind": "arrow",
-      "line": 69,
-      "endLine": 76,
-      "parameters": 2,
-      "component": "surfaces",
-      "language": "TypeScript",
-      "loc": 8,
-      "nonEmptyLines": 8,
-      "decisions": 3,
-      "longLines": 0,
-      "todos": 0,
-      "consoleCalls": 0,
-      "debugStatements": 0,
-      "trailingWhitespace": 0,
-      "securityHits": 0,
-      "churn": 0,
-      "contributors": 0,
-      "complexity": 9.5,
-      "height": 8
     }
   ],
   "complexityGranularity": "function",
   "maintainabilityBenchmarks": {
     "granularity": "function",
     "sampledFunctions": 96,
-    "averageComplexity": 23.5,
-    "p95Complexity": 60.8,
-    "largeUnitShare": 32.3,
-    "complexUnitShare": 14.6,
-    "criticalComplexUnitShare": 9.4,
-    "veryHighDecisionShare": 9.4,
+    "averageComplexity": 23.7,
+    "p95Complexity": 46.2,
+    "largeUnitShare": 34.4,
+    "complexUnitShare": 11.5,
+    "criticalComplexUnitShare": 4.2,
+    "veryHighDecisionShare": 5.2,
     "highParameterFunctions": 1
   },
   "couplingPairs": [
@@ -5412,7 +4283,7 @@
       "title": "Apply safe cleanup batch",
       "risk": "Low",
       "impact": "Runs whitespace, final newline, standalone debugger removal, baseline repo policy files, and npm lockfile CVE patching when available.",
-      "enabled": true
+      "enabled": false
     },
     {
       "action": "npmAuditFixLockfileAll",
@@ -5475,7 +4346,7 @@
       "title": "Create CODEOWNERS",
       "risk": "Low",
       "impact": "Makes review ownership explicit.",
-      "enabled": true
+      "enabled": false
     },
     {
       "action": "createDependabot",
@@ -5487,16 +4358,18 @@
   ],
   "scanDiscipline": {
     "engine": "Clear Code rule evidence model",
-    "ruleBackedFindings": 37,
+    "ruleBackedFindings": 12,
     "confidenceCounts": {
-      "high": 30,
-      "medium": 7
+      "high": 11,
+      "medium": 1
     },
     "maxFiles": 9000,
     "maxFileBytes": 921600,
     "fileDiscovery": "git-visible-files",
     "ignoreFile": ".clearcodeignore",
-    "appliedIgnorePatterns": [],
+    "appliedIgnorePatterns": [
+      "docs/clearcode/**"
+    ],
     "inlineSuppressionDirectives": 0,
     "suppressedFindings": 0,
     "suppressionCounts": {},
@@ -5532,9 +4405,9 @@
       "vendor",
       "venv"
     ],
-    "analyzedFileCoverage": 89.6,
+    "analyzedFileCoverage": 90.2,
     "scopeCounts": {
-      "production": 225,
+      "production": 269,
       "documentation": 6,
       "control-plane": 6,
       "example": 4,
@@ -5588,7 +4461,7 @@
     "generator": {
       "name": "ClearCode Intelligence",
       "version": "0.1.0",
-      "sourceDigest": "fad562fefa9f8da41755117e7a4c66a5d530d45e3fa8e7e41f1fc8fd6760baac"
+      "sourceDigest": "e326855af2006bc8db60f21a75e17ac585521637adb016dd22b66cb63b82b1d4"
     },
     "settings": {
       "engine": "Clear Code rule evidence model",
@@ -5596,7 +4469,9 @@
       "maxFileBytes": 921600,
       "fileDiscovery": "git-visible-files",
       "ignoreFile": ".clearcodeignore",
-      "appliedIgnorePatterns": [],
+      "appliedIgnorePatterns": [
+        "docs/clearcode/**"
+      ],
       "ignoredDirectories": [
         ".cache",
         ".chrome-headless",
@@ -5624,271 +4499,54 @@
         "vendor",
         "venv"
       ],
-      "digest": "67beca315c40aeb9b0fa758488e5769a55d560896f600cdb88365be9e6b3c129"
+      "digest": "3c833fd477ec8ab293692b8b152de71df0b15b30fcb1f7e65a9292ba6fec51fd"
     },
     "target": {
       "source": "https://github.com/andrewyng/openworker",
-      "commit": "602415a52adfc1adb762b85cc55bde3a2df24242",
+      "commit": "bbb806ce5453335d64ef163f9d5586544398c7e8",
       "branch": "HEAD",
       "workingTreeClean": true,
       "shallow": false
     }
   },
-  "comparison": {
-    "schemaVersion": 1,
-    "comparable": true,
-    "claimBoundary": "This comparison describes scanner-observed repository evidence at two exact commits produced by the same scanner source and settings. A resolved finding means the rule evidence is absent in the current scan; it is not proof of runtime security, incident prevention, productivity, or financial value.",
-    "repository": {
-      "identity": "github.com/andrewyng/openworker",
-      "sameRepository": true
-    },
-    "generator": {
-      "name": "ClearCode Intelligence",
-      "version": "0.1.0",
-      "sourceDigest": "fad562fefa9f8da41755117e7a4c66a5d530d45e3fa8e7e41f1fc8fd6760baac",
-      "settingsDigest": "67beca315c40aeb9b0fa758488e5769a55d560896f600cdb88365be9e6b3c129"
-    },
-    "baseline": {
-      "commit": "db93d75bf634e3a855b29e00d8f5d677438cac1f",
-      "generatedAt": "2026-07-25T19:33:44.627Z",
-      "score": 69,
-      "confidence": 84,
-      "findings": 45,
-      "files": 436,
-      "analyzedFiles": 391,
-      "loc": 75301,
-      "dirty": false,
-      "shallow": false,
-      "source": "https://github.com/andrewyng/openworker"
-    },
-    "current": {
-      "commit": "602415a52adfc1adb762b85cc55bde3a2df24242",
-      "generatedAt": "2026-07-25T19:34:17.039Z",
-      "score": 77,
-      "confidence": 100,
-      "findings": 37,
-      "files": 443,
-      "analyzedFiles": 397,
-      "loc": 75475,
-      "dirty": false,
-      "shallow": false,
-      "source": "https://github.com/andrewyng/openworker"
-    },
-    "score": {
-      "before": 69,
-      "after": 77,
-      "change": 8
-    },
-    "dimensions": {
-      "Maintainability": {
-        "before": 33,
-        "after": 34,
-        "change": 1
+  "deliveryValidation": {
+    "summary": "The post-remediation commit was exercised across the Python service, React/TypeScript desktop surface, Rust/Tauri runtime, production frontend build, dependency-audit paths, and the ClearCode scanner itself.",
+    "checks": [
+      {
+        "layer": "Python",
+        "check": "uv run --group dev pytest -q",
+        "result": "891 passed, 1 skipped"
       },
-      "Security": {
-        "before": 63,
-        "after": 85,
-        "change": 22
+      {
+        "layer": "Frontend",
+        "check": "npm test -- --run",
+        "result": "69 tests passed"
       },
-      "Architecture": {
-        "before": 100,
-        "after": 100,
-        "change": 0
+      {
+        "layer": "Frontend",
+        "check": "npm run build",
+        "result": "Production build passed"
       },
-      "Open Source": {
-        "before": 91,
-        "after": 100,
-        "change": 9
+      {
+        "layer": "Rust/Tauri",
+        "check": "cargo fmt --check and cargo check",
+        "result": "Both checks passed"
       },
-      "Delivery": {
-        "before": 73,
-        "after": 74,
-        "change": 1
+      {
+        "layer": "Dependencies",
+        "check": "npm audit and pip-audit through ClearCode",
+        "result": "2 of 2 audit ecosystems completed; 0 known vulnerabilities reported"
       },
-      "AI Governance": {
-        "before": 69,
-        "after": 95,
-        "change": 26
+      {
+        "layer": "ClearCode",
+        "check": "npm test and npm run audit",
+        "result": "117 tests passed; production audit passed"
       }
-    },
-    "findings": {
-      "before": 45,
-      "after": 37,
-      "change": -8,
-      "bySeverity": {
-        "critical": {
-          "before": 0,
-          "after": 0,
-          "change": 0
-        },
-        "high": {
-          "before": 11,
-          "after": 10,
-          "change": -1
-        },
-        "medium": {
-          "before": 22,
-          "after": 19,
-          "change": -3
-        },
-        "low": {
-          "before": 11,
-          "after": 7,
-          "change": -4
-        },
-        "info": {
-          "before": 1,
-          "after": 1,
-          "change": 0
-        }
-      },
-      "inventoryComplete": true,
-      "exactFingerprintMatches": 36,
-      "stableIdentityMatches": 1,
-      "persistingCount": 37,
-      "resolvedCount": 8,
-      "newCount": 0,
-      "resolved": [
-        {
-          "ruleId": "clearcode.security.dependency-vulnerability-xlsx",
-          "fingerprint": "18c0824fc12f",
-          "severity": "high",
-          "area": "Security",
-          "title": "Dependency vulnerability: xlsx",
-          "path": "surfaces/gui/package.json",
-          "line": 1,
-          "applicability": "direct",
-          "confidence": "medium"
-        },
-        {
-          "ruleId": "clearcode.open-source.dependency-automation-missing",
-          "fingerprint": "5f60baaa9974",
-          "severity": "medium",
-          "area": "Open Source",
-          "title": "Dependency automation missing",
-          "path": ".github/dependabot.yml",
-          "line": 1,
-          "applicability": "control",
-          "confidence": "high"
-        },
-        {
-          "ruleId": "clearcode.security.github-actions-use-mutable-references",
-          "fingerprint": "8800caf7c7f3",
-          "severity": "medium",
-          "area": "Security",
-          "title": "GitHub Actions use mutable references",
-          "path": ".github/workflows/ci.yml",
-          "line": 12,
-          "applicability": "control",
-          "confidence": "high"
-        },
-        {
-          "ruleId": "clearcode.security.security-policy-missing",
-          "fingerprint": "2373a66ca21c",
-          "severity": "medium",
-          "area": "Security",
-          "title": "Security policy missing",
-          "path": "SECURITY.md",
-          "line": 1,
-          "applicability": "control",
-          "confidence": "medium"
-        },
-        {
-          "ruleId": "clearcode.maintainability.editorconfig-missing",
-          "fingerprint": "5460c4e6384b",
-          "severity": "low",
-          "area": "Maintainability",
-          "title": "EditorConfig missing",
-          "path": ".editorconfig",
-          "line": 1,
-          "applicability": "control",
-          "confidence": "high"
-        },
-        {
-          "ruleId": "clearcode.delivery.git-attributes-missing",
-          "fingerprint": "354b7616d9df",
-          "severity": "low",
-          "area": "Delivery",
-          "title": "Git attributes missing",
-          "path": ".gitattributes",
-          "line": 1,
-          "applicability": "control",
-          "confidence": "medium"
-        },
-        {
-          "ruleId": "clearcode.security.workflow-token-permissions-are-implicit",
-          "fingerprint": "36eb948bff31",
-          "severity": "low",
-          "area": "Security",
-          "title": "Workflow token permissions are implicit",
-          "path": ".github/workflows/ci.yml",
-          "line": 1,
-          "applicability": "control",
-          "confidence": "high"
-        },
-        {
-          "ruleId": "clearcode.delivery.contribution-guide-missing",
-          "fingerprint": "af227a563c10",
-          "severity": "low",
-          "area": "Delivery",
-          "title": "Contribution guide missing",
-          "path": "CONTRIBUTING.md",
-          "line": 1,
-          "applicability": "control",
-          "confidence": "medium"
-        }
-      ],
-      "new": []
-    },
-    "controls": {
-      "mutableActionRefs": {
-        "before": 15,
-        "after": 0,
-        "change": -15
-      },
-      "implicitPermissionWorkflows": {
-        "before": 2,
-        "after": 0,
-        "change": -2
-      },
-      "dependencyVulnerabilities": {
-        "before": 1,
-        "after": 0,
-        "change": -1
-      },
-      "highDependencyVulnerabilities": {
-        "before": 1,
-        "after": 0,
-        "change": -1
-      },
-      "governanceGaps": {
-        "before": 6,
-        "after": 1,
-        "change": -5
-      }
-    },
-    "codebase": {
-      "files": {
-        "before": 436,
-        "after": 443,
-        "change": 7
-      },
-      "analyzedFiles": {
-        "before": 391,
-        "after": 397,
-        "change": 6
-      },
-      "loc": {
-        "before": 75301,
-        "after": 75475,
-        "change": 174
-      }
-    },
+    ],
     "limitations": [
-      "Scores are prioritization-model outputs, not certifications or measurements of exploitability.",
-      "Finding transitions cover the complete finding inventory in both reports.",
-      "Line-only movement is reconciled by rule, path, and title after exact fingerprint matching.",
-      "No dollar, time, productivity, or incident-avoidance claim is inferred from this comparison."
+      "No production deployment, live traffic, or organization-specific control effectiveness was evaluated.",
+      "The desktop application was not packaged or runtime-tested on macOS in this environment.",
+      "The score and delta describe repository evidence at the named commits; they are not a financial forecast or security certification."
     ]
   }
 }
