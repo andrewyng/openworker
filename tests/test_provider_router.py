@@ -567,3 +567,154 @@ def test_manager_key_hygiene_stamps(tmp_path, monkeypatch):
     mgr2 = SessionManager(data_dir=tmp_path)
     provs2 = {p["name"]: p for p in mgr2.get_providers()}
     assert provs2["deepseek"]["last_used_at"] == first
+
+
+
+# --------------------------------------------------------------------------
+# OpenCode Zen + Go — SessionManager integration as independent providers.
+# Each card stores its own api_key on its own `provider:<name>` profile; the
+# two cards do not share data and removing one never affects the other.
+# --------------------------------------------------------------------------
+
+
+def test_opencode_set_writes_key_to_own_profile(tmp_path, monkeypatch):
+    """set_provider("opencode_zen", {"api_key": "oc-zen-key"}) must store the
+    api_key on `provider:opencode_zen` (its own profile), NOT on a shared profile."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    res = mgr.set_provider("opencode_zen", {"api_key": "oc-zen-key"})
+    assert res["ok"] is True
+
+    own_zen = mgr.secrets.get("provider:opencode_zen") or {}
+    assert own_zen.get("api_key") == "oc-zen-key"
+    # No legacy "shared" profile gets created.
+    assert not mgr.secrets.get("provider:opencode")
+    # Only the configured card reports configured; the sibling stays unconfigured.
+    by_name = {p["name"]: p for p in mgr.get_providers()}
+    assert by_name["opencode_zen"]["configured"] is True
+    assert by_name["opencode_go"]["configured"] is False
+    # Stamp lands on the per-provider profile.
+    assert own_zen.get("key_set_at") == by_name["opencode_zen"]["key_set_at"]
+
+
+def test_opencode_zen_and_go_keys_are_independent(tmp_path, monkeypatch):
+    """Configuring one card does not configure the other — each is fully independent."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    mgr.set_provider("opencode_zen", {"api_key": "oc-zen-key"})
+    mgr.set_provider("opencode_go", {"api_key": "oc-go-key"})
+
+    assert (mgr.secrets.get("provider:opencode_zen") or {}).get("api_key") == "oc-zen-key"
+    assert (mgr.secrets.get("provider:opencode_go") or {}).get("api_key") == "oc-go-key"
+    by_name = {p["name"]: p for p in mgr.get_providers()}
+    assert by_name["opencode_zen"]["configured"] is True
+    assert by_name["opencode_go"]["configured"] is True
+
+
+def test_opencode_per_provider_base_url_goes_to_own_profile(tmp_path, monkeypatch):
+    """A 'Custom endpoint' override on one card lives on `provider:<name>`
+    (per-provider). Both api_key and base_url are stored on the per-provider profile."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    mgr.set_provider(
+        "opencode_zen",
+        {
+            "api_key": "oc-key",
+            "base_url": "https://proxy.example.opencode.ai/v1/",
+        },
+    )
+    own = mgr.secrets.get("provider:opencode_zen") or {}
+    assert own.get("base_url") == "https://proxy.example.opencode.ai/v1/"
+    assert own.get("api_key") == "oc-key"
+    # No legacy shared profile was created.
+    assert not mgr.secrets.get("provider:opencode")
+
+
+def test_opencode_remove_provider_only_wipes_target(tmp_path, monkeypatch):
+    """Removing one card leaves the sibling card untouched — they're fully independent."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    mgr.set_provider("opencode_zen", {"api_key": "oc-zen-key"})
+    mgr.set_provider("opencode_go", {"api_key": "oc-go-key"})
+
+    mgr.remove_provider("opencode_zen")
+    assert not mgr.secrets.get("provider:opencode_zen")
+    # Sibling untouched.
+    assert (mgr.secrets.get("provider:opencode_go") or {}).get("api_key") == "oc-go-key"
+    by_name = {p["name"]: p for p in mgr.get_providers()}
+    assert by_name["opencode_zen"]["configured"] is False
+    assert by_name["opencode_go"]["configured"] is True
+
+
+def test_opencode_first_configured_wins_default_model(tmp_path, monkeypatch):
+    """Configuring OpenCode Zen (with OpenAI unconfigured) MUST swap the default
+    from `gpt-5.6-sol` to the Zen recommended model. Configuring Go later must
+    NOT steal that default."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    for v in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENCODE_API_KEY"):
+        monkeypatch.delenv(v, raising=False)
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    assert mgr.model == "gpt-5.6-sol"  # built-in default with no keys
+
+    mgr.set_provider("opencode_zen", {"api_key": "oc-zen-key"})
+    assert "opencode_zen:gpt-5.6-sol" in mgr.get_settings()["models"]
+    assert mgr.model == "opencode_zen:gpt-5.6-sol"  # took over the default
+
+    # Adding OpenCode Go later must NOT steal the default.
+    mgr.set_provider("opencode_go", {"api_key": "oc-go-key"})
+    assert mgr.model == "opencode_zen:gpt-5.6-sol"  # unchanged
+    assert "opencode_go:kimi-k3" in mgr.get_settings()["models"]
+
+
+def test_opencode_verify_without_key_falls_back_to_own(tmp_path, monkeypatch):
+    """verify_provider('opencode_go', fields={}) — no input key — falls back to
+    the per-provider stored key (or env var), not to a sibling card's key."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    mgr.set_provider("opencode_go", {"api_key": "oc-go-key"})
+
+    seen: dict = {}
+    def fake_verify(name, *, api_key=None, base_url=None, fields=None, timeout=10.0):
+        seen["name"] = name
+        seen["api_key"] = api_key
+        return {"ok": True}
+    # manager.py imports `verify_provider_key` via `from ..providers import …` —
+    # the local binding in `coworker.server.manager` is what `verify_provider`
+    # actually calls. Patch it there so the fake is observed.
+    monkeypatch.setattr("coworker.server.manager.verify_provider_key", fake_verify)
+
+    res = mgr.verify_provider("opencode_go", {})
+    assert res["ok"] is True
+    assert seen["name"] == "opencode_go"
+    assert seen["api_key"] == "oc-go-key"  # own key, not from sibling
+
+
+def test_opencode_router_invalidate_only_drops_named_client(tmp_path, monkeypatch):
+    """ProviderRouter.invalidate('opencode_zen') drops ONLY the named client —
+    the sibling 'opencode_go' must stay cached (its key is stored separately)."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.providers.router import ProviderRouter
+
+    router = ProviderRouter(secrets=None)
+    router._clients["opencode_zen"] = object()
+    router._clients["opencode_go"] = object()
+    router._clients["anthropic"] = object()
+
+    router.invalidate("opencode_zen")
+    assert "opencode_zen" not in router._clients
+    assert "opencode_go" in router._clients  # sibling preserved
+    assert "anthropic" in router._clients  # unrelated preserved
