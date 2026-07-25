@@ -58,6 +58,7 @@ gui: check-node
 
 ## desktop: Start the desktop app using Tauri dev
 desktop: check-node check-rust check-venv
+	@mkdir -p $(GUI_DIR)/src-tauri/binaries/sidecar
 	@cd $(GUI_DIR) && npm run tauri dev
 
 ## test: Run Python backend test suite
