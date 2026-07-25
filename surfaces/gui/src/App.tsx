@@ -28,7 +28,15 @@ import {
   type SurfaceVisibility,
   type WorkspaceCommandTrust,
 } from "./api";
-import type { ApprovalDecision, Attachment, Item, SessionInfo, TodoItem, WsEvent } from "./types";
+import type {
+  ApprovalDecision,
+  Attachment,
+  Item,
+  SessionInfo,
+  TodoItem,
+  UserMessageMeta,
+  WsEvent,
+} from "./types";
 import { isProjectScoped } from "./personaScope";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
@@ -587,7 +595,15 @@ export function App() {
               const last = p[p.length - 1];
               return last && last.kind === "user" && last.text === d.input
                 ? p
-                : [...p, { kind: "user", text: d.input as string, ts: Date.now() / 1000 }];
+                : [
+                    ...p,
+                    {
+                      kind: "user",
+                      text: d.input as string,
+                      ts: Date.now() / 1000,
+                      ...(d.input_mode === "voice_discussion" ? { inputMode: d.input_mode } : {}),
+                    },
+                  ];
             });
           }
           break;
@@ -822,10 +838,19 @@ export function App() {
     return () => clearInterval(t);
   }, [surface, sessionId, browserRefreshKey, markUnattended]);
 
-  const send = (text: string, attachments?: Attachment[]) => {
-    setItems((p) => [...p, { kind: "user", text, attachments, ts: Date.now() / 1000 }]);
+  const send = (text: string, attachments?: Attachment[], meta?: UserMessageMeta) => {
+    setItems((p) => [
+      ...p,
+      {
+        kind: "user",
+        text,
+        attachments,
+        ts: Date.now() / 1000,
+        ...(meta?.inputMode ? { inputMode: meta.inputMode } : {}),
+      },
+    ]);
     // The visible model rides along with the message (single source of truth per turn).
-    sessionRef.current?.userMessage(text, attachments, model);
+    sessionRef.current?.userMessage(text, attachments, model, meta?.inputMode);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
   };
   // Resolving a LIVE prompt also resolves its parked Inbox mirror server-side, but the polled

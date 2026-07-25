@@ -20,8 +20,10 @@ class ScriptedProvider(ProviderClient):
 
     def __init__(self, turns):
         self._turns = list(turns)
+        self.calls = []
 
     def complete(self, *, model, messages, tools=None, **settings):
+        self.calls.append([dict(message) for message in messages])
         return self._turns.pop(0)
 
     def capabilities(self, model):
@@ -323,6 +325,44 @@ def test_ws_simple_turn(tmp_path):
         assert "turn_end" in types
 
 
+def test_ws_voice_discussion_metadata_is_trusted_and_provider_safe(tmp_path):
+    provider = ScriptedProvider([_text("spoken-friendly answer")])
+    manager = SessionManager(workspace=tmp_path, provider=provider)
+    client = TestClient(create_app(manager))
+
+    with client.websocket_connect("/ws/session/voice") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json(
+            {
+                "type": "user_message",
+                "text": "check the brake build",
+                "input_mode": "voice_discussion",
+            }
+        )
+        turn_start = None
+        while True:
+            event = ws.receive_json()
+            if event["type"] == "turn_start":
+                turn_start = event
+            if event["type"] == "turn_done":
+                break
+
+    assert turn_start is not None
+    assert turn_start["data"]["input_mode"] == "voice_discussion"
+
+    messages = client.get("/v1/sessions/voice/messages").json()["messages"]
+    user_message = [m for m in messages if m.get("role") == "user"][-1]
+    assert user_message["input_mode"] == "voice_discussion"
+    assert user_message["content"] == "check the brake build"
+
+    provider_user = [
+        m for m in provider.calls[0] if m.get("role") == "user"
+    ][-1]
+    assert "input_mode" not in provider_user
+    assert "<system-context>" in provider_user["content"]
+    assert "voice discussion turn" in provider_user["content"]
+
+
 def test_ws_rejects_oversized_message(tmp_path):
     from coworker.server import app as app_mod
     from coworker.attachments import MAX_ATTACHMENTS
@@ -372,6 +412,7 @@ def test_ws_rejects_malformed_payloads_without_killing_socket(tmp_path):
                 "attachments": [{"kind": "image", "data_url": "https://example.com/x"}],
             },
             {"type": "set_model", "model": {"unexpected": True}},
+            {"type": "user_message", "text": "x", "input_mode": "untrusted"},
             {"type": "unknown"},
         ]
         for payload in invalid:

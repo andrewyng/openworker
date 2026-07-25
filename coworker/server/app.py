@@ -1697,11 +1697,17 @@ def create_app(manager: SessionManager) -> FastAPI:
             "iteration_end",
         }
 
-        async def run_turn(content, *, retry: bool = False) -> None:
+        async def run_turn(
+            content, *, retry: bool = False, input_mode: Optional[str] = None
+        ) -> None:
             # The receive loop atomically claims this session before scheduling the task.
             # Keeping the claim outside prevents two back-to-back frames from both starting.
             try:
-                events = engine.retry() if retry else engine.run(content)
+                events = (
+                    engine.retry()
+                    if retry
+                    else engine.run(content, input_mode=input_mode)
+                )
                 async for event in events:
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.
@@ -1727,13 +1733,17 @@ def create_app(manager: SessionManager) -> FastAPI:
             # or flush an in-progress assistant stream in the GUI.
             await ws.send_json({"type": "input_rejected", "data": {"error": reason}})
 
-        async def claim_turn(*, retry: bool = False, content=None) -> None:
+        async def claim_turn(
+            *, retry: bool = False, content=None, input_mode: Optional[str] = None
+        ) -> None:
             if not manager.try_mark_running(session_id):
                 await reject_input(
                     "This session is already running a turn. Wait for it to finish or stop it."
                 )
                 return
-            asyncio.create_task(run_turn(content, retry=retry))
+            asyncio.create_task(
+                run_turn(content, retry=retry, input_mode=input_mode)
+            )
 
         try:
             while True:
@@ -1886,10 +1896,16 @@ def create_app(manager: SessionManager) -> FastAPI:
                     if model is not None and not isinstance(model, str):
                         await reject_input("Invalid model: expected a string.")
                         continue
+                    input_mode = message.get("input_mode")
+                    if input_mode not in {None, "voice_discussion"}:
+                        await reject_input(
+                            "Invalid input mode: expected voice_discussion."
+                        )
+                        continue
                     await _apply_model(model)
                     if text or attachments:
                         content = build_user_content(text, attachments)
-                        await claim_turn(content=content)
+                        await claim_turn(content=content, input_mode=input_mode)
                 else:
                     await reject_input(f"Unknown WebSocket message type: {kind}.")
         except WebSocketDisconnect:

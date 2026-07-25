@@ -1,4 +1,4 @@
-import type { SessionInfo, WsEvent } from "./types";
+import type { SessionInfo, UserInputMode, WsEvent } from "./types";
 
 declare const __COWORKER_DEV_TOKEN__: string;
 
@@ -1766,12 +1766,13 @@ export class Session {
    * exactly what the user sees — immune to set_model races across reconnects (a new cowork
    * session always reconnects once to adopt its scratch dir, which could drop a queued
    * set_model and leave the engine on a stale/resumed model; found 2026-07-04). */
-  userMessage(text: string, attachments?: unknown[], model?: string) {
+  userMessage(text: string, attachments?: unknown[], model?: string, inputMode?: UserInputMode) {
     this.send({
       type: "user_message",
       text,
       ...(model ? { model } : {}),
       ...(attachments?.length ? { attachments } : {}),
+      ...(inputMode ? { input_mode: inputMode } : {}),
     });
   }
 

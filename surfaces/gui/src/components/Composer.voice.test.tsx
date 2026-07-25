@@ -34,6 +34,7 @@ const props = (extra: Partial<Parameters<typeof Composer>[0]> = {}) => ({
 });
 
 beforeEach(() => {
+  localStorage.removeItem("openwork-voice-capture-mode");
   invoke = vi.fn(async (cmd: string) => {
     if (cmd === "get_dictation_status") return READY;
     if (cmd === "start_dictation") return RECORDING;
@@ -45,6 +46,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  localStorage.removeItem("openwork-voice-capture-mode");
   delete (globalThis as any).__TAURI__;
 });
 
@@ -100,5 +102,41 @@ describe("Composer voice input (§37)", () => {
     fireEvent.click(await screen.findByLabelText("Start dictation"));
     expect((await screen.findByRole("alert")).textContent).toContain("No microphone is available.");
     expect(screen.getByLabelText("Start dictation").hasAttribute("disabled")).toBe(false);
+  });
+
+  it("voice discussion auto-submits the completed transcript with trusted metadata", async () => {
+    const onSend = vi.fn();
+    render(<Composer {...props({ onSend })} />);
+
+    fireEvent.click(await screen.findByLabelText("Voice input mode"));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Voice discussion/ }));
+    fireEvent.click(screen.getByLabelText("Start voice discussion"));
+    fireEvent.click(await screen.findByLabelText("Stop voice discussion"));
+
+    await waitFor(() =>
+      expect(onSend).toHaveBeenCalledWith(
+        "hello from the mic",
+        undefined,
+        { inputMode: "voice_discussion" },
+      ),
+    );
+    expect(localStorage.getItem("openwork-voice-capture-mode")).toBe("discussion");
+  });
+
+  it("editing during voice discussion cancels auto-send and keeps an editable draft", async () => {
+    const onSend = vi.fn();
+    render(<Composer {...props({ onSend })} />);
+
+    fireEvent.click(await screen.findByLabelText("Voice input mode"));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Voice discussion/ }));
+    fireEvent.click(screen.getByLabelText("Start voice discussion"));
+
+    const box = screen.getByPlaceholderText(/Ask the coworker/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "Please check" } });
+    fireEvent.click(await screen.findByLabelText("Stop voice discussion"));
+
+    await waitFor(() => expect(box.value).toBe("Please check hello from the mic"));
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByText("Voice transcript kept as an editable draft.")).toBeTruthy();
   });
 });

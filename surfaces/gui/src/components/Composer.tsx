@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import type { Attachment } from "../types";
+import type { Attachment, UserMessageMeta } from "../types";
 import { isPdfFile, readFile } from "../attach";
 import { getSettings, inspectPdf } from "../api";
 import { Dropdown, type Option } from "./Dropdown";
@@ -24,6 +24,18 @@ const PERMISSION_OPTIONS: Option[] = [
   { value: "interactive", label: "Ask for approval", description: "Ask before edits and commands" },
   { value: "auto", label: "Full access", description: "Run everything without asking" },
 ];
+
+type VoiceCaptureMode = "dictation" | "discussion";
+const VOICE_MODE_KEY = "openwork-voice-capture-mode";
+const getVoiceCaptureMode = (): VoiceCaptureMode => {
+  try {
+    return localStorage.getItem(VOICE_MODE_KEY) === "discussion" ? "discussion" : "dictation";
+  } catch {
+    return "dictation";
+  }
+};
+const voiceModeName = (mode: VoiceCaptureMode) =>
+  mode === "discussion" ? "Voice discussion" : "Dictation";
 
 // No hardcoded model fallback: until the server supplies the list (a few seconds after a
 // cold app boot), the picker renders a disabled "Loading models…" chip. A baked-in list
@@ -58,7 +70,7 @@ interface Props {
   modelReady?: boolean;
   onConnectModel?: () => void;
   onConfigureVoiceInput?: () => void;
-  onSend: (text: string, attachments?: Attachment[]) => void;
+  onSend: (text: string, attachments?: Attachment[], meta?: UserMessageMeta) => void;
   onInterrupt: () => void;
   onModeChange: (mode: string) => void;
   onModelChange: (model: string) => void;
@@ -87,11 +99,33 @@ export function Composer(props: Props) {
   const [dictation, setDictation] = useState<DictationStatus | null>(null);
   const [dictationBusy, setDictationBusy] = useState<string | null>(null);
   const [dictationError, setDictationError] = useState<string | null>(null);
+  const [dictationNotice, setDictationNotice] = useState<string | null>(null);
+  const [voiceMode, setVoiceMode] = useState<VoiceCaptureMode>(getVoiceCaptureMode);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [attachNotice, setAttachNotice] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const noticeTimer = useRef<number | null>(null);
+  const activeVoiceMode = useRef<VoiceCaptureMode>("dictation");
+  const autoSendVoiceTurn = useRef(false);
+
+  const changeVoiceMode = (mode: VoiceCaptureMode) => {
+    setVoiceMode(mode);
+    try {
+      localStorage.setItem(VOICE_MODE_KEY, mode);
+    } catch {
+      /* per-device preference is best effort */
+    }
+  };
+
+  // Voice discussion is auto-submit by default. Touching the editable composer while recording
+  // is the deliberate escape hatch from issue #71: keep the transcript as a draft instead.
+  const keepVoiceTurnAsDraft = () => {
+    if (activeVoiceMode.current === "discussion" && autoSendVoiceTurn.current) {
+      autoSendVoiceTurn.current = false;
+      setDictationNotice("Auto-send cancelled. This voice turn will stay in the composer.");
+    }
+  };
 
   // Rejected-attachment notice: visible ~8s, then clears (or on ✕).
   const showAttachNotice = (message: string) => {
@@ -200,6 +234,7 @@ export function Composer(props: Props) {
   // size limit is REJECTED with a visible notice — never attached, never silently dropped.
   // The rationale is token cost: a big PDF re-rides every turn of the conversation.
   const addFiles = async (files: FileList | File[]) => {
+    keepVoiceTurnAsDraft();
     const list = Array.from(files);
     let maxPages = 20;
     let maxMb = 10;
@@ -288,16 +323,31 @@ export function Composer(props: Props) {
   const toggleDictation = async () => {
     if (!isTauri() || dictationBusy) return;
     setDictationError(null);
+    setDictationNotice(null);
     try {
       if (dictation?.recording) {
+        const completedMode = activeVoiceMode.current;
+        const shouldAutoSend =
+          completedMode === "discussion" && autoSendVoiceTurn.current;
         setDictationBusy("Transcribing…");
         const transcript = await stopDictation();
         if (transcript === null) throw new Error("Could not transcribe your recording.");
         if (transcript.trim()) {
-          setText((draft) => (draft.trim() ? `${draft.trimEnd()} ${transcript.trim()}` : transcript.trim()));
+          if (shouldAutoSend) {
+            props.onSend(transcript.trim(), undefined, { inputMode: "voice_discussion" });
+            setText("");
+            setAttachments([]);
+          } else {
+            setText((draft) => (draft.trim() ? `${draft.trimEnd()} ${transcript.trim()}` : transcript.trim()));
+            if (completedMode === "discussion") {
+              setDictationNotice("Voice transcript kept as an editable draft.");
+            }
+          }
+        } else if (completedMode === "discussion") {
+          throw new Error("No speech was detected. Try again and speak for a little longer.");
         }
         setDictation(await getDictationStatus());
-        textareaRef.current?.focus();
+        if (!shouldAutoSend) textareaRef.current?.focus();
         return;
       }
 
@@ -307,11 +357,21 @@ export function Composer(props: Props) {
         props.onConfigureVoiceInput?.();
         return;
       }
+      if (voiceMode === "discussion" && props.modelReady === false) {
+        props.onConnectModel?.();
+        return;
+      }
+      if (voiceMode === "discussion" && (!props.connected || props.running)) return;
       setDictationBusy("Starting microphone…");
+      activeVoiceMode.current = voiceMode;
+      autoSendVoiceTurn.current =
+        voiceMode === "discussion" && !text.trim() && attachments.length === 0;
       const recording = await startDictation();
       if (!recording?.recording) throw new Error("Could not start the microphone.");
       setDictation(recording);
     } catch (error) {
+      autoSendVoiceTurn.current = false;
+      setDictationNotice(null);
       setDictationError(error instanceof Error ? error.message : "Voice dictation is unavailable.");
       const status = await getDictationStatus();
       if (status) setDictation(status);
@@ -334,6 +394,12 @@ export function Composer(props: Props) {
   // The send button is accent only when there's something to send — subtle grey otherwise, so the
   // composer isn't carrying a constant blue dot.
   const hasContent = text.trim().length > 0 || attachments.length > 0;
+  const activeVoiceModeName = voiceModeName(activeVoiceMode.current);
+  const voiceActionDisabled =
+    !!dictationBusy ||
+    (!dictation?.recording &&
+      voiceMode === "discussion" &&
+      (!props.connected || props.running));
 
   return (
     <div className="composer-wrap px-6 pb-5 pt-4">
@@ -342,6 +408,11 @@ export function Composer(props: Props) {
       {dictationError && (
         <div className="max-w-3xl mx-auto mb-2 px-1 text-[12px] text-red-600" role="alert">
           {dictationError}
+        </div>
+      )}
+      {dictationNotice && (
+        <div className="max-w-3xl mx-auto mb-2 px-1 text-[12px] text-muted" role="status">
+          {dictationNotice}
         </div>
       )}
 
@@ -392,7 +463,12 @@ export function Composer(props: Props) {
           className="w-full block px-3.5 pt-3.5 pb-1.5 text-[14.5px]"
           placeholder={props.placeholder || "Ask the coworker…  (drop or paste files)"}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onPointerDown={keepVoiceTurnAsDraft}
+          onChange={(e) => {
+            keepVoiceTurnAsDraft();
+            setDictationNotice(null);
+            setText(e.target.value);
+          }}
           onKeyDown={onKey}
           onPaste={onPaste}
           rows={1}
@@ -440,6 +516,11 @@ export function Composer(props: Props) {
               polled ~10Hz, scrolling left) + elapsed time (§37). */}
           {dictation?.recording ? (
             <div className="voice-wave-row flex-1 flex items-center gap-2 ml-1" aria-hidden="true">
+              {activeVoiceMode.current === "discussion" && (
+                <span className="shrink-0 rounded-full bg-accentSoft px-2 py-0.5 text-[10.5px] font-medium text-accent">
+                  Voice discussion
+                </span>
+              )}
               <span className="voice-wave-line" />
               <span className="voice-wave-bars">
                 {Array.from({ length: 14 }, (_, index) => {
@@ -488,30 +569,54 @@ export function Composer(props: Props) {
             </button>
           ))}
 
-          {/* mic — immediately before send (owner call, DMG #28 walkthrough) */}
+          {/* Voice split control: the primary action records in the selected mode; the quiet
+              chevron keeps editable Dictation and auto-submit Voice discussion one click apart. */}
           {isTauri() && (
-            <button
-              className={
-                iconBtn +
-                (dictation?.recording ? " bg-red-50 text-red-600 hover:bg-red-100" : "") +
-                (dictationBusy ? " opacity-60" : "") +
-                (!voiceReady && !dictation?.recording ? " opacity-40" : "")
-              }
-              onClick={() => void toggleDictation()}
-              disabled={!!dictationBusy}
-              title={
-                dictationBusy ||
-                (dictation?.recording
-                  ? "Stop recording and transcribe"
-                  : voiceReady
-                    ? "Start local voice dictation"
-                    : "Configure Voice Input in Settings")
-              }
-              aria-label={dictation?.recording ? "Stop dictation" : voiceReady ? "Start dictation" : "Configure Voice Input in Settings"}
-              aria-disabled={!voiceReady && !dictation?.recording}
-            >
-              <Icon name={dictation?.recording ? "stop" : "mic"} size={16} />
-            </button>
+            <div className="relative flex items-center">
+              <button
+                className={
+                  iconBtn +
+                  (dictation?.recording ? " bg-red-50 text-red-600 hover:bg-red-100" : "") +
+                  (!dictation?.recording && voiceMode === "discussion" ? " bg-accentSoft text-accent" : "") +
+                  (voiceActionDisabled ? " opacity-60" : "") +
+                  (!voiceReady && !dictation?.recording ? " opacity-40" : "")
+                }
+                onClick={() => void toggleDictation()}
+                disabled={voiceActionDisabled}
+                title={
+                  dictationBusy ||
+                  (dictation?.recording
+                    ? `Stop ${activeVoiceModeName.toLowerCase()} and transcribe`
+                    : voiceReady
+                      ? voiceMode === "discussion"
+                        ? "Start voice discussion. The transcript sends when you stop."
+                        : "Start local voice dictation"
+                      : "Configure Voice Input in Settings")
+                }
+                aria-label={
+                  dictation?.recording
+                    ? `Stop ${activeVoiceModeName.toLowerCase()}`
+                    : voiceReady
+                      ? voiceMode === "discussion"
+                        ? "Start voice discussion"
+                        : "Start dictation"
+                      : "Configure Voice Input in Settings"
+                }
+                aria-disabled={
+                  (!voiceReady && !dictation?.recording) ||
+                  (voiceMode === "discussion" && props.modelReady === false)
+                }
+              >
+                <Icon name={dictation?.recording ? "stop" : "mic"} size={16} />
+              </button>
+              {!dictation?.recording && (
+                <VoiceModePicker
+                  mode={voiceMode}
+                  onChange={changeVoiceMode}
+                  disabled={!!dictationBusy}
+                />
+              )}
+            </div>
           )}
 
           {/* send / stop */}
@@ -540,9 +645,113 @@ export function Composer(props: Props) {
         </div>
       </div>
       <span className="sr-only" role="status" aria-live="polite">
-        {dictation?.recording ? `Listening, ${recordingTime}` : dictationBusy || ""}
+        {dictation?.recording
+          ? `${activeVoiceModeName} listening, ${recordingTime}${
+              activeVoiceMode.current === "discussion" && autoSendVoiceTurn.current
+                ? ". Transcript will send when stopped."
+                : ""
+            }`
+          : dictationBusy || ""}
       </span>
     </div>
+  );
+}
+
+function VoiceModePicker({
+  mode,
+  onChange,
+  disabled,
+}: {
+  mode: VoiceCaptureMode;
+  onChange: (mode: VoiceCaptureMode) => void;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const choose = (next: VoiceCaptureMode) => {
+    onChange(next);
+    setOpen(false);
+  };
+  return (
+    <>
+      <button
+        className="h-7 w-4 -ml-1 grid place-items-center rounded-r-md text-faint hover:bg-paper hover:text-ink disabled:opacity-50"
+        aria-label="Voice input mode"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={`Voice input mode: ${voiceModeName(mode)}`}
+        disabled={disabled}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Icon name="chevronDown" size={10} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div
+            className="absolute z-40 bottom-full mb-1 right-0 w-[280px] rounded-xl border border-line bg-panel shadow-2xl p-1.5"
+            role="menu"
+            aria-label="Voice input mode"
+          >
+            <VoiceModeOption
+              checked={mode === "dictation"}
+              label="Dictation"
+              description="Transcribe into the composer so you can edit before sending."
+              onClick={() => choose("dictation")}
+            />
+            <VoiceModeOption
+              checked={mode === "discussion"}
+              label="Voice discussion"
+              description="Send the transcript automatically when you stop speaking."
+              onClick={() => choose("discussion")}
+            />
+            <div className="mx-2 mt-1 border-t border-line px-0 pt-2 pb-1 text-[10.5px] leading-snug text-faint">
+              Clicking or typing in the composer keeps a discussion turn as an editable draft.
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+function VoiceModeOption({
+  checked,
+  label,
+  description,
+  onClick,
+}: {
+  checked: boolean;
+  label: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={
+        "w-full rounded-lg px-2.5 py-2 text-left hover:bg-paper " +
+        (checked ? "bg-accentSoft/60" : "")
+      }
+      role="menuitemradio"
+      aria-checked={checked}
+      onClick={onClick}
+    >
+      <span className="flex items-center gap-2">
+        <span
+          className={
+            "grid h-5 w-5 shrink-0 place-items-center rounded-full border " +
+            (checked ? "border-accent bg-accent text-white" : "border-lineStrong text-faint")
+          }
+        >
+          {checked ? "✓" : <Icon name="mic" size={11} />}
+        </span>
+        <span>
+          <span className={"block text-[13px] " + (checked ? "font-medium text-accent" : "text-ink")}>
+            {label}
+          </span>
+          <span className="mt-0.5 block text-[11px] leading-snug text-faint">{description}</span>
+        </span>
+      </span>
+    </button>
   );
 }
 
