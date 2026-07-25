@@ -70,6 +70,16 @@ MATRIX: dict[str, ModelEntry] = {
     "gemini:gemini-3.6-flash": ModelEntry("Gemini 3.6 Flash · Google", _AGENTIC_VISION),
     "gemini:gemini-2.5-pro": ModelEntry("Gemini 2.5 Pro · Google", _AGENTIC_VISION),
     "gemini:gemini-2.5-flash": ModelEntry("Gemini 2.5 Flash · Google", _AGENTIC_VISION),
+    # Gemini via Google Cloud Vertex AI
+    "vertex-gemini:gemini-3.6-flash": ModelEntry(
+        "Gemini 3.6 Flash · Vertex AI", _AGENTIC_VISION
+    ),
+    "vertex-gemini:gemini-2.5-pro": ModelEntry(
+        "Gemini 2.5 Pro · Vertex AI", _AGENTIC_VISION
+    ),
+    "vertex-gemini:gemini-2.5-flash": ModelEntry(
+        "Gemini 2.5 Flash · Vertex AI", _AGENTIC_VISION
+    ),
     # -- direct OpenAI-compatible vendors ----------------------------------------
     # Muse Spark (Meta Model API, public preview 2026-07-09): multimodal + tools via
     # their OpenAI-compat surface. Vision yes; PDFs unverified over compat — falls

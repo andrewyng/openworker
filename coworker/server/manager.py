@@ -1396,7 +1396,13 @@ class SessionManager:
         out: list[dict[str, Any]] = []
         for d in provider_descriptors():
             profile = self.secrets.get(f"provider:{d.name}") or {}
-            if d.needs_key:
+            if d.name == "vertex-gemini":
+                configured = bool(
+                    profile.get("project_id")
+                    or os.environ.get("GOOGLE_PROJECT_ID")
+                    or os.environ.get("GOOGLE_CLOUD_PROJECT")
+                )
+            elif d.needs_key:
                 configured = bool(profile.get("api_key")) or bool(
                     d.env_key and os.environ.get(d.env_key)
                 )
@@ -1581,6 +1587,11 @@ class SessionManager:
         base_url = (fields.get("base_url") or profile.get("base_url") or "").strip()
         if d.needs_key and not api_key:
             return {"ok": False, "error": "Enter an API key to test."}
+        if name == "vertex-gemini":
+            project_id = (fields.get("project_id") or profile.get("project_id") or "").strip()
+            if not project_id and not os.environ.get("GOOGLE_PROJECT_ID") and not os.environ.get("GOOGLE_CLOUD_PROJECT"):
+                return {"ok": False, "error": "Enter a Project ID to test."}
+            return verify_provider_key(name, api_key=project_id, base_url=base_url)
         return verify_provider_key(name, api_key=api_key, base_url=base_url)
 
     def _model_provider(self, model: str) -> str:
@@ -1595,6 +1606,13 @@ class SessionManager:
         d = get_descriptor(name)
         if d is None:
             return False
+        if name == "vertex-gemini":
+            profile = self.secrets.get(f"provider:{name}") or {}
+            return bool(
+                profile.get("project_id")
+                or os.environ.get("GOOGLE_PROJECT_ID")
+                or os.environ.get("GOOGLE_CLOUD_PROJECT")
+            )
         if not d.needs_key:
             return True  # keyless (Ollama)
         profile = self.secrets.get(f"provider:{name}") or {}

@@ -126,6 +126,19 @@ def _build_gemini(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     return GeminiProvider(api_key=api_key, secrets=secrets)
 
 
+def _build_vertex_gemini(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    project_id = ((profile or {}).get("project_id") or "").strip() or None
+    location = ((profile or {}).get("location") or "").strip() or None
+    credentials_path = ((profile or {}).get("credentials_path") or "").strip() or None
+    return GeminiProvider(
+        vertexai=True,
+        project=project_id,
+        location=location,
+        credentials_path=credentials_path,
+        secrets=secrets,
+    )
+
+
 def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Ollama's OpenAI-compatible endpoint ignores the key but the SDK requires a non-empty
     # string, so we pass a placeholder. `base_url` comes from the stored profile (or the default).
@@ -251,6 +264,42 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         build=_build_gemini,
         recommended_model="gemini-3.6-flash",
         env_key="GEMINI_API_KEY",
+    ),
+    ProviderDescriptor(
+        name="vertex-gemini",
+        title="Vertex AI Gemini (Google Cloud)",
+        needs_key=False,
+        fields=[
+            ProviderField(
+                "project_id",
+                "Google Cloud Project ID",
+                secret=False,
+                required=True,
+                placeholder="my-gcp-project-id",
+                help="Your GCP Project ID. Env fallback: GOOGLE_PROJECT_ID or GOOGLE_CLOUD_PROJECT.",
+            ),
+            ProviderField(
+                "location",
+                "Location / Region",
+                secret=False,
+                required=True,
+                default="us-central1",
+                placeholder="us-central1",
+                help="GCP region (e.g. us-central1, europe-west1). Env fallback: GOOGLE_REGION.",
+            ),
+            ProviderField(
+                "credentials_path",
+                "Service Account Key File Path (optional)",
+                secret=False,
+                required=False,
+                placeholder="/path/to/service-account.json",
+                help="Optional JSON key file path. If blank, uses Application Default Credentials (ADC) or gcloud auth.",
+            ),
+        ],
+        build=_build_vertex_gemini,
+        recommended_model="gemini-3.6-flash",
+        env_key="GOOGLE_PROJECT_ID",
+        blurb="Connects to Gemini via Google Cloud Vertex AI using GCP project credentials or Application Default Credentials (ADC).",
     ),
     # OpenAI-compatible vendors, listed as first-class providers so users don't need to know the
     # "point the OpenAI slot at a different endpoint" trick (owner call, 2026-07-04). Each keeps
@@ -421,6 +470,11 @@ def verify_provider_key(
                 params={"key": key},
                 timeout=timeout,
             )
+        elif name == "vertex-gemini":
+            project = key or os.environ.get("GOOGLE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
+            if not project:
+                return {"ok": False, "error": "Project ID is required for Vertex AI."}
+            return {"ok": True}
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
