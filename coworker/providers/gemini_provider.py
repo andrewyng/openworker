@@ -101,17 +101,22 @@ def resolve_api_key(secrets: Any = None) -> Optional[str]:
 
 def resolve_vertex_config(
     secrets: Any = None,
-) -> tuple[Optional[str], Optional[str], Optional[str]]:
+) -> tuple[Optional[str], str, Optional[str]]:
     """Resolve Vertex AI parameters: (project_id, location, credentials_path).
-    Env `GOOGLE_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`), `GOOGLE_REGION` (or `GOOGLE_LOCATION`),
-    and `GOOGLE_APPLICATION_CREDENTIALS` take precedence, falling back to SecretStore `provider:vertex-gemini`."""
+    Env `GOOGLE_CLOUD_PROJECT` (or `GOOGLE_PROJECT_ID`), `GOOGLE_CLOUD_LOCATION` (or `GOOGLE_REGION`),
+    and `GOOGLE_APPLICATION_CREDENTIALS` take precedence, falling back to SecretStore `provider:vertex-gemini`.
+    Location defaults to 'global' if unspecified."""
     import os
 
     project = (
-        os.environ.get("GOOGLE_PROJECT_ID")
-        or os.environ.get("GOOGLE_CLOUD_PROJECT")
+        os.environ.get("GOOGLE_CLOUD_PROJECT")
+        or os.environ.get("GOOGLE_PROJECT_ID")
     )
-    location = os.environ.get("GOOGLE_REGION") or os.environ.get("GOOGLE_LOCATION")
+    location = (
+        os.environ.get("GOOGLE_CLOUD_LOCATION")
+        or os.environ.get("GOOGLE_REGION")
+        or os.environ.get("GOOGLE_LOCATION")
+    )
     creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
 
     if secrets is not None:
@@ -120,6 +125,7 @@ def resolve_vertex_config(
         location = location or profile.get("location") or profile.get("region") or None
         creds = creds or profile.get("credentials_path") or None
 
+    location = location or "global"
     return (project, location, creds)
 
 
@@ -411,7 +417,7 @@ class GeminiProvider(ProviderClient):
         self,
         client: Any = None,
         *,
-        default_model: str = "gemini-2.5-flash",
+        default_model: str = "gemini-3.6-flash",
         api_key: Optional[str] = None,
         vertexai: bool = False,
         project: Optional[str] = None,

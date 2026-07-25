@@ -1,9 +1,8 @@
-"""Tests for Vertex AI Gemini provider — configuration resolution, client build, and router integration."""
+"""Tests for Gemini Enterprise (Vertex AI) provider — configuration resolution, client build, and router integration."""
 
 from __future__ import annotations
 
 import os
-from types import SimpleNamespace
 import pytest
 
 from coworker.providers import GeminiProvider, capabilities_for
@@ -13,19 +12,31 @@ from coworker.providers.router import ProviderRouter
 
 
 def test_resolve_vertex_config_from_env(monkeypatch):
-    monkeypatch.setenv("GOOGLE_PROJECT_ID", "test-project-env")
-    monkeypatch.setenv("GOOGLE_REGION", "europe-west1")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project-cloud")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/tmp/creds.json")
 
     project, location, creds = resolve_vertex_config()
-    assert project == "test-project-env"
-    assert location == "europe-west1"
+    assert project == "test-project-cloud"
+    assert location == "us-central1"
     assert creds == "/tmp/creds.json"
+
+
+def test_resolve_vertex_config_defaults_to_global_location(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+    monkeypatch.delenv("GOOGLE_REGION", raising=False)
+    monkeypatch.delenv("GOOGLE_LOCATION", raising=False)
+
+    project, location, _ = resolve_vertex_config()
+    assert project == "test-project"
+    assert location == "global"
 
 
 def test_resolve_vertex_config_from_secrets(monkeypatch):
     monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
     monkeypatch.delenv("GOOGLE_REGION", raising=False)
     monkeypatch.delenv("GOOGLE_LOCATION", raising=False)
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
@@ -35,20 +46,21 @@ def test_resolve_vertex_config_from_secrets(monkeypatch):
             if name == "provider:vertex-gemini":
                 return {
                     "project_id": "secret-project",
-                    "location": "us-east1",
+                    "location": "europe-west1",
                     "credentials_path": "/path/to/key.json",
                 }
             return None
 
     project, location, creds = resolve_vertex_config(_Secrets())
     assert project == "secret-project"
-    assert location == "us-east1"
+    assert location == "europe-west1"
     assert creds == "/path/to/key.json"
 
 
 def test_ensure_client_without_project_raises(monkeypatch):
     monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
     monkeypatch.delenv("GOOGLE_REGION", raising=False)
     monkeypatch.delenv("GOOGLE_LOCATION", raising=False)
 
@@ -65,17 +77,25 @@ def test_vertex_gemini_descriptor_and_build():
 
     provider = build_provider_client(
         "vertex-gemini",
-        {"project_id": "proj-123", "location": "us-central1"},
+        {"project_id": "proj-123", "location": "global"},
         secrets=None,
     )
     assert isinstance(provider, GeminiProvider)
     assert provider._vertexai is True
     assert provider._project == "proj-123"
-    assert provider._location == "us-central1"
+    assert provider._location == "global"
 
 
-def test_vertex_gemini_capabilities():
-    caps = capabilities_for("vertex-gemini:gemini-3.6-flash")
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "vertex-gemini:gemini-3.6-flash",
+        "vertex-gemini:gemini-3.1-pro-preview",
+        "vertex-gemini:gemini-3.5-flash-lite",
+    ],
+)
+def test_vertex_gemini_capabilities(model_id):
+    caps = capabilities_for(model_id)
     assert caps.tools and caps.vision and caps.pdf and caps.streaming
     assert caps.parallel_tool_calls is True
 

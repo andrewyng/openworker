@@ -283,9 +283,9 @@ DESCRIPTORS: list[ProviderDescriptor] = [
                 "Location / Region",
                 secret=False,
                 required=True,
-                default="us-central1",
-                placeholder="us-central1",
-                help="GCP region (e.g. us-central1, europe-west1). Env fallback: GOOGLE_REGION.",
+                default="global",
+                placeholder="global",
+                help="GCP region (default: global; backup: us-central1). Env fallback: GOOGLE_CLOUD_LOCATION or GOOGLE_REGION.",
             ),
             ProviderField(
                 "credentials_path",

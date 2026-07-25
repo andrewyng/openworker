@@ -74,11 +74,11 @@ MATRIX: dict[str, ModelEntry] = {
     "vertex-gemini:gemini-3.6-flash": ModelEntry(
         "Gemini 3.6 Flash · Gemini Enterprise (Vertex AI)", _AGENTIC_VISION
     ),
-    "vertex-gemini:gemini-2.5-pro": ModelEntry(
-        "Gemini 2.5 Pro · Gemini Enterprise (Vertex AI)", _AGENTIC_VISION
+    "vertex-gemini:gemini-3.1-pro-preview": ModelEntry(
+        "Gemini 3.1 Pro · Gemini Enterprise (Vertex AI)", _AGENTIC_VISION
     ),
-    "vertex-gemini:gemini-2.5-flash": ModelEntry(
-        "Gemini 2.5 Flash · Gemini Enterprise (Vertex AI)", _AGENTIC_VISION
+    "vertex-gemini:gemini-3.5-flash-lite": ModelEntry(
+        "Gemini 3.5 Flash Lite · Gemini Enterprise (Vertex AI)", _AGENTIC_VISION
     ),
     # -- direct OpenAI-compatible vendors ----------------------------------------
     # Muse Spark (Meta Model API, public preview 2026-07-09): multimodal + tools via
