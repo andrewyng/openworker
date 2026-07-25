@@ -465,14 +465,14 @@ def test_registry_builds_native_anthropic_provider():
 def test_resolve_api_key_env_then_secrets(monkeypatch):
     from coworker.providers.anthropic_provider import resolve_api_key
 
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-env")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", " \tsk-ant-env\n")
     assert resolve_api_key() == "sk-ant-env"
     monkeypatch.delenv("ANTHROPIC_API_KEY")
 
     class _Secrets:
         def get(self, name):
             return (
-                {"api_key": "sk-ant-stored"} if name == "provider:anthropic" else None
+                {"api_key": "\nsk-ant-stored "} if name == "provider:anthropic" else None
             )
 
     assert resolve_api_key(_Secrets()) == "sk-ant-stored"
