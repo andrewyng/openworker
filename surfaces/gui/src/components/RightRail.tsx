@@ -104,10 +104,19 @@ export function RightRail({
     readArtifact(sessionId, selected.path).then(setContent).catch(() => setContent(null));
   }, [selected?.path, sessionId]);
 
-  // Notify the app when a preview opens/closes (drives the left-nav auto-collapse).
+  // Switching conversations or hiding/deactivating the rail closes any open artifact.
   useEffect(() => {
-    onPreviewChange?.(!!selected);
-  }, [!!selected, onPreviewChange]);
+    if (!active) {
+      setSelected(null);
+      setContent(null);
+    }
+  }, [active]);
+
+  // Notify the app when a preview opens/closes (drives the left-nav auto-collapse).
+  const previewOpen = active && !!selected;
+  useEffect(() => {
+    onPreviewChange?.(previewOpen);
+  }, [previewOpen, onPreviewChange]);
 
   const reloadSelected = () => {
     if (!selected) return Promise.resolve();

@@ -231,6 +231,10 @@ export function App() {
   // While an artifact preview is open we auto-collapse the nav (#3). Remember the pre-preview
   // collapse state so we can restore it on close — unless the user re-opened the nav meanwhile.
   const navBeforePreview = useRef<boolean | null>(null);
+  const navCollapsedRef = useRef(navCollapsed);
+  useEffect(() => {
+    navCollapsedRef.current = navCollapsed;
+  }, [navCollapsed]);
   const setNavCollapsedPersist = useCallback((v: boolean) => {
     setNavCollapsed(v);
     try { localStorage.setItem(NAV_COLLAPSED_KEY, v ? "1" : "0"); } catch { /* best effort */ }
@@ -244,14 +248,14 @@ export function App() {
   // user manually toggled meanwhile). The collapse is transient — it never overwrites the pref.
   const onArtifactPreview = useCallback((open: boolean) => {
     if (open) {
-      if (navBeforePreview.current === null) navBeforePreview.current = navCollapsed;
+      if (navBeforePreview.current === null) navBeforePreview.current = navCollapsedRef.current;
       setNavPeek(false);
       setNavCollapsed(true);
     } else if (navBeforePreview.current !== null) {
       setNavCollapsed(navBeforePreview.current);
       navBeforePreview.current = null;
     }
-  }, [navCollapsed]);
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
