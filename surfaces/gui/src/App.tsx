@@ -9,6 +9,7 @@ import {
   getSessions,
   announceAutomationsChanged,
   connectEvents,
+  createSideSession,
   getSettings,
   getPersonas,
   getInbox,
@@ -946,6 +947,48 @@ export function App() {
       setItems([]);
     }
   };
+  const openSideSession = async () => {
+    if (!activeInfo || running) return;
+    try {
+      const result = await createSideSession(sessionId);
+      if (!result.ok || !result.session) {
+        setItems((current) => [
+          ...current,
+          {
+            kind: "notice",
+            tone: "warn",
+            text: result.error || "Could not create the side chat.",
+          },
+        ]);
+        return;
+      }
+      setSessions((current) => [
+        result.session!,
+        ...current.filter((item) => item.session_id !== result.session!.session_id),
+      ]);
+      await selectSession(
+        result.session.session_id,
+        result.session.workspace || "",
+        result.session.agent,
+      );
+    } catch {
+      setItems((current) => [
+        ...current,
+        { kind: "notice", tone: "warn", text: "Could not create the side chat." },
+      ]);
+    }
+  };
+  const returnToParentSession = async () => {
+    const parentId = activeInfo?.parent_session_id;
+    if (!parentId) return;
+    let parent = sessions.find((item) => item.session_id === parentId);
+    if (!parent) {
+      const fresh = await getSessions().catch(() => []);
+      setSessions(fresh);
+      parent = fresh.find((item) => item.session_id === parentId);
+    }
+    if (parent) await selectSession(parent.session_id, parent.workspace || "", parent.agent);
+  };
   const switchAgent = async (name: string) => {
     setSurface("session");
     if (name === agent) return;
@@ -1376,6 +1419,18 @@ export function App() {
           {/* Right: session-settings icon (§23) + panel toggle. Model/mode/persona chrome is
               gone — the facts live in the subtitle, the controls in the composer (§22). */}
           <div className="main-topbar-side main-topbar-actions" onPointerDown={beginWindowDrag}>
+            {hasHistory && activeInfo && !sessionId.startsWith("__") && (
+              <button
+                className="topbar-icon-btn"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={openSideSession}
+                disabled={running}
+                aria-label="Open side chat"
+                title="Open a side chat that follows this conversation"
+              >
+                <Icon name="branch" size={16} />
+              </button>
+            )}
             {agent === "cowork" && railHidden && artifactCount > 0 && (
               <button
                 className="topbar-artifacts-btn"
@@ -1405,6 +1460,28 @@ export function App() {
         </div>
         <div className={"main-workspace" + (railHidden ? " rail-hidden" : "")}>
           <div className="main-chat">
+            {activeInfo?.parent_session_id && (
+              <div
+                className="flex items-center gap-2 px-4 py-2 mb-1 rounded-lg text-[12.5px] border border-line bg-accentSoft/40"
+                data-testid="side-session-banner"
+              >
+                <Icon name="branch" size={14} className="text-accent shrink-0" />
+                <span className="truncate text-muted">
+                  Side chat · follows the latest completed context from{" "}
+                  <span className="text-ink font-medium">
+                    {sessions.find((item) => item.session_id === activeInfo.parent_session_id)?.title ||
+                      "the main conversation"}
+                  </span>
+                  {" "}· discuss mode
+                </span>
+                <button
+                  className="ml-auto shrink-0 text-accent font-medium hover:underline"
+                  onClick={returnToParentSession}
+                >
+                  ← Back to main
+                </button>
+              </div>
+            )}
             {/* Automation-run context (owner ask 2026-07-04): a __run__ session looked like any
                 other chat with no way back to the runs list. Lives INSIDE the chat column (which
                 is padded to clear the absolute glass topbar — rendering above .main-workspace put

@@ -593,6 +593,22 @@ def create_app(manager: SessionManager) -> FastAPI:
     def session_messages(session_id: str) -> dict[str, Any]:
         return {"messages": manager.session_messages(session_id)}
 
+    @app.post("/v1/sessions/{session_id}/branches")
+    def session_branch_create(session_id: str, body: dict | None = None) -> dict[str, Any]:
+        body = body or {}
+        return manager.create_side_session(
+            session_id, mode=str(body.get("mode") or "follow")
+        )
+
+    @app.get("/v1/sessions/{session_id}/branches")
+    def session_branches(session_id: str) -> dict[str, Any]:
+        return {"branches": manager.side_sessions(session_id)}
+
+    @app.get("/v1/sessions/{session_id}/branch")
+    def session_branch(session_id: str) -> dict[str, Any]:
+        branch = manager.side_session_info(session_id)
+        return {"branch": branch}
+
     @app.patch("/v1/sessions/{session_id}")
     def session_patch(session_id: str, body: dict) -> dict[str, Any]:
         body = body or {}
@@ -1722,7 +1738,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                         session_id, {"type": event.type.value, "data": event.data}
                     )
                     if event.type.value in _CHECKPOINTS:
-                        manager.save(session_id, engine)
+                        manager.save(session_id, engine, committed=False)
             finally:
                 manager.mark_idle(session_id)
                 manager.save(session_id, engine)

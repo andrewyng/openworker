@@ -384,6 +384,7 @@ class SessionManager:
 
         record = self.session_store.load(session_id)
         is_new_session = record is None
+        branch = self.session_store.branch_for(session_id)
         agent_name = (record.agent if record else agent) or "code"
         ag = get_agent(agent_name)
 
@@ -423,6 +424,11 @@ class SessionManager:
             provider=self.provider,
             memory_store=self.memory_store,
             messages=messages,
+            inherited_messages_provider=(
+                (lambda sid=session_id: self._inherited_history_for(sid))
+                if branch is not None and branch.state == "active"
+                else None
+            ),
             extra_tools=extra_tools,
             secrets=self.secrets,
             task_store=self.task_store,
@@ -827,7 +833,7 @@ class SessionManager:
         """Save the cached engine's thread (so a prompt's pending tool call survives a crash)."""
         engine = self._engines.get(session_id)
         if engine is not None:
-            self.save(session_id, engine)
+            self.save(session_id, engine, committed=False)
 
     async def resolve_inbox(self, item_id: str, resolution: str) -> bool:
         """Resolve an Inbox item from any surface (REST / Slack button / channel reply). If the
@@ -848,7 +854,8 @@ class SessionManager:
         engine = self.get_engine(item.session_id)
         if engine is None or not hasattr(engine, "resume"):
             return
-        self.mark_running(item.session_id)
+        if not self.try_mark_running(item.session_id):
+            return
         try:
             async for _event in engine.resume():
                 pass
@@ -3228,7 +3235,9 @@ class SessionManager:
             self.task_store.save(task)
         return {"ok": True, "run": run.to_dict()}
 
-    def save(self, session_id: str, engine: TurnEngine) -> None:
+    def save(
+        self, session_id: str, engine: TurnEngine, *, committed: bool = True
+    ) -> None:
         executor = getattr(engine, "executor", None)
         workspace = os.path.realpath(str(executor.cwd)) if executor else ""
         self.session_store.save(
@@ -3242,7 +3251,8 @@ class SessionManager:
                 agent=getattr(engine, "agent_name", "code"),
                 extra_roots=self._extra_roots_of(engine),
                 grants=_grants_of(engine),
-            )
+            ),
+            committed=committed,
         )
 
     @staticmethod
@@ -3524,6 +3534,104 @@ class SessionManager:
         record = self.session_store.load(session_id)
         return record.messages if record else []
 
+    def _inherited_history_for(self, child_session_id: str) -> list[dict[str, Any]]:
+        """Resolve the live parent history for one side session.
+
+        Nested side sessions inherit the effective history of their parent, not merely
+        the parent's local JSONL. Cycles are treated as corrupt metadata and cut off.
+        ``TurnEngine`` freezes the returned list once per child turn.
+        """
+
+        def effective(session_id: str, seen: set[str]) -> list[dict[str, Any]]:
+            if session_id in seen:
+                return []
+            seen = {*seen, session_id}
+            # Never inherit a checkpoint written halfway through a parent turn.
+            # Concurrent parent/child work is safe because this durable boundary
+            # advances only after the parent turn finishes.
+            local = self.session_store.committed_messages(session_id)
+            relation = self.session_store.branch_for(session_id)
+            if relation is None or relation.state != "active":
+                return list(local)
+            inherited = effective(relation.parent_session_id, seen)
+            return [
+                *inherited,
+                *(m for m in local if m.get("role") != "system"),
+            ]
+
+        relation = self.session_store.branch_for(child_session_id)
+        if relation is None or relation.state != "active":
+            return []
+        return effective(relation.parent_session_id, {child_session_id})
+
+    def create_side_session(
+        self, parent_session_id: str, *, mode: str = "follow"
+    ) -> dict[str, Any]:
+        """Create a durable discuss-mode child that follows the parent on every turn."""
+        import uuid
+
+        if parent_session_id.startswith("__"):
+            return {"ok": False, "error": "internal sessions cannot have side sessions"}
+        if mode != "follow":
+            return {"ok": False, "error": "only follow mode is currently supported"}
+        if self.is_running(parent_session_id) or self.inbox.pending(parent_session_id):
+            return {
+                "ok": False,
+                "error": "resolve the parent turn before opening a side session",
+            }
+        # A live but previously unused engine has no durable row yet. Persist it so
+        # ancestry always points at a real session.
+        self.persist_session(parent_session_id)
+        parent = self.session_store.load(parent_session_id)
+        if parent is None:
+            return {"ok": False, "error": "parent session not found"}
+
+        child_session_id = uuid.uuid4().hex[:12]
+        self.session_store.save(
+            SessionRecord(
+                session_id=child_session_id,
+                workspace=parent.workspace,
+                model=parent.model,
+                # The first release is intentionally read-only: a conversational side
+                # branch must not mutate the parent's workspace or external systems.
+                mode=Mode.DISCUSS.value,
+                messages=[],
+                title=f"Side chat · {parent.title or 'New session'}",
+                agent=parent.agent,
+                extra_roots=list(parent.extra_roots),
+            )
+        )
+        relation = self.session_store.create_branch(
+            child_session_id,
+            parent_session_id,
+            mode=mode,
+            base_message_count=parent.message_count,
+        )
+        return {
+            "ok": True,
+            "session": self._session_public(
+                self.session_store.load(child_session_id), relation=relation
+            ),
+            "branch": self._branch_public(relation),
+        }
+
+    def side_sessions(self, parent_session_id: str) -> list[dict[str, Any]]:
+        out = []
+        for relation in self.session_store.branches_from(parent_session_id):
+            record = self.session_store.load(relation.child_session_id)
+            if record is not None:
+                out.append(
+                    {
+                        "session": self._session_public(record, relation=relation),
+                        "branch": self._branch_public(relation),
+                    }
+                )
+        return out
+
+    def side_session_info(self, child_session_id: str) -> Optional[dict[str, Any]]:
+        relation = self.session_store.branch_for(child_session_id)
+        return self._branch_public(relation) if relation is not None else None
+
     def rename_session(self, session_id: str, title: str) -> dict[str, Any]:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal sessions cannot be renamed"}
@@ -3549,6 +3657,11 @@ class SessionManager:
     def delete_session(self, session_id: str) -> dict[str, Any]:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal sessions cannot be deleted here"}
+        if self.session_store.has_active_children(session_id):
+            return {
+                "ok": False,
+                "error": "delete active side sessions before deleting their parent",
+            }
         engine = self._engines.pop(session_id, None)
         if engine is not None:
             try:
@@ -3601,20 +3714,7 @@ class SessionManager:
         ws = self.resolve_workspace(workspace) if workspace else None
         return [
             {
-                "session_id": r.session_id,
-                "title": r.title or "New session",
-                "workspace": r.workspace,
-                "agent": r.agent,
-                "model": r.model,
-                "mode": r.mode,
-                "updated_at": r.updated_at,
-                "messages": r.message_count,
-                "pinned": r.pinned,
-                "archived": r.archived,
-                # §31: non-user origin ("slack") + display label — drives the sidebar's
-                # "From Slack" group and the row's platform icon.
-                "origin": r.origin,
-                "origin_label": r.origin_label,
+                **self._session_public(r),
                 # Attention = Inbox items awaiting this session (the amber count that bubbles
                 # session → persona → footer Inbox). Liveness = working (in-flight turn) /
                 # sleeping (a self-wake is pending) / idle — a count-less dot that never bubbles.
@@ -3629,6 +3729,51 @@ class SessionManager:
             for r in self.session_store.list(workspace=ws)
             if not r.session_id.startswith("__")  # hide internal threads
         ]
+
+    @staticmethod
+    def _branch_public(relation) -> dict[str, Any]:
+        return {
+            "child_session_id": relation.child_session_id,
+            "parent_session_id": relation.parent_session_id,
+            "mode": relation.mode,
+            "base_message_count": relation.base_message_count,
+            "state": relation.state,
+            "created_at": relation.created_at,
+            "merged_at": relation.merged_at,
+        }
+
+    def _session_public(self, record, *, relation=None) -> dict[str, Any]:
+        if record is None:
+            return {}
+        relation = (
+            relation
+            if relation is not None
+            else self.session_store.branch_for(record.session_id)
+        )
+        return {
+            "session_id": record.session_id,
+            "title": record.title or "New session",
+            "workspace": record.workspace,
+            "agent": record.agent,
+            "model": record.model,
+            "mode": record.mode,
+            "updated_at": record.updated_at,
+            "messages": record.message_count,
+            "pinned": record.pinned,
+            "archived": record.archived,
+            # §31: non-user origin ("slack") + display label — drives the sidebar's
+            # "From Slack" group and the row's platform icon.
+            "origin": record.origin,
+            "origin_label": record.origin_label,
+            "parent_session_id": (
+                relation.parent_session_id if relation is not None else None
+            ),
+            "branch_mode": relation.mode if relation is not None else None,
+            "branch_state": relation.state if relation is not None else None,
+            "branch_base_message_count": (
+                relation.base_message_count if relation is not None else None
+            ),
+        }
 
     def _session_liveness(self, session_id: str) -> str:
         if self.is_running(session_id):

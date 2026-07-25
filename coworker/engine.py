@@ -64,6 +64,9 @@ class TurnEngine:
         messages: Optional[list[dict[str, Any]]] = None,
         audit_sink: Optional[Callable[[dict[str, Any]], None]] = None,
         context_provider: Optional[Callable[[], str]] = None,
+        inherited_messages_provider: Optional[
+            Callable[[], list[dict[str, Any]]]
+        ] = None,
         directory_requester: Optional[
             Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
         ] = None,
@@ -91,6 +94,11 @@ class TurnEngine:
         # across providers, so dynamic per-turn context (e.g. the live directory list) rides on
         # the latest user turn. Returns "" when there's nothing to add.
         self.context_provider = context_provider
+        # Side sessions keep only their local transcript in ``self.messages``.
+        # The inherited parent history is fetched and frozen once per user turn,
+        # then prepended only to the provider feed (never persisted into the child).
+        self.inherited_messages_provider = inherited_messages_provider
+        self._inherited_messages: list[dict[str, Any]] = []
         # Handles the `request_directory` tool: emits a DIRECTORY_REQUESTED prompt, waits for the
         # user to grant/decline a folder out-of-band, applies the grant to this live session, and
         # returns the outcome. None on surfaces that can't prompt (the tool then no-ops).
@@ -156,6 +164,7 @@ class TurnEngine:
     async def run(
         self, user_input: "str | list", *, source: Optional[dict[str, Any]] = None
     ) -> AsyncIterator[Event]:
+        self._refresh_inherited_messages()
         # `user_input` is a string, or OpenAI content-parts (text + image_url) for attachments.
         # `source` (a MessageSource dict) is a display-only sidecar for connector messages: it
         # rides on the persisted user message + the TURN_START event, but is stripped before the
@@ -242,6 +251,7 @@ class TurnEngine:
         is the intended recovery path (owner-hit 2026-07-23)."""
         if not self._tail_is_retriable_error():
             return
+        self._refresh_inherited_messages()
         self._cancel.clear()
         yield Event(EventType.TURN_START, {"input": ""})
         async for event in self._loop():
@@ -256,6 +266,7 @@ class TurnEngine:
         pending = self._unanswered_trailing_tool_calls()
         if not pending:
             return
+        self._refresh_inherited_messages()
         self._cancel.clear()
         yield Event(EventType.TURN_START, {"input": "(resumed)"})
         async for event in self._handle_tool_calls(pending):
@@ -890,13 +901,25 @@ class TurnEngine:
         # (thinking text) — copying only messages that carry one. Whole `notice` messages
         # (error/interrupted/model-switch markers) are display-only too: dropped entirely.
         _SIDECARS = ("source", "_display", "ts", "reasoning")
+        # The child's system prompt remains authoritative. Parent system prompts are
+        # deliberately excluded: side sessions may have a different live mode and
+        # duplicating system messages mid-history is rejected by some providers.
+        local_system = [m for m in self.messages if m.get("role") == "system"]
+        local_thread = [m for m in self.messages if m.get("role") != "system"]
+        inherited_thread = [
+            m
+            for m in self._inherited_messages
+            if m.get("role") not in {"system", "notice"}
+        ]
+        feed = [*local_system, *inherited_thread, *local_thread]
+
         out = [
             (
                 {k: v for k, v in msg.items() if k not in _SIDECARS}
                 if any(s in msg for s in _SIDECARS)
                 else msg
             )
-            for msg in self.messages
+            for msg in feed
             if msg.get("role") != "notice"
         ]
         # PDF attachments (stored as `file` parts) are adapted to the ACTIVE model right
@@ -980,6 +1003,21 @@ class TurnEngine:
             out[i] = msg
             break
         return out
+
+    def _refresh_inherited_messages(self) -> None:
+        """Freeze live parent context for the duration of one child turn."""
+        if self.inherited_messages_provider is None:
+            self._inherited_messages = []
+            return
+        try:
+            inherited = self.inherited_messages_provider() or []
+        except Exception:
+            inherited = []
+        # Shallow-copy every canonical message so provider-side adaptation cannot
+        # mutate the parent's live engine history.
+        self._inherited_messages = [
+            dict(message) for message in inherited if isinstance(message, dict)
+        ]
 
 
 def _assistant_message(turn: AssistantTurn) -> dict[str, Any]:

@@ -149,6 +149,32 @@ export async function getSessionMessages(sessionId: string): Promise<Conversatio
   return (await res.json()).messages ?? [];
 }
 
+export interface CreateSideSessionResult {
+  ok: boolean;
+  error?: string;
+  session?: SessionInfo;
+  branch?: {
+    child_session_id: string;
+    parent_session_id: string;
+    mode: "follow";
+    state: "active" | "merged" | "abandoned";
+    base_message_count: number;
+    created_at?: string | null;
+  };
+}
+
+export async function createSideSession(parentSessionId: string): Promise<CreateSideSessionResult> {
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(parentSessionId)}/branches`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "follow" }),
+    },
+  );
+  return res.json();
+}
+
 export async function renameSession(sessionId: string, title: string): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}`, {
     method: "PATCH",

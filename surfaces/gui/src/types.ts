@@ -60,6 +60,12 @@ export interface SessionInfo {
   // "From Slack" group and the row's platform icon.
   origin?: string;
   origin_label?: string;
+  // Live-follow side session metadata. The child stores only its local transcript;
+  // parent context is inherited again at the start of every turn.
+  parent_session_id?: string | null;
+  branch_mode?: "follow" | null;
+  branch_state?: "active" | "merged" | "abandoned" | null;
+  branch_base_message_count?: number | null;
 }
 
 // Attachments (images, PDFs, text files) sent with a user message.

@@ -7,7 +7,7 @@ the skill catalog (progressive disclosure) + load_skill into a TurnEngine.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .agents import Agent, AgentContext, code_agent
 from .automation import scheduling_tools
@@ -119,6 +119,9 @@ def build_engine(
     model_settings: Optional[dict[str, Any]] = None,
     memory_store: Optional[MemoryStore] = None,
     messages: Optional[list[dict[str, Any]]] = None,
+    inherited_messages_provider: Optional[
+        Callable[[], list[dict[str, Any]]]
+    ] = None,
     extra_tools: Optional[list[Any]] = None,
     secrets: Optional[SecretStore] = None,
     task_store: Optional[Any] = None,
@@ -320,6 +323,7 @@ def build_engine(
         ),
         model_settings=model_settings,
         messages=messages,
+        inherited_messages_provider=inherited_messages_provider,
         audit_sink=audit_sink,
         context_provider=context_provider,
         directory_requester=directory_requester,
