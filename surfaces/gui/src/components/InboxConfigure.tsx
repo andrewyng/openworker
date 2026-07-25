@@ -53,7 +53,29 @@ export function InboxConfigure() {
 
 // Where an Unattended session's approvals/questions get mirrored as interactive buttons. Targets
 // the "default" route (sessions fall back to it); pick a channel separate from any you subscribe to.
-function InboxRoutingCard() {
+function parseRoutingAddress(value: string): [string, string] {
+  const address = value.trim();
+  return address.includes(":")
+    ? (address.split(":", 2) as [string, string])
+    : ["slack", address];
+}
+
+function slackApprovalOwners(
+  connectors: Connector[],
+  platform: string,
+  target: string,
+): string[] {
+  if (platform !== "slack") return [];
+  const slack = connectors.find((connector) => connector.name === "slack");
+  if (!target.includes("/")) return slack?.approval_owner_ids ?? [];
+  const teamId = target.split("/", 1)[0];
+  return (
+    slack?.workspaces?.find((workspace) => workspace.team_id === teamId)
+      ?.approval_owner_ids ?? []
+  );
+}
+
+function useInboxRouting() {
   const [recent, setRecent] = useState<RecentChannel[]>([]);
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [target, setTarget] = useState(""); // current default-binding address, e.g. "slack:C0123"
@@ -80,7 +102,7 @@ function InboxRoutingCard() {
     const addr = draft.trim();
     if (!addr) return;
     // "slack:C0123" → channel="slack", target="C0123"; a bare id assumes slack.
-    const [platform, id] = addr.includes(":") ? addr.split(":", 2) : ["slack", addr];
+    const [platform, id] = parseRoutingAddress(addr);
     const result = await setInboxBinding("default", platform, id);
     if (!result.ok) {
       setError(result.error || "Could not update Inbox routing.");
@@ -100,27 +122,36 @@ function InboxRoutingCard() {
     load();
   };
 
-  const draftAddr = draft.trim();
-  const [draftPlatform, draftTarget] = draftAddr.includes(":")
-    ? draftAddr.split(":", 2)
-    : ["slack", draftAddr];
-  const slack = connectors.find((c) => c.name === "slack");
-  const teamId =
-    draftPlatform === "slack" && draftTarget.includes("/")
-      ? draftTarget.split("/", 1)[0]
-      : null;
-  const owners =
-    draftPlatform !== "slack"
-      ? []
-      : teamId
-        ? slack?.workspaces?.find((w) => w.team_id === teamId)?.approval_owner_ids ?? []
-        : slack?.approval_owner_ids ?? [];
+  const [draftPlatform, draftTarget] = parseRoutingAddress(draft);
+  const owners = slackApprovalOwners(connectors, draftPlatform, draftTarget);
   const missingSlackOwner =
     draftPlatform === "slack" && draftTarget.length > 0 && owners.length === 0;
-
-  // Show the channel's NAME when the recent list knows it (raw address as the fallback/tooltip).
   const known = recent.find((c) => c.channel === target)?.name;
+  return {
+    recent,
+    target,
+    draft,
+    setDraft,
+    error,
+    save,
+    clear,
+    missingSlackOwner,
+    known,
+  };
+}
 
+function InboxRoutingCard() {
+  const {
+    recent,
+    target,
+    draft,
+    setDraft,
+    error,
+    save,
+    clear,
+    missingSlackOwner,
+    known,
+  } = useInboxRouting();
   return (
     <div className={CARD + " p-4"} data-testid="inbox-mirror-card">
       <div className="font-semibold text-[13.5px] mb-1">Unattended approvals</div>

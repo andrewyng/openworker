@@ -206,6 +206,14 @@ class LocalExecutor(Executor):
         if self._is_windows and self._proc.stdin is not None:
             # Silence the REPL prompt so it never pollutes captured command output.
             self._proc.stdin.write("function prompt { '' }\n")
+            # Redirected PowerShell defaults to an 80-column formatting surface, which
+            # truncates long paths and table values even though the underlying command
+            # returned complete data. Widen the host buffer so captured output remains
+            # faithful (especially `pwd` in deep workspaces).
+            self._proc.stdin.write(
+                "$Host.UI.RawUI.BufferSize = New-Object "
+                "Management.Automation.Host.Size(4096, $Host.UI.RawUI.BufferSize.Height)\n"
+            )
             self._proc.stdin.flush()
 
     def _read_loop(self) -> None:

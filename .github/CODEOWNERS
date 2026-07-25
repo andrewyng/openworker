@@ -1,0 +1,11 @@
+# Default review ownership. Add subsystem maintainers beside @andrewyng as
+# stewardship expands so review responsibility does not remain concentrated.
+* @andrewyng
+
+# Security-sensitive delivery and desktop boundaries.
+/.github/workflows/ @andrewyng
+/surfaces/gui/src-tauri/ @andrewyng
+
+# Runtime and connector control planes.
+/coworker/server/ @andrewyng
+/coworker/connectors/ @andrewyng

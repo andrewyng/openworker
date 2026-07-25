@@ -1,0 +1,514 @@
+/* ---- Onboarding wizard ----------------------------------------------------- */
+.ob-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--scrim);
+  backdrop-filter: blur(3px);
+}
+.ob {
+  width: 760px;
+  height: 540px; /* fixed — steps never resize the dialog */
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 64px);
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  grid-template-rows: 1fr auto;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+}
+.ob-rail {
+  grid-row: 1 / 3;
+  background: var(--paper);
+  border-right: 1px solid var(--line);
+  padding: 30px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ob-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.ob-rail-item.active {
+  color: var(--ink);
+  background: var(--accent-soft);
+}
+.ob-rail-item.done {
+  color: var(--ink);
+}
+.ob-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--line);
+  color: var(--muted);
+  flex: none;
+}
+.ob-rail-item.active .ob-dot {
+  background: var(--accent);
+  color: #fff;
+}
+.ob-rail-item.done .ob-dot {
+  background: var(--ok);
+  color: #fff;
+}
+.ob-body {
+  grid-column: 2;
+  padding: 40px 40px 16px;
+  overflow-y: auto;
+}
+.ob-step h2 {
+  font-family: var(--serif);
+  margin: 0 0 8px;
+  font-size: 25px;
+  color: var(--ink);
+}
+.ob-sub {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0 0 22px;
+}
+.ob-mark {
+  color: var(--accent);
+  font-size: 30px;
+  margin-bottom: 12px;
+}
+.ob-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  margin: 20px 0 7px;
+}
+.ob-ok {
+  color: var(--ok);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+.ob-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ob-row input,
+.ob-select,
+.ob-input {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+.ob-row input:focus,
+.ob-select:focus,
+.ob-input:focus {
+  border-color: var(--accent);
+}
+.ob-select,
+.ob-input {
+  width: 100%;
+}
+.ob-input {
+  box-sizing: border-box;
+  display: block;
+}
+.ob-note {
+  font-size: 12.5px;
+  margin-top: 9px;
+  color: var(--ink);
+}
+.ob-note.dim,
+.dim {
+  color: var(--faint);
+}
+.ob-toggle {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+}
+.ob-toggle.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ob-toggle input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+.ob-toggle span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ob-toggle strong {
+  font-weight: 500;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+.ob-toggle small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.ob-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 24px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.ob-check input {
+  accent-color: var(--accent);
+}
+.ob-foot {
+  grid-column: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 40px;
+  border-top: 1px solid var(--line);
+}
+.ob-foot-right {
+  display: flex;
+  gap: 10px;
+}
+button.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+button.btn.ghost:hover {
+  color: var(--ink);
+}
+
+/* Welcome value-prop bullets */
+.ob-valueprops {
+  list-style: none;
+  margin: 0 0 18px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ob-valueprops li {
+  position: relative;
+  padding-left: 22px;
+  font-size: 13.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.ob-valueprops li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--ok);
+  font-weight: 700;
+}
+.ob-valueprops strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Model step: detect / verify status (one line) + key help — generous spacing so the stacked
+   states don't feel cramped. */
+.ob-status {
+  margin-top: 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.ob-status.ob-ok {
+  color: var(--ok);
+}
+.ob-status.ob-detected {
+  color: var(--ok);
+}
+.ob-status.ob-err {
+  color: var(--danger);
+}
+.ob-keyhelp {
+  margin-top: 18px;
+}
+.ob-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12.5px;
+}
+.ob-link:hover {
+  text-decoration: underline;
+}
+.ob-keyhelp-body {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.ob-url {
+  flex: 1;
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* Skip-without-a-model warning bar */
+.ob-skipwarn {
+  grid-column: 2;
+  margin: 0 40px;
+  padding: 12px 14px;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-ink);
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: var(--warn-ink);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ob-skipwarn-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---- Attachments ----------------------------------------------------------- */
+.composer.dragging {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.attach-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--paper);
+  padding: 5px 9px;
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 220px;
+}
+.attach-chip .attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attach-chip.img {
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+.attach-chip.img img {
+  width: 46px;
+  height: 46px;
+  object-fit: cover;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  display: block;
+}
+.attach-x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: var(--solid);
+  color: var(--on-solid);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex: none;
+}
+.icon-btn:hover {
+  color: var(--ink);
+  background: var(--paper);
+}
+/* in-transcript attachments on a user bubble */
+.bubble-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.msg-img {
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  display: block;
+}
+.msg-file {
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+/* ---- Automation form inputs (the form/template cards themselves are Tailwind, §28) ---- */
+
+.tmpl-form {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.tmpl-input {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 7px 10px;
+  outline: none;
+}
+.tmpl-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.tmpl-input::placeholder {
+  color: var(--faint);
+}
+.tmpl-textarea {
+  resize: vertical;
+  min-height: 64px;
+  line-height: 1.45;
+}
+.tmpl-sched {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.tmpl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.tmpl-time,
+.tmpl-select {
+  padding: 6px 9px;
+}
+.tmpl-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 2px;
+}
+
+/* Inbox view */
+/* "Go to session" chip: persona icon + session title, links back for context. */
+.inbox-session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 8px 0 2px;
+  max-width: 100%;
+  padding: 4px 8px 4px 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.inbox-session-chip:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+.inbox-session-chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.inbox-chip-ico {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex: none;
+}
+.inbox-chip-ico.ico-cowork {
+  background: #16a34a;
+}
+.inbox-chip-ico.ico-chat {
+  background: var(--accent);
+}
+.inbox-chip-ico.ico-code {
+  background: #7c3aed;
+}
+.inbox-chip-ico.ico-ops {
+  background: #ea580c;
+}
+.inbox-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-chip-go {
+  flex: none;
+  color: var(--faint);
+}
+
+/* Connector registry logos. The brand color comes from the API (`brand_color`), set inline as the
+   --brand / --brand-soft custom properties by <ConnectorIcon>/<ConnectorBadge> — not a CSS table. */
+.connector-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  line-height: 0;
+  color: var(--brand, #6b7280);
+}

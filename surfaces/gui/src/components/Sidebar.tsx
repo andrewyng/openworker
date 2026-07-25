@@ -21,10 +21,10 @@ import {
 } from "../api";
 import type { SessionInfo } from "../types";
 import { isProjectScoped, shortPersonaName } from "../personaScope";
-import { ConnectorIcon } from "../connectors/ConnectorIcon";
 import { Icon, type IconName } from "./Icon";
-import { PersonaGlyph, personaGlyph } from "./personaIcon";
+import { personaGlyph } from "./personaIcon";
 import { SearchModal } from "./SearchModal";
+import { AttnBadge, ConnectorDot, LiveDot, NewSessionSplit, OriginIcon, UnseenBadge } from "./SidebarParts";
 import { baseName } from "../paths";
 import { showPersonas } from "../flags";
 
@@ -42,75 +42,6 @@ const surfaceFromPersona = (p: Persona) => ({
   icon: personaGlyph(p.icon, p.family),
   cls: `ico-${p.icon || "cowork"}`,
 });
-
-// Attention = Inbox items awaiting a session (an accent count that bubbles session → persona →
-// footer Inbox — all views of the one Inbox queue, never a second list).
-function AttnBadge({ n }: { n: number }) {
-  if (!n) return null;
-  return (
-    <span
-      className="text-[10px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
-      title={`${n} awaiting your attention`}
-    >
-      {n > 99 ? "99+" : n}
-    </span>
-  );
-}
-
-// UX-023: unseen-run count on a Scheduled entry. Deliberately QUIET — same neutral
-// treatment as the attention badge; failure only colors the tooltip's words, not the
-// sidebar (owner call 2026-07-20: no color, and the entry alone carries the count).
-function UnseenBadge({ n, failed }: { n: number; failed?: boolean }) {
-  if (!n) return null;
-  return (
-    <span
-      className="text-[10px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
-      title={failed ? `${n} new run${n > 1 ? "s" : ""} — the latest failed` : `${n} new run${n > 1 ? "s" : ""}`}
-    >
-      {n > 99 ? "99+" : n}
-    </span>
-  );
-}
-
-// Liveness = working (in-flight turn) / sleeping (a self-wake is pending). A count-less dot that
-// never bubbles — it says "this is alive", not "this needs you".
-function LiveDot({ state }: { state?: "working" | "sleeping" | "idle" }) {
-  if (state !== "working" && state !== "sleeping") return null;
-  return state === "working" ? (
-    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" title="Working now" />
-  ) : (
-    <span
-      className="w-1.5 h-1.5 rounded-full bg-faint/60 shrink-0"
-      title="Sleeping (will wake itself)"
-    />
-  );
-}
-
-// §31: a session spawned by a platform mention wears its platform's logo, right-aligned beside
-// the title cluster (owner call 2026-07-13). Slack today; the origin key is the platform id.
-function OriginIcon({ s }: { s: SessionInfo }) {
-  if (s.origin !== "slack") return null;
-  return (
-    <ConnectorIcon
-      connector={{ logo: "slack", brand_color: "#611f69" }}
-      size={12}
-      title={s.origin_label || "From Slack"}
-    />
-  );
-}
-
-// A subscribed-connector presence dot (right edge of a row). Brand-colorless here — the sidebar
-// isn't passed the connector registry — so it reads as a neutral "listening on a channel" dot.
-function ConnectorDot({ subs }: { subs?: string[] }) {
-  if (!subs || subs.length === 0) return null;
-  return (
-    <span
-      className="w-1.5 h-1.5 rounded-full bg-faint shrink-0"
-      data-brand={subs[0]}
-      title={subs.join(", ")}
-    />
-  );
-}
 
 interface Props {
   agent: string;
@@ -178,10 +109,11 @@ export function Sidebar(props: Props) {
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
   // Inbox chip sticky unlock (§26): absent until the product first parks an item (or a
   // session first goes Unattended), then permanent. Per-device, like nav collapse.
-  const [inboxUnlocked, setInboxUnlocked] = useState(
-    () => localStorage.getItem("ocw:inbox-unlocked") === "1",
-  );
-  const refreshCloud = () => getCloudStatus().then(setCloud).catch(() => {});
+  const [inboxUnlocked, setInboxUnlocked] = useState(() => localStorage.getItem("ocw:inbox-unlocked") === "1");
+  const refreshCloud = () =>
+    getCloudStatus()
+      .then(setCloud)
+      .catch(() => {});
   useEffect(() => {
     refreshCloud();
     const onFocus = () => refreshCloud();
@@ -203,7 +135,10 @@ export function Sidebar(props: Props) {
   // (mark-seen must clear the badge the moment the detail opens).
   const [automations, setAutomations] = useState<Automation[]>([]);
   useEffect(() => {
-    const load = () => getAutomations().then(setAutomations).catch(() => {});
+    const load = () =>
+      getAutomations()
+        .then(setAutomations)
+        .catch(() => {});
     load();
     const t = setInterval(load, 15_000);
     window.addEventListener(AUTOMATIONS_CHANGED, load);
@@ -288,9 +223,7 @@ export function Sidebar(props: Props) {
   useEffect(() => {
     getSettings()
       .then((s) => {
-        setLayout(
-          s.nav_layout === "flat" ? "flat" : s.nav_layout === "grouped" ? "grouped" : defaultLayout,
-        );
+        setLayout(s.nav_layout === "flat" ? "flat" : s.nav_layout === "grouped" ? "grouped" : defaultLayout);
         if (s.sessions_peek) setPeek(s.sessions_peek);
       })
       .catch(() => {});
@@ -313,8 +246,7 @@ export function Sidebar(props: Props) {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  const personaVisible = (agent: string) =>
-    filterPersonas.size === 0 || filterPersonas.has(agent);
+  const personaVisible = (agent: string) => filterPersonas.size === 0 || filterPersonas.has(agent);
 
   // Which accordion body is expanded. Decoupled from the active session (props.agent): expanding
   // a persona BROWSES its sessions without switching the chat area. Selecting a session or "New
@@ -336,20 +268,12 @@ export function Sidebar(props: Props) {
   };
 
   // Pinned sessions across ALL personas — the cross-persona band at the top (manual pins only).
-  const pinnedSessions = props.sessions.filter(
-    (s) => s.pinned && !s.session_id.startsWith("__") && !s.archived,
-  );
+  const pinnedSessions = props.sessions.filter((s) => s.pinned && !s.session_id.startsWith("__") && !s.archived);
   // §31 (revised 2026-07-21): mention-spawned sessions list chronologically in Recent like any
   // other session — the OriginIcon in the row's indicator cluster marks where they came from.
   // The separate collapsed "From Slack" band hid fresh mentions below week-old sessions.
   // A row in the account menu (§26): closes the menu, then runs the destination.
-  const appMenuItem = (
-    icon: IconName,
-    label: string,
-    onClick: () => void,
-    active?: boolean,
-    trailing?: ReactNode,
-  ) => (
+  const appMenuItem = (icon: IconName, label: string, onClick: () => void, active?: boolean, trailing?: ReactNode) => (
     <button
       className={
         "w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-left " +
@@ -371,9 +295,7 @@ export function Sidebar(props: Props) {
   // Display identity for the account row: the cloud profile only carries the email, so the
   // row shows the capitalized local part ("rohit@…" → "Rohit"); the menu header shows it all.
   const accountEmail = cloud?.signed_in ? cloud.account : "";
-  const accountName = accountEmail
-    ? accountEmail.split("@")[0].replace(/^./, (c) => c.toUpperCase())
-    : "";
+  const accountName = accountEmail ? accountEmail.split("@")[0].replace(/^./, (c) => c.toUpperCase()) : "";
 
   // Roll the per-session attention/liveness up to the persona header and the footer Inbox: the
   // accent count bubbles (sum), the liveness dot aggregates (working wins over sleeping).
@@ -534,9 +456,7 @@ export function Sidebar(props: Props) {
         key={s.session_id}
         className={
           "group flex items-center gap-2 px-2 py-1.5 rounded-lg text-left cursor-pointer " +
-          (active
-            ? "bg-ink/[0.055]"
-            : "hover:bg-panel")
+          (active ? "bg-ink/[0.055]" : "hover:bg-panel")
         }
         onClick={() => {
           if (!editing) props.onSelectSession(s.session_id, s.workspace, s.agent);
@@ -606,9 +526,7 @@ export function Sidebar(props: Props) {
         key={s.session_id}
         className={
           "group w-full flex items-center gap-2.5 px-2 py-2 rounded-lg cursor-pointer text-left " +
-          (active
-            ? "bg-ink/[0.055]"
-            : "hover:bg-paper")
+          (active ? "bg-ink/[0.055]" : "hover:bg-paper")
         }
         title={editing ? undefined : title}
         onClick={() => {
@@ -633,9 +551,7 @@ export function Sidebar(props: Props) {
           />
         ) : (
           <>
-            <span className="min-w-0 flex-1 block truncate text-[13px] font-medium">
-              {title}
-            </span>
+            <span className="min-w-0 flex-1 block truncate text-[13px] font-medium">{title}</span>
             <span
               className={
                 "flex items-center gap-1.5 shrink-0 group-hover:hidden" +
@@ -659,12 +575,8 @@ export function Sidebar(props: Props) {
   const pinnedBand = () =>
     pinnedSessions.length > 0 ? (
       <div>
-        <div className="px-1.5 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">
-          Pinned
-        </div>
-        <div className="space-y-0.5">
-          {pinnedSessions.map((s) => cardRow(s))}
-        </div>
+        <div className="px-1.5 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">Pinned</div>
+        <div className="space-y-0.5">{pinnedSessions.map((s) => cardRow(s))}</div>
       </div>
     ) : null;
 
@@ -674,9 +586,7 @@ export function Sidebar(props: Props) {
   const scheduledBand = () =>
     automations.length > 0 ? (
       <div data-testid="scheduled-band">
-        <div className="px-1.5 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">
-          Scheduled
-        </div>
+        <div className="px-1.5 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">Scheduled</div>
         <div className="space-y-0.5">
           {automations.map((a) => (
             <button
@@ -701,35 +611,35 @@ export function Sidebar(props: Props) {
   // "Group by" flips the persona accordion ↔ chronological list; "Filter by coworker" narrows to
   // the checked personas (none checked = all shown).
   const recentHeader = () => {
-    const filterPersonaList = (personas || []).filter(
-      (p) => (p.enabled && p.surfaced) || agentsWithSessions.has(p.id),
-    );
+    const filterPersonaList = (personas || []).filter((p) => (p.enabled && p.surfaced) || agentsWithSessions.has(p.id));
     return (
-    <div className="relative flex items-center justify-between px-1.5 mb-1" data-testid="recent-header">
-      <span className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">
-        Recent
-      </span>
-      <button
-        className="w-6 h-6 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper -mr-1"
-        title="Group & filter conversations"
-        aria-label="Group and filter conversations"
-        onClick={() => setGroupMenuOpen((v) => !v)}
-      >
-        <Icon name="sliders" size={14} />
-      </button>
-      {groupMenuOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setGroupMenuOpen(false)} />
-          <div
-            className="absolute right-0 top-7 z-50 w-56 rounded-xl border border-line bg-panel shadow-xl p-1.5"
-            role="menu"
-            data-testid="group-filter-menu"
-          >
-            <div className="px-2 pt-1 pb-1 text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-              Group by
-            </div>
-            {([["grouped", "Persona"], ["flat", "Chronological"]] as ["flat" | "grouped", string][]).map(
-              ([key, label]) => (
+      <div className="relative flex items-center justify-between px-1.5 mb-1" data-testid="recent-header">
+        <span className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">Recent</span>
+        <button
+          className="w-6 h-6 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper -mr-1"
+          title="Group & filter conversations"
+          aria-label="Group and filter conversations"
+          onClick={() => setGroupMenuOpen((v) => !v)}
+        >
+          <Icon name="sliders" size={14} />
+        </button>
+        {groupMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setGroupMenuOpen(false)} />
+            <div
+              className="absolute right-0 top-7 z-50 w-56 rounded-xl border border-line bg-panel shadow-xl p-1.5"
+              role="menu"
+              data-testid="group-filter-menu"
+            >
+              <div className="px-2 pt-1 pb-1 text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
+                Group by
+              </div>
+              {(
+                [
+                  ["grouped", "Persona"],
+                  ["flat", "Chronological"],
+                ] as ["flat" | "grouped", string][]
+              ).map(([key, label]) => (
                 <button
                   key={key}
                   className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] text-left hover:bg-paper"
@@ -738,52 +648,49 @@ export function Sidebar(props: Props) {
                   <span className="flex-1">{label}</span>
                   {layout === key && <span className="text-accent text-[12px]">✓</span>}
                 </button>
-              ),
-            )}
-            {filterPersonaList.length > 1 && (
-              <>
-                <div className="my-1 border-t border-line" />
-                <div className="px-2 pt-1 pb-1 flex items-center justify-between">
-                  <span className="text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-                    Filter by coworker
-                  </span>
-                  {filterPersonas.size > 0 && (
-                    <button className="text-[11px] text-accent" onClick={() => setFilterPersonas(new Set())}>
-                      Clear
-                    </button>
-                  )}
-                </div>
-                <div className="max-h-52 overflow-y-auto">
-                  {filterPersonaList.map((p) => {
-                    const checked = filterPersonas.has(p.id);
-                    return (
-                      <button
-                        key={p.id}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] text-left hover:bg-paper"
-                        onClick={() => toggleFilterPersona(p.id)}
-                      >
-                        <span
-                          className={
-                            "w-3.5 h-3.5 rounded border grid place-items-center shrink-0 text-white " +
-                            (checked ? "bg-accent border-accent" : "border-line")
-                          }
-                        >
-                          {checked && <span className="text-[9px] leading-none">✓</span>}
-                        </span>
-                        <span className="flex-1 truncate">{p.name}</span>
+              ))}
+              {filterPersonaList.length > 1 && (
+                <>
+                  <div className="my-1 border-t border-line" />
+                  <div className="px-2 pt-1 pb-1 flex items-center justify-between">
+                    <span className="text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
+                      Filter by coworker
+                    </span>
+                    {filterPersonas.size > 0 && (
+                      <button className="text-[11px] text-accent" onClick={() => setFilterPersonas(new Set())}>
+                        Clear
                       </button>
-                    );
-                  })}
-                </div>
-                <div className="px-2 pt-1 pb-0.5 text-[11px] text-faint leading-snug">
-                  None checked shows all.
-                </div>
-              </>
-            )}
-          </div>
-        </>
-      )}
-    </div>
+                    )}
+                  </div>
+                  <div className="max-h-52 overflow-y-auto">
+                    {filterPersonaList.map((p) => {
+                      const checked = filterPersonas.has(p.id);
+                      return (
+                        <button
+                          key={p.id}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] text-left hover:bg-paper"
+                          onClick={() => toggleFilterPersona(p.id)}
+                        >
+                          <span
+                            className={
+                              "w-3.5 h-3.5 rounded border grid place-items-center shrink-0 text-white " +
+                              (checked ? "bg-accent border-accent" : "border-line")
+                            }
+                          >
+                            {checked && <span className="text-[9px] leading-none">✓</span>}
+                          </span>
+                          <span className="flex-1 truncate">{p.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="px-2 pt-1 pb-0.5 text-[11px] text-faint leading-snug">None checked shows all.</div>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     );
   };
 
@@ -824,9 +731,7 @@ export function Sidebar(props: Props) {
   // not — every session must have a home in the grouped layout (a picker preference can hide the
   // persona from New Session, never orphan its conversations).
   const agentsWithSessions = new Set(
-    props.sessions
-      .filter((s) => !s.archived && !s.session_id.startsWith("__"))
-      .map((s) => s.agent),
+    props.sessions.filter((s) => !s.archived && !s.session_id.startsWith("__")).map((s) => s.agent),
   );
   const visibleSurfaces = (
     personas
@@ -834,9 +739,7 @@ export function Sidebar(props: Props) {
           .filter((p) => (p.enabled && p.surfaced) || agentsWithSessions.has(p.id))
           .sort((a, b) => Number(b.default) - Number(a.default)) // default leads
           .map(surfaceFromPersona)
-      : SURFACES.filter(
-          (s) => s.key === "cowork" || props.surfaces[s.key as keyof SurfaceVisibility],
-        )
+      : SURFACES.filter((s) => s.key === "cowork" || props.surfaces[s.key as keyof SurfaceVisibility])
   ).filter((s) => personaVisible(s.key));
 
   const isCurrent = (key: string) => props.agent === key; // the active session's persona
@@ -859,9 +762,7 @@ export function Sidebar(props: Props) {
             {/* Codex-style Projects: a "+" header affordance, then collapsible folders whose
                 rows carry a right-aligned compact age and truncate to PROJECT_PEEK + "Show more". */}
             <div className="flex items-center justify-between px-1.5 pt-1">
-              <span className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">
-                Projects
-              </span>
+              <span className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">Projects</span>
               <button
                 className="w-5 h-5 grid place-items-center rounded text-faint hover:text-ink hover:bg-panel"
                 title="New project"
@@ -900,18 +801,12 @@ export function Sidebar(props: Props) {
                     >
                       <Icon name="folder" size={15} className="shrink-0" />
                       <span
-                        className={
-                          "truncate min-w-0 text-[12.5px] " + (isActive ? "font-semibold" : "font-medium")
-                        }
+                        className={"truncate min-w-0 text-[12.5px] " + (isActive ? "font-semibold" : "font-medium")}
                       >
                         {baseName(proj)}
                       </span>
                       {/* Disclosure chevron sits AFTER the name (Codex parity), not leading the row. */}
-                      <Icon
-                        name={open ? "chevronDown" : "chevronRight"}
-                        size={12}
-                        className="text-faint shrink-0"
-                      />
+                      <Icon name={open ? "chevronDown" : "chevronRight"} size={12} className="text-faint shrink-0" />
                     </div>
                     {open &&
                       (list.length > 0 ? (
@@ -946,10 +841,9 @@ export function Sidebar(props: Props) {
               </div>
             ) : (
               <>
-                {(personaShowAll.has(browseKey)
-                  ? mine.filter(matches)
-                  : mine.filter(matches).slice(0, peek)
-                ).map((s) => sessionRow(s))}
+                {(personaShowAll.has(browseKey) ? mine.filter(matches) : mine.filter(matches).slice(0, peek)).map((s) =>
+                  sessionRow(s),
+                )}
                 {!personaShowAll.has(browseKey) && mine.filter(matches).length > peek && (
                   <button
                     className="px-2 py-1 text-[12px] text-faint hover:text-muted"
@@ -982,10 +876,7 @@ export function Sidebar(props: Props) {
   };
 
   return (
-    <div
-      className="sidebar flex flex-col min-h-0 bg-panel border-r border-line"
-      onMouseLeave={props.onPeekLeave}
-    >
+    <div className="sidebar flex flex-col min-h-0 bg-panel border-r border-line" onMouseLeave={props.onPeekLeave}>
       {/* Header: collapse/pin control FIRST + wordmark. The pin sits at the same screen position
           as the collapsed reveal button (see .nav-pin-btn / .nav-reveal-btn in styles.css), so
           hovering the reveal peeks the nav and the pin lands right under the cursor — no travel.
@@ -1002,7 +893,9 @@ export function Sidebar(props: Props) {
             <Icon name="sidebar" size={16} />
           </button>
         )}
-        <div className="brand-wordmark text-[15px]">OpenWorker<span className="beta-tag">BETA</span></div>
+        <div className="brand-wordmark text-[15px]">
+          OpenWorker<span className="beta-tag">BETA</span>
+        </div>
       </div>
 
       {/* New session: split button — primary starts the last-used persona; ▾ picks a specific one. */}
@@ -1049,75 +942,63 @@ export function Sidebar(props: Props) {
           <div>
             {recentHeader()}
             {layout === "grouped" ? (
-            <div className="space-y-1.5">
-              {visibleSurfaces.map((s) => {
-                const expanded = isExpanded(s.key);
-                return (
-                  // When expanded, the wrapper carries the recessed fill so the header sits INSIDE
-                  // the block with its sessions (one connected group). Collapsed = a plain row.
-                  <div
-                    key={s.key}
-                    className={expanded ? "rounded-xl bg-paper/70 overflow-hidden" : ""}
-                  >
-                    <div
-                      className={
-                        "flex items-center gap-2.5 px-2 py-2 cursor-pointer select-none " +
-                        (expanded
-                          ? ""
-                          : isCurrent(s.key)
-                            ? "rounded-lg bg-paper"
-                            : "rounded-lg hover:bg-paper")
-                      }
-                      onClick={() => onHeaderClick(s.key)}
-                    >
-                      <span
+              <div className="space-y-1.5">
+                {visibleSurfaces.map((s) => {
+                  const expanded = isExpanded(s.key);
+                  return (
+                    // When expanded, the wrapper carries the recessed fill so the header sits INSIDE
+                    // the block with its sessions (one connected group). Collapsed = a plain row.
+                    <div key={s.key} className={expanded ? "rounded-xl bg-paper/70 overflow-hidden" : ""}>
+                      <div
                         className={
-                          "min-w-0 flex-1 truncate text-[13px] " +
-                          (isCurrent(s.key) ? "font-semibold text-ink" : "font-medium text-ink")
+                          "flex items-center gap-2.5 px-2 py-2 cursor-pointer select-none " +
+                          (expanded ? "" : isCurrent(s.key) ? "rounded-lg bg-paper" : "rounded-lg hover:bg-paper")
                         }
+                        onClick={() => onHeaderClick(s.key)}
                       >
-                        {s.label}
-                      </span>
-                      <LiveDot state={liveByPersona.get(s.key)} />
-                      <AttnBadge n={attnByPersona.get(s.key) || 0} />
-                      {/* Persona configuration moved to Settings ▸ Personas (Rohit's call
+                        <span
+                          className={
+                            "min-w-0 flex-1 truncate text-[13px] " +
+                            (isCurrent(s.key) ? "font-semibold text-ink" : "font-medium text-ink")
+                          }
+                        >
+                          {s.label}
+                        </span>
+                        <LiveDot state={liveByPersona.get(s.key)} />
+                        <AttnBadge n={attnByPersona.get(s.key) || 0} />
+                        {/* Persona configuration moved to Settings ▸ Personas (Rohit's call
                           2026-07-07) — the per-group gear read as clutter here. */}
-                      <Icon
-                        name={expanded ? "chevronDown" : "chevronRight"}
-                        size={15}
-                        className="text-faint shrink-0"
-                      />
+                        <Icon
+                          name={expanded ? "chevronDown" : "chevronRight"}
+                          size={15}
+                          className="text-faint shrink-0"
+                        />
+                      </div>
+                      {expanded && surfaceBody()}
                     </div>
-                    {expanded && surfaceBody()}
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
             ) : (
-            <div className="space-y-0.5">
-              {recentSessions.length === 0 ? (
-                <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                  {normalizedQuery ? "No matching conversations." : "No conversations yet."}
-                </div>
-              ) : (
-                <>
-                  {(recentExpanded
-                    ? recentSessions
-                    : recentSessions.slice(0, RECENT_PEEK)
-                  ).map((s) => cardRow(s))}
-                  {recentSessions.length > RECENT_PEEK && (
-                    <button
-                      className="w-full text-left px-2 py-1.5 text-[12px] text-muted hover:text-ink"
-                      onClick={() => setRecentExpanded((v) => !v)}
-                    >
-                      {recentExpanded
-                        ? "Show less"
-                        : `Show ${recentSessions.length - RECENT_PEEK} more`}
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
+              <div className="space-y-0.5">
+                {recentSessions.length === 0 ? (
+                  <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
+                    {normalizedQuery ? "No matching conversations." : "No conversations yet."}
+                  </div>
+                ) : (
+                  <>
+                    {(recentExpanded ? recentSessions : recentSessions.slice(0, RECENT_PEEK)).map((s) => cardRow(s))}
+                    {recentSessions.length > RECENT_PEEK && (
+                      <button
+                        className="w-full text-left px-2 py-1.5 text-[12px] text-muted hover:text-ink"
+                        onClick={() => setRecentExpanded((v) => !v)}
+                      >
+                        {recentExpanded ? "Show less" : `Show ${recentSessions.length - RECENT_PEEK} more`}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -1164,18 +1045,11 @@ export function Sidebar(props: Props) {
                         });
                       }}
                     >
-                      <Icon name="plug" size={15} className="shrink-0" /> Sign in to OpenWorker
-                      Cloud
+                      <Icon name="plug" size={15} className="shrink-0" /> Sign in to OpenWorker Cloud
                     </button>
                   </>
                 )}
-                {appMenuItem(
-                  "inbox",
-                  "Inbox",
-                  props.onOpenInbox,
-                  props.inboxActive,
-                  <AttnBadge n={totalAttention} />,
-                )}
+                {appMenuItem("inbox", "Inbox", props.onOpenInbox, props.inboxActive, <AttnBadge n={totalAttention} />)}
                 {appMenuItem("plug", "Connectors", props.onOpenIntegrations, props.integrationsActive)}
                 <div className="h-px bg-line my-1 mx-2" />
                 {appMenuItem(
@@ -1217,9 +1091,7 @@ export function Sidebar(props: Props) {
             <span
               className={
                 "w-6 h-6 rounded-full grid place-items-center text-[10.5px] font-semibold shrink-0 " +
-                (cloud?.signed_in
-                  ? "bg-accentSoft text-accent"
-                  : "bg-paper text-faint border border-line")
+                (cloud?.signed_in ? "bg-accentSoft text-accent" : "bg-paper text-faint border border-line")
               }
               aria-hidden
             >
@@ -1240,15 +1112,11 @@ export function Sidebar(props: Props) {
               <span
                 className={
                   "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] shrink-0 cursor-pointer " +
-                  (totalAttention > 0
-                    ? "bg-accentSoft text-accent font-semibold"
-                    : "text-faint hover:text-ink")
+                  (totalAttention > 0 ? "bg-accentSoft text-accent font-semibold" : "text-faint hover:text-ink")
                 }
                 data-testid="inbox-chip"
                 role="button"
-                aria-label={
-                  totalAttention > 0 ? `Inbox — ${totalAttention} items need you` : "Inbox"
-                }
+                aria-label={totalAttention > 0 ? `Inbox — ${totalAttention} items need you` : "Inbox"}
                 title={totalAttention > 0 ? `Inbox — ${totalAttention} items need you` : "Inbox"}
                 onClick={(e) => {
                   // The chip goes STRAIGHT to Inbox — the menu is the row's target, not the chip's.
@@ -1280,98 +1148,6 @@ export function Sidebar(props: Props) {
           }}
           onClose={() => setSearchModalOpen(false)}
         />
-      )}
-    </div>
-  );
-}
-
-// New-session split button (§8): the primary action starts a session with the last-used persona
-// (`current`); the ▾ opens a menu of the enabled personas (from /v1/personas) plus a "Manage
-// personas…" entry. A plain custom split control — the pill-shaped Dropdown doesn't fit this shape.
-function NewSessionSplit({
-  personas,
-  current,
-  onNew,
-  onManage,
-}: {
-  personas: Persona[] | null;
-  current: string;
-  onNew: (agent: string) => void;
-  onManage: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const enabled = (personas || []).filter((p) => p.enabled);
-  // With a single enabled persona there is nothing to pick — the split collapses to a plain
-  // button (owner ask 2026-07-09). `personas === null` (still loading) keeps the split so the
-  // control doesn't visibly change shape once the list arrives with 2+.
-  const solo = personas !== null && enabled.length <= 1;
-  return (
-    <div className="px-3 pt-2 relative">
-      <div className="flex">
-        <button
-          className={
-            "newsplit-primary flex-1 text-left px-3 py-2 bg-accent text-white text-[13px] font-medium hover:opacity-95 flex items-center gap-2 " +
-            (solo ? "rounded-lg" : "rounded-l-lg")
-          }
-          onClick={() => onNew(solo && enabled.length === 1 ? enabled[0].id : current)}
-        >
-          <Icon name="plus" size={15} className="shrink-0" /> New session
-        </button>
-        {!solo && (
-          <button
-            className="px-2.5 rounded-r-lg bg-accent text-white border-l border-white/25 hover:opacity-95 flex items-center"
-            title="Start with a specific persona"
-            aria-label="Choose a persona"
-            onClick={() => setOpen((v) => !v)}
-          >
-            <Icon name="chevronDown" size={13} />
-          </button>
-        )}
-      </div>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="newsplit-menu absolute left-3 right-3 mt-1 z-30 bg-panel border border-line rounded-xl2 shadow-xl p-1">
-            <div className="px-2 py-1 text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-              Start a session as
-            </div>
-            {enabled.map((p) => (
-              <button
-                key={p.id}
-                className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-paper text-left"
-                onClick={() => {
-                  setOpen(false);
-                  onNew(p.id);
-                }}
-              >
-                <span className="w-6 h-6 rounded-md bg-paper border border-line grid place-items-center text-muted shrink-0">
-                  <PersonaGlyph icon={p.icon} family={p.family} size={12} />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-[13px] font-medium truncate">
-                    {shortPersonaName(p.name, p.id)}
-                  </span>
-                  {p.tagline && (
-                    <span className="block text-[11px] text-muted truncate">{p.tagline}</span>
-                  )}
-                </span>
-              </button>
-            ))}
-            {showPersonas() && (
-              <div className="border-t border-line mt-1 pt-1">
-                <button
-                  className="w-full px-2 py-1.5 rounded-lg hover:bg-paper text-left text-[12.5px] text-muted"
-                  onClick={() => {
-                    setOpen(false);
-                    onManage();
-                  }}
-                >
-                  Manage personas…
-                </button>
-              </div>
-            )}
-          </div>
-        </>
       )}
     </div>
   );

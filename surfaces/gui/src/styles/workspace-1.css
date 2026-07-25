@@ -1,0 +1,505 @@
+/* right inspector + artifact viewer */
+.right-rail {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 332px;
+  overflow-y: auto;
+  background: var(--glass-soft);
+  border-left: 1px solid var(--line);
+  padding: 18px 16px;
+  backdrop-filter: blur(12px);
+  z-index: 5;
+}
+/* An open artifact widens the rail into a reading panel (Codex-style) — the chat stays visible
+   and usable beside it; Back returns to the normal-width Progress/Artifacts list. */
+.right-rail.artifact-mode {
+  width: var(--artifact-rail-w);
+  z-index: 8;
+  padding: 0;
+  background: var(--paper);
+  backdrop-filter: none;
+}
+.main.rail-open:has(.right-rail.artifact-mode) .main-chat {
+  margin-right: var(--artifact-rail-w);
+}
+.main.rail-open:has(.right-rail.artifact-mode) .main-topbar {
+  right: var(--artifact-rail-w);
+}
+.artifact-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+}
+.rail-section {
+  border-bottom: 1px solid var(--line);
+  padding: 11px 0;
+}
+.rail-section-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  min-height: 24px;
+}
+.rail-section-toggle {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  user-select: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+}
+.rail-chev {
+  color: var(--faint);
+  flex: none;
+}
+.rail-mini-btn {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+}
+.rail-mini-btn:hover {
+  color: var(--ink);
+  background: var(--paper);
+}
+.rail-section-body {
+  padding-top: 10px;
+}
+.rail-muted {
+  font-size: 12px;
+  color: var(--faint);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.rail-error {
+  font-size: 12px;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+.rail-todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.rail-todo {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.rail-todo-mark {
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+  border: 1.6px solid var(--line-strong);
+  border-radius: 3px;
+  background: transparent;
+}
+.rail-todo.in_progress {
+  color: var(--ink);
+}
+.rail-todo.in_progress .rail-todo-mark {
+  border-radius: 999px;
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 3px var(--panel);
+  background: var(--accent);
+}
+.rail-todo.done {
+  color: var(--faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.rail-todo.done .rail-todo-mark {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.rail-todo.done .rail-todo-mark::after {
+  content: "";
+  display: block;
+  width: 5px;
+  height: 3px;
+  margin: 3px 0 0 2.5px;
+  border-left: 1.5px solid #fff;
+  border-bottom: 1.5px solid #fff;
+  transform: rotate(-45deg);
+}
+.rail-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.rail-actions .btn {
+  padding: 6px 9px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+.browser-mini {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.browser-shot {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.artifact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.artifact-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink);
+  border-radius: 9px;
+  padding: 8px 9px;
+  cursor: pointer;
+  font: inherit;
+  min-width: 0;
+}
+.artifact-row:hover {
+  border-color: var(--line);
+  background: var(--panel);
+}
+.artifact-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+.artifact-name {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-row-meta {
+  font-size: 11px;
+  color: var(--faint);
+  font-weight: 400;
+}
+.artifact-open {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.artifact-viewer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.artifact-head {
+  flex: none;
+  min-height: 58px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+}
+.artifact-icon-btn {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  padding: 0;
+  cursor: pointer;
+}
+.artifact-icon-btn:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+.artifact-heading {
+  flex: 1;
+  min-width: 0;
+}
+.artifact-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.artifact-title span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.artifact-sep {
+  color: var(--faint);
+  font-weight: 400;
+}
+.artifact-path {
+  font-size: 11.5px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.artifact-preview {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  background: var(--panel);
+}
+.artifact-frame {
+  width: 100%;
+  height: 100%;
+  min-height: calc(100vh - 86px);
+  border: 0;
+  background: #fff;
+}
+/* Checkerboard backdrop so white/transparent images still read as an image, not a blank pane. */
+.artifact-image {
+  max-width: 100%;
+  display: block;
+  margin: 20px auto;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: repeating-conic-gradient(
+      var(--check-a) 0% 25%,
+      var(--check-b) 0% 50%
+    )
+    0 0 / 20px 20px;
+}
+.artifact-code {
+  margin: 0;
+  padding: 22px 26px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  color: var(--ink);
+}
+/* Non-previewable binaries (Office docs): a centered prompt to open in the default app. */
+.artifact-open-prompt {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px;
+  text-align: center;
+  color: var(--muted);
+}
+.artifact-open-prompt p {
+  margin: 0;
+  max-width: 280px;
+}
+/* pdf.js-rendered pages, stacked like a document scroll */
+.artifact-pdfjs {
+  padding: 18px 16px;
+}
+.artifact-pdf-page {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0 auto 14px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+/* csv / spreadsheet preview */
+.artifact-tablewrap {
+  padding: 14px 16px 40px;
+  overflow: auto;
+}
+.artifact-table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.artifact-table th,
+.artifact-table td {
+  border: 1px solid var(--line);
+  padding: 5px 10px;
+  text-align: left;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.artifact-table th {
+  background: var(--paper);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+.artifact-table-note {
+  padding: 10px 16px;
+}
+.sheet-viewer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.sheet-viewer .artifact-tablewrap {
+  flex: 1;
+  min-height: 0;
+}
+.sheet-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 9px 14px 0;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+  flex: none;
+}
+.sheet-tab {
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  padding: 6px 12px;
+}
+.sheet-tab.active {
+  color: var(--ink);
+  background: var(--panel);
+  border-color: var(--line);
+}
+/* markdown artifacts reuse the shared .md renderer inside a readable padded column */
+.artifact-md {
+  padding: 26px 28px 70px;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.artifact-md .md h1 {
+  font-size: 24px;
+}
+.artifact-md .md h2 {
+  font-size: 19px;
+  margin-top: 22px;
+}
+
+/* working-directory bar */
+/* Workspace chip lives INSIDE the composer card's head row (top chip row, Tailwind-laid-out). */
+.wschip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 9px;
+  cursor: pointer;
+  max-width: 60%;
+}
+.wschip:hover {
+  border-color: var(--line-strong);
+}
+/* Icon-only variant (composer folder control): just the folder glyph + a small chevron, no name,
+   no border/background — sits inline with the other borderless row controls. */
+.wschip-icon {
+  gap: 3px;
+  padding: 5px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  max-width: none;
+}
+.wschip-icon:hover {
+  background: var(--paper);
+  color: var(--ink);
+  border: none;
+}
+.wschip .edit {
+  color: var(--faint);
+  flex: none;
+}
+.wschip:hover .edit {
+  color: var(--muted);
+}
+.wsbranch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+/* roots manager (orphan Cowork directories) */
+.rootsbar {
+  position: relative;
+  display: inline-flex;
+}
+.rootsbar .wschip {
+  max-width: none;
+}
+.roots-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  width: 420px;
+  max-width: 70vw;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+.roots-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  padding: 2px 6px 8px;
+}
+.root-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 8px;
+}

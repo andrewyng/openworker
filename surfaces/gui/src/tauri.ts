@@ -13,7 +13,11 @@ export const isTauri = (): boolean =>
 export const platformOS = (): string => {
   const injected = (globalThis as any).__OCW_PLATFORM__;
   if (typeof injected === "string" && injected) return injected;
-  return /mac/i.test(navigator.userAgent) ? "macos" : /win/i.test(navigator.userAgent) ? "windows" : "linux";
+  return /mac/i.test(navigator.userAgent)
+    ? "macos"
+    : /win/i.test(navigator.userAgent)
+      ? "windows"
+      : "linux";
 };
 
 export type DictationStatus = {
@@ -34,7 +38,10 @@ export type DictationDownloadProgress = {
   total_bytes: number;
 };
 
-const invoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> => {
+const invoke = async <T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T | null> => {
   const tauri = (globalThis as any).__TAURI__;
   if (!tauri?.core?.invoke) return null;
   try {
@@ -44,9 +51,13 @@ const invoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T
   }
 };
 
-const invokeStrict = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+const invokeStrict = async <T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> => {
   const tauri = (globalThis as any).__TAURI__;
-  if (!tauri?.core?.invoke) throw new Error("This feature is available in the desktop app.");
+  if (!tauri?.core?.invoke)
+    throw new Error("This feature is available in the desktop app.");
   return (await tauri.core.invoke(cmd, args)) as T;
 };
 
@@ -67,39 +78,62 @@ export async function chooseFolder(): Promise<string | null> {
 
 /** Open-at-login (macOS LaunchAgent). */
 export const getAutostart = () => invoke<boolean>("get_autostart");
-export const setAutostart = (enabled: boolean) => invoke<boolean>("set_autostart", { enabled });
+export const setAutostart = (enabled: boolean) =>
+  invoke<boolean>("set_autostart", { enabled });
 
 /** Keep this system awake so scheduled tasks fire while idle (caffeinate on macOS,
  * SetThreadExecutionState on Windows). Persists across restarts. */
 export const getKeepAwake = () => invoke<boolean>("get_keep_awake");
-export const setKeepAwake = (enabled: boolean) => invoke<boolean>("set_keep_awake", { enabled });
+export const setKeepAwake = (enabled: boolean) =>
+  invoke<boolean>("set_keep_awake", { enabled });
 
 /** Begin native window dragging from a custom title/header region. */
 export const startWindowDrag = () => invoke<boolean>("start_window_drag");
 
 // Local dictation is native-only. The browser build deliberately keeps this unavailable rather
 // than silently sending microphone audio to a server.
-export const getDictationStatus = () => invoke<DictationStatus>("get_dictation_status");
+export const getDictationStatus = () =>
+  invoke<DictationStatus>("get_dictation_status");
 /** Instantaneous mic loudness 0..1 while recording (0 otherwise) — drives the composer's
  * live waveform. Cheap; poll at ~10Hz. */
 export const getDictationLevel = () => invoke<number>("dictation_level");
-export const startDictation = () => invokeStrict<DictationStatus>("start_dictation");
+export const startDictation = () =>
+  invokeStrict<DictationStatus>("start_dictation");
 export const stopDictation = () => invokeStrict<string>("stop_dictation");
 export const cancelDictation = () => invokeStrict<void>("cancel_dictation");
-export const downloadDictationModel = () => invokeStrict<DictationStatus>("download_dictation_model");
-export const cancelDictationModelDownload = () => invokeStrict<void>("cancel_dictation_model_download");
-export const verifyDictationModel = () => invokeStrict<DictationStatus>("verify_dictation_model");
-export const markDictationTestPassed = () => invokeStrict<DictationStatus>("mark_dictation_test_passed");
-export const deleteDictationModel = () => invokeStrict<DictationStatus>("delete_dictation_model");
+export const downloadDictationModel = () =>
+  invokeStrict<DictationStatus>("download_dictation_model");
+export const cancelDictationModelDownload = () =>
+  invokeStrict<void>("cancel_dictation_model_download");
+export const verifyDictationModel = () =>
+  invokeStrict<DictationStatus>("verify_dictation_model");
+export const markDictationTestPassed = () =>
+  invokeStrict<DictationStatus>("mark_dictation_test_passed");
+export const deleteDictationModel = () =>
+  invokeStrict<DictationStatus>("delete_dictation_model");
 
 export async function listenDictationDownloadProgress(
   handler: (progress: DictationDownloadProgress) => void,
 ): Promise<() => void> {
   const listen = (globalThis as any).__TAURI__?.event?.listen;
   if (!listen) return () => {};
-  return (await listen("dictation-download-progress", (event: { payload: DictationDownloadProgress }) => {
-    handler(event.payload);
-  })) as () => void;
+  return (await listen(
+    "dictation-download-progress",
+    (event: { payload: DictationDownloadProgress }) => {
+      handler(event.payload);
+    },
+  )) as () => void;
+}
+
+/** Subscribe to a named event emitted by the native shell without evaluating script in the
+ * webview. Browser builds receive an inert cleanup function. */
+export async function listenDesktopEvent(
+  name: string,
+  handler: () => void,
+): Promise<() => void> {
+  const listen = (globalThis as any).__TAURI__?.event?.listen;
+  if (!listen) return () => {};
+  return (await listen(name, handler)) as () => void;
 }
 
 // --- Auto-update (desktop only; browser builds see null / throw) -----------------
@@ -108,7 +142,8 @@ export type UpdateInfo = { version: string; notes: string };
 
 /** Ask the shell whether a newer release exists (verified manifest; see lib.rs).
  * null = up to date, unreachable endpoint, or not the desktop app. */
-export const checkForUpdate = () => invoke<UpdateInfo | null>("check_for_update");
+export const checkForUpdate = () =>
+  invoke<UpdateInfo | null>("check_for_update");
 
 /** Pre-fetch + verify the update bytes in the background so the install is instant.
  * The shell caches them keyed by version; calling again for the same version is a no-op.
@@ -118,7 +153,8 @@ export const downloadUpdate = () => invokeStrict<void>("download_update");
 
 /** Drop the pre-fetched update bundle (freed on "Later" so a dismissed release
  * doesn't pin tens of MB for a weeks-long app run). */
-export const clearPendingUpdate = () => invokeStrict<void>("clear_pending_update");
+export const clearPendingUpdate = () =>
+  invokeStrict<void>("clear_pending_update");
 
 /** Install the update (pre-fetched bytes when available, else download + verify now),
  * then relaunch. Resolves only on failure paths (success restarts the process on macOS;
@@ -131,7 +167,9 @@ export const installUpdate = () => invokeStrict<void>("install_update");
 export function openExternal(url: string): void {
   const opener = (globalThis as any).__TAURI__?.opener;
   if (opener?.openUrl) {
-    opener.openUrl(url).catch(() => window.open(url, "_blank", "noopener,noreferrer"));
+    opener
+      .openUrl(url)
+      .catch(() => window.open(url, "_blank", "noopener,noreferrer"));
     return;
   }
   window.open(url, "_blank", "noopener,noreferrer");

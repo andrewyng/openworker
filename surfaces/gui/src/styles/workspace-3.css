@@ -1,0 +1,512 @@
+/* Small inline segmented control (Appearance: Light / Dark / Auto). */
+.seg {
+  display: inline-flex;
+  gap: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 3px;
+  border-radius: 9px;
+}
+.seg button {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 14px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.seg button.active {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+/* Model checklist (Onboarding + Configure Models): tick = in the composer picker. */
+.mlist {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 6px 0 4px;
+}
+.mlist-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.mlist-row:hover {
+  background: var(--panel);
+}
+.mlist-main {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+.mlist-main input {
+  accent-color: var(--accent);
+  margin: 0;
+}
+.mlist-name {
+  font-size: 13.5px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mlist-row.off .mlist-name {
+  color: var(--muted);
+}
+.mlist-default {
+  background: var(--ink);
+  color: var(--panel);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  letter-spacing: 0.03em;
+  flex: none;
+}
+.mlist-make {
+  visibility: hidden;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  border-radius: 7px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+  flex: none;
+}
+.mlist-row:hover .mlist-make {
+  visibility: visible;
+}
+.mlist-make:hover {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+.mlist-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.mlist-add input {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.mlist-add input:focus {
+  border-color: var(--accent);
+}
+
+/* .mcp-error is used by ScheduledView; the MCP servers list itself is Tailwind-styled inline
+   (ManageTabs McpTab/McpRow/AddForm). */
+.mcp-error {
+  color: var(--accent);
+  font-size: 12.5px;
+  margin-top: 6px;
+}
+
+button.btn-primary {
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 16px;
+  border-radius: 9px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  align-self: flex-start;
+}
+button.btn-primary:hover {
+  filter: brightness(1.05);
+}
+button.link {
+  font: inherit;
+  font-size: 12.5px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+button.link:hover {
+  color: var(--ink);
+}
+button.link.danger:hover {
+  color: var(--accent);
+}
+button.link:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 20px;
+  flex: none;
+}
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch .slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: var(--line-strong);
+  border-radius: 999px;
+  transition: 0.15s;
+}
+.switch .slider::before {
+  content: "";
+  position: absolute;
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: 0.15s;
+}
+.switch input:checked + .slider {
+  background: var(--accent);
+}
+.switch input:checked + .slider::before {
+  transform: translateX(14px);
+}
+
+/* -- Connectors tab --------------------------------------------------------- */
+.conn-name {
+  font-size: 14px;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.conn-meta {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.conn-meta.ok,
+.conn-meta .ok {
+  color: var(--ok);
+}
+.conn-meta.danger,
+.conn-meta .danger {
+  color: var(--danger);
+}
+button.btn-primary.sm {
+  padding: 5px 13px;
+  font-size: 12.5px;
+}
+button.btn.sm {
+  padding: 5px 13px;
+  font-size: 12.5px;
+}
+
+.conn-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.conn-field-label {
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.conn-field-label em {
+  color: var(--faint);
+  font-style: normal;
+}
+.conn-field input {
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink);
+  outline: none;
+}
+.conn-field input:focus {
+  border-color: var(--accent);
+}
+/* Match the <select> (provider picker) to the text inputs: same box + a custom chevron so it
+   isn't the browser-default control. */
+.conn-field select {
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 32px 8px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background-color: var(--paper);
+  color: var(--ink);
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 12px;
+}
+.conn-field select:focus {
+  border-color: var(--accent);
+}
+.conn-field-help {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.sa-sub {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-top: 4px;
+}
+.dim {
+  color: var(--faint);
+}
+
+/* -- Scheduled view (page shell + head are Tailwind, §28) -------------------- */
+.sched-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sched-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sched-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.sched-instructions {
+  font-size: 13.5px;
+  color: var(--ink);
+  white-space: pre-wrap;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 13px;
+  line-height: 1.5;
+}
+/* "Allowed without asking" — the automation's standing-approval revoke list (§25). */
+.sched-grants {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.sched-grant {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.sched-grant:last-child {
+  border-bottom: none;
+}
+.sched-grant-rule code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+}
+.sched-grant-target {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+/* Quick-delete on a list card: revealed on hover, never steals the row click. */
+.sched-card-del {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.12s,
+    color 0.12s,
+    background 0.12s;
+}
+.sched-card:hover .sched-card-del {
+  opacity: 1;
+}
+.sched-card-del:hover {
+  color: var(--danger);
+  background: var(--paper);
+}
+/* Detail "Delete" button — danger-tinted line button with the trash glyph. */
+button.btn.sm.danger-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--danger);
+  border-color: var(--line-strong);
+}
+button.btn.sm.danger-btn:hover {
+  border-color: var(--danger);
+}
+.sched-edit-title {
+  font-size: 18px;
+  font-weight: 600;
+  max-width: 360px;
+}
+.sched-edit-sched {
+  margin: 12px 0 4px;
+}
+.sched-edit-instr {
+  min-height: 96px;
+}
+.sched-run {
+  border-bottom: 1px solid var(--line);
+}
+.sched-run-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 8px 2px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.run-ok {
+  color: var(--ok);
+}
+.run-error {
+  color: var(--accent);
+}
+.run-running {
+  color: var(--muted);
+}
+/* UX-023: marks runs newer than the seen mark captured when the detail opened. */
+.run-new-pill {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+}
+/* Run row = a launcher into the run's conversation. */
+.sched-run.open {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  padding: 4px 12px 10px;
+  cursor: pointer;
+  background: var(--panel);
+}
+.sched-run.open:hover {
+  border-color: var(--line-strong);
+  background: var(--paper);
+}
+.sched-run.open .sched-run-row {
+  cursor: pointer;
+}
+.sched-run-go {
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.sched-run-peek {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.45;
+  max-height: 2.9em;
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+/* Desktop boot splash — shown while the Tauri sidecar server comes up. */
+.boot-splash {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  height: 100vh;
+  color: var(--ink);
+  background: var(--paper);
+}
+.boot-mark {
+  font-size: 38px;
+  color: var(--accent);
+  opacity: 0.9;
+  animation: boot-pulse 1.4s ease-in-out infinite;
+}
+.boot-text {
+  font-size: 14px;
+  opacity: 0.6;
+}
+@keyframes boot-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.04);
+  }
+}
+
+/* Dev-only fake traffic lights (?overlay=1) at the SAME position the real app uses
+   (traffic_light_position 19,24 in lib.rs) so the desktop top-left previews in the browser. */
+.sim-traffic-lights {
+  position: fixed;
+  left: 19px;
+  top: 24px;
+  display: flex;
+  gap: 8px;
+  z-index: 200;
+  pointer-events: none;
+}
+.sim-traffic-lights span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+.sim-traffic-lights span:nth-child(1) {
+  background: #ff5f57;
+}
+.sim-traffic-lights span:nth-child(2) {
+  background: #febc2e;
+}
+.sim-traffic-lights span:nth-child(3) {
+  background: #28c840;
+}

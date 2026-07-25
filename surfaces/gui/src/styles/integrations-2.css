@@ -1,0 +1,464 @@
+/* "N replies ————" rule, like Slack's reply-count divider */
+.hiw-slthread .hiw-cnt {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 8px;
+  color: #868686;
+}
+.hiw-slthread .hiw-cnt::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid #e3e2e3;
+}
+.hiw-slthread .hiw-treply {
+  margin: 0 8px 7px;
+  border: 1px solid #8d8d8daa;
+  border-radius: 7px;
+  padding: 3px 7px;
+  font-size: 8.5px;
+  color: #868686;
+  flex: none;
+}
+
+/* ===== OpenWorker side — app tokens ===== */
+.hiw-ow {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--paper);
+}
+.hiw-owtop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  font-size: 9.5px;
+  font-weight: 600;
+  background: var(--panel);
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+.hiw-owtop .hiw-dots {
+  display: flex;
+  gap: 3.5px;
+}
+.hiw-owtop .hiw-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+.hiw-owbody {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.hiw-owrail {
+  width: 96px;
+  flex: none;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 6px 5px;
+}
+.hiw-owrail .hiw-brand {
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: -0.015em;
+  padding: 0 3px 5px;
+  color: var(--ink);
+}
+.hiw-newbtn {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-size: 8px;
+  font-weight: 600;
+  margin-bottom: 5px;
+}
+.hiw-ownav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 8px;
+  padding: 2px 3px;
+}
+.hiw-owrail .hiw-sect {
+  font-size: 7px;
+  letter-spacing: 0.07em;
+  font-weight: 700;
+  color: var(--faint);
+  margin: 6px 3px 2px;
+}
+.hiw-sess {
+  font-size: 8px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  color: var(--faint);
+  line-height: 1.25;
+}
+.hiw-sess b {
+  display: block;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hiw-sess.hot {
+  background: var(--accent-soft);
+}
+.hiw-owmain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.hiw-owtitle {
+  padding: 4px 8px;
+  font-size: 8.5px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  background: var(--panel);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hiw-owtitle .hiw-via {
+  font-weight: 400;
+  color: var(--faint);
+  font-size: 8px;
+}
+.hiw-owchat {
+  flex: 1;
+  padding: 7px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow: hidden;
+}
+.hiw-bub {
+  font-size: 8.5px;
+  line-height: 1.4;
+  border-radius: 7px;
+  padding: 4px 7px;
+  max-width: 94%;
+}
+.hiw-bub.user {
+  background: var(--accent-soft);
+  align-self: flex-end;
+  color: var(--ink);
+}
+.hiw-bub.agent {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  align-self: flex-start;
+  color: var(--muted);
+}
+.hiw-owcomposer {
+  margin: 0 8px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 8.5px;
+  color: var(--faint);
+  background: var(--panel);
+  flex: none;
+}
+.hiw-waitrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 8.5px;
+  padding: 5px 7px;
+  margin: 9px 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--warn-soft);
+  color: var(--ink);
+}
+.hiw-allowbtn {
+  font-size: 8.5px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  flex: none;
+}
+.hiw-waitcap {
+  margin: 5px 10px;
+  font-size: 8.5px;
+  color: var(--muted);
+}
+
+/* the travelling spark between windows */
+.hiw-spark {
+  position: absolute;
+  top: 46%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+  opacity: 0;
+  z-index: 4;
+}
+.hiw-play .hiw-spark {
+  animation: hiw-shoot 0.9s ease-in-out forwards;
+  animation-delay: var(--d, 0s);
+}
+@keyframes hiw-shoot {
+  0% {
+    opacity: 0;
+    left: 50%;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    left: 57%;
+  }
+}
+
+/* post-it notes (rev 7): the concept in five hand-written words, slapped onto the
+   scene at its beat; they fade near the loop's end so they read as annotation. */
+.hiw-sticky {
+  position: absolute;
+  width: 118px;
+  padding: 8px 10px 10px;
+  z-index: 5;
+  background: #fde68a;
+  color: #6b4d11;
+  font:
+    10.5px/1.35 "Marker Felt",
+    "Bradley Hand",
+    "Segoe Print",
+    "Comic Sans MS",
+    cursive;
+  box-shadow: 2px 4px 10px rgba(0, 0, 0, 0.22);
+  transform: rotate(-3.5deg);
+}
+.hiw-sticky.r {
+  transform: rotate(2.5deg);
+}
+.hiw-sticky::before {
+  /* the bit of tape */
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 30px;
+  height: 9px;
+  transform: translateX(-50%) rotate(-1deg);
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+html[data-theme="dark"] .hiw-sticky {
+  background: #eab308;
+  color: #3d2c05;
+}
+.hiw-play .hiw-k.hiw-sticky {
+  animation:
+    hiw-slap 0.45s ease forwards,
+    hiw-sticky-out 0.6s ease forwards 7.2s;
+  animation-delay: var(--d, 0s), 7.2s;
+}
+.hiw-play .hiw-k.hiw-sticky.r {
+  animation-name: hiw-slap-r, hiw-sticky-out;
+}
+@keyframes hiw-slap {
+  from {
+    opacity: 0;
+    transform: rotate(-3.5deg) scale(1.18);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(-3.5deg) scale(1);
+  }
+}
+@keyframes hiw-slap-r {
+  from {
+    opacity: 0;
+    transform: rotate(2.5deg) scale(1.18);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(2.5deg) scale(1);
+  }
+}
+@keyframes hiw-sticky-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* animation primitives */
+.hiw-k {
+  opacity: 0;
+}
+.hiw-play .hiw-k {
+  animation: hiw-fade-up 0.45s ease forwards;
+  animation-delay: var(--d, 0s);
+}
+@keyframes hiw-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.hiw-play .hiw-glow {
+  animation:
+    hiw-fade-up 0.45s ease forwards,
+    hiw-glow 1.2s ease var(--g, 1s) 2;
+  animation-delay: var(--d, 0s), var(--g, 1s);
+}
+.hiw-play .hiw-stay.hiw-glow {
+  opacity: 1;
+  animation: hiw-glow 1.2s ease var(--g, 1s) 2;
+}
+@keyframes hiw-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+}
+.hiw-stay {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hiw-k,
+  .hiw-play .hiw-k,
+  .hiw-play .hiw-glow,
+  .hiw-play .hiw-spark {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+  .hiw-play .hiw-spark {
+    opacity: 0 !important;
+  }
+  .hiw-tab.on .hiw-prog i {
+    animation: none !important;
+    width: 100%;
+  }
+}
+
+/* ---- UX-026: automation-start toast (top-right, 5s; schedule-fired runs only) ---- */
+.toast-pulse {
+  animation: toast-pulse 1.2s ease infinite;
+}
+@keyframes toast-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.toast-drain {
+  animation: toast-drain 5s linear forwards;
+}
+@keyframes toast-drain {
+  to {
+    width: 0;
+  }
+}
+
+/* ============ Windows (WebView2) polish ============ */
+/* Classic Windows scrollbars consume ~17px of layout width that macOS's overlay
+   scrollbars don't — panels tuned on Mac ended up cramped/misaligned (caught
+   2026-07-21). Thin, quiet scrollbars matching the app's neutral palette; scoped
+   to data-platform so macOS keeps its native overlay behavior. */
+html[data-platform="windows"] ::-webkit-scrollbar,
+html[data-platform="linux"] ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+html[data-platform="windows"] ::-webkit-scrollbar-track,
+html[data-platform="linux"] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+html[data-platform="windows"] ::-webkit-scrollbar-thumb,
+html[data-platform="linux"] ::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+html[data-platform="windows"] ::-webkit-scrollbar-thumb:hover,
+html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--faint);
+}
+
+/* -- thinking (reasoning trace) disclosure — model-layer roadmap item 4 ----------- */
+.thinking {
+  margin: 2px 0 4px;
+}
+.thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--faint);
+  background: none;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.thinking-head:hover {
+  color: var(--muted);
+}
+.thinking-caret {
+  transition: transform 0.15s;
+  transform: rotate(-90deg);
+}
+.thinking-caret.open {
+  transform: rotate(0);
+}
+.thinking-live {
+  animation: boot-pulse 1.4s ease-in-out infinite;
+}
+.thinking-body {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-left: 2px solid var(--line);
+  padding: 4px 0 4px 10px;
+  margin: 4px 0 6px 4px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+/* -- BETA tag (quiet gray chip beside the wordmark; presentation-only, never in
+   bundle/artifact names — those feed the updater) --------------------------------- */
+.beta-tag {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0.5px 4.5px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  /* Raised toward the cap line — superscript-ish without true `super` (which reads
+     fussy on a pill); small + high keeps the wordmark the star. */
+  vertical-align: 3px;
+}

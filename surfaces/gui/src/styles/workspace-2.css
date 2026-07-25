@@ -1,0 +1,509 @@
+.root-row:hover {
+  background: var(--paper);
+}
+.root-row.missing {
+  opacity: 0.6;
+}
+.root-ico {
+  color: var(--muted);
+  flex: none;
+}
+.root-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.root-label {
+  font-size: 13px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.root-path {
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+.root-tag {
+  font-size: 10.5px;
+  color: var(--muted);
+  background: var(--line);
+  border-radius: 5px;
+  padding: 1px 5px;
+  flex: none;
+}
+.root-tag.warn {
+  color: var(--warn-ink);
+  background: var(--warn-soft);
+}
+.root-access {
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 7px;
+  background: var(--paper);
+  color: var(--muted);
+}
+.root-access.rw {
+  color: var(--ok);
+  border-color: var(--ok-line);
+  background: var(--ok-soft);
+}
+.root-access:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.root-x {
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--faint);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 4px;
+  flex: none;
+}
+.root-x:hover {
+  color: var(--ink);
+}
+.roots-add {
+  padding: 8px 2px 2px;
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+}
+.roots-err {
+  color: var(--danger);
+  font-size: 12px;
+  padding: 6px 6px 2px;
+}
+
+/* add-folder form (shared: roots popover + session start panel) */
+.addfolder-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  justify-content: center;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+.addfolder-trigger:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.addfolder-trigger.compact {
+  font-size: 12px;
+  padding: 6px 9px;
+}
+.addfolder-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px;
+}
+.addfolder-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.addfolder-path {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 9px;
+  outline: none;
+}
+.addfolder-path:focus {
+  border-color: var(--accent);
+}
+.addfolder-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.addfolder-write {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.addfolder-actions .spacer {
+  flex: 1;
+}
+
+/* Cowork session start panel */
+.intro {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 40px 20px 24px;
+}
+.intro .greeting {
+  font-size: 26px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.intro .greeting .mark {
+  color: var(--accent);
+}
+.intro-lede {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 8px 0 0;
+}
+
+/* Template tasks on the Cowork start screen (§27): flat hairline rows, no icon tiles — the
+   title is the row. Connector dots on the sub-line (brand color = live for this session,
+   grayscale = not; §23's vocabulary); sub-line copy is the task's OUTCOME, never connection
+   state. Ready row: hover colors the title and reveals the action. Gated row: "Configure ›"
+   stays visible at rest — the setup action IS the row's meaning. Staggered entrance. */
+.intro-tasks {
+  margin-top: 30px;
+  display: flex;
+  flex-direction: column;
+}
+.task-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  padding: 13px 6px;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--line);
+  font: inherit;
+  color: var(--ink);
+  opacity: 0;
+  transform: translateY(4px);
+  animation: task-rise 0.35s ease forwards;
+}
+.task-card:nth-of-type(1) {
+  animation-delay: 0.1s;
+}
+.task-card:nth-of-type(2) {
+  animation-delay: 0.22s;
+}
+.task-card:nth-of-type(3) {
+  animation-delay: 0.34s;
+}
+@keyframes task-rise {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-card {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+.task-card:first-child {
+  border-top: none;
+}
+.task-card-body {
+  flex: 1;
+  min-width: 0;
+}
+.task-card-title {
+  display: block;
+  font-size: 14.5px;
+  transition: color 0.12s;
+}
+.task-card:hover .task-card-title {
+  color: var(--accent);
+}
+.task-card-sub {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--faint);
+  margin-top: 3px;
+}
+.task-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.task-dot + .task-dot {
+  margin-left: -4px;
+}
+.task-dot.off {
+  filter: grayscale(1);
+  opacity: 0.7;
+}
+.task-card-act {
+  color: var(--faint);
+  font-size: 12.5px;
+  flex: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.task-card:hover .task-card-act {
+  opacity: 1;
+  color: var(--accent);
+}
+.task-card.gated .task-card-act {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/* Topbar "Artifacts (N)" affordance, shown when the side panel is hidden */
+.topbar-artifacts-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  margin-right: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+}
+.topbar-artifacts-btn:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+.topbar-artifacts-count {
+  min-width: 17px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+/* the inline add-folder form sits under the "Analyze the files in a directory" task row */
+.intro-addfolder {
+  padding: 4px 6px 14px 6px;
+  border-top: 1px solid var(--line);
+}
+
+/* request_directory prompt (agent-initiated) */
+.dirreq-card {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 9px;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.dirreq-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+.dirreq-head .ico {
+  color: var(--accent);
+}
+.dirreq-reason {
+  font-size: 13px;
+  color: var(--muted);
+  font-style: italic;
+  margin: 6px 0 10px;
+}
+.dirreq-pathrow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.dirreq-path {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 9px;
+  outline: none;
+}
+.dirreq-path:focus {
+  border-color: var(--accent);
+}
+.dirreq-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.dirreq-access {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.dirreq-actions .spacer {
+  flex: 1;
+}
+
+/* propose_plan prompt (plan-mode exit) */
+.plan-card .plan-body {
+  max-height: 320px;
+  overflow-y: auto;
+  font-size: 13.5px;
+  margin: 8px 0 2px;
+  padding: 8px 10px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+/* folder gate */
+.gate-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+}
+.gate {
+  width: 480px;
+  max-width: 92vw;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  padding: 26px 26px 22px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
+}
+.gate-mark {
+  color: var(--accent);
+  font-size: 22px;
+}
+.gate h2 {
+  font-family: var(--serif);
+  font-size: 24px;
+  margin: 6px 0 4px;
+}
+.gate-sub {
+  color: var(--muted);
+  font-size: 13.5px;
+  margin: 0 0 16px;
+}
+.gate-input {
+  display: flex;
+  gap: 8px;
+}
+.gate-input input {
+  flex: 1;
+  font: inherit;
+  font-size: 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--panel);
+  outline: none;
+}
+.gate-input input:focus {
+  border-color: var(--accent);
+}
+.gate-error {
+  color: var(--accent);
+  font-size: 12.5px;
+  margin-top: 8px;
+}
+.gate-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  margin: 18px 0 6px;
+}
+.gate-recents {
+  display: flex;
+  flex-direction: column;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.gate-recent {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.gate-recent:hover {
+  background: var(--panel);
+}
+.gate-recent .folder {
+  font-size: 14px;
+  color: var(--ink);
+}
+.gate-recent .dim {
+  font-size: 11.5px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gate-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 18px;
+}
+.gate-link {
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+}
+.gate-link:hover {
+  text-decoration: underline;
+}
+.gate-cancel {
+  margin: 0;
+}
+
+/* Centered sub-tab row inside a manage pane (e.g. API models / Local models). */
+.subtabs {
+  display: flex;
+  justify-content: center;
+  margin: 20px 0 16px;
+}
+.ob-subtabs {
+  justify-content: flex-start;
+  margin: 22px 0 4px;
+}

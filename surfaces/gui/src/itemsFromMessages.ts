@@ -1,86 +1,124 @@
-// Maps the raw transcript from GET /v1/sessions/{id}/messages into the GUI's `Item[]` model.
-// Extracted from App.tsx so it can be unit-tested without standing up the whole app.
-//
-// A connector-delivered user message carries a structured `source` sidecar (§3.1); when present it
-// becomes a `connector` item (rendered as ConnectorMessageCard) instead of a plain user bubble. This
-// generalizes to any connector via the registry — no Slack special-casing here.
+// Maps the raw transcript from GET /v1/sessions/{id}/messages into the GUI Item model.
+// Connector-delivered user messages retain their structured source metadata.
 
 import type { ConversationMessage } from "./api";
 import type { Attachment, Item } from "./types";
 
-export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
-  const items: Item[] = [];
-  // Index tool results by tool_call_id so replayed tool rows can show their output
-  // (the live view gets this from `tool_finished` events; on replay it's the `role:"tool"` msgs).
+type ToolReplayIndex = {
+  results: Record<string, string>;
+  hiddenCounts: Record<string, number>;
+};
+
+function indexToolResults(messages: ConversationMessage[]): ToolReplayIndex {
   const results: Record<string, string> = {};
-  // `_display` sidecar on a tool message = user-facing metadata the agent never saw
-  // (e.g. how many hits the privacy filters hid) — surfaces on the tool card.
   const hiddenCounts: Record<string, number> = {};
-  for (const m of messages || []) {
-    if (m.role === "tool" && m.tool_call_id) {
-      results[m.tool_call_id] =
-        typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-      const hidden = Number(m._display?.hidden_by_filters || 0);
-      if (hidden > 0) hiddenCounts[m.tool_call_id] = hidden;
-    }
+  for (const message of messages) {
+    if (message.role !== "tool" || !message.tool_call_id) continue;
+    results[message.tool_call_id] =
+      typeof message.content === "string"
+        ? message.content
+        : JSON.stringify(message.content);
+    const hidden = Number(message._display?.hidden_by_filters || 0);
+    if (hidden > 0) hiddenCounts[message.tool_call_id] = hidden;
   }
-  for (const m of messages || []) {
-    if (m.role === "user") {
-      // Connector message → structured card; the framed `content` stays for the model, but display
-      // renders from the source sidecar.
-      if (m.source?.connector) {
-        items.push({ kind: "connector", source: m.source });
-        continue;
-      }
-      const user = userItemFromContent(m.content);
-      // `ts` (unix seconds) is the server's canonical-message stamp; older sessions have none.
-      if (typeof m.ts === "number") user.ts = m.ts;
-      if (user.text || user.attachments?.length) items.push(user);
-    } else if (m.role === "assistant") {
-      if (m.content || m.reasoning)
-        items.push({
-          kind: "assistant",
-          text: m.content || "",
-          ...(typeof m.ts === "number" ? { ts: m.ts } : {}),
-          ...(m.reasoning ? { reasoning: m.reasoning } : {}),
-        });
-      for (const tc of m.tool_calls || []) {
-        let args: any = {};
-        try {
-          args = JSON.parse(tc.function?.arguments || "{}");
-        } catch {
-          args = {};
-        }
-        const preview = results[tc.id];
-        const hidden = hiddenCounts[tc.id];
-        items.push({
-          kind: "tool",
-          id: tc.id,
-          name: tc.function?.name,
-          args,
-          status: "ok",
-          preview,
-          ...(hidden ? { hidden } : {}),
-        });
-      }
-    } else if (m.role === "notice") {
-      // Persisted markers (engine `_append_notice`): error/interrupted/model-switch survive
-      // reload exactly like the live view rendered them. An error notice is retriable —
-      // the Transcript only offers the button when it's the transcript tail.
-      items.push(
-        m.kind === "interrupted"
-          ? { kind: "notice", tone: "warn", text: "Interrupted." }
-          : m.kind === "model_switch"
-            ? { kind: "notice", tone: "info", text: m.text || "Model switched" }
-            : { kind: "notice", tone: "warn", text: "Error: " + (m.text || "unknown"), retriable: true },
-      );
-    }
-    // system messages are omitted; tool-result messages are folded into the tool row above
+  return { results, hiddenCounts };
+}
+
+function userMessageItems(message: ConversationMessage): Item[] {
+  if (message.source?.connector)
+    return [{ kind: "connector", source: message.source }];
+  const user = userItemFromContent(message.content);
+  if (typeof message.ts === "number") user.ts = message.ts;
+  return user.text || user.attachments?.length ? [user] : [];
+}
+
+function parseToolArguments(
+  value: string | undefined,
+): Record<string, unknown> {
+  try {
+    return JSON.parse(value || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function assistantMessageItems(
+  message: ConversationMessage,
+  index: ToolReplayIndex,
+): Item[] {
+  const items: Item[] = [];
+  if (message.content || message.reasoning) {
+    items.push({
+      kind: "assistant",
+      text: message.content || "",
+      ...(typeof message.ts === "number" ? { ts: message.ts } : {}),
+      ...(message.reasoning ? { reasoning: message.reasoning } : {}),
+    });
+  }
+  for (const toolCall of message.tool_calls || []) {
+    const hidden = index.hiddenCounts[toolCall.id];
+    items.push({
+      kind: "tool",
+      id: toolCall.id,
+      name: toolCall.function?.name,
+      args: parseToolArguments(toolCall.function?.arguments),
+      status: "ok",
+      preview: index.results[toolCall.id],
+      ...(hidden ? { hidden } : {}),
+    });
   }
   return items;
 }
 
-export function userItemFromContent(content: any): Extract<Item, { kind: "user" }> {
+function noticeMessageItem(message: ConversationMessage): Item {
+  if (message.kind === "interrupted") {
+    return { kind: "notice", tone: "warn", text: "Interrupted." };
+  }
+  if (message.kind === "model_switch") {
+    return {
+      kind: "notice",
+      tone: "info",
+      text: message.text || "Model switched",
+    };
+  }
+  return {
+    kind: "notice",
+    tone: "warn",
+    text: "Error: " + (message.text || "unknown"),
+    retriable: true,
+  };
+}
+
+function replayItemsForMessage(
+  message: ConversationMessage,
+  index: ToolReplayIndex,
+): Item[] {
+  switch (message.role) {
+    case "user":
+      return userMessageItems(message);
+    case "assistant":
+      return assistantMessageItems(message, index);
+    case "notice":
+      return [noticeMessageItem(message)];
+    default:
+      // System messages are omitted; tool results are folded into their tool row.
+      return [];
+  }
+}
+
+export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
+  const replayMessages = messages || [];
+  const index = indexToolResults(replayMessages);
+  const items: Item[] = [];
+  for (const message of replayMessages) {
+    items.push(...replayItemsForMessage(message, index));
+  }
+  return items;
+}
+
+export function userItemFromContent(
+  content: any,
+): Extract<Item, { kind: "user" }> {
   if (typeof content === "string") return { kind: "user", text: content };
   if (!Array.isArray(content)) return { kind: "user", text: "" };
 
