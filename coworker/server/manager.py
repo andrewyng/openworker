@@ -27,6 +27,7 @@ from ..connections import (
 )
 from ..inbox import InboxStore, args_preview
 from ..inbox_routing import InboxRouting
+from ..interactions import QUESTION_INTERRUPTED, question_answer
 from ..personas import PersonaRegistry
 from ..personas.registry import set_registry as set_persona_registry
 from ..selfwake import WakeStore
@@ -738,11 +739,16 @@ class SessionManager:
             if (
                 item.state != "pending"
             ):  # durable resume re-raised an already-answered prompt
-                return {"answer": item.resolution or ""}
+                return question_answer(item.resolution or "")
             self.persist_session(session_id)  # the pending tool call is now on disk
             await self.mirror_inbox_item(item)
-            answer = await self.inbox.wait(item.id)
-            return {"answer": answer}
+            try:
+                return question_answer(await self.inbox.wait(item.id))
+            except asyncio.CancelledError:
+                # The turn was stopped while parked. Resolve the stored prompt so
+                # it cannot outlive the tool call and accept a meaningless answer.
+                self.inbox.resolve(item.id, QUESTION_INTERRUPTED)
+                raise
 
         return ask
 
@@ -2611,6 +2617,8 @@ class SessionManager:
         target = f"{binding.channel}:{binding.target}"
         body = "\n".join(p for p in (item.title, item.body) if p).strip()
         buttons = buttons_for(item)
+        if item.kind == "question" and not getattr(item, "options", None):
+            body = f"{body}\n(Open the app to answer, or cancel here.)"
         try:
             if buttons:
                 await self.gateway.deliver_interactive(target, body, buttons)

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { InboxItem } from "../api";
 import { humanizeApprovalTitle } from "../humanize";
 import { PreviewBlock, scopeNote, TitleText } from "./ApprovalCard";
@@ -6,7 +6,11 @@ import { PreviewBlock, scopeNote, TitleText } from "./ApprovalCard";
 // One Inbox item, rendered identically in the Inbox list and inline in its own session view
 // (answer-in-context). Resolving either place hits the same item id — first responder wins.
 // Questions (ask_user) mirror Claude Code's AskUserQuestion: optional quick-reply options + an
-// always-available free-text escape, with optional multi-select.
+// always-available free-text escape, with optional multi-select — plus Cancel (Esc) to decline.
+
+// Reserved Inbox resolution for declining a question. Wire value only — the button label is
+// "Cancel". Must match coworker/interactions.py QUESTION_CANCELLED.
+export const QUESTION_CANCELLED = "__cancelled__";
 
 // Shared styles (mock parity — same language as SourcesDrawer/PersonaView).
 const SEC = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
@@ -41,6 +45,30 @@ export function InboxItemCard({
   const options = item.options || [];
   const multi = !!item.multi;
   const allowText = item.allow_text !== false;
+
+  const cancelQuestion = () => onResolve(item.id, QUESTION_CANCELLED);
+
+  // HIG: Escape is Cancel's key equivalent for the active inline prompt. Inbox-list cards do
+  // not claim a global shortcut: several can be mounted at once, and one Esc must never cancel
+  // multiple questions. Softened vs Claude Code — Esc with a draft clears first; empty draft
+  // cancels. Distinct from Stop (whole-turn interrupt): this resolves only the ask_user item.
+  useEffect(() => {
+    if (item.kind !== "question" || !compact) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (e.defaultPrevented) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (answer.trim() || selected.length) {
+        setAnswer("");
+        setSelected([]);
+        return;
+      }
+      onResolve(item.id, QUESTION_CANCELLED);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [item.kind, item.id, answer, selected, onResolve, compact]);
 
   const textRow = (placeholder: string) => (
     <div className="flex items-center gap-2 mt-2.5">
@@ -159,6 +187,18 @@ export function InboxItemCard({
           )}
           {(allowText || options.length === 0) &&
             textRow(options.length ? "Or type your own answer…" : "Your answer…")}
+          {/* HIG Cancel — quiet secondary, same dialect as Deny. Always shown (including
+              allow_text=false) so Esc isn't the only escape hatch. */}
+          <div className="mt-2 flex justify-end">
+            <button
+              type="button"
+              className={BTN_QUIET}
+              title="Cancel (Esc)"
+              onClick={cancelQuestion}
+            >
+              Cancel
+            </button>
+          </div>
         </>
       ) : item.kind === "directory" ? (
         <div className="flex items-center gap-2 mt-2.5">

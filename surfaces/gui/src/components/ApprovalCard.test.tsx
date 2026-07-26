@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ApprovalCard } from "./ApprovalCard";
-import { InboxItemCard } from "./InboxItemCard";
+import { InboxItemCard, QUESTION_CANCELLED } from "./InboxItemCard";
 import type { Item } from "../types";
 import type { InboxItem } from "../api";
 
@@ -218,5 +218,60 @@ describe("InboxItemCard — Allow every time on parked run approvals", () => {
     fireEvent.click(screen.getByText("Allow once"));
     expect(onResolve).toHaveBeenCalledWith("i1", "allow");
     // Old rows without tool data keep the legacy treatment (covered above).
+  });
+});
+
+describe("InboxItemCard — question Cancel", () => {
+  const questionItem = (extra: Partial<InboxItem> = {}): InboxItem => ({
+    id: "q1",
+    session_id: "s1",
+    kind: "question",
+    title: "Which region?",
+    body: "",
+    state: "pending",
+    resolution: null,
+    inbox: "default",
+    created_at: "",
+    resolved_at: null,
+    options: ["us-east-1", "us-west-2"],
+    allow_text: true,
+    ...extra,
+  });
+
+  it("offers Cancel and resolves with the reserved sentinel", () => {
+    const onResolve = vi.fn();
+    render(<InboxItemCard item={questionItem()} onResolve={onResolve} compact />);
+    fireEvent.click(screen.getByTitle("Cancel (Esc)"));
+    expect(onResolve).toHaveBeenCalledWith("q1", QUESTION_CANCELLED);
+  });
+
+  it("Esc cancels when the draft is empty; clears a typed draft first", () => {
+    const onResolve = vi.fn();
+    render(<InboxItemCard item={questionItem()} onResolve={onResolve} compact />);
+    const input = screen.getByPlaceholderText("Or type your own answer…") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "maybe later" } });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onResolve).not.toHaveBeenCalled();
+    expect(input.value).toBe("");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onResolve).toHaveBeenCalledWith("q1", QUESTION_CANCELLED);
+  });
+
+  it("still shows Cancel when allow_text is false (only escape hatch besides options)", () => {
+    render(
+      <InboxItemCard
+        item={questionItem({ allow_text: false })}
+        onResolve={vi.fn()}
+      />,
+    );
+    expect(screen.getByTitle("Cancel (Esc)")).toBeTruthy();
+    expect(screen.queryByPlaceholderText(/answer/i)).toBeNull();
+  });
+
+  it("does not let an Inbox-list card claim the global Esc shortcut", () => {
+    const onResolve = vi.fn();
+    render(<InboxItemCard item={questionItem()} onResolve={onResolve} />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onResolve).not.toHaveBeenCalled();
   });
 });

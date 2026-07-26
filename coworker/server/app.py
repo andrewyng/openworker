@@ -157,6 +157,7 @@ from ..attachments import (
 )
 from ..engine import ApprovalOutcome
 from ..inbox import VIS_INBOX, VIS_INLINE, args_preview
+from ..interactions import QUESTION_INTERRUPTED, question_answer
 from ..permissions import Mode
 from ..providers import AssistantTurn
 from .manager import SessionManager
@@ -1552,7 +1553,15 @@ def create_app(manager: SessionManager) -> FastAPI:
                             },
                         }
                     )
-            return {"answer": await manager.inbox.wait(item.id)}
+                try:
+                    return question_answer(await manager.inbox.wait(item.id))
+                except asyncio.CancelledError:
+                    # Stop cancels the engine's wait. Close the authoritative Inbox
+                    # item too, or it remains clickable even though no turn is listening.
+                    manager.inbox.resolve(item.id, QUESTION_INTERRUPTED)
+                    raise
+            # Durable resume re-raised an already-answered prompt.
+            return question_answer(item.resolution or "")
 
         async def directory_requester(args: dict, tool_call_id=None) -> dict:
             # The engine has already emitted DIRECTORY_REQUESTED. Park, await, then apply the grant.
