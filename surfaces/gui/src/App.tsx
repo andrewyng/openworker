@@ -189,11 +189,18 @@ export function App() {
   const [scheduledOpenId, setScheduledOpenId] = useState<string | null>(null);
   const [gateCreate, setGateCreate] = useState(false);
   // Which Settings section the full-page Settings surface opens on (§ Settings-as-page).
-  const [settingsTab, setSettingsTab] = useState<"appearance" | "models" | "voice" | "personas">(
-    "appearance",
-  );
-  const openSettings = (tab: "appearance" | "models" | "voice" | "personas" = "appearance") => {
+  const [settingsTab, setSettingsTab] = useState<
+    "appearance" | "models" | "skills" | "voice" | "personas"
+  >("appearance");
+  // Two-doors (SKILLS-SPEC §4.3): the rail's "Manage all skills →" carries the session's
+  // workspace so the Skills tab preselects "Only in <that project>". Cold opens carry none.
+  const [settingsWorkspace, setSettingsWorkspace] = useState<string | undefined>(undefined);
+  const openSettings = (
+    tab: "appearance" | "models" | "skills" | "voice" | "personas" = "appearance",
+    workspaceContext?: string,
+  ) => {
     setSettingsTab(tab);
+    setSettingsWorkspace(workspaceContext);
     setSurface("settings");
   };
   // Whether the default model's provider is actually configured (any provider). Drives the
@@ -822,10 +829,12 @@ export function App() {
     return () => clearInterval(t);
   }, [surface, sessionId, browserRefreshKey, markUnattended]);
 
-  const send = (text: string, attachments?: Attachment[]) => {
-    setItems((p) => [...p, { kind: "user", text, attachments, ts: Date.now() / 1000 }]);
+  const send = (text: string, attachments?: Attachment[], skill?: string) => {
+    // A skill-only send still shows as something the user did: render the /name shorthand.
+    const shown = text || (skill ? `/${skill}` : "");
+    setItems((p) => [...p, { kind: "user", text: shown, attachments, ts: Date.now() / 1000 }]);
     // The visible model rides along with the message (single source of truth per turn).
-    sessionRef.current?.userMessage(text, attachments, model);
+    sessionRef.current?.userMessage(text, attachments, model, skill);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
   };
   // Resolving a LIVE prompt also resolves its parked Inbox mirror server-side, but the polled
@@ -1298,6 +1307,7 @@ export function App() {
         <SettingsView
           key={settingsTab}
           initialTab={settingsTab}
+          workspaceContext={settingsWorkspace}
           onOpenPersona={(id) => openPersona(id, "settings")}
         />
       ) : surface === "audit" ? (
@@ -1530,6 +1540,7 @@ export function App() {
               onInterrupt={interrupt}
               onModeChange={changeMode}
               onModelChange={changeModel}
+              sessionId={sessionId}
               workspace={needsWorkspace(agent) ? workspace || "" : undefined}
               unattended={unattended}
               onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}
@@ -1595,6 +1606,7 @@ export function App() {
             scratchPrimary={agent === "cowork"}
             openAccessKey={accessKey}
             onOpenIntegrations={() => setSurface("integrations")}
+            onOpenSkills={() => openSettings("skills", workspace || undefined)}
           />
         </div>
       </div>

@@ -1931,12 +1931,15 @@ export class Session {
    * exactly what the user sees — immune to set_model races across reconnects (a new cowork
    * session always reconnects once to adopt its scratch dir, which could drop a queued
    * set_model and leave the engine on a stale/resumed model; found 2026-07-04). */
-  userMessage(text: string, attachments?: unknown[], model?: string) {
+  userMessage(text: string, attachments?: unknown[], model?: string, skill?: string) {
     this.send({
       type: "user_message",
       text,
       ...(model ? { model } : {}),
       ...(attachments?.length ? { attachments } : {}),
+      // Force-run (SKILLS-SPEC §4.1): the composer's /skill pick rides as its own field;
+      // the server validates it against the session's effective menu and frames the turn.
+      ...(skill ? { skill } : {}),
     });
   }
 

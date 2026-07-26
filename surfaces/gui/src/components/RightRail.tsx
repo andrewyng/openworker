@@ -57,6 +57,7 @@ interface Props {
   scratchPrimary?: boolean;
   openAccessKey?: number;
   onOpenIntegrations?: () => void;
+  onOpenSkills?: () => void;
 }
 
 export function RightRail({
@@ -75,6 +76,7 @@ export function RightRail({
   scratchPrimary,
   openAccessKey = 0,
   onOpenIntegrations,
+  onOpenSkills,
 }: Props) {
   const [open, setOpen] = useState<Record<Panel, boolean>>({
     progress: true,
@@ -219,6 +221,7 @@ export function RightRail({
             scratchPrimary={scratchPrimary}
             openKey={openAccessKey}
             onOpenIntegrations={onOpenIntegrations}
+            onOpenSkills={onOpenSkills}
           />
         </>
       )}

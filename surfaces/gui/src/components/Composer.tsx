@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Attachment } from "../types";
 import { isPdfFile, readFile } from "../attach";
-import { getSettings, inspectPdf } from "../api";
+import { getSettings, inspectPdf, sessionSkills, type SessionSkillRow } from "../api";
 import { Dropdown, type Option } from "./Dropdown";
 import { Icon } from "./Icon";
 import { Toggle } from "./Toggle";
@@ -58,7 +58,10 @@ interface Props {
   modelReady?: boolean;
   onConnectModel?: () => void;
   onConfigureVoiceInput?: () => void;
-  onSend: (text: string, attachments?: Attachment[]) => void;
+  onSend: (text: string, attachments?: Attachment[], skill?: string) => void;
+  // Feeds the "/" force-run popup (SKILLS-SPEC §4.1 #3): the popup lists this session's
+  // effective skill menu. Absent (e.g. tests without sessions) → the popup never opens.
+  sessionId?: string;
   onInterrupt: () => void;
   onModeChange: (mode: string) => void;
   onModelChange: (model: string) => void;
@@ -82,6 +85,38 @@ interface Props {
 export function Composer(props: Props) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // "/" force-run (SKILLS-SPEC §4.1 #3). The popup derives from the draft: it is open while
+  // the text is a bare "/query" (no whitespace yet) and no skill is picked. Selecting a row
+  // clears the query and pins a chip; the skill name rides the user_message as its own field.
+  const [pendingSkill, setPendingSkill] = useState<SessionSkillRow | null>(null);
+  const [slashSkills, setSlashSkills] = useState<SessionSkillRow[] | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const slashQuery =
+    !pendingSkill && props.sessionId && text.startsWith("/") && !/\s/.test(text.slice(1))
+      ? text.slice(1).toLowerCase()
+      : null;
+  const slashMatches = (slashSkills ?? []).filter((s) =>
+    s.name.toLowerCase().includes(slashQuery ?? ""),
+  );
+  useEffect(() => {
+    // Fetch on each popup open (fresh menu — rail mutes apply immediately); drop when closed.
+    if (slashQuery === null) {
+      setSlashSkills(null);
+      setSlashIndex(0);
+      return;
+    }
+    if (slashSkills === null && props.sessionId) {
+      sessionSkills(props.sessionId, props.workspace)
+        .then((all) => setSlashSkills(all.filter((s) => s.enabled)))
+        .catch(() => setSlashSkills([]));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slashQuery === null]);
+  const pickSkill = (s: SessionSkillRow) => {
+    setPendingSkill(s);
+    setText("");
+    textareaRef.current?.focus();
+  };
   const [dragging, setDragging] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [dictation, setDictation] = useState<DictationStatus | null>(null);
@@ -129,6 +164,7 @@ export function Composer(props: Props) {
   useEffect(() => {
     setText("");
     setAttachments([]);
+    setPendingSkill(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.resetKey]);
 
@@ -255,19 +291,51 @@ export function Composer(props: Props) {
   const needsModel = props.modelReady === false;
 
   const submit = () => {
+    // While the "/" popup is open the draft is a query, not a message — never send it.
+    if (slashQuery !== null) return;
     const t = text.trim();
-    if ((!t && attachments.length === 0) || props.running || dictation?.recording || dictationBusy) return;
+    if (
+      (!t && attachments.length === 0 && !pendingSkill) ||
+      props.running ||
+      dictation?.recording ||
+      dictationBusy
+    )
+      return;
     // No model connected: keep the draft (don't drop it) and send the user to setup instead.
     if (needsModel) {
       props.onConnectModel?.();
       return;
     }
-    props.onSend(t, attachments);
+    props.onSend(t, attachments, pendingSkill?.name);
     setText("");
     setAttachments([]);
+    setPendingSkill(null);
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    if (slashQuery !== null) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashIndex((i) => Math.min(i + 1, Math.max(slashMatches.length - 1, 0)));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setText("");
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        const chosen = slashMatches[slashIndex];
+        if (chosen) pickSkill(chosen);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
@@ -362,6 +430,23 @@ export function Composer(props: Props) {
         </div>
       )}
 
+      {/* Picked skill chip — removable; the name rides the send as its own field. */}
+      {pendingSkill && (
+        <div className="max-w-3xl mx-auto mb-1.5" data-testid="skill-chip">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-2.5 py-1 text-[12px]">
+            <span className="text-accent font-medium">/{pendingSkill.name}</span>
+            <span className="text-faint truncate max-w-[240px]">{pendingSkill.description}</span>
+            <button
+              className="opacity-60 hover:opacity-100"
+              aria-label="Remove skill"
+              onClick={() => setPendingSkill(null)}
+            >
+              ✕
+            </button>
+          </span>
+        </div>
+      )}
+
       {/* Attachments preview — a strip ABOVE the input box (mock/Claude-style). */}
       {attachments.length > 0 && (
         <div className="max-w-3xl mx-auto mb-1.5 flex flex-wrap gap-2">
@@ -387,6 +472,37 @@ export function Composer(props: Props) {
           if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
         }}
       >
+        {/* "/" force-run popup — in-flow above the textarea; rows are the session's
+            effective menu only (muted/disabled skills never appear). */}
+        {slashQuery !== null && (
+          <div className="px-2 pt-2" data-testid="skill-popup" role="listbox" aria-label="Skills">
+            {slashSkills === null ? (
+              <div className="px-2 py-1.5 text-[12px] text-faint">Loading skills…</div>
+            ) : slashMatches.length === 0 ? (
+              <div className="px-2 py-1.5 text-[12px] text-faint">No matching skills.</div>
+            ) : (
+              slashMatches.map((s, i) => (
+                <button
+                  key={s.name}
+                  role="option"
+                  aria-selected={i === slashIndex}
+                  className={
+                    "w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-lg " +
+                    (i === slashIndex ? "bg-paper" : "hover:bg-paper")
+                  }
+                  onMouseEnter={() => setSlashIndex(i)}
+                  onClick={() => pickSkill(s)}
+                >
+                  <span className="text-[13px] font-medium text-accent shrink-0">/{s.name}</span>
+                  <span className="text-[12px] text-faint truncate flex-1">{s.description}</span>
+                  <span className="text-[10.5px] px-1.5 py-0.5 rounded-full border border-line text-faint shrink-0">
+                    {s.scope}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           className="w-full block px-3.5 pt-3.5 pb-1.5 text-[14.5px]"

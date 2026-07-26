@@ -88,6 +88,10 @@ export function humanizeTool(name: string, args: any): HumanLine {
     }
     case "explore":
       return { pre: "Sent a sub-agent to explore — ", obj: `“${trunc(String(a.task ?? a.prompt ?? ""), 60)}”` };
+    case "load_skill":
+      // SKILLS-SPEC §4.1 #4 — the trust line: the transcript always shows the moment a
+      // skill's instructions were picked up, model-invoked or forced via /skill.
+      return { pre: "Used skill: ", obj: String(a.name ?? "") };
     case "ask_user":
       return { pre: "Asked you a question" };
     case "propose_plan":
