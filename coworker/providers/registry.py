@@ -8,8 +8,9 @@ model string and builds (and caches) its client from the matching SecretStore pr
 
 Today: `openai` (the default, with an optional custom endpoint that covers Azure OpenAI's
 `/openai/v1` and any OpenAI-compliant gateway), `anthropic` (native Messages API via
-`AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), and `ollama`
-(local, OpenAI-compatible `/v1`). Bedrock/Vertex auth for Claude is future work.
+`AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `ollama`
+(local, native API), `local_llm` (local, OpenAI-compatible `/v1`), and the vendor/
+reseller compat slots. Bedrock/Vertex auth for Claude is future work.
 """
 
 from __future__ import annotations
@@ -333,6 +334,14 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="accounts/fireworks/models/glm-5p2",
         env_key="FIREWORKS_API_KEY",
     ),
+    _compat(
+        "local_llm",
+        "Local LLM Server",
+        base_url="http://127.0.0.1:8000/v1",
+        recommended_model="custom-model",
+        env_key="LOCAL_LLM_API_KEY",
+        endpoint_help="Prefix the base URL with `http://` (e.g. `http://127.0.0.1:8000/v1`). Your OpenAI-compatible local server must be running.",
+    ),
     ProviderDescriptor(
         name="ollama",
         title="Ollama (local models)",
@@ -390,6 +399,8 @@ def detect_provider(api_key: str) -> Optional[str]:
         return "gemini"
     if key.startswith(("sk-", "sk_")):
         return "openai"
+    if key.startswith("local-"):
+        return "local_llm"
     return None
 
 

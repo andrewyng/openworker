@@ -29,6 +29,7 @@ export const KEY_HELP: Record<string, { url: string; label: string }> = {
   qwen: { url: "https://modelstudio.console.alibabacloud.com", label: "alibabacloud.com" },
   minimax: { url: "https://platform.minimax.io", label: "platform.minimax.io" },
   xai: { url: "https://console.x.ai", label: "console.x.ai" },
+  local_llm: { url: "", label: "" },
 };
 
 export type Verify = { state: "idle" | "testing" | "ok" | "error"; msg?: string };
@@ -394,7 +395,7 @@ export function ProviderForm({
         );
       })}
 
-      {info?.needs_key && KEY_HELP[sel] && (
+      {info?.needs_key && KEY_HELP[sel] && KEY_HELP[sel].url && (
         <p className="text-[11.5px] text-faint mt-2">
           No key yet?{" "}
           <button
@@ -404,6 +405,11 @@ export function ProviderForm({
             Create one at {KEY_HELP[sel].label} ↗
           </button>{" "}
           — takes about a minute.
+        </p>
+      )}
+      {sel === "local_llm" && (
+        <p className="text-[11.5px] text-faint mt-2">
+          Use any API key (e.g. <code>local-llm</code>). Your local server must be running at the endpoint above.
         </p>
       )}
       {info && !info.needs_key && (

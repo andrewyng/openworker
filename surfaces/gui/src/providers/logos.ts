@@ -9,6 +9,7 @@ import anthropic from "./logos/anthropic.svg";
 import openai from "./logos/openai.svg";
 import gemini from "./logos/gemini.svg";
 import ollama from "./logos/ollama.svg";
+import local_llm from "./logos/local_llm.svg";
 import fireworks from "./logos/fireworks.svg";
 import together from "./logos/together.svg";
 import zai from "./logos/zai.svg";
@@ -26,6 +27,7 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   gemini,
   meta,
   ollama,
+  local_llm,
   fireworks,
   together,
   zai,
@@ -43,6 +45,7 @@ export const PROVIDER_ORDER = [
   "gemini",
   "meta",
   "ollama",
+  "local_llm",
   "fireworks",
   "together",
   "zai",
