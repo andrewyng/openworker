@@ -881,7 +881,13 @@ class SessionManager:
         loop = asyncio.get_running_loop()
         effective: Optional[set[str]] = None  # computed lazily, once
         out: list[Any] = []
-        for server in load_mcp_servers(ws, secrets=self.secrets):
+        # Workspace `.coworker/mcp.json` is process provenance (stdio spawn at session
+        # open). Gate it behind the same WorkspaceTrustStore consent as
+        # repository `allowed_commands` — see #213.
+        workspace_trusted = bool(ws and self.workspace_trust.is_trusted(ws))
+        for server in load_mcp_servers(
+            ws, secrets=self.secrets, workspace_trusted=workspace_trusted
+        ):
             if not server.enabled:
                 continue
             if server.auth == "oauth" and not mcp_oauth.has_tokens(
@@ -997,7 +1003,15 @@ class SessionManager:
         """Connect one server NOW — for OAuth servers this may open the browser and wait
         for the loopback callback, so callers run it as a background task and watch
         list_mcp for the status flip."""
-        for server in load_mcp_servers(self.default_workspace, secrets=self.secrets):
+        workspace_trusted = bool(
+            self.default_workspace
+            and self.workspace_trust.is_trusted(self.default_workspace)
+        )
+        for server in load_mcp_servers(
+            self.default_workspace,
+            secrets=self.secrets,
+            workspace_trusted=workspace_trusted,
+        ):
             if server.name != name:
                 continue
             self._mcp_authorizing.add(name)
@@ -1075,7 +1089,15 @@ class SessionManager:
 
     async def mcp_tools(self, name: str) -> dict[str, Any]:
         """Connect one server and list its tools (name + description)."""
-        for server in load_mcp_servers(self.default_workspace, secrets=self.secrets):
+        workspace_trusted = bool(
+            self.default_workspace
+            and self.workspace_trust.is_trusted(self.default_workspace)
+        )
+        for server in load_mcp_servers(
+            self.default_workspace,
+            secrets=self.secrets,
+            workspace_trusted=workspace_trusted,
+        ):
             if server.name == name:
                 try:
                     conn = await self.mcp.ensure(server)
@@ -1090,6 +1112,7 @@ class SessionManager:
                     ],
                 }
         return {"name": name, "ok": False, "error": "unknown server", "tools": []}
+
 
     async def reload_mcp(self) -> dict[str, Any]:
         """Drop live MCP connections so new sessions reconnect with fresh config."""
