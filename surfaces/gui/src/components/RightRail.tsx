@@ -42,6 +42,7 @@ interface Props {
   refreshKey: number;
   toolNames: string[];
   tools: string[];
+  skills: string[];
   todo: TodoItem[];
   running: boolean;
   // Fires when a full artifact preview opens/closes, so the app can auto-collapse the left nav
@@ -66,6 +67,7 @@ export function RightRail({
   refreshKey,
   toolNames,
   tools,
+  skills,
   todo,
   running,
   onPreviewChange,
@@ -171,6 +173,8 @@ export function RightRail({
 
           <LoadedToolsSection tools={tools} />
 
+          <LoadedSkillsSection skills={skills} />
+
           {showArtifacts && (
           <RailSection
             title={`Artifacts${artifacts.length ? ` (${artifacts.length})` : ""}`}
@@ -272,6 +276,21 @@ function LoadedToolsSection({ tools }: { tools: string[] }) {
         <div className="tool-list-item" key={name}>
           <span className="tool-list-dot" />
           <span className="tool-list-name">{name}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LoadedSkillsSection({ skills }: { skills: string[] }) {
+  const unique = Array.from(new Set(skills));
+  if (!unique.length) return <div className="rail-muted">No skills loaded.</div>;
+  return (
+    <div className="skill-list">
+      {unique.map((name) => (
+        <div className="skill-list-item" key={name}>
+          <span className="skill-list-dot" />
+          <span className="skill-list-name">{name}</span>
         </div>
       ))}
     </div>
