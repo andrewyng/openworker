@@ -64,6 +64,9 @@ const SETTINGS = {
     "ark:dola-seed-2-1-turbo-260628": "Dola Seed 2.1 Turbo · BytePlus Ark",
     "ark-agent-plan-cn:doubao-seed-evolving": "Doubao Seed Evolving · Volcengine Agent Plan",
     "ark-agent-plan-cn:doubao-seed-2.1-turbo": "Doubao Seed 2.1 Turbo · Volcengine Agent Plan",
+    "venice:zai-org-glm-5-2": "GLM 5.2 · via Venice",
+    "venice:z-ai-glm-5v-turbo": "GLM 5V Turbo · via Venice",
+    "venice:qwen-3-7-max": "Qwen 3.7 Max · via Venice",
   },
   // Context windows (subset — mirrors /v1/settings.model_context_windows); drives the
   // composer usage chip's context-fill meter.
@@ -389,6 +392,8 @@ const PROVIDERS = [
   // have independent credentials, endpoints, and strict curated model lists.
   { name: "ark", title: "BytePlus Ark", needs_key: true, blurb: "Uses BytePlus Ark's OpenAI-compatible Responses API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "BytePlus Ark API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "BytePlus Ark's Asia Pacific endpoint.", placeholder: "https://ark.ap-southeast.bytepluses.com/api/v3", default: "https://ark.ap-southeast.bytepluses.com/api/v3" }], configured: false, values: {}, suggested_models: ["dola-seed-evolving-latest-version", "dola-seed-2-1-turbo-260628"], key_set_at: null, last_used_at: null },
   { name: "ark-agent-plan-cn", title: "Volcengine Ark Agent Plan", needs_key: true, blurb: "Uses Volcengine Ark Agent Plan's OpenAI-compatible Responses API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "Volcengine Ark Agent Plan API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Volcengine Ark Agent Plan's China (Beijing) endpoint.", placeholder: "https://ark.cn-beijing.volces.com/api/plan/v3", default: "https://ark.cn-beijing.volces.com/api/plan/v3" }], configured: false, values: {}, suggested_models: ["doubao-seed-evolving", "doubao-seed-2.1-turbo"], key_set_at: null, last_used_at: null },
+  // venice: current agent-capable models through Venice's OpenAI-compatible API.
+  { name: "venice", title: "Venice AI", needs_key: true, blurb: "Uses Venice AI's OpenAI-compatible API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "Venice AI API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Prefilled with Venice's official OpenAI-compatible endpoint.", placeholder: "https://api.venice.ai/api/v1", default: "https://api.venice.ai/api/v1" }], configured: false, values: {}, suggested_models: ["zai-org-glm-5-2", "z-ai-glm-5v-turbo", "qwen-3-7-max"], key_set_at: null, last_used_at: null },
   // ollama: keyless local provider — "configured" without proving anything runs; the
   // onboarding gallery shows "No key needed" and its form is endpoint + Detect (§39).
   { name: "ollama", title: "Ollama (local models)", needs_key: false, kind: "local", fields: [{ key: "base_url", label: "Endpoint", secret: false, required: false, help: "", placeholder: "http://127.0.0.1:11434", default: "http://127.0.0.1:11434" }], configured: true, values: {}, suggested_models: ["qwen3-coder:30b"], key_set_at: null, last_used_at: null },

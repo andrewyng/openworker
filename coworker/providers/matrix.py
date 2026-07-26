@@ -37,6 +37,9 @@ _AGENTIC = ModelCapabilities(
 _AGENTIC_VISION = ModelCapabilities(
     tools=True, vision=True, pdf=True, parallel_tool_calls=True, streaming=True
 )
+_AGENTIC_COMPAT_VISION = ModelCapabilities(
+    tools=True, vision=True, parallel_tool_calls=True, streaming=True
+)
 
 
 @dataclass(frozen=True)
@@ -482,6 +485,16 @@ MATRIX: dict[str, ModelEntry] = {
             tools=True, vision=False, parallel_tool_calls=False, streaming=True
         ),
         131_072,
+    ),
+    # Venice: GET api.venice.ai/api/v1/models?type=text (public listing, read 2026-11-12)
+    # reports supportsFunctionCalling for all three and availableContextTokens 1,000,000
+    # (GLM 5.2, Qwen 3.7 Max) and 200,000 (GLM 5V Turbo); only the last two take images.
+    "venice:zai-org-glm-5-2": ModelEntry("GLM 5.2 · via Venice", _AGENTIC, 1_000_000),
+    "venice:z-ai-glm-5v-turbo": ModelEntry(
+        "GLM 5V Turbo · via Venice", _AGENTIC_COMPAT_VISION, 200_000
+    ),
+    "venice:qwen-3-7-max": ModelEntry(
+        "Qwen 3.7 Max · via Venice", _AGENTIC_COMPAT_VISION, 1_000_000
     ),
 }
 

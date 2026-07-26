@@ -84,13 +84,16 @@ test("Models: provider gallery states; vendor form previews models", async ({ pa
   // cards come first in their group, the rest sit quieter behind them; local servers group apart.
   await expect(page.getByTestId("set-provider-openai")).toContainText("✓ Connected · 4 models");
   await expect(page.getByTestId("set-provider-anthropic")).toContainText("✓ Connected");
-  await expect(page.getByTestId("set-provider-zai")).toContainText("Not set up");
+  await expect(page.getByTestId("set-provider-venice")).toContainText("Not set up");
   await expect(page.getByTestId("set-provider-ollama")).toContainText("No key needed");
   await expect(page.getByTestId("provider-group-local")).toContainText("Ollama");
+  // Six API-key providers fit under the fold; the fixtures have seven, so the last by title
+  // (Z AI) sits behind a "Show 1 more" line that expands the group in place.
+  await expect(page.getByTestId("set-provider-zai")).toHaveCount(0);
+  await expect(page.getByTestId("provider-more-api_key")).toContainText("1 more");
+  await page.getByTestId("provider-more-api_key").click();
+  await expect(page.getByTestId("set-provider-zai")).toContainText("Not set up");
   await expect(page.getByTestId("set-provider-zai")).not.toHaveClass(/bg-panel/);
-  // Six API-key providers fit under the fold; the "Show N more" line only appears past six.
-
-  await expect(page.getByTestId("provider-more-api_key")).toHaveCount(0);
   await expect(page.getByTestId("pick-model-btn")).toBeVisible();
   await expect(page.getByTestId("provider-search")).toBeVisible();
 
@@ -112,6 +115,12 @@ test("Models: provider gallery states; vendor form previews models", async ({ pa
   // Back to the gallery via the crumb.
   await page.getByTestId("set-back").click();
   await expect(page.getByTestId("set-provider-openai")).toBeVisible();
+
+  // Venice uses its own key profile and current GLM defaults.
+  await page.getByTestId("set-provider-venice").click();
+  await expect(page.getByText(/Uses Venice AI's OpenAI-compatible API/)).toBeVisible();
+  await expect(page.getByTestId("model-preview")).toContainText("GLM 5.2 · via Venice");
+  await expect(page.getByTestId("model-preview")).toContainText("GLM 5V Turbo · via Venice");
 });
 
 test("Models: BytePlus and Volcengine Ark stay visually and operationally separate", async ({ page }) => {

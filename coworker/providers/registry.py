@@ -311,11 +311,11 @@ def _build_openrouter_account(profile: dict[str, Any], secrets: Any) -> Provider
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
-    Kimi, MiniMax, Qwen, xAI, Mistral, Novita, Upstage). The key is resolved from the vendor's OWN
-    profile (or its env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a
-    configured OpenAI key is never silently sent to a different vendor's endpoint. Missing key ⇒
-    fail fast with a vendor-named error (these are only built on demand, when one of their models
-    is selected).
+    Kimi, MiniMax, Qwen, xAI, Mistral, Novita, Upstage, Venice). The key is resolved from the
+    vendor's OWN profile (or its env var) — deliberately NOT from the OpenAI env/SecretStore
+    fallback, so a configured OpenAI key is never silently sent to a different vendor's endpoint.
+    Missing key ⇒ fail fast with a vendor-named error (these are only built on demand, when one of
+    their models is selected).
     """
 
     def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -967,6 +967,14 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="zai-org/GLM-5.2",
         env_key="SILICONFLOW_API_KEY",
         endpoint_help="Prefilled with SiliconFlow's international endpoint. China mainland: https://api.siliconflow.cn/v1 (keys from cloud.siliconflow.cn).",
+    ),
+    _compat(
+        "venice",
+        "Venice AI",
+        base_url="https://api.venice.ai/api/v1",
+        recommended_model="zai-org-glm-5-2",
+        env_key="VENICE_API_KEY",
+        endpoint_help="Prefilled with Venice's official OpenAI-compatible endpoint.",
     ),
     ProviderDescriptor(
         name="ollama",

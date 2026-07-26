@@ -40,6 +40,7 @@ import xai from "./logos/xai.svg";
 import meta from "./logos/meta.svg";
 import nebius from "./logos/nebius.svg";
 import upstage from "./logos/upstage.svg";
+import venice from "./logos/venice.svg";
 
 export const PROVIDER_LOGOS: Record<string, string> = {
   anthropic,
@@ -71,6 +72,7 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   atlascloud,
   novita,
   groq,
+  venice,
   zai,
   kimi,
   deepseek,
@@ -105,6 +107,7 @@ export const PROVIDER_ORDER = [
   "openrouter-account",
   "fireworks",
   "together",
+  "venice",
   "zai",
   "kimi",
   "deepseek",
