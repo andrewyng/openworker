@@ -19,6 +19,7 @@ from coworker.web.providers import (
     BraveProvider,
     DuckDuckGoProvider,
     TavilyProvider,
+    SerperProvider,
     WebSearchProvider,
 )
 
@@ -79,6 +80,9 @@ def test_build_provider_third_party_requires_key():
         build_provider("tavily")  # no key
     assert isinstance(build_provider("tavily", "tvly-x"), TavilyProvider)
     assert isinstance(build_provider("brave", "brv-x"), BraveProvider)
+    with pytest.raises(ValueError):
+        build_provider("serper")  # no key
+    assert isinstance(build_provider("serper", "serp-x"), SerperProvider)
 
 
 def test_tool_surfaces_missing_key_error(tmp_path):
@@ -152,3 +156,44 @@ class _StubProvider:
         from coworker.providers.base import StreamChunk
 
         yield StreamChunk(turn=self.complete())
+
+
+def test_serper_search_calls_api(monkeypatch):
+    from unittest.mock import MagicMock
+    import httpx
+    from coworker.web.providers import SerperProvider
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "organic": [
+            {"title": "Result 1", "link": "https://r1", "snippet": "Snippet 1"},
+            {"title": "Result 2", "link": "https://r2", "snippet": "Snippet 2"},
+        ]
+    }
+    
+    post_calls = []
+
+    def mock_post(url, headers, json, timeout):
+        post_calls.append((url, headers, json, timeout))
+        return mock_resp
+
+    monkeypatch.setattr(httpx, "post", mock_post)
+
+    provider = SerperProvider("test-key")
+    results = provider.search("python news", max_results=2)
+
+    assert len(results) == 2
+    assert results[0].title == "Result 1"
+    assert results[0].url == "https://r1"
+    assert results[0].snippet == "Snippet 1"
+    assert results[1].title == "Result 2"
+    assert results[1].url == "https://r2"
+    assert results[1].snippet == "Snippet 2"
+
+    assert len(post_calls) == 1
+    url, headers, json_body, timeout = post_calls[0]
+    assert url == "https://google.serper.dev/search"
+    assert headers["X-API-KEY"] == "test-key"
+    assert headers["Content-Type"] == "application/json"
+    assert json_body == {"q": "python news", "num": 2}
+

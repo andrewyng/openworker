@@ -108,10 +108,41 @@ class BraveProvider(WebSearchProvider):
         ]
 
 
+class SerperProvider(WebSearchProvider):
+    name = "serper"
+    requires_key = True
+
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
+
+    def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        import httpx
+
+        resp = httpx.post(
+            "https://google.serper.dev/search",
+            headers={
+                "X-API-KEY": self.api_key,
+                "Content-Type": "application/json",
+            },
+            json={"q": query, "num": max_results},
+            timeout=_TIMEOUT,
+        )
+        data = resp.json()
+        return [
+            SearchResult(
+                title=r.get("title", ""),
+                url=r.get("link", ""),
+                snippet=r.get("snippet", ""),
+            )
+            for r in data.get("organic", [])
+        ]
+
+
 _PROVIDERS = {
     "duckduckgo": DuckDuckGoProvider,
     "tavily": TavilyProvider,
     "brave": BraveProvider,
+    "serper": SerperProvider,
 }
 
 

@@ -30,7 +30,7 @@ const PERMISSION_OPTIONS: Option[] = [
 // goes stale and silently offers ids the backend never confirmed (caught 2026-07-21).
 
 // Drop the provider prefix for display (anthropic:claude-opus-4-8 → claude-opus-4-8); full id on hover.
-const shortModel = (m: string) => (m.includes(":") ? m.split(":").slice(1).join(":") : m);
+const shortModel = (m?: string) => (m && m.includes(":") ? m.split(":").slice(1).join(":") : m || "");
 
 // Identify an attachment by name + payload size so duplicates (e.g. the same file picked twice,
 // or a prefill applied twice) collapse to one chip.
@@ -323,10 +323,12 @@ export function Composer(props: Props) {
   const modelsLoaded = !!(props.models && props.models.length);
   const modelOptions: Option[] = Array.from(
     new Set([props.model, ...(props.models || [])]),
-  ).map((m) => ({
-    value: m,
-    label: props.modelLabels?.[m] || shortModel(m),
-  }));
+  )
+    .filter(Boolean)
+    .map((m) => ({
+      value: m,
+      label: props.modelLabels?.[m] || shortModel(m),
+    }));
 
   const iconBtn =
     "w-7 h-7 grid place-items-center rounded-md text-muted hover:text-ink hover:bg-paper shrink-0";
@@ -516,8 +518,15 @@ export function Composer(props: Props) {
 
           {/* send / stop */}
           {props.running ? (
-            <button className="btn danger" onClick={props.onInterrupt}>
-              ⏹ Stop
+            <button
+              className="w-7 h-7 rounded-full grid place-items-center shrink-0 bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 transition-colors"
+              onClick={props.onInterrupt}
+              title="Stop running"
+              aria-label="Stop"
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="4" y="4" width="16" height="16" rx="2" />
+              </svg>
             </button>
           ) : (
             <button
