@@ -13,7 +13,7 @@ import { AccessSection } from "./AccessSection";
 import { Icon } from "./Icon";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
 
-type Panel = "progress" | "tools" | "artifacts";
+type Panel = "progress" | "tools" | "skills" | "artifacts";
 
 // Quiet file-type icons for the artifact list (the colored kind pills read as noisy).
 function kindIcon(kind: string): "file" | "fileCode" | "image" | "table" {
@@ -83,6 +83,7 @@ export function RightRail({
   const [open, setOpen] = useState<Record<Panel, boolean>>({
     progress: true,
     tools: true,
+    skills: true,
     artifacts: true,
   });
   const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
@@ -171,9 +172,21 @@ export function RightRail({
             <ProgressSummary running={running} toolNames={toolNames} todo={todo} />
           </RailSection>
 
-          <LoadedToolsSection tools={tools} />
+          <RailSection
+            title={`Tools${tools.length ? ` (${new Set(tools).size})` : ""}`}
+            open={open.tools}
+            onToggle={() => setOpen({ ...open, tools: !open.tools })}
+          >
+            <LoadedToolsSection tools={tools} />
+          </RailSection>
 
-          <LoadedSkillsSection skills={skills} />
+          <RailSection
+            title={`Skills${skills.length ? ` (${new Set(skills).size})` : ""}`}
+            open={open.skills}
+            onToggle={() => setOpen({ ...open, skills: !open.skills })}
+          >
+            <LoadedSkillsSection skills={skills} />
+          </RailSection>
 
           {showArtifacts && (
           <RailSection
