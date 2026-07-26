@@ -47,6 +47,7 @@ class PersonaEntry:
     # verbatim; builtins set it at registration to match their family/needs_workspace.
     workspace: str = "deliverable"
     tools: list[str] = field(default_factory=list)
+    rules: list[str] = field(default_factory=list)
     default_surfaced: bool = (
         True  # whether it shows in the picker before any user choice
     )
@@ -55,9 +56,23 @@ class PersonaEntry:
 
     def agent(self) -> Agent:
         if self._builder is not None:
-            return self._builder()
-        assert self.manifest is not None
-        return self.manifest.to_agent()
+            agt = self._builder()
+        else:
+            assert self.manifest is not None
+            agt = self.manifest.to_agent()
+
+        rules_to_load = self.rules
+        if self.manifest and self.manifest.rules:
+            rules_to_load = self.manifest.rules
+
+        if rules_to_load:
+            rules_dir = Path(__file__).parent / "rules"
+            for rule in rules_to_load:
+                rule_path = rules_dir / f"{rule}.md"
+                if rule_path.exists():
+                    agt.system_prompt += f"\n\n{rule_path.read_text(encoding='utf-8')}"
+                    
+        return agt
 
 
 class PersonaRegistry:
@@ -99,6 +114,7 @@ class PersonaRegistry:
         needs_workspace,
         family,
         tools,
+        rules=None,
         workspace="deliverable",
         default_surfaced=True,
     ) -> None:
@@ -112,6 +128,7 @@ class PersonaRegistry:
             family=family,
             workspace=workspace,
             tools=list(tools),
+            rules=list(rules or []),
             default_surfaced=default_surfaced,
             _builder=builder,
         )
@@ -129,6 +146,7 @@ class PersonaRegistry:
             True,
             "knowledge",
             COWORK_CAPABILITIES,
+            rules=["common"],
             workspace="deliverable",
         )
         self._register_builder(
@@ -140,6 +158,7 @@ class PersonaRegistry:
             True,
             "code",
             CODE_CAPABILITIES,
+            rules=["common", "testing", "security"],
             workspace="git",
         )
         self._register_builder(

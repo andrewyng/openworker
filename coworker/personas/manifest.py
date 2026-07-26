@@ -62,6 +62,7 @@ class PersonaManifest:
     default_permission_mode: str = "interactive"
     recommended_models: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
+    rules: list[str] = field(default_factory=list)
     mcp: list[str] = field(default_factory=list)
     recommends: list[Recommendation] = field(default_factory=list)
     builtin: bool = False
