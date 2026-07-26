@@ -127,10 +127,13 @@ def _build_gemini(profile: dict[str, Any], secrets: Any) -> ProviderClient:
 
 
 def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
-    # Ollama's OpenAI-compatible endpoint ignores the key but the SDK requires a non-empty
-    # string, so we pass a placeholder. `base_url` comes from the stored profile (or the default).
+    # Stock Ollama ignores the key but the SDK requires a non-empty string, so we fall back to
+    # a placeholder. An optional stored key is passed through for local OpenAI-compatible
+    # servers that DO authenticate (oMLX, a gated proxy in front of `ollama serve`).
+    # `base_url` comes from the stored profile (or the default).
     base_url = _normalize_ollama_url((profile or {}).get("base_url"))
-    return OpenAIProvider(api_key="ollama", base_url=base_url)
+    api_key = ((profile or {}).get("api_key") or "").strip() or "ollama"
+    return OpenAIProvider(api_key=api_key, base_url=base_url)
 
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
@@ -346,6 +349,13 @@ DESCRIPTORS: list[ProviderDescriptor] = [
                 placeholder=DEFAULT_OLLAMA_URL,
                 help="Where `ollama serve` is listening. The OpenAI-compatible /v1 path is added automatically.",
             ),
+            ProviderField(
+                "api_key",
+                "API key (optional)",
+                secret=True,
+                required=False,
+                help="Only for local OpenAI-compatible servers that require auth (e.g. oMLX or a proxy in front of Ollama). Leave blank for stock Ollama.",
+            ),
         ],
         build=_build_ollama,
         # Reliable native tool-calling + strong coding quality (verified). Pull with
@@ -423,7 +433,12 @@ def verify_provider_key(
             )
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
-            resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
+            # Stock Ollama needs no auth; send Bearer only when the user supplied a key, so
+            # an authenticated local server can be tested the same way.
+            ollama_kwargs: dict[str, Any] = {"timeout": timeout}
+            if key:
+                ollama_kwargs["headers"] = {"Authorization": f"Bearer {key}"}
+            resp = httpx.get(base.rstrip("/") + "/models", **ollama_kwargs)
         else:  # openai + any OpenAI-compatible endpoint (Azure, OpenRouter, vendors, vLLM…)
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""

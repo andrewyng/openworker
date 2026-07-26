@@ -331,13 +331,19 @@ export function ProviderForm({
       {info?.blurb && <p className="text-[11.5px] text-faint mt-1">{info.blurb}</p>}
 
       {(info?.fields || []).map((f) => {
-        const keyed = (info?.fields || []).some((x) => x.secret);
+        // "Keyed" means the provider REQUIRES a key (needs_key) — not merely that it has a
+        // secret field. Keyless providers may expose an optional key (Ollama, for local
+        // servers behind auth) and must keep their endpoint-first layout and Detect button.
+        const keyed = !!info?.needs_key;
         // A keyed provider's base_url is an expert option — it renders BELOW the key-help
         // line as its own advanced section (owner nit 2026-07-19), not inside the loop.
         if (f.key === "base_url" && keyed) return null;
-        const testable =
-          (f.secret && f.key === (info?.fields || []).find((x) => x.secret)?.key) ||
-          (!keyed && f.key === (info?.fields || [])[0]?.key);
+        // Exactly one field carries Test/Detect: the key for keyed providers, the first
+        // field (the endpoint) otherwise.
+        const primaryKey = keyed
+          ? (info?.fields || []).find((x) => x.secret)?.key
+          : (info?.fields || [])[0]?.key;
+        const testable = f.key === primaryKey;
         return (
           <div key={f.key}>
             <label className={label}>{f.label}</label>
@@ -389,7 +395,11 @@ export function ProviderForm({
                 </button>
               )}
             </div>
-            {f.help && !f.secret && <p className="text-[11.5px] text-faint mt-1">{f.help}</p>}
+            {/* Keyed providers get KEY_HELP below instead; a keyless provider's optional
+                key still needs its own hint. */}
+            {f.help && (!f.secret || !info?.needs_key) && (
+              <p className="text-[11.5px] text-faint mt-1">{f.help}</p>
+            )}
           </div>
         );
       })}
@@ -408,7 +418,8 @@ export function ProviderForm({
       )}
       {info && !info.needs_key && (
         <p className="text-[11.5px] text-faint mt-2">
-          No API key needed — Ollama runs models on this Mac.{" "}
+          No API key needed — Ollama runs models on this machine. Add one only if your local
+          server requires auth.{" "}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
             onClick={() => openExternal("https://ollama.com/download")}
@@ -422,7 +433,7 @@ export function ProviderForm({
           with enough separation to read as its own advanced row — no explainer copy
           (owner calls 2026-07-18 + 2026-07-19). */}
       {(() => {
-        const keyed = (info?.fields || []).some((x) => x.secret);
+        const keyed = !!info?.needs_key;
         const ep = keyed ? (info?.fields || []).find((f) => f.key === "base_url") : undefined;
         if (!ep) return null;
         if (!ps.showEndpoint)
