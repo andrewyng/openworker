@@ -199,7 +199,7 @@ export function Composer(props: Props) {
                   // 1.5 seconds of silence after speaking -> auto stop and send
                   silenceStartRef.current = null;
                   hasSpokenRef.current = false;
-                  void toggleDictation(true);
+                  void toggleDictation();
                 }
               }
             }
