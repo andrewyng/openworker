@@ -11,9 +11,9 @@ falls back to the conservative heuristics in ``capabilities.py`` at their own ri
 degraded results. Ids verified against vendor/reseller catalogs on 2026-07-04; refresh the
 reseller rows when catalogs rotate (they rename on every model generation).
 
-Resellers: Together + Fireworks for now. TODO: add Groq and OpenRouter entries here AND their
-descriptors in ``registry.py`` once the current provider surface is tested — deliberately
-deferred to bound how much needs verifying at once.
+Resellers: Together, Fireworks + Nebius for now. TODO: add Groq and OpenRouter entries here
+AND their descriptors in ``registry.py`` once the current provider surface is tested —
+deliberately deferred to bound how much needs verifying at once.
 """
 
 from __future__ import annotations
@@ -112,6 +112,12 @@ MATRIX: dict[str, ModelEntry] = {
     "fireworks:accounts/fireworks/models/llama4-maverick-instruct-basic": ModelEntry(
         "Llama 4 Maverick · via Fireworks"
     ),
+    # Nebius Token Factory (ids verified against /v1/models + a live tool-call round-trip
+    # on 2026-07-26; it keeps each lab's own namespace, like Together).
+    "nebius:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Nebius"),
+    "nebius:deepseek-ai/DeepSeek-V4-Pro": ModelEntry("DeepSeek V4 Pro · via Nebius"),
+    "nebius:moonshotai/Kimi-K2.6": ModelEntry("Kimi K2.6 · via Nebius"),
+    "nebius:Qwen/Qwen3.5-397B-A17B": ModelEntry("Qwen3.5 397B · via Nebius"),
 }
 
 
