@@ -22,6 +22,7 @@ export const KEY_HELP: Record<string, { url: string; label: string }> = {
   gemini: { url: "https://aistudio.google.com/apikey", label: "aistudio.google.com" },
   fireworks: { url: "https://fireworks.ai/account/api-keys", label: "fireworks.ai" },
   together: { url: "https://api.together.xyz/settings/api-keys", label: "together.xyz" },
+  nebius: { url: "https://tokenfactory.nebius.com/project/api-keys", label: "tokenfactory.nebius.com" },
   zai: { url: "https://z.ai/manage-apikey/apikey-list", label: "z.ai" },
   kimi: { url: "https://platform.moonshot.ai/console/api-keys", label: "platform.moonshot.ai" },
   deepseek: { url: "https://platform.deepseek.com/api_keys", label: "platform.deepseek.com" },
