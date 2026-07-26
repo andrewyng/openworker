@@ -9,8 +9,12 @@ test("mid-session model switch shows the marker and later turns use the new mode
   page,
 }) => {
   await page.goto("/");
-  await page.getByText("Draft the launch note").first().click();
+  
+  // Wait for auto-resume to settle and load the session's empty transcript
+  await page.waitForResponse("**/v1/sessions/*/messages");
+
   const box = page.getByPlaceholder(/Ask the coworker/);
+  await expect(box).toBeVisible();
   await box.fill("hello there");
   await box.press("Enter");
   await expect(page.getByText("Echo: hello there", { exact: false }).first()).toBeVisible();

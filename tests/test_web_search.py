@@ -81,7 +81,8 @@ def test_build_provider_third_party_requires_key():
     assert isinstance(build_provider("brave", "brv-x"), BraveProvider)
 
 
-def test_tool_surfaces_missing_key_error(tmp_path):
+def test_tool_surfaces_missing_key_error(tmp_path, monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     secrets = SecretStore(tmp_path / "secrets.json")
     secrets.put("web_search:default", {"provider": "tavily"})  # no api_key
     out = make_web_search_tool(secrets)(

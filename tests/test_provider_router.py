@@ -368,6 +368,7 @@ def test_set_provider_auto_adds_recommended_when_pulled(tmp_path, monkeypatch):
     monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
     from coworker.server.manager import SessionManager
 
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
     mgr = SessionManager(data_dir=tmp_path)
     monkeypatch.setattr(  # pretend the recommended model is pulled
         mgr,
