@@ -709,6 +709,41 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         available=True,
     ),
     ConnectorDescriptor(
+        name="inwise",
+        title="Inwise",
+        icon="◉",
+        blurb="Search your meetings, track action items, and prep for the next one — needs the free Inwise desktop app.",
+        auth="none",
+        two_way=False,
+        brand_color="#0F738C",
+        logo="inwise",
+        aliases=(
+            "meetings",
+            "meeting notes",
+            "meeting recordings",
+            "transcripts",
+            "action items",
+            "meeting prep",
+            "1:1 agenda",
+        ),
+        # The open-source desktop app's embedded MCP server — loopback-only, no
+        # accounts, no tokens; the app must be running for the connector to work.
+        mcp_url="http://127.0.0.1:43117/mcp",
+        fields=[],
+        instructions=[
+            "Required first: install and open the free open-source Inwise desktop app "
+            "(github.com/Wise-Ai-Org/inwise-opensource). Connecting fails without it.",
+            "In the app, leave Settings → Connect to AI switched on — that's the local "
+            "server this reads from.",
+            "One click connects — no account, no sign-in.",
+            "Keep the app running. The connector reads only what it recorded on this Mac, "
+            "and only while the app is up — including when a scheduled automation runs.",
+            "Reading a full transcript is a separate tool. Everything else is summarized; "
+            "verbatim text goes to your AI provider only when you approve that one.",
+        ],
+        available=True,
+    ),
+    ConnectorDescriptor(
         name="confluence",
         title="Confluence",
         icon="◫",
