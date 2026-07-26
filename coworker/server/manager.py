@@ -1523,6 +1523,11 @@ class SessionManager:
                 val = val.strip()
             if val:
                 profile[f.key] = val
+            elif f.secret:
+                # The GUI masks a saved secret and submits it blank on a re-save (editing the
+                # server URL, re-running Detect). Keep the stored value instead of silently
+                # dropping it; a real rotation always arrives as a non-empty value.
+                continue
             elif not f.required:
                 profile.pop(f.key, None)
         missing = [f.label for f in d.fields if f.required and not profile.get(f.key)]
