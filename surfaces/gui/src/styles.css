@@ -579,6 +579,9 @@ button.btn.danger { color: var(--accent); }
 }
 .rail-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .rail-actions .btn { padding: 6px 9px; font-size: 12px; border-radius: 8px; }
+.tool-list { display: flex; flex-direction: column; gap: 5px; }
+.tool-list-item { display: flex; gap: 7px; align-items: center; font-size: 12.5px; line-height: 1.35; color: var(--muted); }
+.tool-list-dot { width: 5px; height: 5px; border-radius: 999px; background: var(--faint); flex: none; margin-top: 5px; }
 .browser-mini { display: flex; flex-direction: column; gap: 8px; }
 .browser-shot { display: block; width: 100%; max-height: 220px; object-fit: contain; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .artifact-list { display: flex; flex-direction: column; gap: 7px; }

@@ -1584,6 +1584,7 @@ export function App() {
             sessionId={sessionId}
             refreshKey={browserRefreshKey}
             toolNames={items.filter((i) => i.kind === "tool").map((i: any) => i.name)}
+            tools={[...new Set(items.filter((i) => i.kind === "tool").map((i: any) => i.name))]}
             todo={todo}
             running={running}
             onPreviewChange={onArtifactPreview}

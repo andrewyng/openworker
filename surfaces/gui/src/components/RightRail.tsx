@@ -13,7 +13,7 @@ import { AccessSection } from "./AccessSection";
 import { Icon } from "./Icon";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
 
-type Panel = "progress" | "artifacts";
+type Panel = "progress" | "tools" | "artifacts";
 
 // Quiet file-type icons for the artifact list (the colored kind pills read as noisy).
 function kindIcon(kind: string): "file" | "fileCode" | "image" | "table" {
@@ -41,6 +41,7 @@ interface Props {
   sessionId: string;
   refreshKey: number;
   toolNames: string[];
+  tools: string[];
   todo: TodoItem[];
   running: boolean;
   // Fires when a full artifact preview opens/closes, so the app can auto-collapse the left nav
@@ -64,6 +65,7 @@ export function RightRail({
   sessionId,
   refreshKey,
   toolNames,
+  tools,
   todo,
   running,
   onPreviewChange,
@@ -78,6 +80,7 @@ export function RightRail({
 }: Props) {
   const [open, setOpen] = useState<Record<Panel, boolean>>({
     progress: true,
+    tools: true,
     artifacts: true,
   });
   const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
@@ -165,6 +168,8 @@ export function RightRail({
           <RailSection title="Progress" open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
             <ProgressSummary running={running} toolNames={toolNames} todo={todo} />
           </RailSection>
+
+          <LoadedToolsSection tools={tools} />
 
           {showArtifacts && (
           <RailSection
@@ -254,6 +259,21 @@ function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolN
   return (
     <div className="rail-muted">
       For longer multi-step tasks, progress will appear here while OpenWorker plans, uses tools, waits for approval, and produces artifacts.
+    </div>
+  );
+}
+
+function LoadedToolsSection({ tools }: { tools: string[] }) {
+  const unique = Array.from(new Set(tools));
+  if (!unique.length) return <div className="rail-muted">No tools loaded.</div>;
+  return (
+    <div className="tool-list">
+      {unique.map((name) => (
+        <div className="tool-list-item" key={name}>
+          <span className="tool-list-dot" />
+          <span className="tool-list-name">{name}</span>
+        </div>
+      ))}
     </div>
   );
 }
