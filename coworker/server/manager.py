@@ -73,6 +73,7 @@ from ..memory import MemoryStore, Scope, SQLiteMemoryStore
 from ..permissions import Mode
 from ..agents import list_agents as _list_agents
 from ..providers import (
+    LOCAL_DEFAULT_URLS,
     LOCAL_PROVIDERS,
     ProviderClient,
     ProviderRouter,
@@ -1652,8 +1653,6 @@ class SessionManager:
     def _local_root(self, name: str) -> str:
         """Configured (or default) ROOT url for a local runtime, with any `/v1` trimmed — the
         native APIs we probe below hang off the root, not the OpenAI-compatible path."""
-        from ..providers.registry import LOCAL_DEFAULT_URLS
-
         default = LOCAL_DEFAULT_URLS[name]
         profile = self.secrets.get(f"provider:{name}") or {}
         base = (profile.get("base_url") or default).strip().rstrip("/")
@@ -1699,8 +1698,10 @@ class SessionManager:
         """Live list of models pulled into the configured Ollama server (via its native
         `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama isn't
         configured or unreachable — best-effort, never raises."""
-        profile = self.secrets.get("provider:ollama")
-        if not profile:
+        # `is None` (absent), NOT falsiness: connecting a local runtime on its default
+        # endpoint stores an EMPTY profile, and treating that as "never connected" left the
+        # user with a green ✓ and an empty picker.
+        if self.secrets.get("provider:ollama") is None:
             return []
         try:
             import httpx
@@ -1721,8 +1722,7 @@ class SessionManager:
         an id reliably distinguishes the two. That route is beta, so any failure (older build,
         renamed path) falls back to the stable OpenAI-compatible list unfiltered.
         """
-        profile = self.secrets.get("provider:lmstudio")
-        if not profile:
+        if self.secrets.get("provider:lmstudio") is None:  # absent, not merely empty
             return []
         root = self._local_root("lmstudio")
         try:

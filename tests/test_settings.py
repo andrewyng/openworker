@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from coworker.providers import resolve_api_key
 from coworker.secrets import SecretStore
 
@@ -266,6 +268,35 @@ def test_lmstudio_discovery_silent_when_unconfigured(tmp_path, monkeypatch):
     monkeypatch.setattr("httpx.get", boom)
     assert manager._lmstudio_models() == []
     assert manager._ollama_models() == []
+
+
+@pytest.mark.parametrize(
+    "name,default_url",
+    [("ollama", "http://localhost:11434"), ("lmstudio", "http://localhost:1234")],
+)
+def test_connecting_a_local_runtime_on_its_default_endpoint_enables_discovery(
+    tmp_path, monkeypatch, name, default_url
+):
+    """Connecting with the default endpoint stores an EMPTY profile — there is no required
+    field to fill in. Discovery must read that as connected (absent vs empty), or the user
+    gets a green ✓ and an empty picker."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    manager = SessionManager(data_dir=tmp_path / "data")
+    probed: list[str] = []
+    monkeypatch.setattr(
+        "httpx.get", lambda url, **_k: probed.append(url) or (_ for _ in ()).throw(ConnectionError())
+    )
+
+    assert manager._suggested_models(name) == [] and not probed  # unconnected → no probe
+
+    assert manager.set_provider(name, {})["ok"] is True
+    assert manager.secrets.get(f"provider:{name}") == {}  # nothing to store, but present
+    manager._suggested_models(name)
+    assert probed and probed[0].startswith(default_url), (
+        f"connected {name} must be probed at its default endpoint, got {probed}"
+    )
 
 
 def test_connecting_a_local_runtime_selects_a_model_it_actually_has(

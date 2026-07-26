@@ -43,7 +43,9 @@ export const LOCAL_HELP: Record<string, { url: string; label: string; note: stri
   lmstudio: {
     url: "https://lmstudio.ai/download",
     label: "Install LM Studio",
-    note: "No API key needed — LM Studio runs models on this Mac. Start its server first: Developer tab ▸ Start Server.",
+    // The "start the server" instruction lives in the endpoint field's own help text;
+    // repeating it here put the same sentence on screen twice.
+    note: "No API key needed — LM Studio runs models on this Mac.",
   },
 };
 
@@ -172,7 +174,12 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
       setVerify({ state: "error", msg: res.error || "couldn't verify" });
       return false;
     }
-    if (dirty || !info?.configured) await setProvider(sel, fields).catch(() => {});
+    // Keyless providers always save. `configured` is true for them from the very first
+    // render (there is no key to be missing), so the guard below would skip the save for a
+    // user who accepted the default endpoint and typed nothing — leaving no stored profile,
+    // which is exactly what model discovery reads to decide the runtime was opted into.
+    if (dirty || !info?.configured || !info?.needs_key)
+      await setProvider(sel, fields).catch(() => {});
     if (!info?.needs_key) setKeylessOk((s) => new Set(s).add(sel));
     setVerify({ state: "ok" });
     setDirty(false);
