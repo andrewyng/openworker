@@ -18,6 +18,7 @@ import mistral from "./logos/mistral.svg";
 import qwen from "./logos/qwen.svg";
 import minimax from "./logos/minimax.svg";
 import xai from "./logos/xai.svg";
+import venice from "./logos/venice.svg";
 
 export const PROVIDER_LOGOS: Record<string, string> = {
   anthropic,
@@ -26,6 +27,7 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   ollama,
   fireworks,
   together,
+  venice,
   zai,
   kimi,
   deepseek,
@@ -42,6 +44,7 @@ export const PROVIDER_ORDER = [
   "ollama",
   "fireworks",
   "together",
+  "venice",
   "zai",
   "kimi",
   "deepseek",

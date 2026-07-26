@@ -278,7 +278,7 @@ def test_stream_accumulates_tool_calls():
     )
 
 
-# -- OpenAI-compatible vendor providers (Z AI, DeepSeek, Kimi, MiniMax, Qwen, xAI, Mistral) ------
+# -- OpenAI-compatible vendor providers ----------------------------------------------
 
 COMPAT_VENDORS = {
     "zai": "https://api.z.ai/api/paas/v4",
@@ -288,6 +288,7 @@ COMPAT_VENDORS = {
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "xai": "https://api.x.ai/v1",
     "mistral": "https://api.mistral.ai/v1",
+    "venice": "https://api.venice.ai/api/v1",
 }
 
 
@@ -324,6 +325,11 @@ def test_compat_builder_env_key_fallback(monkeypatch):
     assert p._api_key == "ds-key"
     assert p._base_url == COMPAT_VENDORS["deepseek"]
 
+    monkeypatch.setenv("VENICE_API_KEY", "venice-key")
+    v = build_provider_client("venice", {}, None)
+    assert v._api_key == "venice-key"
+    assert v._base_url == COMPAT_VENDORS["venice"]
+
 
 def test_compat_builder_never_leaks_the_openai_key(monkeypatch):
     """A configured OPENAI_API_KEY must never be sent to a different vendor's endpoint —
@@ -352,6 +358,7 @@ def test_compat_models_route_and_get_tool_capabilities():
         "qwen:qwen3-max",
         "xai:grok-4.3",
         "mistral:mistral-large-latest",
+        "venice:zai-org-glm-5-2",
     ):
         prefix = model.split(":", 1)[0]
         assert router._provider_name(model) == prefix
@@ -415,6 +422,29 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
         # full ids in the matrix must round-trip: prefix + bare == matrix key
         base = next(f for f in d.fields if f.key == "base_url")
         assert base.default.startswith("https://")
+
+
+def test_venice_curated_models_match_current_catalog_capabilities():
+    from coworker.providers.matrix import models_for_provider
+    from coworker.providers.registry import get_descriptor
+
+    descriptor = get_descriptor("venice")
+    assert descriptor is not None
+    assert descriptor.recommended_model == "zai-org-glm-5-2"
+    assert descriptor.env_key == "VENICE_API_KEY"
+
+    curated = models_for_provider("venice")
+    assert set(curated) == {
+        "zai-org-glm-5-2",
+        "z-ai-glm-5v-turbo",
+        "venice-uncensored-1-2",
+        "qwen-3-7-max",
+        "grok-4-5",
+        "kimi-k2-6",
+        "openai-gpt-56-sol",
+    }
+    assert capabilities_for("venice:zai-org-glm-5-2").vision is False
+    assert capabilities_for("venice:z-ai-glm-5v-turbo").vision is True
 
 
 def test_foreign_sidecars_stripped_from_outbound_messages():

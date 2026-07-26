@@ -1415,6 +1415,12 @@ class SessionManager:
         "qwen": ["qwen3-max", "qwen3-coder-plus", "qwen-plus"],
         "xai": ["grok-4.3", "grok-4"],
         "mistral": ["mistral-large-latest", "mistral-small-latest"],
+        "venice": [
+            "zai-org-glm-5-2",
+            "deepseek-v3.2",
+            "claude-opus-5",
+            "google-gemma-4-31b-it",
+        ],
     }
 
     def _suggested_models(self, name: str) -> list[str]:

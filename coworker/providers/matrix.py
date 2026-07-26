@@ -31,6 +31,9 @@ _AGENTIC = ModelCapabilities(
 _AGENTIC_VISION = ModelCapabilities(
     tools=True, vision=True, pdf=True, parallel_tool_calls=True, streaming=True
 )
+_AGENTIC_COMPAT_VISION = ModelCapabilities(
+    tools=True, vision=True, parallel_tool_calls=True, streaming=True
+)
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,28 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "fireworks:accounts/fireworks/models/llama4-maverick-instruct-basic": ModelEntry(
         "Llama 4 Maverick · via Fireworks"
+    ),
+    # Venice catalog capabilities verified from GET /api/v1/models?type=text on
+    # 2026-07-26. GLM 5.2 is the default/code model; GLM 5V Turbo is the
+    # corresponding vision-capable model.
+    "venice:zai-org-glm-5-2": ModelEntry("GLM 5.2 · via Venice"),
+    "venice:z-ai-glm-5v-turbo": ModelEntry(
+        "GLM 5V Turbo · via Venice", _AGENTIC_COMPAT_VISION
+    ),
+    "venice:venice-uncensored-1-2": ModelEntry(
+        "Venice Uncensored 1.2 · Venice", _AGENTIC_COMPAT_VISION
+    ),
+    "venice:qwen-3-7-max": ModelEntry(
+        "Qwen 3.7 Max · via Venice", _AGENTIC_COMPAT_VISION
+    ),
+    "venice:grok-4-5": ModelEntry(
+        "Grok 4.5 · via Venice", _AGENTIC_COMPAT_VISION
+    ),
+    "venice:kimi-k2-6": ModelEntry(
+        "Kimi K2.6 · via Venice", _AGENTIC_COMPAT_VISION
+    ),
+    "venice:openai-gpt-56-sol": ModelEntry(
+        "GPT-5.6 Sol · via Venice", _AGENTIC_COMPAT_VISION
     ),
 }
 

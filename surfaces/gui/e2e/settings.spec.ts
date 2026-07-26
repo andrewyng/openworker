@@ -45,10 +45,11 @@ test("Models: provider gallery states; vendor form previews models", async ({ pa
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Models", exact: true }).click();
 
-  // Card states from the fixtures: openai configured+used, anthropic configured, zai not.
+  // Card states from the fixtures: openai configured+used, anthropic configured, vendors not.
   await expect(page.getByTestId("set-provider-openai")).toContainText("✓ Connected · used 2h ago");
   await expect(page.getByTestId("set-provider-anthropic")).toContainText("✓ Connected");
   await expect(page.getByTestId("set-provider-zai")).toContainText("Not set up");
+  await expect(page.getByTestId("set-provider-venice")).toContainText("Not set up");
   await expect(page.getByTestId("set-provider-ollama")).toContainText("No key needed");
 
   // The composer-picker card lists the curated models with provider tags.
@@ -69,6 +70,12 @@ test("Models: provider gallery states; vendor form previews models", async ({ pa
   // Back to the gallery via the crumb.
   await page.getByTestId("set-back").click();
   await expect(page.getByTestId("set-provider-openai")).toBeVisible();
+
+  // Venice uses its own key profile and current GLM defaults.
+  await page.getByTestId("set-provider-venice").click();
+  await expect(page.getByText(/Uses Venice AI's OpenAI-compatible API/)).toBeVisible();
+  await expect(page.getByTestId("model-preview")).toContainText("GLM 5.2 · via Venice");
+  await expect(page.getByTestId("model-preview")).toContainText("GLM 5V Turbo · via Venice");
 });
 
 // UX-021: a configured provider's form shows the in-field saved state and the Remove key…
