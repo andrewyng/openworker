@@ -15,6 +15,9 @@ import aisuite as ai
 
 _MAX = 20000  # default chars returned
 
+# Transfer cap — `max_chars` trims what is returned, not what is downloaded.
+_MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024
+
 _SCHEMA = {
     "type": "function",
     "function": {
@@ -89,18 +92,26 @@ def make_web_fetch_tool() -> Callable[..., Any]:
                 timeout=20.0,
                 headers={"User-Agent": "coworker/0.1 (+desktop)"},
             ) as client:
-                resp = client.get(url)
-                resp.raise_for_status()
-                ctype = resp.headers.get("content-type", "")
-                body = resp.text
-                final_url = str(resp.url)
+                with client.stream("GET", url) as resp:
+                    resp.raise_for_status()
+                    ctype = resp.headers.get("content-type", "")
+                    raw = bytearray()
+                    body_truncated = False
+                    for chunk in resp.iter_bytes():
+                        raw.extend(chunk)
+                        if len(raw) >= _MAX_DOWNLOAD_BYTES:
+                            body_truncated = True
+                            break
+                    encoding = resp.encoding or "utf-8"
+                    final_url = str(resp.url)
+            body = bytes(raw).decode(encoding, errors="replace")
         except Exception as exc:  # network / HTTP / TLS
             return {"error": f"fetch failed: {exc}"}
         text = _html_to_text(body) if "html" in ctype.lower() else body
         return {
             "url": final_url,
             "content_type": ctype,
-            "truncated": len(text) > cap,
+            "truncated": body_truncated or len(text) > cap,
             "text": text[:cap],
         }
 
