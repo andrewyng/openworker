@@ -363,11 +363,16 @@ function ArtifactViewer({
         ) : content.error ? (
           <div className="rail-error">{content.error}</div>
         ) : content.kind === "html" ? (
+          // Scripts may run for interactive previews, but NOT with same-origin —
+          // that pairing lets agent HTML reach `window.parent.__COWORKER_API_TOKEN__`
+          // and drive the local sidecar. Unique opaque origin keeps the preview useful
+          // while blocking the XSS → tools path (#99).
           <iframe
             key={`${artifact.path}-${reloadKey}`}
-            sandbox="allow-scripts allow-same-origin"
+            sandbox="allow-scripts"
             className="artifact-frame"
             srcDoc={content.content || ""}
+            data-testid="artifact-html-frame"
           />
         ) : content.kind === "markdown" ? (
           <div className="artifact-md">
