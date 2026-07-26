@@ -234,10 +234,11 @@ export function Composer(props: Props) {
       const text = customEvent.detail.text;
       const customUrl = localStorage.getItem("ocw:custom-tts-url");
       const customModel = localStorage.getItem("ocw:custom-tts-model") || "tts-1";
+      const customKey = localStorage.getItem("ocw:custom-tts-key") || "dummy_key";
       
       try {
         if (customUrl) {
-          await playCustomTts(text, customUrl, customModel, audioRef);
+          await playCustomTts(text, customUrl, customModel, customKey, audioRef);
         } else {
           await synthesizeAndPlay(text);
         }

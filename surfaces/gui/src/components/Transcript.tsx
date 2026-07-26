@@ -12,12 +12,15 @@ import { synthesizeAndPlay, stopTts, isTauri, getTtsStatus } from "../tauri";
 // so revealing it on group-hover never shifts the layout. `ts` is unix seconds — canonical
 // messages carry it, pre-stamp history doesn't, so the time simply omits itself when absent.
 
-export function playCustomTts(text: string, customUrl: string, customModel: string, audioRef: React.MutableRefObject<HTMLAudioElement | null>): Promise<void> {
+export function playCustomTts(text: string, customUrl: string, customModel: string, customKey: string, audioRef: React.MutableRefObject<HTMLAudioElement | null>): Promise<void> {
   return new Promise(async (resolve, reject) => {
     try {
       const res = await fetch(customUrl.replace(/\/+$/, "") + "/audio/speech", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${customKey || "dummy_key"}`,
+        },
         body: JSON.stringify({ model: customModel || "tts-1", input: text, voice: "alloy" }),
       });
       if (!res.ok) throw new Error("TTS API fetch failed");
@@ -42,6 +45,7 @@ function BubblePlayTts({ text }: { text: string }) {
   // Custom TTS setting overrides local engine
   const customUrl = localStorage.getItem("ocw:custom-tts-url");
   const customModel = localStorage.getItem("ocw:custom-tts-model") || "tts-1";
+  const customKey = localStorage.getItem("ocw:custom-tts-key") || "dummy_key";
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -63,7 +67,7 @@ function BubblePlayTts({ text }: { text: string }) {
       setPlaying(true);
       try {
         if (customUrl) {
-          await playCustomTts(text, customUrl, customModel, audioRef);
+          await playCustomTts(text, customUrl, customModel, customKey, audioRef);
         } else {
           await synthesizeAndPlay(text);
         }

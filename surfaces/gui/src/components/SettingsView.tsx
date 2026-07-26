@@ -419,6 +419,7 @@ function VoiceOutputCard() {
     setError(null);
     const customUrl = localStorage.getItem("ocw:custom-tts-url");
     const customModel = localStorage.getItem("ocw:custom-tts-model") || "tts-1";
+    const customKey = localStorage.getItem("ocw:custom-tts-key") || "dummy_key";
 
     try {
       if (status?.is_playing || audioRef.current) {
@@ -435,7 +436,10 @@ function VoiceOutputCard() {
         if (customUrl) {
           const res = await fetch(customUrl.replace(/\/+$/, "") + "/audio/speech", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${customKey}`,
+            },
             body: JSON.stringify({ model: customModel, input: testText, voice: "alloy" }),
           });
           if (!res.ok) {
@@ -517,8 +521,23 @@ function VoiceOutputCard() {
             else localStorage.removeItem("ocw:custom-tts-model");
           }}
         />
-        <div className="text-[11.5px] text-muted mt-1.5">
+        <div className="text-[11.5px] text-muted mt-1.5 mb-3">
           The model name to request. Defaults to <code>tts-1</code>.
+        </div>
+
+        <label className="block mb-2 text-[12px] font-medium text-ink">Custom TTS API Key (Optional)</label>
+        <input
+          type="password"
+          className={INPUT + " w-full"}
+          placeholder="sk-..."
+          defaultValue={localStorage.getItem("ocw:custom-tts-key") || ""}
+          onChange={(e) => {
+            if (e.target.value) localStorage.setItem("ocw:custom-tts-key", e.target.value);
+            else localStorage.removeItem("ocw:custom-tts-key");
+          }}
+        />
+        <div className="text-[11.5px] text-muted mt-1.5">
+          API key if required by your provider. A dummy key is sent if left blank.
         </div>
       </div>
       {error && <div className="border-t border-line bg-red-50 px-4 py-3 text-[12px] text-red-700">{error}</div>}
