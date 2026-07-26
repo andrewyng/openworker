@@ -15,8 +15,10 @@ import {
   getCloudStatus,
   getConnectors,
   getRecentChannels,
+  getDmRoute,
   getSessionConnections,
   getSubscriptions,
+  setDmRoute,
   setSessionConnection,
   subscribeChannel,
   unsubscribeChannel,
@@ -163,6 +165,17 @@ export function AccessSection({
 
   const toggleSession = async (connector: string, next: boolean) => {
     await setSessionConnection(sessionId, connector, next);
+    // WeChat/Telegram/Slack DMs only land if a DM session is designated. Enabling the
+    // connector here is the user's clear intent that THIS chat should receive them —
+    // claim the route when none is set (backend does the same; GUI covers older sidecars).
+    if (next && (connector === "weixin" || connector === "telegram" || connector === "slack")) {
+      try {
+        const current = await getDmRoute();
+        if (!current) await setDmRoute(sessionId);
+      } catch {
+        /* ignore — connector toggle still applied */
+      }
+    }
     reload();
   };
   const channelsOf = (connector: string) =>
