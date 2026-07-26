@@ -14,7 +14,11 @@ from coworker.providers import (
     StreamChunk,
     capabilities_for,
 )
-from coworker.providers.registry import _normalize_ollama_url, build_provider_client
+from coworker.providers.registry import (
+    _normalize_lm_studio_url,
+    _normalize_ollama_url,
+    build_provider_client,
+)
 from coworker.providers.openai_provider import _salvage_tool_calls_from_text
 
 
@@ -55,6 +59,15 @@ def test_normalize_ollama_url():
     assert _normalize_ollama_url("  ") == "http://localhost:11434/v1"
 
 
+def test_normalize_lm_studio_url():
+    assert _normalize_lm_studio_url(None) == "http://localhost:1234/v1"
+    assert (
+        _normalize_lm_studio_url("http://localhost:1234") == "http://localhost:1234/v1"
+    )
+    assert _normalize_lm_studio_url("http://h:1/v1/") == "http://h:1/v1"
+    assert _normalize_lm_studio_url("  ") == "http://localhost:1234/v1"
+
+
 def test_build_ollama_client_uses_base_url(monkeypatch):
     captured: dict = {}
 
@@ -69,6 +82,22 @@ def test_build_ollama_client_uses_base_url(monkeypatch):
     client._ensure_client()  # type: ignore[attr-defined]
     assert captured["base_url"] == "http://box:11434/v1"
     assert captured["api_key"] == "ollama"  # placeholder, Ollama ignores it
+
+
+def test_build_lm_studio_client_uses_base_url(monkeypatch):
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    client = build_provider_client(
+        "lm_studio", {"base_url": "http://box:1234"}, secrets=None
+    )
+    client._ensure_client()  # type: ignore[attr-defined]
+    assert captured["base_url"] == "http://box:1234/v1"
+    assert captured["api_key"] == "lm-studio"
 
 
 # -- router routing -------------------------------------------------------------
@@ -151,6 +180,13 @@ def test_router_capabilities_prefix_aware():
 # -- capabilities ---------------------------------------------------------------
 def test_capabilities_ollama():
     caps = capabilities_for("ollama:qwen2.5-coder")
+    assert caps.tools is True
+    assert caps.parallel_tool_calls is False
+    assert caps.vision is False
+
+
+def test_capabilities_lm_studio():
+    caps = capabilities_for("lm_studio:llama-3.2-3b")
     assert caps.tools is True
     assert caps.parallel_tool_calls is False
     assert caps.vision is False

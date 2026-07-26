@@ -174,3 +174,19 @@ def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):
 
     monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
     assert "ollama:llama3.3" in manager.get_settings()["models"]
+
+
+def test_lm_studio_models_gated_on_liveness(tmp_path, monkeypatch):
+    """`lm_studio:*` entries show only while LM Studio's local server answers."""
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    manager.add_model("lm_studio:llama-3.2-3b")
+
+    monkeypatch.setattr(SessionManager, "_lm_studio_alive", lambda self: False)
+    assert "lm_studio:llama-3.2-3b" not in manager.get_settings()["models"]
+
+    monkeypatch.setattr(SessionManager, "_lm_studio_alive", lambda self: True)
+    assert "lm_studio:llama-3.2-3b" in manager.get_settings()["models"]

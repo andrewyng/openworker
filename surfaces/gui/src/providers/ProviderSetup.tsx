@@ -31,6 +31,20 @@ export const KEY_HELP: Record<string, { url: string; label: string }> = {
   xai: { url: "https://console.x.ai", label: "console.x.ai" },
 };
 
+// Keyless local providers — install link + one-line hint (no API key field).
+const KEYLESS_HELP: Record<string, { text: string; url: string; label: string }> = {
+  ollama: {
+    text: "No API key needed — Ollama runs models on this Mac.",
+    url: "https://ollama.com/download",
+    label: "Install Ollama",
+  },
+  lm_studio: {
+    text: "No API key needed — LM Studio runs models on this computer.",
+    url: "https://lmstudio.ai/download",
+    label: "Install LM Studio",
+  },
+};
+
 export type Verify = { state: "idle" | "testing" | "ok" | "error"; msg?: string };
 
 /** Brand chip: always a light plate so multicolor marks read on any theme. */
@@ -406,14 +420,14 @@ export function ProviderForm({
           — takes about a minute.
         </p>
       )}
-      {info && !info.needs_key && (
+      {info && !info.needs_key && KEYLESS_HELP[sel] && (
         <p className="text-[11.5px] text-faint mt-2">
-          No API key needed — Ollama runs models on this Mac.{" "}
+          {KEYLESS_HELP[sel].text}{" "}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
-            onClick={() => openExternal("https://ollama.com/download")}
+            onClick={() => openExternal(KEYLESS_HELP[sel].url)}
           >
-            Install Ollama ↗
+            {KEYLESS_HELP[sel].label} ↗
           </button>
         </p>
       )}
