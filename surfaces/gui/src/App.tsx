@@ -713,9 +713,12 @@ export function App() {
           setRunning(false);
           if (voiceModeRef.current) {
             setItems((prev) => {
-              const lastItem = [...prev].reverse().find(i => i.kind === "assistant");
-              if (lastItem && lastItem.text) {
-                window.dispatchEvent(new CustomEvent("voice-mode-trigger-tts", { detail: { text: lastItem.text } }));
+              const lastItem = [...prev].reverse().find((i) => i.kind === "assistant");
+              if (lastItem) {
+                const textToSpeak = lastItem.text || lastItem.reasoning;
+                if (textToSpeak) {
+                  window.dispatchEvent(new CustomEvent("voice-mode-trigger-tts", { detail: { text: textToSpeak } }));
+                }
               }
               return prev;
             });
