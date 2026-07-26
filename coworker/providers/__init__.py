@@ -10,6 +10,7 @@ from .capabilities import capabilities_for
 from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider, resolve_api_key
 from .registry import (
+    LOCAL_PROVIDERS,
     ProviderDescriptor,
     ProviderField,
     build_provider_client,
@@ -41,4 +42,5 @@ __all__ = [
     "build_provider_client",
     "detect_provider",
     "verify_provider_key",
+    "LOCAL_PROVIDERS",
 ]

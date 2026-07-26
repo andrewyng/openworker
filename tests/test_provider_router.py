@@ -14,7 +14,11 @@ from coworker.providers import (
     StreamChunk,
     capabilities_for,
 )
-from coworker.providers.registry import _normalize_ollama_url, build_provider_client
+from coworker.providers.registry import (
+    _normalize_lmstudio_url,
+    _normalize_ollama_url,
+    build_provider_client,
+)
 from coworker.providers.openai_provider import _salvage_tool_calls_from_text
 
 
@@ -53,6 +57,40 @@ def test_normalize_ollama_url():
     )
     assert _normalize_ollama_url("http://h:1/v1/") == "http://h:1/v1"
     assert _normalize_ollama_url("  ") == "http://localhost:11434/v1"
+
+
+def test_normalize_lmstudio_url():
+    assert _normalize_lmstudio_url(None) == "http://localhost:1234/v1"
+    assert _normalize_lmstudio_url("http://localhost:1234") == "http://localhost:1234/v1"
+    assert _normalize_lmstudio_url("http://box:1234/v1/") == "http://box:1234/v1"
+    assert _normalize_lmstudio_url("  ") == "http://localhost:1234/v1"
+
+
+def test_build_lmstudio_client_never_uses_the_openai_key(monkeypatch):
+    """A local server must never receive a real hosted key. `_build_lmstudio` passes a
+    placeholder explicitly rather than handing over `secrets`, so OpenAIProvider's
+    env/SecretStore fallback can't reach it."""
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-real-hosted-key")
+
+    class _Secrets:  # would hand over a stored key if anyone asked it
+        def get(self, _k):
+            return {"api_key": "sk-stored-hosted-key"}
+
+    client = build_provider_client(
+        "lmstudio", {"base_url": "http://box:1234"}, secrets=_Secrets()
+    )
+    client._ensure_client()  # type: ignore[attr-defined]
+    assert captured["base_url"] == "http://box:1234/v1"
+    assert captured["api_key"] == "lm-studio"  # placeholder; LM Studio ignores it
+    assert "sk-real-hosted-key" not in captured.values()
+    assert "sk-stored-hosted-key" not in captured.values()
 
 
 def test_build_ollama_client_uses_base_url(monkeypatch):
@@ -148,9 +186,26 @@ def test_router_capabilities_prefix_aware():
     assert router.capabilities("ollama:qwen2.5-coder").parallel_tool_calls is False
 
 
+def test_router_strips_lmstudio_prefix_from_namespaced_ids():
+    # LM Studio ids are "publisher/model" — the slash must survive, only the provider goes.
+    r = ProviderRouter(secrets=None)
+    assert r._bare("lmstudio:qwen/qwen3.5-9b") == "qwen/qwen3.5-9b"
+    assert r._provider_name("lmstudio:qwen/qwen3.5-9b") == "lmstudio"
+    # and an unprefixed namespaced id is NOT mistaken for a provider
+    assert r._bare("qwen/qwen3.5-9b") == "qwen/qwen3.5-9b"
+
+
 # -- capabilities ---------------------------------------------------------------
 def test_capabilities_ollama():
     caps = capabilities_for("ollama:qwen2.5-coder")
+    assert caps.tools is True
+    assert caps.parallel_tool_calls is False
+    assert caps.vision is False
+
+
+def test_capabilities_lmstudio_matches_ollama():
+    # Same weights, same answer — whoever is serving them locally.
+    caps = capabilities_for("lmstudio:qwen/qwen3.5-9b")
     assert caps.tools is True
     assert caps.parallel_tool_calls is False
     assert caps.vision is False

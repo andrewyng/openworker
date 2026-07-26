@@ -73,6 +73,7 @@ from ..memory import MemoryStore, Scope, SQLiteMemoryStore
 from ..permissions import Mode
 from ..agents import list_agents as _list_agents
 from ..providers import (
+    LOCAL_PROVIDERS,
     ProviderClient,
     ProviderRouter,
     get_descriptor,
@@ -1493,10 +1494,16 @@ class SessionManager:
 
     def _suggested_models(self, name: str) -> list[str]:
         """Bare model-name suggestions for the 'add model' form (datalist), per provider.
-        Ollama → live `/api/tags` (best-effort); everyone else → the curated matrix,
-        topped up with the compat-vendor extras the matrix doesn't vouch for."""
+        Local runtimes → whatever that server actually has (best-effort live query); everyone
+        else → the curated matrix, topped up with the compat-vendor extras the matrix doesn't
+        vouch for. The matrix deliberately carries no local entries: which models exist is a
+        property of the user's machine, not something we can curate."""
         if name == "ollama":
             return [m.split(":", 1)[-1] for m in self._ollama_models()]
+        if name == "lmstudio":
+            # `split(":", 1)` — LM Studio ids are namespaced with a slash ("qwen/qwen3-…"),
+            # so only the provider prefix is ever stripped.
+            return [m.split(":", 1)[-1] for m in self._lmstudio_models()]
         from ..providers.matrix import models_for_provider
 
         return list(
@@ -1540,9 +1547,18 @@ class SessionManager:
         # the curated list so it shows up in the composer right after configuring the provider.
         rec = d.recommended_model
         added: Optional[str] = None
-        if rec and rec in self._suggested_models(name):
+        available = self._suggested_models(name)
+        if rec and rec in available:
             # OpenAI models stay bare (the router's default); others carry their prefix.
             added = rec if name == "openai" else f"{name}:{rec}"
+        elif name in LOCAL_PROVIDERS and available:
+            # Local runtimes serve whatever the user happens to have downloaded, so a single
+            # named recommendation usually misses. Falling back to something they actually
+            # have is what makes "connect it and it works" true — otherwise connecting a
+            # perfectly good local server still leaves the composer reading "No model".
+            rec = available[0]
+            added = f"{name}:{rec}"
+        if added:
             self.add_model(added)
         # First working provider wins the default: if the current default model belongs to a
         # provider with no usable config (the fresh-install gpt-5.6-sol case), switch the default to
@@ -1633,30 +1649,51 @@ class SessionManager:
         self._save_prefs()
         return {"ok": True, "dm_session": self.dm_session()}
 
-    def _ollama_alive(self) -> bool:
-        """Best-effort local-Ollama liveness, cached 30s (get_settings runs on every GUI
-        fetch — no 2s probe inline). Keyless is not the same as PRESENT: `ollama:*` picker
-        entries render only when an Ollama actually answers, so a machine with no Ollama
-        never shows phantom local models (e.g. a stray pasted string saved as a model id,
-        caught 2026-07-21)."""
+    def _local_root(self, name: str) -> str:
+        """Configured (or default) ROOT url for a local runtime, with any `/v1` trimmed — the
+        native APIs we probe below hang off the root, not the OpenAI-compatible path."""
+        from ..providers.registry import LOCAL_DEFAULT_URLS
+
+        default = LOCAL_DEFAULT_URLS[name]
+        profile = self.secrets.get(f"provider:{name}") or {}
+        base = (profile.get("base_url") or default).strip().rstrip("/")
+        if base.endswith("/v1"):
+            base = base[: -len("/v1")]
+        return base or default
+
+    def _local_alive(self, name: str, path: str) -> bool:
+        """Best-effort liveness for a local runtime, cached 30s per provider (get_settings runs
+        on every GUI fetch — no 2s probe inline). Keyless is not the same as PRESENT: a local
+        provider's picker entries render only while its server actually answers, so a machine
+        with no Ollama / no LM Studio never shows phantom local models (e.g. a stray pasted
+        string saved as a model id, caught 2026-07-21)."""
         import time
 
         now = time.monotonic()
-        cached = getattr(self, "_ollama_alive_cache", None)
+        cache = getattr(self, "_local_alive_cache", None)
+        if cache is None:
+            cache = {}
+            self._local_alive_cache = cache
+        cached = cache.get(name)
         if cached and now - cached[0] < 30:
             return cached[1]
-        profile = self.secrets.get("provider:ollama") or {}
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
         try:
             import httpx
 
-            alive = httpx.get(base + "/api/tags", timeout=0.8).status_code == 200
+            alive = (
+                httpx.get(self._local_root(name) + path, timeout=0.8).status_code == 200
+            )
         except Exception:
             alive = False
-        self._ollama_alive_cache = (now, alive)
+        cache[name] = (now, alive)
         return alive
+
+    def _ollama_alive(self) -> bool:
+        return self._local_alive("ollama", "/api/tags")
+
+    def _lmstudio_alive(self) -> bool:
+        # LM Studio has no root health route; its OpenAI-compatible model list is the probe.
+        return self._local_alive("lmstudio", "/v1/models")
 
     def _ollama_models(self) -> list[str]:
         """Live list of models pulled into the configured Ollama server (via its native
@@ -1665,16 +1702,49 @@ class SessionManager:
         profile = self.secrets.get("provider:ollama")
         if not profile:
             return []
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
         try:
             import httpx
 
-            data = httpx.get(base + "/api/tags", timeout=2.0).json()
+            data = httpx.get(self._local_root("ollama") + "/api/tags", timeout=2.0).json()
             return [
                 f"ollama:{m['name']}" for m in data.get("models", []) if m.get("name")
             ]
+        except Exception:
+            return []
+
+    def _lmstudio_models(self) -> list[str]:
+        """Live list of models LM Studio can serve, as `lmstudio:<id>`. Empty if LM Studio
+        isn't configured or its server isn't started — best-effort, never raises.
+
+        Prefers LM Studio's own `/api/v0/models` because it types each entry, letting us drop
+        embedding models — `/v1/models` returns them mixed in with chat models and nothing in
+        an id reliably distinguishes the two. That route is beta, so any failure (older build,
+        renamed path) falls back to the stable OpenAI-compatible list unfiltered.
+        """
+        profile = self.secrets.get("provider:lmstudio")
+        if not profile:
+            return []
+        root = self._local_root("lmstudio")
+        try:
+            import httpx
+
+            data = httpx.get(root + "/api/v0/models", timeout=2.0).json()
+            models = [m for m in data.get("data", []) if m.get("id")]
+            if models:
+                return [
+                    f"lmstudio:{m['id']}"
+                    for m in models
+                    # Keep anything not explicitly an embedder: unknown/absent types are
+                    # likelier to be a new chat variant than a new kind of embedding model.
+                    if m.get("type") not in ("embeddings", "embedding")
+                ]
+        except Exception:
+            pass
+        try:
+            import httpx
+
+            data = httpx.get(root + "/v1/models", timeout=2.0).json()
+            return [f"lmstudio:{m['id']}" for m in data.get("data", []) if m.get("id")]
         except Exception:
             return []
 
@@ -1740,12 +1810,14 @@ class SessionManager:
         # Only surface models whose provider is actually configured — the composer picker
         # reflects exactly what's connected. The active default is always kept selectable
         # (it's hidden behind the "No model" state until a provider is connected anyway).
-        # Ollama is keyless, so "configured" is meaningless there — its models show only
-        # while a local Ollama answers (cached liveness probe).
+        # Local runtimes are keyless, so "configured" is meaningless there — their models show
+        # only while that server answers (cached liveness probe).
         def _selectable(m: str) -> bool:
             provider = self._model_provider(m)
             if provider == "ollama":
                 return self._ollama_alive()
+            if provider == "lmstudio":
+                return self._lmstudio_alive()
             return self._provider_configured(provider)
 
         selectable = [m for m in self._curated_models() if _selectable(m)]

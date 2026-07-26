@@ -8,8 +8,14 @@ model string and builds (and caches) its client from the matching SecretStore pr
 
 Today: `openai` (the default, with an optional custom endpoint that covers Azure OpenAI's
 `/openai/v1` and any OpenAI-compliant gateway), `anthropic` (native Messages API via
-`AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), and `ollama`
-(local, OpenAI-compatible `/v1`). Bedrock/Vertex auth for Claude is future work.
+`AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), and two local
+runtimes — `ollama` and `lmstudio` — both reached over their OpenAI-compatible `/v1`.
+Bedrock/Vertex auth for Claude is future work.
+
+The local pair are separate providers rather than one "point OpenAI at a custom endpoint"
+setting: a single `provider:openai` profile can only hold one endpoint, so folding a local
+server into it would make local and hosted OpenAI mutually exclusive. They also need to be
+keyless (both ignore the key) and liveness-gated by the manager, which the keyed path is not.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
+DEFAULT_LMSTUDIO_URL = "http://localhost:1234"
 
 
 @dataclass(frozen=True)
@@ -81,18 +88,41 @@ class ProviderDescriptor:
         }
 
 
-def _normalize_ollama_url(url: Optional[str]) -> str:
-    """Accept `http://host:11434` or `.../v1` and return an OpenAI-compatible base URL.
+def _openai_v1_base(url: Optional[str], default: str) -> str:
+    """Accept `http://host:port` or `.../v1` and return an OpenAI-compatible base URL.
 
-    Ollama serves its OpenAI-compatible API under `/v1`; the native API lives at the root, so we
-    always target `<root>/v1`.
+    Both local runtimes serve their OpenAI-compatible API under `/v1` while their native API
+    lives at the root, so we always target `<root>/v1`. Users paste either form.
     """
-    base = (url or DEFAULT_OLLAMA_URL).strip().rstrip("/")
+    base = (url or default).strip().rstrip("/")
     if not base:
-        base = DEFAULT_OLLAMA_URL
+        base = default
     if not base.endswith("/v1"):
         base = base + "/v1"
     return base
+
+
+def _normalize_ollama_url(url: Optional[str]) -> str:
+    return _openai_v1_base(url, DEFAULT_OLLAMA_URL)
+
+
+def _normalize_lmstudio_url(url: Optional[str]) -> str:
+    return _openai_v1_base(url, DEFAULT_LMSTUDIO_URL)
+
+
+# Keyless runtimes on the user's own machine. They share three behaviours the keyed providers
+# don't have: no credential to validate, a default localhost endpoint, and manager-side
+# liveness gating so their models leave the picker when the server is closed.
+LOCAL_PROVIDERS = ("ollama", "lmstudio")
+LOCAL_DEFAULT_URLS = {
+    "ollama": DEFAULT_OLLAMA_URL,
+    "lmstudio": DEFAULT_LMSTUDIO_URL,
+}
+
+
+def _local_v1_base(name: str, url: Optional[str]) -> str:
+    """OpenAI-compatible `/v1` base for a local provider, defaulting to its usual port."""
+    return _openai_v1_base(url, LOCAL_DEFAULT_URLS.get(name, DEFAULT_OLLAMA_URL))
 
 
 def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -131,6 +161,15 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # string, so we pass a placeholder. `base_url` comes from the stored profile (or the default).
     base_url = _normalize_ollama_url((profile or {}).get("base_url"))
     return OpenAIProvider(api_key="ollama", base_url=base_url)
+
+
+def _build_lmstudio(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    # Same shape as Ollama: LM Studio's local server ignores the key, but the SDK insists on a
+    # non-empty string. Note we pass `api_key` EXPLICITLY rather than handing over `secrets` —
+    # that keeps OpenAIProvider's env fallback out of the picture, so a real OPENAI_API_KEY in
+    # the environment is never sent to a local server (the same rule the compat vendors follow).
+    base_url = _normalize_lmstudio_url((profile or {}).get("base_url"))
+    return OpenAIProvider(api_key="lm-studio", base_url=base_url)
 
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
@@ -352,6 +391,27 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         # `ollama pull qwen3-coder:30b`.
         recommended_model="qwen3-coder:30b",
     ),
+    ProviderDescriptor(
+        name="lmstudio",
+        title="LM Studio (local models)",
+        needs_key=False,
+        fields=[
+            ProviderField(
+                "base_url",
+                "LM Studio server URL",
+                secret=False,
+                required=False,
+                placeholder=DEFAULT_LMSTUDIO_URL,
+                help="Where LM Studio's local server is listening (Developer tab ▸ Start Server). The OpenAI-compatible /v1 path is added automatically.",
+            ),
+        ],
+        build=_build_lmstudio,
+        # Only auto-added if it is actually loaded (set_provider checks the live model list),
+        # so naming one costs nothing on a machine running something else.
+        recommended_model="qwen/qwen3-coder-30b",
+        # No blurb: the GUI already renders a "no API key needed / install it" note for every
+        # keyless provider, and a second line saying the same thing reads as clutter.
+    ),
 ]
 
 _BY_NAME = {d.name: d for d in DESCRIPTORS}
@@ -408,6 +468,8 @@ def verify_provider_key(
 
     d = _BY_NAME.get(name) or _BY_NAME["openai"]
     key = (api_key or "").strip()
+    # Resolved up here so the connection-error message below can name the endpoint we tried.
+    base = _local_v1_base(name, base_url) if name in LOCAL_PROVIDERS else ""
     try:
         if name == "anthropic":
             resp = httpx.get(
@@ -421,8 +483,10 @@ def verify_provider_key(
                 params={"key": key},
                 timeout=timeout,
             )
-        elif name == "ollama":
-            base = _normalize_ollama_url(base_url)
+        elif name in LOCAL_PROVIDERS:
+            # Keyless, and always explicit about the endpoint: falling through to the generic
+            # branch below would default an empty base_url to api.openai.com and send it an
+            # empty bearer token.
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
         else:  # openai + any OpenAI-compatible endpoint (Azure, OpenRouter, vendors, vLLM…)
             default_base = next(
@@ -439,6 +503,10 @@ def verify_provider_key(
                 timeout=timeout,
             )
     except Exception as exc:  # DNS/connection/timeout — never let it bubble to a 500
+        if name in LOCAL_PROVIDERS:
+            # By far the most common cause locally is simply that the server isn't started,
+            # which "Couldn't reach (ConnectError)" doesn't tell anyone what to do about.
+            return {"ok": False, "error": f"Nothing listening at {base}. Is it running?"}
         return {
             "ok": False,
             "error": f"Couldn't reach {d.title} ({exc.__class__.__name__}).",
@@ -447,10 +515,10 @@ def verify_provider_key(
     if resp.status_code < 300:
         return {"ok": True}
     if resp.status_code in (401, 403):
-        if name == "ollama":
+        if name in LOCAL_PROVIDERS:
             return {"ok": False, "error": "Server rejected the request."}
         return {"ok": False, "error": "Invalid API key."}
-    if resp.status_code == 404 and name == "ollama":
+    if resp.status_code == 404 and name in LOCAL_PROVIDERS:
         return {
             "ok": False,
             "error": "Reached the server, but no OpenAI-compatible /v1 API there.",

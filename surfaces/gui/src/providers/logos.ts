@@ -42,7 +42,10 @@ export const PROVIDER_ORDER = [
   "openai",
   "gemini",
   "meta",
+  // The two local runtimes sit together, right after the hosted names people recognize.
+  // lmstudio has no vendored mark yet, so ProviderMark falls back to its "L" monogram.
   "ollama",
+  "lmstudio",
   "fireworks",
   "together",
   "zai",

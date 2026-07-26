@@ -90,6 +90,25 @@ def test_verify_ollama_uses_v1_models_no_key(monkeypatch):
     assert "headers" not in cap  # keyless
 
 
+def test_verify_lmstudio_defaults_to_its_own_port(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    # Blank endpoint must resolve to LM Studio's default — NOT fall through to the generic
+    # branch, which would probe api.openai.com with an empty bearer token.
+    assert verify_provider_key("lmstudio", base_url="") == {"ok": True}
+    assert cap["url"] == "http://localhost:1234/v1/models"
+    assert "headers" not in cap  # keyless
+
+
+def test_verify_local_connection_error_names_the_endpoint(monkeypatch):
+    # "Couldn't reach (ConnectError)" doesn't tell a local user what to do; the overwhelmingly
+    # common cause is that they haven't started the server.
+    _patch_get(monkeypatch, raise_exc=ConnectionError("boom"))
+    res = verify_provider_key("lmstudio", base_url="http://localhost:4321")
+    assert res["ok"] is False
+    assert res["error"] == "Nothing listening at http://localhost:4321/v1. Is it running?"
+
+
 def test_verify_network_error_is_clean(monkeypatch):
     _patch_get(monkeypatch, raise_exc=ConnectionError("boom"))
     res = verify_provider_key("openai", api_key="sk-x")

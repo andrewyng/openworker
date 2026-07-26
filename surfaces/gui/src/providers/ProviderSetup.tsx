@@ -31,6 +31,22 @@ export const KEY_HELP: Record<string, { url: string; label: string }> = {
   xai: { url: "https://console.x.ai", label: "console.x.ai" },
 };
 
+// Keyless local runtimes: there's no key to fetch, so the equivalent help is "where do I get
+// the app, and what do I have to do in it". LM Studio needs the extra nudge — unlike `ollama
+// serve`, its server is off by default and lives behind a tab most users never open.
+export const LOCAL_HELP: Record<string, { url: string; label: string; note: string }> = {
+  ollama: {
+    url: "https://ollama.com/download",
+    label: "Install Ollama",
+    note: "No API key needed — Ollama runs models on this Mac.",
+  },
+  lmstudio: {
+    url: "https://lmstudio.ai/download",
+    label: "Install LM Studio",
+    note: "No API key needed — LM Studio runs models on this Mac. Start its server first: Developer tab ▸ Start Server.",
+  },
+};
+
 export type Verify = { state: "idle" | "testing" | "ok" | "error"; msg?: string };
 
 /** Brand chip: always a light plate so multicolor marks read on any theme. */
@@ -406,14 +422,14 @@ export function ProviderForm({
           — takes about a minute.
         </p>
       )}
-      {info && !info.needs_key && (
+      {info && !info.needs_key && LOCAL_HELP[sel] && (
         <p className="text-[11.5px] text-faint mt-2">
-          No API key needed — Ollama runs models on this Mac.{" "}
+          {LOCAL_HELP[sel].note}{" "}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
-            onClick={() => openExternal("https://ollama.com/download")}
+            onClick={() => openExternal(LOCAL_HELP[sel].url)}
           >
-            Install Ollama ↗
+            {LOCAL_HELP[sel].label} ↗
           </button>
         </p>
       )}
