@@ -354,7 +354,7 @@ export function Composer(props: Props) {
     }
   };
 
-  const toggleDictation = async (isVadAutoStop = false) => {
+  const toggleDictation = async () => {
     if (!isTauri() || dictationBusy) return;
     setDictationError(null);
     try {
