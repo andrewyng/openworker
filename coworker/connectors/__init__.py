@@ -1,4 +1,4 @@
-"""Messaging connectors — Slack/Telegram adapters, the gateway, and the send_message tool."""
+"""Messaging connectors — Slack/Telegram/WeChat adapters, the gateway, and send_message."""
 
 from __future__ import annotations
 
@@ -31,12 +31,14 @@ from .setup import (
     connector_list,
     disconnect_connector,
     experimental_enabled,
+    save_weixin_qr_credentials,
     set_experimental_enabled,
     update_connector_tools,
 )
 from .integration_tools import make_integration_tools
 from .tools import make_send_file_tool, make_send_message_tool
 from .tool_defs import connector_for_tool
+from .weixin_adapter import WeixinAdapter, weixin_message_to_event
 
 __all__ = [
     "BasePlatformAdapter",
@@ -61,6 +63,7 @@ __all__ = [
     "connector_list",
     "disconnect_connector",
     "experimental_enabled",
+    "save_weixin_qr_credentials",
     "set_experimental_enabled",
     "update_connector_tools",
     "make_integration_tools",
@@ -70,9 +73,11 @@ __all__ = [
     "SlackAdapter",
     "SlackRelayAdapter",
     "TelegramAdapter",
+    "WeixinAdapter",
     "make_adapter",
     "slack_event_to_event",
     "telegram_message_to_event",
+    "weixin_message_to_event",
     "slack_qualify",
     "slack_split",
 ]
