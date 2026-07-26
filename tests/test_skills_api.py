@@ -136,6 +136,49 @@ def test_create_project_scope_requires_real_workspace(tmp_path):
     assert res["ok"] is False and "workspace" in res["error"].lower()
 
 
+def test_scratch_workspace_rejected_for_skill_writes(tmp_path):
+    """A per-conversation scratch dir is not a project: create/move-into/confirm all refuse
+    it at the manager chokepoint; moving OUT of one still works (the rescue path)."""
+    client, manager, _p = _client(tmp_path)
+    scratch_base = tmp_path / "scratchpads"
+    manager.set_scratch_base(str(scratch_base))
+    scratch_ws = scratch_base / "6d57038c-50d"
+    (scratch_ws / ".coworker" / "skills").mkdir(parents=True)
+
+    res = client.post(
+        "/v1/skills",
+        json={**GREET, "scope": "project", "workspace": str(scratch_ws)},
+    ).json()
+    assert res["ok"] is False and "temporary" in res["error"].lower()
+
+    client.post("/v1/skills", json=GREET)  # global
+    res = client.post(
+        "/v1/skills/greet/move", json={"scope": "project", "workspace": str(scratch_ws)}
+    ).json()
+    assert res["ok"] is False and "temporary" in res["error"].lower()
+
+    md = "---\nname: zipped\ndescription: d\n---\nbody\n"
+    preview = client.post(
+        "/v1/skills/upload", json={"data_b64": _zip_b64({"zipped/SKILL.md": md})}
+    ).json()
+    res = client.post(
+        "/v1/skills/upload/confirm",
+        json={"token": preview["token"], "scope": "project", "workspace": str(scratch_ws)},
+    ).json()
+    assert res["ok"] is False and "temporary" in res["error"].lower()
+
+    # Rescue path: a skill already stranded in scratch can still move OUT to global.
+    manager.skill_store.create(
+        name="stranded", description="", instructions="x",
+        scope="project", workspace=scratch_ws,
+    )
+    res = client.post(
+        "/v1/skills/stranded/move",
+        json={"scope": "global", "workspace": str(scratch_ws)},
+    ).json()
+    assert res["ok"] is True and res["skill"]["scope"] == "global"
+
+
 def test_path_traversal_names_rejected(tmp_path):
     client, _m, _p = _client(tmp_path)
     # ".." must be encoded — the HTTP client itself normalizes a literal /.. away.

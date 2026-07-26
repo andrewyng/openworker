@@ -3694,7 +3694,30 @@ class SessionManager:
         ]
         return {"skills": rows}
 
+    def _scratch_workspace_error(self, workspace: Any) -> Optional[dict[str, Any]]:
+        """Refuse skill WRITES into a per-conversation scratch dir — a skill saved there is
+        stranded in a throwaway folder. Backend chokepoint: guards every entry path (UI,
+        REST, future import), not just the flows the GUI happens to gate."""
+        if not workspace:
+            return None
+        try:
+            ws = Path(str(workspace)).expanduser().resolve()
+            if ws.is_relative_to(self.scratch_base().resolve()):
+                return {
+                    "ok": False,
+                    "error": (
+                        "That folder is a temporary session space — skills saved there "
+                        "would be lost. Save it globally or pick a real project."
+                    ),
+                }
+        except OSError:
+            pass
+        return None
+
     def create_skill(self, body: dict[str, Any]) -> dict[str, Any]:
+        blocked = self._scratch_workspace_error(body.get("workspace"))
+        if blocked:
+            return blocked
         try:
             created = self.skill_store.create(
                 name=str(body.get("name", "")),
@@ -3730,6 +3753,12 @@ class SessionManager:
         return {"ok": True}
 
     def move_skill(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
+        # Moving INTO project scope must not target a scratch dir (moving OUT is fine —
+        # that's the rescue path for already-stranded skills).
+        if str(body.get("scope", "")) == "project":
+            blocked = self._scratch_workspace_error(body.get("workspace"))
+            if blocked:
+                return blocked
         try:
             moved = self.skill_store.move(
                 name,
@@ -3748,6 +3777,9 @@ class SessionManager:
         return {"ok": True, **preview}
 
     def confirm_skill_upload(self, body: dict[str, Any]) -> dict[str, Any]:
+        blocked = self._scratch_workspace_error(body.get("workspace"))
+        if blocked:
+            return blocked
         try:
             saved = self.skill_store.confirm_upload(
                 str(body.get("token", "")),
