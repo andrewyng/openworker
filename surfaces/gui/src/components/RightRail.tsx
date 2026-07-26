@@ -172,21 +172,25 @@ export function RightRail({
             <ProgressSummary running={running} toolNames={toolNames} todo={todo} />
           </RailSection>
 
-          <RailSection
-            title={`Tools${tools.length ? ` (${new Set(tools).size})` : ""}`}
-            open={open.tools}
-            onToggle={() => setOpen({ ...open, tools: !open.tools })}
-          >
-            <LoadedToolsSection tools={tools} />
-          </RailSection>
+          {tools.length > 0 && (
+            <RailSection
+              title={`Tools (${new Set(tools).size})`}
+              open={open.tools}
+              onToggle={() => setOpen({ ...open, tools: !open.tools })}
+            >
+              <LoadedToolsSection tools={tools} />
+            </RailSection>
+          )}
 
-          <RailSection
-            title={`Skills${skills.length ? ` (${new Set(skills).size})` : ""}`}
-            open={open.skills}
-            onToggle={() => setOpen({ ...open, skills: !open.skills })}
-          >
-            <LoadedSkillsSection skills={skills} />
-          </RailSection>
+          {skills.length > 0 && (
+            <RailSection
+              title={`Skills (${new Set(skills).size})`}
+              open={open.skills}
+              onToggle={() => setOpen({ ...open, skills: !open.skills })}
+            >
+              <LoadedSkillsSection skills={skills} />
+            </RailSection>
+          )}
 
           {showArtifacts && (
           <RailSection
