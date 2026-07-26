@@ -1585,6 +1585,16 @@ export function App() {
             refreshKey={browserRefreshKey}
             toolNames={items.filter((i) => i.kind === "tool").map((i: any) => i.name)}
             tools={[...new Set(items.filter((i) => i.kind === "tool").map((i: any) => i.name))]}
+            skills={[
+              ...new Set(
+                items
+                  .filter((i: any) => i.kind === "tool" && i.name === "load_skill")
+                  .map((i: any) => {
+                    try { const a = typeof i.args === "string" ? JSON.parse(i.args) : i.args; return a?.name; } catch { return null; }
+                  })
+                  .filter(Boolean) as string[]
+              ),
+            ]}
             todo={todo}
             running={running}
             onPreviewChange={onArtifactPreview}
