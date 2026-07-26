@@ -215,7 +215,8 @@ function VoiceInputSection() {
   };
 
   const remove = async () => {
-    if (!window.confirm("Delete the local Whisper model and disable Voice Input?")) return;
+    const modelName = status?.model_name || "local voice";
+    if (!window.confirm(`Delete the ${modelName} model and disable Voice Input?`)) return;
     setError(null);
     try {
       publish(await deleteDictationModel());
@@ -294,9 +295,11 @@ function VoiceInputSection() {
 
           <div className={CARD}>
             <div className="p-4 flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-accentSoft text-accent grid place-items-center font-semibold">W</div>
+              <div className="w-9 h-9 rounded-lg bg-accentSoft text-accent grid place-items-center font-semibold">
+                {status?.model_name ? status.model_name.charAt(0).toUpperCase() : "V"}
+              </div>
               <div className="min-w-0 flex-1">
-                <div className="text-[13.5px] font-medium">Whisper Base · English</div>
+                <div className="text-[13.5px] font-medium">{status?.model_name || "Voice Input Model"}</div>
                 <div className="text-[12px] text-muted mt-0.5">
                   {status?.model_verified ? `Installed and verified · ${formatBytes(status.model_bytes)}` : `Local voice model · ${formatBytes(status?.model_bytes || 147_964_211)}`}
                 </div>
