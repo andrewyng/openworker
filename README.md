@@ -89,7 +89,7 @@ desktop app uses an in-memory launch token instead and never writes it to disk.
 
 To run the full desktop app instead of the browser UI, replace step 3 with `npm run tauri dev` (from `surfaces/gui/`) - the Tauri shell launches the window and supervises the server itself.
 
-Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gui` (GUI unit + hermetic end-to-end). Desktop bundles are built with `packaging/build_dmg.sh` / `packaging/build_windows.ps1`.
+Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gui` (GUI unit + hermetic end-to-end). Desktop bundles are built with `packaging/build_dmg.sh` / `packaging/build_windows.ps1` / `packaging/build_linux.sh` (AppImage + .deb).
 
 ## Repository layout
 
@@ -98,7 +98,7 @@ Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gu
 | `coworker/` | Python backend - agent engine, model providers, connectors, MCP client, memory, automations |
 | `surfaces/gui/` | Desktop app - React UI + Tauri shell that supervises the server |
 | `stt/` | Speech-to-text sidecar (Rust) for voice input |
-| `packaging/` | Installer builds (macOS DMG, Windows), auto-update manifest, dev bootstrap |
+| `packaging/` | Installer builds (macOS DMG, Windows, Linux AppImage/.deb), auto-update manifest, dev bootstrap |
 | `docs/` | Design specs and decision logs |
 | `tests/` | Backend test suite |
 
