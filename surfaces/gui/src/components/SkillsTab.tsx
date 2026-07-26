@@ -41,6 +41,14 @@ type Editor = {
   workspace: string;
 };
 
+// The project a skill folder belongs to — the path segment before `.coworker`
+// (…\payments-service\.coworker\skills\x → "payments-service").
+const projectNameOf = (path: string): string => {
+  const parts = path.split(/[\\/]/);
+  const i = parts.indexOf(".coworker");
+  return i > 0 ? parts[i - 1] : "";
+};
+
 const emptyEditor = (scope: "global" | "project", workspace: string): Editor => ({
   mode: "new",
   name: "",
@@ -338,7 +346,11 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
                 <span className={`text-[13px] font-medium ${row.enabled ? "" : "text-muted"}`}>
                   {row.name}
                 </span>
-                <span className={BADGE}>{row.scope}</span>
+                <span className={BADGE} title={row.path}>
+                  {row.scope === "project"
+                    ? `project · ${projectNameOf(row.path) || "?"}`
+                    : row.scope}
+                </span>
                 {row.source !== "local" ? <span className={BADGE}>{row.source}</span> : null}
               </div>
               <div className="text-[12px] text-muted truncate">{row.description}</div>

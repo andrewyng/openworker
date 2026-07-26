@@ -1606,7 +1606,15 @@ export function App() {
             scratchPrimary={agent === "cowork"}
             openAccessKey={accessKey}
             onOpenIntegrations={() => setSurface("integrations")}
-            onOpenSkills={() => openSettings("skills", workspace || undefined)}
+            onOpenSkills={() =>
+              // Two-doors carries the workspace ONLY for project-scoped sessions. A Cowork
+              // scratch space is a throwaway dir with a hex name — offering it as a
+              // "project" strands skills in a temp folder (tester catch 2026-07-26).
+              openSettings(
+                "skills",
+                isProjectScoped(personaOf(agent)) && workspace ? workspace : undefined,
+              )
+            }
           />
         </div>
       </div>
