@@ -1177,7 +1177,7 @@ def make_integration_tools(
         interval: int = 1,
         by_day: str = "",
         until: str = "",
-        count: int = 0,
+        count: Optional[int] = None,
         account: str = "",
     ) -> dict[str, Any]:
         email, profile, err = _gcal_profile(secrets, account)
@@ -1494,7 +1494,7 @@ def make_integration_tools(
         interval: int = 1,
         by_day: str = "",
         until: str = "",
-        count: int = 0,
+        count: Optional[int] = None,
         account: str = "",
     ) -> dict[str, Any]:
         aid, profile, err = _account_profile(

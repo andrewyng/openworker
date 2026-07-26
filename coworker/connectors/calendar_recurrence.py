@@ -65,6 +65,7 @@ RECURRENCE_PROPS: dict[str, Any] = {
     },
     "interval": {
         "type": "integer",
+        "minimum": 1,
         "description": "Repeat every N periods (default 1). E.g. 2 + weekly = biweekly.",
     },
     "by_day": {
@@ -82,6 +83,7 @@ RECURRENCE_PROPS: dict[str, Any] = {
     },
     "count": {
         "type": "integer",
+        "minimum": 1,
         "description": "Optional number of occurrences. Do not combine with until.",
     },
 }
@@ -93,7 +95,7 @@ def parse_recurrence(
     interval: int = 1,
     by_day: str = "",
     until: str = "",
-    count: int = 0,
+    count: Optional[int] = None,
     start: str = "",
 ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, str]]]:
     """Normalize recurrence args.
@@ -109,19 +111,23 @@ def parse_recurrence(
             "error": "freq must be one of: daily, weekly, monthly, yearly"
         }
 
-    try:
-        iv = int(interval) if interval not in (None, "") else 1
-    except (TypeError, ValueError):
+    if interval in (None, ""):
+        iv = 1
+    elif isinstance(interval, bool) or not isinstance(interval, int):
         return None, {"error": "interval must be a positive integer"}
+    else:
+        iv = interval
     if iv < 1:
         return None, {"error": "interval must be a positive integer"}
 
     until_s = (until or "").strip()
-    try:
-        count_n = int(count) if count not in (None, "") else 0
-    except (TypeError, ValueError):
+    if count in (None, ""):
+        count_n = 0
+    elif isinstance(count, bool) or not isinstance(count, int):
         return None, {"error": "count must be a positive integer"}
-    if count_n < 0:
+    else:
+        count_n = count
+    if count not in (None, "") and count_n < 1:
         return None, {"error": "count must be a positive integer"}
     if until_s and count_n:
         return None, {"error": "pass until or count, not both"}

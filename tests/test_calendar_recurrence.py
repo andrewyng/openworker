@@ -26,6 +26,25 @@ def test_parse_rejects_until_and_count():
     assert "until or count" in err["error"]
 
 
+def test_parse_rejects_non_positive_or_non_integer_bounds():
+    for kwargs, field in (
+        ({"count": 0}, "count"),
+        ({"count": -1}, "count"),
+        ({"count": 2.5}, "count"),
+        ({"count": True}, "count"),
+        ({"interval": 0}, "interval"),
+        ({"interval": 1.5}, "interval"),
+        ({"interval": True}, "interval"),
+    ):
+        spec, err = parse_recurrence(
+            freq="daily",
+            start="2026-07-27T10:00:00",
+            **kwargs,
+        )
+        assert spec is None
+        assert f"{field} must be a positive integer" == err["error"]
+
+
 def test_parse_rejects_bad_freq():
     spec, err = parse_recurrence(freq="hourly", start="2026-07-27T10:00:00")
     assert spec is None
