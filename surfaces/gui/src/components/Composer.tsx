@@ -5,6 +5,7 @@ import { getSettings, inspectPdf } from "../api";
 import { Dropdown, type Option } from "./Dropdown";
 import { Icon } from "./Icon";
 import { Toggle } from "./Toggle";
+import { playCustomTts } from "./Transcript";
 import {
   cancelDictation,
   getDictationLevel,
@@ -12,6 +13,7 @@ import {
   isTauri,
   startDictation,
   stopDictation,
+  synthesizeAndPlay,
   type DictationStatus,
 } from "../tauri";
 
@@ -62,6 +64,8 @@ interface Props {
   onInterrupt: () => void;
   onModeChange: (mode: string) => void;
   onModelChange: (model: string) => void;
+  voiceMode?: boolean;
+  onVoiceModeChange?: (enabled: boolean) => void;
   // When set (Code/Cowork), the Mode menu is shown. The folder/roots + branch controls left the
   // composer for the Session settings drawer (§22) — folder access is standing session config.
   workspace?: string;
@@ -192,6 +196,42 @@ export function Composer(props: Props) {
     window.addEventListener("keydown", cancelOnEscape);
     return () => window.removeEventListener("keydown", cancelOnEscape);
   }, [dictation?.recording]);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  
+  useEffect(() => {
+    const handleVoiceModeTrigger = async (e: Event) => {
+      const customEvent = e as CustomEvent<{ text: string }>;
+      const text = customEvent.detail.text;
+      const customUrl = localStorage.getItem("ocw:custom-tts-url");
+      
+      try {
+        if (customUrl) {
+          await playCustomTts(text, customUrl, audioRef);
+        } else {
+          await synthesizeAndPlay(text);
+        }
+      } catch (err) {
+        console.error("Voice mode TTS failed", err);
+      }
+      
+      // Start dictation for the next turn
+      if (props.voiceMode) {
+        setDictationBusy("Starting microphone…");
+        try {
+          const recording = await startDictation();
+          if (recording?.recording) setDictation(recording);
+        } catch (err) {
+          setDictationError(err instanceof Error ? err.message : "Failed to restart dictation");
+        } finally {
+          setDictationBusy(null);
+        }
+      }
+    };
+    
+    window.addEventListener("voice-mode-trigger-tts", handleVoiceModeTrigger);
+    return () => window.removeEventListener("voice-mode-trigger-tts", handleVoiceModeTrigger);
+  }, [props.voiceMode]);
 
   const voiceReady = !!dictation?.supported && !!dictation?.model_verified && !!dictation?.test_passed;
   const recordingTime = `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`;
@@ -490,28 +530,43 @@ export function Composer(props: Props) {
 
           {/* mic — immediately before send (owner call, DMG #28 walkthrough) */}
           {isTauri() && (
-            <button
-              className={
-                iconBtn +
-                (dictation?.recording ? " bg-red-50 text-red-600 hover:bg-red-100" : "") +
-                (dictationBusy ? " opacity-60" : "") +
-                (!voiceReady && !dictation?.recording ? " opacity-40" : "")
-              }
-              onClick={() => void toggleDictation()}
-              disabled={!!dictationBusy}
-              title={
-                dictationBusy ||
-                (dictation?.recording
-                  ? "Stop recording and transcribe"
-                  : voiceReady
-                    ? "Start local voice dictation"
-                    : "Configure Voice Input in Settings")
-              }
-              aria-label={dictation?.recording ? "Stop dictation" : voiceReady ? "Start dictation" : "Configure Voice Input in Settings"}
-              aria-disabled={!voiceReady && !dictation?.recording}
-            >
-              <Icon name={dictation?.recording ? "stop" : "mic"} size={16} />
-            </button>
+            <>
+              {voiceReady && props.onVoiceModeChange && (
+                <button
+                  className={
+                    iconBtn +
+                    (props.voiceMode ? " bg-accent text-white hover:brightness-105" : "")
+                  }
+                  onClick={() => props.onVoiceModeChange?.(!props.voiceMode)}
+                  title={props.voiceMode ? "Voice Chat Mode: ON" : "Voice Chat Mode: OFF"}
+                  aria-label="Toggle Voice Chat Mode"
+                >
+                  <Icon name="sparkle" size={14} />
+                </button>
+              )}
+              <button
+                className={
+                  iconBtn +
+                  (dictation?.recording ? " bg-red-50 text-red-600 hover:bg-red-100" : "") +
+                  (dictationBusy ? " opacity-60" : "") +
+                  (!voiceReady && !dictation?.recording ? " opacity-40" : "")
+                }
+                onClick={() => void toggleDictation()}
+                disabled={!!dictationBusy}
+                title={
+                  dictationBusy ||
+                  (dictation?.recording
+                    ? "Stop recording and transcribe"
+                    : voiceReady
+                      ? "Start local voice dictation"
+                      : "Configure Voice Input in Settings")
+                }
+                aria-label={dictation?.recording ? "Stop dictation" : voiceReady ? "Start dictation" : "Configure Voice Input in Settings"}
+                aria-disabled={!voiceReady && !dictation?.recording}
+              >
+                <Icon name={dictation?.recording ? "stop" : "mic"} size={16} />
+              </button>
+            </>
           )}
 
           {/* send / stop */}

@@ -156,6 +156,12 @@ export function App() {
   const [surfaces, setSurfaces] = useState<SurfaceVisibility>({ cowork: true, chat: false, code: false });
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
+  const [sidebarSearch, setSidebarSearch] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
+  const voiceModeRef = useRef(voiceMode);
+  voiceModeRef.current = voiceMode;
+
+  const [activeRun, setActiveRun] = useState<AutomationRun | null>(null);
   const [running, setRunning] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [streaming, setStreamingState] = useState("");
@@ -708,6 +714,15 @@ export function App() {
           break;
         case "turn_done":
           setRunning(false);
+          if (voiceModeRef.current) {
+            setItems((prev) => {
+              const lastItem = [...prev].reverse().find(i => i.kind === "assistant");
+              if (lastItem && lastItem.text) {
+                window.dispatchEvent(new CustomEvent("voice-mode-trigger-tts", { detail: { text: lastItem.text } }));
+              }
+              return prev;
+            });
+          }
           refreshSessions();
           // Catch-all artifact refresh: files created via shell or on a brand-new session (whose
           // record only exists after the first save) appear once the turn completes.
@@ -1530,6 +1545,8 @@ export function App() {
               onInterrupt={interrupt}
               onModeChange={changeMode}
               onModelChange={changeModel}
+              voiceMode={voiceMode}
+              onVoiceModeChange={setVoiceMode}
               workspace={needsWorkspace(agent) ? workspace || "" : undefined}
               unattended={unattended}
               onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}

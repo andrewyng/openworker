@@ -461,6 +461,22 @@ function VoiceOutputCard() {
           <div className="mt-1.5 text-[11.5px] text-muted flex"><span>{formatBytes(progress?.bytes_downloaded || 0)} of {formatBytes(progress?.total_bytes || 1)}</span><span className="ml-auto">{progressPercent}%</span></div>
         </div>
       )}
+      <div className="border-t border-line px-4 py-3">
+        <label className="block mb-2 text-[12px] font-medium text-ink">Custom OpenAI-compatible TTS URL (Optional)</label>
+        <input
+          type="text"
+          className={INPUT + " w-full"}
+          placeholder="http://127.0.0.1:8000/v1"
+          defaultValue={localStorage.getItem("ocw:custom-tts-url") || ""}
+          onChange={(e) => {
+            if (e.target.value) localStorage.setItem("ocw:custom-tts-url", e.target.value);
+            else localStorage.removeItem("ocw:custom-tts-url");
+          }}
+        />
+        <div className="text-[11.5px] text-muted mt-1.5">
+          If set, TTS will use this endpoint instead of the local model. It will POST to <code>{"{URL}/audio/speech"}</code>.
+        </div>
+      </div>
       {error && <div className="border-t border-line bg-red-50 px-4 py-3 text-[12px] text-red-700">{error}</div>}
     </div>
   );

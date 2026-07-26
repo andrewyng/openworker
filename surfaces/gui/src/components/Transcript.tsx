@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { ApprovalDecision, Item } from "../types";
 import { shortArgs } from "./ApprovalCard";
 import { humanizeAsk, humanizeTool, type HumanLine } from "../humanize";
@@ -12,29 +12,65 @@ import { synthesizeAndPlay, stopTts, isTauri, getTtsStatus } from "../tauri";
 // so revealing it on group-hover never shifts the layout. `ts` is unix seconds — canonical
 // messages carry it, pre-stamp history doesn't, so the time simply omits itself when absent.
 
+export function playCustomTts(text: string, customUrl: string, audioRef: React.MutableRefObject<HTMLAudioElement | null>): Promise<void> {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const res = await fetch(customUrl.replace(/\/+$/, "") + "/audio/speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "tts-1", input: text, voice: "alloy" }),
+      });
+      if (!res.ok) throw new Error("TTS API fetch failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+      audio.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+      audio.play().catch((e) => { URL.revokeObjectURL(url); reject(e); });
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
 function BubblePlayTts({ text }: { text: string }) {
   const [installed, setInstalled] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  
+  // Custom TTS setting overrides local engine
+  const customUrl = localStorage.getItem("ocw:custom-tts-url");
 
   useEffect(() => {
     if (!isTauri()) return;
     getTtsStatus().then((status) => setInstalled(status?.model_installed ?? false));
   }, []);
 
-  if (!isTauri() || !installed) return null;
+  if (!isTauri() || (!installed && !customUrl)) return null;
 
   const toggle = async () => {
     if (playing) {
-      await stopTts();
+      if (customUrl && audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      } else {
+        await stopTts();
+      }
       setPlaying(false);
     } else {
       setPlaying(true);
       try {
-        await synthesizeAndPlay(text);
-      } catch {
-        // error playing
+        if (customUrl) {
+          await playCustomTts(text, customUrl, audioRef);
+        } else {
+          await synthesizeAndPlay(text);
+        }
+      } catch (e) {
+        console.error("TTS playback error", e);
       } finally {
         setPlaying(false);
+        audioRef.current = null;
       }
     }
   };
