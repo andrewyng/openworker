@@ -12,16 +12,24 @@ import { synthesizeAndPlay, stopTts, isTauri, getTtsStatus } from "../tauri";
 // so revealing it on group-hover never shifts the layout. `ts` is unix seconds — canonical
 // messages carry it, pre-stamp history doesn't, so the time simply omits itself when absent.
 
-export function playCustomTts(text: string, customUrl: string, customModel: string, customKey: string, audioRef: React.MutableRefObject<HTMLAudioElement | null>): Promise<void> {
+export function playCustomTts(text: string, customUrl: string, customModel: string, customKey: string, customVoice: string, audioRef: React.MutableRefObject<HTMLAudioElement | null>): Promise<void> {
   return new Promise(async (resolve, reject) => {
     try {
+      // Strip markdown characters and replace newlines with periods to prevent
+      // TTS backends (like Qwen3) from splitting paragraphs and using different voices.
+      const cleanText = text
+        .replace(/[#*`~_-]/g, "")
+        .replace(/\n+/g, ". ")
+        .replace(/\.+/g, ".") // prevent double periods
+        .trim();
+
       const res = await fetch(customUrl.replace(/\/+$/, "") + "/audio/speech", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${customKey || "dummy_key"}`,
         },
-        body: JSON.stringify({ model: customModel || "tts-1", input: text, voice: "alloy" }),
+        body: JSON.stringify({ model: customModel || "tts-1", input: cleanText, voice: customVoice || "alloy" }),
       });
       if (!res.ok) throw new Error("TTS API fetch failed");
       const blob = await res.blob();
@@ -46,6 +54,7 @@ function BubblePlayTts({ text }: { text: string }) {
   const customUrl = localStorage.getItem("ocw:custom-tts-url");
   const customModel = localStorage.getItem("ocw:custom-tts-model") || "tts-1";
   const customKey = localStorage.getItem("ocw:custom-tts-key") || "dummy_key";
+  const customVoice = localStorage.getItem("ocw:custom-tts-voice") || "alloy";
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -67,7 +76,7 @@ function BubblePlayTts({ text }: { text: string }) {
       setPlaying(true);
       try {
         if (customUrl) {
-          await playCustomTts(text, customUrl, customModel, customKey, audioRef);
+          await playCustomTts(text, customUrl, customModel, customKey, customVoice, audioRef);
         } else {
           await synthesizeAndPlay(text);
         }

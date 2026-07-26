@@ -420,6 +420,7 @@ function VoiceOutputCard() {
     const customUrl = localStorage.getItem("ocw:custom-tts-url");
     const customModel = localStorage.getItem("ocw:custom-tts-model") || "tts-1";
     const customKey = localStorage.getItem("ocw:custom-tts-key") || "dummy_key";
+    const customVoice = localStorage.getItem("ocw:custom-tts-voice") || "alloy";
 
     try {
       if (status?.is_playing || audioRef.current) {
@@ -440,7 +441,7 @@ function VoiceOutputCard() {
               "Content-Type": "application/json",
               "Authorization": `Bearer ${customKey}`,
             },
-            body: JSON.stringify({ model: customModel, input: testText, voice: "alloy" }),
+            body: JSON.stringify({ model: customModel, input: testText, voice: customVoice }),
           });
           if (!res.ok) {
             const txt = await res.text().catch(() => "");
@@ -536,8 +537,23 @@ function VoiceOutputCard() {
             else localStorage.removeItem("ocw:custom-tts-key");
           }}
         />
-        <div className="text-[11.5px] text-muted mt-1.5">
+        <div className="text-[11.5px] text-muted mt-1.5 mb-3">
           API key if required by your provider. A dummy key is sent if left blank.
+        </div>
+        
+        <label className="block mb-2 text-[12px] font-medium text-ink">Custom TTS Voice (Optional)</label>
+        <input
+          type="text"
+          className={INPUT + " w-full"}
+          placeholder="alloy"
+          defaultValue={localStorage.getItem("ocw:custom-tts-voice") || ""}
+          onChange={(e) => {
+            if (e.target.value) localStorage.setItem("ocw:custom-tts-voice", e.target.value);
+            else localStorage.removeItem("ocw:custom-tts-voice");
+          }}
+        />
+        <div className="text-[11.5px] text-muted mt-1.5">
+          The voice ID or name to use. Defaults to <code>alloy</code>.
         </div>
       </div>
       {error && <div className="border-t border-line bg-red-50 px-4 py-3 text-[12px] text-red-700">{error}</div>}
