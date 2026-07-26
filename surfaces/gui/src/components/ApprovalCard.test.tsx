@@ -245,7 +245,7 @@ describe("InboxItemCard — question Cancel", () => {
     expect(onResolve).toHaveBeenCalledWith("q1", QUESTION_CANCELLED);
   });
 
-  it("Esc cancels when the draft is empty; clears a typed draft first", () => {
+  it("one Esc cancels even with a typed draft; repeated keydown is ignored", () => {
     const onResolve = vi.fn();
     render(<InboxItemCard item={questionItem()} onResolve={onResolve} compact />);
     const input = screen.getByPlaceholderText("Or type your own answer…") as HTMLInputElement;
@@ -254,12 +254,15 @@ describe("InboxItemCard — question Cancel", () => {
     expect(onResolve).not.toHaveBeenCalled();
     expect(input.value).toBe("maybe later");
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(onResolve).not.toHaveBeenCalled();
-    expect(input.value).toBe("");
-    fireEvent.keyDown(window, { key: "Escape", repeat: true });
-    expect(onResolve).not.toHaveBeenCalled();
-    fireEvent.keyDown(window, { key: "Escape" });
     expect(onResolve).toHaveBeenCalledWith("q1", QUESTION_CANCELLED);
+  });
+
+  it("places Cancel immediately before the primary Send action", () => {
+    render(<InboxItemCard item={questionItem()} onResolve={vi.fn()} compact />);
+    const actions = screen
+      .getAllByRole("button")
+      .map((button) => button.textContent?.trim());
+    expect(actions.slice(-2)).toEqual(["Cancel", "Send"]);
   });
 
   it("still shows Cancel when allow_text is false (only escape hatch besides options)", () => {

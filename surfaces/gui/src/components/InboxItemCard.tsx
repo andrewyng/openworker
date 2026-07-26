@@ -50,8 +50,8 @@ export function InboxItemCard({
 
   // HIG: Escape is Cancel's key equivalent for the active inline prompt. Inbox-list cards do
   // not claim a global shortcut: several can be mounted at once, and one Esc must never cancel
-  // multiple questions. Softened vs Claude Code — Esc with a draft clears first; empty draft
-  // cancels. Distinct from Stop (whole-turn interrupt): this resolves only the ask_user item.
+  // multiple questions. Distinct from Stop (whole-turn interrupt): this resolves only the
+  // ask_user item.
   useEffect(() => {
     if (item.kind !== "question" || !compact) return;
     const onKey = (e: KeyboardEvent) => {
@@ -60,16 +60,22 @@ export function InboxItemCard({
       if (e.repeat) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      if (answer.trim() || selected.length) {
-        setAnswer("");
-        setSelected([]);
-        return;
-      }
       onResolve(item.id, QUESTION_CANCELLED);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [item.kind, item.id, answer, selected, onResolve, compact]);
+  }, [item.kind, item.id, onResolve, compact]);
+
+  const cancelButton = () => (
+    <button
+      type="button"
+      className={BTN_BORDERED}
+      title="Cancel (Esc)"
+      onClick={cancelQuestion}
+    >
+      Cancel
+    </button>
+  );
 
   const textRow = (placeholder: string) => (
     <div className="flex items-center gap-2 mt-2.5">
@@ -82,6 +88,7 @@ export function InboxItemCard({
           if (e.key === "Enter" && answer.trim()) onResolve(item.id, answer);
         }}
       />
+      {cancelButton()}
       <button className={BTN_PRIMARY} disabled={!answer.trim()} onClick={() => onResolve(item.id, answer)}>
         Send
       </button>
@@ -176,7 +183,8 @@ export function InboxItemCard({
             </div>
           )}
           {multi && options.length > 0 && (
-            <div className="mt-2.5">
+            <div className="flex items-center justify-end gap-2 mt-2.5">
+              {!allowText && cancelButton()}
               <button
                 className={BTN_PRIMARY}
                 disabled={!selected.length}
@@ -188,18 +196,9 @@ export function InboxItemCard({
           )}
           {(allowText || options.length === 0) &&
             textRow(options.length ? "Or type your own answer…" : "Your answer…")}
-          {/* HIG Cancel — quiet secondary, same dialect as Deny. Always shown (including
-              allow_text=false) so Esc isn't the only escape hatch. */}
-          <div className="mt-2 flex justify-end">
-            <button
-              type="button"
-              className={BTN_QUIET}
-              title="Cancel (Esc)"
-              onClick={cancelQuestion}
-            >
-              Cancel
-            </button>
-          </div>
+          {!allowText && !multi && (
+            <div className="flex justify-end mt-2.5">{cancelButton()}</div>
+          )}
         </>
       ) : item.kind === "directory" ? (
         <div className="flex items-center gap-2 mt-2.5">
