@@ -100,6 +100,132 @@ export const MCP_CATALOG: McpCatalogItem[] = [
       enabled: true,
     }
   },
+  {
+    id: "memory",
+    name: "Memory",
+    description: "Knowledge graph-based persistent memory system for agents to store contextual information.",
+    icon: "archive",
+    author: "ModelContextProtocol",
+    config: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-memory"],
+      enabled: true,
+    }
+  },
+  {
+    id: "fetch",
+    name: "Fetch",
+    description: "Web content fetching and conversion for reading URLs and extracting markdown.",
+    icon: "globe",
+    author: "ModelContextProtocol",
+    config: {
+      command: "uvx",
+      args: ["mcp-server-fetch"],
+      enabled: true,
+    }
+  },
+  {
+    id: "google-drive",
+    name: "Google Drive",
+    description: "File access and search for Google Drive documents and workspaces.",
+    icon: "folder",
+    author: "ModelContextProtocol",
+    config: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-gdrive"],
+      enabled: true,
+    }
+  },
+  {
+    id: "sentry",
+    name: "Sentry",
+    description: "Retrieve and analyze error reports and performance issues from your Sentry projects.",
+    icon: "shield",
+    author: "ModelContextProtocol",
+    config: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-sentry"],
+      env: { SENTRY_AUTH_TOKEN: "" },
+      enabled: true,
+    }
+  },
+  {
+    id: "notion",
+    name: "Notion",
+    description: "Interact with Notion workspaces, append blocks to pages, and query databases.",
+    icon: "file",
+    author: "ModelContextProtocol",
+    config: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-notion"],
+      env: { NOTION_API_KEY: "" },
+      enabled: true,
+    }
+  },
+  {
+    id: "sequential-thinking",
+    name: "Sequential Thinking",
+    description: "Dynamic and step-by-step problem-solving tool for complex reasoning.",
+    icon: "sparkle",
+    author: "ModelContextProtocol",
+    config: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      enabled: true,
+    }
+  },
+  {
+    id: "gitlab",
+    name: "GitLab",
+    description: "Manage GitLab repositories, pipelines, merge requests, and issues.",
+    icon: "branch",
+    author: "ModelContextProtocol",
+    config: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-gitlab"],
+      env: { GITLAB_PERSONAL_ACCESS_TOKEN: "", GITLAB_API_URL: "https://gitlab.com/api/v4" },
+      enabled: true,
+    }
+  },
+  {
+    id: "aws-s3",
+    name: "AWS S3",
+    description: "List buckets, read objects, and write files to Amazon S3 storage.",
+    icon: "folder",
+    author: "ModelContextProtocol",
+    config: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-aws-s3"],
+      env: { AWS_ACCESS_KEY_ID: "", AWS_SECRET_ACCESS_KEY: "", AWS_REGION: "us-east-1" },
+      enabled: true,
+    }
+  },
+  {
+    id: "telegram",
+    name: "Telegram",
+    description: "Send messages, read channels, and manage Telegram bots via the Telegram Bot API.",
+    icon: "chat",
+    author: "Community (@node2flow)",
+    config: {
+      command: "npx",
+      args: ["-y", "@node2flow/telegram-bot-mcp"],
+      env: { TELEGRAM_BOT_TOKEN: "" },
+      enabled: true,
+    }
+  },
+  {
+    id: "exa",
+    name: "Exa Search",
+    description: "Perform deep, semantic web searches using the Exa AI search engine API.",
+    icon: "search",
+    author: "ModelContextProtocol",
+    config: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-exa"],
+      env: { EXA_API_KEY: "" },
+      enabled: true,
+    }
+  },
 ];
 
 export function McpMarketplace() {
