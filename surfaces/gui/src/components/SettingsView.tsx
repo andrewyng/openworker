@@ -163,11 +163,53 @@ function VoiceSection() {
           <div className="rounded-xl border border-green-200 bg-green-50/70 px-4 py-3 text-[12.5px] text-green-800">
             <span className="font-medium">Private by design.</span> Audio is processed locally.
           </div>
+          <VoiceToneCard />
           <VoiceInputCard />
           <VoiceOutputCard />
         </div>
       )}
     </section>
+  );
+}
+
+function VoiceToneCard() {
+  const [tone, setTone] = useState(localStorage.getItem("ocw:conversation-tone") || "normal");
+  
+  return (
+    <div className={CARD + " p-4"}>
+      <div className="flex items-center gap-3 mb-4">
+        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-panel">
+          <Icon name="chat" size={15} className="text-accent" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 className="font-semibold text-ink text-[13.5px]">Voice Conversation Tone</h3>
+          <p className="text-[12px] text-muted leading-snug">
+            Control the length and detail of the agent's voice responses.
+          </p>
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-3 gap-2">
+        <button
+          className={"px-3 py-2 border rounded-lg text-[12.5px] font-medium transition-colors " + (tone === "short" ? "border-accent bg-accent/10 text-accent" : "border-line bg-paper text-ink hover:bg-panel")}
+          onClick={() => { setTone("short"); localStorage.setItem("ocw:conversation-tone", "short"); }}
+        >
+          Short
+        </button>
+        <button
+          className={"px-3 py-2 border rounded-lg text-[12.5px] font-medium transition-colors " + (tone === "normal" ? "border-accent bg-accent/10 text-accent" : "border-line bg-paper text-ink hover:bg-panel")}
+          onClick={() => { setTone("normal"); localStorage.setItem("ocw:conversation-tone", "normal"); }}
+        >
+          Normal
+        </button>
+        <button
+          className={"px-3 py-2 border rounded-lg text-[12.5px] font-medium transition-colors " + (tone === "extended" ? "border-accent bg-accent/10 text-accent" : "border-line bg-paper text-ink hover:bg-panel")}
+          onClick={() => { setTone("extended"); localStorage.setItem("ocw:conversation-tone", "extended"); }}
+        >
+          Extended
+        </button>
+      </div>
+    </div>
   );
 }
 

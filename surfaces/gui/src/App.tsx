@@ -838,9 +838,19 @@ export function App() {
   }, [surface, sessionId, browserRefreshKey, markUnattended]);
 
   const send = (text: string, attachments?: Attachment[]) => {
+    let outboundText = text;
+    if (voiceModeRef.current) {
+      const tone = localStorage.getItem("ocw:conversation-tone") || "normal";
+      if (tone === "short") {
+        outboundText += "\n\n(System: Keep your response extremely concise, ideally 1-2 sentences.)";
+      } else if (tone === "extended") {
+        outboundText += "\n\n(System: Provide a highly detailed and extended response.)";
+      }
+    }
+    
     setItems((p) => [...p, { kind: "user", text, attachments, ts: Date.now() / 1000 }]);
     // The visible model rides along with the message (single source of truth per turn).
-    sessionRef.current?.userMessage(text, attachments, model);
+    sessionRef.current?.userMessage(outboundText, attachments, model);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
   };
   // Resolving a LIVE prompt also resolves its parked Inbox mirror server-side, but the polled
