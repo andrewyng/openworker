@@ -250,9 +250,14 @@ describe("InboxItemCard — question Cancel", () => {
     render(<InboxItemCard item={questionItem()} onResolve={onResolve} compact />);
     const input = screen.getByPlaceholderText("Or type your own answer…") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "maybe later" } });
+    fireEvent.keyDown(window, { key: "Escape", repeat: true });
+    expect(onResolve).not.toHaveBeenCalled();
+    expect(input.value).toBe("maybe later");
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onResolve).not.toHaveBeenCalled();
     expect(input.value).toBe("");
+    fireEvent.keyDown(window, { key: "Escape", repeat: true });
+    expect(onResolve).not.toHaveBeenCalled();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onResolve).toHaveBeenCalledWith("q1", QUESTION_CANCELLED);
   });

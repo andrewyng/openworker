@@ -57,6 +57,7 @@ export function InboxItemCard({
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (e.defaultPrevented) return;
+      if (e.repeat) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       if (answer.trim() || selected.length) {
