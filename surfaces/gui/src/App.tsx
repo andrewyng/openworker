@@ -156,12 +156,9 @@ export function App() {
   const [surfaces, setSurfaces] = useState<SurfaceVisibility>({ cowork: true, chat: false, code: false });
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
-  const [sidebarSearch, setSidebarSearch] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
   const voiceModeRef = useRef(voiceMode);
   voiceModeRef.current = voiceMode;
-
-  const [activeRun, setActiveRun] = useState<AutomationRun | null>(null);
   const [running, setRunning] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [streaming, setStreamingState] = useState("");
