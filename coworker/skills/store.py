@@ -151,6 +151,7 @@ class SkillStore:
                 row = {
                     "name": skill.name,
                     "description": skill.description,
+                    "instructions": skill.instructions,  # Settings editor prefill
                     "scope": scope,
                     "source": _frontmatter_source(md) or "local",
                     "enabled": skill.name not in disabled,

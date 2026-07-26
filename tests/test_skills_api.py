@@ -65,6 +65,7 @@ def test_create_then_list_enriched(tmp_path):
         {
             "name": "greet",
             "description": "says hello",
+            "instructions": "Say hello warmly.",
             "scope": "global",
             "source": "local",
             "enabled": True,

@@ -1,0 +1,259 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { SkillsTab } from "./SkillsTab";
+
+// SKILLS-SPEC §4.6 GUI — Settings ▸ Skills: list + badges, form validation, the three add
+// modes (write / upload-with-preview / draft-never-auto-saves), scope picker visibility.
+
+type Call = { url: string; method: string; body: any };
+
+function stubFetch(routes: { match: string; method?: string; json: any }[]) {
+  const calls: Call[] = [];
+  const fn = vi.fn(async (url: string, init?: RequestInit) => {
+    const method = (init?.method || "GET").toUpperCase();
+    calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    for (const r of routes) {
+      if (url.includes(r.match) && (!r.method || r.method === method)) {
+        return { ok: true, json: async () => r.json } as Response;
+      }
+    }
+    return { ok: true, json: async () => ({}) } as Response;
+  });
+  vi.stubGlobal("fetch", fn);
+  return calls;
+}
+
+const ROW = {
+  name: "weekly-report",
+  description: "Monday status report",
+  instructions: "1. Collect updates\n2. Write it up",
+  scope: "global",
+  source: "local",
+  enabled: true,
+  path: "/skills/weekly-report",
+};
+
+const UPLOADED_ROW = {
+  ...ROW,
+  name: "greet",
+  description: "says hello",
+  source: "uploaded",
+  enabled: false,
+};
+
+const LIST = { skills: [ROW, UPLOADED_ROW] };
+const WORKSPACES = {
+  workspaces: [{ path: "C:\\dev\\payments", name: "payments", exists: true }],
+};
+const NO_WORKSPACES = { workspaces: [] };
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe("SkillsTab", () => {
+  it("renders rows with scope + source badges and dims disabled skills", async () => {
+    stubFetch([
+      { match: "/v1/skills", method: "GET", json: LIST },
+      { match: "/v1/workspaces/recent", json: WORKSPACES },
+    ]);
+    render(<SkillsTab />);
+    expect(await screen.findByText("weekly-report")).toBeTruthy();
+    expect(screen.getByText("Monday status report")).toBeTruthy();
+    expect(screen.getAllByText("global").length).toBe(2);
+    expect(screen.getByText("uploaded")).toBeTruthy(); // provenance badge
+    const toggles = screen.getAllByRole("switch");
+    expect((toggles[0] as HTMLInputElement).checked).toBe(true);
+    expect((toggles[1] as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("blocks Save until name and instructions are filled", async () => {
+    stubFetch([
+      { match: "/v1/skills", method: "GET", json: { skills: [] } },
+      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
+    ]);
+    render(<SkillsTab />);
+    fireEvent.click(await screen.findByText("New skill"));
+    const save = screen.getByText("Save skill") as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "greet" } });
+    expect(save.disabled).toBe(true); // instructions still empty
+    fireEvent.change(screen.getByLabelText("Instructions"), {
+      target: { value: "Say hello." },
+    });
+    expect(save.disabled).toBe(false);
+  });
+
+  it("creates a skill and refreshes the list", async () => {
+    const calls = stubFetch([
+      { match: "/v1/skills", method: "GET", json: { skills: [] } },
+      { match: "/v1/skills", method: "POST", json: { ok: true } },
+      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
+    ]);
+    render(<SkillsTab />);
+    fireEvent.click(await screen.findByText("New skill"));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "greet" } });
+    fireEvent.change(screen.getByLabelText("Instructions"), {
+      target: { value: "Say hello." },
+    });
+    fireEvent.click(screen.getByText("Save skill"));
+    await waitFor(() => {
+      const post = calls.find((c) => c.method === "POST" && c.url.endsWith("/v1/skills"));
+      expect(post?.body).toMatchObject({ name: "greet", instructions: "Say hello.", scope: "global" });
+    });
+    // list re-fetched after save
+    expect(calls.filter((c) => c.method === "GET" && c.url.includes("/v1/skills")).length).toBeGreaterThan(1);
+  });
+
+  it("edit prefills the form (name locked, body loaded) and PATCHes on save", async () => {
+    const calls = stubFetch([
+      { match: "/v1/skills", method: "GET", json: LIST },
+      { match: "/v1/skills/weekly-report", method: "PATCH", json: { ok: true } },
+      { match: "/v1/workspaces/recent", json: WORKSPACES },
+    ]);
+    render(<SkillsTab />);
+    await screen.findByText("weekly-report");
+    fireEvent.click(screen.getAllByTitle("Edit")[0]);
+    const name = screen.getByLabelText("Name") as HTMLInputElement;
+    expect(name.value).toBe("weekly-report");
+    expect(name.disabled).toBe(true);
+    const body = screen.getByLabelText("Instructions") as HTMLTextAreaElement;
+    expect(body.value).toContain("Collect updates");
+    fireEvent.change(body, { target: { value: "New steps" } });
+    fireEvent.click(screen.getByText("Save skill"));
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === "PATCH");
+      expect(patch?.url).toContain("/v1/skills/weekly-report");
+      expect(patch?.body.instructions).toBe("New steps");
+    });
+  });
+
+  it("delete is two-step: arm, then DELETE on confirm", async () => {
+    const calls = stubFetch([
+      { match: "/v1/skills", method: "GET", json: LIST },
+      { match: "/v1/skills/weekly-report", method: "DELETE", json: { ok: true } },
+      { match: "/v1/workspaces/recent", json: WORKSPACES },
+    ]);
+    render(<SkillsTab />);
+    await screen.findByText("weekly-report");
+    // arm via the trash button (renders "Confirm delete" once armed)
+    fireEvent.click(screen.getByLabelText("Delete weekly-report"));
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+    const confirm = await screen.findByText("Confirm delete");
+    fireEvent.click(confirm);
+    await waitFor(() => {
+      expect(calls.some((c) => c.method === "DELETE" && c.url.includes("weekly-report"))).toBe(true);
+    });
+  });
+
+  it("the enabled switch PATCHes {enabled}", async () => {
+    const calls = stubFetch([
+      { match: "/v1/skills", method: "GET", json: LIST },
+      { match: "/v1/skills/weekly-report", method: "PATCH", json: { ok: true } },
+      { match: "/v1/workspaces/recent", json: WORKSPACES },
+    ]);
+    render(<SkillsTab />);
+    await screen.findByText("weekly-report");
+    fireEvent.click(screen.getByLabelText("weekly-report enabled"));
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === "PATCH");
+      expect(patch?.body).toMatchObject({ enabled: false });
+    });
+  });
+
+  it("upload shows the parsed preview and installs nothing until confirmed", async () => {
+    const calls = stubFetch([
+      { match: "/v1/skills/upload/confirm", method: "POST", json: { ok: true } },
+      {
+        match: "/v1/skills/upload",
+        method: "POST",
+        json: {
+          ok: true,
+          token: "t1",
+          name: "greet",
+          description: "says hello",
+          instructions: "Say hello warmly.",
+          files: ["notes.txt"],
+        },
+      },
+      { match: "/v1/skills", method: "GET", json: { skills: [] } },
+      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
+    ]);
+    render(<SkillsTab />);
+    const input = (await screen.findByLabelText("Upload a skill archive")) as HTMLInputElement;
+    const file = new File([new Uint8Array([80, 75, 3, 4])], "greet.zip", { type: "application/zip" });
+    fireEvent.change(input, { target: { files: [file] } });
+    await screen.findByText("Review before installing");
+    expect(screen.getByText("Say hello warmly.")).toBeTruthy();
+    expect(screen.getByText(/notes\.txt/)).toBeTruthy();
+    expect(calls.some((c) => c.url.includes("/upload/confirm"))).toBe(false); // preview ≠ install
+    fireEvent.click(screen.getByText("Install skill"));
+    await waitFor(() => {
+      const confirm = calls.find((c) => c.url.includes("/upload/confirm"));
+      expect(confirm?.body).toMatchObject({ token: "t1", scope: "global" });
+    });
+  });
+
+  it("draft fills the editor and never saves by itself", async () => {
+    const calls = stubFetch([
+      {
+        match: "/v1/skills/draft",
+        method: "POST",
+        json: { ok: true, name: "weekly-report", description: "Monday report", instructions: "1. Collect" },
+      },
+      { match: "/v1/skills", method: "GET", json: { skills: [] } },
+      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
+    ]);
+    render(<SkillsTab />);
+    fireEvent.change(await screen.findByLabelText("Describe the skill"), {
+      target: { value: "monday reports" },
+    });
+    fireEvent.click(screen.getByText("Draft with OpenWorker"));
+    await waitFor(() => {
+      expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("weekly-report");
+    });
+    expect((screen.getByLabelText("Instructions") as HTMLTextAreaElement).value).toBe("1. Collect");
+    // review-before-save: the draft call happened, but no create POST did
+    expect(calls.some((c) => c.url.includes("/draft"))).toBe(true);
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/v1/skills"))).toBe(false);
+  });
+
+  it("hides the project scope option when no workspace is known", async () => {
+    stubFetch([
+      { match: "/v1/skills", method: "GET", json: { skills: [] } },
+      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
+    ]);
+    render(<SkillsTab />);
+    fireEvent.click(await screen.findByText("New skill"));
+    expect(screen.getByLabelText("Everywhere")).toBeTruthy();
+    expect(screen.queryByLabelText("Only one project")).toBeNull();
+  });
+
+  it("preselects the project scope when a workspace context is passed (two doors)", async () => {
+    stubFetch([
+      { match: "/v1/skills", method: "GET", json: { skills: [] } },
+      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
+    ]);
+    render(<SkillsTab workspaceContext="C:\dev\payments" />);
+    fireEvent.click(await screen.findByText("New skill"));
+    const project = screen.getByLabelText("Only one project") as HTMLInputElement;
+    expect(project.checked).toBe(true);
+    expect(screen.getByText("payments")).toBeTruthy(); // dropdown shows the session's project
+  });
+
+  it("surfaces server-side validation errors", async () => {
+    stubFetch([
+      { match: "/v1/skills", method: "GET", json: { skills: [] } },
+      { match: "/v1/skills", method: "POST", json: { ok: false, error: "A skill named 'x' already exists in that scope." } },
+      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
+    ]);
+    render(<SkillsTab />);
+    fireEvent.click(await screen.findByText("New skill"));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "x" } });
+    fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "y" } });
+    fireEvent.click(screen.getByText("Save skill"));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByText(/already exists/)).toBeTruthy();
+  });
+});
