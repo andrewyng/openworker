@@ -11,9 +11,8 @@ falls back to the conservative heuristics in ``capabilities.py`` at their own ri
 degraded results. Ids verified against vendor/reseller catalogs on 2026-07-04; refresh the
 reseller rows when catalogs rotate (they rename on every model generation).
 
-Resellers: Together + Fireworks for now. TODO: add Groq and OpenRouter entries here AND their
-descriptors in ``registry.py`` once the current provider surface is tested — deliberately
-deferred to bound how much needs verifying at once.
+Resellers: Together + Fireworks, Groq, and OpenRouter.
+See corresponding entries in ``registry.py`` for providers.
 """
 
 from __future__ import annotations
@@ -111,6 +110,47 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "fireworks:accounts/fireworks/models/llama4-maverick-instruct-basic": ModelEntry(
         "Llama 4 Maverick · via Fireworks"
+    ),
+    # Groq
+    "groq:llama3-8b-8192": ModelEntry(
+        "Llama 3 8B · via Groq"
+    ),
+    "groq:llama3-70b-8192": ModelEntry(
+        "Llama 3 70B · via Groq"
+    ),
+    "groq:mixtral-8x7b-32768": ModelEntry(
+        "Mixtral 8x7B · via Groq"
+    ),
+    "groq:gemma-7b-it": ModelEntry(
+        "Gemma 7B IT · via Groq"
+    ),
+    # OpenRouter
+    "openrouter:anthropic/claude-3.5-sonnet": ModelEntry(
+        "Claude 3.5 Sonnet · via OpenRouter"
+    ),
+    "openrouter:anthropic/claude-3-opus": ModelEntry(
+        "Claude 3 Opus · via OpenRouter"
+    ),
+    "openrouter:anthropic/claude-3-haiku": ModelEntry(
+        "Claude 3 Haiku · via OpenRouter"
+    ),
+    "openrouter:openai/gpt-4o": ModelEntry(
+        "GPT-4o · via OpenRouter"
+    ),
+    "openrouter:openai/gpt-4-turbo": ModelEntry(
+        "GPT-4 Turbo · via OpenRouter"
+    ),
+    "openrouter:openai/gpt-3.5-turbo": ModelEntry(
+        "GPT-3.5 Turbo · via OpenRouter"
+    ),
+    "openrouter:google/gemini-pro-1.5": ModelEntry(
+        "Gemini Pro 1.5 · via OpenRouter"
+    ),
+    "openrouter:meta-llama/llama-3-8b": ModelEntry(
+        "Llama 3 8B · via OpenRouter"
+    ),
+    "openrouter:meta-llama/llama-3-70b": ModelEntry(
+        "Llama 3 70B · via OpenRouter"
     ),
 }
 
