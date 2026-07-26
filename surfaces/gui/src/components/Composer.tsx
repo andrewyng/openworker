@@ -169,18 +169,47 @@ export function Composer(props: Props) {
   // trace reads as a real input meter (owner catch on DMG #28 — the first cut's bars were
   // decorative constants and read as fake).
   const [levels, setLevels] = useState<number[]>([]);
+  const silenceStartRef = useRef<number | null>(null);
+  const hasSpokenRef = useRef(false);
+
   useEffect(() => {
     if (!dictation?.recording) {
       setLevels([]);
+      silenceStartRef.current = null;
+      hasSpokenRef.current = false;
       return;
     }
     const timer = window.setInterval(() => {
       getDictationLevel().then((level) => {
-        if (typeof level === "number") setLevels((cur) => [...cur.slice(-13), level]);
+        if (typeof level === "number") {
+          setLevels((cur) => {
+            const next = [...cur.slice(-13), level];
+            
+            // Simple VAD for Voice Mode
+            if (props.voiceMode && !dictationBusy) {
+              const latestLevel = next[next.length - 1] ?? 0;
+              // 0.05 is a reasonable RMS volume threshold to detect speech
+              if (latestLevel > 0.05) {
+                hasSpokenRef.current = true;
+                silenceStartRef.current = null;
+              } else if (hasSpokenRef.current) {
+                if (silenceStartRef.current === null) {
+                  silenceStartRef.current = Date.now();
+                } else if (Date.now() - silenceStartRef.current > 1500) {
+                  // 1.5 seconds of silence after speaking -> auto stop and send
+                  silenceStartRef.current = null;
+                  hasSpokenRef.current = false;
+                  void toggleDictation(true);
+                }
+              }
+            }
+            return next;
+          });
+        }
       });
     }, 100);
     return () => window.clearInterval(timer);
-  }, [dictation?.recording]);
+  }, [dictation?.recording, props.voiceMode, dictationBusy]);
 
   useEffect(() => {
     if (!dictation?.recording) return;
@@ -325,7 +354,7 @@ export function Composer(props: Props) {
     }
   };
 
-  const toggleDictation = async () => {
+  const toggleDictation = async (isVadAutoStop = false) => {
     if (!isTauri() || dictationBusy) return;
     setDictationError(null);
     try {
@@ -333,11 +362,22 @@ export function Composer(props: Props) {
         setDictationBusy("Transcribing…");
         const transcript = await stopDictation();
         if (transcript === null) throw new Error("Could not transcribe your recording.");
+        
+        let nextText = text;
         if (transcript.trim()) {
-          setText((draft) => (draft.trim() ? `${draft.trimEnd()} ${transcript.trim()}` : transcript.trim()));
+          nextText = text.trim() ? `${text.trimEnd()} ${transcript.trim()}` : transcript.trim();
+          setText(nextText);
         }
         setDictation(await getDictationStatus());
-        textareaRef.current?.focus();
+        
+        // Auto-send in voice mode, whether manual stop or VAD stop
+        if (props.voiceMode && (nextText.trim() || attachments.length > 0)) {
+          props.onSend(nextText.trim(), attachments);
+          setText("");
+          setAttachments([]);
+        } else {
+          textareaRef.current?.focus();
+        }
         return;
       }
 
