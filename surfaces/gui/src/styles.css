@@ -489,6 +489,12 @@ button.btn.danger { color: var(--accent); }
 .pill.chip { background: var(--paper); border: 1px solid var(--line); }
 .pill.chip:hover { border-color: var(--line-strong); background: var(--paper); }
 
+/* The model picker shares the composer's single control row with the send/stop action. When an
+   artifact panel narrows that column, let the model label truncate instead of pushing the action
+   outside the composer (issue #208). */
+.composer .dd { min-width: 0; flex: 0 1 240px; }
+.composer .dd .pill { max-width: 100%; }
+
 /* dropdown popover */
 .dd { position: relative; }
 .dd-backdrop { position: fixed; inset: 0; z-index: 20; }

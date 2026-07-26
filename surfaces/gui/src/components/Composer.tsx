@@ -399,7 +399,7 @@ export function Composer(props: Props) {
         />
 
         {/* Three-control row (§22): + attach · Mode ⌄ …(right)… model (fresh only) · send */}
-        <div className="px-2.5 pb-2.5 pt-1 flex items-center gap-1.5">
+        <div className="px-2.5 pb-2.5 pt-1 flex min-w-0 items-center gap-1.5">
           {/* + attach menu */}
           <div className="relative">
             <button
@@ -516,7 +516,7 @@ export function Composer(props: Props) {
 
           {/* send / stop */}
           {props.running ? (
-            <button className="btn danger" onClick={props.onInterrupt}>
+            <button className="btn danger shrink-0" onClick={props.onInterrupt}>
               ⏹ Stop
             </button>
           ) : (
