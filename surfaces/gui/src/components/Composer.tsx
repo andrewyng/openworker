@@ -354,7 +354,7 @@ export function Composer(props: Props) {
     }
   };
 
-  const toggleDictation = async () => {
+  const toggleDictation = async (isVadAutoStop = false) => {
     if (!isTauri() || dictationBusy) return;
     setDictationError(null);
     try {
@@ -363,18 +363,36 @@ export function Composer(props: Props) {
         const transcript = await stopDictation();
         if (transcript === null) throw new Error("Could not transcribe your recording.");
         
+        let cleanTranscript = transcript.trim();
+        const lower = cleanTranscript.toLowerCase();
+        // Ignore common whisper hallucinations for silence
+        if (lower.includes("[blank_audio]") || lower.includes("no speech") || lower.includes("no audio")) {
+          cleanTranscript = "";
+        }
+        
         let nextText = text;
-        if (transcript.trim()) {
-          nextText = text.trim() ? `${text.trimEnd()} ${transcript.trim()}` : transcript.trim();
+        if (cleanTranscript) {
+          nextText = text.trim() ? `${text.trimEnd()} ${cleanTranscript}` : cleanTranscript;
           setText(nextText);
         }
         setDictation(await getDictationStatus());
         
         // Auto-send in voice mode, whether manual stop or VAD stop
-        if (props.voiceMode && (nextText.trim() || attachments.length > 0)) {
-          props.onSend(nextText.trim(), attachments);
-          setText("");
-          setAttachments([]);
+        if (props.voiceMode) {
+          if (nextText.trim() || attachments.length > 0) {
+            props.onSend(nextText.trim(), attachments);
+            setText("");
+            setAttachments([]);
+          } else if (isVadAutoStop) {
+            // False VAD trigger on silence. Restart the microphone.
+            setDictationBusy("Restarting microphone…");
+            try {
+              const recording = await startDictation();
+              if (recording?.recording) setDictation(recording);
+            } catch (err) {
+              setDictationError(err instanceof Error ? err.message : "Failed to restart dictation");
+            }
+          }
         } else {
           textareaRef.current?.focus();
         }
