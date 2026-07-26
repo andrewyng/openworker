@@ -268,13 +268,15 @@ class SkillStore:
             )
 
     # -- uploads: stage → preview → confirm -----------------------------------------
-    def stage_upload(self, data: bytes) -> dict[str, Any]:
-        """Unpack an uploaded zip into the staging area and return the parsed preview.
-        Nothing is installed until :meth:`confirm_upload`."""
+    def stage_upload(self, data: bytes, filename: str = "") -> dict[str, Any]:
+        """Stage an upload and return the parsed preview. Accepts the three shapes the
+        ecosystem converged on (Claude-compatible): a ``.zip``, a ``.skill`` (a renamed
+        zip), or a bare ``SKILL.md`` with YAML frontmatter. Nothing is installed until
+        :meth:`confirm_upload`."""
         try:
             archive = zipfile.ZipFile(io.BytesIO(data))
         except zipfile.BadZipFile:
-            raise ValueError("Not a valid .zip archive.")
+            return self._stage_single_md(data, filename)
         names = [n for n in archive.namelist() if not n.endswith("/")]
         for entry in names:
             p = Path(entry)
@@ -315,6 +317,38 @@ class SkillStore:
             "description": skill.description,
             "instructions": skill.instructions,
             "files": extras,
+        }
+
+    def _stage_single_md(self, data: bytes, filename: str) -> dict[str, Any]:
+        """The bare-.md path: one SKILL.md, no resources. Frontmatter must carry the name
+        (there is no folder to fall back to)."""
+        if filename.lower().endswith((".zip", ".skill")):
+            raise ValueError("Not a valid .zip archive.")
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ValueError("Not a valid skill file — upload a .zip, .skill, or SKILL.md.")
+        token = uuid.uuid4().hex
+        staged = self._staging_dir / token
+        staged.mkdir(parents=True, exist_ok=True)
+        (staged / "SKILL.md").write_text(text, encoding="utf-8")
+        skill = _parse_skill(staged / "SKILL.md")
+        if skill.name == token:  # no frontmatter name → parser fell back to the folder
+            shutil.rmtree(staged, ignore_errors=True)
+            raise ValueError(
+                "The .md file needs YAML frontmatter with at least a skill name."
+            )
+        try:
+            validate_name(skill.name)
+        except ValueError:
+            shutil.rmtree(staged, ignore_errors=True)
+            raise
+        return {
+            "token": token,
+            "name": skill.name,
+            "description": skill.description,
+            "instructions": skill.instructions,
+            "files": [],
         }
 
     def confirm_upload(

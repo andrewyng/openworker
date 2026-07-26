@@ -609,7 +609,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             data = base64.b64decode(data_b64, validate=True)
         except (ValueError, binascii.Error):
             return {"ok": False, "error": "Invalid archive encoding."}
-        return manager.stage_skill_upload(data)
+        return manager.stage_skill_upload(data, str((body or {}).get("filename", "")))
 
     @app.post("/v1/skills/upload/confirm")
     def confirm_skill_upload(body: dict) -> dict[str, Any]:

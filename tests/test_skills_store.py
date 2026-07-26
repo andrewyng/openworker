@@ -225,8 +225,36 @@ def test_upload_zip_at_root_and_nested(store):
 def test_upload_without_skill_md_rejected(store):
     with pytest.raises(ValueError, match="SKILL.md"):
         store.stage_upload(_zip_bytes({"readme.txt": "not a skill"}))
+    # A broken file that CLAIMS to be an archive fails as an archive, not as markdown.
     with pytest.raises(ValueError, match="zip"):
-        store.stage_upload(b"this is not a zip archive")
+        store.stage_upload(b"garbage bytes", filename="broken.zip")
+    with pytest.raises(ValueError, match="zip"):
+        store.stage_upload(b"garbage bytes", filename="broken.skill")
+    # Binary junk with no extension hint → the catch-all message names all three shapes.
+    with pytest.raises(ValueError, match=r"\.zip, \.skill, or SKILL\.md"):
+        store.stage_upload(b"\xff\xfe\x00\x01binary junk")
+
+
+def test_upload_bare_md_with_frontmatter(store):
+    preview = store.stage_upload(SKILL_MD.encode(), filename="greet.md")
+    assert preview["name"] == "greet"
+    assert preview["files"] == []
+    saved = store.confirm_upload(preview["token"], scope="global")
+    assert saved["name"] == "greet"
+    assert store.rows()[0]["source"] == "uploaded"
+
+
+def test_upload_bare_md_without_name_rejected(store):
+    with pytest.raises(ValueError, match="frontmatter"):
+        store.stage_upload(b"Just instructions, no frontmatter.", filename="notes.md")
+
+
+def test_upload_dot_skill_is_a_zip_alias(store):
+    preview = store.stage_upload(
+        _zip_bytes({"greet/SKILL.md": SKILL_MD}), filename="greet.skill"
+    )
+    assert preview["name"] == "greet"
+    store.discard_upload(preview["token"])
 
 
 def test_upload_zip_slip_rejected(store, tmp_path):

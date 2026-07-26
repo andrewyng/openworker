@@ -3740,9 +3740,9 @@ class SessionManager:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "skill": moved}
 
-    def stage_skill_upload(self, data: bytes) -> dict[str, Any]:
+    def stage_skill_upload(self, data: bytes, filename: str = "") -> dict[str, Any]:
         try:
-            preview = self.skill_store.stage_upload(data)
+            preview = self.skill_store.stage_upload(data, filename)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, **preview}

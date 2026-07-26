@@ -144,7 +144,7 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
 
   const onPickFile = async (file: File | undefined) => {
     if (!file) return;
-    const res = await stageSkillUpload(await fileToB64(file));
+    const res = await stageSkillUpload(await fileToB64(file), file.name);
     if (fail(res)) return;
     setUploadScope(defaultScope);
     setUpload(res);
@@ -187,7 +187,7 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
         <div>
           <h2 className="text-[16px] font-semibold">Skills</h2>
           <p className="text-[12.5px] text-muted mt-1 leading-relaxed">
-            Reusable instructions the coworker can follow — available everywhere or only in one
+            Reusable instructions the worker can follow — available everywhere or only in one
             project. Off here means off in every session.
           </p>
         </div>
@@ -213,7 +213,7 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
       <input
         ref={fileInput}
         type="file"
-        accept=".zip"
+        accept=".zip,.skill,.md"
         className="hidden"
         aria-label="Upload a skill archive"
         onChange={(e) => {
@@ -232,7 +232,7 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
         <div className={`${CARD} p-4 mb-4`}>
           <div className="text-[13px] font-medium mb-1">Review before installing</div>
           <p className="text-[12.5px] text-muted mb-3">
-            Read the instructions — installing a skill means the coworker will follow them.
+            Read the instructions — installing a skill means the worker will follow them.
           </p>
           <div className="text-[13px] mb-1">
             <span className="font-medium">{upload.name}</span>
@@ -286,7 +286,7 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
             id="skill-desc"
             className={`${INPUT} mt-1 mb-3`}
             value={editor.description}
-            placeholder="One line the coworker uses to decide when this applies"
+            placeholder="One line the worker uses to decide when this applies"
             onChange={(e) => setEditor({ ...editor, description: e.target.value })}
           />
           <label className={FIELD_LABEL} htmlFor="skill-instructions">
@@ -327,8 +327,8 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
       <div className={`${CARD} divide-y divide-line`}>
         {rows.length === 0 && !editor ? (
           <div className="p-5 text-[13px] text-muted">
-            No skills yet. Write one, import a folder someone shared, or describe one below and
-            let OpenWorker draft it.
+            No skills yet. Write one, import a .zip / .skill / SKILL.md someone shared, or
+            describe one below and let OpenWorker draft it.
           </div>
         ) : null}
         {rows.map((row) => (

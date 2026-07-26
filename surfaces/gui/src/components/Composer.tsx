@@ -401,7 +401,9 @@ export function Composer(props: Props) {
 
   // The send button is accent only when there's something to send — subtle grey otherwise, so the
   // composer isn't carrying a constant blue dot.
-  const hasContent = text.trim().length > 0 || attachments.length > 0;
+  // A pinned /skill is sendable content on its own (tester catch 2026-07-26: the arrow
+  // stayed grey after picking a skill, reading as "stuck").
+  const hasContent = text.trim().length > 0 || attachments.length > 0 || !!pendingSkill;
 
   return (
     <div className="composer-wrap px-6 pb-5 pt-4">

@@ -1125,8 +1125,11 @@ export async function moveSkill(
   return res.json();
 }
 
-export async function stageSkillUpload(dataB64: string): Promise<SkillUploadPreview> {
-  const res = await fetch(skillUrl("/upload"), jsonPost({ data_b64: dataB64 }));
+export async function stageSkillUpload(
+  dataB64: string,
+  filename = "",
+): Promise<SkillUploadPreview> {
+  const res = await fetch(skillUrl("/upload"), jsonPost({ data_b64: dataB64, filename }));
   return res.json();
 }
 

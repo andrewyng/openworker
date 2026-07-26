@@ -167,9 +167,15 @@ def test_upload_invalid_archive_friendly(tmp_path):
     client, _m, _p = _client(tmp_path)
     bad = client.post(
         "/v1/skills/upload",
-        json={"data_b64": base64.b64encode(b"not a zip").decode()},
+        json={"data_b64": base64.b64encode(b"not a zip").decode(), "filename": "x.zip"},
     ).json()
     assert bad["ok"] is False and "zip" in bad["error"].lower()
+    # A bare .md without frontmatter gets the md-specific guidance.
+    bare = client.post(
+        "/v1/skills/upload",
+        json={"data_b64": base64.b64encode(b"no frontmatter").decode(), "filename": "a.md"},
+    ).json()
+    assert bare["ok"] is False and "frontmatter" in bare["error"].lower()
     assert client.post("/v1/skills/upload", json={}).json()["ok"] is False
     assert (
         client.post("/v1/skills/upload", json={"data_b64": "!!!"}).json()["ok"] is False
