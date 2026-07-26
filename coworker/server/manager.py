@@ -1776,6 +1776,7 @@ class SessionManager:
             # Real on-disk secrets location, so the UI shows the OS-native path instead of a
             # hardcoded POSIX one (Windows -> %APPDATA%\coworker, macOS/Linux -> ~/.config).
             "secrets_path": str(self.secrets.path),
+            "subagent_models": self._prefs.get("subagent_models", {}),
             **self.pdf_settings(),
         }
 
@@ -1798,6 +1799,12 @@ class SessionManager:
             self._prefs["show_code"] = bool(code)
         self._save_prefs()
         return {"ok": True, "surfaces": self._surfaces()}
+
+    def set_subagent_models(self, mapping: dict[str, str]) -> dict[str, Any]:
+        """Persist user-configured local models for subagent task tiers (e.g. heavy, balanced, fast)."""
+        self._prefs["subagent_models"] = mapping
+        self._save_prefs()
+        return {"ok": True, **self.get_settings()}
 
     def _nav_layout(self) -> str:
         """Sidebar layout: ``"flat"`` (default) or ``"grouped"`` (by persona). Persisted in

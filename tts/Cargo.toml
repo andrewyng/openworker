@@ -1,0 +1,15 @@
+[package]
+name = "ocw-tts"
+version = "0.1.0"
+description = "Local, offline text-to-speech engine for OpenWorker hosts"
+edition = "2021"
+rust-version = "1.77"
+license = "MIT"
+
+[dependencies]
+rodio = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+ureq = "2.12"
+# ort = "2.0" # Would be used for real ONNX inference (e.g. Piper TTS)

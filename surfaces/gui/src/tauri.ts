@@ -56,12 +56,13 @@ export async function pickFolder(): Promise<string | null> {
   return typeof path === "string" && path ? path : null;
 }
 
+import { pickFolderViaServer } from "./api";
+
 /** The folder picker that works EVERYWHERE: Tauri's native dialog in the desktop shell, else the
  * sidecar-opened OS dialog (the sidecar is local, so the browser GUI still gets a real picker —
  * owner report 2026-07-04: "Browse" was desktop-only and the browser had paste-a-path only). */
 export async function chooseFolder(): Promise<string | null> {
   if (isTauri()) return pickFolder();
-  const { pickFolderViaServer } = await import("./api");
   return pickFolderViaServer();
 }
 
@@ -98,6 +99,37 @@ export async function listenDictationDownloadProgress(
   const listen = (globalThis as any).__TAURI__?.event?.listen;
   if (!listen) return () => {};
   return (await listen("dictation-download-progress", (event: { payload: DictationDownloadProgress }) => {
+    handler(event.payload);
+  })) as () => void;
+}
+
+// -- local TTS ----------------------------------------------------------------
+
+export type TtsStatus = {
+  is_playing: boolean;
+  model_installed: boolean;
+  download_in_progress: boolean;
+  model_name: string;
+  model_bytes: number;
+};
+
+export type TtsDownloadProgress = {
+  bytes_downloaded: number;
+  total_bytes: number;
+};
+
+export const getTtsStatus = () => invoke<TtsStatus>("get_tts_status");
+export const synthesizeAndPlay = (text: string) => invokeStrict<void>("synthesize_and_play", { text });
+export const stopTts = () => invokeStrict<void>("stop_tts");
+export const downloadTtsModel = () => invokeStrict<TtsStatus>("download_tts_model");
+export const deleteTtsModel = () => invokeStrict<TtsStatus>("delete_tts_model");
+
+export async function listenTtsDownloadProgress(
+  handler: (progress: TtsDownloadProgress) => void,
+): Promise<() => void> {
+  const listen = (globalThis as any).__TAURI__?.event?.listen;
+  if (!listen) return () => {};
+  return (await listen("tts-download-progress", (event: { payload: TtsDownloadProgress }) => {
     handler(event.payload);
   })) as () => void;
 }

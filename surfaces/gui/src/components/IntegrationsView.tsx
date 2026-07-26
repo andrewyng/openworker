@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getConnectors } from "../api";
 import { McpTab } from "./ManageTabs";
 import { ConnectorsSection } from "./connectors/ConnectorsSection";
+import { McpMarketplace } from "./McpMarketplace";
 import { Icon } from "./Icon";
 
 // The Connectors surface (renamed from "Integrations", §26) keeps the left sub-nav, now just
@@ -9,13 +10,14 @@ import { Icon } from "./Icon";
 // Inbox ▸ Configure (§28): inbox-delivery config belongs with the Inbox, and Unrouted is
 // "messages that never reached you". The one remaining Activity is the audit log, reached from
 // the account menu.
-type IntTab = "connectors" | "mcp";
+type IntTab = "connectors" | "mcp" | "marketplace";
 
 // Fixed sub-nav (UX-DECISIONS §21): connector detail lives as a SUBPAGE under
 // Connectors, never as a nav item — the nav must not grow per connector.
-const INT_TABS: { key: IntTab; label: string; icon: "plug" | "code" }[] = [
+const INT_TABS: { key: IntTab; label: string; icon: any }[] = [
   { key: "connectors", label: "Connectors", icon: "plug" },
   { key: "mcp", label: "MCP servers", icon: "code" },
+  { key: "marketplace", label: "Marketplace", icon: "sparkle" },
 ];
 
 export function IntegrationsView() {
@@ -74,13 +76,21 @@ export function IntegrationsView() {
               />
               <ConnectorsSection />
             </section>
-          ) : (
+          ) : tab === "mcp" ? (
             <section>
               <PanelHead
                 title="MCP servers"
                 sub="External tool servers (stdio or HTTP), shared across all agents."
               />
               <McpTab />
+            </section>
+          ) : (
+            <section>
+              <PanelHead
+                title="Marketplace"
+                sub="Discover and install community Model Context Protocol (MCP) servers."
+              />
+              <McpMarketplace />
             </section>
           )}
         </div>
