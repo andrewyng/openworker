@@ -23,7 +23,7 @@ _TIMEOUT = 30.0
 
 def _slack_api_base() -> str:
     """Web API base URL. `SLACK_API_URL` (trailing slash) lets tests / the FakeSlack harness
-    redirect outbound sends to a local fake. See platform/docs/FAKE-SLACK-SPEC.md."""
+    redirect outbound sends to a local fake. See docs/FAKE-SLACK-SPEC.md."""
     return os.environ.get("SLACK_API_URL", "https://slack.com/api/")
 
 

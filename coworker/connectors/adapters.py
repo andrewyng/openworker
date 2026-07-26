@@ -194,7 +194,7 @@ class SlackAdapter(BasePlatformAdapter):
         # Base-URL override so tests (and the FakeSlack harness) can redirect every Web API
         # call — auth.test/users.info/conversations.info/chat.update AND Socket Mode's
         # apps.connections.open, which the handler issues on this same client. Default is the
-        # real Slack API. See platform/docs/FAKE-SLACK-SPEC.md.
+        # real Slack API. See docs/FAKE-SLACK-SPEC.md.
         base_url = os.environ.get("SLACK_API_URL", "https://slack.com/api/")
         client = AsyncWebClient(token=self.bot_token, base_url=base_url)
         self._app = AsyncApp(client=client)

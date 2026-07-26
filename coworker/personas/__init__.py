@@ -3,7 +3,7 @@
 A persona is a manifest (YAML frontmatter + a markdown body that is the system prompt) that
 composes vetted catalog capabilities, a family/workspace shape, and lifecycle metadata. The
 built-in surfaces (Code, Cowork, Chat, Ops) are themselves manifests — the same format third
-parties use. See `platform/docs/PERSONAS.md`.
+parties use. See `docs/PERSONAS.md`.
 """
 
 from __future__ import annotations

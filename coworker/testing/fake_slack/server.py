@@ -5,7 +5,7 @@ Implements just enough of the Web API + Socket Mode envelope protocol for the re
 Slack app console**. Built on Starlette + uvicorn (both already core deps) and served on an
 ephemeral port via an in-process ``uvicorn.Server`` background task.
 
-See ``platform/docs/FAKE-SLACK-SPEC.md``. The adapter is pointed at the fake via the
+See ``docs/FAKE-SLACK-SPEC.md``. The adapter is pointed at the fake via the
 ``SLACK_API_URL`` base-URL override (env), which redirects every Web API call — including
 Socket Mode's ``apps.connections.open``, so the fake decides the WebSocket URL.
 
