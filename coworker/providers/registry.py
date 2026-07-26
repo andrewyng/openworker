@@ -393,7 +393,9 @@ DESCRIPTORS: list[ProviderDescriptor] = [
     ),
     ProviderDescriptor(
         name="lmstudio",
-        title="LM Studio (local models)",
+        # "(local)" not "(local models)" like Ollama: the longer form truncates in the
+        # gallery card, and the "No key needed" line underneath already carries the rest.
+        title="LM Studio (local)",
         needs_key=False,
         fields=[
             ProviderField(

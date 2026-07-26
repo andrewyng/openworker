@@ -7,7 +7,7 @@ import {
   type ProviderInfo,
 } from "../api";
 import { openExternal } from "../tauri";
-import { PROVIDER_LOGOS, providerRank } from "./logos";
+import { FULL_BLEED_LOGOS, PROVIDER_LOGOS, providerRank } from "./logos";
 
 // The provider gallery ⇄ key form, shared by Onboarding step 1 (§39) and
 // Settings ▸ Models (UX-021) so the two can never drift apart visually. The hook
@@ -54,13 +54,19 @@ export type Verify = { state: "idle" | "testing" | "ok" | "error"; msg?: string 
 /** Brand chip: always a light plate so multicolor marks read on any theme. */
 export function ProviderMark({ name, title, size = 32 }: { name: string; title: string; size?: number }) {
   const url = PROVIDER_LOGOS[name];
+  const bleed = FULL_BLEED_LOGOS.has(name);
   return (
     <span
-      className="rounded-lg border border-line grid place-items-center shrink-0"
+      className="rounded-lg border border-line grid place-items-center shrink-0 overflow-hidden"
       style={{ width: size, height: size, background: "#f6f7f8" }}
     >
       {url ? (
-        <img src={url} alt="" style={{ width: size * 0.6, height: size * 0.6 }} />
+        <img
+          src={url}
+          alt=""
+          // A self-backgrounded app icon fills the plate; a flat glyph floats inside it.
+          style={bleed ? { width: "100%", height: "100%" } : { width: size * 0.6, height: size * 0.6 }}
+        />
       ) : (
         <span className="text-[13px] font-semibold text-muted">{title[0]}</span>
       )}
