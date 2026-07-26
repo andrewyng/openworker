@@ -276,6 +276,14 @@ class SessionManager:
             "required": bool(commands and not trusted),
         }
 
+    def _mcp_workspace_trusted(self, workspace: Optional[str | Path]) -> bool:
+        """Whether workspace `.coworker/mcp.json` may be loaded (#213).
+
+        Same consent boundary as repository ``allowed_commands``: an untrusted
+        clone must not define stdio processes that spawn at session open.
+        """
+        return bool(workspace and self.workspace_trust.is_trusted(workspace))
+
     def set_workspace_trust(
         self, path: str | Path, *, trusted: bool
     ) -> dict[str, Any]:
@@ -881,12 +889,10 @@ class SessionManager:
         loop = asyncio.get_running_loop()
         effective: Optional[set[str]] = None  # computed lazily, once
         out: list[Any] = []
-        # Workspace `.coworker/mcp.json` is process provenance (stdio spawn at session
-        # open). Gate it behind the same WorkspaceTrustStore consent as
-        # repository `allowed_commands` — see #213.
-        workspace_trusted = bool(ws and self.workspace_trust.is_trusted(ws))
         for server in load_mcp_servers(
-            ws, secrets=self.secrets, workspace_trusted=workspace_trusted
+            ws,
+            secrets=self.secrets,
+            workspace_trusted=self._mcp_workspace_trusted(ws),
         ):
             if not server.enabled:
                 continue
@@ -1003,14 +1009,10 @@ class SessionManager:
         """Connect one server NOW — for OAuth servers this may open the browser and wait
         for the loopback callback, so callers run it as a background task and watch
         list_mcp for the status flip."""
-        workspace_trusted = bool(
-            self.default_workspace
-            and self.workspace_trust.is_trusted(self.default_workspace)
-        )
         for server in load_mcp_servers(
             self.default_workspace,
             secrets=self.secrets,
-            workspace_trusted=workspace_trusted,
+            workspace_trusted=self._mcp_workspace_trusted(self.default_workspace),
         ):
             if server.name != name:
                 continue
@@ -1089,14 +1091,10 @@ class SessionManager:
 
     async def mcp_tools(self, name: str) -> dict[str, Any]:
         """Connect one server and list its tools (name + description)."""
-        workspace_trusted = bool(
-            self.default_workspace
-            and self.workspace_trust.is_trusted(self.default_workspace)
-        )
         for server in load_mcp_servers(
             self.default_workspace,
             secrets=self.secrets,
-            workspace_trusted=workspace_trusted,
+            workspace_trusted=self._mcp_workspace_trusted(self.default_workspace),
         ):
             if server.name == name:
                 try:
@@ -1112,7 +1110,6 @@ class SessionManager:
                     ],
                 }
         return {"name": name, "ok": False, "error": "unknown server", "tools": []}
-
 
     async def reload_mcp(self) -> dict[str, Any]:
         """Drop live MCP connections so new sessions reconnect with fresh config."""
