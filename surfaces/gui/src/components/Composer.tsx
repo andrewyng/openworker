@@ -367,7 +367,7 @@ export function Composer(props: Props) {
         let cleanTranscript = transcript.trim();
         const lower = cleanTranscript.toLowerCase();
         // Ignore common whisper hallucinations for silence
-        if (lower.includes("[blank_audio]") || lower.includes("no speech") || lower.includes("no audio")) {
+        if (lower.includes("[blank_audio]") || lower.includes("no speech") || lower.includes("no audio") || lower.includes("silence")) {
           cleanTranscript = "";
         }
         

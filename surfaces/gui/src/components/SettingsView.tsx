@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   getSettings,
   getTrustedWorkspaces,
@@ -413,15 +413,44 @@ function VoiceOutputCard() {
     }
   };
 
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   const test = async () => {
     setError(null);
+    const customUrl = localStorage.getItem("ocw:custom-tts-url");
+    const customModel = localStorage.getItem("ocw:custom-tts-model") || "tts-1";
+
     try {
-      if (status?.is_playing) {
-        await stopTts();
+      if (status?.is_playing || audioRef.current) {
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current = null;
+        } else {
+          await stopTts();
+        }
         const latest = await getTtsStatus();
         if (latest) setStatus(latest);
       } else {
-        await synthesizeAndPlay("Hi there, this is Open Worker testing the Text to Speech engine.");
+        const testText = "Hi there, this is Open Worker testing the Text to Speech engine.";
+        if (customUrl) {
+          const res = await fetch(customUrl.replace(/\/+$/, "") + "/audio/speech", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: customModel, input: testText, voice: "alloy" }),
+          });
+          if (!res.ok) {
+            const txt = await res.text().catch(() => "");
+            throw new Error(`Custom TTS error (${res.status}): ${txt}`);
+          }
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audioRef.current = audio;
+          audio.onended = () => { URL.revokeObjectURL(url); };
+          await audio.play();
+        } else {
+          await synthesizeAndPlay(testText);
+        }
         const latest = await getTtsStatus();
         if (latest) setStatus(latest);
       }
