@@ -809,6 +809,12 @@ export async function mockApi(page: import("@playwright/test").Page) {
     }
 
     if (p.endsWith("/v1/health")) return json(HEALTH);
+    if (p.endsWith("/v1/settings/models/add") && m === "POST") {
+      // A model typed into the composer picker is persisted into the curated shortlist.
+      const added = String(req.postDataJSON()?.model || "");
+      if (added && !SETTINGS.models.includes(added)) SETTINGS.models.push(added);
+      return json({ ok: true, models: SETTINGS.models, model_labels: SETTINGS.model_labels });
+    }
     if (p.endsWith("/v1/settings")) return json(SETTINGS);
     if (p.endsWith("/v1/settings/pdf") && m === "POST") {
       Object.assign(SETTINGS, req.postDataJSON());
