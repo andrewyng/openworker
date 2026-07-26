@@ -367,7 +367,13 @@ export function GalleryModal({
   );
 
   return (
-    <div className="fixed inset-0 z-50" data-testid="gallery-modal">
+    <div
+      className="fixed inset-0 z-50"
+      data-testid="gallery-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Persona Gallery"
+    >
       <div className="absolute inset-0 bg-black/30 backdrop-blur-[1px]" onClick={onClose} />
       <div className="absolute left-1/2 top-[6vh] -translate-x-1/2 w-[720px] max-w-[94vw] max-h-[88vh] rounded-xl2 border border-line bg-panel shadow-2xl overflow-hidden flex flex-col">
         <div className="px-5 pt-4 pb-3 border-b border-line flex items-center gap-3 shrink-0">

@@ -53,6 +53,9 @@ interface Props {
   // interactive-then-disabled control.
   running: boolean;
   connected: boolean;
+  // A visible ask_user prompt owns Escape. The composer must not depend on
+  // window-listener registration order to decide whether to stop the turn.
+  questionPending?: boolean;
   // False when the default model's provider has no key — the composer shows a "connect a model"
   // banner and routes sends to setup (preserving the draft) instead of dropping them.
   modelReady?: boolean;
@@ -178,20 +181,42 @@ export function Composer(props: Props) {
     return () => window.clearInterval(timer);
   }, [dictation?.recording]);
 
+  // HIG: Escape is Stop's key equivalent while a turn is running (mirrors the TUI). Honor
+  // `defaultPrevented` and visible higher-priority surfaces so closing a dialog/menu never also
+  // stops the turn. Dictation outranks Stop — Esc while recording cancels the mic only.
   useEffect(() => {
-    if (!dictation?.recording) return;
-    const cancelOnEscape = (event: KeyboardEvent) => {
+    const onEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (event.defaultPrevented) return;
+      if (
+        document.querySelector(
+          '[role="dialog"], [role="menu"], [role="listbox"]',
+        )
+      )
+        return;
+      if (dictation?.recording) {
+        event.preventDefault();
+        void cancelDictation()
+          .catch(() => undefined)
+          .finally(() => {
+            void getDictationStatus().then((status) => status && setDictation(status));
+          });
+        return;
+      }
+      if (props.questionPending) return;
+      if (!props.running) return;
+      if (event.repeat) return;
       event.preventDefault();
-      void cancelDictation()
-        .catch(() => undefined)
-        .finally(() => {
-          void getDictationStatus().then((status) => status && setDictation(status));
-        });
+      props.onInterrupt();
     };
-    window.addEventListener("keydown", cancelOnEscape);
-    return () => window.removeEventListener("keydown", cancelOnEscape);
-  }, [dictation?.recording]);
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [
+    dictation?.recording,
+    props.running,
+    props.onInterrupt,
+    props.questionPending,
+  ]);
 
   const voiceReady = !!dictation?.supported && !!dictation?.model_verified && !!dictation?.test_passed;
   const recordingTime = `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`;
@@ -516,7 +541,7 @@ export function Composer(props: Props) {
 
           {/* send / stop */}
           {props.running ? (
-            <button className="btn danger" onClick={props.onInterrupt}>
+            <button className="btn danger" onClick={props.onInterrupt} title="Stop (Esc)">
               ⏹ Stop
             </button>
           ) : (
