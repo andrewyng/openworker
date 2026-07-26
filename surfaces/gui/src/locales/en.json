@@ -155,6 +155,7 @@
     "attach_other": "Other files",
     "connect_to_send": "Connect a model to send",
     "stop": "⏹ Stop",
+    "stop_title": "Stop (Esc)",
     "mode_label": "Mode",
     "approvals_to_inbox": "Send approvals to the Inbox",
     "mode": {
