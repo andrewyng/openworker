@@ -473,8 +473,23 @@ function VoiceOutputCard() {
             else localStorage.removeItem("ocw:custom-tts-url");
           }}
         />
-        <div className="text-[11.5px] text-muted mt-1.5">
+        <div className="text-[11.5px] text-muted mt-1.5 mb-3">
           If set, TTS will use this endpoint instead of the local model. It will POST to <code>{"{URL}/audio/speech"}</code>.
+        </div>
+        
+        <label className="block mb-2 text-[12px] font-medium text-ink">Custom TTS Model (Optional)</label>
+        <input
+          type="text"
+          className={INPUT + " w-full"}
+          placeholder="tts-1"
+          defaultValue={localStorage.getItem("ocw:custom-tts-model") || ""}
+          onChange={(e) => {
+            if (e.target.value) localStorage.setItem("ocw:custom-tts-model", e.target.value);
+            else localStorage.removeItem("ocw:custom-tts-model");
+          }}
+        />
+        <div className="text-[11.5px] text-muted mt-1.5">
+          The model name to request. Defaults to <code>tts-1</code>.
         </div>
       </div>
       {error && <div className="border-t border-line bg-red-50 px-4 py-3 text-[12px] text-red-700">{error}</div>}
