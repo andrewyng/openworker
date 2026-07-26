@@ -112,6 +112,10 @@ MATRIX: dict[str, ModelEntry] = {
     "fireworks:accounts/fireworks/models/llama4-maverick-instruct-basic": ModelEntry(
         "Llama 4 Maverick · via Fireworks"
     ),
+    # -- local / ollama ---------------------------------------------------------
+    "local_llm:Qwen3.6-35B-A3B-6bit": ModelEntry("Qwen 3.6 35B · Local"),
+    "local_llm:gemma-4-12b-it-4bit": ModelEntry("Gemma 4 12B · Local"),
+    "local_llm:Qwen3.5-9B-MLX-4bit": ModelEntry("Qwen 3.5 9B · Local"),
 }
 
 

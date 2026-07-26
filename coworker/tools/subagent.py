@@ -117,9 +117,9 @@ def explorer_tools(
         """
         # Standardize local model aliases for 3-tier subagent delegation
         MODEL_ALIASES = {
-            "opus": "Qwen3.6-35B-A3B-6bit",
-            "sonnet": "gemma-4-12b-it-4bit",
-            "haiku": "Qwen3.5-9B-MLX-4bit",
+            "opus": "local_llm:Qwen3.6-35B-A3B-6bit",
+            "sonnet": "local_llm:gemma-4-12b-it-4bit",
+            "haiku": "local_llm:Qwen3.5-9B-MLX-4bit",
         }
         actual_target = target_model if target_model else model
         actual_target = MODEL_ALIASES.get(actual_target.lower(), actual_target)
