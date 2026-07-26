@@ -7,6 +7,11 @@
 # Usage: bash packaging/setup_dev_env.sh
 set -euo pipefail
 
+# Check native build prerequisites for Rust STT sidecar (whisper-rs / moonshine-rs)
+if ! command -v cmake &>/dev/null; then
+  echo "Warning: 'cmake' was not found in PATH. Building the Rust STT sidecar (ocw-stt) requires CMake ≥ 3.22."
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV="$ROOT/.venv"
 

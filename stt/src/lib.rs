@@ -21,17 +21,45 @@ use cpal::{
     SampleFormat, Stream, StreamConfig,
 };
 use serde::Serialize;
+
+#[cfg(feature = "whisper")]
 use sha2::{Digest, Sha256};
+
+#[cfg(not(any(feature = "whisper", feature = "moonshine")))]
+compile_error!("At least one STT feature ('whisper' or 'moonshine') must be enabled in ocw-stt.");
+
+#[cfg(feature = "whisper")]
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-/// A reasonably fast English model for short OpenWorker prompts (~142 MB).
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+use moonshine_rs::{ModelArch, Transcriber};
+
+#[cfg(feature = "whisper")]
 pub const DEFAULT_MODEL_FILE: &str = "ggml-base.en.bin";
+#[cfg(feature = "whisper")]
 pub const DEFAULT_MODEL_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
+#[cfg(feature = "whisper")]
 pub const DEFAULT_MODEL_BYTES: u64 = 147_964_211;
+#[cfg(feature = "whisper")]
 pub const DEFAULT_MODEL_SHA256: &str =
     "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002";
-const WHISPER_SAMPLE_RATE: u32 = 16_000;
+#[cfg(feature = "whisper")]
+pub const DEFAULT_MODEL_NAME: &str = "Whisper Base English (local)";
+
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+pub const DEFAULT_MODEL_FILE: &str = "encoder_model.ort";
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+pub const DEFAULT_MODEL_URL: &str =
+    "https://download.moonshine.ai/model/tiny-en/quantized/tiny-en/encoder_model.ort";
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+pub const DEFAULT_MODEL_BYTES: u64 = 16_166_524; // combined tiny-en quantized files total ~16.1MB
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+pub const DEFAULT_MODEL_SHA256: &str = "";
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+pub const DEFAULT_MODEL_NAME: &str = "Moonshine Tiny English (local)";
+
+const STT_SAMPLE_RATE: u32 = 16_000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DictationStatus {
@@ -118,7 +146,7 @@ impl Dictation {
             model_verified,
             test_passed: model_verified && self.ready_marker_path.is_file(),
             download_in_progress: self.download_in_progress.load(Ordering::SeqCst),
-            model_name: "Whisper Base English (local)",
+            model_name: DEFAULT_MODEL_NAME,
             model_bytes: DEFAULT_MODEL_BYTES,
         }
     }
@@ -334,6 +362,7 @@ impl Dictation {
     }
 }
 
+#[cfg(feature = "whisper")]
 fn verify_model_file(path: &Path) -> Result<(), String> {
     let metadata =
         fs::metadata(path).map_err(|e| format!("Could not read the local voice model: {e}"))?;
@@ -363,6 +392,26 @@ fn verify_model_file(path: &Path) -> Result<(), String> {
             "The local voice model failed its checksum. Repair the download in Settings."
                 .to_owned(),
         );
+    }
+    Ok(())
+}
+
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+fn verify_model_file(path: &Path) -> Result<(), String> {
+    let parent = if path.is_dir() {
+        path
+    } else {
+        path.parent().ok_or("Invalid model path")?
+    };
+
+    let required_files = ["encoder_model.ort", "decoder_model_merged.ort", "tokenizer.bin"];
+    for file_name in &required_files {
+        let file_path = parent.join(file_name);
+        let metadata = fs::metadata(&file_path)
+            .map_err(|e| format!("Could not read model file {file_name}: {e}"))?;
+        if metadata.len() == 0 {
+            return Err(format!("Model file {file_name} is empty."));
+        }
     }
     Ok(())
 }
@@ -557,12 +606,12 @@ fn append_frames<T>(
 }
 
 fn resample_mono(input: &[f32], source_rate: u32) -> Vec<f32> {
-    if source_rate == WHISPER_SAMPLE_RATE {
+    if source_rate == STT_SAMPLE_RATE {
         return input.to_vec();
     }
     let output_len =
-        (input.len() as u64 * WHISPER_SAMPLE_RATE as u64 / source_rate as u64) as usize;
-    let ratio = source_rate as f64 / WHISPER_SAMPLE_RATE as f64;
+        (input.len() as u64 * STT_SAMPLE_RATE as u64 / source_rate as u64) as usize;
+    let ratio = source_rate as f64 / STT_SAMPLE_RATE as f64;
     (0..output_len)
         .map(|i| {
             let position = i as f64 * ratio;
@@ -574,6 +623,7 @@ fn resample_mono(input: &[f32], source_rate: u32) -> Vec<f32> {
         .collect()
 }
 
+#[cfg(feature = "whisper")]
 fn transcribe(model_path: &Path, samples: &[f32]) -> Result<String, String> {
     if !model_path.is_file() {
         return Err("The local voice model is not installed yet.".to_owned());
@@ -609,6 +659,26 @@ fn transcribe(model_path: &Path, samples: &[f32]) -> Result<String, String> {
     Ok(text.trim().to_owned())
 }
 
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+fn transcribe(model_path: &Path, samples: &[f32]) -> Result<String, String> {
+    let model_dir = if model_path.is_dir() {
+        model_path
+    } else {
+        model_path
+            .parent()
+            .ok_or_else(|| "Invalid local voice model directory.".to_owned())?
+    };
+
+    let transcriber = Transcriber::from_files(model_dir, ModelArch::Tiny, None)
+        .map_err(|e| format!("Could not load the local Moonshine model: {e}"))?;
+
+    let transcript = transcriber
+        .transcribe(samples, 16000)
+        .map_err(|e| format!("Could not transcribe the recording with Moonshine: {e}"))?;
+
+    Ok(transcript.text().trim().to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -634,8 +704,15 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "whisper")]
     fn default_model_size_matches_the_published_base_english_artifact() {
         assert_eq!(DEFAULT_MODEL_BYTES, 147_964_211);
+    }
+
+    #[test]
+    #[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+    fn default_model_size_matches_the_published_tiny_english_artifact() {
+        assert_eq!(DEFAULT_MODEL_BYTES, 16_166_524);
     }
 
     #[test]
