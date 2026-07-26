@@ -22,6 +22,7 @@ import {
   updateConnectorTools,
   type CloudStatus,
   type Connector,
+  setSubagentModels,
   type Subscription,
   type McpServer,
   type ModelSettings,
@@ -93,6 +94,7 @@ export function ModelsTab() {
       <div>
         <ProviderCards ps={ps} tp="set" gridClass="grid grid-cols-2 xl:grid-cols-3 gap-2.5" lastUsed />
         <ComposerPickerCard settings={settings} providers={ps.providers} onChanged={refreshSettings} />
+        <SubagentTaskModelsCard settings={settings} onChanged={refreshSettings} />
       </div>
     );
   }
@@ -224,6 +226,57 @@ function ComposerPickerCard({
                   Make default
                 </button>
               )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SubagentTaskModelsCard({
+  settings,
+  onChanged,
+}: {
+  settings: ModelSettings;
+  onChanged: () => void;
+}) {
+  const tiers = [
+    { id: "heavy", label: "Heavy (Complex tasks)" },
+    { id: "balanced", label: "Balanced (Standard tasks)" },
+    { id: "fast", label: "Fast (Quick research)" },
+  ];
+  
+  const updateTier = async (tier: string, model: string) => {
+    const next = { ...settings.subagent_models, [tier]: model };
+    const res = await setSubagentModels(next);
+    if (res.ok) onChanged();
+  };
+
+  return (
+    <div className="mt-6" data-testid="subagent-models">
+      <div className={SEC_H + " mb-1.5"}>Subagent Task Models</div>
+      <p className="text-[12px] text-muted mb-2.5 leading-relaxed">
+        Choose which local models to use for multi-agent workflows when a subagent is delegated a specific task tier.
+      </p>
+      <div className="space-y-2">
+        {tiers.map((t) => {
+          const current = settings.subagent_models?.[t.id] || "";
+          return (
+            <div key={t.id} className="flex items-center gap-3">
+              <label className="text-[13px] font-medium w-48 shrink-0">{t.label}</label>
+              <select
+                className="flex-1 bg-paper border border-line rounded-lg px-2.5 py-1.5 text-[13px] outline-none focus:border-accent"
+                value={current}
+                onChange={(e) => updateTier(t.id, e.target.value)}
+              >
+                <option value="">(Default hardcoded model)</option>
+                {settings.models.map((m) => (
+                  <option key={m} value={m}>
+                    {settings.model_labels?.[m] || m}
+                  </option>
+                ))}
+              </select>
             </div>
           );
         })}

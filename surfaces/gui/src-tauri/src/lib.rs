@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ocw_stt::{Dictation, DownloadProgress};
+use ocw_tts::{TtsEngine, TtsStatus, DownloadProgress as TtsDownloadProgress};
 use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -474,6 +475,52 @@ fn dictation_level(state: tauri::State<Arc<Dictation>>) -> f32 {
     state.input_level()
 }
 
+// -- local TTS ---------------------------------------------------------------------------------
+
+#[tauri::command]
+fn get_tts_status(state: tauri::State<Arc<TtsEngine>>) -> TtsStatus {
+    state.status()
+}
+
+#[tauri::command]
+async fn synthesize_and_play(
+    text: String,
+    state: tauri::State<'_, Arc<TtsEngine>>,
+) -> Result<(), String> {
+    let tts = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || tts.synthesize_and_play(&text))
+        .await
+        .map_err(|e| format!("TTS playback failed: {e}"))??;
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_tts(state: tauri::State<Arc<TtsEngine>>) {
+    state.stop();
+}
+
+#[tauri::command]
+async fn download_tts_model(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<TtsEngine>>,
+) -> Result<TtsStatus, String> {
+    let tts = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        tts.install_default_model_with_progress(move |progress: TtsDownloadProgress| {
+            let _ = app.emit("tts-download-progress", progress);
+        })?;
+        Ok::<TtsStatus, String>(tts.status())
+    })
+    .await
+    .map_err(|e| format!("TTS model download stopped unexpectedly: {e}"))?
+}
+
+#[tauri::command]
+fn delete_tts_model(state: tauri::State<Arc<TtsEngine>>) -> Result<TtsStatus, String> {
+    state.delete_default_model()?;
+    Ok(state.status())
+}
+
 fn show_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
@@ -619,6 +666,11 @@ pub fn run() {
             mark_dictation_test_passed,
             delete_dictation_model,
             dictation_level,
+            get_tts_status,
+            synthesize_and_play,
+            stop_tts,
+            download_tts_model,
+            delete_tts_model,
             check_for_update,
             download_update,
             clear_pending_update,
@@ -685,6 +737,7 @@ pub fn run() {
             // Voice recordings are transient; only the explicitly installed local Whisper model
             // lives in the existing application state directory.
             app.manage(Arc::new(Dictation::new(state_dir().join("models"))));
+            app.manage(Arc::new(TtsEngine::new(state_dir().join("models"))));
 
             // 2. Build the window, injecting the sidecar endpoints before the SPA loads.
             //    Overlay title bar (macOS): traffic lights float over the edge-to-edge UI.

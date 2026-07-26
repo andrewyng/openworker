@@ -104,22 +104,29 @@ def explorer_tools(
         report_format: str = "",
     ) -> dict:
         """Delegate a task to a subagent with its own fresh context window.
-        You can choose a specific model (e.g. a faster one for routine tasks like 'haiku' or 'sonnet'),
+        You can choose a specific model (e.g. a faster one for routine tasks like 'fast' or 'balanced'),
         grant write or shell access, and request structured reporting. Independent
         delegate calls run in parallel when requested together.
         
         Args:
             task (str): The task description.
-            target_model (str): Optional model name to use instead of the current one (e.g. 'sonnet', 'haiku').
+            target_model (str): Optional model name to use instead of the current one (e.g. 'balanced', 'fast').
             allow_write (bool): Whether to grant the subagent permission to modify files.
             allow_shell (bool): Whether to grant the subagent permission to run shell commands.
             report_format (str): How the subagent should format its final report.
         """
+        # Read user-configured subagent task models if provided
+        user_aliases = model_settings.get("subagent_models", {}) if model_settings else {}
+        
         # Standardize local model aliases for 3-tier subagent delegation
         MODEL_ALIASES = {
-            "opus": "local_llm:Qwen3.6-35B-A3B-6bit",
-            "sonnet": "local_llm:gemma-4-12b-it-4bit",
-            "haiku": "local_llm:Qwen3.5-9B-MLX-4bit",
+            "heavy": user_aliases.get("heavy", "local_llm:Qwen3.6-35B-A3B-6bit"),
+            "balanced": user_aliases.get("balanced", "local_llm:gemma-4-12b-it-4bit"),
+            "fast": user_aliases.get("fast", "local_llm:Qwen3.5-9B-MLX-4bit"),
+            # Legacy aliases
+            "opus": user_aliases.get("heavy", "local_llm:Qwen3.6-35B-A3B-6bit"),
+            "sonnet": user_aliases.get("balanced", "local_llm:gemma-4-12b-it-4bit"),
+            "haiku": user_aliases.get("fast", "local_llm:Qwen3.5-9B-MLX-4bit"),
         }
         actual_target = target_model if target_model else model
         actual_target = MODEL_ALIASES.get(actual_target.lower(), actual_target)

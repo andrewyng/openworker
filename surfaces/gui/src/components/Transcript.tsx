@@ -1,15 +1,55 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { ApprovalDecision, Item } from "../types";
 import { shortArgs } from "./ApprovalCard";
 import { humanizeAsk, humanizeTool, type HumanLine } from "../humanize";
 import { Markdown } from "./Markdown";
 import { ConnectorMessageCard } from "./ConnectorMessageCard";
 import { Icon } from "./Icon";
+import { synthesizeAndPlay, stopTts, isTauri, getTtsStatus } from "../tauri";
 
 // Hover affordances for a message bubble (FB-005): copy the raw text + the message's time.
 // Lives in a ZERO-HEIGHT strip under the bubble (absolute, inside the transcript's 20px gap)
 // so revealing it on group-hover never shifts the layout. `ts` is unix seconds — canonical
 // messages carry it, pre-stamp history doesn't, so the time simply omits itself when absent.
+
+function BubblePlayTts({ text }: { text: string }) {
+  const [installed, setInstalled] = useState(false);
+  const [playing, setPlaying] = useState(false);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    getTtsStatus().then((status) => setInstalled(status?.model_installed ?? false));
+  }, []);
+
+  if (!isTauri() || !installed) return null;
+
+  const toggle = async () => {
+    if (playing) {
+      await stopTts();
+      setPlaying(false);
+    } else {
+      setPlaying(true);
+      try {
+        await synthesizeAndPlay(text);
+      } catch {
+        // error playing
+      } finally {
+        setPlaying(false);
+      }
+    }
+  };
+
+  return (
+    <button
+      className="flex items-center cursor-pointer hover:text-muted"
+      data-testid="bubble-play"
+      title={playing ? "Stop playing" : "Read aloud"}
+      onClick={toggle}
+    >
+      <Icon name={playing ? "stop" : "play"} size={11} />
+    </button>
+  );
+}
 function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "left" | "right" }) {
   const [copied, setCopied] = useState(false);
   const when = typeof ts === "number" ? new Date(ts * 1000) : null;
@@ -40,6 +80,7 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
         >
           {copied ? "Copied" : <Icon name="copy" size={11} />}
         </button>
+        {align === "left" && <BubblePlayTts text={text} />}
         {when && (
           <span data-testid="bubble-ts" title={when.toLocaleString()}>
             {when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}

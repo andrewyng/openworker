@@ -696,6 +696,7 @@ export interface ModelSettings {
   pdf_fallback?: "text" | "images";
   pdf_max_pages?: number; // default 20, 1–100
   pdf_max_mb?: number; // default 10, 1–10
+  subagent_models?: Record<string, string>;
 }
 
 export interface PdfSettings {
@@ -712,6 +713,18 @@ export async function setPdfSettings(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
+/** Persist user-configured local models for subagent task tiers. */
+export async function setSubagentModels(
+  mapping: Record<string, string>,
+): Promise<{ ok: boolean; error?: string } & Partial<ModelSettings>> {
+  const res = await fetch(`${httpBase()}/v1/settings/subagent-models`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ subagent_models: mapping }),
   });
   return res.json();
 }

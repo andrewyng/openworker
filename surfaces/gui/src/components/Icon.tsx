@@ -40,6 +40,7 @@ export type IconName =
   | "image"
   | "table"
   | "mic"
+  | "play"
   | "stop"
   | "x";
 
@@ -161,6 +162,12 @@ export function Icon({
       return (
         <svg {...s} fill="currentColor" stroke="none">
           <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
+        </svg>
+      );
+    case "play":
+      return (
+        <svg {...s} fill="currentColor" stroke="none">
+          <path d="M7 5.5l11 6.5-11 6.5z" />
         </svg>
       );
     case "x":

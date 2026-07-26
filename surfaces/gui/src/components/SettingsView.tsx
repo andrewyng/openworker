@@ -31,6 +31,14 @@ import {
   verifyDictationModel,
   type DictationDownloadProgress,
   type DictationStatus,
+  getTtsStatus,
+  synthesizeAndPlay,
+  stopTts,
+  downloadTtsModel,
+  deleteTtsModel,
+  listenTtsDownloadProgress,
+  type TtsStatus,
+  type TtsDownloadProgress,
 } from "../tauri";
 import { useThemePref } from "../theme";
 import { Icon } from "./Icon";
@@ -61,7 +69,7 @@ const BTN_BORDERED =
 const SET_TABS: { key: SetTab; label: string; icon: "sliders" | "code" | "mic" | "sparkle" }[] = [
   { key: "appearance", label: "General", icon: "sliders" },
   { key: "models", label: "Models", icon: "code" },
-  { key: "voice", label: "Voice input", icon: "mic" },
+  { key: "voice", label: "Voice", icon: "mic" },
   { key: "personas", label: "Personas", icon: "sparkle" },
 ];
 
@@ -121,7 +129,7 @@ export function SettingsView({
               </div>
             </section>
           ) : tab === "voice" ? (
-            <VoiceInputSection />
+            <VoiceSection />
           ) : (
             <PersonasSection onOpenPersona={onOpenPersona} />
           )}
@@ -140,7 +148,30 @@ const formatBytes = (bytes: number) => {
   return `${Math.round(bytes / 1024 / 1024)} MiB`;
 };
 
-function VoiceInputSection() {
+function VoiceSection() {
+  const desktop = isTauri();
+  return (
+    <section>
+      <PanelHead
+        title="Voice"
+        sub="Speak naturally in the composer and hear the agent's responses. Processing stays on this device."
+      />
+      {!desktop ? (
+        <div className={CARD + " p-4 text-[13px] text-muted"}>Voice setup is available in the OpenWorker desktop app.</div>
+      ) : (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-green-200 bg-green-50/70 px-4 py-3 text-[12.5px] text-green-800">
+            <span className="font-medium">Private by design.</span> Audio is processed locally.
+          </div>
+          <VoiceInputCard />
+          <VoiceOutputCard />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function VoiceInputCard() {
   const [status, setStatus] = useState<DictationStatus | null>(null);
   const [progress, setProgress] = useState<DictationDownloadProgress | null>(null);
   const [phase, setPhase] = useState<"idle" | "downloading" | "verifying" | "testing" | "transcribing">("idle");
@@ -256,21 +287,8 @@ function VoiceInputSection() {
   const ready = !!status?.supported && !!status?.model_verified && !!status?.test_passed;
 
   return (
-    <section>
-      <PanelHead
-        title="Voice input"
-        sub="Speak naturally in the composer. Recordings and transcripts stay on this device."
-      />
-
-      {!desktop ? (
-        <div className={CARD + " p-4 text-[13px] text-muted"}>Voice Input setup is available in the OpenWorker desktop app.</div>
-      ) : (
-        <div className="space-y-4">
-          <div className="rounded-xl border border-green-200 bg-green-50/70 px-4 py-3 text-[12.5px] text-green-800">
-            <span className="font-medium">Private by design.</span> Audio is held in memory only while you record and is transcribed locally.
-          </div>
-
-          <div className={CARD}>
+    <div className="space-y-4">
+      <div className={CARD}>
             <div className="p-4 flex items-start gap-3">
               <Icon name="code" size={18} className="text-accent mt-0.5" />
               <div className="min-w-0 flex-1">
@@ -341,10 +359,110 @@ function VoiceInputSection() {
             {testTranscript && <div className="border-t border-line bg-paper/50 px-4 py-3 text-[13px]">“{testTranscript}”</div>}
           </div>
 
-          {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-[12px] text-red-700">{error}</div>}
+      {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-[12px] text-red-700">{error}</div>}
+    </div>
+  );
+}
+
+function VoiceOutputCard() {
+  const [status, setStatus] = useState<TtsStatus | null>(null);
+  const [progress, setProgress] = useState<TtsDownloadProgress | null>(null);
+  const [phase, setPhase] = useState<"idle" | "downloading">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    let unlisten = () => {};
+    void listenTtsDownloadProgress((next) => {
+      if (active) setProgress(next);
+    }).then((stop) => {
+      unlisten = stop;
+    });
+    void getTtsStatus().then((initial) => {
+      if (active && initial) setStatus(initial);
+    });
+    return () => {
+      active = false;
+      unlisten();
+    };
+  }, []);
+
+  const download = async () => {
+    setError(null);
+    setProgress({ bytes_downloaded: 0, total_bytes: status?.model_bytes || 45000000 });
+    setPhase("downloading");
+    try {
+      setStatus(await downloadTtsModel());
+    } catch (e) {
+      setError(voiceError(e));
+      const latest = await getTtsStatus();
+      if (latest) setStatus(latest);
+    } finally {
+      setPhase("idle");
+    }
+  };
+
+  const remove = async () => {
+    if (!window.confirm("Delete the local TTS model?")) return;
+    setError(null);
+    try {
+      setStatus(await deleteTtsModel());
+      setProgress(null);
+    } catch (e) {
+      setError(voiceError(e));
+    }
+  };
+
+  const test = async () => {
+    setError(null);
+    try {
+      if (status?.is_playing) {
+        await stopTts();
+        const latest = await getTtsStatus();
+        if (latest) setStatus(latest);
+      } else {
+        await synthesizeAndPlay("Hi there, this is Open Worker testing the Text to Speech engine.");
+        const latest = await getTtsStatus();
+        if (latest) setStatus(latest);
+      }
+    } catch (e) {
+      setError(voiceError(e));
+    }
+  };
+  
+  if (!status) return null;
+  const downloading = phase === "downloading" || status.download_in_progress;
+  const progressPercent = Math.min(100, Math.round(((progress?.bytes_downloaded || 0) / (progress?.total_bytes || 1)) * 100));
+
+  return (
+    <div className={CARD}>
+      <div className="p-4 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-lg bg-accentSoft text-accent grid place-items-center font-semibold">T</div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[13.5px] font-medium">Text-to-Speech</div>
+          <div className="text-[12px] text-muted mt-0.5">
+            {status.model_installed ? `Installed · ${formatBytes(status.model_bytes)}` : `Local TTS model · ${formatBytes(status.model_bytes)}`}
+          </div>
+        </div>
+        {status.model_installed ? (
+          <>
+            <button className={BTN_BORDERED} onClick={() => void test()}>{status.is_playing ? "Stop" : "Test Voice"}</button>
+            <button className="text-[12px] text-red-600 px-2 py-2" onClick={() => void remove()}>Delete</button>
+          </>
+        ) : downloading ? (
+          <span className="text-[12px] text-muted">Downloading…</span>
+        ) : (
+          <button className={BTN_ACCENT} onClick={() => void download()}>Download model</button>
+        )}
+      </div>
+      {downloading && (
+        <div className="border-t border-line px-4 py-3">
+          <div className="h-1.5 rounded-full bg-line overflow-hidden"><div className="h-full bg-accent transition-all" style={{ width: `${progressPercent}%` }} /></div>
+          <div className="mt-1.5 text-[11.5px] text-muted flex"><span>{formatBytes(progress?.bytes_downloaded || 0)} of {formatBytes(progress?.total_bytes || 1)}</span><span className="ml-auto">{progressPercent}%</span></div>
         </div>
       )}
-    </section>
+      {error && <div className="border-t border-line bg-red-50 px-4 py-3 text-[12px] text-red-700">{error}</div>}
+    </div>
   );
 }
 
