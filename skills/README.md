@@ -1,6 +1,6 @@
 # ECC → OpenWorker Skill Packs: Delivery Summary
 
-> **Location:** `openworker-skills/` directory (10 skill packs, 3,654 lines total)
+> **Location:** `` directory (10 skill packs, 3,654 lines total)
 > **Format:** Compatible with OpenWorker's `SkillLoader` — YAML frontmatter + markdown body
 > **Source:** Adapted from ECC (`affaan-m/ECC`) patterns, rewritten for OpenWorker's architecture
 
@@ -10,23 +10,23 @@
 
 | # | Skill | Lines | When to Use |
 |---|-------|-------|-------------|
-| 1 | [`security-review`](openworker-skills/security-review/SKILL.md) | 360 | Auth, user input, secrets, API endpoints, payment features |
-| 2 | [`tdd-workflow`](openworker-skills/tdd-workflow/SKILL.md) | 393 | Writing features, fixing bugs, refactoring — test-driven development |
-| 3 | [`verification-loop`](openworker-skills/verification-loop/SKILL.md) | 180 | Pre-submission quality check — build, types, lint, tests, security |
-| 4 | [`coding-standards`](openworker-skills/coding-standards/SKILL.md) | 418 | Starting new code, reviewing quality, refactoring, onboarding |
-| 5 | [`search-first`](openworker-skills/search-first/SKILL.md) | 232 | Unfamiliar code, new integrations, onboarding — research before editing |
-| 6 | [`strategic-compact`](openworker-skills/strategic-compact/SKILL.md) | 159 | Long sessions, multi-phase tasks — compact at logical boundaries |
-| 7 | [`error-handling`](openworker-skills/error-handling/SKILL.md) | 479 | Error design, debugging, incident response, root-cause analysis |
-| 8 | [`eval-harness`](openworker-skills/eval-harness/SKILL.md) | 386 | Measuring code quality, benchmarking models, comparing implementations |
-| 9 | [`git-workflow`](openworker-skills/git-workflow/SKILL.md) | 656 | Branching, commits, PRs, conflicts, releases |
-| 10 | [`docker-patterns`](openworker-skills/docker-patterns/SKILL.md) | 391 | Container setup, networking, volumes, security, multi-service orchestration |
+| 1 | [`security-review`](security-review/SKILL.md) | 360 | Auth, user input, secrets, API endpoints, payment features |
+| 2 | [`tdd-workflow`](tdd-workflow/SKILL.md) | 393 | Writing features, fixing bugs, refactoring — test-driven development |
+| 3 | [`verification-loop`](verification-loop/SKILL.md) | 180 | Pre-submission quality check — build, types, lint, tests, security |
+| 4 | [`coding-standards`](coding-standards/SKILL.md) | 418 | Starting new code, reviewing quality, refactoring, onboarding |
+| 5 | [`search-first`](search-first/SKILL.md) | 232 | Unfamiliar code, new integrations, onboarding — research before editing |
+| 6 | [`strategic-compact`](strategic-compact/SKILL.md) | 159 | Long sessions, multi-phase tasks — compact at logical boundaries |
+| 7 | [`error-handling`](error-handling/SKILL.md) | 479 | Error design, debugging, incident response, root-cause analysis |
+| 8 | [`eval-harness`](eval-harness/SKILL.md) | 386 | Measuring code quality, benchmarking models, comparing implementations |
+| 9 | [`git-workflow`](git-workflow/SKILL.md) | 656 | Branching, commits, PRs, conflicts, releases |
+| 10 | [`docker-patterns`](docker-patterns/SKILL.md) | 391 | Container setup, networking, volumes, security, multi-service orchestration |
 
 ---
 
 ## File Structure
 
 ```
-openworker-skills/
+skills/
 ├── coding-standards/
 │   └── SKILL.md          418 lines  — naming, immutability, performance, code smells
 ├── docker-patterns/
@@ -156,14 +156,14 @@ These skills are designed to be loaded by OpenWorker's `SkillLoader` and invoked
 
 ### Option A: Drop into existing skills directory
 
-Copy the `openworker-skills/` directory into OpenWorker's skills path:
+Copy the `skills/` directory into OpenWorker's skills path:
 
 ```bash
 # If OpenWorker loads skills from ~/.openworker/skills/
-cp -r openworker-skills/* ~/.openworker/skills/
+cp -r skills/* ~/.openworker/skills/
 
 # Or if it loads from a project-local .cowork/skills/
-cp -r openworker-skills/* .cowork/skills/
+cp -r skills/* .cowork/skills/
 ```
 
 ### Option B: Reference via SkillLoader paths
@@ -172,7 +172,7 @@ OpenWorker's `SkillLoader` takes a list of directories:
 
 ```python
 loader = SkillLoader([
-    "/Users/jose/OpenWorker/12428dbc-8a1/openworker-skills",
+    "/Users/jose/OpenWorker/12428dbc-8a1/skills",
     # ... other skill directories
 ])
 
@@ -189,13 +189,13 @@ Only load the skills relevant to a specific task:
 
 ```python
 # For a code review session:
-loader = SkillLoader(["openworker-skills/security-review", "openworker-skills/coding-standards"])
+loader = SkillLoader(["skills/security-review", "skills/coding-standards"])
 
 # For a new feature implementation:
-loader = SkillLoader(["openworker-skills/search-first", "openworker-skills/tdd-workflow"])
+loader = SkillLoader(["skills/search-first", "skills/tdd-workflow"])
 
 # For a pre-deployment check:
-loader = SkillLoader(["openworker-skills/verification-loop", "openworker-skills/security-review"])
+loader = SkillLoader(["skills/verification-loop", "skills/security-review"])
 ```
 
 ### Option D: Agent Tool Invocation
@@ -267,16 +267,16 @@ strategic-compact ──applies to─ all long sessions
 
 | File | Path | Size |
 |------|------|------|
-| security-review | `openworker-skills/security-review/SKILL.md` | 360 lines |
-| tdd-workflow | `openworker-skills/tdd-workflow/SKILL.md` | 393 lines |
-| verification-loop | `openworker-skills/verification-loop/SKILL.md` | 180 lines |
-| coding-standards | `openworker-skills/coding-standards/SKILL.md` | 418 lines |
-| search-first | `openworker-skills/search-first/SKILL.md` | 232 lines |
-| strategic-compact | `openworker-skills/strategic-compact/SKILL.md` | 159 lines |
-| error-handling | `openworker-skills/error-handling/SKILL.md` | 479 lines |
-| eval-harness | `openworker-skills/eval-harness/SKILL.md` | 386 lines |
-| git-workflow | `openworker-skills/git-workflow/SKILL.md` | 656 lines |
-| docker-patterns | `openworker-skills/docker-patterns/SKILL.md` | 391 lines |
+| security-review | `security-review/SKILL.md` | 360 lines |
+| tdd-workflow | `tdd-workflow/SKILL.md` | 393 lines |
+| verification-loop | `verification-loop/SKILL.md` | 180 lines |
+| coding-standards | `coding-standards/SKILL.md` | 418 lines |
+| search-first | `search-first/SKILL.md` | 232 lines |
+| strategic-compact | `strategic-compact/SKILL.md` | 159 lines |
+| error-handling | `error-handling/SKILL.md` | 479 lines |
+| eval-harness | `eval-harness/SKILL.md` | 386 lines |
+| git-workflow | `git-workflow/SKILL.md` | 656 lines |
+| docker-patterns | `docker-patterns/SKILL.md` | 391 lines |
 | **Total** | | **10 skills, 3,654 lines** |
 
 Summary: [ECC_OpenWorker_Skill_Summary.md](ECC_OpenWorker_Skill_Summary.md)
