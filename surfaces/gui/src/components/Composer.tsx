@@ -537,7 +537,13 @@ export function Composer(props: Props) {
                     iconBtn +
                     (props.voiceMode ? " bg-accent text-white hover:brightness-105" : "")
                   }
-                  onClick={() => props.onVoiceModeChange?.(!props.voiceMode)}
+                  onClick={() => {
+                    const next = !props.voiceMode;
+                    props.onVoiceModeChange?.(next);
+                    if (next && props.mode !== "auto") {
+                      props.onModeChange("auto");
+                    }
+                  }}
                   title={props.voiceMode ? "Voice Chat Mode: ON" : "Voice Chat Mode: OFF"}
                   aria-label="Toggle Voice Chat Mode"
                 >
