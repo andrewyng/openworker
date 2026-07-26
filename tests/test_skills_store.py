@@ -228,10 +228,8 @@ def test_upload_without_skill_md_rejected(store):
     # A broken file that CLAIMS to be an archive fails as an archive, not as markdown.
     with pytest.raises(ValueError, match="zip"):
         store.stage_upload(b"garbage bytes", filename="broken.zip")
-    with pytest.raises(ValueError, match="zip"):
-        store.stage_upload(b"garbage bytes", filename="broken.skill")
-    # Binary junk with no extension hint → the catch-all message names all three shapes.
-    with pytest.raises(ValueError, match=r"\.zip, \.skill, or SKILL\.md"):
+    # Binary junk with no extension hint → the catch-all names both accepted shapes.
+    with pytest.raises(ValueError, match=r"\.zip or a SKILL\.md"):
         store.stage_upload(b"\xff\xfe\x00\x01binary junk")
 
 
@@ -249,12 +247,27 @@ def test_upload_bare_md_without_name_rejected(store):
         store.stage_upload(b"Just instructions, no frontmatter.", filename="notes.md")
 
 
-def test_upload_dot_skill_is_a_zip_alias(store):
+def test_upload_mac_finder_zip_junk_stripped(store):
+    """macOS Finder's Compress injects __MACOSX/._* shadows and .DS_Store — a Mac-made
+    zip must install clean on Windows/Linux, with none of that staged or listed."""
     preview = store.stage_upload(
-        _zip_bytes({"greet/SKILL.md": SKILL_MD}), filename="greet.skill"
+        _zip_bytes(
+            {
+                "greet/SKILL.md": SKILL_MD,
+                "greet/notes.txt": "real resource",
+                "greet/.DS_Store": "junk",
+                "__MACOSX/greet/._SKILL.md": "junk",
+                "__MACOSX/greet/._notes.txt": "junk",
+            }
+        ),
+        filename="greet.zip",
     )
     assert preview["name"] == "greet"
-    store.discard_upload(preview["token"])
+    assert preview["files"] == ["notes.txt"]  # junk neither listed…
+    saved = store.confirm_upload(preview["token"], scope="global")
+    folder = Path(saved["path"])
+    installed = sorted(p.name for p in folder.rglob("*"))
+    assert installed == ["SKILL.md", "notes.txt"]  # …nor installed
 
 
 def test_upload_zip_slip_rejected(store, tmp_path):

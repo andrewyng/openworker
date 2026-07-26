@@ -269,15 +269,24 @@ class SkillStore:
 
     # -- uploads: stage → preview → confirm -----------------------------------------
     def stage_upload(self, data: bytes, filename: str = "") -> dict[str, Any]:
-        """Stage an upload and return the parsed preview. Accepts the three shapes the
-        ecosystem converged on (Claude-compatible): a ``.zip``, a ``.skill`` (a renamed
-        zip), or a bare ``SKILL.md`` with YAML frontmatter. Nothing is installed until
-        :meth:`confirm_upload`."""
+        """Stage an upload and return the parsed preview. Accepts a ``.zip`` (folder skill)
+        or a bare ``SKILL.md`` with YAML frontmatter. Nothing is installed until
+        :meth:`confirm_upload`. (A ``.skill`` file is a renamed zip and still unpacks —
+        just not advertised.)"""
         try:
             archive = zipfile.ZipFile(io.BytesIO(data))
         except zipfile.BadZipFile:
             return self._stage_single_md(data, filename)
-        names = [n for n in archive.namelist() if not n.endswith("/")]
+        # macOS Finder's "Compress" injects __MACOSX/ shadow entries (._*) and .DS_Store —
+        # metadata, not skill content. Strip them so a Mac-made zip installs clean.
+        names = [
+            n
+            for n in archive.namelist()
+            if not n.endswith("/")
+            and "__MACOSX" not in Path(n).parts
+            and Path(n).name != ".DS_Store"
+            and not Path(n).name.startswith("._")
+        ]
         for entry in names:
             p = Path(entry)
             if p.is_absolute() or ".." in p.parts or (p.parts and ":" in p.parts[0]):
@@ -327,7 +336,7 @@ class SkillStore:
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
-            raise ValueError("Not a valid skill file — upload a .zip, .skill, or SKILL.md.")
+            raise ValueError("Not a valid skill file — upload a .zip or a SKILL.md.")
         token = uuid.uuid4().hex
         staged = self._staging_dir / token
         staged.mkdir(parents=True, exist_ok=True)

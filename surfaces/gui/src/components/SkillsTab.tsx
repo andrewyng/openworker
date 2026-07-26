@@ -213,7 +213,7 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
       <input
         ref={fileInput}
         type="file"
-        accept=".zip,.skill,.md"
+        accept=".zip,.md"
         className="hidden"
         aria-label="Upload a skill archive"
         onChange={(e) => {
@@ -327,8 +327,8 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
       <div className={`${CARD} divide-y divide-line`}>
         {rows.length === 0 && !editor ? (
           <div className="p-5 text-[13px] text-muted">
-            No skills yet. Write one, import a .zip / .skill / SKILL.md someone shared, or
-            describe one below and let OpenWorker draft it.
+            No skills yet. Write one, import a .zip or SKILL.md someone shared, or describe
+            one below and let OpenWorker draft it.
           </div>
         ) : null}
         {rows.map((row) => (
