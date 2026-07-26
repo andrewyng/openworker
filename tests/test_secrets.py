@@ -8,7 +8,10 @@ import subprocess
 import sys
 import time
 
-from coworker.secrets import SecretStore
+import pytest
+
+import coworker.secrets as secrets_mod
+from coworker.secrets import SecretStore, write_private_text
 
 
 def test_put_get_round_trip(tmp_path):
@@ -77,6 +80,25 @@ def test_secrets_file_is_restricted(tmp_path):
         assert "BUILTIN\\Administrators" not in out
     else:
         assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits only")
+def test_secrets_never_world_readable_during_write(tmp_path, monkeypatch):
+    """Files holding secrets must be owner-only from creation, not chmod'd after the
+    plaintext already landed on disk (that ordering leaves a window where other local
+    users can read credentials, and a failed chmod leaves them exposed indefinitely).
+    Neuter the after-the-fact chmod and assert the mode is still 0600."""
+    monkeypatch.setattr(secrets_mod, "_restrict_to_user", lambda *a, **k: None)
+    old_umask = os.umask(0o022)  # permissive umask so creation-time perms do the work
+    try:
+        store_path = tmp_path / "secrets.json"
+        SecretStore(store_path).put("x", {"a": 1})
+        assert stat.S_IMODE(os.stat(store_path).st_mode) == 0o600
+
+        key_path = write_private_text(tmp_path / "id_key", "PRIVATE")
+        assert stat.S_IMODE(os.stat(key_path).st_mode) == 0o600
+    finally:
+        os.umask(old_umask)
 
 
 def test_delete(tmp_path):
