@@ -8,6 +8,8 @@ proxy so any OpenAI-format client can use the runtime as a backend.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import os
 import re
@@ -388,6 +390,29 @@ def create_app(manager: SessionManager) -> FastAPI:
         manager.unattended.set(session_id, on)
         return {"ok": True, "session_id": session_id, "unattended": on}
 
+    @app.get("/v1/sessions/{session_id}/skills")
+    def session_skills(session_id: str, workspace: str = "") -> dict[str, Any]:
+        # The rail's Skills group + the composer popup both read this (SKILLS-SPEC §4.1).
+        return manager.session_skills_view(session_id, workspace or None)
+
+    @app.post("/v1/sessions/{session_id}/skills")
+    def set_session_skill(session_id: str, body: dict) -> dict[str, Any]:
+        # A session mute. `clear` drops the override (inherit again); otherwise explicit
+        # on/off. Nothing on disk changes — Settings owns permanent state.
+        body = body or {}
+        skill = str(body.get("skill", "")).strip()
+        if not skill:
+            return {"ok": False, "error": "skill required"}
+        if body.get("clear"):
+            manager.session_skills.clear(session_id, skill)
+        else:
+            manager.session_skills.set(
+                session_id, skill, bool(body.get("enabled", False))
+            )
+        return manager.session_skills_view(
+            session_id, str(body.get("workspace", "")) or None
+        )
+
     @app.get("/v1/sessions/{session_id}/connections")
     def session_connections(session_id: str, persona: str = "") -> dict[str, Any]:
         # `persona` is the GUI's hint for brand-new sessions (no record yet) — without it the
@@ -555,8 +580,44 @@ def create_app(manager: SessionManager) -> FastAPI:
         )
 
     @app.get("/v1/skills")
-    def skills() -> dict[str, Any]:
-        return {"skills": manager.list_skills()}
+    def skills(workspace: str = "") -> dict[str, Any]:
+        return {"skills": manager.list_skills(workspace or None)}
+
+    @app.post("/v1/skills")
+    def create_skill(body: dict) -> dict[str, Any]:
+        return manager.create_skill(body or {})
+
+    @app.patch("/v1/skills/{name}")
+    def update_skill(name: str, body: dict) -> dict[str, Any]:
+        return manager.update_skill(name, body or {})
+
+    @app.delete("/v1/skills/{name}")
+    def delete_skill(name: str, workspace: str = "") -> dict[str, Any]:
+        return manager.delete_skill(name, workspace or None)
+
+    @app.post("/v1/skills/{name}/move")
+    def move_skill(name: str, body: dict) -> dict[str, Any]:
+        return manager.move_skill(name, body or {})
+
+    @app.post("/v1/skills/upload")
+    def stage_skill_upload(body: dict) -> dict[str, Any]:
+        # Stage → preview; nothing is installed until /upload/confirm (SKILLS-SPEC §4.2).
+        data_b64 = str((body or {}).get("data_b64", ""))
+        if not data_b64:
+            return {"ok": False, "error": "No archive supplied."}
+        try:
+            data = base64.b64decode(data_b64, validate=True)
+        except (ValueError, binascii.Error):
+            return {"ok": False, "error": "Invalid archive encoding."}
+        return manager.stage_skill_upload(data)
+
+    @app.post("/v1/skills/upload/confirm")
+    def confirm_skill_upload(body: dict) -> dict[str, Any]:
+        return manager.confirm_skill_upload(body or {})
+
+    @app.post("/v1/skills/draft")
+    def draft_skill(body: dict) -> dict[str, Any]:
+        return manager.draft_skill(str((body or {}).get("description", "")))
 
     @app.get("/v1/workspaces/recent")
     def recent_workspaces() -> dict[str, Any]:
@@ -1899,6 +1960,26 @@ def create_app(manager: SessionManager) -> FastAPI:
                     if model is not None and not isinstance(model, str):
                         await reject_input("Invalid model: expected a string.")
                         continue
+                    # Force-run (SKILLS-SPEC §4.1): the composer's `/skill` pick rides as a
+                    # separate field. Validated against the session's effective menu — a muted
+                    # or unknown skill is a visible error, never a silent no-op (§4.6 #15).
+                    skill = message.get("skill")
+                    if skill is not None:
+                        if not isinstance(skill, str) or not skill.strip():
+                            await reject_input("Invalid skill: expected a name.")
+                            continue
+                        skill = skill.strip()
+                        menu = manager.effective_skill_names(session_id, workspace)
+                        if skill not in menu:
+                            await reject_input(
+                                f"Skill '{skill}' is not available in this session."
+                            )
+                            continue
+                        text = (
+                            f'Use the skill "{skill}" for this request: first call '
+                            f'load_skill("{skill}") and follow its instructions.'
+                            + (f"\n\n{text}" if text else "")
+                        )
                     await _apply_model(model)
                     if text or attachments:
                         content = build_user_content(text, attachments)

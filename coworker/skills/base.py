@@ -43,6 +43,12 @@ class SkillLoader:
     def names(self) -> list[str]:
         return list(self._skills)
 
+    def restrict(self, allowed: set[str]) -> None:
+        """Drop every skill not in ``allowed`` — the session's effective menu (Settings
+        disables + session mutes) applied before catalog injection, so the model never
+        sees a skill the user turned off."""
+        self._skills = {n: s for n, s in self._skills.items() if n in allowed}
+
     def get(self, name: str) -> Optional[Skill]:
         return self._skills.get(name)
 

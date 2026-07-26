@@ -81,7 +81,12 @@ from ..providers import (
 )
 from ..secrets import SecretStore, state_dir
 from ..sessions import SessionRecord
-from ..skills import SkillLoader
+from ..skills import (
+    SessionSkillStore,
+    SkillLoader,
+    SkillStore,
+    effective_skills,
+)
 
 _SCOPES = {s.value for s in Scope}
 
@@ -224,6 +229,11 @@ class SessionManager:
         self.session_connections = SessionConnectionStore(
             base / "session_connections.json"
         )
+        # Skills (SKILLS-SPEC §4): folder-backed CRUD + per-session mutes. The effective menu
+        # gates the engine's skill catalog the same way effective_connectors gates connector
+        # tools — one resolver feeds the catalog injection, the rail, and the composer popup.
+        self.skill_store = SkillStore()
+        self.session_skills = SessionSkillStore(base / "session_skills.json")
         # Dead-letter: inbound messages with no destination + background-turn failures, so neither
         # vanishes silently (a debugging/visibility surface, not a redelivery queue).
         self.unrouted = UnroutedStore(base / "unrouted.json")
@@ -445,6 +455,8 @@ class SessionManager:
             routing_targets=self._routing_targets(session_id, agent),
             # Per-session connection hierarchy: expose only effective-enabled connectors' tools.
             connector_filter=self.effective_connectors(session_id, agent_name),
+            # Per-session skill menu: Settings disables + session mutes (SKILLS-SPEC §3).
+            skill_filter=self.effective_skill_names(session_id, ws),
         )
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
@@ -2587,6 +2599,7 @@ class SessionManager:
             # Scheduled runs respect the same per-session connection hierarchy as live sessions:
             # expose only the persona's effective-enabled connectors' tools (§4.3).
             connector_filter=self.effective_connectors(session_id, task.agent),
+            skill_filter=self.effective_skill_names(session_id, task.workspace),
         )
         self._seed_task_permissions(engine, task)
         return engine
@@ -3565,6 +3578,8 @@ class SessionManager:
         self.mention_sessions.remove_session(session_id)
         # ...and drops its per-session connector overrides (§4.2, like subscriptions).
         self.session_connections.remove_session(session_id)
+        # ...and its per-session skill mutes (SKILLS-SPEC §3 — mutes die with the session).
+        self.session_skills.remove_session(session_id)
         # ...and closes its pending Inbox items — an orphaned approval/question can never be
         # meaningfully answered (owner call, 2026-07-03).
         self.inbox.resolve_session(session_id)
@@ -3640,9 +3655,139 @@ class SessionManager:
     def list_agents(self) -> list[dict[str, Any]]:
         return _list_agents()
 
-    def list_skills(self) -> list[dict[str, Any]]:
-        loader = SkillLoader([state_dir() / "skills"])
-        return loader.catalog()
+    # -- skills (SKILLS-SPEC §4.4) ------------------------------------------------
+    def list_skills(self, workspace: Optional[str] = None) -> list[dict[str, Any]]:
+        """Enriched rows for the Settings screen (scope/source/enabled). Optional workspace
+        adds that project's skills, with project copies shadowing same-named global ones."""
+        return self.skill_store.rows(workspace or None)
+
+    def effective_skill_names(
+        self, session_id: str, workspace: Optional[str | Path] = None
+    ) -> set[str]:
+        """The session's skill menu (§3): merged scopes − Settings disables − session mutes.
+        The single resolver behind the engine catalog, the rail list, and the composer popup."""
+        dirs = [self.skill_store.global_dir]
+        if workspace:
+            dirs.append(self.skill_store.project_dir(workspace))
+        loader = SkillLoader(dirs)
+        return effective_skills(
+            names=set(loader.names()),
+            disabled=self.skill_store.disabled_names(),
+            session_overrides=self.session_skills.get(session_id),
+        )
+
+    def session_skills_view(
+        self, session_id: str, workspace: Optional[str] = None
+    ) -> dict[str, Any]:
+        """The rail payload: every in-scope, Settings-enabled skill with its mute state."""
+        disabled = self.skill_store.disabled_names()
+        overrides = self.session_skills.get(session_id)
+        rows = [
+            {
+                "name": r["name"],
+                "description": r["description"],
+                "scope": r["scope"],
+                "enabled": overrides.get(r["name"], True),
+            }
+            for r in self.skill_store.rows(workspace or None)
+            if r["name"] not in disabled
+        ]
+        return {"skills": rows}
+
+    def create_skill(self, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            created = self.skill_store.create(
+                name=str(body.get("name", "")),
+                description=str(body.get("description", "")),
+                instructions=str(body.get("instructions", "")),
+                scope=str(body.get("scope", "global") or "global"),
+                workspace=body.get("workspace") or None,
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "skill": created}
+
+    def update_skill(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            if "enabled" in body:
+                self.skill_store.set_enabled(name, bool(body["enabled"]))
+            if body.get("description") is not None or body.get("instructions") is not None:
+                self.skill_store.update(
+                    name,
+                    description=body.get("description"),
+                    instructions=body.get("instructions"),
+                    workspace=body.get("workspace") or None,
+                )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
+    def delete_skill(self, name: str, workspace: Optional[str] = None) -> dict[str, Any]:
+        try:
+            self.skill_store.delete(name, workspace or None)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
+    def move_skill(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            moved = self.skill_store.move(
+                name,
+                to_scope=str(body.get("scope", "")),
+                workspace=body.get("workspace") or None,
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "skill": moved}
+
+    def stage_skill_upload(self, data: bytes) -> dict[str, Any]:
+        try:
+            preview = self.skill_store.stage_upload(data)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, **preview}
+
+    def confirm_skill_upload(self, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            saved = self.skill_store.confirm_upload(
+                str(body.get("token", "")),
+                scope=str(body.get("scope", "global") or "global"),
+                workspace=body.get("workspace") or None,
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "skill": saved}
+
+    def draft_skill(self, description: str) -> dict[str, Any]:
+        """One-shot draft for the "create using OpenWorker" mode — returns fields for the
+        Write form; never saves anything itself (the user reviews first, SKILLS-SPEC §4.2)."""
+        description = (description or "").strip()
+        if not description:
+            return {"ok": False, "error": "Describe what the skill should do."}
+        prompt = (
+            "Draft an agent skill from this description. Reply with STRICT JSON only: "
+            '{"name": "<kebab-case, max 40 chars>", "description": "<one line>", '
+            '"instructions": "<markdown steps the agent will follow>"}\n\n'
+            f"Description: {description}"
+        )
+        try:
+            turn = self.provider.complete(
+                model=self.model, messages=[{"role": "user", "content": prompt}]
+            )
+            text = (turn.text or "").strip()
+            start, end = text.find("{"), text.rfind("}")
+            data = json.loads(text[start : end + 1]) if start != -1 else {}
+        except Exception as exc:  # provider/network/JSON — friendly, never a 500
+            return {"ok": False, "error": f"Could not draft the skill: {exc}"}
+        name = str(data.get("name", "")).strip()
+        if not name:
+            return {"ok": False, "error": "The model returned an unusable draft. Try again."}
+        return {
+            "ok": True,
+            "name": name,
+            "description": str(data.get("description", "")).strip(),
+            "instructions": str(data.get("instructions", "")).strip(),
+        }
 
     def list_memory(self) -> list[dict[str, Any]]:
         return [

@@ -133,6 +133,7 @@ def build_engine(
     channel_buffer: Optional[Any] = None,
     routing_targets: Optional[list[str]] = None,
     connector_filter: Optional[set[str]] = None,
+    skill_filter: Optional[set[str]] = None,
 ) -> TurnEngine:
     ws = Path(workspace).expanduser().resolve() if workspace else None
     if agent.needs_workspace and ws is None:
@@ -260,6 +261,10 @@ def build_engine(
             instructions = f"{instructions}\n\n{block}"
 
     skill_loader = SkillLoader(_skill_dirs(ws))
+    # Per-session effective menu (SKILLS-SPEC §3): the manager passes Settings-disables +
+    # session mutes resolved into an allow-set. Default None preserves CLI / direct callers.
+    if skill_filter is not None:
+        skill_loader.restrict(skill_filter)
     registry.register_all(skill_tools(skill_loader))
     catalog = skill_catalog_text(skill_loader)
     if catalog:
