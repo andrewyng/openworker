@@ -2851,7 +2851,18 @@ class SessionManager:
         # DM (or any non-channel): route to the designated session, else park it for visibility.
         dm = self.dm_session()
         if dm and self._inbound_connector_allowed(dm, src.platform):
-            await self.deliver_to_session(dm, event.tagged_text(), source=ms.to_dict())
+            msg = (
+                f"{event.tagged_text()}\n\n"
+                f"(This is a direct message. You MUST reply using the send_message tool "
+                f'with target "{src.target}" so the user receives your response. Replies to this DM are pre-approved.)'
+            )
+            engine = self.get_engine(dm)
+            if engine:
+                engine.permissions.task_rules.setdefault("send_message", set()).add(
+                    src.target
+                )
+                self.save(dm, engine)
+            await self.deliver_to_session(dm, msg, source=ms.to_dict())
         elif dm:
             # Designated, but this session has muted the connector → park rather than deliver.
             self.unrouted.record(
