@@ -93,6 +93,52 @@ def test_write_local_path_scoped(tmp_path):
     assert not escape.allowed
 
 
+@pytest.mark.parametrize("tool_name", ["apply_patch", "apply_unified_diff"])
+def test_write_tools_without_a_path_argument_cannot_bypass_via_session_allowlist(
+    tmp_path, tool_name
+):
+    # apply_patch/apply_unified_diff carry their target file path(s) inside the diff/patch
+    # text rather than a top-level "path" argument, so the path-scoping check above can't
+    # verify them. A previously-granted "always allow this tool for the session" grant must
+    # not let that unverifiable target sail through as a silent allow -- it should still
+    # require approval, the same as any other write whose target isn't known to be safe.
+    # (The underlying file-tool implementation independently enforces the same shared roots
+    # as a backstop, but the permission engine's own decision must not claim "allowed" for a
+    # target it never actually checked.)
+    eng = PermissionEngine(workspace_root=tmp_path, mode=Mode.INTERACTIVE)
+    eng.session_allow_tools.add(tool_name)
+    d = eng.evaluate(tool_name, {"patch": "*** Begin Patch\n..."}, None)
+    assert not d.allowed and d.needs_user
+
+
+@pytest.mark.parametrize("tool_name", ["apply_patch", "apply_unified_diff"])
+def test_write_tools_without_a_path_argument_cannot_bypass_via_custom_auto_allow(
+    tmp_path, tool_name
+):
+    eng = PermissionEngine(
+        workspace_root=tmp_path, mode=Mode.CUSTOM, auto_allow_tools={tool_name}
+    )
+    d = eng.evaluate(tool_name, {"diff": "--- a/f\n+++ b/f\n"}, None)
+    assert not d.allowed and d.needs_user
+
+
+def test_write_tools_without_a_path_argument_still_get_full_access_in_auto_mode(tmp_path):
+    # AUTO mode's "full access" contract is unchanged -- the file toolkit's own root
+    # enforcement is the trusted backstop there, same as before this fix.
+    eng = PermissionEngine(workspace_root=tmp_path, mode=Mode.AUTO)
+    d = eng.evaluate("apply_patch", {"patch": "*** Begin Patch\n..."}, None)
+    assert d.allowed
+
+
+def test_write_file_with_a_real_path_is_unaffected_by_the_unverifiable_target_fix(tmp_path):
+    # write_file/replace_in_file DO carry a checkable "path" argument, so the normal
+    # allowlist shortcuts still apply to them exactly as before.
+    eng = PermissionEngine(workspace_root=tmp_path, mode=Mode.INTERACTIVE)
+    eng.session_allow_tools.add("write_file")
+    d = eng.evaluate("write_file", {"path": "notes.txt", "content": "hi"}, None)
+    assert d.allowed and d.reason == "tool allowed for session"
+
+
 def test_exec_uses_command_allowlist(tmp_path):
     eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=["pytest"])
     assert eng.evaluate("run_shell", {"command": "pytest -q"}, None).allowed
