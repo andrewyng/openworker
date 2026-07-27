@@ -11,6 +11,7 @@ owns the wake records + the due/complete logic; the scheduler tick consumes ``du
 from __future__ import annotations
 
 import json
+import os
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -50,9 +51,11 @@ class WakeStore:
         self._lock = threading.Lock()
         self._wakes: dict[str, Wake] = {}
         if self.path and self.path.is_file():
-            for raw in json.loads(self.path.read_text(encoding="utf-8")).get(
-                "wakes", []
-            ):
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                data = {}
+            for raw in data.get("wakes", []):
                 w = Wake(**raw)
                 self._wakes[w.id] = w
 
@@ -60,10 +63,12 @@ class WakeStore:
         if not self.path:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(
             json.dumps({"wakes": [asdict(w) for w in self._wakes.values()]}, indent=2),
             encoding="utf-8",
         )
+        os.replace(str(tmp), str(self.path))
 
     def add_timer(self, session_id: str, fire_at: datetime, *, note: str = "") -> Wake:
         w = Wake(
@@ -99,8 +104,10 @@ class WakeStore:
     def due(self, now: Optional[datetime] = None) -> list[Wake]:
         """Timer wakes whose fire time has passed, plus completion/event wakes marked due."""
         now = now or _now()
+        with self._lock:
+            snaps = list(self._wakes.values())
         out = []
-        for w in self._wakes.values():
+        for w in snaps:
             if w.state != STATE_PENDING and w.state != STATE_DUE:
                 continue
             if (
@@ -144,9 +151,11 @@ class WakeStore:
                 self._save()
 
     def pending(self, session_id: Optional[str] = None) -> list[Wake]:
+        with self._lock:
+            snaps = list(self._wakes.values())
         return [
             w
-            for w in self._wakes.values()
+            for w in snaps
             if w.state != STATE_FIRED
             and (session_id is None or w.session_id == session_id)
         ]
