@@ -1103,6 +1103,14 @@ class SessionManager:
         for c in connectors:
             if not (c.get("two_way") and c.get("connected")):
                 continue
+            # `connected` above means "credentials are saved" — it gates the outbound tools
+            # and must stay that way. It says nothing about the INBOUND listener, so a bot
+            # whose polling never started still reads as connected while silently receiving
+            # nothing. Report the listener separately (issue #257).
+            c["listening"] = bool(self.gateway and self.gateway.is_listening(c["name"]))
+            c["listen_error"] = (
+                self.gateway.listen_error(c["name"]) if self.gateway else None
+            )
             allowed = set(c.get("allowed_users") or [])
             # Per-workspace allow-lists (managed relay) — a sender is judged against
             # ITS workspace's list; the flat list only governs team-less (socket) events.

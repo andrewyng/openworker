@@ -18,7 +18,8 @@ class ScriptedProvider(ProviderClient):
 
 
 class _Gateway:
-    """Minimal gateway stub exposing the recent-senders surface the manager enriches with."""
+    """Minimal gateway stub exposing the surfaces the manager enriches with: recent senders
+    and listener liveness. Stands in for a gateway whose listeners all came up."""
 
     def __init__(self, recent):
         self._recent = recent
@@ -26,6 +27,12 @@ class _Gateway:
 
     def recent_senders(self, name):
         return [dict(r) for r in self._recent] if name == "slack" else []
+
+    def is_listening(self, name):
+        return True
+
+    def listen_error(self, name):
+        return None
 
 
 def _connected_slack(mgr, allowed=()):

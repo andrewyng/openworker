@@ -101,23 +101,55 @@ class TelegramAdapter(BasePlatformAdapter):
             logger.warning(
                 "python-telegram-bot not installed — `pip install coworker[messaging]`"
             )
+            self.connect_error = (
+                "python-telegram-bot is not installed — reinstall with the "
+                "messaging extra (`pip install coworker[messaging]`)"
+            )
             return False
 
-        self._app = Application.builder().token(self.token).build()
+        from telegram.error import InvalidToken
 
         async def _on_update(update, _context):
             event = telegram_message_to_event(update.effective_message)
             if event is not None:
                 await self.handle_message(event)
 
-        self._app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, _on_update)
-        )
-        await self._app.initialize()
-        await self._app.start()
-        await self._app.updater.start_polling(drop_pending_updates=True)
+        # Bring the whole listener up under one guard. A failure anywhere here means the bot
+        # receives nothing, and the reason has to reach the user — the Connectors tab shows
+        # this connector as "connected" the moment a token is saved (issue #257).
+        try:
+            self._app = Application.builder().token(self.token).build()
+            self._app.add_handler(
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_update)
+            )
+            await self._app.initialize()
+            await self._app.start()
+            await self._app.updater.start_polling(drop_pending_updates=True)
+        except InvalidToken:
+            # Never quote the exception: it repeats the rejected token verbatim.
+            logger.warning("telegram rejected the bot token")
+            self.connect_error = (
+                "Telegram rejected the bot token — re-copy it from @BotFather"
+            )
+            await self._shutdown_quietly()
+            return False
+        except Exception as exc:
+            logger.exception("telegram polling failed to start")
+            self.connect_error = (
+                f"could not start Telegram polling ({type(exc).__name__})"
+            )
+            await self._shutdown_quietly()
+            return False
+
         logger.info("telegram adapter polling")
         return True
+
+    async def _shutdown_quietly(self) -> None:
+        """Tear down a half-started Application so a retry starts from a clean slate."""
+        try:
+            await self.disconnect()  # its `finally` clears _app even when teardown raises
+        except Exception:
+            logger.debug("telegram cleanup after a failed connect", exc_info=True)
 
     async def disconnect(self) -> None:
         if self._app is None:
@@ -189,6 +221,10 @@ class SlackAdapter(BasePlatformAdapter):
             logger.warning(
                 "slack-bolt not installed — `pip install coworker[messaging]`"
             )
+            self.connect_error = (
+                "slack-bolt is not installed — reinstall with the messaging extra "
+                "(`pip install coworker[messaging]`)"
+            )
             return False
 
         # Base-URL override so tests (and the FakeSlack harness) can redirect every Web API
@@ -202,7 +238,11 @@ class SlackAdapter(BasePlatformAdapter):
             auth = await self._app.client.auth_test()
             self._bot_user_id = auth.get("user_id")
         except Exception:
+            # No exception text here either — Slack SDK errors echo the request payload.
             logger.exception("slack auth_test failed")
+            self.connect_error = (
+                "Slack rejected the bot token — reconnect the Slack connector"
+            )
             return False
 
         @self._app.event("message")
