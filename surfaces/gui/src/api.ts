@@ -676,6 +676,8 @@ export interface ModelSettings {
   provider: string;
   model: string;
   models: string[];
+  // Models whose providers can run now. `models` also keeps an unavailable default visible.
+  ready_models?: string[];
   has_key: boolean;
   model_ready: boolean; // can the default model's provider actually run (any provider)?
   source: "env" | "store" | null;
