@@ -7,7 +7,7 @@ the skill catalog (progressive disclosure) + load_skill into a TurnEngine.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .agents import Agent, AgentContext, code_agent
 from .automation import scheduling_tools
@@ -133,7 +133,8 @@ def build_engine(
     channel_buffer: Optional[Any] = None,
     routing_targets: Optional[list[str]] = None,
     connector_filter: Optional[set[str]] = None,
-    skill_filter: Optional[set[str]] = None,
+    # A set (static snapshot) or a zero-arg callable (live, re-evaluated per load_skill).
+    skill_filter: Optional[set[str] | Callable[[], set[str]]] = None,
 ) -> TurnEngine:
     ws = Path(workspace).expanduser().resolve() if workspace else None
     if agent.needs_workspace and ws is None:
@@ -261,12 +262,17 @@ def build_engine(
             instructions = f"{instructions}\n\n{block}"
 
     skill_loader = SkillLoader(_skill_dirs(ws))
-    # Per-session effective menu (SKILLS-SPEC §3): the manager passes Settings-disables +
-    # session mutes resolved into an allow-set. Default None preserves CLI / direct callers.
-    if skill_filter is not None:
-        skill_loader.restrict(skill_filter)
-    registry.register_all(skill_tools(skill_loader))
-    catalog = skill_catalog_text(skill_loader)
+    # Per-session effective menu (SKILLS-SPEC §3). The manager passes a CALLABLE so
+    # load_skill consults the LIVE state per call (a Settings disable applies to running
+    # sessions; a skill created after this build is still loadable — tester catch
+    # 2026-07-27: force-run validated live but the engine snapshot said "not installed").
+    # The catalog line is a build-time snapshot by design (§4.7 reload rule). Default
+    # None preserves CLI / direct callers.
+    registry.register_all(skill_tools(skill_loader, allowed=skill_filter))
+    catalog = skill_catalog_text(
+        skill_loader,
+        allowed=skill_filter() if callable(skill_filter) else skill_filter,
+    )
     if catalog:
         instructions = f"{instructions}\n\n{catalog}"
 

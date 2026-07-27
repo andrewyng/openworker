@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, Union
 
 import aisuite as ai
 
@@ -27,9 +27,17 @@ class Skill:
 
 class SkillLoader:
     def __init__(self, dirs: list[str | Path]) -> None:
+        self._dirs = [Path(d) for d in dirs]
         self._skills: dict[str, Skill] = {}
-        for directory in dirs:
-            self._discover(Path(directory))
+        self.rescan()
+
+    def rescan(self) -> None:
+        """Re-read the skill dirs. load_skill rescans on a miss so a skill created AFTER
+        the session's engine was built is still loadable (the catalog line stays static
+        until the next session, but an explicitly requested skill must not 404)."""
+        self._skills = {}
+        for directory in self._dirs:
+            self._discover(directory)
 
     def _discover(self, directory: Path) -> None:
         if not directory.is_dir():
@@ -42,12 +50,6 @@ class SkillLoader:
 
     def names(self) -> list[str]:
         return list(self._skills)
-
-    def restrict(self, allowed: set[str]) -> None:
-        """Drop every skill not in ``allowed`` — the session's effective menu (Settings
-        disables + session mutes) applied before catalog injection, so the model never
-        sees a skill the user turned off."""
-        self._skills = {n: s for n, s in self._skills.items() if n in allowed}
 
     def get(self, name: str) -> Optional[Skill]:
         return self._skills.get(name)
@@ -87,8 +89,12 @@ def _parse_skill(md: Path) -> Skill:
     )
 
 
-def skill_catalog_text(loader: SkillLoader) -> str:
-    catalog = loader.catalog()
+def skill_catalog_text(
+    loader: SkillLoader, allowed: Optional[set[str]] = None
+) -> str:
+    catalog = [
+        c for c in loader.catalog() if allowed is None or c["name"] in allowed
+    ]
     if not catalog:
         return ""
     lines = [f"- {c['name']}: {c['description']}" for c in catalog]
@@ -98,13 +104,31 @@ def skill_catalog_text(loader: SkillLoader) -> str:
     )
 
 
-def skill_tools(loader: SkillLoader) -> list:
+AllowedSkills = Union[set, Callable[[], set], None]
+
+
+def skill_tools(loader: SkillLoader, allowed: AllowedSkills = None) -> list:
+    """`allowed` gates load_skill: a set is a build-time snapshot; a CALLABLE is consulted
+    on every call — the manager passes one so Settings disables apply to live sessions
+    immediately, and skills created after the engine was built are still loadable
+    (loader rescans on a miss)."""
+
+    def _allowed_now() -> Optional[set]:
+        return allowed() if callable(allowed) else allowed
+
     def load_skill(name: str) -> dict:
         """Load a skill's full instructions + resources path by name. Call this when a
         skill from the catalog is relevant to the current task."""
         skill = loader.get(name)
         if skill is None:
-            return {"error": f"unknown skill: {name}", "available": loader.names()}
+            loader.rescan()  # created after this session started? pick it up now
+            skill = loader.get(name)
+        gate = _allowed_now()
+        if skill is None or (gate is not None and name not in gate):
+            available = sorted(
+                n for n in loader.names() if gate is None or n in gate
+            )
+            return {"error": f"unknown skill: {name}", "available": available}
         return {
             "name": skill.name,
             "instructions": skill.instructions,

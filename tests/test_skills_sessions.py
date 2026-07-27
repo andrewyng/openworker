@@ -141,6 +141,52 @@ def test_empty_catalog_is_safe(tmp_path):
     assert result["available"] == []
 
 
+def test_live_load_skill_semantics(manager):
+    """SKILLS-SPEC state table (§4.7 addendum) — the engine consults LIVE state per call:
+    · a skill created AFTER the engine was built is loadable (tester-caught bug 2026-07-27:
+      force-run validated live, but the engine snapshot answered "not installed");
+    · a Settings disable applies to RUNNING sessions (OFF == invisible, immediately);
+    · a deleted skill behaves exactly like OFF (uninstalled ≡ disabled, to the model);
+    · the catalog line stays a build-time snapshot (documented reload rule)."""
+    from coworker.agent import build_engine
+    from coworker.agents.registry import get_agent
+
+    _skill(manager.skill_store.global_dir, "early", body="early body")
+    engine = build_engine(
+        agent=get_agent("chat"),
+        provider=ScriptedProvider(),
+        skill_filter=lambda: manager.effective_skill_names("s1"),
+    )
+    assert "early" in engine.messages[0]["content"]
+
+    # created after build → still loadable (rescan-on-miss + live gate)
+    manager.create_skill(
+        {"name": "late", "description": "d", "instructions": "late body"}
+    )
+    loaded = engine.registry.execute("load_skill", {"name": "late"})
+    assert loaded["instructions"] == "late body"
+    # …but the model's menu is a snapshot: no "late" line until the next session
+    assert "late" not in engine.messages[0]["content"]
+
+    # disable → refused in the LIVE session, listed nowhere
+    manager.skill_store.set_enabled("early", False)
+    refused = engine.registry.execute("load_skill", {"name": "early"})
+    assert refused["error"].startswith("unknown skill")
+    assert "early" not in refused["available"]
+
+    # delete ≡ disable, from the model's side
+    manager.delete_skill("late")
+    gone = engine.registry.execute("load_skill", {"name": "late"})
+    assert gone["error"].startswith("unknown skill")
+
+    # re-enable → back, files were untouched all along (OFF is parking, not deletion)
+    manager.skill_store.set_enabled("early", True)
+    assert (
+        engine.registry.execute("load_skill", {"name": "early"})["instructions"]
+        == "early body"
+    )
+
+
 def test_parity_catalog_vs_rail_view(manager):
     """The §3 invariant: the engine's menu and the rail payload come from one resolver."""
     _skill(manager.skill_store.global_dir, "alpha")

@@ -455,8 +455,9 @@ class SessionManager:
             routing_targets=self._routing_targets(session_id, agent),
             # Per-session connection hierarchy: expose only effective-enabled connectors' tools.
             connector_filter=self.effective_connectors(session_id, agent_name),
-            # Per-session skill menu: Settings disables + session mutes (SKILLS-SPEC §3).
-            skill_filter=self.effective_skill_names(session_id, ws),
+            # Per-session skill menu, LIVE (SKILLS-SPEC §3): a callable so load_skill sees
+            # disables/new skills immediately; the catalog snapshot is taken at build.
+            skill_filter=lambda sid=session_id, w=ws: self.effective_skill_names(sid, w),
         )
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
@@ -2599,7 +2600,9 @@ class SessionManager:
             # Scheduled runs respect the same per-session connection hierarchy as live sessions:
             # expose only the persona's effective-enabled connectors' tools (§4.3).
             connector_filter=self.effective_connectors(session_id, task.agent),
-            skill_filter=self.effective_skill_names(session_id, task.workspace),
+            skill_filter=lambda sid=session_id, w=task.workspace: (
+                self.effective_skill_names(sid, w)
+            ),
         )
         self._seed_task_permissions(engine, task)
         return engine
