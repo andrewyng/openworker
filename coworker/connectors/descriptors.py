@@ -1085,9 +1085,10 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         mcp_url=_newrelic_mcp_url(""),
         mcp_auth="connector",
         mcp_url_for=lambda raw: _newrelic_mcp_url(raw.get("region", "")),
-        # New Relic's own tool-corpus filter (docs.newrelic.com/docs/agentic-ai/mcp/setup):
-        # scope the server to triage-relevant tags instead of its full catalog.
-        mcp_headers={"include-tags": "discovery,data-access,alerting,incident-response"},
+        # No include-tags header (docs.newrelic.com/docs/agentic-ai/mcp/setup): we pin
+        # every tool (tool_defs.py) including convert_time_period_to_epoch_ms, which
+        # exists but carries none of the 6 documented tags — a tag filter here would
+        # silently drop it. The pin is the only allowlist that matters.
         fields=[
             Field(
                 "api_key",

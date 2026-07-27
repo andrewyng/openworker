@@ -55,9 +55,10 @@ ABOUT: dict[str, str] = {
     "projects, create tasks, and comment. Connects with a personal access "
     "token from the Asana developer console.",
     "newrelic": "Triage incidents with New Relic — find entities, check firing "
-    "alerts and open issues, run NRQL (or ask in plain English), and correlate a "
-    "deploy or change with the impact it had. Connects with a New Relic user API "
-    "key; read-only, no way to change alerts or data.",
+    "alerts and open issues, run NRQL (or ask in plain English), correlate a "
+    "deploy or change with the impact it had, and dig into logs, dashboards, and "
+    "performance metrics. Connects with a New Relic user API key; read-only, no "
+    "way to change alerts or data.",
 }
 
 # What connecting actually grants, as short honest bullets. Write powers always
@@ -117,9 +118,9 @@ ACCESS: dict[str, list[str]] = {
         "Creates tasks as you.",
     ],
     "newrelic": [
-        "Reads entities, alerts, issues, NRQL query results, and change/deploy "
-        "history your API key can see. Read-only — no tool can change an alert, "
-        "a policy, or your data.",
+        "Reads entities, alerts, issues, dashboards, logs, NRQL query results, "
+        "change/deploy history, and performance metrics your API key can see. "
+        "Read-only — no tool can change an alert, a policy, or your data.",
     ],
     "confluence": [
         "Reads and searches spaces and pages your account can see.",

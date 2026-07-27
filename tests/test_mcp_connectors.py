@@ -304,9 +304,8 @@ def test_newrelic_manual_connect_seeds_header_based_mcp_config(tmp_path, monkeyp
     raw = read_global()["newrelic"]
     assert raw["url"] == "https://mcp.eu.newrelic.com/mcp/"
     assert raw["auth"] == "connector"
-    assert raw["headers"] == {
-        "include-tags": "discovery,data-access,alerting,incident-response"
-    }
+    # No include-tags filter — the pin (include_tools) is the only allowlist.
+    assert raw["headers"] == {}
     assert set(raw["include_tools"]) == set(mcp_pinned_tools("newrelic"))
     assert "NRAK-test123" not in str(raw)
     # The secret lives only in the SecretStore profile, resolved fresh at connect time.

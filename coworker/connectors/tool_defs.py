@@ -494,8 +494,9 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
     ),
     # -- New Relic via their hosted MCP server (API-key connect; no REST tool set —
     # NerdGraph is large enough that duplicating it in Python isn't worth it). Pinned
-    # to the on-call triage tags (discovery, data-access, alerting, incident-response);
-    # New Relic's own performance-analytics/advanced-analysis tools stay out of scope.
+    # to every tool across New Relic's documented tags (discovery, data-access,
+    # alerting, incident-response, performance-analytics, advanced-analysis) — this
+    # allowlist IS the scope — no include-tags header (descriptors.py) narrows it.
     ConnectorToolDef(
         "newrelic",
         "mcp__newrelic__get_entity",
@@ -572,6 +573,118 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "Alert insights report",
         "read",
         "Generate an AI alert-intelligence analysis report for an issue.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__generate_user_impact_report",
+        "User impact report",
+        "read",
+        "Generate an end-user impact analysis report for an issue.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__list_alert_conditions",
+        "List alert conditions",
+        "read",
+        "List alert condition details for a specific alert policy.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__list_synthetic_monitors",
+        "List synthetic monitors",
+        "read",
+        "List synthetic monitors — automated checks of a service's availability and performance.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__search_entity_with_tag",
+        "Search entities by tag",
+        "read",
+        "Search for entities using a specific tag key and value.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__get_dashboard",
+        "Read dashboard",
+        "read",
+        "Fetch details about a specific dashboard.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__list_dashboards",
+        "List dashboards",
+        "read",
+        "List all dashboards for an account.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__list_available_new_relic_accounts",
+        "List accounts",
+        "read",
+        "List all account IDs available to the user.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__convert_time_period_to_epoch_ms",
+        "Convert time period",
+        "read",
+        "Convert a time period (e.g. \"last 30 minutes\") to epoch milliseconds.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__analyze_entity_logs",
+        "Analyze logs",
+        "read",
+        "Analyze application logs to identify error patterns, anomalies, and recurring issues.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__analyze_golden_metrics",
+        "Analyze golden metrics",
+        "read",
+        "Analyze golden metrics — throughput, response time, error rate, and saturation.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__analyze_transactions",
+        "Analyze transactions",
+        "read",
+        "Analyze transactions for an entity within a time window, identifying slow and error-prone ones.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__analyze_threads",
+        "Analyze threads",
+        "read",
+        "Analyze thread metric data for an entity — thread state, CPU usage, and memory.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__analyze_kafka_metrics",
+        "Analyze Kafka metrics",
+        "read",
+        "Analyze Kafka metrics — consumer lag, producer throughput, message latency, partition balance.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__list_garbage_collection_metrics",
+        "GC metrics",
+        "read",
+        "List garbage collection and memory metrics for an account and entity.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__list_recent_logs",
+        "Recent logs",
+        "read",
+        "List recent logs for an account and entity.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__list_entity_performance_risk_groups",
+        "Performance risk groups",
+        "read",
+        "Fetch performance-risk groups for an entity from the Performance Risks Inbox.",
     ),
     ConnectorToolDef(
         "confluence",
