@@ -44,6 +44,8 @@ def resolve_api_key(secrets: Any = None) -> Optional[str]:
 # with that exact complaint anyway (a future generation, an alias we didn't list),
 # retry once at effort none so the user gets a working turn instead of a 400.
 _EFFORT_ERROR = "function tools with reasoning_effort are not supported"
+_RESPONSES_PATH = "/v1/responses"
+_RESPONSES_SIDECAR = "_openai_responses"
 
 
 def _pin_reasoning_effort(kwargs: dict[str, Any]) -> None:
@@ -73,6 +75,18 @@ def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, An
     ]
 
 
+def _strip_openai_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep our Responses replay sidecar while dropping every foreign provider sidecar."""
+    return [
+        {
+            key: value
+            for key, value in message.items()
+            if not key.startswith("_") or key == _RESPONSES_SIDECAR
+        }
+        for message in messages
+    ]
+
+
 _MAX_TOKENS_ERROR = "'max_tokens' is not supported"
 
 
@@ -92,6 +106,213 @@ def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
         fixed["max_completion_tokens"] = fixed.pop("max_tokens")
         return fixed
     raise exc
+
+
+def _requires_responses(kwargs: dict[str, Any], exc: Exception) -> bool:
+    """Return True only when a tool-call failure explicitly requires Responses."""
+    msg = str(exc).lower()
+    return bool(kwargs.get("tools")) and _EFFORT_ERROR in msg and _RESPONSES_PATH in msg
+
+
+def _chat_create(client: Any, kwargs: dict[str, Any]) -> Any:
+    """Create a chat completion with the two targeted parameter retries."""
+    current = dict(kwargs)
+    current["messages"] = _strip_foreign_sidecars(current.get("messages") or [])
+    for _ in range(2):
+        try:
+            return client.chat.completions.create(**current)
+        except Exception as exc:
+            current = _param_fix_retry(current, exc)
+    return client.chat.completions.create(**current)
+
+
+def _responses_tools(tools: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Flatten Chat Completions function schemas into Responses tool schemas."""
+    converted: list[dict[str, Any]] = []
+    for tool in tools or []:
+        if tool.get("type") != "function" or not isinstance(tool.get("function"), dict):
+            converted.append(tool)
+            continue
+        function = tool["function"]
+        item = {"type": "function", **function}
+        if "strict" in tool and "strict" not in item:
+            item["strict"] = tool["strict"]
+        converted.append(item)
+    return converted
+
+
+def _responses_content(content: Any, *, assistant: bool = False) -> Any:
+    """Convert canonical OpenAI-shaped content parts to Responses parts."""
+    if not isinstance(content, list):
+        return content
+    converted: list[dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("type")
+        if kind == "text":
+            converted.append(
+                {
+                    "type": "output_text" if assistant else "input_text",
+                    "text": part.get("text", ""),
+                }
+            )
+        elif kind == "image_url":
+            converted.append(
+                {
+                    "type": "input_image",
+                    "image_url": (part.get("image_url") or {}).get("url", ""),
+                }
+            )
+        elif kind == "file":
+            converted.append({"type": "input_file", **(part.get("file") or {})})
+        else:
+            converted.append(part)
+    return converted
+
+
+def _responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Map the engine transcript to stateless Responses input Items."""
+    items: list[dict[str, Any]] = []
+    for raw_message in messages:
+        message = {
+            key: value
+            for key, value in raw_message.items()
+            if not key.startswith("_") or key == _RESPONSES_SIDECAR
+        }
+        role = message.get("role")
+        if role == "assistant":
+            sidecar = message.get(_RESPONSES_SIDECAR) or {}
+            output = sidecar.get("output") if isinstance(sidecar, dict) else None
+            if isinstance(output, list):
+                items.extend(output)
+                continue
+            content = message.get("content")
+            if content:
+                items.append(
+                    {
+                        "role": "assistant",
+                        "content": _responses_content(content, assistant=True),
+                    }
+                )
+            for call in message.get("tool_calls") or []:
+                function = call.get("function") or {}
+                items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": call.get("id") or "",
+                        "name": function.get("name") or "",
+                        "arguments": function.get("arguments") or "{}",
+                    }
+                )
+        elif role == "tool":
+            output = message.get("content", "")
+            if not isinstance(output, str):
+                output = json.dumps(output, default=str)
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": message.get("tool_call_id") or "",
+                    "output": output,
+                }
+            )
+        elif role in {"system", "developer", "user"}:
+            items.append(
+                {
+                    "role": role,
+                    "content": _responses_content(message.get("content", "")),
+                }
+            )
+    return items
+
+
+def _plain_response_item(item: Any) -> dict[str, Any]:
+    if isinstance(item, dict):
+        return item
+    dump = getattr(item, "model_dump", None)
+    if callable(dump):
+        return dump(mode="json", exclude_none=True)
+    data = getattr(item, "__dict__", None)
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def _responses_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Translate common Chat settings supported by the Responses API."""
+    result: dict[str, Any] = {
+        "model": kwargs["model"],
+        "input": _responses_input(kwargs.get("messages") or []),
+        "store": False,
+        "include": ["reasoning.encrypted_content"],
+    }
+    if kwargs.get("tools"):
+        result["tools"] = _responses_tools(kwargs["tools"])
+    if "reasoning_effort" in kwargs:
+        result["reasoning"] = {"effort": kwargs["reasoning_effort"]}
+    if "max_completion_tokens" in kwargs:
+        result["max_output_tokens"] = kwargs["max_completion_tokens"]
+    elif "max_tokens" in kwargs:
+        result["max_output_tokens"] = kwargs["max_tokens"]
+    for key in (
+        "temperature",
+        "top_p",
+        "parallel_tool_calls",
+        "tool_choice",
+        "metadata",
+        "service_tier",
+        "user",
+    ):
+        if key in kwargs:
+            result[key] = kwargs[key]
+    return result
+
+
+def _response_reasoning(output: list[Any]) -> Optional[str]:
+    parts: list[str] = []
+    for item in output:
+        if getattr(item, "type", None) != "reasoning":
+            continue
+        for summary in getattr(item, "summary", None) or []:
+            text = getattr(summary, "text", None)
+            if isinstance(text, str) and text:
+                parts.append(text)
+    return "".join(parts) or None
+
+
+def _parse_response(response: Any) -> AssistantTurn:
+    output = list(getattr(response, "output", None) or [])
+    tool_calls: list[ToolCall] = []
+    for item in output:
+        if getattr(item, "type", None) != "function_call":
+            continue
+        raw_args = getattr(item, "arguments", None)
+        try:
+            arguments = json.loads(raw_args) if raw_args else {}
+        except (TypeError, json.JSONDecodeError):
+            arguments = {"_raw": raw_args}
+        tool_calls.append(
+            ToolCall(
+                id=getattr(item, "call_id", ""),
+                name=getattr(item, "name", ""),
+                arguments=arguments,
+            )
+        )
+    status = getattr(response, "status", None)
+    finish_reason = "tool_calls" if tool_calls else "stop"
+    if status == "incomplete":
+        details = getattr(response, "incomplete_details", None)
+        finish_reason = getattr(details, "reason", None) or "incomplete"
+    return AssistantTurn(
+        text=getattr(response, "output_text", None) or None,
+        tool_calls=tool_calls,
+        finish_reason=finish_reason,
+        raw=response,
+        reasoning=_response_reasoning(output),
+        extras={
+            _RESPONSES_SIDECAR: {
+                "output": [_plain_response_item(item) for item in output]
+            }
+        },
+    )
 
 
 class OpenAIProvider(ProviderClient):
@@ -118,6 +339,9 @@ class OpenAIProvider(ProviderClient):
         self._base_url = base_url
         self._secrets = secrets
         self.default_model = default_model
+        # This provider instance represents one endpoint. Cache only models for which
+        # that endpoint explicitly rejected Chat Completions and accepted Responses.
+        self._responses_models: set[str] = set()
 
     def _ensure_client(self) -> Any:
         if self._client is None:
@@ -146,7 +370,7 @@ class OpenAIProvider(ProviderClient):
     ) -> AssistantTurn:
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": _strip_foreign_sidecars(messages),
+            "messages": _strip_openai_sidecars(messages),
             **settings,
         }
         if tools:
@@ -154,15 +378,16 @@ class OpenAIProvider(ProviderClient):
         _pin_reasoning_effort(kwargs)
 
         client = self._ensure_client()
-        # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
-        for _ in range(2):
-            try:
-                response = client.chat.completions.create(**kwargs)
-                break
-            except Exception as exc:
-                kwargs = _param_fix_retry(kwargs, exc)
-        else:
-            response = client.chat.completions.create(**kwargs)
+        if model in self._responses_models:
+            return _parse_response(client.responses.create(**_responses_kwargs(kwargs)))
+        try:
+            response = _chat_create(client, kwargs)
+        except Exception as exc:
+            if not _requires_responses(kwargs, exc) or not hasattr(client, "responses"):
+                raise
+            turn = _parse_response(client.responses.create(**_responses_kwargs(kwargs)))
+            self._responses_models.add(model)
+            return turn
         choice = response.choices[0]
         message = choice.message
         text = getattr(message, "content", None)
@@ -189,7 +414,7 @@ class OpenAIProvider(ProviderClient):
     ):
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": _strip_foreign_sidecars(messages),
+            "messages": _strip_openai_sidecars(messages),
             "stream": True,
             **settings,
         }
@@ -203,15 +428,17 @@ class OpenAIProvider(ProviderClient):
         tool_accum: dict[int, dict[str, str]] = {}
         finish_reason = None
 
-        # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
-        for _ in range(2):
-            try:
-                chunks = client.chat.completions.create(**kwargs)
-                break
-            except Exception as exc:
-                kwargs = _param_fix_retry(kwargs, exc)
-        else:
-            chunks = client.chat.completions.create(**kwargs)
+        if model in self._responses_models:
+            yield from self._stream_responses(client, kwargs)
+            return
+        try:
+            chunks = _chat_create(client, kwargs)
+        except Exception as exc:
+            if not _requires_responses(kwargs, exc) or not hasattr(client, "responses"):
+                raise
+            yield from self._stream_responses(client, kwargs)
+            self._responses_models.add(model)
+            return
         for chunk in chunks:
             choices = getattr(chunk, "choices", None)
             if not choices:
@@ -264,6 +491,43 @@ class OpenAIProvider(ProviderClient):
                 reasoning="".join(reasoning_parts) or None,
             )
         )
+
+    @staticmethod
+    def _stream_responses(client: Any, kwargs: dict[str, Any]):
+        response_kwargs = _responses_kwargs(kwargs)
+        response_kwargs["stream"] = True
+        text_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        final_response = None
+        for event in client.responses.create(**response_kwargs):
+            kind = getattr(event, "type", "")
+            if kind == "response.output_text.delta":
+                delta = getattr(event, "delta", None)
+                if delta:
+                    text_parts.append(delta)
+                    yield StreamChunk(text_delta=delta)
+            elif kind in {
+                "response.reasoning_summary_text.delta",
+                "response.reasoning_text.delta",
+            }:
+                delta = getattr(event, "delta", None)
+                if delta:
+                    reasoning_parts.append(delta)
+                    yield StreamChunk(reasoning_delta=delta)
+            elif kind in {"response.completed", "response.incomplete"}:
+                final_response = getattr(event, "response", None)
+        if final_response is not None:
+            turn = _parse_response(final_response)
+            if not turn.text and text_parts:
+                turn.text = "".join(text_parts)
+            if not turn.reasoning and reasoning_parts:
+                turn.reasoning = "".join(reasoning_parts)
+        else:
+            turn = AssistantTurn(
+                text="".join(text_parts) or None,
+                reasoning="".join(reasoning_parts) or None,
+            )
+        yield StreamChunk(turn=turn)
 
 
 def _parse_tool_calls(raw_tool_calls: Any) -> list[ToolCall]:
