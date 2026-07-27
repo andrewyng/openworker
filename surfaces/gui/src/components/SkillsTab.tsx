@@ -13,12 +13,13 @@ import {
 } from "../api";
 import { Icon } from "./Icon";
 
-// Settings ▸ Skills (SKILLS-SPEC §5/§6) — the management home: list + permanent
-// enable/disable + the three doors (write form / import / ask-the-worker). Everything a
-// user creates here is GLOBAL — "skills are things your worker knows everywhere".
-// Creation-by-AI is a CONVERSATION (the doorway card below starts one; the worker proposes
-// via save_skill) — there is no in-Settings drafting. Persona-bundled skills arrive with
-// personas (§10) and are managed on the persona page, not here.
+// Settings ▸ Skills (SKILLS-SPEC §5/§6) — the management home: the LIST is the page; every
+// add-surface appears only when summoned from the single "Add skill" menu (the three doors:
+// write form / import / start-a-conversation). Everything a user creates here is GLOBAL —
+// "skills are things your worker knows everywhere". Creation-by-AI is a CONVERSATION (the
+// menu's third door starts one; the worker proposes via save_skill) — there is no
+// in-Settings drafting and no description box: the composer is where you describe it.
+// Persona-bundled skills arrive with personas (§10), managed on the persona page, not here.
 
 const CARD = "rounded-xl2 border border-line bg-panel";
 const FIELD_LABEL = "text-[12.5px] font-medium text-ink";
@@ -75,7 +76,7 @@ export function SkillsTab({
   const [rows, setRows] = useState<SkillRow[]>([]);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [upload, setUpload] = useState<SkillUploadPreview | null>(null);
-  const [describe, setDescribe] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
   const [error, setError] = useState("");
   // The state-change callout (SKILLS-SPEC §4.1 #2): name-first so the user knows WHICH
@@ -169,15 +170,70 @@ export function SkillsTab({
             off everywhere.
           </p>
         </div>
-        <div className="flex gap-2">
-          <button className={BTN_BORDERED} onClick={() => fileInput.current?.click()}>
+        {/* One add-action, three doors behind it (SKILLS-SPEC §5): the list is the page. */}
+        <div className="relative shrink-0">
+          <button
+            className={BTN_ACCENT}
+            aria-haspopup="menu"
+            aria-expanded={addOpen}
+            onClick={() => setAddOpen((v) => !v)}
+          >
             <span className="inline-flex items-center gap-1.5">
-              <Icon name="plus" size={13} /> Import
+              <Icon name="plus" size={13} /> Add skill
             </span>
           </button>
-          <button className={BTN_ACCENT} onClick={() => setEditor(emptyEditor())}>
-            New skill
-          </button>
+          {addOpen ? (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setAddOpen(false)} />
+              <div
+                role="menu"
+                className="absolute right-0 top-full mt-1.5 w-80 rounded-xl2 border border-line bg-panel shadow-xl z-20 p-1.5"
+                onKeyDown={(e) => e.key === "Escape" && setAddOpen(false)}
+              >
+                <button
+                  role="menuitem"
+                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-paper"
+                  onClick={() => {
+                    setAddOpen(false);
+                    setEditor(emptyEditor());
+                  }}
+                >
+                  <div className="text-[13px] font-medium">Write it myself</div>
+                  <div className="text-[11.5px] text-muted">
+                    A name, a description, and the instructions
+                  </div>
+                </button>
+                <button
+                  role="menuitem"
+                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-paper"
+                  onClick={() => {
+                    setAddOpen(false);
+                    fileInput.current?.click();
+                  }}
+                >
+                  <div className="text-[13px] font-medium">Import a file</div>
+                  <div className="text-[11.5px] text-muted">
+                    A .zip or SKILL.md someone shared — you review before it installs
+                  </div>
+                </button>
+                <button
+                  role="menuitem"
+                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-paper disabled:opacity-40"
+                  disabled={!onCreateSkill}
+                  onClick={() => {
+                    setAddOpen(false);
+                    onCreateSkill?.("");
+                  }}
+                >
+                  <div className="text-[13px] font-medium">Create with OpenWorker</div>
+                  <div className="text-[11.5px] text-muted">
+                    Starts a conversation — the worker builds it and asks before adding it to
+                    your skills
+                  </div>
+                </button>
+              </div>
+            </>
+          ) : null}
         </div>
       </div>
       <input
@@ -303,8 +359,8 @@ export function SkillsTab({
       <div className={`${CARD} divide-y divide-line`}>
         {rows.length === 0 && !editor ? (
           <div className="p-5 text-[13px] text-muted">
-            No skills yet. Write one, import one someone shared, or describe one below and
-            the worker will build it with you.
+            No skills yet — <b>Add skill</b> teaches your worker its first one, like
+            “prepare my Monday status report”.
           </div>
         ) : null}
         {rows.map((row) => (
@@ -379,32 +435,6 @@ export function SkillsTab({
         ))}
       </div>
 
-      {/* The doorway (SKILLS-SPEC §5.2): creation is a conversation, Settings is management.
-          Copy per §7 — capability in plain words ("scripts and examples included"), the
-          safety promise ("asks before adding"), destination "your skills". */}
-      <div className={`${CARD} p-4 mt-4`}>
-        <div className="text-[13px] font-medium mb-1">Create using OpenWorker</div>
-        <p className="text-[12.5px] text-muted mb-2">
-          Describe the skill you want — the worker builds the whole thing with you, scripts
-          and examples included, and asks before adding it to your skills.
-        </p>
-        <textarea
-          className={`${INPUT} min-h-[64px]`}
-          value={describe}
-          placeholder="Optional — e.g. Every Monday I write a status report from Slack and GitHub activity…"
-          aria-label="Describe the skill"
-          onChange={(e) => setDescribe(e.target.value)}
-        />
-        {/* Always clickable: with a description it rides along; without one, the composer
-            opens prompting the user to describe the skill there instead. */}
-        <button
-          className={`${BTN_ACCENT} mt-2`}
-          disabled={!onCreateSkill}
-          onClick={() => onCreateSkill?.(describe.trim())}
-        >
-          Start a conversation
-        </button>
-      </div>
     </section>
   );
 }
