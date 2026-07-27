@@ -225,8 +225,7 @@ describe("SkillsTab", () => {
     fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "x" } });
     fireEvent.click(screen.getByText("Save skill"));
     const status = await screen.findByRole("status");
-    expect(status.textContent).toContain("new sessions");
-    expect(status.textContent).toContain("already underway");
+    expect(status.textContent).toContain("next message");
   });
 
   it("revise-in-place: with a draft in the form, the box revises it and never saves", async () => {

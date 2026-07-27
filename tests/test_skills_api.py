@@ -302,11 +302,13 @@ def test_engine_catalog_respects_settings_disable(tmp_path):
     engine = build_engine(
         agent=get_agent("chat"),
         provider=ScriptedProvider(),
-        skill_filter=manager.effective_skill_names("s1"),
+        skill_filter=lambda: manager.effective_skill_names("s1"),
     )
-    system = engine.messages[0]["content"]
-    assert "greet" in system
-    assert "hidden" not in system
+    # The menu rides the live per-turn context block (§4.1), not the system prompt.
+    menu = engine.context_provider()
+    assert "greet" in menu
+    assert "hidden" not in menu
+    assert "greet" not in engine.messages[0]["content"]
 
 
 def _drain(ws):

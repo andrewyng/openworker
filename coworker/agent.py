@@ -264,17 +264,11 @@ def build_engine(
     skill_loader = SkillLoader(_skill_dirs(ws))
     # Per-session effective menu (SKILLS-SPEC §3). The manager passes a CALLABLE so
     # load_skill consults the LIVE state per call (a Settings disable applies to running
-    # sessions; a skill created after this build is still loadable — tester catch
-    # 2026-07-27: force-run validated live but the engine snapshot said "not installed").
-    # The catalog line is a build-time snapshot by design (§4.7 reload rule). Default
-    # None preserves CLI / direct callers.
+    # sessions; a skill created after this build is still loadable). The catalog itself
+    # is injected per turn via context_provider (below), NOT here — so the menu the model
+    # sees is also live: skill changes apply from the next message, no new session needed.
+    # Default None preserves CLI / direct callers.
     registry.register_all(skill_tools(skill_loader, allowed=skill_filter))
-    catalog = skill_catalog_text(
-        skill_loader,
-        allowed=skill_filter() if callable(skill_filter) else skill_filter,
-    )
-    if catalog:
-        instructions = f"{instructions}\n\n{catalog}"
 
     # User-local risk overrides (mainly to relax MCP's conservative default). Empty store →
     # no-op; never written by persona loading (the no-self-grant rule).
@@ -315,6 +309,17 @@ def build_engine(
             ctx = roots_context()
             if ctx:
                 parts.append(ctx)
+        # Live skill menu (SKILLS-SPEC §4.1): recomputed every turn like the roots list, so
+        # a skill installed/enabled/disabled mid-session applies from the NEXT MESSAGE —
+        # no new session, no lost context. (What a conversation already loaded stays; that
+        # is conversation memory, not the menu.)
+        skill_loader.rescan()
+        skills_ctx = skill_catalog_text(
+            skill_loader,
+            allowed=skill_filter() if callable(skill_filter) else skill_filter,
+        )
+        if skills_ctx:
+            parts.append(skills_ctx)
         return "\n\n".join(parts)
 
     engine = TurnEngine(

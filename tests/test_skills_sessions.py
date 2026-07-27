@@ -142,12 +142,12 @@ def test_empty_catalog_is_safe(tmp_path):
 
 
 def test_live_load_skill_semantics(manager):
-    """SKILLS-SPEC state table (§4.7 addendum) — the engine consults LIVE state per call:
-    · a skill created AFTER the engine was built is loadable (tester-caught bug 2026-07-27:
-      force-run validated live, but the engine snapshot answered "not installed");
-    · a Settings disable applies to RUNNING sessions (OFF == invisible, immediately);
-    · a deleted skill behaves exactly like OFF (uninstalled ≡ disabled, to the model);
-    · the catalog line stays a build-time snapshot (documented reload rule)."""
+    """SKILLS-SPEC state table — EVERYTHING the model sees is live per turn:
+    · the menu (context_provider) reflects installs/disables from the NEXT MESSAGE —
+      no new session needed (mid-session import UX, decided 2026-07-27);
+    · load_skill consults live state per call (create-after-build loadable; a Settings
+      disable applies to RUNNING sessions; delete ≡ disable to the model);
+    · the ONLY thing that persists is what a conversation already loaded (history)."""
     from coworker.agent import build_engine
     from coworker.agents.registry import get_agent
 
@@ -157,30 +157,34 @@ def test_live_load_skill_semantics(manager):
         provider=ScriptedProvider(),
         skill_filter=lambda: manager.effective_skill_names("s1"),
     )
-    assert "early" in engine.messages[0]["content"]
+    # The menu lives in the per-turn context block, not the static system prompt.
+    assert "early" in engine.context_provider()
+    assert "Available skills" not in engine.messages[0]["content"]
 
-    # created after build → still loadable (rescan-on-miss + live gate)
+    # created after build → in the menu from the next turn AND loadable
     manager.create_skill(
         {"name": "late", "description": "d", "instructions": "late body"}
     )
+    assert "late" in engine.context_provider()
     loaded = engine.registry.execute("load_skill", {"name": "late"})
     assert loaded["instructions"] == "late body"
-    # …but the model's menu is a snapshot: no "late" line until the next session
-    assert "late" not in engine.messages[0]["content"]
 
-    # disable → refused in the LIVE session, listed nowhere
+    # disable → gone from the menu next turn, refused on load, listed nowhere
     manager.skill_store.set_enabled("early", False)
+    assert "early" not in engine.context_provider()
     refused = engine.registry.execute("load_skill", {"name": "early"})
     assert refused["error"].startswith("unknown skill")
     assert "early" not in refused["available"]
 
     # delete ≡ disable, from the model's side
     manager.delete_skill("late")
+    assert "late" not in engine.context_provider()
     gone = engine.registry.execute("load_skill", {"name": "late"})
     assert gone["error"].startswith("unknown skill")
 
-    # re-enable → back, files were untouched all along (OFF is parking, not deletion)
+    # re-enable → back next turn, files untouched all along (OFF is parking, not deletion)
     manager.skill_store.set_enabled("early", True)
+    assert "early" in engine.context_provider()
     assert (
         engine.registry.execute("load_skill", {"name": "early"})["instructions"]
         == "early body"

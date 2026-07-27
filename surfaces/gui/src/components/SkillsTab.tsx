@@ -79,7 +79,7 @@ export function SkillsTab() {
   const fileInput = useRef<HTMLInputElement>(null);
 
   const CONFIRMATION =
-    "Available to the worker in new sessions. Conversations already underway keep what they've already read.";
+    "The worker can use it from its next message, in every conversation.";
 
   const refresh = () => listSkills().then(setRows);
   useEffect(() => {
@@ -177,8 +177,8 @@ export function SkillsTab() {
         <div>
           <h2 className="text-[16px] font-semibold">Skills</h2>
           <p className="text-[12.5px] text-muted mt-1 leading-relaxed">
-            Reusable instructions the worker can follow in every session. Off here means off
-            everywhere; mute one for a single conversation from the session's Access panel.
+            Reusable instructions the worker can follow in every session. Changes apply from
+            the worker's next message; off here means off everywhere.
           </p>
         </div>
         <div className="flex gap-2">
