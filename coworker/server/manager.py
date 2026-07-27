@@ -8,6 +8,7 @@ sessions span folders.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
@@ -17,6 +18,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from ..agent import build_engine
 from ..agents import get_agent
@@ -76,9 +78,12 @@ from ..providers import (
     ProviderClient,
     ProviderRouter,
     get_descriptor,
+    is_custom_provider,
+    is_removed_custom_provider,
     provider_descriptors,
     verify_provider_key,
 )
+from ..providers.registry import CUSTOM_PROVIDERS_PROFILE
 from ..secrets import SecretStore, state_dir
 from ..sessions import SessionRecord
 from ..skills import SkillLoader
@@ -86,6 +91,28 @@ from ..skills import SkillLoader
 _SCOPES = {s.value for s in Scope}
 
 logger = logging.getLogger("coworker.manager")
+
+
+def _custom_endpoint_error(url: str) -> Optional[str]:
+    """Allow HTTPS everywhere; plaintext HTTP only for an explicitly local gateway."""
+    try:
+        parsed = urlsplit((url or "").strip())
+    except ValueError:
+        return "Enter a valid HTTPS endpoint."
+    if parsed.scheme == "https" and parsed.hostname:
+        return None
+    if parsed.scheme != "http" or not parsed.hostname:
+        return "Endpoint must be an HTTPS URL (for example, https://gateway.example/v1)."
+    host = parsed.hostname.lower()
+    if host == "localhost":
+        return None
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return "HTTP endpoints are allowed only for localhost or a private IP address."
+    if address.is_loopback or address.is_private:
+        return None
+    return "HTTP endpoints are allowed only for localhost or a private IP address."
 
 
 def _grants_of(engine) -> dict[str, Any]:
@@ -1394,7 +1421,7 @@ class SessionManager:
         import os
 
         out: list[dict[str, Any]] = []
-        for d in provider_descriptors():
+        for d in provider_descriptors(self.secrets):
             profile = self.secrets.get(f"provider:{d.name}") or {}
             if d.needs_key:
                 configured = bool(profile.get("api_key")) or bool(
@@ -1420,9 +1447,55 @@ class SessionManager:
                     "last_used_at": (self._prefs.get("provider_last_used") or {}).get(
                         d.name
                     ),
+                    "is_custom": is_custom_provider(d.name, self.secrets),
                 }
             )
         return out
+
+    def create_custom_provider(
+        self, name: str, title: str, fields: Optional[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Create a named OpenAI-compatible provider, then save its first credentials.
+
+        The short slug is the stable model-route prefix (``slug:model-id``), so it is
+        deliberately immutable and restricted to a transport-safe subset.
+        """
+        name = (name or "").strip().lower()
+        title = (title or "").strip()
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", name):
+            return {
+                "ok": False,
+                "error": "Route prefix must start with a letter and use only lowercase letters, numbers, - or _.",
+            }
+        if not title or len(title) > 80:
+            return {"ok": False, "error": "Enter a provider name (up to 80 characters)."}
+        if get_descriptor(name) is not None or is_custom_provider(name, self.secrets):
+            return {"ok": False, "error": "That route prefix is already in use."}
+        fields = fields or {}
+        base_url = str(fields.get("base_url") or "").strip()
+        endpoint_error = _custom_endpoint_error(base_url)
+        if endpoint_error:
+            return {"ok": False, "error": endpoint_error}
+        if not str(fields.get("api_key") or "").strip():
+            return {"ok": False, "error": "Enter an API key."}
+
+        index = dict(self.secrets.get(CUSTOM_PROVIDERS_PROFILE) or {})
+        providers = dict(index.get("providers") or {})
+        removed = dict(index.get("removed") or {})
+        previous_removed = dict(removed)
+        providers[name] = title
+        removed.pop(name, None)  # re-creating a route clears its fail-closed tombstone
+        self.secrets.put(
+            CUSTOM_PROVIDERS_PROFILE, {"providers": providers, "removed": removed}
+        )
+        saved = self.set_provider(name, fields)
+        if not saved.get("ok"):
+            providers.pop(name, None)
+            self.secrets.put(
+                CUSTOM_PROVIDERS_PROFILE,
+                {"providers": providers, "removed": previous_removed},
+            )
+        return saved
 
     def pick_native_folder(self) -> dict[str, Any]:
         """Open the OS folder picker FROM THE SIDECAR — the browser GUI can't obtain absolute
@@ -1510,9 +1583,11 @@ class SessionManager:
     ) -> dict[str, Any]:
         """Store a provider's config in its `provider:<name>` SecretStore profile and rebuild
         its cached client. Merges provided fields into any existing profile."""
-        d = get_descriptor(name)
+        d = get_descriptor(name, self.secrets)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
+        if is_removed_custom_provider(name, self.secrets):
+            return {"ok": False, "error": "provider was removed; create it again first"}
         fields = fields or {}
         profile = dict(self.secrets.get(f"provider:{name}") or {})
         for f in d.fields:
@@ -1528,6 +1603,10 @@ class SessionManager:
         missing = [f.label for f in d.fields if f.required and not profile.get(f.key)]
         if missing:
             return {"ok": False, "error": "missing: " + ", ".join(missing)}
+        if is_custom_provider(name, self.secrets):
+            endpoint_error = _custom_endpoint_error(str(profile.get("base_url") or ""))
+            if endpoint_error:
+                return {"ok": False, "error": endpoint_error}
         # A (re)pasted key stamps its save date — Settings shows "key added <date>" so stale
         # keys are visible. Endpoint-only saves keep the original stamp.
         if isinstance(fields.get("api_key"), str) and fields["api_key"].strip():
@@ -1555,10 +1634,35 @@ class SessionManager:
         """Forget a provider's stored config (Settings ▸ Models "Remove key"). The whole
         `provider:<name>` profile goes — key, endpoint, key_set_at — so the provider reads
         as never configured. Curated models stay; they just gray out until a new key."""
-        d = get_descriptor(name)
+        d = get_descriptor(name, self.secrets)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
         self.secrets.delete(f"provider:{name}")
+        if is_custom_provider(name, self.secrets):
+            index = dict(self.secrets.get(CUSTOM_PROVIDERS_PROFILE) or {})
+            providers = dict(index.get("providers") or {})
+            removed = dict(index.get("removed") or {})
+            title = providers.pop(name, d.title)
+            removed[name] = title
+            self.secrets.put(
+                CUSTOM_PROVIDERS_PROFILE,
+                {"providers": providers, "removed": removed},
+            )
+            # A deleted custom route must not remain selectable and accidentally fall
+            # through to the default OpenAI provider as an unknown ``prefix:model``.
+            prefix = name + ":"
+            self._prefs["models"] = [
+                m for m in self._prefs.get("models", []) if not str(m).startswith(prefix)
+            ]
+            self._prefs["hidden_models"] = [
+                m
+                for m in self._prefs.get("hidden_models", [])
+                if not str(m).startswith(prefix)
+            ]
+            if str(self.model).startswith(prefix):
+                self.model = "gpt-5.6-sol"
+                self._prefs["default_model"] = self.model
+            self._save_prefs()
         self._refresh_provider(name)
         return {"ok": True, "provider": name}
 
@@ -1570,7 +1674,7 @@ class SessionManager:
         the key blank (e.g. testing an already-configured provider)."""
         import os
 
-        d = get_descriptor(name)
+        d = get_descriptor(name, self.secrets)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
         fields = fields or {}
@@ -1581,18 +1685,27 @@ class SessionManager:
         base_url = (fields.get("base_url") or profile.get("base_url") or "").strip()
         if d.needs_key and not api_key:
             return {"ok": False, "error": "Enter an API key to test."}
-        return verify_provider_key(name, api_key=api_key, base_url=base_url)
+        # A verification call sends the key to the supplied endpoint too. Apply the
+        # same transport policy as Save so an unsaved edit cannot accidentally
+        # send a credential over plaintext to a remote host.
+        if is_custom_provider(name, self.secrets):
+            endpoint_error = _custom_endpoint_error(base_url)
+            if endpoint_error:
+                return {"ok": False, "error": endpoint_error}
+        return verify_provider_key(
+            name, api_key=api_key, base_url=base_url, descriptor=d
+        )
 
     def _model_provider(self, model: str) -> str:
         """The provider a model string routes to (known `prefix:` or the OpenAI default)."""
         if ":" in (model or ""):
             prefix = model.split(":", 1)[0]
-            if get_descriptor(prefix) is not None:
+            if get_descriptor(prefix, self.secrets) is not None:
                 return prefix
         return "openai"
 
     def _provider_configured(self, name: str) -> bool:
-        d = get_descriptor(name)
+        d = get_descriptor(name, self.secrets)
         if d is None:
             return False
         if not d.needs_key:

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from coworker.providers import (
     AssistantTurn,
     ModelCapabilities,
@@ -308,6 +310,109 @@ def test_manager_provider_config(tmp_path, monkeypatch):
     assert "api_key" not in provs["openai"].get("values", {})
 
     assert mgr.set_provider("nope", {})["ok"] is False  # unknown provider rejected
+
+
+def test_custom_openai_compatible_provider_routes_and_persists(tmp_path, monkeypatch):
+    """A custom route owns its key/endpoint and strips only its own prefix."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    created = mgr.create_custom_provider(
+        "openrouter",
+        "OpenRouter",
+        {"api_key": "or-test", "base_url": "https://openrouter.ai/api/v1"},
+    )
+    assert created["ok"] is True and created["provider"] == "openrouter"
+
+    providers = {p["name"]: p for p in mgr.get_providers()}
+    assert providers["openrouter"]["is_custom"] is True
+    assert providers["openrouter"]["values"] == {
+        "base_url": "https://openrouter.ai/api/v1"
+    }
+    assert "or-test" not in str(providers)
+
+    router = mgr.provider
+    assert router._provider_name("openrouter:anthropic/claude-example") == "openrouter"
+    assert (
+        router._bare("openrouter:anthropic/claude-example", mgr.secrets)
+        == "anthropic/claude-example"
+    )
+    client = router._client_for("openrouter:anthropic/claude-example")
+    assert client._api_key == "or-test" and client._base_url == "https://openrouter.ai/api/v1"
+
+    mgr.add_model("openrouter:anthropic/claude-example")
+    assert "openrouter:anthropic/claude-example" in mgr.get_settings()["models"]
+    assert mgr.remove_provider("openrouter")["ok"] is True
+    assert "openrouter" not in {p["name"] for p in mgr.get_providers()}
+    assert "openrouter:anthropic/claude-example" not in mgr.get_settings()["models"]
+    # Existing sessions retain the full routed model id. After removal that must
+    # fail locally, never fall through to whichever provider is now the default.
+    assert router._provider_name("openrouter:anthropic/claude-example") == "openrouter"
+    with pytest.raises(RuntimeError, match="was removed"):
+        router.complete(model="openrouter:anthropic/claude-example", messages=[])
+
+    # Re-creating the same route intentionally clears its tombstone.
+    assert mgr.create_custom_provider(
+        "openrouter",
+        "OpenRouter",
+        {"api_key": "or-recreated", "base_url": "https://openrouter.ai/api/v1"},
+    )["ok"]
+    assert router._client_for("openrouter:anthropic/claude-example")._api_key == "or-recreated"
+
+
+def test_custom_provider_requires_safe_route_and_complete_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    assert not mgr.create_custom_provider("Bad Name", "Gateway", {})["ok"]
+    assert not mgr.create_custom_provider(
+        "gateway", "Gateway", {"api_key": "x", "base_url": "gateway.example/v1"}
+    )["ok"]
+    assert not mgr.create_custom_provider(
+        "remote-http", "Remote HTTP", {"api_key": "x", "base_url": "http://example.com/v1"}
+    )["ok"]
+    assert mgr.create_custom_provider(
+        "local-http", "Local HTTP", {"api_key": "x", "base_url": "http://127.0.0.1:8000/v1"}
+    )["ok"]
+
+
+def test_custom_provider_verify_allows_missing_models_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    assert mgr.create_custom_provider(
+        "gateway", "Gateway", {"api_key": "test", "base_url": "https://gateway.example/v1"}
+    )["ok"]
+
+    monkeypatch.setattr(
+        "httpx.get", lambda *args, **kwargs: SimpleNamespace(status_code=404)
+    )
+    checked = mgr.verify_provider("gateway", {})
+    assert checked["ok"] is True and "does not expose /models" in checked["warning"]
+
+
+def test_custom_provider_verify_applies_endpoint_transport_policy(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    assert mgr.create_custom_provider(
+        "gateway", "Gateway", {"api_key": "test", "base_url": "https://gateway.example/v1"}
+    )["ok"]
+
+    # Verify accepts unsaved form fields, so it must independently reject an
+    # unsafe replacement URL before it makes any request with the key.
+    monkeypatch.setattr(
+        "httpx.get", lambda *args, **kwargs: pytest.fail("unsafe endpoint was requested")
+    )
+    checked = mgr.verify_provider(
+        "gateway", {"base_url": "http://example.com/v1", "api_key": "test"}
+    )
+    assert checked["ok"] is False
+    assert "localhost or a private IP" in checked["error"]
 
 
 def test_manager_curated_models(tmp_path, monkeypatch):

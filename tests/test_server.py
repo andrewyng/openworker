@@ -989,6 +989,32 @@ def test_provider_set_and_remove_roundtrip(tmp_path):
     assert not client.delete("/v1/providers/nope").json()["ok"]
 
 
+def test_custom_provider_rest_create_and_delete(tmp_path, monkeypatch):
+    """The public Settings API creates a separately-routed custom provider."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    client = TestClient(create_app(manager))
+
+    created = client.post(
+        "/v1/providers/custom",
+        json={
+            "name": "openrouter",
+            "title": "OpenRouter",
+            "fields": {
+                "api_key": "or-test",
+                "base_url": "https://openrouter.ai/api/v1",
+            },
+        },
+    ).json()
+    assert created == {"ok": True, "provider": "openrouter", "recommended_model": None}
+    provider = {p["name"]: p for p in client.get("/v1/providers").json()}["openrouter"]
+    assert provider["is_custom"] is True and provider["values"]["base_url"].endswith("/v1")
+    assert "or-test" not in str(provider)
+
+    assert client.delete("/v1/providers/openrouter").json()["ok"] is True
+    assert "openrouter" not in {p["name"] for p in client.get("/v1/providers").json()}
+
+
 def test_always_allow_grants_survive_restart(tmp_path):
     """"Always allow" is session-scoped, and the session outlives the process — a restart
     (fresh manager over the same store) must not re-ask for an approved command

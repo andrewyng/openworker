@@ -56,6 +56,8 @@ Model access is yours: pick a provider, paste your key, switch anytime. Supporte
 
 A curated model list marks what we've verified for tool-calling work. Adding any model string works at your own risk.
 
+Need another Chat Completions gateway? In **Settings → Models**, choose **Custom provider** and enter its endpoint, Bearer API key, and a short route prefix. Add the gateway's model IDs manually; for example, an OpenRouter route named `openrouter` uses `openrouter:anthropic/claude-…`. This supports standard OpenAI-compatible APIs without OpenWorker maintaining their full catalog.
+
 ## Privacy
 
 OpenWorker is local-first. Everything lives on your machine: the agent loop, your conversations, connector tokens, and model keys - all in the app's local secret store. The only cloud piece is a small service that brokers OAuth handshakes for connectors. You can always use the App without signing-in - use the connectors via manually-created credentials/API-keys.

@@ -24,6 +24,9 @@ from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
+# The index deliberately lives in the SecretStore too: it names profiles which contain
+# credentials, and keeping the two together makes a future secure-store backend a drop-in.
+CUSTOM_PROVIDERS_PROFILE = "providers:custom"
 
 
 @dataclass(frozen=True)
@@ -193,6 +196,50 @@ def _compat(
     )
 
 
+def _custom_provider_descriptor(name: str, title: str) -> ProviderDescriptor:
+    """Descriptor synthesized for a user-defined OpenAI-compatible endpoint.
+
+    Unlike the built-ins there is no catalog or capability claim here. The endpoint and
+    bearer key are required; model ids are supplied separately by the user.
+    """
+    return ProviderDescriptor(
+        name=name,
+        title=title,
+        needs_key=True,
+        fields=[
+            ProviderField("api_key", f"{title} API key", secret=True),
+            ProviderField(
+                "base_url",
+                "Endpoint",
+                required=True,
+                placeholder="https://…/v1",
+                help="An HTTPS OpenAI-compatible API base URL ending in /v1. HTTP is allowed only for local gateways.",
+            ),
+        ],
+        build=_openai_compat(title, ""),
+        blurb="Uses the standard OpenAI Chat Completions API. Add model IDs manually below.",
+    )
+
+
+def _disabled_custom_provider_descriptor(name: str, title: str) -> ProviderDescriptor:
+    """Keep a removed route recognizable so old sessions fail closed, never reroute."""
+
+    def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+        raise RuntimeError(
+            f"{title} was removed from Settings ▸ Models. Configure that provider again "
+            "before continuing this session."
+        )
+
+    return ProviderDescriptor(
+        name=name,
+        title=title,
+        needs_key=True,
+        fields=[],
+        build=build,
+        blurb="Removed custom provider.",
+    )
+
+
 DESCRIPTORS: list[ProviderDescriptor] = [
     ProviderDescriptor(
         name="openai",
@@ -357,23 +404,78 @@ DESCRIPTORS: list[ProviderDescriptor] = [
 _BY_NAME = {d.name: d for d in DESCRIPTORS}
 
 
-def provider_descriptors() -> list[ProviderDescriptor]:
-    return list(DESCRIPTORS)
+def _custom_provider_titles(secrets: Any = None) -> dict[str, str]:
+    """Return the validated custom-provider index without exposing credentials."""
+    if secrets is None:
+        return {}
+    raw = secrets.get(CUSTOM_PROVIDERS_PROFILE) or {}
+    providers = raw.get("providers") if isinstance(raw, dict) else None
+    if not isinstance(providers, dict):
+        return {}
+    return {
+        name: title
+        for name, title in providers.items()
+        if isinstance(name, str)
+        and isinstance(title, str)
+        and name not in _BY_NAME
+        and title.strip()
+    }
 
 
-def provider_names() -> list[str]:
-    return [d.name for d in DESCRIPTORS]
+def _removed_custom_provider_titles(secrets: Any = None) -> dict[str, str]:
+    """Routes kept as tombstones after deletion to protect existing sessions."""
+    if secrets is None:
+        return {}
+    raw = secrets.get(CUSTOM_PROVIDERS_PROFILE) or {}
+    removed = raw.get("removed") if isinstance(raw, dict) else None
+    if not isinstance(removed, dict):
+        return {}
+    return {
+        name: title
+        for name, title in removed.items()
+        if isinstance(name, str)
+        and isinstance(title, str)
+        and name not in _BY_NAME
+        and title.strip()
+    }
 
 
-def get_descriptor(name: str) -> Optional[ProviderDescriptor]:
-    return _BY_NAME.get(name)
+def is_custom_provider(name: str, secrets: Any = None) -> bool:
+    return name in _custom_provider_titles(secrets)
+
+
+def is_removed_custom_provider(name: str, secrets: Any = None) -> bool:
+    return name in _removed_custom_provider_titles(secrets)
+
+
+def provider_descriptors(secrets: Any = None) -> list[ProviderDescriptor]:
+    custom = [
+        _custom_provider_descriptor(name, title)
+        for name, title in _custom_provider_titles(secrets).items()
+    ]
+    return [*DESCRIPTORS, *custom]
+
+
+def provider_names(secrets: Any = None) -> list[str]:
+    return [d.name for d in provider_descriptors(secrets)]
+
+
+def get_descriptor(name: str, secrets: Any = None) -> Optional[ProviderDescriptor]:
+    builtin = _BY_NAME.get(name)
+    if builtin is not None:
+        return builtin
+    title = _custom_provider_titles(secrets).get(name)
+    if title:
+        return _custom_provider_descriptor(name, title)
+    title = _removed_custom_provider_titles(secrets).get(name)
+    return _disabled_custom_provider_descriptor(name, title) if title else None
 
 
 def build_provider_client(
     name: str, profile: dict[str, Any], secrets: Any
 ) -> ProviderClient:
     """Build a `ProviderClient` for `name` from its stored profile. Unknown → OpenAI default."""
-    descriptor = _BY_NAME.get(name) or _BY_NAME["openai"]
+    descriptor = get_descriptor(name, secrets) or _BY_NAME["openai"]
     return descriptor.build(profile or {}, secrets)
 
 
@@ -399,6 +501,7 @@ def verify_provider_key(
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
     timeout: float = 10.0,
+    descriptor: Optional[ProviderDescriptor] = None,
 ) -> dict[str, Any]:
     """Validate a provider's credentials with one cheap, read-only call (list models) — the same
     pattern connectors use to validate tokens. Transient: callers pass the key directly so a user
@@ -406,7 +509,7 @@ def verify_provider_key(
     """
     import httpx
 
-    d = _BY_NAME.get(name) or _BY_NAME["openai"]
+    d = descriptor or _BY_NAME.get(name) or _BY_NAME["openai"]
     key = (api_key or "").strip()
     try:
         if name == "anthropic":
@@ -446,6 +549,14 @@ def verify_provider_key(
 
     if resp.status_code < 300:
         return {"ok": True}
+    if resp.status_code in (404, 405) and d.name not in _BY_NAME:
+        # Chat Completions compatibility does not require the optional model-list
+        # endpoint. The gateway was reached, so do not call a usable custom route
+        # invalid merely because it cannot provide a catalog.
+        return {
+            "ok": True,
+            "warning": "Endpoint reached, but it does not expose /models. Add a model ID and try a chat to finish checking it.",
+        }
     if resp.status_code in (401, 403):
         if name == "ollama":
             return {"ok": False, "error": "Server rejected the request."}
