@@ -96,7 +96,7 @@ describe("AccessSection skills group", () => {
     const onOpenSkills = vi.fn();
     renderSection({ onOpenSkills });
     fireEvent.click(screen.getByTestId("access-toggle"));
-    fireEvent.click(await screen.findByText("Manage all skills →"));
+    fireEvent.click(await screen.findByText("Manage all skills (global) →"));
     expect(onOpenSkills).toHaveBeenCalled();
   });
 

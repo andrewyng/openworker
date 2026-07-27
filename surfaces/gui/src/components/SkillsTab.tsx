@@ -1,25 +1,24 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useEffect } from "react";
 import {
   createSkill,
   deleteSkill,
   draftSkill,
-  getRecentWorkspaces,
   listSkills,
-  moveSkill,
   stageSkillUpload,
   confirmSkillUpload,
   updateSkill,
-  type RecentWorkspace,
   type SkillRow,
   type SkillUploadPreview,
 } from "../api";
 import { Icon } from "./Icon";
 
-// Settings ▸ Skills (SKILLS-SPEC §4.1/§4.2) — the management home: list + permanent
-// enable/disable + the three add modes (write / upload / draft-with-OpenWorker).
-// Scope = folder location; the picker defaults "Everywhere" and only offers "Only in a
-// project" when a workspace is known (two-doors: the rail's manage-link passes the
-// session's workspace so the project option arrives preselected).
+// Settings ▸ Skills (SKILLS-SPEC §4.1/§4.2, global-only per §4.7) — the management home:
+// list + permanent enable/disable + the three add modes (write / upload / draft-with-
+// OpenWorker). Everything a user creates here is GLOBAL — "skills are things your worker
+// knows everywhere". Folder/project scope was retired 2026-07-27; repo-shipped skills
+// still load silently in Code sessions (backend compat, no UI). Persona-bundled skills
+// arrive with personas (§6) and are managed on the persona page, not here.
 
 const CARD = "rounded-xl2 border border-line bg-panel";
 const FIELD_LABEL = "text-[12.5px] font-medium text-ink";
@@ -37,25 +36,13 @@ type Editor = {
   name: string;
   description: string;
   instructions: string;
-  scope: "global" | "project";
-  workspace: string;
 };
 
-// The project a skill folder belongs to — the path segment before `.coworker`
-// (…\payments-service\.coworker\skills\x → "payments-service").
-const projectNameOf = (path: string): string => {
-  const parts = path.split(/[\\/]/);
-  const i = parts.indexOf(".coworker");
-  return i > 0 ? parts[i - 1] : "";
-};
-
-const emptyEditor = (scope: "global" | "project", workspace: string): Editor => ({
+const emptyEditor = (): Editor => ({
   mode: "new",
   name: "",
   description: "",
   instructions: "",
-  scope,
-  workspace,
 });
 
 async function fileToB64(file: File): Promise<string> {
@@ -78,31 +65,20 @@ async function fileToB64(file: File): Promise<string> {
   return btoa(bin);
 }
 
-export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
+export function SkillsTab() {
   const [rows, setRows] = useState<SkillRow[]>([]);
-  const [workspaces, setWorkspaces] = useState<RecentWorkspace[]>([]);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [upload, setUpload] = useState<SkillUploadPreview | null>(null);
-  const [uploadScope, setUploadScope] = useState<"global" | "project">("global");
   const [draftText, setDraftText] = useState("");
   const [drafting, setDrafting] = useState(false);
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
   const [error, setError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const refresh = () => listSkills(workspaceContext).then(setRows);
+  const refresh = () => listSkills().then(setRows);
   useEffect(() => {
     refresh();
-    getRecentWorkspaces().then((ws) => setWorkspaces(ws.filter((w) => w.exists)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceContext]);
-
-  // Two-doors (§4.3): arriving from a session preselects "Only in <that project>".
-  const defaultScope: "global" | "project" = workspaceContext ? "project" : "global";
-  const knownWorkspaces = workspaceContext
-    ? [{ path: workspaceContext, name: workspaceContext.split(/[\\/]/).pop() || workspaceContext, exists: true }]
-    : workspaces;
-  const projectOptionAvailable = knownWorkspaces.length > 0;
+  }, []);
 
   const fail = (res: { ok?: boolean; error?: string }) => {
     if (res.ok === false) {
@@ -115,20 +91,16 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
 
   const save = async () => {
     if (!editor) return;
-    const workspace = editor.scope === "project" ? editor.workspace : undefined;
     const res =
       editor.mode === "new"
         ? await createSkill({
             name: editor.name.trim(),
             description: editor.description.trim(),
             instructions: editor.instructions,
-            scope: editor.scope,
-            workspace,
           })
         : await updateSkill(editor.name, {
             description: editor.description.trim(),
             instructions: editor.instructions,
-            workspace: workspaceContext,
           });
     if (fail(res)) return;
     setEditor(null);
@@ -142,7 +114,7 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
     if (fail(res)) return;
     // The draft only fills the form — the user reviews and saves (never auto-saved, §4.2).
     setEditor({
-      ...emptyEditor(defaultScope, workspaceContext || knownWorkspaces[0]?.path || ""),
+      mode: "new",
       name: res.name || "",
       description: res.description || "",
       instructions: res.instructions || "",
@@ -154,17 +126,12 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
     if (!file) return;
     const res = await stageSkillUpload(await fileToB64(file), file.name);
     if (fail(res)) return;
-    setUploadScope(defaultScope);
     setUpload(res);
   };
 
   const confirmUpload = async () => {
     if (!upload?.token) return;
-    const workspace =
-      uploadScope === "project"
-        ? workspaceContext || knownWorkspaces[0]?.path
-        : undefined;
-    const res = await confirmSkillUpload(upload.token, uploadScope, workspace);
+    const res = await confirmSkillUpload(upload.token);
     if (fail(res)) return;
     setUpload(null);
     refresh();
@@ -176,15 +143,7 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
       return;
     }
     setArmedDelete(null);
-    const res = await deleteSkill(row.name, row.scope === "project" ? workspaceContext : undefined);
-    if (fail(res)) return;
-    refresh();
-  };
-
-  const move = async (row: SkillRow) => {
-    const to = row.scope === "global" ? "project" : "global";
-    const workspace = workspaceContext || knownWorkspaces[0]?.path;
-    const res = await moveSkill(row.name, to, workspace);
+    const res = await deleteSkill(row.name);
     if (fail(res)) return;
     refresh();
   };
@@ -195,25 +154,17 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
         <div>
           <h2 className="text-[16px] font-semibold">Skills</h2>
           <p className="text-[12.5px] text-muted mt-1 leading-relaxed">
-            Reusable instructions the worker can follow — available everywhere or only in one
-            project. Off here means off in every session.
+            Reusable instructions the worker can follow in every session. Off here means off
+            everywhere; mute one for a single conversation from the session's Access panel.
           </p>
         </div>
         <div className="flex gap-2">
-          <button
-            className={BTN_BORDERED}
-            onClick={() => fileInput.current?.click()}
-          >
+          <button className={BTN_BORDERED} onClick={() => fileInput.current?.click()}>
             <span className="inline-flex items-center gap-1.5">
               <Icon name="plus" size={13} /> Import
             </span>
           </button>
-          <button
-            className={BTN_ACCENT}
-            onClick={() =>
-              setEditor(emptyEditor(defaultScope, workspaceContext || knownWorkspaces[0]?.path || ""))
-            }
-          >
+          <button className={BTN_ACCENT} onClick={() => setEditor(emptyEditor())}>
             New skill
           </button>
         </div>
@@ -254,12 +205,6 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
               Bundled files: {upload.files.join(", ")}
             </div>
           ) : null}
-          <ScopePicker
-            scope={uploadScope}
-            onScope={setUploadScope}
-            workspaces={knownWorkspaces}
-            projectAvailable={projectOptionAvailable}
-          />
           <div className="flex gap-2 mt-3">
             <button className={BTN_ACCENT} onClick={confirmUpload}>
               Install skill
@@ -307,16 +252,6 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
             placeholder={"1. Gather last week's updates\n2. Write the report, under 300 words"}
             onChange={(e) => setEditor({ ...editor, instructions: e.target.value })}
           />
-          {editor.mode === "new" ? (
-            <ScopePicker
-              scope={editor.scope}
-              onScope={(scope) => setEditor({ ...editor, scope })}
-              workspace={editor.workspace}
-              onWorkspace={(workspace) => setEditor({ ...editor, workspace })}
-              workspaces={knownWorkspaces}
-              projectAvailable={projectOptionAvailable}
-            />
-          ) : null}
           <div className="flex gap-2 mt-3">
             <button
               className={BTN_ACCENT}
@@ -340,16 +275,11 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
           </div>
         ) : null}
         {rows.map((row) => (
-          <div key={`${row.scope}:${row.name}`} className="flex items-center gap-3 px-4 py-3">
+          <div key={row.name} className="flex items-center gap-3 px-4 py-3">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <span className={`text-[13px] font-medium ${row.enabled ? "" : "text-muted"}`}>
                   {row.name}
-                </span>
-                <span className={BADGE} title={row.path}>
-                  {row.scope === "project"
-                    ? `project · ${projectNameOf(row.path) || "?"}`
-                    : row.scope}
                 </span>
                 {row.source !== "local" ? <span className={BADGE}>{row.source}</span> : null}
               </div>
@@ -364,18 +294,11 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
                   name: row.name,
                   description: row.description,
                   instructions: row.instructions,
-                  scope: row.scope,
-                  workspace: workspaceContext || "",
                 })
               }
             >
               <Icon name="pencil" size={13} />
             </button>
-            {projectOptionAvailable || row.scope === "project" ? (
-              <button className={BTN_BORDERED} onClick={() => move(row)}>
-                {row.scope === "global" ? "Move to project" : "Move to global"}
-              </button>
-            ) : null}
             <button
               className={BTN_BORDERED}
               aria-label={`Delete ${row.name}`}
@@ -420,63 +343,5 @@ export function SkillsTab({ workspaceContext }: { workspaceContext?: string }) {
         </button>
       </div>
     </section>
-  );
-}
-
-function ScopePicker({
-  scope,
-  onScope,
-  workspace,
-  onWorkspace,
-  workspaces,
-  projectAvailable,
-}: {
-  scope: "global" | "project";
-  onScope: (s: "global" | "project") => void;
-  workspace?: string;
-  onWorkspace?: (path: string) => void;
-  workspaces: RecentWorkspace[];
-  projectAvailable: boolean;
-}) {
-  return (
-    <div>
-      <div className={FIELD_LABEL}>Available in</div>
-      <div className="flex items-center gap-4 mt-1.5">
-        <label className="inline-flex items-center gap-1.5 text-[13px]">
-          <input
-            type="radio"
-            name="skill-scope"
-            checked={scope === "global"}
-            onChange={() => onScope("global")}
-          />
-          Everywhere
-        </label>
-        {projectAvailable ? (
-          <label className="inline-flex items-center gap-1.5 text-[13px]">
-            <input
-              type="radio"
-              name="skill-scope"
-              checked={scope === "project"}
-              onChange={() => onScope("project")}
-            />
-            Only one project
-          </label>
-        ) : null}
-      </div>
-      {scope === "project" && projectAvailable ? (
-        <select
-          className={`${INPUT} mt-2`}
-          aria-label="Project"
-          value={workspace || workspaces[0]?.path || ""}
-          onChange={(e) => onWorkspace?.(e.target.value)}
-        >
-          {workspaces.map((w) => (
-            <option key={w.path} value={w.path}>
-              {w.name}
-            </option>
-          ))}
-        </select>
-      ) : null}
-    </div>
   );
 }

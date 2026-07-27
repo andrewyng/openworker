@@ -192,15 +192,10 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState<
     "appearance" | "models" | "skills" | "voice" | "personas"
   >("appearance");
-  // Two-doors (SKILLS-SPEC §4.3): the rail's "Manage all skills →" carries the session's
-  // workspace so the Skills tab preselects "Only in <that project>". Cold opens carry none.
-  const [settingsWorkspace, setSettingsWorkspace] = useState<string | undefined>(undefined);
   const openSettings = (
     tab: "appearance" | "models" | "skills" | "voice" | "personas" = "appearance",
-    workspaceContext?: string,
   ) => {
     setSettingsTab(tab);
-    setSettingsWorkspace(workspaceContext);
     setSurface("settings");
   };
   // Whether the default model's provider is actually configured (any provider). Drives the
@@ -1307,7 +1302,6 @@ export function App() {
         <SettingsView
           key={settingsTab}
           initialTab={settingsTab}
-          workspaceContext={settingsWorkspace}
           onOpenPersona={(id) => openPersona(id, "settings")}
         />
       ) : surface === "audit" ? (
@@ -1606,15 +1600,7 @@ export function App() {
             scratchPrimary={agent === "cowork"}
             openAccessKey={accessKey}
             onOpenIntegrations={() => setSurface("integrations")}
-            onOpenSkills={() =>
-              // Two-doors carries the workspace ONLY for project-scoped sessions. A Cowork
-              // scratch space is a throwaway dir with a hex name — offering it as a
-              // "project" strands skills in a temp folder (tester catch 2026-07-26).
-              openSettings(
-                "skills",
-                isProjectScoped(personaOf(agent)) && workspace ? workspace : undefined,
-              )
-            }
+            onOpenSkills={() => openSettings("skills")}
           />
         </div>
       </div>

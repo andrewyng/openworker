@@ -42,10 +42,6 @@ const UPLOADED_ROW = {
 };
 
 const LIST = { skills: [ROW, UPLOADED_ROW] };
-const WORKSPACES = {
-  workspaces: [{ path: "C:\\dev\\payments", name: "payments", exists: true }],
-};
-const NO_WORKSPACES = { workspaces: [] };
 
 afterEach(() => {
   cleanup();
@@ -53,26 +49,20 @@ afterEach(() => {
 });
 
 describe("SkillsTab", () => {
-  it("renders rows with scope + source badges and dims disabled skills", async () => {
-    stubFetch([
-      { match: "/v1/skills", method: "GET", json: LIST },
-      { match: "/v1/workspaces/recent", json: WORKSPACES },
-    ]);
+  it("renders rows with provenance badges and dims disabled skills", async () => {
+    stubFetch([{ match: "/v1/skills", method: "GET", json: LIST }]);
     render(<SkillsTab />);
     expect(await screen.findByText("weekly-report")).toBeTruthy();
     expect(screen.getByText("Monday status report")).toBeTruthy();
-    expect(screen.getAllByText("global").length).toBe(2);
-    expect(screen.getByText("uploaded")).toBeTruthy(); // provenance badge
+    expect(screen.queryByText("global")).toBeNull(); // no scope badges — global-only (§4.7)
+    expect(screen.getByText("uploaded")).toBeTruthy(); // provenance badge stays
     const toggles = screen.getAllByRole("switch");
     expect((toggles[0] as HTMLInputElement).checked).toBe(true);
     expect((toggles[1] as HTMLInputElement).checked).toBe(false);
   });
 
   it("blocks Save until name and instructions are filled", async () => {
-    stubFetch([
-      { match: "/v1/skills", method: "GET", json: { skills: [] } },
-      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
-    ]);
+    stubFetch([{ match: "/v1/skills", method: "GET", json: { skills: [] } }]);
     render(<SkillsTab />);
     fireEvent.click(await screen.findByText("New skill"));
     const save = screen.getByText("Save skill") as HTMLButtonElement;
@@ -85,11 +75,10 @@ describe("SkillsTab", () => {
     expect(save.disabled).toBe(false);
   });
 
-  it("creates a skill and refreshes the list", async () => {
+  it("creates a skill (global, no scope field) and refreshes the list", async () => {
     const calls = stubFetch([
       { match: "/v1/skills", method: "GET", json: { skills: [] } },
       { match: "/v1/skills", method: "POST", json: { ok: true } },
-      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
     ]);
     render(<SkillsTab />);
     fireEvent.click(await screen.findByText("New skill"));
@@ -100,7 +89,8 @@ describe("SkillsTab", () => {
     fireEvent.click(screen.getByText("Save skill"));
     await waitFor(() => {
       const post = calls.find((c) => c.method === "POST" && c.url.endsWith("/v1/skills"));
-      expect(post?.body).toMatchObject({ name: "greet", instructions: "Say hello.", scope: "global" });
+      expect(post?.body).toMatchObject({ name: "greet", instructions: "Say hello." });
+      expect(post?.body.workspace).toBeUndefined(); // global-only: no scope/workspace sent
     });
     // list re-fetched after save
     expect(calls.filter((c) => c.method === "GET" && c.url.includes("/v1/skills")).length).toBeGreaterThan(1);
@@ -110,7 +100,6 @@ describe("SkillsTab", () => {
     const calls = stubFetch([
       { match: "/v1/skills", method: "GET", json: LIST },
       { match: "/v1/skills/weekly-report", method: "PATCH", json: { ok: true } },
-      { match: "/v1/workspaces/recent", json: WORKSPACES },
     ]);
     render(<SkillsTab />);
     await screen.findByText("weekly-report");
@@ -133,7 +122,6 @@ describe("SkillsTab", () => {
     const calls = stubFetch([
       { match: "/v1/skills", method: "GET", json: LIST },
       { match: "/v1/skills/weekly-report", method: "DELETE", json: { ok: true } },
-      { match: "/v1/workspaces/recent", json: WORKSPACES },
     ]);
     render(<SkillsTab />);
     await screen.findByText("weekly-report");
@@ -151,7 +139,6 @@ describe("SkillsTab", () => {
     const calls = stubFetch([
       { match: "/v1/skills", method: "GET", json: LIST },
       { match: "/v1/skills/weekly-report", method: "PATCH", json: { ok: true } },
-      { match: "/v1/workspaces/recent", json: WORKSPACES },
     ]);
     render(<SkillsTab />);
     await screen.findByText("weekly-report");
@@ -178,7 +165,6 @@ describe("SkillsTab", () => {
         },
       },
       { match: "/v1/skills", method: "GET", json: { skills: [] } },
-      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
     ]);
     render(<SkillsTab />);
     const input = (await screen.findByLabelText("Upload a skill archive")) as HTMLInputElement;
@@ -191,7 +177,7 @@ describe("SkillsTab", () => {
     fireEvent.click(screen.getByText("Install skill"));
     await waitFor(() => {
       const confirm = calls.find((c) => c.url.includes("/upload/confirm"));
-      expect(confirm?.body).toMatchObject({ token: "t1", scope: "global" });
+      expect(confirm?.body).toMatchObject({ token: "t1" });
     });
   });
 
@@ -203,7 +189,6 @@ describe("SkillsTab", () => {
         json: { ok: true, name: "weekly-report", description: "Monday report", instructions: "1. Collect" },
       },
       { match: "/v1/skills", method: "GET", json: { skills: [] } },
-      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
     ]);
     render(<SkillsTab />);
     fireEvent.change(await screen.findByLabelText("Describe the skill"), {
@@ -219,34 +204,20 @@ describe("SkillsTab", () => {
     expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/v1/skills"))).toBe(false);
   });
 
-  it("hides the project scope option when no workspace is known", async () => {
-    stubFetch([
-      { match: "/v1/skills", method: "GET", json: { skills: [] } },
-      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
-    ]);
+  it("offers no scope UI at all — skills are global (§4.7)", async () => {
+    stubFetch([{ match: "/v1/skills", method: "GET", json: { skills: [] } }]);
     render(<SkillsTab />);
     fireEvent.click(await screen.findByText("New skill"));
-    expect(screen.getByLabelText("Everywhere")).toBeTruthy();
+    expect(screen.queryByText("Available in")).toBeNull();
+    expect(screen.queryByLabelText("Everywhere")).toBeNull();
     expect(screen.queryByLabelText("Only one project")).toBeNull();
-  });
-
-  it("preselects the project scope when a workspace context is passed (two doors)", async () => {
-    stubFetch([
-      { match: "/v1/skills", method: "GET", json: { skills: [] } },
-      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
-    ]);
-    render(<SkillsTab workspaceContext="C:\dev\payments" />);
-    fireEvent.click(await screen.findByText("New skill"));
-    const project = screen.getByLabelText("Only one project") as HTMLInputElement;
-    expect(project.checked).toBe(true);
-    expect(screen.getByText("payments")).toBeTruthy(); // dropdown shows the session's project
+    expect(screen.queryByText(/Move to/)).toBeNull();
   });
 
   it("surfaces server-side validation errors", async () => {
     stubFetch([
       { match: "/v1/skills", method: "GET", json: { skills: [] } },
       { match: "/v1/skills", method: "POST", json: { ok: false, error: "A skill named 'x' already exists in that scope." } },
-      { match: "/v1/workspaces/recent", json: NO_WORKSPACES },
     ]);
     render(<SkillsTab />);
     fireEvent.click(await screen.findByText("New skill"));

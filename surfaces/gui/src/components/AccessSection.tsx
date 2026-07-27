@@ -520,7 +520,7 @@ export function AccessSection({
                   className="mt-1 text-[12px] text-accent font-medium hover:underline text-left"
                   onClick={() => onOpenSkills?.()}
                 >
-                  Manage all skills →
+                  Manage all skills (global) →
                 </button>
               </div>
             </div>

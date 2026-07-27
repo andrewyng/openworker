@@ -70,13 +70,9 @@ const SET_TABS: { key: SetTab; label: string; icon: "sliders" | "code" | "mic" |
 export function SettingsView({
   initialTab,
   onOpenPersona,
-  workspaceContext,
 }: {
   initialTab?: SetTab;
   onOpenPersona?: (id: string) => void;
-  // Two-doors (SKILLS-SPEC §4.3): the rail's "Manage all skills →" passes the session's
-  // workspace so the Skills tab preselects "Only in <that project>".
-  workspaceContext?: string;
 }) {
   // Personas is flag-gated (hidden for launch) — filter the tab AND coerce a stale
   // deep-link to it (openSettings("personas") callers) so the page never opens on a
@@ -127,7 +123,7 @@ export function SettingsView({
               </div>
             </section>
           ) : tab === "skills" ? (
-            <SkillsTab workspaceContext={workspaceContext} />
+            <SkillsTab />
           ) : tab === "voice" ? (
             <VoiceInputSection />
           ) : (
