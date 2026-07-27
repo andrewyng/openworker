@@ -45,6 +45,10 @@ const SETTINGS = {
   model_labels: {
     "anthropic:claude-opus-4-8": "Claude Opus 4.8 · Anthropic",
     "zai:glm-5.2": "GLM-5.2 · Z AI",
+    "venice:zai-org-glm-5-2": "GLM 5.2 · via Venice",
+    "venice:z-ai-glm-5v-turbo": "GLM 5V Turbo · via Venice",
+    "venice:qwen-3-7-max": "Qwen 3.7 Max · via Venice",
+    "venice:grok-4-5": "Grok 4.5 · via Venice",
   },
 };
 
@@ -331,6 +335,8 @@ const PROVIDERS = [
   { name: "anthropic", title: "Claude (Anthropic)", needs_key: true, fields: [{ key: "api_key", label: "API key", secret: true, required: true, help: "", placeholder: "sk-…" }], configured: true, values: {}, suggested_models: ["claude-opus-4-8"], key_set_at: null, last_used_at: null },
   // zai: an OpenAI-compatible vendor — unconfigured, with a prefilled editable endpoint + blurb.
   { name: "zai", title: "Z AI (GLM)", needs_key: true, blurb: "Uses Z AI's OpenAI-compatible API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "Z AI API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Prefilled with Z AI's international endpoint.", placeholder: "https://api.z.ai/api/paas/v4", default: "https://api.z.ai/api/paas/v4" }], configured: false, values: {}, suggested_models: ["glm-5.2"], key_set_at: null, last_used_at: null },
+  // venice: current agent-capable models through Venice's OpenAI-compatible API.
+  { name: "venice", title: "Venice AI", needs_key: true, blurb: "Uses Venice AI's OpenAI-compatible API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "Venice AI API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Prefilled with Venice's official OpenAI-compatible endpoint.", placeholder: "https://api.venice.ai/api/v1", default: "https://api.venice.ai/api/v1" }], configured: false, values: {}, suggested_models: ["zai-org-glm-5-2", "z-ai-glm-5v-turbo", "qwen-3-7-max", "grok-4-5"], key_set_at: null, last_used_at: null },
   // ollama: keyless local provider — "configured" without proving anything runs; the
   // onboarding gallery shows "No key needed" and its form is endpoint + Detect (§39).
   { name: "ollama", title: "Ollama (local models)", needs_key: false, fields: [{ key: "base_url", label: "Endpoint", secret: false, required: false, help: "", placeholder: "http://127.0.0.1:11434", default: "http://127.0.0.1:11434" }], configured: true, values: {}, suggested_models: ["qwen3-coder:30b"], key_set_at: null, last_used_at: null },

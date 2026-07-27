@@ -135,10 +135,11 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
-    Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its
-    env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a configured OpenAI
-    key is never silently sent to a different vendor's endpoint. Missing key ⇒ fail fast with a
-    vendor-named error (these are only built on demand, when one of their models is selected).
+    Kimi, MiniMax, Qwen, xAI, Mistral, Venice). The key is resolved from the vendor's OWN profile
+    (or its env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a configured
+    OpenAI key is never silently sent to a different vendor's endpoint. Missing key ⇒ fail fast
+    with a vendor-named error (these are only built on demand, when one of their models is
+    selected).
     """
 
     def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -332,6 +333,14 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         base_url="https://api.fireworks.ai/inference/v1",
         recommended_model="accounts/fireworks/models/glm-5p2",
         env_key="FIREWORKS_API_KEY",
+    ),
+    _compat(
+        "venice",
+        "Venice AI",
+        base_url="https://api.venice.ai/api/v1",
+        recommended_model="zai-org-glm-5-2",
+        env_key="VENICE_API_KEY",
+        endpoint_help="Prefilled with Venice's official OpenAI-compatible endpoint.",
     ),
     ProviderDescriptor(
         name="ollama",

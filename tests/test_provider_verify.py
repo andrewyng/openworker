@@ -58,6 +58,14 @@ def test_verify_openai_custom_endpoint(monkeypatch):
     assert cap["url"] == "https://gw.example/openai/v1/models"
 
 
+def test_verify_venice_uses_official_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("venice", api_key="venice-key") == {"ok": True}
+    assert cap["url"] == "https://api.venice.ai/api/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer venice-key"
+
+
 def test_verify_bad_key_is_invalid(monkeypatch):
     _patch_get(monkeypatch, status=401)
     assert verify_provider_key("openai", api_key="sk-bad") == {
