@@ -445,14 +445,21 @@ def create_app(manager: SessionManager) -> FastAPI:
                         "error": "gallery requires cloud sign-in (or the cloud is unreachable)",
                     }
                 markdown = manifest.get("manifest_markdown", "")
-                digest = "sha256:" + hashlib.sha256(markdown.encode()).hexdigest()
+                digest = (
+                    "sha256:" + hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+                )
                 if (
                     manifest.get("manifest_hash")
                     and manifest["manifest_hash"] != digest
                 ):
                     return {"ok": False, "error": "manifest hash mismatch"}
                 with tempfile.TemporaryDirectory() as td:
-                    (Path(td) / f"{slug}.md").write_text(markdown)
+                    # UTF-8 explicitly: the hash above and `load_manifest_file` both
+                    # treat this markdown as UTF-8, so the file between them must match.
+                    # Defaulting to the locale encoding breaks on Windows (cp1252),
+                    # where CJK/emoji fail to encode and an em-dash writes as a byte the
+                    # UTF-8 read then rejects.
+                    (Path(td) / f"{slug}.md").write_text(markdown, encoding="utf-8")
                     summaries = reg.install_from_dir(td)
                 cloud.gallery_install_event(manager.secrets, load_config(), slug)
             else:
