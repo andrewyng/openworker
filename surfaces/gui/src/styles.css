@@ -397,6 +397,9 @@ body {
   margin-top: 11px; font-family: var(--mono); font-size: 12px; color: var(--muted);
   background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px;
   overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.55;
+  /* Long previews (a 170-line skill) must scroll INSIDE the card — expanded content
+     otherwise outgrows the viewport with no way to read or reach "show less". */
+  max-height: 42vh; overflow-y: auto;
 }
 .approval-prev-more {
   display: block; margin-top: 4px; font: inherit; font-family: -apple-system, sans-serif;

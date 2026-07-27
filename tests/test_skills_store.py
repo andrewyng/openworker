@@ -381,10 +381,14 @@ def test_save_skill_validation_errors(store, session_dir):
     assert "description" in tool(name="x", description=" ", instructions="i")["error"]
     assert "instructions" in tool(name="x", description="d", instructions=" ")["error"]
     assert "error" in tool(name="../evil", description="d", instructions="i")
+    # A bundled SKILL.md is skipped silently, never an error: the instructions argument
+    # becomes SKILL.md, and models routinely try to bundle their workspace draft of it —
+    # erroring cost a second approval round (live drive 2026-07-27).
     (session_dir / "SKILL.md").write_text("x", encoding="utf-8")
     result = tool(name="x", description="d", instructions="i", files=["SKILL.md"])
-    assert "SKILL.md" in result["error"]
-    assert not (store.global_dir / "x").exists()
+    assert result["ok"] and result["files"] == []
+    skill_md = (store.global_dir / "x" / "SKILL.md").read_text(encoding="utf-8")
+    assert "i" in skill_md and "x" != skill_md  # instructions won, draft file ignored
 
 
 def test_save_skill_requires_approval_metadata(store):

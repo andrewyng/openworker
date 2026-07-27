@@ -69,10 +69,10 @@ export function scopeNote(
   if (EXTERNAL.has(name)) {
     const platform = String(args?.target ?? "").split(":")[0];
     const names: Record<string, string> = { slack: "Slack", telegram: "Telegram" };
-    return { text: `leaves this Mac → ${names[platform] || platform || "a connected chat"}`, external: true };
+    return { text: `leaves this computer → ${names[platform] || platform || "a connected chat"}`, external: true };
   }
   const overwrite = name === "write_file" && args?.overwrite;
-  return { text: "stays on this Mac" + (overwrite ? " · overwrites the existing file" : ""), external: false };
+  return { text: "stays on this computer" + (overwrite ? " · overwrites the existing file" : ""), external: false };
 }
 
 // The proposed content/command, straight from the tool call's ARGS — the file/action

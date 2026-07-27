@@ -573,9 +573,10 @@ def save_skill_tool(
                 return {"error": f"File is outside this session's folders: {raw}"}
             base = rp.name
             if base.lower() == "skill.md":
-                return {
-                    "error": "Bundled files must not be named SKILL.md — the instructions argument becomes SKILL.md."
-                }
+                # The instructions argument BECOMES SKILL.md; models routinely draft one in
+                # the workspace and bundle it. Skip silently — erroring here cost the user a
+                # second approval round for a self-healing retry (live drive 2026-07-27).
+                continue
             if any(base == b for _, b in staged):
                 return {"error": f"Duplicate bundled filename: {base}"}
             staged.append((rp, base))
