@@ -8,8 +8,8 @@ model string and builds (and caches) its client from the matching SecretStore pr
 
 Today: `openai` (the default, with an optional custom endpoint that covers Azure OpenAI's
 `/openai/v1` and any OpenAI-compliant gateway), `anthropic` (native Messages API via
-`AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), and `ollama`
-(local, OpenAI-compatible `/v1`). Bedrock/Vertex auth for Claude is future work.
+`AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `ollama` and
+`lm_studio` (local, OpenAI-compatible `/v1`). Bedrock/Vertex auth for Claude is future work.
 """
 
 from __future__ import annotations
@@ -24,6 +24,9 @@ from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
+DEFAULT_LM_STUDIO_URL = "http://localhost:1234"
+
+_KEYLESS_LOCAL = frozenset({"ollama", "lm_studio"})
 
 
 @dataclass(frozen=True)
@@ -81,18 +84,24 @@ class ProviderDescriptor:
         }
 
 
+def _normalize_local_v1_url(url: Optional[str], default: str) -> str:
+    """Accept `http://host:port` or `.../v1` and return an OpenAI-compatible base URL."""
+    base = (url or default).strip().rstrip("/") or default
+    return base if base.endswith("/v1") else base + "/v1"
+
+
 def _normalize_ollama_url(url: Optional[str]) -> str:
     """Accept `http://host:11434` or `.../v1` and return an OpenAI-compatible base URL.
 
     Ollama serves its OpenAI-compatible API under `/v1`; the native API lives at the root, so we
     always target `<root>/v1`.
     """
-    base = (url or DEFAULT_OLLAMA_URL).strip().rstrip("/")
-    if not base:
-        base = DEFAULT_OLLAMA_URL
-    if not base.endswith("/v1"):
-        base = base + "/v1"
-    return base
+    return _normalize_local_v1_url(url, DEFAULT_OLLAMA_URL)
+
+
+def _normalize_lm_studio_url(url: Optional[str]) -> str:
+    """LM Studio's local server speaks OpenAI-compatible `/v1`; normalize like Ollama."""
+    return _normalize_local_v1_url(url, DEFAULT_LM_STUDIO_URL)
 
 
 def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -131,6 +140,12 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # string, so we pass a placeholder. `base_url` comes from the stored profile (or the default).
     base_url = _normalize_ollama_url((profile or {}).get("base_url"))
     return OpenAIProvider(api_key="ollama", base_url=base_url)
+
+
+def _build_lm_studio(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    # LM Studio's local OpenAI-compatible server is keyless; the SDK still wants a string.
+    base_url = _normalize_lm_studio_url((profile or {}).get("base_url"))
+    return OpenAIProvider(api_key="lm-studio", base_url=base_url)
 
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
@@ -352,6 +367,22 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         # `ollama pull qwen3-coder:30b`.
         recommended_model="qwen3-coder:30b",
     ),
+    ProviderDescriptor(
+        name="lm_studio",
+        title="LM Studio (local models)",
+        needs_key=False,
+        fields=[
+            ProviderField(
+                "base_url",
+                "LM Studio server URL",
+                secret=False,
+                required=False,
+                placeholder=DEFAULT_LM_STUDIO_URL,
+                help="Where LM Studio's local API is listening. The /v1 path is added automatically.",
+            ),
+        ],
+        build=_build_lm_studio,
+    ),
 ]
 
 _BY_NAME = {d.name: d for d in DESCRIPTORS}
@@ -424,6 +455,9 @@ def verify_provider_key(
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
+        elif name == "lm_studio":
+            base = _normalize_lm_studio_url(base_url)
+            resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
         else:  # openai + any OpenAI-compatible endpoint (Azure, OpenRouter, vendors, vLLM…)
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""
@@ -447,10 +481,10 @@ def verify_provider_key(
     if resp.status_code < 300:
         return {"ok": True}
     if resp.status_code in (401, 403):
-        if name == "ollama":
+        if name in _KEYLESS_LOCAL:
             return {"ok": False, "error": "Server rejected the request."}
         return {"ok": False, "error": "Invalid API key."}
-    if resp.status_code == 404 and name == "ollama":
+    if resp.status_code == 404 and name in _KEYLESS_LOCAL:
         return {
             "ok": False,
             "error": "Reached the server, but no OpenAI-compatible /v1 API there.",

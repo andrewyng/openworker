@@ -1497,6 +1497,8 @@ class SessionManager:
         topped up with the compat-vendor extras the matrix doesn't vouch for."""
         if name == "ollama":
             return [m.split(":", 1)[-1] for m in self._ollama_models()]
+        if name == "lm_studio":
+            return [m.split(":", 1)[-1] for m in self._lm_studio_models()]
         from ..providers.matrix import models_for_provider
 
         return list(
@@ -1678,6 +1680,49 @@ class SessionManager:
         except Exception:
             return []
 
+    def _lm_studio_alive(self) -> bool:
+        """Best-effort LM Studio liveness, cached 30s. `lm_studio:*` picker entries show only
+        while the local server answers — keyless must not mean always-present."""
+        now = time.monotonic()
+        cached = getattr(self, "_lm_studio_alive_cache", None)
+        if cached and now - cached[0] < 30:
+            return cached[1]
+        from ..providers.registry import _normalize_lm_studio_url
+
+        profile = self.secrets.get("provider:lm_studio") or {}
+        base = _normalize_lm_studio_url(profile.get("base_url"))
+        try:
+            import httpx
+
+            alive = (
+                httpx.get(base.rstrip("/") + "/models", timeout=0.8).status_code == 200
+            )
+        except Exception:
+            alive = False
+        self._lm_studio_alive_cache = (now, alive)
+        return alive
+
+    def _lm_studio_models(self) -> list[str]:
+        """Live list of models loaded in LM Studio (via OpenAI `/v1/models`), as
+        `lm_studio:<id>` so they're directly selectable. Empty if unreachable."""
+        profile = self.secrets.get("provider:lm_studio")
+        if not profile:
+            return []
+        from ..providers.registry import _normalize_lm_studio_url
+
+        base = _normalize_lm_studio_url(profile.get("base_url"))
+        try:
+            import httpx
+
+            data = httpx.get(base.rstrip("/") + "/models", timeout=2.0).json()
+            return [
+                f"lm_studio:{m['id']}"
+                for m in data.get("data", [])
+                if m.get("id")
+            ]
+        except Exception:
+            return []
+
     def _curated_models(self) -> list[str]:
         """The models offered in the composer's selector: every curated-matrix model
         (`get_settings` culls the ones whose provider has no key) plus custom ids the user
@@ -1746,6 +1791,8 @@ class SessionManager:
             provider = self._model_provider(m)
             if provider == "ollama":
                 return self._ollama_alive()
+            if provider == "lm_studio":
+                return self._lm_studio_alive()
             return self._provider_configured(provider)
 
         selectable = [m for m in self._curated_models() if _selectable(m)]

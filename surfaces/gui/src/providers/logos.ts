@@ -43,6 +43,7 @@ export const PROVIDER_ORDER = [
   "gemini",
   "meta",
   "ollama",
+  "lm_studio",
   "fireworks",
   "together",
   "zai",

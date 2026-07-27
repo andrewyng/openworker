@@ -1050,3 +1050,11 @@ def test_set_provider_persists_extra_fields(tmp_path):
     manager.set_provider("ollama", {"base_url": ""})
     providers = {p["name"]: p for p in manager.get_providers()}
     assert "base_url" not in providers["ollama"]["values"]
+
+    assert manager.set_provider("lm_studio", {"base_url": "http://127.0.0.1:8888"})["ok"]
+    providers = {p["name"]: p for p in manager.get_providers()}
+    assert providers["lm_studio"]["values"]["base_url"] == "http://127.0.0.1:8888"
+
+    manager.set_provider("lm_studio", {"base_url": ""})
+    providers = {p["name"]: p for p in manager.get_providers()}
+    assert "base_url" not in providers["lm_studio"]["values"]

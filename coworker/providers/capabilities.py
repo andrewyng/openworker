@@ -24,7 +24,7 @@ def capabilities_for(model: str) -> ModelCapabilities:
 
     # Ollama (local) models vary widely and many fake/mishandle parallel tool calls — assume
     # tools work (we only point at tool-capable models) but stay conservative otherwise.
-    if provider == "ollama":
+    if provider in ("ollama", "lm_studio"):
         return ModelCapabilities(
             tools=True, vision=False, parallel_tool_calls=False, streaming=True
         )
