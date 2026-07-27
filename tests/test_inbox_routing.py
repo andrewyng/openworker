@@ -88,3 +88,26 @@ def test_inbound_legacy_ocw_token_still_resolves(tmp_path):
     item = store.add_approval("s1", "Deploy?", inbox="ops")
     assert resolve_from_reply(f"deny [ocw:{item.id}]", store.resolve) is True
     assert store.get(item.id).resolution == "deny"
+
+
+def test_disallow_does_not_match_allow(tmp_path):
+    """'disallow' contains 'allow' but must NOT approve — the old substring
+    match approved it; word-boundary regex catches it correctly."""
+    store = InboxStore(tmp_path / "inbox.json")
+    q = store.add_question("s1", "Free text?")
+    assert resolve_from_reply(f"disallow [ow:{q.id}]", store.resolve) is True
+    assert store.get(q.id).resolution == "disallow"
+
+
+def test_no_word_boundary_avoids_false_denies(tmp_path):
+    """'note', 'know', 'innovation' contain 'no' but must NOT trigger deny —
+    only standalone 'no' as a word should."""
+    store = InboxStore(tmp_path / "inbox.json")
+    q = store.add_question("s1", "Any input?")
+    # embed the REAL item id so the store can resolve it
+    assert resolve_from_reply(f"note this [ow:{q.id}]", store.resolve) is True
+    assert store.get(q.id).resolution == "note this"
+    # actual standalone 'no' still denies
+    item = store.add_approval("s2", "Deploy?", inbox="ops")
+    assert resolve_from_reply(f"no [ow:{item.id}]", store.resolve) is True
+    assert store.get(item.id).resolution == "deny"
