@@ -9,6 +9,7 @@ export type IconName =
   | "signOut"
   | "chat"
   | "diamond"
+  | "book"
   | "search"
   | "folder"
   | "folderPlus"
@@ -66,6 +67,14 @@ export function Icon({
   };
 
   switch (name) {
+    case "book":
+      // A playbook — Skills are the worker's recipe book (Settings ▸ Skills).
+      return (
+        <svg {...s}>
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+        </svg>
+      );
     case "sparkle":
       // Filled 4-point twinkle — crisp at small sizes.
       return (
