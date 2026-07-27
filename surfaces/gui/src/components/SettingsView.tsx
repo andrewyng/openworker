@@ -39,6 +39,7 @@ import { ModelsTab } from "./ManageTabs";
 import { GalleryModal } from "./GalleryModal";
 import { PersonasTab } from "./PersonasTab";
 import { showPersonas } from "../flags";
+import { useI18n } from "../i18n";
 
 // Settings, restructured (Option 2) into a full-page surface that mirrors IntegrationsView's shell:
 // a left sub-nav (Appearance · Files · Models · Personas) + centered panel, replacing the old
@@ -409,7 +410,7 @@ function AppearanceSection() {
 
   return (
     <section>
-      <PanelHead title="General" sub="How OpenWorker looks and behaves on this machine." />
+      <PanelHead title={t.settings.general} sub={t.settings.generalSub} />
 
       <div className={CARD + " p-4 mb-4"}>
         <div className={FIELD_LABEL}>Theme</div>
@@ -425,7 +426,22 @@ function AppearanceSection() {
 
       <SidebarCard />
 
-      <FilesCard />
+      
+          {/* Language selector */}
+          <div className={CARD + " p-4"}>
+            <div className={FIELD_LABEL}>{t.settings.language}</div>
+            <div className="text-[12px] text-muted mt-0.5 mb-3">{t.settings.languageSub}</div>
+            <select
+              className="rounded-lg border border-line bg-white px-3 py-1.5 text-[13px]"
+              value={lang}
+              onChange={e => setLang(e.target.value as "en" | "zh-CN")}
+            >
+              <option value="en">English</option>
+              <option value="zh-CN">简体中文</option>
+            </select>
+          </div>
+
+          <FilesCard />
 
       <TrustedWorkspacesCard />
 
