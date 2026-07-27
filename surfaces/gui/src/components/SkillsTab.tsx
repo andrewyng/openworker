@@ -315,18 +315,22 @@ export function SkillsTab({
                   {row.name}
                 </span>
                 {row.source !== "local" ? <span className={BADGE}>{row.source}</span> : null}
-                {/* §6: a rich skill must not look identical to a one-file one. */}
+                {/* §6: a rich skill must not look identical to a one-file one. Styled as a
+                    chip with a folder icon so it READS as clickable (live drive: plain
+                    text hid the affordance). */}
                 {row.files ? (
                   <button
-                    className="text-[11px] text-muted hover:text-ink shrink-0"
+                    className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md border border-line bg-paper text-muted hover:text-ink hover:border-lineStrong shrink-0"
                     title="Show folder"
                     onClick={() => revealSkill(row.name)}
                   >
-                    · {row.files} file{row.files === 1 ? "" : "s"}
+                    <Icon name="folder" size={11} /> {row.files} file{row.files === 1 ? "" : "s"}
                   </button>
                 ) : null}
               </div>
-              <div className="text-[12px] text-muted truncate">{row.description}</div>
+              {/* Full description, wrapping — a skill's one-liner is its menu entry; cutting
+                  it mid-word hid what the skill does (live drive). */}
+              <div className="text-[12px] text-muted leading-relaxed">{row.description}</div>
             </div>
             <button
               className={BTN_BORDERED}
