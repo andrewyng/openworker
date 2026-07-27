@@ -69,10 +69,14 @@ export function Icon({
   switch (name) {
     case "book":
       // A playbook — Skills are the worker's recipe book (Settings ▸ Skills).
+      // Hardcover with a full spine + two text lines: "written instructions inside".
+      // (Owner-picked from a 15px-preview comparison, 2026-07-27.)
       return (
         <svg {...s}>
-          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+          <path d="M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" />
+          <path d="M8.5 2v20" />
+          <path d="M11.5 8.5h5" />
+          <path d="M11.5 12h3.5" />
         </svg>
       );
     case "sparkle":
