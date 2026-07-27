@@ -191,6 +191,62 @@ def test_live_load_skill_semantics(manager):
     )
 
 
+def test_disable_countermand_for_loaded_skills(manager):
+    """§3: a skill whose instructions already entered the conversation gets an explicit
+    per-turn stop note once disabled/deleted — menus shrinking is passive, instructions in
+    history are not. Recomputed fresh: re-enabling clears it; unloaded skills never get one."""
+    import json as _json
+
+    from coworker.agent import build_engine
+    from coworker.agents.registry import get_agent
+
+    _skill(manager.skill_store.global_dir, "used-one", body="used body")
+    _skill(manager.skill_store.global_dir, "unused-one", body="never loaded")
+    engine = build_engine(
+        agent=get_agent("chat"),
+        provider=ScriptedProvider(),
+        skill_filter=lambda: manager.effective_skill_names("s1"),
+    )
+    # Simulate a successful load earlier in this conversation (OpenAI message shape).
+    engine.messages.append(
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {
+                        "name": "load_skill",
+                        "arguments": _json.dumps({"name": "used-one"}),
+                    },
+                }
+            ],
+        }
+    )
+    engine.messages.append(
+        {
+            "role": "tool",
+            "tool_call_id": "c1",
+            "content": _json.dumps(
+                {"name": "used-one", "instructions": "used body", "resources_path": "x"}
+            ),
+        }
+    )
+    assert "disabled by the user" not in engine.context_provider()
+
+    manager.skill_store.set_enabled("used-one", False)
+    ctx = engine.context_provider()
+    assert 'skill "used-one" has been disabled' in ctx
+    assert "- used-one:" not in ctx  # gone from the menu itself
+    assert "- unused-one:" in ctx  # untouched skill still offered, no note for it
+
+    manager.skill_store.set_enabled("used-one", True)
+    assert "disabled by the user" not in engine.context_provider()  # self-healing
+
+    manager.delete_skill("used-one")  # delete ≡ disable for the countermand too
+    assert 'skill "used-one" has been disabled' in engine.context_provider()
+
+
 def test_parity_catalog_vs_rail_view(manager):
     """The §3 invariant: the engine's menu and the rail payload come from one resolver."""
     _skill(manager.skill_store.global_dir, "alpha")

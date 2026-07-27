@@ -78,14 +78,16 @@ export function SkillsTab() {
   const [notice, setNotice] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const CONFIRMATION =
-    "The worker can use it from its next message, in every conversation.";
-  // The physics footnote (SKILLS-SPEC §3): shown exactly when it becomes relevant — turning
-  // OFF or deleting. Context can't be un-read; only a new conversation is a clean slate.
+  // Confirmation copy (SKILLS-SPEC §4.1 #2): outcome + remedy only, in words a person
+  // already owns — now / everywhere / off / start a new one. Never mechanism ("the model
+  // will be told…") or engineering timing ("from the next message") — three rounds of
+  // owner-driver review, 2026-07-27. The engine countermands disabled-but-loaded skills
+  // silently (context_provider note); the copy promises only the guaranteed part.
+  const CONFIRMATION = "The worker can now use this in every conversation.";
   const OFF_NOTE =
-    "Off from the worker's next message, in every conversation. A conversation that already used it keeps what it read until it ends.";
+    "Turned off everywhere. If a conversation already used it, start a new one for a completely clean slate.";
   const DELETE_NOTE =
-    "Removed. A conversation that already used it keeps what it read until it ends.";
+    "Removed. If a conversation already used it, start a new one for a completely clean slate.";
 
   const refresh = () => listSkills().then(setRows);
   useEffect(() => {
@@ -184,8 +186,8 @@ export function SkillsTab() {
         <div>
           <h2 className="text-[16px] font-semibold">Skills</h2>
           <p className="text-[12.5px] text-muted mt-1 leading-relaxed">
-            Reusable instructions the worker can follow in every session. Changes apply from
-            the worker's next message; off here means off everywhere.
+            Reusable instructions the worker can follow in every conversation. Off here means
+            off everywhere.
           </p>
         </div>
         <div className="flex gap-2">

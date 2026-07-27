@@ -148,8 +148,8 @@ describe("SkillsTab", () => {
       expect(patch?.body).toMatchObject({ enabled: false });
     });
     const status = await screen.findByRole("status");
-    expect(status.textContent).toContain("Off from the worker's next message");
-    expect(status.textContent).toContain("keeps what it read"); // can't-unread, in place
+    expect(status.textContent).toContain("Turned off everywhere");
+    expect(status.textContent).toContain("clean slate"); // the guaranteed remedy, in place
   });
 
   it("upload shows the parsed preview and installs nothing until confirmed", async () => {
@@ -228,7 +228,7 @@ describe("SkillsTab", () => {
     fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "x" } });
     fireEvent.click(screen.getByText("Save skill"));
     const status = await screen.findByRole("status");
-    expect(status.textContent).toContain("next message");
+    expect(status.textContent).toContain("can now use this in every conversation");
   });
 
   it("revise-in-place: with a draft in the form, the box revises it and never saves", async () => {

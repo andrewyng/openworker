@@ -99,6 +99,38 @@ def _enabled_connector_tools(secrets: SecretStore) -> tuple[set[str], set[str]]:
     return enabled_connectors, enabled_tools
 
 
+def _loaded_skill_names(messages: list[dict[str, Any]]) -> set[str]:
+    """Skills whose instructions successfully entered THIS conversation (a load_skill call
+    with a non-error result). Drives the disable countermand: a menu quietly shrinking is
+    passive, but instructions already in history keep steering the model unless it is
+    explicitly asked to stop."""
+    import json as _json
+
+    results: dict[str, str] = {}
+    for m in messages:
+        if m.get("role") == "tool" and m.get("tool_call_id"):
+            content = m.get("content")
+            results[m["tool_call_id"]] = (
+                content if isinstance(content, str) else _json.dumps(content)
+            )
+    loaded: set[str] = set()
+    for m in messages:
+        if m.get("role") != "assistant" or not m.get("tool_calls"):
+            continue
+        for tc in m["tool_calls"]:
+            fn = tc.get("function") or {}
+            if fn.get("name") != "load_skill":
+                continue
+            try:
+                name = str(_json.loads(fn.get("arguments") or "{}").get("name", ""))
+            except Exception:
+                continue
+            result = results.get(tc.get("id", ""), "")
+            if name and '"instructions"' in result:
+                loaded.add(name)
+    return loaded
+
+
 def _skill_dirs(workspace: Optional[Path]) -> list[Path]:
     dirs = [state_dir() / "skills"]
     if workspace is not None:
@@ -299,6 +331,10 @@ def build_engine(
         else None
     )
 
+    # Late-bound engine ref: the closure needs the conversation history (for the disable
+    # countermand) but the engine is constructed after the closure. Filled below.
+    _engine_box: list = []
+
     def context_provider() -> str:
         parts = []
         if permissions.mode is Mode.PLAN:
@@ -311,15 +347,24 @@ def build_engine(
                 parts.append(ctx)
         # Live skill menu (SKILLS-SPEC §4.1): recomputed every turn like the roots list, so
         # a skill installed/enabled/disabled mid-session applies from the NEXT MESSAGE —
-        # no new session, no lost context. (What a conversation already loaded stays; that
-        # is conversation memory, not the menu.)
+        # no new session, no lost context.
         skill_loader.rescan()
-        skills_ctx = skill_catalog_text(
-            skill_loader,
-            allowed=skill_filter() if callable(skill_filter) else skill_filter,
-        )
+        allowed = skill_filter() if callable(skill_filter) else skill_filter
+        skills_ctx = skill_catalog_text(skill_loader, allowed=allowed)
         if skills_ctx:
             parts.append(skills_ctx)
+        # Disable countermand (§3): instructions already loaded into this conversation keep
+        # steering the model even after the skill is turned off/deleted — history can't be
+        # un-read. So a loaded-but-no-longer-available skill gets an explicit stop note,
+        # recomputed fresh each turn (re-enable → the note disappears; never persisted).
+        eng = _engine_box[0] if _engine_box else None
+        if eng is not None:
+            available = set(skill_loader.names()) if allowed is None else set(allowed)
+            for name in sorted(_loaded_skill_names(eng.messages) - available):
+                parts.append(
+                    f'Note: the skill "{name}" has been disabled by the user — stop '
+                    "following its instructions from here on."
+                )
         return "\n\n".join(parts)
 
     engine = TurnEngine(
@@ -352,6 +397,7 @@ def build_engine(
         "workspace": str(ws) if ws else "",
     }
     engine.skill_loader = skill_loader  # type: ignore[attr-defined]
+    _engine_box.append(engine)  # late-bind for the countermand (see context_provider)
     return engine
 
 
