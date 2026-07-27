@@ -153,6 +153,17 @@ export function Composer(props: Props) {
     el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
   }, [text]);
 
+  // Clear the draft when the conversation changes, so a half-typed message / picked file doesn't
+  // bleed from one session into another. Declared BEFORE the prefill effect: when both fire in
+  // the same render (the Skills doorway starts a new session AND prefills it), effects run in
+  // declaration order — clear first, then the prefill lands on the fresh session.
+  useEffect(() => {
+    setText("");
+    setAttachments([]);
+    setPendingSkill(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.resetKey]);
+
   // Apply a prefill (text + attachments) pushed from outside, then focus the composer. Applied at
   // most once per nonce (a ref guards against StrictMode/re-render double-fires), and attachments
   // are de-duplicated so the same file never lands twice.
@@ -166,15 +177,6 @@ export function Composer(props: Props) {
     textareaRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.prefill?.nonce]);
-
-  // Clear the draft when the conversation changes, so a half-typed message / picked file doesn't
-  // bleed from one session into another.
-  useEffect(() => {
-    setText("");
-    setAttachments([]);
-    setPendingSkill(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.resetKey]);
 
   // Dictation is intentionally native-only: the browser/dev build remains a local server client
   // and never turns on the browser microphone or ships audio anywhere.

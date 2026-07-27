@@ -126,3 +126,25 @@ describe("Composer / skills popup", () => {
     expect(screen.queryByTestId("skill-popup")).toBeNull();
   });
 });
+
+describe("Composer — the doorway prefill (SKILLS-SPEC §5.2)", () => {
+  it("a prefill arriving together with a session switch survives the draft clear", async () => {
+    stubFetch();
+    const { rerender } = render(<Composer {...props({ resetKey: "s1" })} />);
+    // The doorway does both in one render: new session (resetKey) + prefill. The clear
+    // effect must run BEFORE the prefill effect or the prefill is wiped (regression).
+    rerender(
+      <Composer
+        {...props({
+          resetKey: "s2",
+          prefill: { text: "Build a new skill for me: release procedure", nonce: 1 },
+        })}
+      />,
+    );
+    await waitFor(() => {
+      expect((box() as HTMLTextAreaElement).value).toBe(
+        "Build a new skill for me: release procedure",
+      );
+    });
+  });
+});
