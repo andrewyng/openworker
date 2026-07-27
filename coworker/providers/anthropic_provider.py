@@ -384,6 +384,7 @@ class AnthropicProvider(ProviderClient):
         *,
         default_model: str = "claude-sonnet-4-6",
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         secrets: Any = None,
         thinking_budget: Optional[int] = None,
     ):
@@ -391,8 +392,12 @@ class AnthropicProvider(ProviderClient):
         # before any key exists; the key resolves at call time (explicit → env → SecretStore).
         # Tests inject a `client` directly. `thinking_budget` (tokens, from the provider
         # profile's optional field) opts every request into extended thinking.
+        # `base_url` points the same SDK at any Anthropic-protocol-compatible gateway (e.g.
+        # a third-party Claude/MiniMax endpoint at https://api.<vendor>/anthropic). When None,
+        # behavior is identical to stock Anthropic (api.anthropic.com).
         self._client = client
         self._api_key = api_key
+        self._base_url = base_url
         self._secrets = secrets
         self.default_model = default_model
         self.thinking_budget = thinking_budget or 0
@@ -408,7 +413,10 @@ class AnthropicProvider(ProviderClient):
                     "No Anthropic API key configured. Set ANTHROPIC_API_KEY in the environment, "
                     "or add your key in Manage → Configure Models."
                 )
-            self._client = Anthropic(api_key=key)
+            kwargs: dict[str, Any] = {"api_key": key}
+            if self._base_url:
+                kwargs["base_url"] = self._base_url
+            self._client = Anthropic(**kwargs)
         return self._client
 
     def _request_kwargs(
