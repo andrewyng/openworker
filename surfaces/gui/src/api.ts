@@ -1,5 +1,7 @@
 import type { SessionInfo, WsEvent } from "./types";
 
+declare const __COWORKER_DEV_TOKEN__: string;
+
 // Endpoint resolution order: runtime-injected globals (Tauri sets `window.__COWORKER_HTTP__`
 // for its dynamically-chosen sidecar port) → Vite env → the 127.0.0.1:8765 dev default. This
 // keeps a single codebase: browser `npm run dev` hits 8765; the desktop shell hits its sidecar.
@@ -11,6 +13,29 @@ const wsBase = (): string =>
   (globalThis as any).__COWORKER_WS__ ||
   (import.meta as any).env?.VITE_COWORKER_WS ||
   "ws://127.0.0.1:8765";
+const apiToken = (): string =>
+  (globalThis as any).__COWORKER_API_TOKEN__ ||
+  (import.meta as any).env?.VITE_COWORKER_API_TOKEN ||
+  (typeof __COWORKER_DEV_TOKEN__ === "string" ? __COWORKER_DEV_TOKEN__ : "");
+
+// All local REST calls pass through this module, so a module-local wrapper applies launch
+// authentication without asking every endpoint helper to remember the security header.
+const fetch = (
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<Response> => {
+  const headers = new Headers(init.headers);
+  const token = apiToken();
+  if (token) headers.set("X-OpenWorker-Token", token);
+  return globalThis.fetch(input, { ...init, headers });
+};
+
+const openWebSocket = (url: string): WebSocket => {
+  const token = apiToken();
+  return token
+    ? new WebSocket(url, ["openworker", token])
+    : new WebSocket(url);
+};
 
 export interface Health {
   status: string;
@@ -22,6 +47,14 @@ export interface RecentWorkspace {
   path: string;
   name: string;
   exists: boolean;
+}
+
+export interface WorkspaceCommandTrust {
+  workspace: string;
+  requested_commands: string[];
+  trusted: boolean;
+  required: boolean;
+  exists?: boolean;
 }
 
 export async function getHealth(): Promise<Health> {
@@ -49,11 +82,34 @@ export async function pickFolderViaServer(): Promise<string | null> {
 export async function openWorkspace(
   path: string,
   create = false,
-): Promise<{ path: string; ok: boolean; error?: string; git_branch?: string | null }> {
+): Promise<{
+  path: string;
+  ok: boolean;
+  error?: string;
+  git_branch?: string | null;
+  command_trust?: WorkspaceCommandTrust;
+}> {
   const res = await fetch(`${httpBase()}/v1/workspaces/open`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path, create }),
+  });
+  return res.json();
+}
+
+export async function getTrustedWorkspaces(): Promise<WorkspaceCommandTrust[]> {
+  const res = await fetch(`${httpBase()}/v1/workspaces/trusted`);
+  return (await res.json()).workspaces ?? [];
+}
+
+export async function setWorkspaceTrusted(
+  path: string,
+  trusted: boolean,
+): Promise<{ ok: boolean; error?: string } & WorkspaceCommandTrust> {
+  const res = await fetch(`${httpBase()}/v1/workspaces/trust`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, trusted }),
   });
   return res.json();
 }
@@ -307,6 +363,8 @@ export interface SlackWorkspace {
   allowed_users: string[];
   allow_all: boolean;
   allowed_user_names?: Record<string, string | null>;
+  approval_owner_ids?: string[];
+  approval_owner_names?: Record<string, string | null>;
   // Who installed this workspace (authed_user) — pre-added to the allow-list on
   // connect (UX-027); the GUI marks their chip "you" and keys the setup card copy.
   installer_user_id?: string;
@@ -387,6 +445,8 @@ export interface Connector {
   mcp?: boolean; // MCP-backed one-click (vendor-hosted MCP + local OAuth — no cloud sign-in)
   allowed_users: string[]; // the allow-list (managed inline in the Connectors tab)
   allowed_user_names?: Record<string, string | null>; // id → display name (people directory)
+  approval_owner_ids?: string[]; // Manual Slack: humans allowed to resolve approvals
+  approval_owner_names?: Record<string, string | null>;
   recent?: RecentSender[]; // recently-seen senders on a connected two-way connector
   unauthorized?: ParkedMessage[]; // parked messages from unallowed senders (§19)
   tools: ConnectorTool[];
@@ -1357,7 +1417,7 @@ export function connectEvents(
   let closed = false;
   const open = () => {
     if (closed) return;
-    ws = new WebSocket(`${wsBase()}/ws/events`);
+    ws = openWebSocket(`${wsBase()}/ws/events`);
     ws.onmessage = (e) => {
       try {
         onEvent(JSON.parse(e.data));
@@ -1529,6 +1589,32 @@ export async function disallowUser(name: string, userId: string, teamId?: string
   return res.json();
 }
 
+export async function addSlackApprovalOwner(
+  userId: string,
+  displayName?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/connectors/slack/approval-owners/add`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id: userId,
+      ...(displayName ? { name: displayName } : {}),
+    }),
+  });
+  return res.json();
+}
+
+export async function removeSlackApprovalOwner(
+  userId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/connectors/slack/approval-owners/remove`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId }),
+  });
+  return res.json();
+}
+
 /** Stop relaying one managed Slack workspace (the app stays installed in Slack). */
 export async function disconnectSlackWorkspace(teamId: string): Promise<{ ok: boolean; error?: string; remaining_workspaces?: number }> {
   const res = await fetch(
@@ -1684,7 +1770,7 @@ export class Session {
 
   constructor(sessionId: string, workspace: string, agent: string, handlers: Handlers) {
     const q = `?workspace=${encodeURIComponent(workspace)}&agent=${encodeURIComponent(agent)}`;
-    this.ws = new WebSocket(`${wsBase()}/ws/session/${sessionId}${q}`);
+    this.ws = openWebSocket(`${wsBase()}/ws/session/${sessionId}${q}`);
     this.ws.onmessage = (e) => handlers.onEvent(JSON.parse(e.data));
     this.ws.onopen = () => {
       this.flush();
@@ -1771,4 +1857,3 @@ export class Session {
     this.ws.close();
   }
 }
-
