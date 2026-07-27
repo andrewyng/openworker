@@ -135,7 +135,7 @@ describe("SkillsTab", () => {
     });
   });
 
-  it("the enabled switch PATCHes {enabled}", async () => {
+  it("the enabled switch PATCHes {enabled} and teaches the off rule + physics footnote", async () => {
     const calls = stubFetch([
       { match: "/v1/skills", method: "GET", json: LIST },
       { match: "/v1/skills/weekly-report", method: "PATCH", json: { ok: true } },
@@ -147,6 +147,9 @@ describe("SkillsTab", () => {
       const patch = calls.find((c) => c.method === "PATCH");
       expect(patch?.body).toMatchObject({ enabled: false });
     });
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toContain("Off from the worker's next message");
+    expect(status.textContent).toContain("keeps what it read"); // can't-unread, in place
   });
 
   it("upload shows the parsed preview and installs nothing until confirmed", async () => {

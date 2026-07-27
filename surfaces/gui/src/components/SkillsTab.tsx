@@ -80,6 +80,12 @@ export function SkillsTab() {
 
   const CONFIRMATION =
     "The worker can use it from its next message, in every conversation.";
+  // The physics footnote (SKILLS-SPEC §3): shown exactly when it becomes relevant — turning
+  // OFF or deleting. Context can't be un-read; only a new conversation is a clean slate.
+  const OFF_NOTE =
+    "Off from the worker's next message, in every conversation. A conversation that already used it keeps what it read until it ends.";
+  const DELETE_NOTE =
+    "Removed. A conversation that already used it keeps what it read until it ends.";
 
   const refresh = () => listSkills().then(setRows);
   useEffect(() => {
@@ -168,6 +174,7 @@ export function SkillsTab() {
     setArmedDelete(null);
     const res = await deleteSkill(row.name);
     if (fail(res)) return;
+    setNotice(DELETE_NOTE);
     refresh();
   };
 
@@ -341,7 +348,13 @@ export function SkillsTab() {
                 role="switch"
                 aria-label={`${row.name} enabled`}
                 checked={row.enabled}
-                onChange={(e) => updateSkill(row.name, { enabled: e.target.checked }).then(refresh)}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  updateSkill(row.name, { enabled: on }).then((res) => {
+                    if (!fail(res)) setNotice(on ? CONFIRMATION : OFF_NOTE);
+                    refresh();
+                  });
+                }}
               />
               On
             </label>
