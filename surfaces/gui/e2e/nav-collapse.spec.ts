@@ -29,6 +29,28 @@ test("⌘B toggles the sidebar collapse", async ({ page }) => {
   await expect(app).not.toHaveClass(/nav-collapsed/);
 });
 
+test("sidebar can stay expanded while an artifact preview is open", async ({ page }) => {
+  await page.goto("/");
+  const app = page.locator(".app");
+  await expect(page.locator(".sidebar")).toBeVisible();
+
+  // Opening a full preview auto-collapses the nav to make room.
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent("ocw-open-artifact", { detail: { path: "reports/summary.md" } }),
+    );
+  });
+  await expect(page.locator(".right-rail.artifact-mode")).toBeVisible();
+  await expect(app).toHaveClass(/nav-collapsed/);
+
+  // A manual toggle owns the state from this point on. The preview notification callback must
+  // stay referentially stable, or RightRail's effect fires again and immediately re-collapses it.
+  await page.getByRole("button", { name: "Show sidebar" }).click();
+  await page.waitForTimeout(250);
+  await expect(app).not.toHaveClass(/nav-collapsed/);
+  await expect(page.locator(".right-rail.artifact-mode")).toBeVisible();
+});
+
 test("RECENT header group/filter popover: switch grouping + see coworker filters", async ({
   page,
 }) => {
