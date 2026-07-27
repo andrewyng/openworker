@@ -3,8 +3,8 @@ import { useEffect } from "react";
 import {
   createSkill,
   deleteSkill,
-  draftSkill,
   listSkills,
+  revealSkill,
   stageSkillUpload,
   confirmSkillUpload,
   updateSkill,
@@ -13,12 +13,12 @@ import {
 } from "../api";
 import { Icon } from "./Icon";
 
-// Settings ▸ Skills (SKILLS-SPEC §4.1/§4.2, global-only per §4.7) — the management home:
-// list + permanent enable/disable + the three add modes (write / upload / draft-with-
-// OpenWorker). Everything a user creates here is GLOBAL — "skills are things your worker
-// knows everywhere". Folder/project scope was retired 2026-07-27; repo-shipped skills
-// still load silently in Code sessions (backend compat, no UI). Persona-bundled skills
-// arrive with personas (§6) and are managed on the persona page, not here.
+// Settings ▸ Skills (SKILLS-SPEC §5/§6) — the management home: list + permanent
+// enable/disable + the three doors (write form / import / ask-the-worker). Everything a
+// user creates here is GLOBAL — "skills are things your worker knows everywhere".
+// Creation-by-AI is a CONVERSATION (the doorway card below starts one; the worker proposes
+// via save_skill) — there is no in-Settings drafting. Persona-bundled skills arrive with
+// personas (§10) and are managed on the persona page, not here.
 
 const CARD = "rounded-xl2 border border-line bg-panel";
 const FIELD_LABEL = "text-[12.5px] font-medium text-ink";
@@ -65,12 +65,17 @@ async function fileToB64(file: File): Promise<string> {
   return btoa(bin);
 }
 
-export function SkillsTab() {
+export function SkillsTab({
+  onCreateSkill,
+}: {
+  // The doorway (SKILLS-SPEC §5.2): starts a new conversation with the description
+  // prefilled in the composer — the worker builds the skill and proposes it via save_skill.
+  onCreateSkill?: (description: string) => void;
+}) {
   const [rows, setRows] = useState<SkillRow[]>([]);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [upload, setUpload] = useState<SkillUploadPreview | null>(null);
-  const [draftText, setDraftText] = useState("");
-  const [drafting, setDrafting] = useState(false);
+  const [describe, setDescribe] = useState("");
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
   const [error, setError] = useState("");
   // The state-change callout (SKILLS-SPEC §4.1 #2): name-first so the user knows WHICH
@@ -124,35 +129,6 @@ export function SkillsTab() {
     if (editor.mode === "new")
       setNotice({ name: editor.name.trim(), text: CONFIRMATION, tone: "ok" });
     refresh();
-  };
-
-  const draft = async () => {
-    setDrafting(true);
-    // Refine-in-place (§4.2 #3): with a draft in the form, the box revises it — CURRENT
-    // form contents (hand-edits included) + the note in, revised fields out. No chat,
-    // no history; the draft itself is the memory. Fresh mode otherwise.
-    const res = await draftSkill(
-      editor
-        ? {
-            current: {
-              name: editor.name,
-              description: editor.description,
-              instructions: editor.instructions,
-            },
-            feedback: draftText,
-          }
-        : { description: draftText },
-    );
-    setDrafting(false);
-    if (fail(res)) return;
-    // The draft only fills the form — the user reviews and saves (never auto-saved, §4.2).
-    setEditor({
-      mode: editor?.mode ?? "new",
-      name: editor?.mode === "edit" ? editor.name : res.name || editor?.name || "",
-      description: res.description ?? editor?.description ?? "",
-      instructions: res.instructions ?? editor?.instructions ?? "",
-    });
-    setDraftText("");
   };
 
   const onPickFile = async (file: File | undefined) => {
@@ -327,8 +303,8 @@ export function SkillsTab() {
       <div className={`${CARD} divide-y divide-line`}>
         {rows.length === 0 && !editor ? (
           <div className="p-5 text-[13px] text-muted">
-            No skills yet. Write one, import a .zip or SKILL.md someone shared, or describe
-            one below and let OpenWorker draft it.
+            No skills yet. Write one, import one someone shared, or describe one below and
+            the worker will build it with you.
           </div>
         ) : null}
         {rows.map((row) => (
@@ -339,6 +315,16 @@ export function SkillsTab() {
                   {row.name}
                 </span>
                 {row.source !== "local" ? <span className={BADGE}>{row.source}</span> : null}
+                {/* §6: a rich skill must not look identical to a one-file one. */}
+                {row.files ? (
+                  <button
+                    className="text-[11px] text-muted hover:text-ink shrink-0"
+                    title="Show folder"
+                    onClick={() => revealSkill(row.name)}
+                  >
+                    · {row.files} file{row.files === 1 ? "" : "s"}
+                  </button>
+                ) : null}
               </div>
               <div className="text-[12px] text-muted truncate">{row.description}</div>
             </div>
@@ -389,37 +375,29 @@ export function SkillsTab() {
         ))}
       </div>
 
+      {/* The doorway (SKILLS-SPEC §5.2): creation is a conversation, Settings is management.
+          Copy per §7 — capability in plain words ("scripts and examples included"), the
+          safety promise ("asks before adding"), destination "your skills". */}
       <div className={`${CARD} p-4 mt-4`}>
-        <div className="text-[13px] font-medium mb-1">
-          {editor ? "Ask OpenWorker to revise" : "Create using OpenWorker"}
-        </div>
+        <div className="text-[13px] font-medium mb-1">Create using OpenWorker</div>
         <p className="text-[12.5px] text-muted mb-2">
-          {editor
-            ? "Tell it what to change about the draft in the editor above."
-            : "Describe what the skill should do — a draft lands in the editor for you to review. Nothing is saved until you save it."}
+          Describe the skill you want — the worker builds the whole thing with you, scripts
+          and examples included, and asks before adding it to your skills.
         </p>
         <textarea
           className={`${INPUT} min-h-[64px]`}
-          value={draftText}
-          placeholder={
-            editor
-              ? "Make it shorter, and always ask for the repo name first…"
-              : "Every Monday I write a status report from Slack and GitHub activity…"
-          }
-          aria-label={editor ? "Revise the draft" : "Describe the skill"}
-          onChange={(e) => setDraftText(e.target.value)}
+          value={describe}
+          placeholder="Every Monday I write a status report from Slack and GitHub activity…"
+          aria-label="Describe the skill"
+          onChange={(e) => setDescribe(e.target.value)}
         />
         <button
           className={`${BTN_ACCENT} mt-2`}
-          disabled={!draftText.trim() || drafting}
-          onClick={draft}
+          disabled={!describe.trim() || !onCreateSkill}
+          onClick={() => onCreateSkill?.(describe.trim())}
         >
-          {drafting ? "Drafting…" : editor ? "Revise" : "Draft with OpenWorker"}
+          Start a conversation
         </button>
-        <p className="text-[11.5px] text-muted mt-2">
-          Not a chat — each revision rewrites the draft above using your note. The draft itself
-          is the memory; your manual edits are kept.
-        </p>
       </div>
     </section>
   );

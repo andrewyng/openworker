@@ -125,11 +125,13 @@ function Buttons({
   onApprove,
   runTask,
   primaryLabel,
+  denyLabel = "Deny",
 }: {
   item: ApprovalItem;
   onApprove: (decision: ApprovalDecision) => void;
   runTask?: { id: string; title: string } | null;
   primaryLabel: string;
+  denyLabel?: string;
 }) {
   const connector = item.category === "connector";
   const offerStanding = !!(runTask && item.standingTarget);
@@ -152,7 +154,9 @@ function Buttons({
           exactly the scope distinction §25 exists to draw. Same rule for run_shell:
           the command-scoped button below is the specific (safer) grant, so the
           tool-wide one stays out of the card. */}
-      {!connector && !offerStanding && item.name !== "run_shell" && (
+      {/* save_skill: no session-wide "always" — every skill proposal gets its own review
+          (SKILLS-SPEC §5: one gate, always). */}
+      {!connector && !offerStanding && item.name !== "run_shell" && item.name !== "save_skill" && (
         <button
           className="btn"
           title={`Always allow ${TOOL_VERBS[item.name]?.toLowerCase() || item.name} for this session`}
@@ -168,7 +172,7 @@ function Buttons({
       )}
       <span className="spacer" />
       <button className="btn quiet-deny" onClick={() => onApprove("deny")}>
-        Deny
+        {denyLabel}
       </button>
     </div>
   );
@@ -252,6 +256,28 @@ export function ApprovalCard({
       {item.name === "send_message" && item.args?.text && (
         <MessagePreview text={String(item.args.text)} />
       )}
+      {/* save_skill (SKILLS-SPEC §5.2): the arguments ARE the review surface — show the
+          description, the full instructions (clamped, expandable), and every bundled file. */}
+      {item.name === "save_skill" && (
+        <>
+          {item.args?.description && (
+            <div className="approval-with">{String(item.args.description)}</div>
+          )}
+          {item.args?.instructions && <PreviewBlock text={String(item.args.instructions)} mono={false} />}
+          {Array.isArray(item.args?.files) && item.args.files.length > 0 && (
+            <div data-testid="skill-bundle-files">
+              {item.args.files.map((f: unknown, i: number) => (
+                <span className="approval-filechip" key={i}>
+                  <span className="ico">
+                    <Icon name="file" size={13} />
+                  </span>
+                  {String(f).split(/[\\/]/).pop() || String(f)}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      )}
 
       {grants.length > 0 && (
         <div className="approval-grants" data-testid="approval-grants">
@@ -272,7 +298,7 @@ export function ApprovalCard({
       )}
       {/* Long-tail tools: no bespoke preview — fall back to the compact args line. */}
       {!FILE_WRITES.has(item.name) &&
-        !["run_shell", "send_message", "send_file"].includes(item.name) &&
+        !["run_shell", "send_message", "send_file", "save_skill"].includes(item.name) &&
         !grants.length &&
         shortArgs(item.args) && <div className="approval-rest">{shortArgs(item.args)}</div>}
       {reason && <div className="approval-reason">{reason}</div>}
@@ -280,7 +306,13 @@ export function ApprovalCard({
       {item.resolved ? (
         <div className="resolved">Approved: {item.resolved.replace("_", " ")}</div>
       ) : (
-        <Buttons item={item} onApprove={onApprove} runTask={runTask} primaryLabel="Allow once" />
+        <Buttons
+          item={item}
+          onApprove={onApprove}
+          runTask={runTask}
+          primaryLabel={item.name === "save_skill" ? "Add to my skills" : "Allow once"}
+          denyLabel={item.name === "save_skill" ? "Not now" : "Deny"}
+        />
       )}
     </div>
   );

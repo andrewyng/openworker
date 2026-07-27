@@ -1307,6 +1307,12 @@ export function App() {
           key={settingsTab}
           initialTab={settingsTab}
           onOpenPersona={(id) => openPersona(id, "settings")}
+          onCreateSkill={(description) => {
+            // The Skills doorway (SKILLS-SPEC §5.2): creation is a conversation. Fresh
+            // session, description in the composer — the user reads and hits send.
+            startNewSession();
+            prefillComposer(`Build a new skill for me: ${description}`);
+          }}
         />
       ) : surface === "audit" ? (
         <AuditView />

@@ -70,6 +70,7 @@ def test_create_then_list_enriched(tmp_path):
             "source": "local",
             "enabled": True,
             "path": rows[0]["path"],
+            "files": 0,
         }
     ]
 
@@ -225,39 +226,13 @@ def test_upload_invalid_archive_friendly(tmp_path):
     )
 
 
-def test_draft_returns_fields_and_survives_provider_failure(tmp_path):
-    draft_json = (
-        '{"name": "weekly-report", "description": "Monday report", '
-        '"instructions": "1. Collect updates"}'
-    )
-    client, _m, _p = _client(tmp_path, [AssistantTurn(text=draft_json)])
-    res = client.post("/v1/skills/draft", json={"description": "my monday report"}).json()
-    assert res["ok"] is True and res["name"] == "weekly-report"
-    assert res["instructions"].startswith("1.")
-    # queue exhausted → provider raises → friendly error, never a 500
-    res = client.post("/v1/skills/draft", json={"description": "again"}).json()
-    assert res["ok"] is False and "draft" in res["error"].lower()
-    assert client.post("/v1/skills/draft", json={}).json()["ok"] is False
-
-
-def test_draft_revise_in_place(tmp_path):
-    """§4.2 #3: a revision round sends the CURRENT form contents + feedback — stateless,
-    the draft is the memory. The prompt must carry both."""
-    revised = '{"name": "greet", "description": "shorter", "instructions": "1. Hi"}'
-    client, _m, provider = _client(tmp_path, [AssistantTurn(text=revised)])
-    res = client.post(
-        "/v1/skills/draft",
-        json={
-            "current": {"name": "greet", "description": "long", "instructions": "1. Hello there"},
-            "feedback": "shorter please",
-        },
-    ).json()
-    assert res["ok"] is True and res["description"] == "shorter"
-    prompt = str(provider.seen[-1][-1]["content"])
-    assert "Hello there" in prompt  # current draft rode along…
-    assert "shorter please" in prompt  # …with the feedback
-    # feedback without a draft (and vice versa) → the friendly fresh-mode error
-    assert client.post("/v1/skills/draft", json={"feedback": "x"}).json()["ok"] is False
+def test_draft_endpoint_is_gone(tmp_path):
+    """The drafting path retired with the worker-authors flow (SKILLS-SPEC §5.2/§9):
+    creation is a conversation ending in save_skill, not a Settings endpoint."""
+    client, _m, _p = _client(tmp_path)
+    # 405 not 404: the path now falls through to PATCH /v1/skills/{name}. Either way,
+    # POSTing a draft is no longer a thing.
+    assert client.post("/v1/skills/draft", json={"description": "x"}).status_code in (404, 405)
 
 
 # -- session mutes over HTTP ----------------------------------------------------------
@@ -378,3 +353,9 @@ def test_ws_force_run_unknown_and_muted_error_without_killing_socket(tmp_path):
     ]
     assert all("Use the skill" not in u for u in users)
     assert any("plain" in u for u in users)
+
+
+def test_reveal_unknown_skill_is_a_friendly_error(tmp_path):
+    client, _m, _p = _client(tmp_path)
+    res = client.post("/v1/skills/nope/reveal", json={}).json()
+    assert res["ok"] is False and "nope" in res["error"]

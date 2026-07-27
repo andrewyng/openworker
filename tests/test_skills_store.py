@@ -310,3 +310,99 @@ def test_corrupt_settings_json_treated_as_empty(store):
     assert store.disabled_names() == set()
     store.set_enabled("x", False)  # recovers by rewriting the file
     assert store.disabled_names() == {"x"}
+
+
+# -- save_skill tool (SKILLS-SPEC §5.2 — the worker-authors door) -------------------
+
+
+from coworker.skills import save_skill_tool  # noqa: E402
+
+
+@pytest.fixture()
+def session_dir(tmp_path):
+    d = tmp_path / "session-root"
+    d.mkdir()
+    return d
+
+
+def test_save_skill_adds_a_new_global_skill(store, session_dir):
+    tool = save_skill_tool(store, allowed_dirs=[session_dir])
+    result = tool(
+        name="weekly-report",
+        description="Monday status report",
+        instructions="1. Gather updates\n2. Write the report",
+    )
+    assert result["ok"] and result["action"] == "added"
+    skill = SkillLoader([store.global_dir]).get("weekly-report")
+    assert skill.description == "Monday status report"
+
+
+def test_save_skill_bundles_files_from_session_roots(store, session_dir):
+    script = session_dir / "fetch_prs.py"
+    script.write_text("print('prs')", encoding="utf-8")
+    example = session_dir / "sub" / "example-report.md"
+    example.parent.mkdir()
+    example.write_text("# Example", encoding="utf-8")
+    tool = save_skill_tool(store, allowed_dirs=[session_dir])
+    result = tool(
+        name="gh-report",
+        description="report",
+        instructions="Run fetch_prs.py",
+        files=[str(script), "sub/example-report.md"],  # absolute AND relative both work
+    )
+    assert result["ok"] and sorted(result["files"]) == ["example-report.md", "fetch_prs.py"]
+    folder = store.global_dir / "gh-report"
+    assert (folder / "fetch_prs.py").read_text(encoding="utf-8") == "print('prs')"
+    assert (folder / "example-report.md").is_file()
+
+
+def test_save_skill_existing_name_updates_and_keeps_resources(store, session_dir):
+    store.create(name="gh-report", description="old", instructions="old body")
+    (store.global_dir / "gh-report" / "keep.txt").write_text("keep", encoding="utf-8")
+    tool = save_skill_tool(store, allowed_dirs=[session_dir])
+    result = tool(name="gh-report", description="new", instructions="new body")
+    assert result["ok"] and result["action"] == "updated"
+    skill = SkillLoader([store.global_dir]).get("gh-report")
+    assert skill.description == "new" and "new body" in skill.instructions
+    assert (store.global_dir / "gh-report" / "keep.txt").is_file()  # siblings preserved
+
+
+def test_save_skill_refuses_files_outside_session_roots(store, session_dir, tmp_path):
+    secret = tmp_path / "outside.txt"
+    secret.write_text("secret", encoding="utf-8")
+    tool = save_skill_tool(store, allowed_dirs=[session_dir])
+    result = tool(name="x", description="d", instructions="i", files=[str(secret)])
+    assert "outside this session's folders" in result["error"]
+    assert not (store.global_dir / "x").exists()  # vetting happens BEFORE any disk write
+
+
+def test_save_skill_validation_errors(store, session_dir):
+    tool = save_skill_tool(store, allowed_dirs=[session_dir])
+    assert "description" in tool(name="x", description=" ", instructions="i")["error"]
+    assert "instructions" in tool(name="x", description="d", instructions=" ")["error"]
+    assert "error" in tool(name="../evil", description="d", instructions="i")
+    (session_dir / "SKILL.md").write_text("x", encoding="utf-8")
+    result = tool(name="x", description="d", instructions="i", files=["SKILL.md"])
+    assert "SKILL.md" in result["error"]
+    assert not (store.global_dir / "x").exists()
+
+
+def test_save_skill_requires_approval_metadata(store):
+    tool = save_skill_tool(store)
+    meta = tool.__aisuite_tool_metadata__
+    assert meta.requires_approval is True  # → EXTERNAL risk → approval card, every call
+    assert tool.__coworker_schema__["function"]["name"] == "save_skill"
+    required = tool.__coworker_schema__["function"]["parameters"]["required"]
+    assert required == ["name", "description", "instructions"]
+
+
+def test_rows_report_bundled_file_count(store):
+    store.create(name="plain", description="d", instructions="i")
+    store.create(name="rich", description="d", instructions="i")
+    rich = store.global_dir / "rich"
+    (rich / "fetch.py").write_text("x", encoding="utf-8")
+    (rich / "examples").mkdir()
+    (rich / "examples" / "one.md").write_text("x", encoding="utf-8")
+    by_name = {r["name"]: r for r in store.rows()}
+    assert by_name["plain"]["files"] == 0  # SKILL.md itself is not "bundled"
+    assert by_name["rich"]["files"] == 2  # counted recursively

@@ -70,9 +70,13 @@ const SET_TABS: { key: SetTab; label: string; icon: "sliders" | "code" | "mic" |
 export function SettingsView({
   initialTab,
   onOpenPersona,
+  onCreateSkill,
 }: {
   initialTab?: SetTab;
   onOpenPersona?: (id: string) => void;
+  // Skills doorway (SKILLS-SPEC §5.2): start a new conversation with the description
+  // prefilled — the worker builds the skill and proposes it via save_skill.
+  onCreateSkill?: (description: string) => void;
 }) {
   // Personas is flag-gated (hidden for launch) — filter the tab AND coerce a stale
   // deep-link to it (openSettings("personas") callers) so the page never opens on a
@@ -123,7 +127,7 @@ export function SettingsView({
               </div>
             </section>
           ) : tab === "skills" ? (
-            <SkillsTab />
+            <SkillsTab onCreateSkill={onCreateSkill} />
           ) : tab === "voice" ? (
             <VoiceInputSection />
           ) : (

@@ -135,6 +135,11 @@ export function humanizeApprovalTitle(name: string, args: any): HumanLine {
       return a.title
         ? { pre: "Create the automation ", obj: `“${trunc(String(a.title), 60)}”` }
         : { pre: "Create an automation" };
+    case "save_skill":
+      // SKILLS-SPEC §5.2/§7: "Add", never "install"; destination is "your skills".
+      return a.name
+        ? { pre: "Add skill ", obj: String(a.name), post: " to your skills" }
+        : { pre: "Add a skill to your skills" };
     default:
       return { pre: `Use ${name}` };
   }

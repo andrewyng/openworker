@@ -1056,6 +1056,7 @@ export interface SkillRow {
   source: string; // "local" | "uploaded"
   enabled: boolean;
   path: string;
+  files?: number; // bundled resources beyond SKILL.md (§6 — rich skills are visible)
 }
 
 export interface SessionSkillRow {
@@ -1107,6 +1108,12 @@ export async function updateSkill(
   return res.json();
 }
 
+export async function revealSkill(name: string): Promise<{ ok: boolean; error?: string }> {
+  // §6 "Show folder": the backend opens the skill's folder in the OS file manager.
+  const res = await fetch(skillUrl(`/${encodeURIComponent(name)}/reveal`), jsonPost({}));
+  return res.json();
+}
+
 export async function deleteSkill(
   name: string,
   workspace?: string,
@@ -1142,20 +1149,6 @@ export async function confirmSkillUpload(
   return res.json();
 }
 
-export async function draftSkill(payload: {
-  description?: string; // fresh draft
-  current?: { name: string; description: string; instructions: string }; // revise-in-place:
-  feedback?: string; //   current form contents + a note → revised fields (stateless per round)
-}): Promise<{
-  ok: boolean;
-  error?: string;
-  name?: string;
-  description?: string;
-  instructions?: string;
-}> {
-  const res = await fetch(skillUrl("/draft"), jsonPost(payload));
-  return res.json();
-}
 
 export async function sessionSkills(
   sessionId: string,

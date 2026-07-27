@@ -220,3 +220,43 @@ describe("InboxItemCard — Allow every time on parked run approvals", () => {
     // Old rows without tool data keep the legacy treatment (covered above).
   });
 });
+
+describe("ApprovalCard — save_skill (SKILLS-SPEC §5.2)", () => {
+  const skillApproval = (extra: Partial<ApprovalItem> = {}): ApprovalItem =>
+    sendApproval({
+      name: "save_skill",
+      category: "skills",
+      args: {
+        name: "weekly-github-report",
+        description: "Create a concise Monday status report from GitHub activity.",
+        instructions: "1. Fetch PRs\n2. Write the report",
+        files: ["fetch_prs.py", "sub/example-report.md"],
+      },
+      standingTarget: undefined,
+      ...extra,
+    });
+
+  it("shows name-first title, description, instructions, and every bundled file", () => {
+    render(<ApprovalCard item={skillApproval()} onApprove={vi.fn()} />);
+    expect(screen.getByText("weekly-github-report")).toBeTruthy(); // bold obj in the title
+    expect(screen.getByText(/to your skills/)).toBeTruthy();
+    expect(
+      screen.getByText("Create a concise Monday status report from GitHub activity."),
+    ).toBeTruthy();
+    expect(screen.getByText(/Fetch PRs/)).toBeTruthy();
+    const chips = screen.getByTestId("skill-bundle-files");
+    expect(chips.textContent).toContain("fetch_prs.py");
+    expect(chips.textContent).toContain("example-report.md"); // basename, not the path
+  });
+
+  it("uses the §7 button copy and never offers a session-wide always", () => {
+    const onApprove = vi.fn();
+    render(<ApprovalCard item={skillApproval()} onApprove={onApprove} />);
+    expect(screen.queryByText("Always allow")).toBeNull(); // every proposal gets its own review
+    expect(screen.queryByText("Deny")).toBeNull();
+    fireEvent.click(screen.getByText("Add to my skills"));
+    expect(onApprove).toHaveBeenCalledWith("once");
+    fireEvent.click(screen.getByText("Not now"));
+    expect(onApprove).toHaveBeenCalledWith("deny");
+  });
+});

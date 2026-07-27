@@ -3664,6 +3664,39 @@ class SessionManager:
         adds that project's skills, with project copies shadowing same-named global ones."""
         return self.skill_store.rows(workspace or None)
 
+    def reveal_skill(
+        self, name: str, workspace: Optional[str] = None
+    ) -> dict[str, Any]:
+        """Open the skill's folder in the OS file manager (§6 "Show folder" — the power-user
+        window into folder-is-truth). Same local-machine rationale as reveal_artifact."""
+        import subprocess
+        import sys
+
+        try:
+            folder, _scope = self.skill_store.find(name, workspace or None)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(
+                    ["open", str(folder)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            elif sys.platform == "win32":
+                import os
+
+                os.startfile(str(folder))  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(
+                    ["xdg-open", str(folder)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
     def effective_skill_names(
         self, session_id: str, workspace: Optional[str | Path] = None
     ) -> set[str]:
@@ -3792,49 +3825,6 @@ class SessionManager:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "skill": saved}
-
-    def draft_skill(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Draft (or refine-in-place, SKILLS-SPEC §4.2 #3) for "create using OpenWorker" —
-        returns fields for the Write form; never saves anything itself (the user reviews
-        first). Fresh mode: `description`. Revise mode: `current` (the form's contents,
-        including any hand-edits) + `feedback` — one stateless call per round; the draft
-        itself is the memory, there is no chat history."""
-        description = str(body.get("description", "") or "").strip()
-        current = body.get("current") if isinstance(body.get("current"), dict) else None
-        feedback = str(body.get("feedback", "") or "").strip()
-        shape = (
-            'Reply with STRICT JSON only: {"name": "<kebab-case, max 40 chars>", '
-            '"description": "<one line>", "instructions": "<markdown steps the agent '
-            'will follow>"}'
-        )
-        if current is not None and feedback:
-            prompt = (
-                f"Revise this draft agent skill according to the feedback. {shape}\n\n"
-                f"Current draft: {json.dumps({k: str(current.get(k, '')) for k in ('name', 'description', 'instructions')})}\n"
-                f"Feedback: {feedback}"
-            )
-        elif description:
-            prompt = f"Draft an agent skill from this description. {shape}\n\nDescription: {description}"
-        else:
-            return {"ok": False, "error": "Describe what the skill should do."}
-        try:
-            turn = self.provider.complete(
-                model=self.model, messages=[{"role": "user", "content": prompt}]
-            )
-            text = (turn.text or "").strip()
-            start, end = text.find("{"), text.rfind("}")
-            data = json.loads(text[start : end + 1]) if start != -1 else {}
-        except Exception as exc:  # provider/network/JSON — friendly, never a 500
-            return {"ok": False, "error": f"Could not draft the skill: {exc}"}
-        name = str(data.get("name", "")).strip()
-        if not name:
-            return {"ok": False, "error": "The model returned an unusable draft. Try again."}
-        return {
-            "ok": True,
-            "name": name,
-            "description": str(data.get("description", "")).strip(),
-            "instructions": str(data.get("instructions", "")).strip(),
-        }
 
     def list_memory(self) -> list[dict[str, Any]]:
         return [

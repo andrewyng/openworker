@@ -30,7 +30,7 @@ from .roots import RootDir, normalize_roots, render_context
 from .providers import ProviderClient, ProviderRouter
 from .overrides import RiskOverrideStore
 from .secrets import SecretStore, state_dir
-from .skills import SkillLoader, skill_catalog_text, skill_tools
+from .skills import SkillLoader, save_skill_tool, skill_catalog_text, skill_tools
 from .tools import ToolRegistry
 from .tools.ask import ask_user_tool
 from .tools.directories import request_directory_tool
@@ -301,6 +301,15 @@ def build_engine(
     # sees is also live: skill changes apply from the next message, no new session needed.
     # Default None preserves CLI / direct callers.
     registry.register_all(skill_tools(skill_loader, allowed=skill_filter))
+    # The worker-authors door (SKILLS-SPEC §5.2): save_skill proposes installing a finished
+    # skill; requires_approval routes it through the standard approval card, so the review-
+    # before-save rule holds without any bespoke plumbing. Bundled files may only come from
+    # this session's roots.
+    registry.register(
+        save_skill_tool(
+            allowed_dirs=[r.path for r in (root_list or [])] or ([ws] if ws else [])
+        )
+    )
 
     # User-local risk overrides (mainly to relax MCP's conservative default). Empty store →
     # no-op; never written by persona loading (the no-self-grant rule).

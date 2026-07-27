@@ -23,7 +23,9 @@ import threading
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
+
+import aisuite as ai
 
 from ..secrets import state_dir
 from .base import Skill, _parse_skill
@@ -148,6 +150,12 @@ class SkillStore:
                 if not md.is_file():
                     continue
                 skill = _parse_skill(md)
+                try:
+                    # Bundled resources beyond SKILL.md (§6): a rich skill must not look
+                    # identical to a one-file one in the Settings list.
+                    bundled = sum(1 for p in sub.rglob("*") if p.is_file()) - 1
+                except OSError:
+                    bundled = 0
                 row = {
                     "name": skill.name,
                     "description": skill.description,
@@ -156,6 +164,7 @@ class SkillStore:
                     "source": _frontmatter_source(md) or "local",
                     "enabled": skill.name not in disabled,
                     "path": str(sub),
+                    "files": max(bundled, 0),
                 }
                 if skill.name in seen:  # project copy shadows the global one
                     out[seen[skill.name]] = row
@@ -464,3 +473,145 @@ def effective_skills(
             continue
         out.add(name)
     return out
+
+
+# -- the worker-authors door (SKILLS-SPEC §5.2) -------------------------------------
+
+_SAVE_SKILL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "save_skill",
+        "description": (
+            "Propose adding a finished skill to the user's skills. The user reviews the "
+            "name, description, full instructions, and any bundled files on an approval "
+            "card before anything is saved; once they approve, the skill is usable in "
+            "every conversation. Use this after building or refining a skill in "
+            "conversation, and offer it in words like: 'Want me to add <name> to your "
+            "skills?' — say 'your skills', never the app name; say 'add', never "
+            "'install'. If a skill with this name already exists, approving overwrites "
+            "its instructions and adds the files."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Short folder-safe skill name (letters, digits, dots, dashes, underscores).",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "One line saying when the skill applies — this is its menu entry.",
+                },
+                "instructions": {
+                    "type": "string",
+                    "description": "The full instruction body (markdown). Becomes SKILL.md.",
+                },
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Optional paths of files in this session's folders to bundle into "
+                        "the skill (scripts, examples, README). Copied in by basename."
+                    ),
+                },
+            },
+            "required": ["name", "description", "instructions"],
+        },
+    },
+}
+
+
+def save_skill_tool(
+    store: Optional[SkillStore] = None,
+    *,
+    allowed_dirs: Optional[list[str | Path]] = None,
+) -> Callable:
+    """Build the `save_skill` tool (SKILLS-SPEC §5.2). `requires_approval=True` routes every
+    call through the standard approval card — the tool's ARGUMENTS are the review surface,
+    which is why the schema carries the full instructions and file list. Bundled files may
+    only be read from `allowed_dirs` (the session's roots): the worker must never bundle
+    arbitrary machine paths into a skill."""
+    store = store or SkillStore()
+    dirs: list[Path] = []
+    for d in allowed_dirs or []:
+        try:
+            dirs.append(Path(d).expanduser().resolve())
+        except OSError:
+            continue
+
+    def save_skill(
+        name: str,
+        description: str = "",
+        instructions: str = "",
+        files: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        try:
+            name = validate_name(name)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        if not (description or "").strip():
+            return {"error": "A one-line description is required — it becomes the skill's menu entry."}
+        if not (instructions or "").strip():
+            return {"error": "Skill instructions are required."}
+
+        # Resolve + vet the bundle BEFORE touching disk, so a bad file never leaves a
+        # half-written skill behind.
+        staged: list[tuple[Path, str]] = []
+        for raw in files or []:
+            p = Path(str(raw)).expanduser()
+            if not p.is_absolute():
+                if not dirs:
+                    return {"error": f"File is outside this session's folders: {raw}"}
+                p = dirs[0] / p
+            try:
+                rp = p.resolve()
+            except OSError:
+                return {"error": f"Unreadable file: {raw}"}
+            if not rp.is_file():
+                return {"error": f"Not a file: {raw}"}
+            if not any(d == rp or d in rp.parents for d in dirs):
+                return {"error": f"File is outside this session's folders: {raw}"}
+            base = rp.name
+            if base.lower() == "skill.md":
+                return {
+                    "error": "Bundled files must not be named SKILL.md — the instructions argument becomes SKILL.md."
+                }
+            if any(base == b for _, b in staged):
+                return {"error": f"Duplicate bundled filename: {base}"}
+            staged.append((rp, base))
+
+        # Worker-authored skills always land GLOBAL (§3.4: never a throwaway location).
+        try:
+            folder, _scope = store.find(name)
+            action = "updated"
+            store.update(name, description=description.strip(), instructions=instructions)
+        except ValueError:
+            action = "added"
+            created = store.create(
+                name=name, description=description.strip(), instructions=instructions
+            )
+            folder = Path(created["path"])
+        for src, base in staged:
+            shutil.copy2(src, folder / base)
+        return {
+            "ok": True,
+            "name": name,
+            "action": action,
+            "files": [b for _, b in staged],
+            "note": (
+                "Saved to the user's skills — usable in every conversation from now on. "
+                "Confirm in one short sentence."
+            ),
+        }
+
+    save_skill.__name__ = "save_skill"
+    save_skill.__doc__ = _SAVE_SKILL_SCHEMA["function"]["description"]
+    save_skill.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="save_skill",
+        category="skills",
+        risk_level="medium",
+        capabilities=["save_skill"],
+        requires_approval=True,
+    )
+    save_skill.__coworker_schema__ = _SAVE_SKILL_SCHEMA
+    return save_skill

@@ -3,6 +3,7 @@ from .store import (
     SessionSkillStore,
     SkillStore,
     effective_skills,
+    save_skill_tool,
     validate_name,
 )
 
@@ -14,5 +15,6 @@ __all__ = [
     "SkillStore",
     "SessionSkillStore",
     "effective_skills",
+    "save_skill_tool",
     "validate_name",
 ]

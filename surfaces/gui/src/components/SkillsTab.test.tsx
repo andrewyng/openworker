@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SkillsTab } from "./SkillsTab";
 
-// SKILLS-SPEC §4.6 GUI — Settings ▸ Skills: list + badges, form validation, the three add
-// modes (write / upload-with-preview / draft-never-auto-saves), scope picker visibility.
+// SKILLS-SPEC §5/§6 GUI — Settings ▸ Skills: list + badges + rich-skill file counts, form
+// validation, the doors (write form / upload-with-preview / doorway-to-conversation).
 
 type Call = { url: string; method: string; body: any };
 
@@ -185,27 +185,22 @@ describe("SkillsTab", () => {
     });
   });
 
-  it("draft fills the editor and never saves by itself", async () => {
-    const calls = stubFetch([
-      {
-        match: "/v1/skills/draft",
-        method: "POST",
-        json: { ok: true, name: "weekly-report", description: "Monday report", instructions: "1. Collect" },
-      },
-      { match: "/v1/skills", method: "GET", json: { skills: [] } },
-    ]);
-    render(<SkillsTab />);
-    fireEvent.change(await screen.findByLabelText("Describe the skill"), {
+  it("doorway (§5.2): describe → Start a conversation hands off; no drafting API exists", async () => {
+    const calls = stubFetch([{ match: "/v1/skills", method: "GET", json: { skills: [] } }]);
+    const onCreateSkill = vi.fn();
+    render(<SkillsTab onCreateSkill={onCreateSkill} />);
+    // The agreed copy: capability in plain words + the safety promise.
+    expect(await screen.findByText(/scripts\s+and examples included/)).toBeTruthy();
+    expect(screen.getByText(/asks before adding it to your skills/)).toBeTruthy();
+    const button = screen.getByText("Start a conversation");
+    expect((button as HTMLButtonElement).disabled).toBe(true); // needs a description first
+    fireEvent.change(screen.getByLabelText("Describe the skill"), {
       target: { value: "monday reports" },
     });
-    fireEvent.click(screen.getByText("Draft with OpenWorker"));
-    await waitFor(() => {
-      expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("weekly-report");
-    });
-    expect((screen.getByLabelText("Instructions") as HTMLTextAreaElement).value).toBe("1. Collect");
-    // review-before-save: the draft call happened, but no create POST did
-    expect(calls.some((c) => c.url.includes("/draft"))).toBe(true);
-    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/v1/skills"))).toBe(false);
+    fireEvent.click(button);
+    expect(onCreateSkill).toHaveBeenCalledWith("monday reports");
+    // Settings never drafts: no POST of any kind happened.
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
   });
 
   it("offers no scope UI at all — skills are global (§4.7)", async () => {
@@ -233,34 +228,14 @@ describe("SkillsTab", () => {
     expect(status.textContent).toContain("can now use it in every conversation");
   });
 
-  it("revise-in-place: with a draft in the form, the box revises it and never saves", async () => {
-    const calls = stubFetch([
-      {
-        match: "/v1/skills/draft",
-        method: "POST",
-        json: { ok: true, name: "greet", description: "v2 desc", instructions: "v2 steps" },
-      },
-      { match: "/v1/skills", method: "GET", json: { skills: [] } },
-    ]);
-    render(<SkillsTab />);
+  it("the doorway card never flips to a revise mode with the editor open", async () => {
+    stubFetch([{ match: "/v1/skills", method: "GET", json: { skills: [] } }]);
+    render(<SkillsTab onCreateSkill={vi.fn()} />);
     fireEvent.click(await screen.findByText("New skill"));
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "greet" } });
-    fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "v1 steps" } });
-    // With the editor open the box flips to revise mode
-    expect(screen.getByText("Ask OpenWorker to revise")).toBeTruthy();
-    expect(screen.getByText(/Not a chat/)).toBeTruthy(); // the mental-model caption
-    fireEvent.change(screen.getByLabelText("Revise the draft"), {
-      target: { value: "shorter please" },
-    });
-    fireEvent.click(screen.getByText("Revise"));
-    await waitFor(() => {
-      const draft = calls.find((c) => c.url.includes("/draft"));
-      // current form contents (hand-edits included) + the note ride together
-      expect(draft?.body.current).toMatchObject({ name: "greet", instructions: "v1 steps" });
-      expect(draft?.body.feedback).toBe("shorter please");
-    });
-    expect((screen.getByLabelText("Instructions") as HTMLTextAreaElement).value).toBe("v2 steps");
-    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/v1/skills"))).toBe(false);
+    // Drafting-in-Settings retired (§5.2/§9): the doorway reads the same regardless.
+    expect(screen.queryByText("Ask OpenWorker to revise")).toBeNull();
+    expect(screen.queryByText(/Not a chat/)).toBeNull();
+    expect(screen.getByText("Create using OpenWorker")).toBeTruthy();
   });
 
   it("surfaces server-side validation errors", async () => {
@@ -275,5 +250,27 @@ describe("SkillsTab", () => {
     fireEvent.click(screen.getByText("Save skill"));
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.getByText(/already exists/)).toBeTruthy();
+  });
+});
+
+describe("SkillsTab — rich-skill disclosure (§6)", () => {
+  it("shows a file count only when a skill bundles resources", async () => {
+    stubFetch([
+      {
+        match: "/v1/skills",
+        method: "GET",
+        json: {
+          skills: [
+            { name: "plain", description: "d", instructions: "i", scope: "global", source: "local", enabled: true, path: "/p", files: 0 },
+            { name: "rich", description: "d", instructions: "i", scope: "global", source: "uploaded", enabled: true, path: "/r", files: 3 },
+          ],
+        },
+      },
+    ]);
+    render(<SkillsTab />);
+    const note = await screen.findByTitle("Show folder");
+    expect(note.textContent).toContain("3 files");
+    // The one-file skill carries no count at all — only rich skills are marked.
+    expect(screen.getAllByTitle("Show folder")).toHaveLength(1);
   });
 });

@@ -599,6 +599,11 @@ def create_app(manager: SessionManager) -> FastAPI:
     def move_skill(name: str, body: dict) -> dict[str, Any]:
         return manager.move_skill(name, body or {})
 
+    @app.post("/v1/skills/{name}/reveal")
+    def reveal_skill(name: str, body: dict) -> dict[str, Any]:
+        # §6 "Show folder": open the skill's folder in the OS file manager (local machine).
+        return manager.reveal_skill(name, str((body or {}).get("workspace", "")) or None)
+
     @app.post("/v1/skills/upload")
     def stage_skill_upload(body: dict) -> dict[str, Any]:
         # Stage → preview; nothing is installed until /upload/confirm (SKILLS-SPEC §4.2).
@@ -614,11 +619,6 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/skills/upload/confirm")
     def confirm_skill_upload(body: dict) -> dict[str, Any]:
         return manager.confirm_skill_upload(body or {})
-
-    @app.post("/v1/skills/draft")
-    def draft_skill(body: dict) -> dict[str, Any]:
-        # Fresh draft ({description}) or refine-in-place ({current, feedback}) — §4.2 #3.
-        return manager.draft_skill(body or {})
 
     @app.get("/v1/workspaces/recent")
     def recent_workspaces() -> dict[str, Any]:
