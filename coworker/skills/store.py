@@ -601,7 +601,9 @@ def save_skill_tool(
             "files": [b for _, b in staged],
             "note": (
                 "Saved to the user's skills — usable in every conversation from now on. "
-                "Confirm in one short sentence."
+                "Confirm in one short sentence. To browse the installed files, point the "
+                "user to Settings > Skills (the file-count chip opens the folder) — do NOT "
+                "link the workspace build folder as an artifact; folders don't open there."
             ),
         }
 
