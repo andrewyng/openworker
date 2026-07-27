@@ -6,6 +6,7 @@
 // long tail behind the scroll fold.
 
 import anthropic from "./logos/anthropic.svg";
+import anyrouter from "./logos/anyrouter.svg";
 import openai from "./logos/openai.svg";
 import gemini from "./logos/gemini.svg";
 import ollama from "./logos/ollama.svg";
@@ -22,6 +23,7 @@ import meta from "./logos/meta.svg";
 
 export const PROVIDER_LOGOS: Record<string, string> = {
   anthropic,
+  anyrouter,
   openai,
   gemini,
   meta,
@@ -45,6 +47,7 @@ export const PROVIDER_ORDER = [
   "ollama",
   "fireworks",
   "together",
+  "anyrouter",
   "zai",
   "kimi",
   "deepseek",
