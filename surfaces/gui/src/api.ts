@@ -1279,6 +1279,7 @@ export interface ProviderInfo {
   blurb?: string; // one-line note under the title ("Uses X's OpenAI-compatible API…")
   key_set_at?: string | null; // ISO date the key was last (re)saved — absent for env-only config
   last_used_at?: number | null; // epoch secs the provider last served a completion
+  is_custom?: boolean; // user-created OpenAI-compatible provider
 }
 
 export async function getProviders(): Promise<ProviderInfo[]> {
@@ -1298,6 +1299,20 @@ export async function setProvider(
   return res.json();
 }
 
+/** Create a named, user-configured OpenAI-compatible provider. */
+export async function createCustomProvider(
+  name: string,
+  title: string,
+  fields: Record<string, string>,
+): Promise<{ ok: boolean; error?: string; provider?: string }> {
+  const res = await fetch(`${httpBase()}/v1/providers/custom`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, title, fields }),
+  });
+  return res.json();
+}
+
 /** Forget a provider's stored config (Settings ▸ Models "Remove key…"). */
 export async function removeProvider(name: string): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`${httpBase()}/v1/providers/${encodeURIComponent(name)}`, {
@@ -1310,7 +1325,7 @@ export async function removeProvider(name: string): Promise<{ ok: boolean; error
 export async function verifyProvider(
   name: string,
   fields: Record<string, string>,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; warning?: string }> {
   const res = await fetch(`${httpBase()}/v1/providers/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

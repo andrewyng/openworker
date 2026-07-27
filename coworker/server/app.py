@@ -1308,6 +1308,13 @@ def create_app(manager: SessionManager) -> FastAPI:
             return {"ok": False, "error": "name required"}
         return manager.set_provider(name, (body or {}).get("fields"))
 
+    @app.post("/v1/providers/custom")
+    def providers_custom_create(body: dict) -> dict[str, Any]:
+        body = body or {}
+        return manager.create_custom_provider(
+            body.get("name", ""), body.get("title", ""), body.get("fields")
+        )
+
     @app.delete("/v1/providers/{name}")
     def providers_remove(name: str) -> dict[str, Any]:
         return manager.remove_provider(name)
