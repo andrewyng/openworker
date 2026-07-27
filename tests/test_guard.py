@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -329,6 +330,7 @@ class TestGuardConfigLoader:
         yaml_path.write_text(yaml.dump({"rules": []}))
         loader = GuardConfigLoader(yaml_path)
         loader.load_config()
+        time.sleep(0.15)  # ensure mtime differs (NTFS resolution ~100ms)
         # Modify the file
         yaml_path.write_text(yaml.dump({"rules": [{"name": "new", "tool": "x", "action": "deny"}]}))
         assert loader.has_changed()
@@ -338,6 +340,7 @@ class TestGuardConfigLoader:
         yaml_path.write_text(yaml.dump({"rules": [{"name": "original"}]}))
         loader = GuardConfigLoader(yaml_path)
         first = loader.load_config()
+        time.sleep(0.15)  # ensure mtime differs (NTFS resolution ~100ms)
         # Modify file behind our back
         yaml_path.write_text(yaml.dump({"rules": [{"name": "modified"}]}))
         # Without calling load_config again, has_changed is True
@@ -421,13 +424,7 @@ class TestGuardMiddleware:
                 raise RuntimeError("something went wrong")
 
             def track_start(self, tool_name):
-                pass
-
-            def track_end(self, tool_name):
-                pass
-
-            def track_start(self, tool_name):
-                pass
+                return True
 
             def track_end(self, tool_name):
                 pass

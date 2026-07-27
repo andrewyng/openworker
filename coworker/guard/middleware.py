@@ -142,9 +142,26 @@ class GuardMiddleware:
     # Fan-out tracking
     # ------------------------------------------------------------------
 
-    def track_start(self, tool_name: str) -> None:
-        """Notify the rule set that *tool_name* has started executing."""
-        self._ruleset.track_start(tool_name)
+    def track_start(self, tool_name: str) -> bool:
+        """Try to start tracking *tool_name*.
+
+        Returns ``True`` if the tool was allowed to start (counter incremented),
+        or ``False`` if the fan-out limit would be exceeded.
+
+        When returning ``False`` the decision is logged for audit so the
+        blocked call is traceable.
+        """
+        allowed = self._ruleset.track_start(tool_name)
+        if not allowed:
+            self._logger.log_decision(
+                agent_id=self.agent_id,
+                tool_name=tool_name,
+                arguments={},
+                allowed=False,
+                reason="fanout limit exceeded during track_start",
+                rule="",
+            )
+        return allowed
 
     def track_end(self, tool_name: str) -> None:
         """Notify the rule set that *tool_name* has finished executing."""

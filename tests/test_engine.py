@@ -9,7 +9,7 @@ import time
 import aisuite as ai
 from coworker.engine import ApprovalOutcome, PermissionRequest, TurnEngine
 from coworker.events import EventType
-from coworker.permissions import PermissionEngine
+from coworker.permissions import Mode, PermissionEngine
 from coworker.providers import (
     AssistantTurn,
     ModelCapabilities,
@@ -18,6 +18,16 @@ from coworker.providers import (
     ToolCall,
 )
 from coworker.tools import ToolRegistry
+
+
+def _multi_tool_turn(calls):
+    return AssistantTurn(
+        tool_calls=[
+            ToolCall(id=f"call_{i}", name=name, arguments=args)
+            for i, (name, args) in enumerate(calls)
+        ],
+        finish_reason="tool_calls",
+    )
 
 
 def _text_turn(text):
@@ -47,11 +57,12 @@ class ScriptedProvider(ProviderClient):
         return ModelCapabilities()
 
 
-def _engine(tmp_path, turns, *, approver=None, loop=False, max_iterations=12):
+def _engine(tmp_path, turns, *, approver=None, loop=False, max_iterations=12,
+             mode=None, guard_middleware=None):
     provider = ScriptedProvider(turns, loop=loop)
     registry = ToolRegistry()
     registry.register_all(ai.toolkits.files(root=str(tmp_path), allow_write=True))
-    permissions = PermissionEngine(workspace_root=tmp_path)
+    permissions = PermissionEngine(workspace_root=tmp_path, mode=mode or Mode.INTERACTIVE)
     engine = TurnEngine(
         provider=provider,
         registry=registry,
@@ -59,6 +70,7 @@ def _engine(tmp_path, turns, *, approver=None, loop=False, max_iterations=12):
         model="gpt-5.5",
         approver=approver,
         max_iterations=max_iterations,
+        guard_middleware=guard_middleware,
     )
     return engine, provider
 
@@ -201,25 +213,16 @@ def test_steering_injects_next_turn(tmp_path):
 # -- parallel tool execution ------------------------------------------------------
 
 
-def _multi_tool_turn(calls):
-    return AssistantTurn(
-        tool_calls=[
-            ToolCall(id=f"call_{i}", name=name, arguments=args)
-            for i, (name, args) in enumerate(calls)
-        ],
-        finish_reason="tool_calls",
-    )
-
-
-def _bare_engine(tmp_path, turns):
+def _bare_engine(tmp_path, turns, *, mode=None, guard_middleware=None):
     provider = ScriptedProvider(turns)
     registry = ToolRegistry()
-    permissions = PermissionEngine(workspace_root=tmp_path)
+    permissions = PermissionEngine(workspace_root=tmp_path, mode=mode or Mode.INTERACTIVE)
     engine = TurnEngine(
         provider=provider,
         registry=registry,
         permissions=permissions,
         model="gpt-5.5",
+        guard_middleware=guard_middleware,
     )
     return engine, registry
 
@@ -417,6 +420,376 @@ def test_switch_model_warns_when_images_meet_text_only_model(tmp_path):
     )
     text = engine.switch_model("zai:glm-5.2")
     assert "images" in text  # degradation is called out in the marker
+
+
+# -- guard middleware integration ------------------------------------------------
+
+
+def _guard_engine(tmp_path, turns, rules, *, mode=None, loop=False):
+    """Build an engine wired with GuardMiddleware for integration tests.
+    Delegates to ``_engine()`` then attaches the guard middleware."""
+    from coworker.guard.middleware import GuardMiddleware
+    from coworker.guard.ruleset import GuardRuleSet
+
+    engine, provider = _engine(
+        tmp_path, turns, mode=mode or Mode.AUTO, loop=loop,
+    )
+    guard = GuardMiddleware(
+        engine.permissions,
+        ruleset=GuardRuleSet(rules),
+        log_path=str(tmp_path / "guard.log"),
+    )
+    engine.guard_middleware = guard
+    return engine, provider
+
+
+def test_guard_blocks_disallowed_tool(tmp_path):
+    """GuardMiddleware denies a tool that matches a deny rule — the engine
+    surfaces it as a denied tool with a guard: prefixed reason, and the file
+    is NOT written."""
+    from coworker.guard.ruleset import GuardRule
+
+    rules = [
+        GuardRule(
+            name="block-writes",
+            tool="write_file",
+            action="deny",
+            reason="All writes blocked by guard rule",
+        ),
+    ]
+    engine, _ = _guard_engine(
+        tmp_path,
+        [
+            _tool_turn("write_file", {"path": "x.py", "content": "print(1)\n"}),
+            _text_turn("blocked by guard"),
+        ],
+        rules=rules,
+    )
+    events = _collect(engine, "write x.py")
+
+    finished = [e for e in events if e.type == EventType.TOOL_FINISHED]
+    assert len(finished) == 1
+    assert finished[0].data["status"] == "denied"
+    assert "guard:" in finished[0].data.get("reason", "")
+
+    # Permission was AUTO so the permission engine itself did NOT block;
+    # only the guard layer stopped it. Verify no file was written.
+    assert not (tmp_path / "x.py").exists()
+
+    # The error message in history should cite the guard rule.
+    assert any(
+        m.get("role") == "tool"
+        and "guard:" in m.get("content", "")
+        and "not executed" in m.get("content", "")
+        for m in engine.messages
+    )
+
+
+def test_guard_blocks_in_read_only_mode_via_permission_engine(tmp_path):
+    """In PLAN mode, the guard middleware respects the permission engine's
+    read-only gate — a consequential tool is blocked even without a matching
+    guard rule."""
+
+    # Empty ruleset — the guard has no opinion; the permission engine should
+    # still block the write in plan mode.
+    engine, _ = _guard_engine(
+        tmp_path,
+        [
+            _tool_turn("write_file", {"path": "x.py", "content": "x"}),
+            _text_turn("blocked"),
+        ],
+        rules=[],
+        mode=Mode.PLAN,
+    )
+    events = _collect(engine, "write x.py")
+
+    finished = [e for e in events if e.type == EventType.TOOL_FINISHED]
+    assert len(finished) == 1
+    assert finished[0].data["status"] == "denied"
+    # The reason should cite plan mode being read-only, not the guard.
+    assert "read-only" in finished[0].data.get("reason", "").lower()
+    assert not (tmp_path / "x.py").exists()
+
+
+def _guard_bare_engine(tmp_path, turns, rules):
+    """Build a bare engine with GuardMiddleware and no pre-registered tools.
+    Delegates to ``_bare_engine()`` then attaches the guard middleware.
+    Caller registers tools on the returned ``registry``."""
+    from coworker.guard.middleware import GuardMiddleware
+    from coworker.guard.ruleset import GuardRuleSet
+
+    engine, registry = _bare_engine(tmp_path, turns)
+    guard = GuardMiddleware(
+        engine.permissions,
+        ruleset=GuardRuleSet(rules),
+        log_path=str(tmp_path / "guard.log"),
+    )
+    engine.guard_middleware = guard
+    return engine, registry
+
+
+def test_guard_allows_non_matching_tool(tmp_path):
+    """GuardMiddleware lets through a tool call when no rule matches."""
+    from coworker.guard.ruleset import GuardRule
+
+    (tmp_path / "a.txt").write_text("hello")
+
+    # A guard rule that only targets run_shell, not read_file.
+    rules = [
+        GuardRule(
+            name="block-dangerous-shell",
+            tool="run_shell",
+            action="deny",
+            match_command_contains="rm -rf",
+        ),
+    ]
+    engine, _ = _guard_engine(
+        tmp_path,
+        [
+            _tool_turn("read_file", {"path": "a.txt"}),
+            _text_turn("it says hello"),
+        ],
+        rules=rules,
+    )
+    events = _collect(engine, "read a.txt")
+
+    finished = [e for e in events if e.type == EventType.TOOL_FINISHED]
+    assert len(finished) == 1
+    assert finished[0].data["status"] == "ok"
+
+    # The result content made it through.
+    assert any(
+        m.get("role") == "tool" and "hello" in m.get("content", "")
+        for m in engine.messages
+    )
+
+
+def test_guard_concurrent_tools_pass_through_within_turn(tmp_path):
+    """Two concurrent low-risk tools both pass GuardMiddleware within a single
+    turn.  The engine authorises ALL tools before executing ANY of them, so the
+    fan-out counter is always 0 during evaluation within one turn — the limit
+    can only fire *across* iterations in the current architecture.
+
+    This test verifies the wiring: barrier-based concurrency + guard middleware
+    + track_start/track_end all work together, and that after the turn the
+    fan-out counter is back to 0.
+    """
+    from coworker.guard.ruleset import GuardRule
+
+    barrier = threading.Barrier(2, timeout=5)
+    low = ai.ToolMetadata(
+        category="search", risk_level="low", requires_approval=False
+    )
+
+    # Use an empty tool name (match any tool) so the rule fires against
+    # whatever the registered function is called.
+    rules = [
+        GuardRule(
+            name="limit-concurrent",
+            tool="",
+            action="deny",
+            max_concurrent=1,
+        ),
+    ]
+
+    def explore(task: str):
+        barrier.wait()
+        return {"report": task}
+
+    engine, registry = _guard_bare_engine(
+        tmp_path,
+        [
+            _multi_tool_turn(
+                [("explore", {"task": "x"}), ("explore", {"task": "y"})]
+            ),
+            _text_turn("done"),
+        ],
+        rules,
+    )
+    registry.register(explore, metadata=low)
+
+    events = _collect(engine, "research both")
+    finished = [e for e in events if e.type == EventType.TOOL_FINISHED]
+    assert len(finished) == 2
+    # Both succeed because authorisation happens before track_start —
+    # the fan-out counter is 0 when both are evaluated.
+    assert all(e.data["status"] == "ok" for e in finished)
+
+    # The fan-out counter must be back to 0 after the turn completes.
+    guard = engine.guard_middleware
+    assert guard._ruleset._fanout_counters.get("explore", 0) == 0
+
+
+def test_guard_serial_tools_track_correctly(tmp_path):
+    """Serial tools with max_concurrent=1 both pass because each finishes before
+    the next authorises.  Verifies the engine calls track_start/track_end through
+    the guard middleware for non-concurrent (medium-risk) tools.
+    """
+    from coworker.guard.ruleset import GuardRule
+
+    medium = ai.ToolMetadata(
+        category="filesystem", risk_level="medium", requires_approval=False
+    )
+
+    # Empty tool name = match any tool.
+    rules = [
+        GuardRule(
+            name="limit-serial",
+            tool="",
+            action="deny",
+            max_concurrent=1,
+        ),
+    ]
+    order: list[str] = []
+
+    def serial_tool():
+        order.append("start")
+        time.sleep(0.1)
+        order.append("end")
+        return "ok"
+
+    engine, registry = _guard_bare_engine(
+        tmp_path,
+        [
+            _multi_tool_turn([("serial_tool", {}), ("serial_tool", {})]),
+            _text_turn("done"),
+        ],
+        rules,
+    )
+    registry.register(serial_tool, metadata=medium)
+
+    _collect(engine, "go")
+
+    # Serial execution order: they run one at a time even when the turn
+    # requests two calls (medium-risk = not parallel_safe).
+    assert order == ["start", "end", "start", "end"]
+
+    # Fan-out counters reset after turn.
+    guard = engine.guard_middleware
+    assert guard._ruleset._fanout_counters.get("serial_tool", 0) == 0
+
+
+def test_guard_concurrent_fanout_limit_denies_overflow(tmp_path):
+    """Three concurrent low-risk tools with max_concurrent=2 — the first two
+    succeed (proved concurrent via threading.Barrier) and the third is denied
+    by the guard middleware's eager ``track_start`` check.
+
+    Unlike the earlier ``pass_through_within_turn`` test, the empty-tool
+    rule fires on every ``track_start`` call, so the moment counter reaches
+    *max_concurrent* the next tool is blocked before it ever executes.
+    """
+    from coworker.guard.ruleset import GuardRule
+
+    barrier = threading.Barrier(2, timeout=5)
+    low = ai.ToolMetadata(
+        category="search", risk_level="low", requires_approval=False
+    )
+
+    rules = [
+        GuardRule(
+            name="limit-concurrent",
+            tool="",
+            action="deny",
+            max_concurrent=2,
+        ),
+    ]
+
+    def explore(task: str):
+        barrier.wait()
+        return {"report": task}
+
+    engine, registry = _guard_bare_engine(
+        tmp_path,
+        [
+            _multi_tool_turn(
+                [
+                    ("explore", {"task": "a"}),
+                    ("explore", {"task": "b"}),
+                    ("explore", {"task": "c"}),
+                ]
+            ),
+            _text_turn("done"),
+        ],
+        rules,
+    )
+    registry.register(explore, metadata=low)
+
+    events = _collect(engine, "research three things")
+    finished = [e for e in events if e.type == EventType.TOOL_FINISHED]
+    assert len(finished) == 3
+
+    ok_tools = [e for e in finished if e.data["status"] == "ok"]
+    denied_tools = [e for e in finished if e.data["status"] == "denied"]
+
+    # Two succeed (concurrent, barrier proves it), one is denied by fanout.
+    assert len(ok_tools) == 2, f"expected 2 ok, got {len(ok_tools)}"
+    assert len(denied_tools) == 1, f"expected 1 denied, got {len(denied_tools)}"
+
+    # Denied tool cites the guard.
+    assert "guard:" in denied_tools[0].data.get("reason", "")
+
+    # Fan-out counter reset after turn completes.
+    guard = engine.guard_middleware
+    assert guard._ruleset._fanout_counters.get("explore", 0) == 0
+
+
+def test_guard_middleware_exception_fails_safe_via_engine(tmp_path):
+    """When the guard middleware's ruleset raises during ``evaluate()``, the
+    middleware catches the exception and returns ``Decision(needs_user=True)``.
+    The engine emits ``PERMISSION_REQUIRED``, then the default approver
+    (``_deny_all``) denies the tool.
+    """
+
+    class _BrokenRuleset:
+        def evaluate(self, tool_name, arguments):
+            raise RuntimeError("guard ruleset crash")
+
+        def track_start(self, tool_name):
+            return True
+
+        def track_end(self, tool_name):
+            pass
+
+    from coworker.guard.middleware import GuardMiddleware
+
+    provider = ScriptedProvider(
+        [_tool_turn("read_file", {"path": "x.txt"}), _text_turn("done")]
+    )
+    registry = ToolRegistry()
+    registry.register_all(ai.toolkits.files(root=str(tmp_path)))
+    permissions = PermissionEngine(workspace_root=tmp_path)
+    guard = GuardMiddleware(
+        permissions,
+        ruleset=_BrokenRuleset(),  # type: ignore[arg-type]
+        log_path=str(tmp_path / "guard.log"),
+    )
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=permissions,
+        model="gpt-5.5",
+        guard_middleware=guard,
+    )
+
+    events = _collect(engine, "read x.txt")
+
+    # The middleware exception triggers a permission prompt (fail safe).
+    assert EventType.PERMISSION_REQUIRED in _types(events)
+
+    # The PERMISSION_REQUIRED event carries the guard error in its reason.
+    perm_events = [e for e in events if e.type == EventType.PERMISSION_REQUIRED]
+    assert any("guard" in e.data.get("reason", "") for e in perm_events)
+
+    # The default approver (_deny_all) denies the tool.
+    finished = [e for e in events if e.type == EventType.TOOL_FINISHED]
+    assert len(finished) == 1
+    assert finished[0].data["status"] == "denied"
+
+    # The history carries an explanation.
+    assert any(
+        m.get("role") == "tool" and "not executed" in m.get("content", "")
+        for m in engine.messages
+    )
 
 
 def test_outbound_replaces_images_for_non_vision_models(tmp_path):

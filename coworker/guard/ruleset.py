@@ -43,6 +43,7 @@ class GuardDecision:
     reason: str = ""
     rule: str = ""  # name of the matching rule, if any
     needs_user: bool = False  # True → surface should prompt the user for approval
+    is_fanout_block: bool = False  # True when the denial was caused by max_concurrent
 
 
 class GuardRuleSet:
@@ -158,6 +159,7 @@ class GuardRuleSet:
                         allowed=False,
                         reason=f"{rule.reason} (max {rule.max_concurrent} concurrent)",
                         rule=rule.name,
+                        is_fanout_block=True,
                     )
                 # Within limits — this rule doesn't apply; continue to next.
                 # A rule with max_concurrent but no other match patterns
@@ -182,9 +184,21 @@ class GuardRuleSet:
     # Fan-out tracking
     # ------------------------------------------------------------------
 
-    def track_start(self, tool_name: str) -> None:
-        """Increment the active-count for *tool_name* (tool is starting)."""
+    def track_start(self, tool_name: str) -> bool:
+        """Try to start tracking *tool_name*.
+
+        Returns ``True`` if the tool was allowed to start (counter incremented),
+        or ``False`` if the fan-out limit would be exceeded (no change).
+
+        Delegates to :meth:`evaluate` so the fan-out check logic stays in one
+        place — only fan-out denials ("concurrent" in reason) cause a rejection;
+        other deny rules are already enforced at authorization time.
+        """
+        decision = self.evaluate(tool_name, {})
+        if not decision.allowed and decision.is_fanout_block:
+            return False
         self._fanout_counters[tool_name] = self._fanout_counters.get(tool_name, 0) + 1
+        return True
 
     def track_end(self, tool_name: str) -> None:
         """Decrement the active-count for *tool_name* (tool finished)."""
