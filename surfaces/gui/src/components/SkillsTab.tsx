@@ -73,21 +73,23 @@ export function SkillsTab() {
   const [drafting, setDrafting] = useState(false);
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
   const [error, setError] = useState("");
-  // The install/enable confirmation (SKILLS-SPEC §4.1 #2): teaches the new-session pickup
-  // rule and the can't-unread rule at exactly the moment they become relevant.
-  const [notice, setNotice] = useState("");
+  // The state-change callout (SKILLS-SPEC §4.1 #2): name-first so the user knows WHICH
+  // skill, and visually distinct so it can't be skimmed past (tester ask 2026-07-27).
+  const [notice, setNotice] = useState<{ name: string; text: string; tone: "ok" | "warn" } | null>(
+    null,
+  );
   const fileInput = useRef<HTMLInputElement>(null);
 
-  // Confirmation copy (SKILLS-SPEC §4.1 #2): outcome + remedy only, in words a person
-  // already owns — now / everywhere / off / start a new one. Never mechanism ("the model
-  // will be told…") or engineering timing ("from the next message") — three rounds of
-  // owner-driver review, 2026-07-27. The engine countermands disabled-but-loaded skills
-  // silently (context_provider note); the copy promises only the guaranteed part.
-  const CONFIRMATION = "The worker can now use this in every conversation.";
+  // Confirmation copy (SKILLS-SPEC §4.1 #2): name-first, outcome + remedy only, in words a
+  // person already owns — now / everywhere / off / start a new one. Never mechanism ("the
+  // model will be told…") or engineering timing ("from the next message") — owner-driver
+  // review rounds, 2026-07-27. The engine countermands disabled-but-loaded skills silently;
+  // the copy promises only the guaranteed part.
+  const CONFIRMATION = "— the worker can now use it in every conversation.";
   const OFF_NOTE =
-    "Turned off everywhere. If a conversation already used it, start a new one for a completely clean slate.";
+    "turned off everywhere. If a conversation already used it, start a new one for a completely clean slate.";
   const DELETE_NOTE =
-    "Removed. If a conversation already used it, start a new one for a completely clean slate.";
+    "removed. If a conversation already used it, start a new one for a completely clean slate.";
 
   const refresh = () => listSkills().then(setRows);
   useEffect(() => {
@@ -95,7 +97,7 @@ export function SkillsTab() {
   }, []);
 
   const fail = (res: { ok?: boolean; error?: string }) => {
-    setNotice("");
+    setNotice(null);
     if (res.ok === false) {
       setError(res.error || "Something went wrong.");
       return true;
@@ -119,7 +121,8 @@ export function SkillsTab() {
           });
     if (fail(res)) return;
     setEditor(null);
-    if (editor.mode === "new") setNotice(CONFIRMATION);
+    if (editor.mode === "new")
+      setNotice({ name: editor.name.trim(), text: CONFIRMATION, tone: "ok" });
     refresh();
   };
 
@@ -164,7 +167,7 @@ export function SkillsTab() {
     const res = await confirmSkillUpload(upload.token);
     if (fail(res)) return;
     setUpload(null);
-    setNotice(CONFIRMATION);
+    setNotice({ name: upload.name || "Skill", text: CONFIRMATION, tone: "ok" });
     refresh();
   };
 
@@ -176,7 +179,7 @@ export function SkillsTab() {
     setArmedDelete(null);
     const res = await deleteSkill(row.name);
     if (fail(res)) return;
-    setNotice(DELETE_NOTE);
+    setNotice({ name: row.name, text: DELETE_NOTE, tone: "warn" });
     refresh();
   };
 
@@ -219,8 +222,25 @@ export function SkillsTab() {
         </div>
       ) : null}
       {notice ? (
-        <div className="text-[12.5px] text-muted mb-3" role="status">
-          {notice}
+        <div
+          role="status"
+          className={
+            "mb-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-[12.5px] " +
+            (notice.tone === "ok"
+              ? "bg-tealSoft/70 text-tealInk border-tealInk/20"
+              : "bg-warnSoft/70 text-warnInk border-warnInk/20")
+          }
+        >
+          <span className="min-w-0">
+            <b>{notice.name}</b> {notice.text}
+          </span>
+          <button
+            className="ml-auto shrink-0 opacity-60 hover:opacity-100"
+            aria-label="Dismiss"
+            onClick={() => setNotice(null)}
+          >
+            ✕
+          </button>
         </div>
       ) : null}
 
@@ -353,7 +373,12 @@ export function SkillsTab() {
                 onChange={(e) => {
                   const on = e.target.checked;
                   updateSkill(row.name, { enabled: on }).then((res) => {
-                    if (!fail(res)) setNotice(on ? CONFIRMATION : OFF_NOTE);
+                    if (!fail(res))
+                      setNotice({
+                        name: row.name,
+                        text: on ? CONFIRMATION : OFF_NOTE,
+                        tone: on ? "ok" : "warn",
+                      });
                     refresh();
                   });
                 }}

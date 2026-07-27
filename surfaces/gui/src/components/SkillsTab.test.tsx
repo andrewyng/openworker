@@ -148,7 +148,8 @@ describe("SkillsTab", () => {
       expect(patch?.body).toMatchObject({ enabled: false });
     });
     const status = await screen.findByRole("status");
-    expect(status.textContent).toContain("Turned off everywhere");
+    expect(status.textContent).toContain("weekly-report"); // name-first — WHICH skill
+    expect(status.textContent).toContain("turned off everywhere");
     expect(status.textContent).toContain("clean slate"); // the guaranteed remedy, in place
   });
 
@@ -228,7 +229,8 @@ describe("SkillsTab", () => {
     fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "x" } });
     fireEvent.click(screen.getByText("Save skill"));
     const status = await screen.findByRole("status");
-    expect(status.textContent).toContain("can now use this in every conversation");
+    expect(status.textContent).toContain("greet"); // name-first — WHICH skill
+    expect(status.textContent).toContain("can now use it in every conversation");
   });
 
   it("revise-in-place: with a draft in the form, the box revises it and never saves", async () => {
