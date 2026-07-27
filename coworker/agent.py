@@ -6,6 +6,7 @@ the skill catalog (progressive disclosure) + load_skill into a TurnEngine.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -38,6 +39,8 @@ from .tools.plan import propose_plan_tool
 from .tools.subagent import explorer_tools
 from .web import make_web_fetch_tool, make_web_search_tool
 from .workspace_trust import WorkspaceTrustStore
+from .guard.middleware import GuardMiddleware
+from .guard.ruleset import GuardRuleSet
 from .tools.shell import LocalExecutor
 from .tools.todo import TodoList
 
@@ -306,6 +309,23 @@ def build_engine(
                 parts.append(ctx)
         return "\n\n".join(parts)
 
+    # Build guard middleware for agent families that fan out subagents.
+    guard_middleware: Optional[GuardMiddleware] = None
+    if agent.family == "code" and ws is not None:
+        guard_config = Path(
+            os.environ.get("COWORKER_GUARD_CONFIG", str(state_dir() / "guard.yaml"))
+        )
+        guard_log = state_dir() / "guard.log"
+        # Load rules from default guard config; empty file = no-op.
+        ruleset = GuardRuleSet.load_rules(guard_config)
+        guard_middleware = GuardMiddleware(
+            permissions=permissions,
+            config_path=guard_config,
+            log_path=guard_log,
+            ruleset=ruleset,
+            agent_id=agent.name,
+        )
+
     engine = TurnEngine(
         provider=provider,
         registry=registry,
@@ -325,6 +345,7 @@ def build_engine(
         directory_requester=directory_requester,
         plan_approver=plan_approver,
         question_asker=question_asker,
+        guard_middleware=guard_middleware,
     )
     engine.executor = executor  # type: ignore[attr-defined]
     engine.todo = todo  # type: ignore[attr-defined]
