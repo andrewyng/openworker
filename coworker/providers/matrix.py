@@ -76,6 +76,7 @@ MATRIX: dict[str, ModelEntry] = {
     "deepseek:deepseek-v4-pro": ModelEntry("DeepSeek V4 Pro · DeepSeek"),
     "kimi:kimi-k2.6": ModelEntry("Kimi K2.6 · Moonshot"),
     "minimax:MiniMax-M2.5": ModelEntry("MiniMax M2.5 · MiniMax"),
+    "nvidia:z-ai/glm-5.2": ModelEntry("GLM-5.2 · NVIDIA NIM"),
     "qwen:qwen3-max": ModelEntry("Qwen3 Max · Alibaba"),
     "xai:grok-4.3": ModelEntry("Grok 4.3 · xAI"),
     "mistral:mistral-large-latest": ModelEntry("Mistral Large · Mistral"),
