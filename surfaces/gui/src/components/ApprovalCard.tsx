@@ -32,6 +32,43 @@ const EXTERNAL = new Set(["send_message", "send_file"]);
 
 type ApprovalItem = Extract<Item, { kind: "approval" }>;
 
+// Per-tool button copy (§7): a skill proposal is an "add", not an "allow". Shared with the
+// parked Inbox card so both dialects match.
+export function approvalActionLabels(name?: string): { allow: string; deny: string } {
+  return name === "save_skill"
+    ? { allow: "Add to my skills", deny: "Not now" }
+    : { allow: "Allow once", deny: "Deny" };
+}
+
+// save_skill's review surface (SKILLS-SPEC §5.2): description, the full instructions
+// (clamped, expandable, scrollable), every bundled file, and the guaranteed footer that
+// answers "added WHERE, available WHEN". Shared verbatim with the parked Inbox card —
+// one decision, one dialect.
+export function SaveSkillPreview({ args }: { args: any }) {
+  return (
+    <>
+      {args?.description && <div className="approval-with">{String(args.description)}</div>}
+      {args?.instructions && <PreviewBlock text={String(args.instructions)} mono={false} />}
+      {Array.isArray(args?.files) && args.files.length > 0 && (
+        <div data-testid="skill-bundle-files">
+          {args.files.map((f: unknown, i: number) => (
+            <span className="approval-filechip" key={i}>
+              <span className="ico">
+                <Icon name="file" size={13} />
+              </span>
+              {String(f).split(/[\\/]/).pop() || String(f)}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="approval-with">
+        Approving adds it to your skills on this computer — usable in every conversation from
+        then on.
+      </div>
+    </>
+  );
+}
+
 // A `permissions` proposal on the create_scheduled_task consent card (§25): reads are
 // disclosure lines, writes are the standing grants the approval mints.
 interface PermissionLine {
@@ -65,6 +102,9 @@ export function scopeNote(
   args: any,
   category?: string,
 ): { text: string; external: boolean } {
+  // save_skill's corner answers WHERE (SKILLS-SPEC §5.2): the exact place to find, edit,
+  // or turn off the skill afterwards.
+  if (name === "save_skill") return { text: "saves to Settings ▸ Skills", external: false };
   if (category === "connector") return { text: "acts on a connected service", external: true };
   if (EXTERNAL.has(name)) {
     const platform = String(args?.target ?? "").split(":")[0];
@@ -256,28 +296,8 @@ export function ApprovalCard({
       {item.name === "send_message" && item.args?.text && (
         <MessagePreview text={String(item.args.text)} />
       )}
-      {/* save_skill (SKILLS-SPEC §5.2): the arguments ARE the review surface — show the
-          description, the full instructions (clamped, expandable), and every bundled file. */}
-      {item.name === "save_skill" && (
-        <>
-          {item.args?.description && (
-            <div className="approval-with">{String(item.args.description)}</div>
-          )}
-          {item.args?.instructions && <PreviewBlock text={String(item.args.instructions)} mono={false} />}
-          {Array.isArray(item.args?.files) && item.args.files.length > 0 && (
-            <div data-testid="skill-bundle-files">
-              {item.args.files.map((f: unknown, i: number) => (
-                <span className="approval-filechip" key={i}>
-                  <span className="ico">
-                    <Icon name="file" size={13} />
-                  </span>
-                  {String(f).split(/[\\/]/).pop() || String(f)}
-                </span>
-              ))}
-            </div>
-          )}
-        </>
-      )}
+      {/* save_skill (SKILLS-SPEC §5.2): the arguments ARE the review surface. */}
+      {item.name === "save_skill" && <SaveSkillPreview args={item.args} />}
 
       {grants.length > 0 && (
         <div className="approval-grants" data-testid="approval-grants">
@@ -310,8 +330,8 @@ export function ApprovalCard({
           item={item}
           onApprove={onApprove}
           runTask={runTask}
-          primaryLabel={item.name === "save_skill" ? "Add to my skills" : "Allow once"}
-          denyLabel={item.name === "save_skill" ? "Not now" : "Deny"}
+          primaryLabel={approvalActionLabels(item.name).allow}
+          denyLabel={approvalActionLabels(item.name).deny}
         />
       )}
     </div>
