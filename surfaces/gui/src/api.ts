@@ -436,7 +436,12 @@ export interface Connector {
   available: boolean;
   fields: ConnectorField[];
   instructions: string[];
+  // `connected` means the credentials are saved — it gates the outbound tools and says
+  // nothing about the inbound listener. These two report the listener itself, so a bot
+  // that receives nothing stops reading as Live (#257). Set for two-way connectors only.
   connected: boolean;
+  listening?: boolean; // the inbound listener actually came up
+  listen_error?: string | null; // why it didn't (only set once a start was attempted)
   account: string | null;
   enabled: boolean;
   brand_color: string; // hex brand color, e.g. "#611f69" (fallback gray "#6b7280")

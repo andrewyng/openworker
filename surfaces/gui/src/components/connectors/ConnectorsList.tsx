@@ -61,7 +61,9 @@ export function ConnectorsList({
                 <ConnectorBadge connector={c} size={34} title={c.title} />
                 <span className="min-w-0 flex-1">
                   <span className="font-medium text-[13.5px]">{c.title}</span>
-                  <span className="block text-[12px] text-muted">{statusLine(c)}</span>
+                  <span className="block text-[12px] text-muted truncate" title={statusLine(c)}>
+                    {statusLine(c)}
+                  </span>
                 </span>
                 {healthChip(c, slack)}
                 <span className="text-faint text-[15px] shrink-0">›</span>
@@ -125,6 +127,9 @@ export function ConnectorsList({
 }
 
 function statusLine(c: Connector): string {
+  // The reason rides the subtitle so it's readable without opening the connector — the
+  // reporter's whole problem was that the list looked healthy (#257).
+  if (c.two_way && c.connected && c.listen_error) return c.listen_error;
   if (c.name === "slack" && c.mode === "relay") {
     const n = c.workspaces?.length ?? 0;
     return `${n} workspace${n === 1 ? "" : "s"} · relay`;
@@ -148,7 +153,14 @@ function healthChip(c: Connector, slack: SlackStatus | null) {
       return <span className={CHIP_WARN}>⚠ Token</span>;
     return <span className={CHIP_OK}>● Live</span>;
   }
-  if (c.two_way && c.connected) return <span className={CHIP_OK}>● Live</span>;
+  // Saved credentials used to be enough to claim "Live", so a bot whose polling never
+  // started looked identical to a healthy one (#257). Only downgrade on a recorded
+  // reason: `listen_error` is set once a start was actually attempted and failed, so a
+  // server with no gateway running can't trip a false alarm.
+  if (c.two_way && c.connected) {
+    if (c.listen_error) return <span className={CHIP_OFF}>● Not receiving</span>;
+    return <span className={CHIP_OK}>● Live</span>;
+  }
   return <span className={CHIP_OK}>● Ready</span>;
 }
 
