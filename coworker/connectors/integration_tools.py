@@ -19,6 +19,7 @@ from urllib.parse import quote
 import aisuite as ai
 
 from ..secrets import SecretStore
+from .apify_tools import make_apify_tools
 from .browser_automation import make_browser_automation_tools
 from .email_tools import make_email_tools
 from .tool_defs import approval_for_tool, connector_for_tool
@@ -529,6 +530,9 @@ def make_integration_tools(
     # Email needs the session roots: attachment downloads land in the primary scratch
     # and outgoing attachments must resolve inside a granted directory.
     tools.extend(make_email_tools(secrets, roots=roots))
+    # Apify's dataset reads plus the local FTS5 record cache are substantial
+    # non-HTTP logic, so they live in their own module (email_tools precedent).
+    tools.extend(make_apify_tools(secrets))
 
     def browser_read_url(url: str, max_chars: int = 20000) -> dict[str, Any]:
         if not url.lower().startswith(("http://", "https://")):

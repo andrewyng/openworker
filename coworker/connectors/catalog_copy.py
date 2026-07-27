@@ -54,6 +54,11 @@ ABOUT: dict[str, str] = {
     "asana": "Keep up with your Asana work — search and read tasks and "
     "projects, create tasks, and comment. Connects with a personal access "
     "token from the Asana developer console.",
+    "apify": "Pull one Apify dataset — the output of a crawler or scraper you "
+    "already run — into a local cache on this machine, then answer questions "
+    "from that copy instead of re-fetching every time. One connected account "
+    "is one dataset: the agent reads that dataset and nothing else in your "
+    "Apify workspace.",
 }
 
 # What connecting actually grants, as short honest bullets. Write powers always
@@ -201,6 +206,13 @@ ACCESS: dict[str, list[str]] = {
     ],
     "hunter": [
         "Finds and verifies email addresses, using your Hunter quota.",
+    ],
+    "apify": [
+        "Reads items from the one Apify dataset you name — nothing else in your account.",
+        "Stores a copy of those items in a local cache on this machine so "
+        "questions are answered without re-fetching.",
+        "Refreshing the cache re-reads the dataset and uses your Apify API quota.",
+        "Never starts, stops, or edits Apify actors, runs, or storage.",
     ],
 }
 

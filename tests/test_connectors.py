@@ -749,6 +749,9 @@ _NEW_CONNECTORS = {
         "base_uri": "https://demo.docusign.net",
     },
     "canva": {"access_token": "cnv_x"},
+    # Batch 4 — cached-dataset connector (flat :default on purpose, see posthog
+    # comment above; the accounts layer migrates it lazily on first tool call).
+    "apify": {"api_token": "apify_api_x", "dataset_id": "acme~jobs"},
 }
 
 
@@ -772,6 +775,8 @@ def test_new_connector_descriptors_listed(tmp_path):
     # google_drive (scope discipline) and canva (exports are renders) too
     assert all(t["kind"] == "read" for t in by_name["google_drive"]["tools"])
     assert all(t["kind"] == "read" for t in by_name["canva"]["tools"])
+    # apify: refresh only writes the LOCAL cache, nothing external mutates
+    assert all(t["kind"] == "read" for t in by_name["apify"]["tools"])
 
 
 def test_new_connectors_connect_and_gate_tools(tmp_path):
@@ -823,6 +828,7 @@ def test_new_tools_error_when_not_connected(tmp_path):
     assert "not connected" in tools["drive_search_files"]("plan")["error"]
     assert "not connected" in tools["docusign_list_envelopes"]()["error"]
     assert "not connected" in tools["canva_list_designs"]()["error"]
+    assert "not connected" in tools["apify_search_cache"]("jobs")["error"]
 
 
 def _connected_tools(tmp_path, monkeypatch, calls):
@@ -1569,6 +1575,7 @@ def test_new_connector_validators_wired():
         "google_drive",
         "docusign",
         "canva",
+        "apify",
     ):
         assert get_descriptor(name).validate is not None, name
     # stripe restricted-key permissions vary, so it has no whoami validator
