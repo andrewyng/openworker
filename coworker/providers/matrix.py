@@ -25,6 +25,16 @@ from .base import ModelCapabilities
 _AGENTIC = ModelCapabilities(
     tools=True, vision=False, parallel_tool_calls=True, streaming=True
 )
+# Same as _AGENTIC but flags the DeepSeek-R1-style inline reasoning convention: content
+# arrives with `<think>...</think>` wrapping the thinking text instead of a separate
+# `reasoning_content` field (see providers/base.py:ModelCapabilities.inline_think_tags).
+_AGENTIC_INLINE_THINK = ModelCapabilities(
+    tools=True,
+    vision=False,
+    parallel_tool_calls=True,
+    streaming=True,
+    inline_think_tags=True,
+)
 # The native three (OpenAI, Anthropic, Gemini) all take PDFs directly; every
 # OpenAI-compatible vendor and reseller in the matrix does not (their chat APIs have
 # no inline file part — checked 2026-07-17), so those fall back via pdf_support.py.
@@ -84,7 +94,7 @@ MATRIX: dict[str, ModelEntry] = {
     "deepseek:deepseek-v4-flash": ModelEntry("DeepSeek V4 Flash · DeepSeek"),
     "deepseek:deepseek-v4-pro": ModelEntry("DeepSeek V4 Pro · DeepSeek"),
     "kimi:kimi-k2.6": ModelEntry("Kimi K2.6 · Moonshot"),
-    "minimax:MiniMax-M2.5": ModelEntry("MiniMax M2.5 · MiniMax"),
+    "minimax:MiniMax-M2.5": ModelEntry("MiniMax M2.5 · MiniMax", _AGENTIC_INLINE_THINK),
     "qwen:qwen3-max": ModelEntry("Qwen3 Max · Alibaba"),
     "xai:grok-4.3": ModelEntry("Grok 4.3 · xAI"),
     "mistral:mistral-large-latest": ModelEntry("Mistral Large · Mistral"),

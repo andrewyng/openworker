@@ -454,3 +454,141 @@ def test_complete_picks_up_reasoning_content():
     provider = OpenAIProvider(client=_FakeClient(SimpleNamespace(choices=[choice])))
     turn = provider.complete(model="deepseek-v4-pro", messages=[{"role": "user", "content": "x"}])
     assert turn.text == "Answer" and turn.reasoning == "deep thought"
+
+
+# -- inline <think> tag stripping (MiniMax M2/M2.5, DeepSeek R1, thinking Ollamas) ----
+# These models leave reasoning_content empty and instead put the thinking inside
+# `content` wrapped in `<think>...</think>`. Peel it out so it lands on the same
+# reasoning sidecar the UI renders as "Thought process".
+
+
+def test_think_stripper_single_chunk():
+    from coworker.providers.openai_provider import _ThinkTagStripper
+
+    s = _ThinkTagStripper()
+    text, reason = s.feed("<think>reasoning here</think>the reply")
+    tail_text, tail_reason = s.flush()
+    assert reason == "reasoning here"
+    assert (text + tail_text) == "the reply"
+    assert tail_reason == ""
+
+
+def test_think_stripper_split_across_chunks():
+    """Real-world case: the SSE frame boundary lands inside a marker."""
+    from coworker.providers.openai_provider import _ThinkTagStripper
+
+    s = _ThinkTagStripper()
+    outs = [s.feed(part) for part in ("<thi", "nk>hmm</thi", "nk>done")]
+    text = "".join(t for t, _ in outs)
+    reason = "".join(r for _, r in outs)
+    tail_text, _ = s.flush()
+    assert reason == "hmm"
+    assert (text + tail_text) == "done"
+
+
+def test_think_stripper_no_tag_passthrough():
+    """A stream that never uses <think> must arrive at the user byte-for-byte."""
+    from coworker.providers.openai_provider import _ThinkTagStripper
+
+    s = _ThinkTagStripper()
+    text_parts, reason_parts = [], []
+    for part in ("Hello ", "world", "!"):
+        t, r = s.feed(part)
+        text_parts.append(t)
+        reason_parts.append(r)
+    tail_text, tail_reason = s.flush()
+    assert "".join(text_parts) + tail_text == "Hello world!"
+    assert "".join(reason_parts) + tail_reason == ""
+
+
+def test_think_stripper_unterminated_tail_becomes_reasoning():
+    from coworker.providers.openai_provider import _ThinkTagStripper
+
+    s = _ThinkTagStripper()
+    text, reason = s.feed("visible <think>still thinking when the stream died")
+    tail_text, tail_reason = s.flush()
+    assert text == "visible " and tail_text == ""
+    assert reason + tail_reason == "still thinking when the stream died"
+
+
+def test_extract_think_blocks_non_streaming():
+    from coworker.providers.openai_provider import _extract_think_blocks
+
+    text, reason = _extract_think_blocks("<think>a</think>hello <think>b</think>world")
+    assert text == "hello world"
+    assert reason == "a\nb"
+
+    text2, reason2 = _extract_think_blocks("no tags here")
+    assert text2 == "no tags here" and reason2 is None
+
+
+def test_stream_strips_inline_think_for_flagged_model():
+    """MiniMax M2.5 wire format: <think>...</think> arrives inside content, empty
+    reasoning_content. The stripper routes it to reasoning_delta so the UI shows it
+    as 'Thought process' instead of inline text."""
+    chunks = [
+        _chunk(content="<think>musing"),
+        _chunk(content=" more</think>Hi "),
+        _chunk(content="there!"),
+        _chunk(finish="stop"),
+    ]
+    provider = OpenAIProvider(client=_StreamClient(chunks))
+    out = list(provider.stream(model="MiniMax-M2.5", messages=[]))
+    reasoning = "".join(c.reasoning_delta for c in out if c.reasoning_delta)
+    text = "".join(c.text_delta for c in out if c.text_delta)
+    assert reasoning == "musing more"
+    assert text == "Hi there!"
+    final = out[-1].turn
+    assert final.text == "Hi there!" and final.reasoning == "musing more"
+
+
+def test_stream_does_not_strip_for_regular_models():
+    """Regression guard: on gpt-5.5 (and other non-flagged models), `<think>` in the
+    stream is preserved verbatim — a user could be asking about the tag in their code."""
+    chunks = [_chunk(content="use <think>x</think> tag"), _chunk(finish="stop")]
+    provider = OpenAIProvider(client=_StreamClient(chunks))
+    out = list(provider.stream(model="gpt-5.5", messages=[]))
+    text = "".join(c.text_delta for c in out if c.text_delta)
+    reasoning_deltas = [c.reasoning_delta for c in out if c.reasoning_delta]
+    assert text == "use <think>x</think> tag"
+    assert reasoning_deltas == []
+
+
+def test_complete_strips_inline_think_for_flagged_model():
+    message = SimpleNamespace(
+        content="<think>quick check</think>\n\nhi",
+        tool_calls=None,
+        reasoning_content=None,
+    )
+    choice = SimpleNamespace(message=message, finish_reason="stop")
+    provider = OpenAIProvider(client=_FakeClient(SimpleNamespace(choices=[choice])))
+    turn = provider.complete(model="MiniMax-M2.5", messages=[{"role": "user", "content": "hi"}])
+    assert turn.text == "hi"
+    assert turn.reasoning == "quick check"
+
+
+def test_complete_leaves_think_text_alone_for_regular_models():
+    message = SimpleNamespace(
+        content="use <think>x</think> in code",
+        tool_calls=None,
+        reasoning_content=None,
+    )
+    choice = SimpleNamespace(message=message, finish_reason="stop")
+    provider = OpenAIProvider(client=_FakeClient(SimpleNamespace(choices=[choice])))
+    turn = provider.complete(model="gpt-5.5", messages=[{"role": "user", "content": "hi"}])
+    assert turn.text == "use <think>x</think> in code"
+    assert turn.reasoning is None
+
+
+def test_capability_flag_for_known_inline_think_models():
+    """The capability probe must recognize MiniMax M2/M2.5, DeepSeek R1, and Ollama's
+    thinking variants so the stripper actually kicks in for them — and stay OFF for
+    the sibling models that use reasoning_content (regression guard)."""
+    assert capabilities_for("minimax:MiniMax-M2.5").inline_think_tags is True
+    assert capabilities_for("MiniMax-M2.5").inline_think_tags is True  # bare id path
+    assert capabilities_for("deepseek-r1").inline_think_tags is True
+    assert capabilities_for("ollama:qwen3-thinking:14b").inline_think_tags is True
+    # not this convention:
+    assert capabilities_for("deepseek:deepseek-v4-pro").inline_think_tags is False
+    assert capabilities_for("zai:glm-5.2").inline_think_tags is False
+    assert capabilities_for("gpt-5.5").inline_think_tags is False

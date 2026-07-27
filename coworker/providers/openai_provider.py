@@ -59,6 +59,86 @@ def _delta_reasoning(obj: Any) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
+# DeepSeek-R1-style reasoning delivery: some vendors (MiniMax M2/M2.5, DeepSeek R1,
+# local Qwen thinking variants) leave `reasoning_content` empty and instead wrap the
+# thinking inside the normal `content` string as `<think>...</think>`. The stripper
+# pulls those blocks out so text/reasoning route to the right places the UI expects.
+# Gated per-model on ModelCapabilities.inline_think_tags so ordinary responses (where
+# a user might legitimately be discussing `<think>` in their own text) are untouched.
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+class _ThinkTagStripper:
+    """Streaming state machine that splits an inline-`<think>` content stream into
+    (text, reasoning) pieces. Buffers across chunks so a marker split like `<thi` + `nk>`
+    still resolves. Handles multiple think blocks and an unterminated tail (treated as
+    reasoning on flush, since the model was mid-thought when the stream ended)."""
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._in_think = False
+
+    def feed(self, delta: str) -> tuple[str, str]:
+        """Push a content delta; return `(text, reasoning)` ready to yield. Either can be
+        empty; both empty means the whole delta is being held pending marker resolution."""
+        self._buf += delta
+        text_parts: list[str] = []
+        reason_parts: list[str] = []
+        while self._buf:
+            marker = _THINK_CLOSE if self._in_think else _THINK_OPEN
+            idx = self._buf.find(marker)
+            if idx >= 0:
+                if self._in_think:
+                    reason_parts.append(self._buf[:idx])
+                else:
+                    text_parts.append(self._buf[:idx])
+                self._buf = self._buf[idx + len(marker) :]
+                self._in_think = not self._in_think
+                continue
+            # No full marker in view. Emit everything except the last (len(marker)-1) chars,
+            # which might be the start of a marker completed by the next chunk.
+            safe_upto = len(self._buf) - (len(marker) - 1)
+            if safe_upto > 0:
+                chunk = self._buf[:safe_upto]
+                (reason_parts if self._in_think else text_parts).append(chunk)
+                self._buf = self._buf[safe_upto:]
+            break
+        return "".join(text_parts), "".join(reason_parts)
+
+    def flush(self) -> tuple[str, str]:
+        """End-of-stream: release any held bytes. If we're still inside a `<think>` block
+        the stream ended mid-thought; surface the tail as reasoning rather than text."""
+        if not self._buf:
+            return "", ""
+        remaining, self._buf = self._buf, ""
+        return ("", remaining) if self._in_think else (remaining, "")
+
+
+def _extract_think_blocks(content: str) -> tuple[str, Optional[str]]:
+    """Non-streaming counterpart: pull every `<think>...</think>` block out of `content`
+    and return `(visible_text, joined_reasoning_or_None)`. An unterminated `<think>` at
+    the tail is treated as reasoning too, mirroring the streaming flush behavior."""
+    if _THINK_OPEN not in content:
+        return content, None
+    reasoning: list[str] = []
+
+    def take(m):
+        reasoning.append(m.group(1))
+        return ""
+
+    text = re.sub(
+        r"<think>(.*?)</think>\s*", take, content, flags=re.DOTALL
+    )
+    # Handle a trailing, unterminated <think>: DOTALL regex above missed it by design.
+    tail_open = text.find(_THINK_OPEN)
+    if tail_open >= 0:
+        reasoning.append(text[tail_open + len(_THINK_OPEN) :])
+        text = text[:tail_open]
+    joined = "\n".join(r for r in reasoning if r) or None
+    return text, joined
+
+
 def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop provider-private message sidecars (underscore-prefixed keys, e.g. `_gemini`
     thought signatures — see providers/base.py): they belong to other providers, and the
@@ -168,12 +248,22 @@ class OpenAIProvider(ProviderClient):
         text = getattr(message, "content", None)
         tool_calls = _parse_tool_calls(getattr(message, "tool_calls", None))
         text, tool_calls = _maybe_salvage_tool_calls(text, tool_calls, tools=tools)
+        reasoning = _delta_reasoning(message)
+        # Inline-<think> vendors (MiniMax M2, DeepSeek R1, some Ollama models) put the
+        # thinking inside `content` instead of a separate field. Peel it out so it lands
+        # on the same `reasoning` sidecar the UI already knows how to render.
+        if (
+            reasoning is None
+            and text
+            and capabilities_for(model).inline_think_tags
+        ):
+            text, reasoning = _extract_think_blocks(text)
         return AssistantTurn(
             text=text,
             tool_calls=tool_calls,
             finish_reason=getattr(choice, "finish_reason", None),
             raw=response,
-            reasoning=_delta_reasoning(message),
+            reasoning=reasoning,
         )
 
     def capabilities(self, model: str) -> ModelCapabilities:
@@ -202,6 +292,12 @@ class OpenAIProvider(ProviderClient):
         reasoning_parts: list[str] = []
         tool_accum: dict[int, dict[str, str]] = {}
         finish_reason = None
+        # Same inline-<think> handling as the non-streaming path, in state-machine form so
+        # a marker split across chunks still resolves. Instantiated only when the model
+        # actually uses this convention; otherwise content passes through untouched.
+        think_stripper = (
+            _ThinkTagStripper() if capabilities_for(model).inline_think_tags else None
+        )
 
         # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
         for _ in range(2):
@@ -225,8 +321,17 @@ class OpenAIProvider(ProviderClient):
                     yield StreamChunk(reasoning_delta=reasoning)
                 content = getattr(delta, "content", None)
                 if content:
-                    text_parts.append(content)
-                    yield StreamChunk(text_delta=content)
+                    if think_stripper is not None:
+                        text_out, reason_out = think_stripper.feed(content)
+                        if reason_out:
+                            reasoning_parts.append(reason_out)
+                            yield StreamChunk(reasoning_delta=reason_out)
+                        if text_out:
+                            text_parts.append(text_out)
+                            yield StreamChunk(text_delta=text_out)
+                    else:
+                        text_parts.append(content)
+                        yield StreamChunk(text_delta=content)
                 for tc in getattr(delta, "tool_calls", None) or []:
                     acc = tool_accum.setdefault(
                         getattr(tc, "index", 0), {"id": "", "name": "", "args": ""}
@@ -241,6 +346,17 @@ class OpenAIProvider(ProviderClient):
                             acc["args"] += fn.arguments
             if getattr(choice, "finish_reason", None):
                 finish_reason = choice.finish_reason
+
+        # Release any bytes still held by the stripper (a marker that never completed,
+        # or the tail after the last </think>).
+        if think_stripper is not None:
+            text_out, reason_out = think_stripper.flush()
+            if reason_out:
+                reasoning_parts.append(reason_out)
+                yield StreamChunk(reasoning_delta=reason_out)
+            if text_out:
+                text_parts.append(text_out)
+                yield StreamChunk(text_delta=text_out)
 
         tool_calls = []
         for index in sorted(tool_accum):

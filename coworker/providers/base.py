@@ -55,6 +55,11 @@ class ModelCapabilities:
     pdf: bool = False
     parallel_tool_calls: bool = True
     streaming: bool = True
+    # DeepSeek-R1-style: reasoning arrives inline in `content` wrapped in
+    # `<think>...</think>` instead of a separate `reasoning_content` field. MiniMax M2/M2.5,
+    # DeepSeek R1, and most Ollama-hosted thinking models do this. When True, the OpenAI
+    # provider peels the tags out and routes the inner text to the `reasoning` sidecar.
+    inline_think_tags: bool = False
 
 
 @dataclass
