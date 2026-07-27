@@ -193,12 +193,14 @@ describe("SkillsTab", () => {
     expect(await screen.findByText(/scripts\s+and examples included/)).toBeTruthy();
     expect(screen.getByText(/asks before adding it to your skills/)).toBeTruthy();
     const button = screen.getByText("Start a conversation");
-    expect((button as HTMLButtonElement).disabled).toBe(true); // needs a description first
+    expect((button as HTMLButtonElement).disabled).toBe(false); // description is optional
+    fireEvent.click(button);
+    expect(onCreateSkill).toHaveBeenCalledWith(""); // empty → composer prompts instead
     fireEvent.change(screen.getByLabelText("Describe the skill"), {
       target: { value: "monday reports" },
     });
     fireEvent.click(button);
-    expect(onCreateSkill).toHaveBeenCalledWith("monday reports");
+    expect(onCreateSkill).toHaveBeenLastCalledWith("monday reports");
     // Settings never drafts: no POST of any kind happened.
     expect(calls.some((c) => c.method === "POST")).toBe(false);
   });

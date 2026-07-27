@@ -387,13 +387,15 @@ export function SkillsTab({
         <textarea
           className={`${INPUT} min-h-[64px]`}
           value={describe}
-          placeholder="Every Monday I write a status report from Slack and GitHub activity…"
+          placeholder="Optional — e.g. Every Monday I write a status report from Slack and GitHub activity…"
           aria-label="Describe the skill"
           onChange={(e) => setDescribe(e.target.value)}
         />
+        {/* Always clickable: with a description it rides along; without one, the composer
+            opens prompting the user to describe the skill there instead. */}
         <button
           className={`${BTN_ACCENT} mt-2`}
-          disabled={!describe.trim() || !onCreateSkill}
+          disabled={!onCreateSkill}
           onClick={() => onCreateSkill?.(describe.trim())}
         >
           Start a conversation
