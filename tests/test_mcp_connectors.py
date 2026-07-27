@@ -11,6 +11,7 @@ import asyncio
 from types import SimpleNamespace
 
 from coworker.connectors.setup import (
+    connect_connector,
     connector_list,
     disconnect_connector,
     update_connector_tools,
@@ -254,6 +255,127 @@ def test_stale_token_reauth_never_opens_a_browser_mid_turn(tmp_path, monkeypatch
     monkeypatch.setattr(manager.mcp, "ensure", refuses)
     assert asyncio.run(manager.prepare_mcp_tools("s1")) == []
     assert "sign-in required" in manager._mcp_errors["granola"]
+
+
+def test_mcp_auth_is_independent_of_the_manual_field_auth_type(tmp_path, monkeypatch):
+    """jira's manual field form is `auth: "api_token"`, but its MCP path is still
+    full browser OAuth (Atlassian supports DCR) — `mcp_auth` must reflect THAT, not
+    the descriptor's `auth`, or the GUI would wrongly hide jira's one-click button."""
+    from coworker.connectors.descriptors import get_descriptor
+
+    _state(tmp_path, monkeypatch)
+    assert get_descriptor("jira").auth == "api_token"
+    assert get_descriptor("jira").mcp_auth == "oauth"
+    assert get_descriptor("monday").mcp_auth == "oauth"
+    assert get_descriptor("newrelic").mcp_auth == "connector"
+
+    rows = {c["name"]: c for c in connector_list(SecretStore())}
+    assert rows["jira"]["mcp"] is True and rows["jira"]["mcp_auth"] == "oauth"
+    assert rows["monday"]["mcp"] is True and rows["monday"]["mcp_auth"] == "oauth"
+    assert rows["newrelic"]["mcp"] is True and rows["newrelic"]["mcp_auth"] == "connector"
+    # Not MCP-backed at all → no mcp_auth opinion.
+    assert rows["linear"]["mcp"] is False and rows["linear"]["mcp_auth"] is None
+
+
+def test_mcp_connect_connector_refuses_non_oauth_descriptors(tmp_path, monkeypatch):
+    """Defense in depth: even if the GUI's mcp_auth gate were bypassed, the one-click
+    OAuth seeding path itself must fail closed for a connector that isn't oauth —
+    seeding `auth: "oauth"` for New Relic would open a browser against an
+    authorization server that doesn't recognize our (non-DCR) client."""
+    _state(tmp_path, monkeypatch)
+    manager = SessionManager(data_dir=tmp_path / "data")
+    out = asyncio.run(manager.mcp_connect_connector("newrelic"))
+    assert not out["ok"]
+    assert "newrelic" not in read_global()
+
+
+def test_newrelic_manual_connect_seeds_header_based_mcp_config(tmp_path, monkeypatch):
+    """New Relic's OAuth needs a vendor-registered redirect we can't provide (the
+    Asana wall) — its manual API-key connect seeds a `connector`-auth MCP entry
+    itself. The key must never land in the plain-text, paste-shareable mcp.json."""
+    _state(tmp_path, monkeypatch)
+    secrets = SecretStore()
+
+    out = connect_connector(
+        secrets, "newrelic", {"api_key": "NRAK-test123", "region": "eu"}, validate=False
+    )
+    assert out["ok"]
+
+    raw = read_global()["newrelic"]
+    assert raw["url"] == "https://mcp.eu.newrelic.com/mcp/"
+    assert raw["auth"] == "connector"
+    assert raw["headers"] == {
+        "include-tags": "discovery,data-access,alerting,incident-response"
+    }
+    assert set(raw["include_tools"]) == set(mcp_pinned_tools("newrelic"))
+    assert "NRAK-test123" not in str(raw)
+    # The secret lives only in the SecretStore profile, resolved fresh at connect time.
+    assert secrets.get("newrelic:default")["api_key"] == "NRAK-test123"
+
+    out = disconnect_connector(secrets, "newrelic")
+    assert out["ok"]
+    assert "newrelic" not in read_global()
+    assert secrets.get("newrelic:default") is None
+
+
+def test_newrelic_region_defaults_to_us(tmp_path, monkeypatch):
+    _state(tmp_path, monkeypatch)
+    secrets = SecretStore()
+    connect_connector(secrets, "newrelic", {"api_key": "NRAK-x"}, validate=False)
+    assert read_global()["newrelic"]["url"] == "https://mcp.newrelic.com/mcp/"
+
+
+def test_connector_auth_injects_api_key_header_dynamically(tmp_path, monkeypatch):
+    """auth: "connector" pulls the key from the connector's SecretStore profile at
+    connect time — never from server.headers, which stays secret-free."""
+    from contextlib import asynccontextmanager
+
+    from coworker.mcp import client as mcp_client
+    from coworker.mcp.config import MCPServerDef
+
+    _state(tmp_path, monkeypatch)
+    secrets = SecretStore()
+    secrets.put("newrelic:default", {"api_key": "NRAK-secret"})
+
+    captured = {}
+
+    @asynccontextmanager
+    async def fake_streamablehttp_client(url, headers=None, auth=None):
+        captured["headers"] = headers
+        yield (object(), object(), None)
+
+    class FakeSession:
+        def __init__(self, read, write):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def initialize(self):
+            return None
+
+        async def list_tools(self):
+            return SimpleNamespace(tools=[])
+
+    monkeypatch.setattr(mcp_client, "streamablehttp_client", fake_streamablehttp_client)
+    monkeypatch.setattr(mcp_client, "ClientSession", FakeSession)
+
+    server = MCPServerDef(
+        name="newrelic",
+        transport="http",
+        url="https://mcp.newrelic.com/mcp/",
+        headers={"include-tags": "discovery"},
+        auth="connector",
+    )
+    manager = mcp_client.MCPManager(secrets=secrets)
+    asyncio.run(manager.ensure(server))
+
+    assert captured["headers"]["Api-Key"] == "NRAK-secret"
+    assert captured["headers"]["include-tags"] == "discovery"
+    assert "Api-Key" not in server.headers  # never written back onto the def
 
 
 def test_non_interactive_auth_wiring_refuses_the_browser():

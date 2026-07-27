@@ -74,19 +74,21 @@ def test_persona_detail_endpoint(tmp_path, monkeypatch):
     assert set(detail["tools"]) == {"files", "search", "shell", "todo"}
     assert detail["description"]  # the manifest description is surfaced
 
-    # recommends annotated with `connected` (github connected; slack/datadog not)
+    # recommends annotated with `connected` (github connected; slack/newrelic not)
     by_ref = {r["ref"]: r for r in detail["recommends"]}
     assert by_ref["github"]["connected"] is True and by_ref["github"]["tier"] == "core"
     assert by_ref["slack"]["connected"] is False
+    assert by_ref["newrelic"]["connected"] is False and by_ref["newrelic"]["tier"] == "core"
     assert by_ref["filesystem"]["kind"] == "mcp"  # mcp recommend carried through
 
     # default_connections = the RECOMMENDED connectors: core seed on / optional off, `connected`
-    # annotated. datadog is core → seeds True even though it's an unconnected placeholder.
+    # annotated. newrelic is core → seeds True even though it's an unconnected placeholder.
     dc = {d["connector"]: d for d in detail["default_connections"]}
-    assert set(dc) == {"github", "slack", "datadog", "pagerduty"}
+    assert set(dc) == {"github", "slack", "newrelic", "datadog", "pagerduty"}
     assert dc["github"]["enabled"] is True and dc["github"]["connected"] is True
     assert dc["slack"]["enabled"] is True and dc["slack"]["connected"] is False
-    assert dc["datadog"]["enabled"] is True
+    assert dc["newrelic"]["enabled"] is True
+    assert dc["datadog"]["enabled"] is False
     assert dc["pagerduty"]["enabled"] is False
 
     # unknown id → the app's error convention
@@ -112,7 +114,7 @@ def test_persona_set_default_connection(tmp_path, monkeypatch):
     flipped = {d["connector"]: d["enabled"] for d in resp["default_connections"]}
     assert flipped["github"] is False
     # the rest of the seeded row is preserved (the edit overlays the seed, not collapses it)
-    assert set(flipped) == {"github", "slack", "datadog", "pagerduty"}
+    assert set(flipped) == {"github", "slack", "newrelic", "datadog", "pagerduty"}
 
     # reflected in the next GET
     detail = client.get("/v1/personas/ops").json()
@@ -173,13 +175,15 @@ def test_session_connections_endpoint(tmp_path, monkeypatch):
     # slack's detail surfaces the subscribed channel id
     assert "C123" in conn["slack"]["detail"]
 
-    # recommended = connector recommends not yet account-connected (datadog/pagerduty placeholders)
+    # recommended = connector recommends not yet account-connected (newrelic core;
+    # datadog/pagerduty placeholders, both optional)
     rec = {r["connector"]: r for r in view["recommended"]}
-    assert set(rec) == {"datadog", "pagerduty"}
+    assert set(rec) == {"newrelic", "datadog", "pagerduty"}
     assert all(r["connected"] is False for r in view["recommended"])
-    assert rec["datadog"]["tier"] == "core" and rec["pagerduty"]["tier"] == "optional"
+    assert rec["newrelic"]["tier"] == "core"
+    assert rec["datadog"]["tier"] == "optional" and rec["pagerduty"]["tier"] == "optional"
     # attention = count of not-yet-connected recommends
-    assert view["attention"] == 2
+    assert view["attention"] == 3
 
 
 def test_fresh_session_view_uses_persona_hint(tmp_path, monkeypatch):

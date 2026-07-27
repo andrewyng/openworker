@@ -35,8 +35,12 @@ export function AddConnectionModal({
 }) {
   // MCP-backed one-click (§42): local OAuth against the vendor's hosted MCP server —
   // with manual fields alongside (jira, asana) it's a second mode; alone (monday)
-  // it IS the connect flow.
-  const mcpBacked = !!c.mcp;
+  // it IS the connect flow. Requires mcp_auth:"oauth" (independent of `auth`, the
+  // manual field form's own auth type — jira's is "api_token" but its MCP path is
+  // still full OAuth). A connector whose OAuth needs a vendor-registered redirect
+  // we can't provide (New Relic: API key only, mcp_auth:"connector") has no
+  // one-click path and goes straight to the manual field form.
+  const mcpBacked = !!c.mcp && c.mcp_auth === "oauth";
   const twoModes =
     c.name === "slack" ||
     c.name === "hubspot" ||

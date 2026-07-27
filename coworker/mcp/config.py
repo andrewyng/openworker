@@ -35,7 +35,10 @@ class MCPServerDef:
     exclude_tools: Optional[list[str]] = None
     requires_approval: bool = True
     # "oauth" → browser OAuth 2.1 + PKCE with Dynamic Client Registration (mcp/oauth.py).
-    # HTTP transport only; tokens live in the SecretStore, never in this file.
+    # "connector" → non-oauth MCP-backed connector (e.g. New Relic): the API key
+    # lives in that connector's SecretStore profile, fetched fresh per connect
+    # (mcp/client.py) rather than kept here. Both HTTP transport only; secrets
+    # live in the SecretStore, never in this file.
     auth: Optional[str] = None
 
 

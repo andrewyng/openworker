@@ -17,9 +17,12 @@ recommends:
   - connector: slack
     reason: receive alerts and reply to the team in-channel
     tier: core
+  - connector: newrelic
+    reason: pull firing alerts, entities, and NRQL to triage an incident
+    tier: core
   - connector: datadog
     reason: pull the firing alerts and the incident timeline
-    tier: core
+    tier: optional
   - connector: pagerduty
     reason: see who's on-call before paging
     tier: optional

@@ -492,6 +492,87 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "write",
         "Add a comment to a task.",
     ),
+    # -- New Relic via their hosted MCP server (API-key connect; no REST tool set —
+    # NerdGraph is large enough that duplicating it in Python isn't worth it). Pinned
+    # to the on-call triage tags (discovery, data-access, alerting, incident-response);
+    # New Relic's own performance-analytics/advanced-analysis tools stay out of scope.
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__get_entity",
+        "Find entity",
+        "read",
+        "Fetch a New Relic entity by GUID or name pattern.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__list_related_entities",
+        "Related entities",
+        "read",
+        "List entities one hop away from a given entity — upstream/downstream dependencies.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__execute_nrql_query",
+        "Run NRQL",
+        "read",
+        "Execute an NRQL query against NRDB.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__natural_language_to_nrql_query",
+        "Query in plain English",
+        "read",
+        "Convert a natural-language request into NRQL, run it, and return the results.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__list_alert_policies",
+        "List alert policies",
+        "read",
+        "List alert policies for an account.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__search_incident",
+        "Search alert events",
+        "read",
+        "List open and closed alert events with flexible filtering.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__list_recent_issues",
+        "List open issues",
+        "read",
+        "List all open issues for an account.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__list_change_events",
+        "List change events",
+        "read",
+        "List an entity's change/deploy history — correlate incidents with what shipped.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__analyze_deployment_impact",
+        "Analyze deployment impact",
+        "read",
+        "Analyze the performance impact of a deployment on an entity.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__list_entity_error_groups",
+        "List error groups",
+        "read",
+        "Fetch Errors Inbox error groups for an entity within a time window.",
+    ),
+    ConnectorToolDef(
+        "newrelic",
+        "mcp__newrelic__generate_alert_insights_report",
+        "Alert insights report",
+        "read",
+        "Generate an AI alert-intelligence analysis report for an issue.",
+    ),
     ConnectorToolDef(
         "confluence",
         "confluence_search",
