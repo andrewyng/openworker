@@ -79,8 +79,13 @@ jobs:
           python -m venv .venv
           if [ "$RUNNER_OS" = "Windows" ]; then VPY=.venv/Scripts/python; else VPY=.venv/bin/python; fi
           "$VPY" -m pip install --upgrade pip
-          "$VPY" -m pip install -e . pyinstaller typer tzdata
+          "$VPY" -m pip install -e ".[messaging]" pyinstaller typer tzdata
           "$VPY" -c "import aisuite, coworker"  # fail fast if either import breaks
+          # The [messaging] extra must be importable HERE, at build time: the PyInstaller
+          # spec collects slack_bolt/telegram only when it can import them, so a build venv
+          # without the extra silently ships a sidecar that can't run the Telegram or
+          # Slack Socket Mode listeners at all.
+          "$VPY" -c "import telegram, slack_bolt"  # fail fast if inbound messaging is missing
 
       - name: npm ci
         working-directory: surfaces/gui

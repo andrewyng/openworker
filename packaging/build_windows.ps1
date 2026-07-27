@@ -15,7 +15,10 @@
     - A Python venv at platform\.venv with this package installed editable, plus pyinstaller.
       `typer` is needed only at build time: PyInstaller walks the `mcp` package and `mcp.cli`
       calls sys.exit() at import if typer is absent, which aborts the freeze.
-        py -m venv .venv ; .\.venv\Scripts\pip install -e . pyinstaller tzdata typer
+        py -m venv .venv ; .\.venv\Scripts\pip install -e ".[messaging]" pyinstaller tzdata typer
+      The [messaging] extra is NOT optional for a release build: openworker-server.spec
+      bundles slack_bolt/telegram only if it can import them here, so building without it
+      ships a sidecar whose Telegram / Slack Socket Mode listeners can never start.
 
   The result is UNSIGNED — first launch shows a SmartScreen warning ("More info" -> "Run anyway").
   Authenticode signing is a later step.
