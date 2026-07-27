@@ -8,6 +8,7 @@ import {
   type ArtifactContent,
   type ArtifactInfo,
 } from "../api";
+import { artifactBaseName, findArtifact } from "../artifactPaths";
 import type { TodoItem } from "../types";
 import { AccessSection } from "./AccessSection";
 import { Icon } from "./Icon";
@@ -122,17 +123,15 @@ export function RightRail({
     if (!active) return;
     const minimal = (path: string): ArtifactInfo => ({
       path,
-      name: path.split("/").pop() || path,
+      name: artifactBaseName(path),
       kind: kindFromPath(path),
       size: 0,
       modified_at: 0,
     });
-    const match = (list: ArtifactInfo[], path: string) =>
-      list.find((a) => a.path === path || a.path.endsWith("/" + path) || a.name === path);
     const onOpen = (e: Event) => {
       const path = String((e as CustomEvent).detail?.path || "");
       if (!path) return;
-      const found = match(artifacts, path);
+      const found = findArtifact(artifacts, path);
       if (found) {
         setSelected(found);
         return;
@@ -140,7 +139,7 @@ export function RightRail({
       getArtifacts(sessionId)
         .then((list) => {
           setArtifacts(list);
-          setSelected(match(list, path) ?? minimal(path));
+          setSelected(findArtifact(list, path) ?? minimal(path));
         })
         .catch(() => setSelected(minimal(path)));
     };

@@ -179,7 +179,7 @@ export async function deleteSession(sessionId: string): Promise<{ ok: boolean; e
 }
 
 export interface ArtifactInfo {
-  path: string; // workspace-relative (the display/API identifier)
+  path: string; // primary-root relative or absolute for an additional granted root
   abs_path?: string; // absolute — what "Copy path" copies
   name: string;
   kind: "markdown" | "html" | "image" | "code" | "text" | string;
