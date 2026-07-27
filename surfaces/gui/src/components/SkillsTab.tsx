@@ -73,7 +73,13 @@ export function SkillsTab() {
   const [drafting, setDrafting] = useState(false);
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
   const [error, setError] = useState("");
+  // The install/enable confirmation (SKILLS-SPEC §4.1 #2): teaches the new-session pickup
+  // rule and the can't-unread rule at exactly the moment they become relevant.
+  const [notice, setNotice] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
+
+  const CONFIRMATION =
+    "Available to the worker in new sessions. Conversations already underway keep what they've already read.";
 
   const refresh = () => listSkills().then(setRows);
   useEffect(() => {
@@ -81,6 +87,7 @@ export function SkillsTab() {
   }, []);
 
   const fail = (res: { ok?: boolean; error?: string }) => {
+    setNotice("");
     if (res.ok === false) {
       setError(res.error || "Something went wrong.");
       return true;
@@ -104,20 +111,35 @@ export function SkillsTab() {
           });
     if (fail(res)) return;
     setEditor(null);
+    if (editor.mode === "new") setNotice(CONFIRMATION);
     refresh();
   };
 
   const draft = async () => {
     setDrafting(true);
-    const res = await draftSkill(draftText);
+    // Refine-in-place (§4.2 #3): with a draft in the form, the box revises it — CURRENT
+    // form contents (hand-edits included) + the note in, revised fields out. No chat,
+    // no history; the draft itself is the memory. Fresh mode otherwise.
+    const res = await draftSkill(
+      editor
+        ? {
+            current: {
+              name: editor.name,
+              description: editor.description,
+              instructions: editor.instructions,
+            },
+            feedback: draftText,
+          }
+        : { description: draftText },
+    );
     setDrafting(false);
     if (fail(res)) return;
     // The draft only fills the form — the user reviews and saves (never auto-saved, §4.2).
     setEditor({
-      mode: "new",
-      name: res.name || "",
-      description: res.description || "",
-      instructions: res.instructions || "",
+      mode: editor?.mode ?? "new",
+      name: editor?.mode === "edit" ? editor.name : res.name || editor?.name || "",
+      description: res.description ?? editor?.description ?? "",
+      instructions: res.instructions ?? editor?.instructions ?? "",
     });
     setDraftText("");
   };
@@ -134,6 +156,7 @@ export function SkillsTab() {
     const res = await confirmSkillUpload(upload.token);
     if (fail(res)) return;
     setUpload(null);
+    setNotice(CONFIRMATION);
     refresh();
   };
 
@@ -184,6 +207,11 @@ export function SkillsTab() {
       {error ? (
         <div className="text-[12.5px] text-red-500 mb-3" role="alert">
           {error}
+        </div>
+      ) : null}
+      {notice ? (
+        <div className="text-[12.5px] text-muted mb-3" role="status">
+          {notice}
         </div>
       ) : null}
 
@@ -322,16 +350,23 @@ export function SkillsTab() {
       </div>
 
       <div className={`${CARD} p-4 mt-4`}>
-        <div className="text-[13px] font-medium mb-1">Create using OpenWorker</div>
+        <div className="text-[13px] font-medium mb-1">
+          {editor ? "Ask OpenWorker to revise" : "Create using OpenWorker"}
+        </div>
         <p className="text-[12.5px] text-muted mb-2">
-          Describe what the skill should do — a draft lands in the editor for you to review. Nothing
-          is saved until you save it.
+          {editor
+            ? "Tell it what to change about the draft in the editor above."
+            : "Describe what the skill should do — a draft lands in the editor for you to review. Nothing is saved until you save it."}
         </p>
         <textarea
           className={`${INPUT} min-h-[64px]`}
           value={draftText}
-          placeholder="Every Monday I write a status report from Slack and GitHub activity…"
-          aria-label="Describe the skill"
+          placeholder={
+            editor
+              ? "Make it shorter, and always ask for the repo name first…"
+              : "Every Monday I write a status report from Slack and GitHub activity…"
+          }
+          aria-label={editor ? "Revise the draft" : "Describe the skill"}
           onChange={(e) => setDraftText(e.target.value)}
         />
         <button
@@ -339,8 +374,12 @@ export function SkillsTab() {
           disabled={!draftText.trim() || drafting}
           onClick={draft}
         >
-          {drafting ? "Drafting…" : "Draft with OpenWorker"}
+          {drafting ? "Drafting…" : editor ? "Revise" : "Draft with OpenWorker"}
         </button>
+        <p className="text-[11.5px] text-muted mt-2">
+          Not a chat — each revision rewrites the draft above using your note. The draft itself
+          is the memory; your manual edits are kept.
+        </p>
       </div>
     </section>
   );

@@ -240,6 +240,26 @@ def test_draft_returns_fields_and_survives_provider_failure(tmp_path):
     assert client.post("/v1/skills/draft", json={}).json()["ok"] is False
 
 
+def test_draft_revise_in_place(tmp_path):
+    """§4.2 #3: a revision round sends the CURRENT form contents + feedback — stateless,
+    the draft is the memory. The prompt must carry both."""
+    revised = '{"name": "greet", "description": "shorter", "instructions": "1. Hi"}'
+    client, _m, provider = _client(tmp_path, [AssistantTurn(text=revised)])
+    res = client.post(
+        "/v1/skills/draft",
+        json={
+            "current": {"name": "greet", "description": "long", "instructions": "1. Hello there"},
+            "feedback": "shorter please",
+        },
+    ).json()
+    assert res["ok"] is True and res["description"] == "shorter"
+    prompt = str(provider.seen[-1][-1]["content"])
+    assert "Hello there" in prompt  # current draft rode along…
+    assert "shorter please" in prompt  # …with the feedback
+    # feedback without a draft (and vice versa) → the friendly fresh-mode error
+    assert client.post("/v1/skills/draft", json={"feedback": "x"}).json()["ok"] is False
+
+
 # -- session mutes over HTTP ----------------------------------------------------------
 
 
@@ -299,16 +319,29 @@ def _drain(ws):
 
 
 def test_ws_force_run_frames_the_turn(tmp_path):
+    """The display/model split (§4.1 #3): the provider gets the framing; the transcript
+    (TURN_START + the persisted message's `_display`) gets the user's literal '/name …'."""
     client, _m, provider = _client(tmp_path, [AssistantTurn(text="done")])
     client.post("/v1/skills", json=GREET)
     with client.websocket_connect("/ws/session/s1?agent=chat") as ws:
         assert ws.receive_json()["type"] == "ready"
         ws.send_json({"type": "user_message", "text": "hello", "skill": "greet"})
-        types, _ = _drain(ws)
-        assert "turn_done" in types
+        events = []
+        while True:
+            evt = ws.receive_json()
+            events.append(evt)
+            if evt["type"] == "turn_done":
+                break
     framed = provider.seen[-1][-1]["content"]
     assert 'load_skill("greet")' in str(framed)
     assert "hello" in str(framed)
+    start = next(e for e in events if e["type"] == "turn_start")
+    assert start["data"]["display"] == "/greet hello"  # what the transcript shows
+    assert "load_skill" in str(start["data"]["input"])  # what the model saw
+    stored = client.get("/v1/sessions/s1/messages").json()["messages"]
+    user = next(m for m in stored if m["role"] == "user")
+    assert user["_display"] == "/greet hello"
+    assert "load_skill" in str(user["content"])
 
 
 def test_ws_force_run_unknown_and_muted_error_without_killing_socket(tmp_path):

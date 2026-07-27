@@ -214,6 +214,51 @@ describe("SkillsTab", () => {
     expect(screen.queryByText(/Move to/)).toBeNull();
   });
 
+  it("shows the new-session confirmation line after creating a skill", async () => {
+    stubFetch([
+      { match: "/v1/skills", method: "GET", json: { skills: [] } },
+      { match: "/v1/skills", method: "POST", json: { ok: true } },
+    ]);
+    render(<SkillsTab />);
+    fireEvent.click(await screen.findByText("New skill"));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "greet" } });
+    fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "x" } });
+    fireEvent.click(screen.getByText("Save skill"));
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toContain("new sessions");
+    expect(status.textContent).toContain("already underway");
+  });
+
+  it("revise-in-place: with a draft in the form, the box revises it and never saves", async () => {
+    const calls = stubFetch([
+      {
+        match: "/v1/skills/draft",
+        method: "POST",
+        json: { ok: true, name: "greet", description: "v2 desc", instructions: "v2 steps" },
+      },
+      { match: "/v1/skills", method: "GET", json: { skills: [] } },
+    ]);
+    render(<SkillsTab />);
+    fireEvent.click(await screen.findByText("New skill"));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "greet" } });
+    fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "v1 steps" } });
+    // With the editor open the box flips to revise mode
+    expect(screen.getByText("Ask OpenWorker to revise")).toBeTruthy();
+    expect(screen.getByText(/Not a chat/)).toBeTruthy(); // the mental-model caption
+    fireEvent.change(screen.getByLabelText("Revise the draft"), {
+      target: { value: "shorter please" },
+    });
+    fireEvent.click(screen.getByText("Revise"));
+    await waitFor(() => {
+      const draft = calls.find((c) => c.url.includes("/draft"));
+      // current form contents (hand-edits included) + the note ride together
+      expect(draft?.body.current).toMatchObject({ name: "greet", instructions: "v1 steps" });
+      expect(draft?.body.feedback).toBe("shorter please");
+    });
+    expect((screen.getByLabelText("Instructions") as HTMLTextAreaElement).value).toBe("v2 steps");
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/v1/skills"))).toBe(false);
+  });
+
   it("surfaces server-side validation errors", async () => {
     stubFetch([
       { match: "/v1/skills", method: "GET", json: { skills: [] } },

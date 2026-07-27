@@ -1142,14 +1142,18 @@ export async function confirmSkillUpload(
   return res.json();
 }
 
-export async function draftSkill(description: string): Promise<{
+export async function draftSkill(payload: {
+  description?: string; // fresh draft
+  current?: { name: string; description: string; instructions: string }; // revise-in-place:
+  feedback?: string; //   current form contents + a note → revised fields (stateless per round)
+}): Promise<{
   ok: boolean;
   error?: string;
   name?: string;
   description?: string;
   instructions?: string;
 }> {
-  const res = await fetch(skillUrl("/draft"), jsonPost({ description }));
+  const res = await fetch(skillUrl("/draft"), jsonPost(payload));
   return res.json();
 }
 

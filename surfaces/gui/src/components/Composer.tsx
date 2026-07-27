@@ -87,19 +87,27 @@ export function Composer(props: Props) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   // "/" force-run (SKILLS-SPEC §4.1 #3). The popup derives from the draft: it is open while
   // the text is a bare "/query" (no whitespace yet) and no skill is picked. Selecting a row
-  // clears the query and pins a chip; the skill name rides the user_message as its own field.
+  // inserts "/name " INLINE in the box (Claude-Code style — the slash text IS the state);
+  // the user keeps typing after it, and on send the prefix is stripped while the skill name
+  // rides the user_message as its own field. Editing the prefix away un-picks the skill.
   const [pendingSkill, setPendingSkill] = useState<SessionSkillRow | null>(null);
   const [slashSkills, setSlashSkills] = useState<SessionSkillRow[] | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
+  const prefixIntact =
+    pendingSkill !== null &&
+    (text === `/${pendingSkill.name}` || text.startsWith(`/${pendingSkill.name} `));
+  useEffect(() => {
+    if (pendingSkill && !prefixIntact) setPendingSkill(null);
+  }, [pendingSkill, prefixIntact]);
   const slashQuery =
-    !pendingSkill && props.sessionId && text.startsWith("/") && !/\s/.test(text.slice(1))
+    !prefixIntact && props.sessionId && text.startsWith("/") && !/\s/.test(text.slice(1))
       ? text.slice(1).toLowerCase()
       : null;
   const slashMatches = (slashSkills ?? []).filter((s) =>
     s.name.toLowerCase().includes(slashQuery ?? ""),
   );
   useEffect(() => {
-    // Fetch on each popup open (fresh menu — rail mutes apply immediately); drop when closed.
+    // Fetch on each popup open (fresh menu); drop when closed.
     if (slashQuery === null) {
       setSlashSkills(null);
       setSlashIndex(0);
@@ -114,7 +122,7 @@ export function Composer(props: Props) {
   }, [slashQuery === null]);
   const pickSkill = (s: SessionSkillRow) => {
     setPendingSkill(s);
-    setText("");
+    setText(`/${s.name} `);
     textareaRef.current?.focus();
   };
   const [dragging, setDragging] = useState(false);
@@ -293,9 +301,12 @@ export function Composer(props: Props) {
   const submit = () => {
     // While the "/" popup is open the draft is a query, not a message — never send it.
     if (slashQuery !== null) return;
-    const t = text.trim();
+    // The visible "/name " prefix is UI state, not message text — strip it for the send;
+    // the skill rides as its own field.
+    const skill = prefixIntact ? pendingSkill!.name : undefined;
+    const t = (skill ? text.slice(skill.length + 1) : text).trim();
     if (
-      (!t && attachments.length === 0 && !pendingSkill) ||
+      (!t && attachments.length === 0 && !skill) ||
       props.running ||
       dictation?.recording ||
       dictationBusy
@@ -306,7 +317,7 @@ export function Composer(props: Props) {
       props.onConnectModel?.();
       return;
     }
-    props.onSend(t, attachments, pendingSkill?.name);
+    props.onSend(t, attachments, skill);
     setText("");
     setAttachments([]);
     setPendingSkill(null);
@@ -429,23 +440,6 @@ export function Composer(props: Props) {
           >
             ✕
           </button>
-        </div>
-      )}
-
-      {/* Picked skill chip — removable; the name rides the send as its own field. */}
-      {pendingSkill && (
-        <div className="max-w-3xl mx-auto mb-1.5" data-testid="skill-chip">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-2.5 py-1 text-[12px]">
-            <span className="text-accent font-medium">/{pendingSkill.name}</span>
-            <span className="text-faint truncate max-w-[240px]">{pendingSkill.description}</span>
-            <button
-              className="opacity-60 hover:opacity-100"
-              aria-label="Remove skill"
-              onClick={() => setPendingSkill(null)}
-            >
-              ✕
-            </button>
-          </span>
         </div>
       )}
 

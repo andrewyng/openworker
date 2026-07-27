@@ -585,11 +585,14 @@ export function App() {
                 : [...p, { kind: "connector", source: src }];
             });
           } else if (typeof d.input === "string" && d.input) {
+            // `display` (force-run) is the user's literal "/name …" line; the framed
+            // `input` is model-facing. Surface/dedupe on what the user actually sees.
+            const shown = (typeof d.display === "string" && d.display) || (d.input as string);
             setItems((p) => {
               const last = p[p.length - 1];
-              return last && last.kind === "user" && last.text === d.input
+              return last && last.kind === "user" && last.text === shown
                 ? p
-                : [...p, { kind: "user", text: d.input as string, ts: Date.now() / 1000 }];
+                : [...p, { kind: "user", text: shown, ts: Date.now() / 1000 }];
             });
           }
           break;
@@ -825,8 +828,9 @@ export function App() {
   }, [surface, sessionId, browserRefreshKey, markUnattended]);
 
   const send = (text: string, attachments?: Attachment[], skill?: string) => {
-    // A skill-only send still shows as something the user did: render the /name shorthand.
-    const shown = text || (skill ? `/${skill}` : "");
+    // Force-run shows exactly what the user typed: "/name rest". Must match the server's
+    // `display` sidecar formula so the turn_start dedupe recognizes the local echo.
+    const shown = skill ? `/${skill}${text ? ` ${text}` : ""}` : text;
     setItems((p) => [...p, { kind: "user", text: shown, attachments, ts: Date.now() / 1000 }]);
     // The visible model rides along with the message (single source of truth per turn).
     sessionRef.current?.userMessage(text, attachments, model, skill);
@@ -1600,7 +1604,6 @@ export function App() {
             scratchPrimary={agent === "cowork"}
             openAccessKey={accessKey}
             onOpenIntegrations={() => setSurface("integrations")}
-            onOpenSkills={() => openSettings("skills")}
           />
         </div>
       </div>

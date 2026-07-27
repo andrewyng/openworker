@@ -75,14 +75,14 @@ describe("Composer / skills popup", () => {
     expect(screen.queryByTestId("skill-popup")).toBeNull();
   });
 
-  it("selecting pins a chip and the send carries the skill as its own field", async () => {
+  it("selecting inserts /name inline; the send strips the prefix and carries the skill field", async () => {
     stubFetch();
     const p = props();
     render(<Composer {...p} />);
     fireEvent.change(box(), { target: { value: "/gr" } });
     fireEvent.click(await screen.findByRole("option", { name: /greet/ }));
-    await screen.findByTestId("skill-chip");
-    fireEvent.change(box(), { target: { value: "say hi to the team" } });
+    expect((box() as HTMLTextAreaElement).value).toBe("/greet "); // inline, no chip
+    fireEvent.change(box(), { target: { value: "/greet say hi to the team" } });
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(p.onSend).toHaveBeenCalled());
     expect(p.onSend).toHaveBeenCalledWith("say hi to the team", [], "greet");
@@ -96,9 +96,20 @@ describe("Composer / skills popup", () => {
     await screen.findByText("/weekly-report");
     fireEvent.keyDown(box(), { key: "Enter" }); // selects, does not send
     expect(p.onSend).not.toHaveBeenCalled();
-    await screen.findByTestId("skill-chip");
+    expect((box() as HTMLTextAreaElement).value).toBe("/weekly-report ");
     fireEvent.keyDown(box(), { key: "Enter" }); // now sends, skill-only
     await waitFor(() => expect(p.onSend).toHaveBeenCalledWith("", [], "weekly-report"));
+  });
+
+  it("editing the /name prefix away un-picks the skill", async () => {
+    stubFetch();
+    const p = props();
+    render(<Composer {...p} />);
+    fireEvent.change(box(), { target: { value: "/gr" } });
+    fireEvent.click(await screen.findByRole("option", { name: /greet/ }));
+    fireEvent.change(box(), { target: { value: "hello plain" } }); // prefix gone
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(p.onSend).toHaveBeenCalledWith("hello plain", [], undefined));
   });
 
   it("Escape closes the popup and no popup ever opens without a sessionId", async () => {

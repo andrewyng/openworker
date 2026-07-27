@@ -17,16 +17,13 @@ import {
   getRecentChannels,
   getSessionConnections,
   getSubscriptions,
-  sessionSkills,
   setSessionConnection,
-  setSessionSkill,
   subscribeChannel,
   unsubscribeChannel,
   type CloudStatus,
   type Connector,
   type RecentChannel,
   type SessionConnections,
-  type SessionSkillRow,
   type Subscription,
 } from "../api";
 import { ConnectorBadge } from "../connectors/ConnectorIcon";
@@ -60,7 +57,6 @@ export function AccessSection({
   scratchPrimary,
   openKey = 0,
   onOpenIntegrations,
-  onOpenSkills,
 }: {
   sessionId: string;
   personaId?: string;
@@ -72,12 +68,9 @@ export function AccessSection({
   // Bumped by deep links ("Configure ›", onboarding's Start-working) → expand + scroll here.
   openKey?: number;
   onOpenIntegrations?: () => void;
-  // Opens Settings ▸ Skills with this session's workspace as context (two-doors, SKILLS-SPEC §4.3).
-  onOpenSkills?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [conns, setConns] = useState<SessionConnections | null>(null);
-  const [skills, setSkills] = useState<SessionSkillRow[]>([]);
   const [byName, setByName] = useState<ConnectorMap>({});
   const { roots, busy: rootsBusy, error: rootsError, addRoot, toggleAccess, removeRoot } =
     useRoots(sessionId, open ? 1 : 0);
@@ -89,11 +82,7 @@ export function AccessSection({
     getSessionConnections(sessionId, personaId)
       .then(setConns)
       .catch(() => setConns(null));
-    // Skills group (SKILLS-SPEC §4.1 #2): the effective menu with per-session mute states.
-    sessionSkills(sessionId, workspace)
-      .then(setSkills)
-      .catch(() => setSkills([]));
-  }, [sessionId, personaId, workspace]);
+  }, [sessionId, personaId]);
   useEffect(() => {
     reload();
   }, [reload]);
@@ -232,10 +221,7 @@ export function AccessSection({
     : roots.length > 0
       ? `${roots.length} folder${roots.length === 1 ? "" : "s"}`
       : null;
-  // Skills fact in the collapsed glance (SKILLS-SPEC §4.1 #2): count of skills ON here.
-  const skillsOn = skills.filter((s) => s.enabled).length;
-  const skillsPart = skillsOn > 0 ? `${skillsOn} skill${skillsOn === 1 ? "" : "s"}` : null;
-  const summary = [sourcesPart, folderPart, skillsPart].filter(Boolean).join(" · ");
+  const summary = [sourcesPart, folderPart].filter(Boolean).join(" · ");
 
   return (
     <section className="rail-section" ref={rootEl} data-testid="access-section">
@@ -477,51 +463,6 @@ export function AccessSection({
                   </button>
                 )}
                 {rootsError && <div className="roots-err">{rootsError}</div>}
-              </div>
-
-              {/* Skills — the session's effective menu; each toggle is a per-session MUTE,
-                  mirroring Sources exactly (SKILLS-SPEC §4.1 #2: parity beats minimalism).
-                  Install/edit/delete live in Settings ▸ Skills, never here. */}
-              <div data-testid="rail-skills">
-                <div className={`${SEC_H} mb-1.5`}>Skills</div>
-                {skills.length === 0 && (
-                  <div className="text-[12px] text-faint py-0.5">No skills installed yet.</div>
-                )}
-                <div className="space-y-1">
-                  {skills.map((s) => (
-                    <div className="flex items-center gap-2 py-1" key={s.name}>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[12.5px] font-medium leading-tight truncate">
-                          <span>{s.name}</span>
-                          <span className="text-faint font-normal"> · {s.scope}</span>
-                        </div>
-                        {s.description && (
-                          <div className="text-[11px] text-faint truncate">{s.description}</div>
-                        )}
-                      </div>
-                      <Toggle
-                        checked={s.enabled}
-                        onChange={(next) =>
-                          setSessionSkill(sessionId, s.name, next, { workspace }).then((res) => {
-                            if (res.skills) setSkills(res.skills);
-                          })
-                        }
-                        title="On for this session — tap to mute here"
-                      />
-                    </div>
-                  ))}
-                </div>
-                {skills.length > 0 && (
-                  <p className="text-[10.5px] text-faint mt-1 leading-snug">
-                    Off mutes it for <b>this session only</b> — the skill stays installed.
-                  </p>
-                )}
-                <button
-                  className="mt-1 text-[12px] text-accent font-medium hover:underline text-left"
-                  onClick={() => onOpenSkills?.()}
-                >
-                  Manage all skills (global) →
-                </button>
               </div>
             </div>
           )}

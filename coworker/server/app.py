@@ -617,7 +617,8 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.post("/v1/skills/draft")
     def draft_skill(body: dict) -> dict[str, Any]:
-        return manager.draft_skill(str((body or {}).get("description", "")))
+        # Fresh draft ({description}) or refine-in-place ({current, feedback}) — §4.2 #3.
+        return manager.draft_skill(body or {})
 
     @app.get("/v1/workspaces/recent")
     def recent_workspaces() -> dict[str, Any]:
@@ -1771,11 +1772,15 @@ def create_app(manager: SessionManager) -> FastAPI:
             "iteration_end",
         }
 
-        async def run_turn(content, *, retry: bool = False) -> None:
+        async def run_turn(content, *, retry: bool = False, display=None) -> None:
             # The receive loop atomically claims this session before scheduling the task.
             # Keeping the claim outside prevents two back-to-back frames from both starting.
             try:
-                events = engine.retry() if retry else engine.run(content)
+                events = (
+                    engine.retry()
+                    if retry
+                    else engine.run(content, display=display)
+                )
                 async for event in events:
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.
@@ -1801,13 +1806,13 @@ def create_app(manager: SessionManager) -> FastAPI:
             # or flush an in-progress assistant stream in the GUI.
             await ws.send_json({"type": "input_rejected", "data": {"error": reason}})
 
-        async def claim_turn(*, retry: bool = False, content=None) -> None:
+        async def claim_turn(*, retry: bool = False, content=None, display=None) -> None:
             if not manager.try_mark_running(session_id):
                 await reject_input(
                     "This session is already running a turn. Wait for it to finish or stop it."
                 )
                 return
-            asyncio.create_task(run_turn(content, retry=retry))
+            asyncio.create_task(run_turn(content, retry=retry, display=display))
 
         try:
             while True:
@@ -1960,10 +1965,13 @@ def create_app(manager: SessionManager) -> FastAPI:
                     if model is not None and not isinstance(model, str):
                         await reject_input("Invalid model: expected a string.")
                         continue
-                    # Force-run (SKILLS-SPEC §4.1): the composer's `/skill` pick rides as a
+                    # Force-run (SKILLS-SPEC §4.1 #3): the composer's `/skill` pick rides as a
                     # separate field. Validated against the session's effective menu — a muted
                     # or unknown skill is a visible error, never a silent no-op (§4.6 #15).
+                    # The model-facing framing goes into `content`; the transcript shows the
+                    # user's literal "/name …" line via the `_display` sidecar (one bubble).
                     skill = message.get("skill")
+                    display = None
                     if skill is not None:
                         if not isinstance(skill, str) or not skill.strip():
                             await reject_input("Invalid skill: expected a name.")
@@ -1975,6 +1983,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                                 f"Skill '{skill}' is not available in this session."
                             )
                             continue
+                        display = f"/{skill}" + (f" {text}" if text else "")
                         text = (
                             f'Use the skill "{skill}" for this request: first call '
                             f'load_skill("{skill}") and follow its instructions.'
@@ -1983,7 +1992,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                     await _apply_model(model)
                     if text or attachments:
                         content = build_user_content(text, attachments)
-                        await claim_turn(content=content)
+                        await claim_turn(content=content, display=display)
                 else:
                     await reject_input(f"Unknown WebSocket message type: {kind}.")
         except WebSocketDisconnect:

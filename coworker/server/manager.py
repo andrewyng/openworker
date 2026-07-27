@@ -3793,18 +3793,30 @@ class SessionManager:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "skill": saved}
 
-    def draft_skill(self, description: str) -> dict[str, Any]:
-        """One-shot draft for the "create using OpenWorker" mode — returns fields for the
-        Write form; never saves anything itself (the user reviews first, SKILLS-SPEC §4.2)."""
-        description = (description or "").strip()
-        if not description:
-            return {"ok": False, "error": "Describe what the skill should do."}
-        prompt = (
-            "Draft an agent skill from this description. Reply with STRICT JSON only: "
-            '{"name": "<kebab-case, max 40 chars>", "description": "<one line>", '
-            '"instructions": "<markdown steps the agent will follow>"}\n\n'
-            f"Description: {description}"
+    def draft_skill(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Draft (or refine-in-place, SKILLS-SPEC §4.2 #3) for "create using OpenWorker" —
+        returns fields for the Write form; never saves anything itself (the user reviews
+        first). Fresh mode: `description`. Revise mode: `current` (the form's contents,
+        including any hand-edits) + `feedback` — one stateless call per round; the draft
+        itself is the memory, there is no chat history."""
+        description = str(body.get("description", "") or "").strip()
+        current = body.get("current") if isinstance(body.get("current"), dict) else None
+        feedback = str(body.get("feedback", "") or "").strip()
+        shape = (
+            'Reply with STRICT JSON only: {"name": "<kebab-case, max 40 chars>", '
+            '"description": "<one line>", "instructions": "<markdown steps the agent '
+            'will follow>"}'
         )
+        if current is not None and feedback:
+            prompt = (
+                f"Revise this draft agent skill according to the feedback. {shape}\n\n"
+                f"Current draft: {json.dumps({k: str(current.get(k, '')) for k in ('name', 'description', 'instructions')})}\n"
+                f"Feedback: {feedback}"
+            )
+        elif description:
+            prompt = f"Draft an agent skill from this description. {shape}\n\nDescription: {description}"
+        else:
+            return {"ok": False, "error": "Describe what the skill should do."}
         try:
             turn = self.provider.complete(
                 model=self.model, messages=[{"role": "user", "content": prompt}]
