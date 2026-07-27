@@ -347,6 +347,7 @@ class AnthropicProvider(ProviderClient):
         api_key: Optional[str] = None,
         secrets: Any = None,
         thinking_budget: Optional[int] = None,
+        base_url: Optional[str] = None,
     ):
         # Mirrors OpenAIProvider: the SDK client is built lazily so engines can be assembled
         # before any key exists; the key resolves at call time (explicit → env → SecretStore).
@@ -355,6 +356,9 @@ class AnthropicProvider(ProviderClient):
         self._client = client
         self._api_key = api_key
         self._secrets = secrets
+        # Optional Anthropic-compatible endpoint (e.g. Z AI's /api/anthropic). None → the SDK
+        # default (api.anthropic.com).
+        self._base_url = base_url
         self.default_model = default_model
         self.thinking_budget = thinking_budget or 0
 
@@ -369,7 +373,7 @@ class AnthropicProvider(ProviderClient):
                     "No Anthropic API key configured. Set ANTHROPIC_API_KEY in the environment, "
                     "or add your key in Manage → Configure Models."
                 )
-            self._client = Anthropic(api_key=key)
+            self._client = Anthropic(api_key=key, base_url=self._base_url)
         return self._client
 
     def _request_kwargs(

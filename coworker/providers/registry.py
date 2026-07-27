@@ -120,6 +120,18 @@ def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     )
 
 
+def _build_zai_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    # Z AI's coding-plan key is billed ONLY on its Anthropic-compatible endpoint; the OpenAI-style
+    # /paas API (the `zai` provider) returns 429 code 1113 "insufficient balance" for it. So reach
+    # GLM through AnthropicProvider pointed at /api/anthropic, keyed from THIS provider's own
+    # profile (never the shared Anthropic env/SecretStore key — a different vendor's endpoint).
+    api_key = ((profile or {}).get("api_key") or "").strip() or None
+    base_url = ((profile or {}).get("base_url") or "").strip() or "https://api.z.ai/api/anthropic"
+    if not api_key:
+        raise RuntimeError("No Z AI API key configured — add it in Settings ▸ Models.")
+    return AnthropicProvider(api_key=api_key, base_url=base_url, secrets=secrets)
+
+
 def _build_gemini(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Same deferred-key contract as anthropic (GeminiProvider/resolve_api_key).
     api_key = ((profile or {}).get("api_key") or "").strip() or None
@@ -262,6 +274,29 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="glm-5.2",
         env_key="ZAI_API_KEY",
         endpoint_help="Prefilled with Z AI's international endpoint. China mainland: https://open.bigmodel.cn/api/paas/v4",
+    ),
+    # Z AI coding-plan keys are billed on Z AI's ANTHROPIC-compatible endpoint, not the OpenAI-style
+    # /paas API the `zai` provider above uses (that returns 1113 "insufficient balance" for them).
+    # This provider reuses the native Anthropic engine pointed at /api/anthropic. Separate from
+    # `anthropic` so real Claude and GLM can be configured side by side.
+    ProviderDescriptor(
+        name="zai-coding",
+        title="GLM (Z AI · coding plan)",
+        needs_key=True,
+        fields=[
+            ProviderField("api_key", "Z AI API key", secret=True),
+            ProviderField(
+                "base_url",
+                "Endpoint",
+                required=False,
+                default="https://api.z.ai/api/anthropic",
+                placeholder="https://api.z.ai/api/anthropic",
+                help="Z AI's Anthropic-compatible endpoint, where coding-plan keys are billed. China mainland: https://open.bigmodel.cn/api/anthropic",
+            ),
+        ],
+        build=_build_zai_anthropic,
+        recommended_model="glm-4.6",
+        blurb="Spends your Z AI coding-plan allowance via Z AI's Anthropic-compatible API (not the pay-as-you-go /paas endpoint).",
     ),
     _compat(
         "deepseek",

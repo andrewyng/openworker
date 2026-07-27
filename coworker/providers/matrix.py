@@ -81,6 +81,8 @@ MATRIX: dict[str, ModelEntry] = {
         ),
     ),
     "zai:glm-5.2": ModelEntry("GLM-5.2 · Z AI"),
+    "zai-coding:glm-4.6": ModelEntry("GLM-4.6 · Z AI (coding plan)"),
+    "zai-coding:glm-4.5": ModelEntry("GLM-4.5 · Z AI (coding plan)"),
     "deepseek:deepseek-v4-flash": ModelEntry("DeepSeek V4 Flash · DeepSeek"),
     "deepseek:deepseek-v4-pro": ModelEntry("DeepSeek V4 Pro · DeepSeek"),
     "kimi:kimi-k2.6": ModelEntry("Kimi K2.6 · Moonshot"),
