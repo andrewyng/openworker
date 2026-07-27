@@ -165,6 +165,114 @@ async def test_gateway_dispatches_authorized():
     assert not fake.connected
 
 
+# -- listener liveness (issue #257: "live connection" but nothing is received) --------
+def _live_gateway(platform: str = "fake") -> Gateway:
+    return Gateway(
+        settings={platform: ConnectorSettings(platform, enabled=True, allow_all=True)}
+    )
+
+
+class _DeadAdapter(FakeAdapter):
+    """An adapter whose listener never comes up — connect() fails the way the real ones do
+    when the messaging extra is missing or the token is rejected."""
+
+    def __init__(self, *, reason: str | None = None, raises: bool = False) -> None:
+        super().__init__()
+        self._reason = reason
+        self._raises = raises
+
+    async def connect(self) -> bool:
+        if self._raises:
+            raise RuntimeError("boom")
+        self.connect_error = self._reason
+        return False
+
+
+async def test_gateway_status_reports_a_failed_listener_as_down():
+    """Registering an adapter is not the same as its listener running. The status used to
+    read `platform in self._adapters`, so a bot that received nothing still said connected."""
+    gw = _live_gateway()
+    gw.register(_DeadAdapter(reason="python-telegram-bot is not installed"))
+
+    assert await gw.start() == []
+    assert gw.is_listening("fake") is False
+    assert gw.listen_error("fake") == "python-telegram-bot is not installed"
+
+    status = gw.status()[0]
+    assert status["registered"] is True  # it IS registered...
+    assert status["connected"] is False  # ...but nothing is listening
+    assert status["error"] == "python-telegram-bot is not installed"
+
+
+async def test_gateway_records_a_reason_when_connect_gives_none():
+    gw = _live_gateway()
+    gw.register(_DeadAdapter())
+    await gw.start()
+    assert gw.listen_error("fake") == "the listener did not start"
+
+
+async def test_gateway_records_a_raised_connect_error():
+    """A raising connect() must not break the server, but it must not vanish either."""
+    gw = _live_gateway()
+    gw.register(_DeadAdapter(raises=True))
+
+    assert await gw.start() == []
+    assert gw.is_listening("fake") is False
+    assert gw.listen_error("fake") == "RuntimeError — see the server log for details"
+
+
+async def test_gateway_listen_error_never_quotes_the_exception():
+    """This string is served over REST. Library errors quote the credential they rejected
+    (python-telegram-bot's InvalidToken embeds the bot token), so only the type may surface."""
+
+    class _LeakyAdapter(_DeadAdapter):
+        async def connect(self) -> bool:
+            raise RuntimeError("The token `S3CRET-TOKEN` was rejected by the server.")
+
+    gw = _live_gateway()
+    gw.register(_LeakyAdapter())
+    await gw.start()
+
+    assert "S3CRET-TOKEN" not in (gw.listen_error("fake") or "")
+    assert "RuntimeError" in (gw.listen_error("fake") or "")
+
+
+async def test_gateway_flags_an_enabled_platform_with_no_adapter():
+    """make_adapter() returns None for an incomplete profile (e.g. Slack bot token, no app
+    token). The platform is enabled and looks connected, but nothing was ever built."""
+    gw = _live_gateway("slack")
+
+    assert await gw.start() == []
+    assert gw.is_listening("slack") is False
+    assert "no listener" in (gw.listen_error("slack") or "")
+
+
+async def test_gateway_live_listener_has_no_error():
+    gw = _live_gateway()
+    gw.register(FakeAdapter())
+
+    assert await gw.start() == ["fake"]
+    assert gw.is_listening("fake") is True
+    assert gw.listen_error("fake") is None
+    assert gw.status()[0]["connected"] is True
+
+    await gw.stop()
+    assert gw.is_listening("fake") is False  # stopped, so no longer live
+
+
+async def test_gateway_start_clears_a_stale_error_on_recovery():
+    """A connector that failed once and then connects must not keep showing the old reason."""
+    gw = _live_gateway()
+    flaky = _DeadAdapter(reason="Slack rejected the bot token")
+    gw.register(flaky)
+    await gw.start()
+    assert gw.listen_error("fake")
+
+    gw.register(FakeAdapter())  # same platform, now healthy
+    assert await gw.start() == ["fake"]
+    assert gw.listen_error("fake") is None
+
+
 async def test_gateway_deliver_via_adapter():
     gw = Gateway(
         settings={"fake": ConnectorSettings("fake", enabled=True, allow_all=True)}

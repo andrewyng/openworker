@@ -56,6 +56,13 @@ class Gateway:
         # can be PARKED for one-step allow-and-deliver instead of vanishing.
         self._on_unauthorized = on_unauthorized
         self._adapters: dict[str, BasePlatformAdapter] = {}
+        # Which adapters actually came up in `start()`. Registration is NOT liveness: a
+        # platform stays in `_adapters` even when its listener never started (missing
+        # messaging extra, rejected token, network), so anything reporting "connected" has
+        # to read this instead — otherwise a bot that receives nothing still looks live.
+        self._live: set[str] = set()
+        # platform -> why the listener is down (surfaced on the Connectors tab).
+        self._listen_errors: dict[str, str] = {}
         # In-memory recent senders for chat-ID auto-capture (identity only, never persisted).
         self._recent: "OrderedDict[tuple[str, str, str], dict]" = OrderedDict()
 
@@ -167,20 +174,60 @@ class Gateway:
         return [e for e in items if platform is None or e["platform"] == platform]
 
     async def start(self) -> list[str]:
-        """Connect every enabled+registered adapter. Returns the platforms that came up."""
+        """Connect every enabled+registered adapter. Returns the platforms that came up.
+
+        Every failure path records *why* in `_listen_errors` rather than only logging it.
+        A connector whose credentials are saved reads as "connected" everywhere in the UI
+        (that check is credentials-present, by design — it gates the outbound tools), so
+        without this a listener that never started is completely invisible to the user.
+        """
         live: list[str] = []
         for platform, settings in self.settings.items():
             if not settings.enabled:
                 continue
             adapter = self._adapters.get(platform)
             if adapter is None:
+                # Enabled with no adapter: make_adapter() couldn't build one from the saved
+                # profile (e.g. Slack Socket Mode with a bot token but no app token).
+                self._mark_down(
+                    platform, "no listener could be started from the saved settings"
+                )
                 continue
+            adapter.connect_error = None
             try:
                 if await adapter.connect():
                     live.append(platform)
-            except Exception:  # bad token / network — skip, don't break the server
+                    self._live.add(platform)
+                    self._listen_errors.pop(platform, None)
+                else:
+                    self._mark_down(
+                        platform,
+                        adapter.connect_error or "the listener did not start",
+                    )
+            except Exception as exc:  # bad token / network — skip, don't break the server
                 logger.exception("failed to connect %s adapter", platform)
+                # Only the exception TYPE, never its message: this string is served over
+                # REST, and library errors quote the credential they rejected verbatim
+                # (python-telegram-bot's InvalidToken embeds the bot token). Adapters that
+                # want to say more set a curated `connect_error` and return False instead.
+                self._mark_down(
+                    platform,
+                    f"{type(exc).__name__} — see the server log for details",
+                )
         return live
+
+    def _mark_down(self, platform: str, reason: str) -> None:
+        self._live.discard(platform)
+        self._listen_errors[platform] = reason
+        logger.warning("%s listener is not running: %s", platform, reason)
+
+    def is_listening(self, platform: str) -> bool:
+        """True only if this platform's inbound listener actually came up."""
+        return platform in self._live
+
+    def listen_error(self, platform: str) -> Optional[str]:
+        """Why `platform`'s listener isn't running, or None when it is (or was never started)."""
+        return self._listen_errors.get(platform)
 
     async def stop(self) -> None:
         for adapter in self._adapters.values():
@@ -188,6 +235,8 @@ class Gateway:
                 await adapter.disconnect()
             except Exception:
                 logger.exception("error disconnecting %s adapter", adapter.platform)
+        self._live.clear()
+        self._listen_errors.clear()
 
     async def deliver(self, target: str, text: str) -> SendResult:
         """Send via a live adapter (used where the persistent connection is preferred)."""
@@ -223,7 +272,11 @@ class Gateway:
                 {
                     "platform": platform,
                     "enabled": settings.enabled,
-                    "connected": platform in self._adapters,
+                    # Registered ≠ running: `connected` used to be `platform in self._adapters`,
+                    # which was true even when connect() failed.
+                    "registered": platform in self._adapters,
+                    "connected": platform in self._live,
+                    "error": self._listen_errors.get(platform),
                     "allow_all": settings.allow_all,
                     "allowed_users": len(settings.allowed_users),
                 }

@@ -147,6 +147,11 @@ class BasePlatformAdapter(ABC):
     def __init__(self) -> None:
         self._handler: Optional[MessageHandler] = None
         self._interaction_handler: Optional[InteractionHandler] = None
+        # Why the last `connect()` failed, in words a user can act on ("the bot token was
+        # rejected", "the messaging extra isn't installed"). A bare `return False` tells the
+        # gateway the listener is down but not why, and the Connectors tab has to show
+        # *something* — otherwise a dead bot is indistinguishable from a healthy one.
+        self.connect_error: Optional[str] = None
 
     def set_message_handler(self, handler: MessageHandler) -> None:
         self._handler = handler

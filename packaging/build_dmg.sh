@@ -12,7 +12,10 @@
 #   - A Python venv at .venv (repo root) with this package installed editable, plus the
 #     build-only deps:
 #       python3 -m venv .venv
-#       .venv/bin/pip install -e . pyinstaller tzdata typer
+#       .venv/bin/pip install -e ".[messaging]" pyinstaller tzdata typer
+#     The [messaging] extra is NOT optional for a release build: openworker-server.spec
+#     bundles slack_bolt/telegram only if it can import them here, so building without it
+#     ships a sidecar whose Telegram / Slack Socket Mode listeners can never start.
 #     `typer` is needed only at BUILD time: PyInstaller walks the `mcp` package and
 #     `mcp.cli` calls sys.exit() at import if typer is absent, which aborts the freeze.
 #     (aisuite installs like any other dependency — git-pinned in pyproject.toml.)
