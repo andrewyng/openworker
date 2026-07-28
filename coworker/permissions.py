@@ -20,9 +20,28 @@ from typing import Any, Optional
 # (`` ` `` `$(`), process substitution / grouping (`(`), and newlines.
 _SHELL_OPERATORS = (";", "&", "|", ">", "<", "`", "$(", "(", "\n", "\r")
 
+# find(1) flags that run an arbitrary helper. Shell-operator rejection already blocks the
+# classic `… -exec … ;` form (`;` is an operator), but `… -exec … {} +` has no shell
+# metacharacters — so a bare allowlisted `find` would otherwise auto-run helpers.
+_FIND_HELPER_FLAGS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+
 
 def _has_shell_operators(command: str) -> bool:
     return any(op in command for op in _SHELL_OPERATORS)
+
+
+def _unauthorized_find_helper(argv: list[str], prefix: list[str]) -> bool:
+    """True when argv uses find helper-exec flags the allowlist entry did not itself name.
+
+    Allowlisting `find` means inspection (`find . -name '*.py'`). Auto-running
+    `find . -exec … {} +` requires the entry to include that flag (e.g. `find . -exec`).
+    """
+    prog = Path(argv[0]).name.lower()
+    if prog not in {"find", "gfind"}:
+        return False
+    used = {t for t in argv if t in _FIND_HELPER_FLAGS}
+    authorized = {t for t in prefix if t in _FIND_HELPER_FLAGS}
+    return bool(used - authorized)
 
 from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
     SHELL_TOOL,
@@ -219,7 +238,8 @@ class PermissionEngine:
         # carrying shell operators (chaining/redirection/substitution) up front, then match
         # the parsed argv against each entry — the entry's own tokens must be an exact
         # prefix of the command's tokens (so `git status` matches `git status -s` but never
-        # `git statusfoo` or a bare `git`).
+        # `git statusfoo` or a bare `git`). Also reject program-native helper execution
+        # that the entry did not authorize (find -exec / -execdir / -ok / -okdir).
         if _has_shell_operators(command):
             return False
         try:
@@ -233,6 +253,9 @@ class PermissionEngine:
                 prefix = shlex.split(allowed)
             except ValueError:
                 continue
-            if prefix and argv[: len(prefix)] == prefix:
-                return True
+            if not prefix or argv[: len(prefix)] != prefix:
+                continue
+            if _unauthorized_find_helper(argv, prefix):
+                continue
+            return True
         return False

@@ -149,3 +149,45 @@ def test_shell_commands_not_auto_allowed_by_default(tmp_path):
     ):
         d = eng.evaluate("run_shell", {"command": cmd}, None)
         assert not d.allowed and d.needs_user, cmd
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find . -exec touch /tmp/pwned {} +",
+        "find /tmp -execdir sh -c 'id' {} +",
+        "find . -ok rm {} +",
+        "find . -okdir echo {} +",
+        "/usr/bin/find . -exec cat {} +",
+    ],
+)
+def test_allowlisted_find_rejects_helper_execution(tmp_path, command):
+    # Bare `find` is inspection-only. The `{} +` form has no shell metacharacters, so
+    # operator rejection alone is not enough — helper flags must be denied unless the
+    # allowlist entry itself names them.
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=["find"])
+    d = eng.evaluate("run_shell", {"command": command}, None)
+    assert not d.allowed and d.needs_user, command
+
+
+def test_allowlisted_find_still_allows_inspection(tmp_path):
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=["find"])
+    assert eng.evaluate(
+        "run_shell", {"command": "find . -name '*.py'"}, None
+    ).allowed
+    assert eng.evaluate("run_shell", {"command": "find . -type f"}, None).allowed
+
+
+def test_find_helper_allowed_only_when_entry_names_flag(tmp_path):
+    # Opting into helper execution requires naming the flag in the allowlist entry.
+    eng = PermissionEngine(
+        workspace_root=tmp_path, allowed_commands=["find . -exec"]
+    )
+    assert eng.evaluate(
+        "run_shell", {"command": "find . -exec touch /tmp/x {} +"}, None
+    ).allowed
+    # A different helper flag is still not covered by `-exec`.
+    d = eng.evaluate(
+        "run_shell", {"command": "find . -execdir touch /tmp/x {} +"}, None
+    )
+    assert not d.allowed and d.needs_user
