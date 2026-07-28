@@ -681,6 +681,7 @@ export interface ModelSettings {
   source: "env" | "store" | null;
   onboarded: boolean;
   surfaces: SurfaceVisibility;
+  composer_enter_behavior?: "send" | "newline";
   scratch_base: string;
   secrets_path: string;  // OS-native on-disk location the server reports (not hardcoded)
   // Sidebar layout preference (§7): "flat" = the persona accordions / today's list; "grouped" =
@@ -702,6 +703,20 @@ export interface PdfSettings {
   pdf_fallback: "text" | "images";
   pdf_max_pages: number;
   pdf_max_mb: number;
+}
+
+export type ComposerEnterBehavior = "send" | "newline";
+
+/** Persist whether Enter sends or inserts a newline in the composer. */
+export async function setComposerEnterBehavior(
+  composer_enter_behavior: ComposerEnterBehavior,
+): Promise<{ ok: boolean; composer_enter_behavior?: ComposerEnterBehavior; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/composer-enter-behavior`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ composer_enter_behavior }),
+  });
+  return res.json();
 }
 
 /** Persist the Token-savings PDF settings (fallback mode + attach thresholds). */

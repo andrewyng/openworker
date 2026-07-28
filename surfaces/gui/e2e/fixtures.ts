@@ -32,6 +32,7 @@ const SETTINGS = {
   onboarded: true,
   experimental_connectors: false,
   surfaces: { cowork: true, chat: false, code: true },
+  composer_enter_behavior: "send",
   nav_layout: "grouped",
   scratch_base: "~/OpenWorker",
   secrets_path: "/Users/test/.config/coworker/secrets.json",
@@ -539,6 +540,13 @@ export async function mockApi(page: import("@playwright/test").Page) {
   // Providers — mutable so save (POST) flips `configured` and stamps key_set_at, matching the
   // backend's set_provider. verify (POST) never mutates: it's a live read-only credential check.
   const providers: any[] = PROVIDERS.map((p) => ({ ...p }));
+  // Settings — PER-TEST copy so preference-editing specs (like composer Enter behavior and
+  // PDF token-savings thresholds) never leak mutated values into sibling tests.
+  const settings = {
+    ...SETTINGS,
+    surfaces: { ...SETTINGS.surfaces },
+    model_labels: { ...SETTINGS.model_labels },
+  };
   // Automations — mutable so Run now appends a run, enable/disable toggles, and delete removes.
   const automations: any[] = [{ ...AUTOMATION }, { ...AUTOMATION_CLEAN }];
   // MCP servers (empty by default; the granola OAuth quick-add test populates it).
@@ -809,14 +817,21 @@ export async function mockApi(page: import("@playwright/test").Page) {
     }
 
     if (p.endsWith("/v1/health")) return json(HEALTH);
-    if (p.endsWith("/v1/settings")) return json(SETTINGS);
-    if (p.endsWith("/v1/settings/pdf") && m === "POST") {
-      Object.assign(SETTINGS, req.postDataJSON());
+    if (p.endsWith("/v1/settings")) return json(settings);
+    if (p.endsWith("/v1/settings/composer-enter-behavior") && m === "POST") {
+      Object.assign(settings, req.postDataJSON());
       return json({
         ok: true,
-        pdf_fallback: SETTINGS.pdf_fallback,
-        pdf_max_pages: SETTINGS.pdf_max_pages,
-        pdf_max_mb: SETTINGS.pdf_max_mb,
+        composer_enter_behavior: settings.composer_enter_behavior,
+      });
+    }
+    if (p.endsWith("/v1/settings/pdf") && m === "POST") {
+      Object.assign(settings, req.postDataJSON());
+      return json({
+        ok: true,
+        pdf_fallback: settings.pdf_fallback,
+        pdf_max_pages: settings.pdf_max_pages,
+        pdf_max_mb: settings.pdf_max_mb,
       });
     }
     if (p.endsWith("/v1/attachments/inspect-pdf") && m === "POST") {

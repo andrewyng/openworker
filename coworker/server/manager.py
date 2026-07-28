@@ -1773,6 +1773,7 @@ class SessionManager:
             "onboarded": bool(self._prefs.get("onboarded")),
             "experimental_connectors": experimental_enabled(self.secrets),
             "surfaces": self._surfaces(),
+            "composer_enter_behavior": self.composer_enter_behavior(),
             "nav_layout": self._nav_layout(),
             "sessions_peek": self.sessions_peek(),
             "scratch_base": self._prefs.get("scratch_base")
@@ -1802,6 +1803,23 @@ class SessionManager:
             self._prefs["show_code"] = bool(code)
         self._save_prefs()
         return {"ok": True, "surfaces": self._surfaces()}
+
+    def composer_enter_behavior(self) -> str:
+        """Composer Enter-key preference: ``"send"`` (default) or ``"newline"``."""
+        return (
+            "newline"
+            if self._prefs.get("composer_enter_behavior") == "newline"
+            else "send"
+        )
+
+    def set_composer_enter_behavior(self, behavior: str) -> dict[str, Any]:
+        """Set + persist the composer's Enter-key behavior. Unknown values fall back to
+        ``"send"``.
+        """
+        value = "newline" if (behavior or "").strip() == "newline" else "send"
+        self._prefs["composer_enter_behavior"] = value
+        self._save_prefs()
+        return {"ok": True, "composer_enter_behavior": value}
 
     def _nav_layout(self) -> str:
         """Sidebar layout: ``"flat"`` (default) or ``"grouped"`` (by persona). Persisted in

@@ -96,3 +96,22 @@ test("composer: PDF over the page threshold is rejected with a notice", async ({
   });
   await expect(page.locator(".attach-chip")).toContainText("small.pdf");
 });
+
+test("composer: Enter-key behavior follows the user preference", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Draft the launch note").first().click();
+
+  const box = page.getByPlaceholder(/Ask the coworker/);
+
+  await box.fill("send this now");
+  await box.press("Enter");
+  await expect(box).toHaveValue("");
+
+  await page.getByTestId("account-row").click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const [req] = await Promise.all([
+    page.waitForRequest((r) => r.url().endsWith("/v1/settings/composer-enter-behavior") && r.method() === "POST"),
+    page.getByTestId("composer-enter-behavior").getByRole("button", { name: "Newline on Enter" }).click(),
+  ]);
+  expect(req.postDataJSON()).toEqual({ composer_enter_behavior: "newline" });
+});

@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import {
   getSettings,
   getTrustedWorkspaces,
+  setComposerEnterBehavior,
   setOnboarded,
   setPdfSettings,
   setScratchBase,
   setSessionsPeek,
   setWorkspaceTrusted,
+  type ComposerEnterBehavior,
   type ModelSettings,
   type PdfSettings,
   type WorkspaceCommandTrust,
@@ -423,6 +425,8 @@ function AppearanceSection() {
         <div className={FIELD_HELP}>Auto follows your Mac&rsquo;s appearance.</div>
       </div>
 
+      <ComposerCard />
+
       <SidebarCard />
 
       <FilesCard />
@@ -517,6 +521,46 @@ function TrustedWorkspacesCard() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ComposerCard() {
+  const [behavior, setBehavior] = useState<ComposerEnterBehavior | null>(null);
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => setBehavior(s.composer_enter_behavior === "newline" ? "newline" : "send"))
+      .catch(() => setBehavior("send"));
+  }, []);
+
+  const save = async (next: ComposerEnterBehavior) => {
+    setBehavior(next);
+    await setComposerEnterBehavior(next);
+  };
+
+  if (behavior === null) return null;
+  return (
+    <div className={CARD + " p-4 mb-4"} data-testid="composer-card">
+      <div className={FIELD_LABEL}>Composer</div>
+      <div className={FIELD_HELP}>
+        Choose whether pressing Enter sends your message or inserts a new line.
+      </div>
+
+      <div
+        className="seg mt-2.5"
+        role="radiogroup"
+        aria-label="Composer Enter behavior"
+        data-testid="composer-enter-behavior"
+      >
+        <button className={behavior === "send" ? "active" : ""} onClick={() => save("send")}>
+          Send on Enter
+        </button>
+        <button className={behavior === "newline" ? "active" : ""} onClick={() => save("newline")}>
+          Newline on Enter
+        </button>
+      </div>
+      <div className={FIELD_HELP}>Shift+Enter does the opposite of the selected mode.</div>
     </div>
   );
 }

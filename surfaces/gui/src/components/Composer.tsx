@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import type { ComposerEnterBehavior } from "../api";
 import type { Attachment } from "../types";
 import { isPdfFile, readFile } from "../attach";
 import { getSettings, inspectPdf } from "../api";
@@ -53,6 +54,7 @@ interface Props {
   // interactive-then-disabled control.
   running: boolean;
   connected: boolean;
+  enterBehavior?: ComposerEnterBehavior;
   // False when the default model's provider has no key — the composer shows a "connect a model"
   // banner and routes sends to setup (preserving the draft) instead of dropping them.
   modelReady?: boolean;
@@ -268,7 +270,9 @@ export function Composer(props: Props) {
   };
 
   const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    const sendKey = props.enterBehavior === "newline" ? e.shiftKey : !e.shiftKey;
+    if (e.key === "Enter" && sendKey) {
       e.preventDefault();
       submit();
     }

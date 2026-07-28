@@ -130,6 +130,41 @@ def test_nav_layout_setting_roundtrips(tmp_path, monkeypatch):
     assert reborn.get_settings()["nav_layout"] == "grouped"
 
 
+def test_composer_enter_behavior_setting_roundtrips(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from coworker.server.app import create_app
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    data_dir = tmp_path / "data"
+    client = TestClient(create_app(SessionManager(data_dir=data_dir)))
+
+    assert client.get("/v1/settings").json()["composer_enter_behavior"] == "send"
+
+    resp = client.post(
+        "/v1/settings/composer-enter-behavior",
+        json={"composer_enter_behavior": "newline"},
+    ).json()
+    assert resp == {"ok": True, "composer_enter_behavior": "newline"}
+    assert client.get("/v1/settings").json()["composer_enter_behavior"] == "newline"
+
+    assert (
+        client.post(
+            "/v1/settings/composer-enter-behavior",
+            json={"composer_enter_behavior": "bogus"},
+        ).json()["composer_enter_behavior"]
+        == "send"
+    )
+
+    client.post(
+        "/v1/settings/composer-enter-behavior",
+        json={"composer_enter_behavior": "newline"},
+    )
+    reborn = SessionManager(data_dir=data_dir)
+    assert reborn.get_settings()["composer_enter_behavior"] == "newline"
+
+
 def test_scratch_base_setting_persists_and_drives_provisioning(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 

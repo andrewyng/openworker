@@ -1354,6 +1354,12 @@ def create_app(manager: SessionManager) -> FastAPI:
         b = body or {}
         return manager.set_surfaces(chat=b.get("chat"), code=b.get("code"))
 
+    @app.post("/v1/settings/composer-enter-behavior")
+    def settings_set_composer_enter_behavior(body: dict) -> dict[str, Any]:
+        return manager.set_composer_enter_behavior(
+            str((body or {}).get("composer_enter_behavior", ""))
+        )
+
     @app.post("/v1/settings/scratch-base")
     def settings_set_scratch_base(body: dict) -> dict[str, Any]:
         return manager.set_scratch_base(str((body or {}).get("path", "")))

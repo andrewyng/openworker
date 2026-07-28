@@ -119,3 +119,21 @@ test("Settings: Token savings card edits PDF fallback and thresholds", async ({ 
   ]);
   expect(req2.postDataJSON()).toEqual({ pdf_max_pages: 30 });
 });
+
+test("Settings: Composer card edits Enter key behavior", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("account-row").click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+
+  const card = page.getByTestId("composer-card");
+  await expect(card).toBeVisible();
+  const seg = page.getByTestId("composer-enter-behavior");
+  await expect(seg.getByRole("button", { name: "Send on Enter" })).toHaveClass(/active/);
+
+  const [req] = await Promise.all([
+    page.waitForRequest((r) => r.url().endsWith("/v1/settings/composer-enter-behavior") && r.method() === "POST"),
+    seg.getByRole("button", { name: "Newline on Enter" }).click(),
+  ]);
+  expect(req.postDataJSON()).toEqual({ composer_enter_behavior: "newline" });
+  await expect(seg.getByRole("button", { name: "Newline on Enter" })).toHaveClass(/active/);
+});

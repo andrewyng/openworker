@@ -21,6 +21,7 @@ import {
   setSessionFlags,
   setUnattended,
   Session,
+  type ComposerEnterBehavior,
   type InboxItem,
   type MessageSource,
   type Persona,
@@ -154,6 +155,7 @@ export function App() {
   const [models, setModels] = useState<string[]>([]);
   const [modelLabels, setModelLabels] = useState<Record<string, string>>({});
   const [surfaces, setSurfaces] = useState<SurfaceVisibility>({ cowork: true, chat: false, code: false });
+  const [composerEnterBehavior, setComposerEnterBehavior] = useState<ComposerEnterBehavior>("send");
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
@@ -484,6 +486,9 @@ export function App() {
         setModels(s.models || []);
         setModelLabels(s.model_labels || {});
         setModelReady(s.model_ready);
+        setComposerEnterBehavior(
+          s.composer_enter_behavior === "newline" ? "newline" : "send",
+        );
         if (s.surfaces) setSurfaces(s.surfaces);
       })
       .catch(() => {});
@@ -1523,6 +1528,7 @@ export function App() {
               modelLabels={modelLabels}
               running={running}
               connected={connected}
+              enterBehavior={composerEnterBehavior}
               modelReady={modelReady}
               onConnectModel={openModelSetup}
               onConfigureVoiceInput={() => openSettings("voice")}
