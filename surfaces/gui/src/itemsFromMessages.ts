@@ -35,6 +35,7 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
       const user = userItemFromContent(m.content);
       // `ts` (unix seconds) is the server's canonical-message stamp; older sessions have none.
       if (typeof m.ts === "number") user.ts = m.ts;
+      if (m.input_mode === "voice_discussion") user.inputMode = m.input_mode;
       if (user.text || user.attachments?.length) items.push(user);
     } else if (m.role === "assistant") {
       if (m.content || m.reasoning)

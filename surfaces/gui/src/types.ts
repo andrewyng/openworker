@@ -71,11 +71,18 @@ export interface Attachment {
   text?: string; // text files
 }
 
+// Trusted input metadata. This is carried beside the visible transcript text and stripped
+// before provider conversion; the server turns it into ephemeral voice-aware guidance.
+export type UserInputMode = "voice_discussion";
+export interface UserMessageMeta {
+  inputMode?: UserInputMode;
+}
+
 // Transcript items
 // `ts` = unix seconds (the server's canonical-message stamp; live items stamp locally).
 // Optional: sessions saved before the server stamped timestamps have none.
 export type Item =
-  | { kind: "user"; text: string; attachments?: Attachment[]; ts?: number }
+  | { kind: "user"; text: string; attachments?: Attachment[]; ts?: number; inputMode?: UserInputMode }
   // A connector-delivered inbound message (Slack/Salesforce/…), rendered as a structured card
   // (ConnectorMessageCard) instead of a plain user bubble. Generalizes to any connector via the
   // registry — no per-connector special-casing.

@@ -81,6 +81,17 @@ describe("TurnGroup (Transcript §33)", () => {
     expect(container.querySelector("details.stepgroup")).toBeNull();
     expect(screen.getByText("Hello there.")).toBeTruthy();
   });
+
+  it("labels voice discussion turns without changing their visible transcript", () => {
+    render(
+      <Transcript
+        items={[{ kind: "user", text: "check the release", inputMode: "voice_discussion" }]}
+        onApprove={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Voice discussion")).toBeTruthy();
+    expect(screen.getByText("check the release")).toBeTruthy();
+  });
 });
 
 describe("live turns (§33 flicker fix)", () => {

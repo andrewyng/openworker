@@ -94,6 +94,79 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Voice mode picker: compact radio-card rows with an optically centered icon check.
+   The selected surface uses the app's single cobalt accent and stays legible in both themes. */
+.voice-mode-menu {
+  box-shadow:
+    0 20px 52px rgba(8, 12, 20, 0.24),
+    0 3px 12px rgba(8, 12, 20, 0.12);
+}
+.voice-mode-option {
+  position: relative;
+  border: 1px solid transparent;
+  color: var(--ink);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    transform 120ms ease;
+}
+.voice-mode-option:hover {
+  background: color-mix(in srgb, var(--paper) 82%, var(--panel));
+}
+.voice-mode-option:active {
+  transform: translateY(1px) scale(0.995);
+}
+.voice-mode-option:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 1px;
+}
+.voice-mode-option.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 78%, var(--panel));
+}
+.voice-mode-indicator {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--panel) 72%, var(--paper));
+  color: var(--faint);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+.voice-mode-option:hover .voice-mode-indicator {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line-strong));
+  color: var(--muted);
+}
+.voice-mode-option.is-selected .voice-mode-indicator {
+  border-color: color-mix(in srgb, var(--accent) 86%, white);
+  background: var(--accent);
+  color: #f8fbff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.voice-mode-label {
+  font-weight: 500;
+}
+.voice-mode-option.is-selected .voice-mode-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+.voice-mode-description {
+  color: var(--faint);
+}
+.voice-mode-option.is-selected .voice-mode-description {
+  color: color-mix(in srgb, var(--muted) 88%, var(--accent));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-mode-option,
+  .voice-mode-indicator {
+    transition: none;
+  }
+}
+
 .app {
   display: grid;
   grid-template-columns: 264px 1fr;

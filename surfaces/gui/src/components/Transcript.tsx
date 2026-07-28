@@ -387,6 +387,12 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
             return (
               <div className="group self-end max-w-[78%] flex flex-col items-end" key={bi}>
                 <div className="bubble-user px-3.5 py-2.5 rounded-[14px_14px_4px_14px] bg-solid text-onSolid text-[14.5px] leading-relaxed whitespace-pre-wrap">
+                  {item.inputMode === "voice_discussion" && (
+                    <span className="mb-1 flex items-center gap-1 text-[10.5px] leading-none text-onSolid/70">
+                      <Icon name="mic" size={11} />
+                      Voice discussion
+                    </span>
+                  )}
                   {item.attachments && item.attachments.length > 0 && (
                     <div className="bubble-attachments">
                       {item.attachments.map((a, i) =>

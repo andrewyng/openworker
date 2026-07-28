@@ -41,6 +41,7 @@ export type IconName =
   | "table"
   | "mic"
   | "stop"
+  | "check"
   | "x";
 
 export function Icon({
@@ -161,6 +162,14 @@ export function Icon({
       return (
         <svg {...s} fill="currentColor" stroke="none">
           <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
+        </svg>
+      );
+    case "check":
+      // Tabler check. Kept in the shared 24px line-icon system so compact selected
+      // states align optically instead of relying on a font-dependent Unicode glyph.
+      return (
+        <svg {...s}>
+          <path d="m5 12 5 5L20 7" />
         </svg>
       );
     case "x":

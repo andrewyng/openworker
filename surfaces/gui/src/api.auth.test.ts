@@ -35,4 +35,16 @@ it("authenticates REST and session WebSocket calls with the launch token", async
   const session = new Session("s1", "/workspace", "code", { onEvent: vi.fn() });
   const socket = (session as unknown as { ws: FakeWebSocket }).ws;
   expect(socket.protocols).toEqual(["openworker", "launch-token"]);
+
+  session.userMessage("hello", undefined, "gpt-5.6-sol", "voice_discussion");
+  socket.readyState = FakeWebSocket.OPEN;
+  socket.onopen?.();
+  expect(socket.send).toHaveBeenCalledWith(
+    JSON.stringify({
+      type: "user_message",
+      text: "hello",
+      model: "gpt-5.6-sol",
+      input_mode: "voice_discussion",
+    }),
+  );
 });

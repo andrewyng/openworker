@@ -44,6 +44,12 @@ class PermissionRequest:
 
 Approver = Callable[[PermissionRequest], Awaitable[ApprovalOutcome]]
 
+_VOICE_DISCUSSION_CONTEXT = """This is a voice discussion turn.
+Treat unusual or ambiguous wording as a possible transcription error or homophone and use the
+conversation and workspace context to interpret it. Ask one brief clarification before a
+consequential action when ambiguity remains. Respond concisely and conversationally, and briefly
+narrate tool use so the user can follow along without watching the screen."""
+
 
 async def _deny_all(_request: PermissionRequest) -> ApprovalOutcome:
     return ApprovalOutcome.DENY
@@ -154,7 +160,11 @@ class TurnEngine:
 
     # -- main loop --------------------------------------------------------------
     async def run(
-        self, user_input: "str | list", *, source: Optional[dict[str, Any]] = None
+        self,
+        user_input: "str | list",
+        *,
+        source: Optional[dict[str, Any]] = None,
+        input_mode: Optional[str] = None,
     ) -> AsyncIterator[Event]:
         # `user_input` is a string, or OpenAI content-parts (text + image_url) for attachments.
         # `source` (a MessageSource dict) is a display-only sidecar for connector messages: it
@@ -168,11 +178,15 @@ class TurnEngine:
         }
         if source is not None:
             message["source"] = source
+        if input_mode == "voice_discussion":
+            message["input_mode"] = input_mode
         self.messages.append(message)
         self._cancel.clear()
         data: dict[str, Any] = {"input": user_input}
         if source is not None:
             data["source"] = source
+        if input_mode == "voice_discussion":
+            data["input_mode"] = input_mode
         yield Event(EventType.TURN_START, data)
         async for event in self._loop():
             yield event
@@ -878,18 +892,19 @@ class TurnEngine:
     def _outbound_messages(self) -> list[dict[str, Any]]:
         """`self.messages` prepared for the provider. The SOLE provider feed (see `_astream`).
 
-        Every message is stripped of the display-only sidecars — `source`, `_display`, and
-        `ts` — (providers reject unknown keys), unconditionally — whether or not a
+        Every message is stripped of the display-only sidecars — `source`, `_display`, `ts`, and
+        `input_mode` — (providers reject unknown keys), unconditionally — whether or not a
         `<system-context>` block is added. When a context
         provider yields a non-empty string, an ephemeral `<system-context>` block is appended to the
         last user message. Never mutates `self.messages`, so neither the strip nor the block is
         persisted/replayed.
         """
         # Strip the display-only sidecars — `source` (connector cards), `_display`
-        # (e.g. filter-hidden counts), `ts` (append-time timestamps), and `reasoning`
-        # (thinking text) — copying only messages that carry one. Whole `notice` messages
+        # (e.g. filter-hidden counts), `ts` (append-time timestamps), `reasoning`
+        # (thinking text), and trusted `input_mode` — copying only messages that carry one.
+        # Whole `notice` messages
         # (error/interrupted/model-switch markers) are display-only too: dropped entirely.
-        _SIDECARS = ("source", "_display", "ts", "reasoning")
+        _SIDECARS = ("source", "_display", "ts", "reasoning", "input_mode")
         out = [
             (
                 {k: v for k, v in msg.items() if k not in _SIDECARS}
@@ -963,6 +978,17 @@ class TurnEngine:
         context = (
             self.context_provider() if self.context_provider is not None else ""
         ) or ""
+        # The voice flag is trusted server metadata. It is persisted beside the user's visible
+        # text, then converted here into ephemeral provider guidance. This keeps prompt-like
+        # control text out of the transcript while applying it to every iteration of this turn.
+        voice_context = ""
+        for message in reversed(self.messages):
+            if message.get("role") != "user":
+                continue
+            if message.get("input_mode") == "voice_discussion":
+                voice_context = _VOICE_DISCUSSION_CONTEXT
+            break
+        context = "\n\n".join(part for part in (context, voice_context) if part)
         if not context:
             return out
         block = f"\n\n<system-context>\n{context}\n</system-context>"

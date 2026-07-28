@@ -39,6 +39,7 @@ import { ModelsTab } from "./ManageTabs";
 import { GalleryModal } from "./GalleryModal";
 import { PersonasTab } from "./PersonasTab";
 import { showPersonas } from "../flags";
+import { getVoiceStatus } from "../voice";
 
 // Settings, restructured (Option 2) into a full-page surface that mirrors IntegrationsView's shell:
 // a left sub-nav (Appearance · Files · Models · Personas) + centered panel, replacing the old
@@ -185,6 +186,17 @@ function VoiceInputSection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [desktop]);
 
+  useEffect(() => {
+    if (desktop) return;
+    let active = true;
+    void getVoiceStatus().then((initial) => {
+      if (active && initial) setStatus(initial);
+    });
+    return () => {
+      active = false;
+    };
+  }, [desktop]);
+
   const download = async () => {
     setError(null);
     setProgress({ downloaded_bytes: 0, total_bytes: status?.model_bytes || 0 });
@@ -259,11 +271,50 @@ function VoiceInputSection() {
     <section>
       <PanelHead
         title="Voice input"
-        sub="Speak naturally in the composer. Recordings and transcripts stay on this device."
+        sub={
+          desktop
+            ? "Speak naturally in the composer. Recordings and transcripts stay on this device."
+            : "Speak naturally in the composer using your browser’s speech recognition service."
+        }
       />
 
       {!desktop ? (
-        <div className={CARD + " p-4 text-[13px] text-muted"}>Voice Input setup is available in the OpenWorker desktop app.</div>
+        <div className={CARD}>
+          <div className="p-4 flex items-start gap-3">
+            <Icon
+              name="mic"
+              size={18}
+              className={status?.supported ? "text-green-600 mt-0.5" : "text-muted mt-0.5"}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-[13.5px] font-medium">
+                {!status
+                  ? "Checking browser voice input…"
+                  : status.supported
+                    ? "Browser voice input is ready"
+                    : "Browser voice input is unavailable"}
+              </div>
+              <div className="mt-1 text-[12px] leading-relaxed text-muted">
+                {status?.supported
+                  ? "Start from the microphone in the composer. Your browser will request microphone permission the first time."
+                  : status?.compatibility_reason || "Checking browser compatibility…"}
+              </div>
+              <div className="mt-3 rounded-lg border border-line bg-paper px-3 py-2 text-[11.5px] leading-relaxed text-muted">
+                Browser transcription may use a speech service managed by your browser vendor. Use the desktop app when you need fully local Whisper transcription.
+              </div>
+            </div>
+            {status && (
+              <span
+                className={
+                  "shrink-0 rounded-full px-2 py-1 text-[11.5px] " +
+                  (status.supported ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600")
+                }
+              >
+                {status.supported ? "● Compatible" : "Unsupported"}
+              </span>
+            )}
+          </div>
+        </div>
       ) : (
         <div className="space-y-4">
           <div className="rounded-xl border border-green-200 bg-green-50/70 px-4 py-3 text-[12.5px] text-green-800">

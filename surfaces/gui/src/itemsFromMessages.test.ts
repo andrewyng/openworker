@@ -49,6 +49,18 @@ describe("itemsFromMessages timestamps", () => {
   });
 });
 
+describe("itemsFromMessages voice metadata", () => {
+  it("keeps the trusted voice discussion marker beside the visible transcript", () => {
+    const items = itemsFromMessages([
+      { role: "user", content: "hello from the mic", input_mode: "voice_discussion" },
+    ] as any);
+
+    expect(items).toEqual([
+      { kind: "user", text: "hello from the mic", inputMode: "voice_discussion" },
+    ]);
+  });
+});
+
 describe("itemsFromMessages notices", () => {
   it("replays persisted error/interrupted markers; only errors are retriable", () => {
     const items = itemsFromMessages([
