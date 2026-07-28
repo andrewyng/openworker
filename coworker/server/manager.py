@@ -4299,6 +4299,8 @@ class SessionManager:
         engine.permissions.task_rules = task.standing_rules()
         for tool in task.name_allowed_tools():
             engine.permissions.allow_tool_for_session(tool)
+        for cmd in task.always_allowed_commands:
+            engine.permissions.allow_command_for_session(cmd)
 
     def _build_task_engine(self, task, *, session_id: str) -> TurnEngine:
         ag = get_agent(task.agent)
