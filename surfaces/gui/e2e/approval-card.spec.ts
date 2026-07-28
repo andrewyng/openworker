@@ -1,7 +1,7 @@
 // §35 (UX-018): approval cards speak the transcript's language. Routine workspace writes
 // are a compact ROW (humanized title, inline args-preview, short "Always allow" with the
 // full rule on hover); everything else is a full card — shell titles with the model's
-// description, external actions wear the leaves-this-Mac note. No "PERMISSION REQUIRED"
+// description, external actions wear the leaves-this-computer note. No "PERMISSION REQUIRED"
 // kicker, no raw args dump, no solid-fill buttons.
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
@@ -34,7 +34,7 @@ test("routine write → compact row: humanized title, inline preview, Allow reso
   await expect(page.getByText(/Done via write_file/)).toBeVisible();
 });
 
-test("run_shell → full card: description title, command preview, stays-on-this-Mac note", async ({
+test("run_shell → full card: description title, command preview, stays-on-this-computer note", async ({
   page,
 }) => {
   await page.goto("/");
@@ -45,7 +45,7 @@ test("run_shell → full card: description title, command preview, stays-on-this
   // The mocked proposal has no description → plain "Run a command" title; the command is
   // the preview; the reason still renders; the scope note replaces the old badge.
   await expect(page.getByText("Run a command").last()).toBeVisible();
-  await expect(page.getByText("stays on this Mac").last()).toBeVisible();
+  await expect(page.getByText("stays on this computer").last()).toBeVisible();
   await expect(page.getByText("The coworker wants to run a command.").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Always allow this command" }).last()).toBeVisible();
   await expect(page.getByText(/local action/)).toHaveCount(0);

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { ApprovalCard } from "./ApprovalCard";
+import { ApprovalCard, scopeNote } from "./ApprovalCard";
 import { InboxItemCard } from "./InboxItemCard";
 import type { Item } from "../types";
 import type { InboxItem } from "../api";
@@ -19,6 +19,15 @@ const sendApproval = (extra: Partial<ApprovalItem> = {}): ApprovalItem => ({
 });
 
 afterEach(cleanup);
+
+describe("scopeNote — cross-platform copy", () => {
+  it("describes an overwriting file write without naming the operating system", () => {
+    expect(scopeNote("write_file", { overwrite: true })).toEqual({
+      text: "stays on this computer · overwrites the existing file",
+      external: false,
+    });
+  });
+});
 
 describe("ApprovalCard — standing scoped approvals (§25)", () => {
   it("offers Allow every time only with BOTH a run context and an eligible target", () => {
@@ -110,7 +119,7 @@ describe("ApprovalCard — §35 shapes", () => {
     expect(onApprove).toHaveBeenCalledWith("once");
   });
 
-  it("send_file gets the full external card: destination title, file chip, leaves-the-Mac note", () => {
+  it("send_file gets the full external card: destination title, file chip, leaves-the-computer note", () => {
     render(
       <ApprovalCard
         item={sendApproval({
@@ -121,7 +130,7 @@ describe("ApprovalCard — §35 shapes", () => {
       />,
     );
     expect(screen.getByText(/Send a file to/).textContent).toContain("C9");
-    expect(screen.getByText(/leaves this Mac → Slack/)).toBeTruthy();
+    expect(screen.getByText(/leaves this computer → Slack/)).toBeTruthy();
     expect(screen.getByText(/report\.pdf/)).toBeTruthy();
     expect(screen.getByText(/here you go/)).toBeTruthy();
     expect(screen.getByText("Allow once")).toBeTruthy();
@@ -159,7 +168,7 @@ describe("ApprovalCard — §35 shapes", () => {
     );
     expect(screen.getByText(/Run a command — fetch semiconductor stock data/)).toBeTruthy();
     expect(screen.getByText(/python3 fetch\.py/)).toBeTruthy();
-    expect(screen.getByText(/stays on this Mac/)).toBeTruthy();
+    expect(screen.getByText(/stays on this computer/)).toBeTruthy();
     expect(screen.getByText("Always allow this command")).toBeTruthy();
   });
 });
@@ -213,7 +222,7 @@ describe("InboxItemCard — Allow every time on parked run approvals", () => {
     expect(screen.getByText("fetch_data.py")).toBeTruthy();
     expect(screen.queryByText("Run `send_message`?")).toBeNull();
     expect(screen.getByText(/import json/)).toBeTruthy();
-    expect(screen.getByText(/stays on this Mac/)).toBeTruthy();
+    expect(screen.getByText(/stays on this computer/)).toBeTruthy();
     // §35 labels; resolution vocabulary unchanged (works on every approver path).
     fireEvent.click(screen.getByText("Allow once"));
     expect(onResolve).toHaveBeenCalledWith("i1", "allow");

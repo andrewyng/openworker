@@ -27,7 +27,7 @@ const TOOL_VERBS: Record<string, string> = {
 
 // §35: routine workspace writes render as a compact ROW; everything else is a full card.
 const FILE_WRITES = new Set(["write_file", "replace_in_file", "apply_patch", "apply_unified_diff"]);
-// Actions that leave the Mac get the warm border + explicit destination note.
+// Actions that leave the computer get the warm border + explicit destination note.
 const EXTERNAL = new Set(["send_message", "send_file"]);
 
 type ApprovalItem = Extract<Item, { kind: "approval" }>;
@@ -69,10 +69,10 @@ export function scopeNote(
   if (EXTERNAL.has(name)) {
     const platform = String(args?.target ?? "").split(":")[0];
     const names: Record<string, string> = { slack: "Slack", telegram: "Telegram" };
-    return { text: `leaves this Mac → ${names[platform] || platform || "a connected chat"}`, external: true };
+    return { text: `leaves this computer → ${names[platform] || platform || "a connected chat"}`, external: true };
   }
   const overwrite = name === "write_file" && args?.overwrite;
-  return { text: "stays on this Mac" + (overwrite ? " · overwrites the existing file" : ""), external: false };
+  return { text: "stays on this computer" + (overwrite ? " · overwrites the existing file" : ""), external: false };
 }
 
 // The proposed content/command, straight from the tool call's ARGS — the file/action
