@@ -3,8 +3,8 @@
 #   <your-project>/.coworker/config.toml    (per-workspace, overrides global)
 #
 # All keys are optional; unset keys fall back to built-in defaults.
-# Note: allowed_commands and auto_allow are global-only — a repo's
-# .coworker/config.toml cannot grant them (untrusted checkout).
+# Note: auto_allow is global-only (a repo cannot grant it). allowed_commands from a
+# repo's .coworker/config.toml are ignored until that workspace path is trusted.
 
 model = "gpt-5.5"            # default model id (override per session in the UI/CLI)
 mode = "interactive"         # plan | interactive | auto | custom

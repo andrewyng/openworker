@@ -25,21 +25,81 @@ _SHELL_OPERATORS = (";", "&", "|", ">", "<", "`", "$(", "(", "\n", "\r")
 # metacharacters — so a bare allowlisted `find` would otherwise auto-run helpers.
 _FIND_HELPER_FLAGS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
 
+# find(1) primaries/options that consume the next argv token as their argument. Used so a
+# pattern like `find . -name -exec` does not treat `-exec` as helper execution.
+_FIND_UNARY_OPTS = frozenset(
+    {
+        "-name",
+        "-iname",
+        "-lname",
+        "-ilname",
+        "-path",
+        "-ipath",
+        "-wholename",
+        "-iwholename",
+        "-regex",
+        "-iregex",
+        "-type",
+        "-xtype",
+        "-user",
+        "-group",
+        "-perm",
+        "-size",
+        "-links",
+        "-maxdepth",
+        "-mindepth",
+        "-printf",
+        "-fprintf",
+        "-fls",
+        "-fprint",
+        "-fprint0",
+        "-newer",
+        "-anewer",
+        "-cnewer",
+        "-uid",
+        "-gid",
+        "-context",
+        "-fstype",
+    }
+)
+
 
 def _has_shell_operators(command: str) -> bool:
     return any(op in command for op in _SHELL_OPERATORS)
 
 
+def _find_helper_flags_used(argv: list[str]) -> set[str]:
+    """Helper-exec flags used as find primaries (not as arguments to other primaries)."""
+    used: set[str] = set()
+    i = 1  # skip program name
+    while i < len(argv):
+        tok = argv[i]
+        if tok in _FIND_HELPER_FLAGS:
+            used.add(tok)
+            i += 1
+            while i < len(argv) and argv[i] not in {"+", ";"}:
+                i += 1
+            if i < len(argv):
+                i += 1
+            continue
+        if tok in _FIND_UNARY_OPTS or tok.startswith("-newer"):
+            i += 2
+            continue
+        i += 1
+    return used
+
+
 def _unauthorized_find_helper(argv: list[str], prefix: list[str]) -> bool:
     """True when argv uses find helper-exec flags the allowlist entry did not itself name.
 
-    Allowlisting `find` means inspection (`find . -name '*.py'`). Auto-running
-    `find . -exec … {} +` requires the entry to include that flag (e.g. `find . -exec`).
+    A bare allowlisted `find` does not authorize `-exec`/`-execdir`/`-ok`/`-okdir` unless
+    the entry itself names that flag (e.g. `find . -exec`). Other find predicates are
+    unchanged by this check.
     """
     prog = Path(argv[0]).name.lower()
     if prog not in {"find", "gfind"}:
         return False
-    used = {t for t in argv if t in _FIND_HELPER_FLAGS}
+    used = _find_helper_flags_used(argv)
     authorized = {t for t in prefix if t in _FIND_HELPER_FLAGS}
     return bool(used - authorized)
 
