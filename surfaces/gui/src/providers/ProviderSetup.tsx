@@ -25,6 +25,7 @@ export const KEY_HELP: Record<string, { url: string; label: string }> = {
   bedrock: { url: "https://console.aws.amazon.com/bedrock/home#/api-keys", label: "the AWS Bedrock console" },
   fireworks: { url: "https://fireworks.ai/account/api-keys", label: "fireworks.ai" },
   together: { url: "https://api.together.xyz/settings/api-keys", label: "together.xyz" },
+  nvidia: { url: "https://build.nvidia.com/settings/api-keys", label: "build.nvidia.com" },
   zai: { url: "https://z.ai/manage-apikey/apikey-list", label: "z.ai" },
   kimi: { url: "https://platform.moonshot.ai/console/api-keys", label: "platform.moonshot.ai" },
   deepseek: { url: "https://platform.deepseek.com/api_keys", label: "platform.deepseek.com" },

@@ -11,7 +11,7 @@ falls back to the conservative heuristics in ``capabilities.py`` at their own ri
 degraded results. Ids verified against vendor/reseller catalogs on 2026-07-04; refresh the
 reseller rows when catalogs rotate (they rename on every model generation).
 
-Resellers: Together + Fireworks + OpenRouter. TODO: add Groq entries here AND its
+Resellers: Together + Fireworks + OpenRouter + NVIDIA NIM. TODO: add Groq entries here AND its
 descriptor in ``registry.py`` once the current provider surface is tested — deliberately
 deferred to bound how much needs verifying at once.
 """
@@ -120,6 +120,22 @@ MATRIX: dict[str, ModelEntry] = {
     "openrouter:meta-llama/llama-4-maverick": ModelEntry(
         "Llama 4 Maverick · via OpenRouter"
     ),
+    # NVIDIA NIM — ids verified against integrate.api.nvidia.com/v1/models (2026-07-25).
+    # Tool calling was probed live per model the same day: each returned two well-formed
+    # calls in a single assistant turn, so _AGENTIC (incl. parallel) is observed, not
+    # assumed. Vision left off — not tested. NVIDIA also fronts kimi-k2.6, but it 404s
+    # ("Not found for account") on a standard build.nvidia.com key, so it stays out until
+    # that's verifiable.
+    "nvidia:nvidia/llama-3.3-nemotron-super-49b-v1.5": ModelEntry(
+        "Llama 3.3 Nemotron Super · via NVIDIA"
+    ),
+    "nvidia:nvidia/nemotron-3-ultra-550b-a55b": ModelEntry(
+        "Nemotron 3 Ultra · via NVIDIA"
+    ),
+    "nvidia:z-ai/glm-5.2": ModelEntry("GLM-5.2 · via NVIDIA"),
+    # ~150s to first response from cold on this route — usable, but noticeably slower
+    # than the same model via Together/Fireworks.
+    "nvidia:deepseek-ai/deepseek-v4-pro": ModelEntry("DeepSeek V4 Pro · via NVIDIA"),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
     # Converse) plus AWS's own `-v<n>:<m>` version suffix. Some regions require the
