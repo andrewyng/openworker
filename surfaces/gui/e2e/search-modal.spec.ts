@@ -4,8 +4,14 @@
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
-test("search from expanded sidebar is centered in the viewport", async ({ page }) => {
+async function ready(page: import("@playwright/test").Page) {
   await page.goto("/");
+  await expect(page.locator(".app")).not.toHaveClass(/boot-splash/);
+  await expect(page.locator(".sidebar")).toBeVisible();
+}
+
+test("search from expanded sidebar is centered in the viewport", async ({ page }) => {
+  await ready(page);
   await page.locator(".sidebar").getByRole("button", { name: "Search", exact: true }).click();
 
   const panel = page.getByTestId("search-modal-panel");
@@ -22,10 +28,10 @@ test("search from expanded sidebar is centered in the viewport", async ({ page }
 });
 
 test("search from peeked collapsed sidebar stays viewport-centered", async ({ page }) => {
-  await page.goto("/");
+  await ready(page);
   const app = page.locator(".app");
 
-  await page.keyboard.press("Meta+b");
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
   await expect(app).toHaveClass(/nav-collapsed/);
 
   // Hover the left-edge zone to peek the floating sidebar, then open Search from it.
@@ -49,10 +55,12 @@ test("search from peeked collapsed sidebar stays viewport-centered", async ({ pa
 });
 
 test("collapsed topbar search is also viewport-centered", async ({ page }) => {
-  await page.goto("/");
-  await page.keyboard.press("Meta+b");
+  await ready(page);
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await expect(page.locator(".app")).toHaveClass(/nav-collapsed/);
 
   const cluster = page.getByTestId("topbar-cluster");
+  await expect(cluster).toBeVisible();
   await cluster.getByRole("button", { name: "Search" }).click();
 
   const panel = page.getByTestId("search-modal-panel");
