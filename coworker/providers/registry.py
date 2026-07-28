@@ -11,7 +11,8 @@ Today: `openai` (the default, with an optional custom endpoint that covers Azure
 `AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `bedrock`
 (models in the user's own AWS account — Claude natively, everything else via Converse),
 `vertex` (the user's own GCP project — Gemini and Claude natively, open-weight via the
-MaaS endpoint), and `ollama` (local, OpenAI-compatible `/v1`).
+MaaS endpoint), `novita` (OpenAI-compatible Novita Cloud), and `ollama` (local,
+OpenAI-compatible `/v1`).
 """
 
 from __future__ import annotations
@@ -184,10 +185,11 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
-    Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its
-    env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a configured OpenAI
-    key is never silently sent to a different vendor's endpoint. Missing key ⇒ fail fast with a
-    vendor-named error (these are only built on demand, when one of their models is selected).
+    Kimi, MiniMax, Qwen, xAI, Mistral, Novita). The key is resolved from the vendor's OWN
+    profile (or its env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a
+    configured OpenAI key is never silently sent to a different vendor's endpoint. Missing key ⇒
+    fail fast with a vendor-named error (these are only built on demand, when one of their models
+    is selected).
     """
 
     def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -209,7 +211,7 @@ def _compat(
     title: str,
     *,
     base_url: str,
-    recommended_model: str,
+    recommended_model: Optional[str] = None,
     env_key: str,
     endpoint_help: str = "",
 ) -> ProviderDescriptor:
@@ -518,6 +520,13 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="muse-spark-1.1",
         env_key="META_API_KEY",
         endpoint_help="Prefilled with the Meta Model API endpoint (public preview, US-only as of 2026-07).",
+    ),
+    _compat(
+        "novita",
+        "Novita AI",
+        base_url="https://api.novita.ai/openai/v1",
+        env_key="NOVITA_API_KEY",
+        endpoint_help="Prefilled with Novita's OpenAI-compatible endpoint; keep it unless you use a regional or proxy variant.",
     ),
     # Resellers: many labs' models behind one key, using THEIR model namespaces (the curated
     # ids + display labels live in providers/matrix.py). TODO: add Groq here (+ its matrix

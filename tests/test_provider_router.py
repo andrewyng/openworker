@@ -71,6 +71,20 @@ def test_build_ollama_client_uses_base_url(monkeypatch):
     assert captured["api_key"] == "ollama"  # placeholder, Ollama ignores it
 
 
+def test_build_novita_client_uses_base_url(monkeypatch):
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    client = build_provider_client("novita", {"api_key": "sk-nov"}, secrets=None)
+    client._ensure_client()  # type: ignore[attr-defined]
+    assert captured["base_url"] == "https://api.novita.ai/openai/v1"
+    assert captured["api_key"] == "sk-nov"
+
+
 # -- router routing -------------------------------------------------------------
 class _Recorder(ProviderClient):
     def __init__(self, name: str):

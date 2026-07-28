@@ -48,6 +48,7 @@ export const PROVIDER_ORDER = [
   "openai",
   "gemini",
   "meta",
+  "novita",
   "ollama",
   "bedrock",
   "vertex",
