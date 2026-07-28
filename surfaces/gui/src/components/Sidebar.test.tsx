@@ -107,6 +107,38 @@ describe("Sidebar group/filter control", () => {
   });
 });
 
+describe("Side-session rows", () => {
+  it("marks a child conversation with the branch icon", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+    ]);
+    render(
+      <Sidebar
+        {...baseProps}
+        sessions={[
+          ...SESSIONS,
+          {
+            session_id: "side-1",
+            title: "Side chat",
+            workspace: "",
+            agent: "cowork",
+            model: "m",
+            mode: "discuss",
+            updated_at: "2026-06-30",
+            messages: 1,
+            parent_session_id: "s-cowork-1",
+            branch_mode: "follow",
+            branch_state: "active",
+          },
+        ]}
+      />,
+    );
+    await screen.findByText("Side chat");
+    expect(screen.getByTestId("side-session-icon")).toBeTruthy();
+  });
+});
+
 describe("Chronological list row actions (⋮ menu)", () => {
   // The Recent list sorts by updated_at desc with store order breaking ties, so index 0 = s-ops-1.
   const openOpsMenu = () => fireEvent.click(screen.getAllByTestId("row-menu")[0]);

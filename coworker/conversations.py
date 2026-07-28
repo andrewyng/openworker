@@ -17,7 +17,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from .sessions import SessionRecord
+from .sessions import SessionBranch, SessionRecord
 
 
 def _load_roots(raw: Optional[str]) -> list[dict]:
@@ -74,6 +74,7 @@ class ConversationStore:
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id TEXT PRIMARY KEY, workspace TEXT, model TEXT, mode TEXT,
                 title TEXT, agent TEXT DEFAULT 'code', n_msgs INTEGER DEFAULT 0, messages TEXT,
+                committed_n_msgs INTEGER DEFAULT 0,
                 extra_roots TEXT, pinned INTEGER DEFAULT 0, archived INTEGER DEFAULT 0,
                 origin TEXT, origin_label TEXT,
                 auto_title TEXT, renamed INTEGER DEFAULT 0,
@@ -82,7 +83,21 @@ class ConversationStore:
             CREATE TABLE IF NOT EXISTS workspaces (
                 path TEXT PRIMARY KEY, last_used TEXT DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS session_branches (
+                child_session_id TEXT PRIMARY KEY,
+                parent_session_id TEXT NOT NULL,
+                mode TEXT NOT NULL DEFAULT 'follow',
+                base_message_count INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                merged_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_branches_parent
+                ON session_branches(parent_session_id);
             """)
+        columns_before_migration = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(sessions)")
+        }
         for ddl in (
             "ALTER TABLE sessions ADD COLUMN title TEXT",
             "ALTER TABLE sessions ADD COLUMN n_msgs INTEGER DEFAULT 0",
@@ -95,6 +110,7 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN auto_title TEXT",
             "ALTER TABLE sessions ADD COLUMN renamed INTEGER DEFAULT 0",
             "ALTER TABLE sessions ADD COLUMN grants TEXT",
+            "ALTER TABLE sessions ADD COLUMN committed_n_msgs INTEGER DEFAULT 0",
         ):
             try:
                 self._conn.execute(ddl)
@@ -102,6 +118,14 @@ class ConversationStore:
                 pass
         self._conn.commit()
         self._backfill_counts()
+        if "committed_n_msgs" not in columns_before_migration:
+            # Sessions from versions before side chats were last saved at complete
+            # turn boundaries in normal operation. Run after the legacy inline-message
+            # migration above so its repaired ``n_msgs`` value is available.
+            self._conn.execute(
+                "UPDATE sessions SET committed_n_msgs = COALESCE(n_msgs, 0)"
+            )
+            self._conn.commit()
 
     # -- file helpers -----------------------------------------------------------
     def _file(self, sid: str) -> Path:
@@ -164,7 +188,7 @@ class ConversationStore:
             self._conn.commit()
 
     # -- API --------------------------------------------------------------------
-    def save(self, record: SessionRecord) -> None:
+    def save(self, record: SessionRecord, *, committed: bool = True) -> None:
         sid = record.session_id
         with self._lock:
             # lazily migrate a legacy inline blob into the .jsonl
@@ -191,12 +215,19 @@ class ConversationStore:
             title = record.title or title_from(record.messages)
             self._conn.execute(
                 """
-                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO sessions (
+                    session_id, workspace, model, mode, title, agent, n_msgs,
+                    committed_n_msgs, messages, extra_roots, grants, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace, model = excluded.model, mode = excluded.mode,
                     title = COALESCE(sessions.title, excluded.title), agent = excluded.agent,
                     n_msgs = excluded.n_msgs, messages = NULL, extra_roots = excluded.extra_roots,
+                    committed_n_msgs = CASE
+                        WHEN ? THEN excluded.n_msgs
+                        ELSE sessions.committed_n_msgs
+                    END,
                     grants = excluded.grants, updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -207,8 +238,10 @@ class ConversationStore:
                     title,
                     record.agent,
                     len(record.messages),
+                    len(record.messages) if committed else 0,
                     json.dumps(record.extra_roots or []),
                     json.dumps(record.grants or {}),
+                    1 if committed else 0,
                 ),
             )
             self._conn.commit()
@@ -236,6 +269,9 @@ class ConversationStore:
             title=_display_title(row),
             agent=row["agent"] or "code",
             message_count=len(messages),
+            committed_message_count=min(
+                len(messages), int(row["committed_n_msgs"] or 0)
+            ),
             updated_at=row["updated_at"],
             extra_roots=_load_roots(
                 row["extra_roots"] if "extra_roots" in row.keys() else None
@@ -278,6 +314,9 @@ class ConversationStore:
                 title=_display_title(r),
                 agent=r["agent"] or "code",
                 message_count=r["n_msgs"] or 0,
+                committed_message_count=min(
+                    int(r["n_msgs"] or 0), int(r["committed_n_msgs"] or 0)
+                ),
                 updated_at=r["updated_at"],
                 pinned=bool(r["pinned"]),
                 archived=bool(r["archived"]),
@@ -286,6 +325,13 @@ class ConversationStore:
             )
             for r in rows
         ]
+
+    def committed_messages(self, session_id: str) -> list[dict]:
+        """Return only the last fully completed provider-safe transcript prefix."""
+        record = self.load(session_id)
+        if record is None:
+            return []
+        return record.messages[: record.committed_message_count]
 
     def touch_workspace(self, path: str) -> None:
         with self._lock:
@@ -331,6 +377,10 @@ class ConversationStore:
 
     def delete(self, session_id: str) -> bool:
         with self._lock:
+            self._conn.execute(
+                "DELETE FROM session_branches WHERE child_session_id = ?",
+                (session_id,),
+            )
             cur = self._conn.execute(
                 "DELETE FROM sessions WHERE session_id = ?", (session_id,)
             )
@@ -339,6 +389,104 @@ class ConversationStore:
         if path.exists():
             path.unlink()
         return cur.rowcount > 0
+
+    # -- live-follow side sessions ---------------------------------------------
+    def create_branch(
+        self,
+        child_session_id: str,
+        parent_session_id: str,
+        *,
+        mode: str = "follow",
+        base_message_count: Optional[int] = None,
+    ) -> SessionBranch:
+        """Relate an existing child session to an existing parent.
+
+        Branch creation is intentionally separate from ``save`` so normal per-turn
+        session persistence cannot accidentally rewrite ancestry.
+        """
+        if mode != "follow":
+            raise ValueError("only follow-mode side sessions are currently supported")
+        if child_session_id == parent_session_id:
+            raise ValueError("a session cannot branch from itself")
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, n_msgs FROM sessions WHERE session_id IN (?, ?)",
+                (child_session_id, parent_session_id),
+            ).fetchall()
+            by_id = {row["session_id"]: row for row in rows}
+            if parent_session_id not in by_id:
+                raise KeyError(f"parent session not found: {parent_session_id}")
+            if child_session_id not in by_id:
+                raise KeyError(f"child session not found: {child_session_id}")
+            base = (
+                int(base_message_count)
+                if base_message_count is not None
+                else int(by_id[parent_session_id]["n_msgs"] or 0)
+            )
+            self._conn.execute(
+                """
+                INSERT INTO session_branches (
+                    child_session_id, parent_session_id, mode, base_message_count
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (child_session_id, parent_session_id, mode, max(0, base)),
+            )
+            self._conn.commit()
+        branch = self.branch_for(child_session_id)
+        assert branch is not None
+        return branch
+
+    def branch_for(self, child_session_id: str) -> Optional[SessionBranch]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM session_branches WHERE child_session_id = ?",
+                (child_session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return SessionBranch(
+            child_session_id=row["child_session_id"],
+            parent_session_id=row["parent_session_id"],
+            mode=row["mode"],
+            base_message_count=int(row["base_message_count"] or 0),
+            state=row["state"],
+            created_at=row["created_at"],
+            merged_at=row["merged_at"],
+        )
+
+    def branches_from(
+        self, parent_session_id: str, *, active_only: bool = False
+    ) -> list[SessionBranch]:
+        sql = "SELECT * FROM session_branches WHERE parent_session_id = ?"
+        if active_only:
+            sql += " AND state = 'active'"
+        sql += " ORDER BY created_at ASC"
+        with self._lock:
+            rows = self._conn.execute(sql, (parent_session_id,)).fetchall()
+        return [
+            SessionBranch(
+                child_session_id=row["child_session_id"],
+                parent_session_id=row["parent_session_id"],
+                mode=row["mode"],
+                base_message_count=int(row["base_message_count"] or 0),
+                state=row["state"],
+                created_at=row["created_at"],
+                merged_at=row["merged_at"],
+            )
+            for row in rows
+        ]
+
+    def has_active_children(self, session_id: str) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT 1 FROM session_branches
+                WHERE parent_session_id = ? AND state = 'active'
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+        return row is not None
 
     def rename(self, session_id: str, title: str) -> bool:
         clean = " ".join((title or "").split())[:120]

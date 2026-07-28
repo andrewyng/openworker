@@ -566,6 +566,11 @@ export function Sidebar(props: Props) {
               }
             >
               {s.pinned && <Icon name="pin" size={11} className="text-faint shrink-0" />}
+              {s.parent_session_id && (
+                <span data-testid="side-session-icon">
+                  <Icon name="branch" size={11} className="text-accent shrink-0" />
+                </span>
+              )}
               <span className="truncate">{title}</span>
             </span>
             <span
@@ -633,8 +638,13 @@ export function Sidebar(props: Props) {
           />
         ) : (
           <>
-            <span className="min-w-0 flex-1 block truncate text-[13px] font-medium">
-              {title}
+            <span className="min-w-0 flex-1 flex items-center gap-1.5 truncate text-[13px] font-medium">
+              {s.parent_session_id && (
+                <span data-testid="side-session-icon">
+                  <Icon name="branch" size={11} className="text-accent shrink-0" />
+                </span>
+              )}
+              <span className="truncate">{title}</span>
             </span>
             <span
               className={
