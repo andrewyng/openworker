@@ -186,6 +186,154 @@ def test_effort_400_from_an_unpinned_model_retries_once_at_none():
     assert out[-1].turn.text == "ok" and len(client.chat.completions.calls) == 4
 
 
+class _ResponseItem(SimpleNamespace):
+    def model_dump(self, **_kwargs):
+        return dict(self.__dict__)
+
+
+class _ResponsesOnlyCompletions:
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        raise RuntimeError(
+            "Function tools with reasoning_effort are not supported for this model "
+            "in /v1/chat/completions. Please use /v1/responses instead."
+        )
+
+
+class _FakeResponses:
+    def __init__(self, responses, stream_events=None):
+        self._responses = list(responses)
+        self._stream_events = list(stream_events or [])
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs.get("stream"):
+            return iter(self._stream_events)
+        return self._responses.pop(0)
+
+
+def _responses_client(responses, stream_events=None):
+    chat = _ResponsesOnlyCompletions()
+    api = _FakeResponses(responses, stream_events)
+    return SimpleNamespace(chat=SimpleNamespace(completions=chat), responses=api)
+
+
+def test_explicit_responses_requirement_falls_back_and_replays_tool_context():
+    reasoning = _ResponseItem(
+        type="reasoning", encrypted_content="encrypted", summary=[]
+    )
+    function_call = _ResponseItem(
+        type="function_call",
+        call_id="call_1",
+        name="read_file",
+        arguments='{"path":"a.py"}',
+    )
+    first = SimpleNamespace(
+        output=[reasoning, function_call], output_text="", status="completed"
+    )
+    message = _ResponseItem(
+        type="message",
+        role="assistant",
+        content=[{"type": "output_text", "text": "done"}],
+    )
+    second = SimpleNamespace(output=[message], output_text="done", status="completed")
+    client = _responses_client([first, second])
+    provider = OpenAIProvider(client=client)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {"type": "object"},
+            },
+        }
+    ]
+
+    turn = provider.complete(
+        model="gpt-5.6-terra",
+        messages=[{"role": "user", "content": "read it"}],
+        tools=tools,
+    )
+    assert turn.tool_calls == [
+        ToolCall(id="call_1", name="read_file", arguments={"path": "a.py"})
+    ]
+    assert len(client.chat.completions.calls) == 1
+    first_call = client.responses.calls[0]
+    assert first_call["store"] is False
+    assert first_call["include"] == ["reasoning.encrypted_content"]
+    assert first_call["tools"][0] == {
+        "type": "function",
+        "name": "read_file",
+        "description": "Read a file",
+        "parameters": {"type": "object"},
+    }
+
+    history = [
+        {"role": "user", "content": "read it"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": '{"path":"a.py"}',
+                    },
+                }
+            ],
+            **turn.extras,
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "contents"},
+    ]
+    final = provider.complete(model="gpt-5.6-terra", messages=history, tools=tools)
+    assert final.text == "done"
+    assert len(client.chat.completions.calls) == 1  # protocol choice cached per model
+    replay = client.responses.calls[1]["input"]
+    assert replay[1]["type"] == "reasoning"
+    assert replay[2]["call_id"] == "call_1"
+    assert replay[3] == {
+        "type": "function_call_output",
+        "call_id": "call_1",
+        "output": "contents",
+    }
+
+
+def test_responses_fallback_streams_and_caches_protocol_choice():
+    final_response = SimpleNamespace(
+        output=[
+            _ResponseItem(
+                type="message",
+                role="assistant",
+                content=[{"type": "output_text", "text": "Hello"}],
+            )
+        ],
+        output_text="Hello",
+        status="completed",
+    )
+    events = [
+        SimpleNamespace(type="response.output_text.delta", delta="Hel"),
+        SimpleNamespace(type="response.output_text.delta", delta="lo"),
+        SimpleNamespace(type="response.completed", response=final_response),
+    ]
+    client = _responses_client([final_response], events)
+    provider = OpenAIProvider(client=client)
+
+    out = list(provider.stream(model="gpt-5.6-terra", messages=[], tools=_TOOLS))
+    assert [chunk.text_delta for chunk in out if chunk.text_delta] == ["Hel", "lo"]
+    assert out[-1].turn.text == "Hello"
+    assert client.responses.calls[0]["stream"] is True
+
+    provider.complete(model="gpt-5.6-terra", messages=[], tools=_TOOLS)
+    assert len(client.chat.completions.calls) == 1
+
+
 def test_max_tokens_rejection_retries_as_max_completion_tokens():
     """Reasoning-routed models 400 on max_tokens (want max_completion_tokens); compat
     servers know only max_tokens — so the swap happens on rejection, never up front.
