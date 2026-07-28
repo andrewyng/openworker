@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { addModel, getSettings, removeModel, setDefaultModel } from "../api";
 
 // One provider's models as a checklist: tick = shown in the composer's model picker (the
@@ -22,6 +23,7 @@ export function ModelChecklist({
   labels?: Record<string, string>; // curated display names (full id → label); raw id when absent
   onChanged: (next: { models: string[]; model: string }) => void;
 }) {
+  const { t } = useTranslation();
   const [draft, setDraft] = useState("");
 
   const provOf = (id: string) => {
@@ -72,7 +74,7 @@ export function ModelChecklist({
                 type="checkbox"
                 checked={checked(id)}
                 disabled={isDefault}
-                title={isDefault ? "The default model is always shown — make another model default first" : undefined}
+                title={isDefault ? t("models.default_locked") : undefined}
                 onChange={(e) => tick(id, e.target.checked)}
               />
               <span className="mlist-name" title={id}>
@@ -80,10 +82,10 @@ export function ModelChecklist({
               </span>
             </label>
             {isDefault ? (
-              <span className="mlist-default">default</span>
+              <span className="mlist-default">{t("models.default_badge")}</span>
             ) : (
               <button className="mlist-make" onClick={() => makeDefault(id)}>
-                Make default
+                {t("models.make_default")}
               </button>
             )}
           </div>
@@ -91,7 +93,7 @@ export function ModelChecklist({
       })}
       <div className="mlist-add">
         <input
-          placeholder="Add another model…"
+          placeholder={t("models.add_placeholder")}
           value={draft}
           spellCheck={false}
           autoComplete="off"
@@ -99,7 +101,7 @@ export function ModelChecklist({
           onKeyDown={(e) => e.key === "Enter" && add()}
         />
         <button className="btn-primary sm" onClick={add} disabled={!draft.trim()}>
-          Add
+          {t("models.add_btn")}
         </button>
       </div>
     </div>

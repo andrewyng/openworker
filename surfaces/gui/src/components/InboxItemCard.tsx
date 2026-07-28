@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import type { InboxItem } from "../api";
 import { humanizeApprovalTitle } from "../humanize";
 import { PreviewBlock, scopeNote, TitleText } from "./ApprovalCard";
@@ -41,6 +42,7 @@ export function InboxItemCard({
   const options = item.options || [];
   const multi = !!item.multi;
   const allowText = item.allow_text !== false;
+  const { t } = useTranslation();
 
   const textRow = (placeholder: string) => (
     <div className="flex items-center gap-2 mt-2.5">
@@ -54,7 +56,7 @@ export function InboxItemCard({
         }}
       />
       <button className={BTN_PRIMARY} disabled={!answer.trim()} onClick={() => onResolve(item.id, answer)}>
-        Send
+        {t("common.send")}
       </button>
     </div>
   );
@@ -102,7 +104,7 @@ export function InboxItemCard({
             className={item.data?.tool ? BTN_ACCENT : BTN_PRIMARY}
             onClick={() => onResolve(item.id, "allow")}
           >
-            {item.data?.tool ? "Allow once" : "Approve"}
+            {item.data?.tool ? t("approval.allow_once") : t("inbox.approve")}
           </button>
           {/* Task-persistent standing grant (§25) — present only when the approval was
               raised inside an automation run AND the call can carry a tool+target rule.
@@ -110,17 +112,20 @@ export function InboxItemCard({
           {item.data?.task_id && item.data?.standing_target && (
             <button
               className={BTN_BORDERED}
-              title={`Always allow against ${item.data.standing_target} for “${item.data.task_title || "this automation"}” — revoke any time on its Automations page`}
+              title={t("inbox.always_task_title", {
+                target: item.data.standing_target,
+                task: item.data.task_title || t("approval.btn.this_automation"),
+              })}
               onClick={() => onResolve(item.id, "always_task")}
             >
-              Allow every time
+              {t("approval.btn.allow_every_time")}
             </button>
           )}
           <button
             className={item.data?.tool ? BTN_QUIET : BTN_BORDERED}
             onClick={() => onResolve(item.id, "deny")}
           >
-            Deny
+            {t("approval.deny")}
           </button>
         </div>
       ) : item.kind === "question" ? (
@@ -153,19 +158,19 @@ export function InboxItemCard({
                 disabled={!selected.length}
                 onClick={() => onResolve(item.id, selected.join(", "))}
               >
-                Send{selected.length ? ` (${selected.length})` : ""}
+                {selected.length ? t("inbox.send_count", { count: selected.length }) : t("common.send")}
               </button>
             </div>
           )}
           {(allowText || options.length === 0) &&
-            textRow(options.length ? "Or type your own answer…" : "Your answer…")}
+            textRow(options.length ? t("inbox.or_type_answer") : t("inbox.your_answer"))}
         </>
       ) : item.kind === "directory" ? (
         <div className="flex items-center gap-2 mt-2.5">
           <button
             className={BTN_PRIMARY}
             disabled={!item.data?.path}
-            title={item.data?.path || "No folder was suggested"}
+            title={item.data?.path || t("inbox.no_folder_suggested")}
             onClick={() =>
               onResolve(
                 item.id,
@@ -173,10 +178,10 @@ export function InboxItemCard({
               )
             }
           >
-            {item.data?.path ? "Grant" : "Grant (no folder)"}
+            {item.data?.path ? t("inbox.grant") : t("inbox.grant_no_folder")}
           </button>
           <button className={BTN_BORDERED} onClick={() => onResolve(item.id, JSON.stringify({ granted: false }))}>
-            Deny
+            {t("approval.deny")}
           </button>
         </div>
       ) : item.kind === "plan" ? (
@@ -185,19 +190,19 @@ export function InboxItemCard({
             className={BTN_PRIMARY}
             onClick={() => onResolve(item.id, JSON.stringify({ approved: true, mode: "interactive" }))}
           >
-            Approve
+            {t("inbox.approve")}
           </button>
           <button
             className={BTN_BORDERED}
             onClick={() => onResolve(item.id, JSON.stringify({ approved: false, feedback: "" }))}
           >
-            Reject
+            {t("inbox.reject")}
           </button>
         </div>
       ) : (
         <div className="flex items-center gap-2 mt-2.5">
           <button className={BTN_BORDERED} onClick={() => onResolve(item.id, "seen")}>
-            Dismiss
+            {t("inbox.dismiss")}
           </button>
         </div>
       )}

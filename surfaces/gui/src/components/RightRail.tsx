@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 // Emits the asset URL only; the worker itself loads lazily with the pdfjs chunk.
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
@@ -76,6 +77,7 @@ export function RightRail({
   openAccessKey = 0,
   onOpenIntegrations,
 }: Props) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState<Record<Panel, boolean>>({
     progress: true,
     artifacts: true,
@@ -162,13 +164,13 @@ export function RightRail({
         />
       ) : (
         <>
-          <RailSection title="Progress" open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
+          <RailSection title={t("rail.progress_title")} open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
             <ProgressSummary running={running} toolNames={toolNames} todo={todo} />
           </RailSection>
 
           {showArtifacts && (
           <RailSection
-            title={`Artifacts${artifacts.length ? ` (${artifacts.length})` : ""}`}
+            title={`${t("rail.artifacts_title")}${artifacts.length ? ` (${artifacts.length})` : ""}`}
             open={open.artifacts}
             onToggle={() => setOpen({ ...open, artifacts: !open.artifacts })}
             action={
@@ -177,17 +179,17 @@ export function RightRail({
                   <button
                     className="rail-mini-btn"
                     onClick={(e) => { e.stopPropagation(); revealArtifact(sessionId, artifacts[0].path, "reveal"); }}
-                    title="Show the folder where these files are saved"
+                    title={t("rail.show_folder")}
                   >
                     <Icon name="folder" size={13} />
                   </button>
                 )}
-                <button className="rail-mini-btn" onClick={(e) => { e.stopPropagation(); refreshArtifacts(); }} title="Refresh artifacts"><Icon name="refresh" size={13} /></button>
+                <button className="rail-mini-btn" onClick={(e) => { e.stopPropagation(); refreshArtifacts(); }} title={t("rail.refresh")}><Icon name="refresh" size={13} /></button>
               </>
             }
           >
             {artifacts.length === 0 ? (
-              <div className="rail-muted">No previewable files yet.</div>
+              <div className="rail-muted">{t("rail.artifacts_empty")}</div>
             ) : (
               <div className="artifact-list">
                 {artifacts.slice(0, 16).map((a) => (
@@ -227,6 +229,7 @@ export function RightRail({
 }
 
 function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolNames: string[]; todo: TodoItem[] }) {
+  const { t } = useTranslation();
   if (todo.length) {
     return (
       <div className="rail-todo-list">
@@ -238,7 +241,7 @@ function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolN
         ))}
         {running && (
           <div className="rail-muted">
-            {toolNames.length ? `${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"} so far.` : "Working..."}
+            {toolNames.length ? t("rail.tool_calls", { count: toolNames.length }) : t("rail.working")}
           </div>
         )}
       </div>
@@ -247,13 +250,13 @@ function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolN
   if (running) {
     return (
       <div className="rail-muted">
-        Working on this task{toolNames.length ? ` with ${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"} so far.` : "."}
+        {toolNames.length ? t("rail.working_task_with_tools", { count: toolNames.length }) : t("rail.working_task")}
       </div>
     );
   }
   return (
     <div className="rail-muted">
-      For longer multi-step tasks, progress will appear here while OpenWorker plans, uses tools, waits for approval, and produces artifacts.
+      {t("rail.empty_state")}
     </div>
   );
 }
@@ -298,6 +301,7 @@ function ArtifactViewer({
   onReload: () => Promise<void>;
   onBack: () => void;
 }) {
+  const { t } = useTranslation();
   const [reloadKey, setReloadKey] = useState(0);
   const isHtml = content?.kind === "html" && !content.error;
   // Best viewed in a real app: spreadsheets, PDFs, and Office docs (pptx/docx can't preview inline)
@@ -306,11 +310,11 @@ function ArtifactViewer({
   return (
     <div className="artifact-viewer">
       <div className="artifact-head">
-        <button className="artifact-icon-btn" onClick={onBack} aria-label="Back to artifacts" title="Back">
+        <button className="artifact-icon-btn" onClick={onBack} aria-label={t("rail.back_to_artifacts")} title={t("rail.back")}>
           <Icon name="arrowLeft" size={16} />
         </button>
         <div className="artifact-heading">
-          <div className="artifact-title"><span>Artifacts</span><span className="artifact-sep">/</span><span>{artifact.name}</span></div>
+          <div className="artifact-title"><span>{t("rail.artifacts_title")}</span><span className="artifact-sep">/</span><span>{artifact.name}</span></div>
           <div className="artifact-path">{artifact.path}</div>
         </div>
         <div className="rail-actions">
@@ -321,8 +325,8 @@ function ArtifactViewer({
                 await onReload();
                 setReloadKey((k) => k + 1);
               }}
-              aria-label="Reload preview"
-              title="Reload"
+              aria-label={t("rail.reload_preview")}
+              title={t("rail.reload")}
             >
               <Icon name="refresh" size={16} />
             </button>
@@ -331,8 +335,8 @@ function ArtifactViewer({
             <button
               className="artifact-icon-btn"
               onClick={() => revealArtifact(sessionId, artifact.path, "open")}
-              aria-label="Open in default app"
-              title="Open in default app"
+              aria-label={t("rail.open_in_default")}
+              title={t("rail.open_in_default")}
             >
               <Icon name="panelOpen" size={16} />
             </button>
@@ -342,16 +346,16 @@ function ArtifactViewer({
           <button
             className="artifact-icon-btn"
             onClick={() => navigator.clipboard?.writeText(artifact.abs_path || artifact.path)}
-            aria-label="Copy path"
-            title="Copy full path"
+            aria-label={t("rail.copy_path")}
+            title={t("rail.copy_full_path")}
           >
             <Icon name="copy" size={16} />
           </button>
           <button
             className="artifact-icon-btn"
             onClick={() => revealArtifact(sessionId, artifact.path, "reveal")}
-            aria-label="Show in folder"
-            title="Show in folder"
+            aria-label={t("rail.show_in_folder")}
+            title={t("rail.show_in_folder")}
           >
             <Icon name="folder" size={16} />
           </button>
@@ -359,7 +363,7 @@ function ArtifactViewer({
       </div>
       <div className="artifact-preview">
         {!content ? (
-          <div className="rail-muted">Loading...</div>
+          <div className="rail-muted">{t("rail.loading")}</div>
         ) : content.error ? (
           <div className="rail-error">{content.error}</div>
         ) : content.kind === "html" ? (
@@ -384,9 +388,9 @@ function ArtifactViewer({
         ) : content.kind === "office" ? (
           <div className="artifact-open-prompt">
             <Icon name="panelOpen" size={28} />
-            <p>This {/\.pptx?$/i.test(artifact.name) ? "PowerPoint" : "Word"} file can’t be previewed here.</p>
+            <p>{t("rail.office_no_preview", { type: /\.pptx?$/i.test(artifact.name) ? "PowerPoint" : "Word" })}</p>
             <button className="btn sm" onClick={() => revealArtifact(sessionId, artifact.path, "open")}>
-              Open in default app
+              {t("rail.open_in_default")}
             </button>
           </div>
         ) : (
@@ -461,8 +465,9 @@ function parseCsv(text: string): string[][] {
 }
 
 function CsvTable({ text }: { text: string }) {
+  const { t } = useTranslation();
   const rows = parseCsv(text);
-  if (!rows.length) return <div className="rail-muted artifact-table-note">Empty file.</div>;
+  if (!rows.length) return <div className="rail-muted artifact-table-note">{t("rail.empty_file")}</div>;
   return <GridTable rows={rows} />;
 }
 
@@ -471,6 +476,7 @@ function CsvTable({ text }: { text: string }) {
 // WKWebView has no inline PDF plugin (<embed> shows a gray pane in the Tauri shell), so we
 // rasterize pages with pdf.js onto stacked canvases — same lazy-chunk pattern as SheetViewer.
 function PdfViewer({ dataUrl }: { dataUrl: string }) {
+  const { t } = useTranslation();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const holder = useRef<HTMLDivElement | null>(null);
@@ -510,16 +516,17 @@ function PdfViewer({ dataUrl }: { dataUrl: string }) {
     };
   }, [dataUrl]);
 
-  if (error) return <div className="rail-error artifact-table-note">Could not render PDF: {error}</div>;
+  if (error) return <div className="rail-error artifact-table-note">{t("rail.pdf_error", { error })}</div>;
   return (
     <div className="artifact-pdfjs">
-      {loading && <div className="rail-muted artifact-table-note">Rendering PDF…</div>}
+      {loading && <div className="rail-muted artifact-table-note">{t("rail.pdf_rendering")}</div>}
       <div ref={holder} />
     </div>
   );
 }
 
 function SheetViewer({ dataUrl }: { dataUrl: string }) {
+  const { t } = useTranslation();
   const [sheets, setSheets] = useState<{ name: string; rows: unknown[][] }[] | null>(null);
   const [error, setError] = useState("");
   const [active, setActive] = useState(0);
@@ -547,8 +554,8 @@ function SheetViewer({ dataUrl }: { dataUrl: string }) {
     };
   }, [dataUrl]);
 
-  if (error) return <div className="rail-error artifact-table-note">Could not parse spreadsheet: {error}</div>;
-  if (!sheets) return <div className="rail-muted artifact-table-note">Parsing spreadsheet…</div>;
+  if (error) return <div className="rail-error artifact-table-note">{t("rail.sheet_error", { error })}</div>;
+  if (!sheets) return <div className="rail-muted artifact-table-note">{t("rail.sheet_parsing")}</div>;
   const sheet = sheets[active];
   return (
     <div className="sheet-viewer">
@@ -561,7 +568,7 @@ function SheetViewer({ dataUrl }: { dataUrl: string }) {
           ))}
         </div>
       )}
-      {sheet.rows.length ? <GridTable rows={sheet.rows} /> : <div className="rail-muted artifact-table-note">Empty sheet.</div>}
+      {sheet.rows.length ? <GridTable rows={sheet.rows} /> : <div className="rail-muted artifact-table-note">{t("rail.sheet_empty")}</div>}
     </div>
   );
 }

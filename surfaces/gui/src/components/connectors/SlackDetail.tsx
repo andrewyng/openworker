@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   addSlackApprovalOwner,
   allowUser,
@@ -41,18 +42,19 @@ const LABEL = "text-[12.5px] text-muted w-24 shrink-0";
 
 /** The relay status line, one honest layer at a time: sign-in → socket → live.
  * Dot color + text; never a synthetic "Slack is down" claim. */
-function relayHealth(slack: SlackStatus | null): { dot: string; text: string } {
-  if (!slack) return { dot: "bg-ok", text: "Live · managed relay" };
+function relayHealth(slack: SlackStatus | null, t: (k: string) => string): { dot: string; text: string } {
+  if (!slack) return { dot: "bg-ok", text: t("slack.relay_live") };
   if (!slack.signed_in)
-    return { dot: "bg-warnInk", text: "Sign-in needed — relaying is paused" };
+    return { dot: "bg-warnInk", text: t("slack.relay_signin_needed") };
   if (slack.relay.state === "offline")
-    return { dot: "bg-faint/60", text: "Offline — can't reach the relay" };
+    return { dot: "bg-faint/60", text: t("slack.relay_offline") };
   if (slack.relay.state === "reconnecting")
-    return { dot: "bg-warnInk", text: "Reconnecting to the relay…" };
-  return { dot: "bg-ok", text: "Live · managed relay" };
+    return { dot: "bg-warnInk", text: t("slack.relay_reconnecting") };
+  return { dot: "bg-ok", text: t("slack.relay_live") };
 }
 
 export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
+  const { t } = useTranslation();
   const [adding, setAdding] = useState(false);
   const [subs, setSubs] = useState<Subscription[]>([]);
   const loadSubs = () => getSubscriptions().then(setSubs).catch(() => setSubs([]));
@@ -78,23 +80,23 @@ export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
               <>
                 <span
                   className={
-                    "w-2 h-2 rounded-full " + (relay ? relayHealth(slack).dot : "bg-ok")
+                    "w-2 h-2 rounded-full " + (relay ? relayHealth(slack, t).dot : "bg-ok")
                   }
                 />
                 <span data-testid="slack-mode-badge">
                   {relay
-                    ? relayHealth(slack).text
-                    : "Connected · Socket Mode (manual tokens)"}
+                    ? relayHealth(slack, t).text
+                    : t("slack.connected_socket_mode")}
                 </span>
               </>
             ) : (
-              <span>Not connected</span>
+              <span>{t("connector.not_connected")}</span>
             )}
           </div>
         </div>
         {relay || !c.connected ? (
           <button className={PILL_ACCENT} data-testid="add-workspace-btn" onClick={() => setAdding(true)}>
-            ＋ Add workspace
+            {t("slack.add_workspace")}
           </button>
         ) : null}
       </div>
@@ -102,8 +104,8 @@ export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
       {!c.connected && (
         <div className={GRP}>
           <div className={ROW + " text-[12.5px] text-muted"}>
-            One @ocw app, installed per workspace — each keeps its own allow-list.
-            {cloud?.signed_in ? "" : " One-click needs cloud sign-in; Manual works without it."}
+            {t("slack.setup_blurb")}
+            {cloud?.signed_in ? "" : " " + t("slack.setup_cloud_note")}
           </div>
         </div>
       )}
@@ -127,7 +129,7 @@ export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
       {/* Manual Socket Mode: one workspace, the flat allow-list (unchanged semantics). */}
       {c.connected && !relay && (
         <div data-testid="slack-manual-card">
-          <div className={GRP_H}>{c.account || "workspace"} <span className="font-normal text-faint">· manual tokens</span></div>
+          <div className={GRP_H}>{c.account || t("slack.workspace_default")} <span className="font-normal text-faint">{t("slack.manual_tokens")}</span></div>
           <div className={GRP}>
             <PeopleRow
               allowed={c.allowed_users}
@@ -158,14 +160,14 @@ export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
 
       <ToolsDisclosure c={c} onChanged={onChanged} />
       {c.connected && (
-        <div className={FOOT + " mt-2"}>Names come from Slack automatically. IDs show on hover.</div>
+        <div className={FOOT + " mt-2"}>{t("slack.names_foot")}</div>
       )}
 
       {adding && (
         <AddConnectionModal
           c={c}
           cloud={cloud}
-          title="Add a workspace"
+          title={t("slack.add_workspace_title")}
           onClose={() => setAdding(false)}
           onChanged={changed}
         />
@@ -187,6 +189,7 @@ function WorkspaceGroup({
   tokenOk: boolean;
   onChanged: () => void;
 }) {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const parked = (c.unauthorized ?? []).filter((m) => m.team_id === w.team_id);
   const listening = subs.filter((s) => s.channel.startsWith(`slack:${w.team_id}/`));
@@ -212,7 +215,7 @@ function WorkspaceGroup({
         </span>
         {!tokenOk && (
           <span className={TAG_WARN} data-testid={`token-warn-${w.team_id}`}>
-            ⚠ Token revoked — reinstall
+            {t("slack.token_revoked")}
           </span>
         )}
       </div>
@@ -221,7 +224,7 @@ function WorkspaceGroup({
           <>
             <div className={ROW}>
               <span className="min-w-0 flex-1 text-[12.5px] text-muted flex items-center gap-2 flex-wrap">
-                <span>No one allowed yet — mentions of the bot show up here for your OK.</span>
+                <span>{t("slack.empty_parked_note")}</span>
                 <PersonPicker teamId={w.team_id} allowed={[]} onChanged={onChanged} />
               </span>
               <DisconnectBtn teamId={w.team_id} busy={busy} onClick={disconnect} />
@@ -271,15 +274,16 @@ function WorkspaceGroup({
 }
 
 function DisconnectBtn({ teamId, busy, onClick }: { teamId: string; busy: boolean; onClick: () => void }) {
+  const { t } = useTranslation();
   return (
     <button
       className="text-[12.5px] text-danger/80 hover:text-danger shrink-0"
       data-testid={`disconnect-workspace-${teamId}`}
-      title="Stops relaying this workspace to this computer. The app stays installed in Slack."
+      title={t("slack.disconnect_workspace_title")}
       onClick={onClick}
       disabled={busy}
     >
-      {busy ? "Disconnecting…" : "Disconnect workspace"}
+      {busy ? t("connector.disconnecting") : t("slack.disconnect_workspace")}
     </button>
   );
 }
@@ -303,16 +307,17 @@ function PeopleRow({
   onRemove: (userId: string) => void;
   onChanged: () => void;
 }) {
+  const { t } = useTranslation();
   // The installer's chip reads "you" — their name may still be unresolved (it's
   // fetched lazily for outbound attribution), so fall back to a literal "You".
   const label = (u: string) =>
-    names?.[u] || (u === installerId ? installerName || "You" : u);
+    names?.[u] || (u === installerId ? installerName || t("slack.you") : u);
   return (
     <div className={ROW}>
-      <span className={LABEL}>People</span>
+      <span className={LABEL}>{t("connector.people")}</span>
       <span className="min-w-0 flex-1 flex flex-wrap items-center gap-1.5">
         {allowed.length === 0 && (
-          <span className="text-[12px] text-faint">nobody yet — pick a name, or approve a waiting sender below</span>
+          <span className="text-[12px] text-faint">{t("slack.nobody_yet")}</span>
         )}
         {allowed.map((u) => (
           <span
@@ -325,16 +330,16 @@ function PeopleRow({
               {initials(label(u))}
             </span>
             {label(u)}
-            {u === installerId && <span className="text-[10.5px] text-faint">· you</span>}
+            {u === installerId && <span className="text-[10.5px] text-faint">{t("slack.you_suffix")}</span>}
             {protectedIds?.includes(u) ? (
               <span
                 className="text-[10.5px] text-faint"
-                title="Remove approval-owner access before removing this person."
+                title={t("slack.owner_protected_title")}
               >
-                · owner
+                {t("slack.owner_suffix")}
               </span>
             ) : (
-              <button className={XBTN} title="remove" onClick={() => onRemove(u)}>
+              <button className={XBTN} title={t("common.remove")} onClick={() => onRemove(u)}>
                 ×
               </button>
             )}
@@ -354,7 +359,7 @@ function PersonPicker({
   allowed,
   onChanged,
   onPick,
-  buttonLabel = "＋ Add person",
+  buttonLabel,
   testId,
 }: {
   teamId: string | null;
@@ -364,6 +369,7 @@ function PersonPicker({
   buttonLabel?: string;
   testId?: string;
 }) {
+  const { t: tt } = useTranslation();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<SlackMember[]>([]);
@@ -388,12 +394,12 @@ function PersonPicker({
           if (r.ok) {
             setRows(r.members || []);
             setErr(null);
-          } else setErr(r.error || "directory unavailable");
+          } else setErr(r.error || tt("slack.directory_unavailable"));
         })
-        .catch(() => setErr("directory unavailable"));
+        .catch(() => setErr(tt("slack.directory_unavailable")));
     }, 200);
     return () => clearTimeout(t);
-  }, [open, q, teamId]);
+  }, [open, q, teamId, tt]);
 
   useEffect(() => {
     if (!open) return;
@@ -424,10 +430,10 @@ function PersonPicker({
         ref={btn}
         className="inline-flex items-center px-2 py-0.5 rounded-full border border-dashed border-line text-[12.5px] text-muted hover:text-ink hover:border-faint"
         data-testid={testId || `add-person-${teamId || "default"}`}
-        title="Pick from the workspace directory"
+        title={tt("slack.pick_from_directory")}
         onClick={toggle}
       >
-        {buttonLabel}
+        {buttonLabel ?? tt("slack.add_person")}
       </button>
       {open && (
         <div
@@ -438,7 +444,7 @@ function PersonPicker({
           <input
             autoFocus
             className="w-full bg-paper border border-line rounded-lg px-2 py-1 text-[12.5px] outline-none placeholder:text-faint"
-            placeholder="Type a name…"
+            placeholder={tt("slack.type_a_name")}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
@@ -449,7 +455,7 @@ function PersonPicker({
             {err ? (
               <div className="px-2 py-1.5 text-[12px] text-warnInk">{err}</div>
             ) : candidates.length === 0 ? (
-              <div className="px-2 py-1.5 text-[12px] text-faint">no matches</div>
+              <div className="px-2 py-1.5 text-[12px] text-faint">{tt("slack.no_matches")}</div>
             ) : (
               candidates.map((m) => (
                 <button
@@ -467,7 +473,7 @@ function PersonPicker({
                   <span className="text-[11.5px] text-faint">@{m.handle}</span>
                   {m.guest && (
                     <span className="ml-1.5 text-[10.5px] text-warnInk bg-warnSoft/70 border border-warnInk/15 rounded px-1 py-0.5">
-                      guest
+                      {tt("slack.guest")}
                     </span>
                   )}
                 </button>
@@ -475,7 +481,7 @@ function PersonPicker({
             )}
           </div>
           <div className="px-2 pb-1 text-[10.5px] text-faint">
-            From your workspace directory — stays on this computer.
+            {tt("slack.directory_foot")}
           </div>
         </div>
       )}
@@ -498,13 +504,14 @@ function ApprovalOwnersRow({
   editable: boolean;
   onChanged: () => void;
 }) {
+  const { t } = useTranslation();
   const [err, setErr] = useState<string | null>(null);
   const label = (u: string) =>
-    names?.[u] || (u === installerId ? installerName || "You" : u);
+    names?.[u] || (u === installerId ? installerName || t("slack.you_fallback") : u);
   const remove = async (userId: string) => {
     const result = await removeSlackApprovalOwner(userId);
     if (!result.ok) {
-      setErr(result.error || "could not remove approval owner");
+      setErr(result.error || t("slack.remove_owner_failed"));
       return;
     }
     setErr(null);
@@ -512,11 +519,11 @@ function ApprovalOwnersRow({
   };
   return (
     <div className={ROW} data-testid="slack-approval-owners">
-      <span className={LABEL}>Approvals</span>
+      <span className={LABEL}>{t("slack.approvals_label")}</span>
       <span className="min-w-0 flex-1 flex flex-wrap items-center gap-1.5">
         {owners.length === 0 && (
           <span className="text-[12px] text-warnInk">
-            Choose at least one owner before routing Inbox approvals to Slack.
+            {t("slack.choose_owner_warning")}
           </span>
         )}
         {owners.map((u) => (
@@ -530,9 +537,9 @@ function ApprovalOwnersRow({
               {initials(label(u))}
             </span>
             {label(u)}
-            {u === installerId && <span className="text-[10.5px] text-faint">· installer</span>}
+            {u === installerId && <span className="text-[10.5px] text-faint">{t("slack.installer_suffix")}</span>}
             {editable && (
-              <button className={XBTN} title="remove approval owner" onClick={() => remove(u)}>
+              <button className={XBTN} title={t("slack.remove_owner_title")} onClick={() => remove(u)}>
                 ×
               </button>
             )}
@@ -544,12 +551,12 @@ function ApprovalOwnersRow({
             allowed={owners}
             onChanged={onChanged}
             onPick={(m) => addSlackApprovalOwner(m.id, m.name)}
-            buttonLabel="＋ Add owner"
+            buttonLabel={t("slack.add_owner")}
             testId="add-approval-owner"
           />
         )}
         {!editable && owners.length > 0 && (
-          <span className="text-[11.5px] text-faint">Set by the workspace installer.</span>
+          <span className="text-[11.5px] text-faint">{t("slack.owner_set_by_installer")}</span>
         )}
         {err && <span className="basis-full text-[11.5px] text-warnInk">{err}</span>}
       </span>
@@ -558,35 +565,36 @@ function ApprovalOwnersRow({
 }
 
 function WaitingRow({ m, onChanged }: { m: ParkedMessage; onChanged: () => void }) {
+  const { t } = useTranslation();
   const act = async (action: "dismiss" | "allow" | "allow_deliver") => {
     await resolveUnauthorized("slack", m.id, action);
     onChanged();
   };
   return (
     <div className={ROW + " bg-warnSoft/25"} data-testid={`waiting-${m.id}`}>
-      <span className={LABEL}>Waiting</span>
+      <span className={LABEL}>{t("connector.waiting")}</span>
       <span className="min-w-0 flex-1">
         <span className="font-medium text-[13px]">{m.user_name || m.user_id}</span>{" "}
-        <span className="text-[12.5px] text-muted">in {m.chat_name || m.chat_id}</span>
+        <span className="text-[12.5px] text-muted">{t("connector.in_channel", { name: m.chat_name || m.chat_id })}</span>
         <span className="block text-[12.5px] text-muted truncate">“{m.text}”</span>
       </span>
       <button
         className={PILL_ACCENT + " !py-1"}
         data-testid={`parked-allow-deliver-${m.id}`}
-        title="Allow the sender and deliver this message now"
+        title={t("slack.allow_deliver_title")}
         onClick={() => act("allow_deliver")}
       >
-        Allow & deliver
+        {t("connector.allow_deliver")}
       </button>
       <button
         className={PILL_LINE + " !py-1"}
         data-testid={`parked-allow-${m.id}`}
-        title="Allow the sender; this message is discarded"
+        title={t("slack.allow_discard_title")}
         onClick={() => act("allow")}
       >
-        Allow
+        {t("connector.allow")}
       </button>
-      <button className={XBTN + " px-1"} data-testid={`parked-dismiss-${m.id}`} title="Dismiss" onClick={() => act("dismiss")}>
+      <button className={XBTN + " px-1"} data-testid={`parked-dismiss-${m.id}`} title={t("connector.dismiss")} onClick={() => act("dismiss")}>
         ×
       </button>
     </div>
@@ -594,10 +602,11 @@ function WaitingRow({ m, onChanged }: { m: ParkedMessage; onChanged: () => void 
 }
 
 function ListeningRows({ subs, onChanged }: { subs: Subscription[]; onChanged: () => void }) {
+  const { t } = useTranslation();
   if (subs.length === 0) return null;
   return (
     <div className={ROW} data-testid="listening-slack">
-      <span className={LABEL}>Listening</span>
+      <span className={LABEL}>{t("connector.listening")}</span>
       <span className="min-w-0 flex-1 space-y-1">
         {subs.map((s) => (
           <span key={s.session_id + s.channel} className="flex items-center gap-2 text-[12.5px]">
@@ -610,7 +619,7 @@ function ListeningRows({ subs, onChanged }: { subs: Subscription[]; onChanged: (
             </span>
             <button
               className={XBTN + " ml-auto"}
-              title="Unsubscribe this session"
+              title={t("connector.unsubscribe_title")}
               onClick={async () => {
                 await unsubscribeChannel(s.session_id, s.channel);
                 onChanged();

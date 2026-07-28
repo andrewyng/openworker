@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   getProviders,
   removeProvider,
@@ -50,16 +52,17 @@ export function ProviderMark({ name, title, size = 32 }: { name: string; title: 
   );
 }
 
-/** "2h ago"-style label for a provider's last completion (null when never used). */
-export function relTime(epoch?: number | null): string | null {
+/** "2h ago"-style label for a provider's last completion (null when never used).
+ *  Pass a translation function to localize; omit for the legacy English fallback. */
+export function relTime(epoch?: number | null, t?: TFunction): string | null {
   if (!epoch) return null;
   const secs = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
-  if (secs < 90) return "just now";
+  if (secs < 90) return t ? t("provider.just_now") : "just now";
   const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return t ? t("provider.minutes_ago", { count: mins }) : `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 48) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
+  if (hrs < 48) return t ? t("provider.hours_ago", { count: hrs }) : `${hrs}h ago`;
+  return t ? t("provider.days_ago", { count: Math.floor(hrs / 24) }) : `${Math.floor(hrs / 24)}d ago`;
 }
 
 export interface ProviderSetupState {
@@ -92,6 +95,7 @@ export interface ProviderSetupState {
 }
 
 export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetupState {
+  const { t } = useTranslation();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   // null = the gallery; a provider name = that provider's key form.
   const [sel, setSel] = useState<string | null>(null);
@@ -151,9 +155,9 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   const runTestAndSave = async (): Promise<boolean> => {
     if (!sel) return false;
     setVerify({ state: "testing" });
-    const res = await verifyProvider(sel, fields).catch(() => ({ ok: false, error: "unreachable" }));
+    const res = await verifyProvider(sel, fields).catch(() => ({ ok: false, error: t("provider.err_unreachable") }));
     if (!res.ok) {
-      setVerify({ state: "error", msg: res.error || "couldn't verify" });
+      setVerify({ state: "error", msg: res.error || t("provider.err_couldnt_verify") });
       return false;
     }
     if (dirty || !info?.configured) await setProvider(sel, fields).catch(() => {});
@@ -213,20 +217,20 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
 
   const statusFor = (p: ProviderInfo, o?: { lastUsed?: boolean }) => {
     if (p.configured && p.needs_key) {
-      const used = o?.lastUsed ? relTime(p.last_used_at) : null;
+      const used = o?.lastUsed ? relTime(p.last_used_at, t) : null;
       return (
         <span className="block text-[11.5px] text-ok font-medium truncate">
-          ✓ Connected{used ? <span className="text-muted font-normal"> · used {used}</span> : ""}
+          {t("provider.connected_ok")}{used ? <span className="text-muted font-normal"> {t("provider.used_suffix", { time: used })}</span> : ""}
         </span>
       );
     }
     if (!p.needs_key)
       return (
         <span className="block text-[11.5px] text-faint truncate">
-          {keylessOk.has(p.name) ? <span className="text-ok font-medium">✓ Running</span> : "No key needed"}
+          {keylessOk.has(p.name) ? <span className="text-ok font-medium">{t("provider.running")}</span> : t("provider.no_key_needed")}
         </span>
       );
-    return <span className="block text-[11.5px] text-faint truncate">Not set up</span>;
+    return <span className="block text-[11.5px] text-faint truncate">{t("provider.not_set_up")}</span>;
   };
 
   return {
@@ -311,6 +315,7 @@ export function ProviderForm({
   tp: string;
   footer?: ReactNode;
 }) {
+  const { t } = useTranslation();
   const { info, sel } = ps;
   const label = "block text-[12px] text-muted mt-3 mb-1";
   const input =
@@ -319,7 +324,7 @@ export function ProviderForm({
   return (
     <div>
       <button className="text-[12.5px] text-muted hover:text-ink" onClick={ps.backToGallery} data-testid={`${tp}-back`}>
-        ‹ All providers
+        {t("provider.all_providers")}
       </button>
       <div className="flex items-center gap-3 mt-3 mb-1">
         <ProviderMark name={info?.name || ""} title={info?.title || ""} size={36} />
@@ -357,7 +362,7 @@ export function ProviderForm({
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
                     data-testid={`${tp}-field-saved-${f.key}`}
                   >
-                    ✓ Saved
+                    {t("provider.saved_pill")}
                   </span>
                 )}
                 {/* §39: state lives IN the field — no status lines below. */}
@@ -366,7 +371,7 @@ export function ProviderForm({
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
                     data-testid={`${tp}-saved-pill`}
                   >
-                    ✓ Tested &amp; saved
+                    {t("provider.tested_saved_pill")}
                   </span>
                 )}
                 {ps.savedState && !f.secret && testable && (
@@ -374,7 +379,7 @@ export function ProviderForm({
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
                     data-testid={`${tp}-saved-pill`}
                   >
-                    ✓ Detected
+                    {t("provider.detected_pill")}
                   </span>
                 )}
               </div>
@@ -385,7 +390,7 @@ export function ProviderForm({
                   disabled={ps.verify.state === "testing" || (f.secret && !ps.secretFilled && !ps.credentialed)}
                   data-testid={`${tp}-test`}
                 >
-                  {ps.verify.state === "testing" ? "…" : info?.needs_key ? "Test" : "Detect"}
+                  {ps.verify.state === "testing" ? "…" : info?.needs_key ? t("provider.test_btn") : t("provider.detect_btn")}
                 </button>
               )}
             </div>
@@ -396,24 +401,24 @@ export function ProviderForm({
 
       {info?.needs_key && KEY_HELP[sel] && (
         <p className="text-[11.5px] text-faint mt-2">
-          No key yet?{" "}
+          {t("provider.no_key_yet")}{" "}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
             onClick={() => openExternal(KEY_HELP[sel].url)}
           >
-            Create one at {KEY_HELP[sel].label} ↗
+            {t("provider.create_key_at", { label: KEY_HELP[sel].label })} ↗
           </button>{" "}
-          — takes about a minute.
+          {t("provider.takes_a_minute")}
         </p>
       )}
       {info && !info.needs_key && (
         <p className="text-[11.5px] text-faint mt-2">
-          No API key needed — Ollama runs models on this Mac.{" "}
+          {t("provider.no_key_needed_desc")}{" "}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
             onClick={() => openExternal("https://ollama.com/download")}
           >
-            Install Ollama ↗
+            {t("provider.install_ollama")} ↗
           </button>
         </p>
       )}
@@ -432,7 +437,7 @@ export function ProviderForm({
               onClick={() => ps.setShowEndpoint(true)}
               data-testid={`${tp}-endpoint-link`}
             >
-              Custom endpoint ⌄
+              {t("provider.custom_endpoint")} ⌄
             </button>
           );
         return (
@@ -453,7 +458,7 @@ export function ProviderForm({
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
                   data-testid={`${tp}-field-saved-${ep.key}`}
                 >
-                  ✓ Saved
+                  {t("provider.saved_pill")}
                 </span>
               )}
             </div>

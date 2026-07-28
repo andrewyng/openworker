@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   deletePersona,
   getPersonas,
@@ -26,6 +27,7 @@ const BTN_BORDERED =
   "text-[12.5px] px-2.5 py-1.5 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0 disabled:opacity-40 disabled:hover:border-line";
 
 export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) => void }) {
+  const { t } = useTranslation();
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [mode, setMode] = useState<"git" | "dir">("git");
   const [src, setSrc] = useState("");
@@ -68,7 +70,7 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
     setConfirmDel(null);
     const r = await deletePersona(id);
     if (!r.ok) {
-      setMsg(r.error || "delete failed");
+      setMsg(r.error || t("personas.delete_failed"));
       return;
     }
     if (r.personas) setPersonas(r.personas);
@@ -85,20 +87,19 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
     );
     setBusy(false);
     if (!r.ok) {
-      setMsg(r.error || "install failed");
+      setMsg(r.error || t("personas.install_failed"));
       return;
     }
     setConsent(r.consent || []);
     if (r.personas) setPersonas(r.personas);
-    setMsg(`Installed ${(r.consent || []).length} persona(s) — review and enable below.`);
+    setMsg(t("personas.installed", { count: (r.consent || []).length }));
     setSrc("");
   };
 
   return (
     <div>
       <p className="text-[12.5px] text-muted mb-3 leading-relaxed">
-        Enable a coworker, then choose whether it appears in the new-session picker. The starred persona
-        is the default for new sessions.
+        {t("personas.enable_intro")}
       </p>
 
       <div className={CARD + " divide-y divide-line mb-6"}>
@@ -108,8 +109,8 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
             <div className="min-w-0 flex-1">
               <div className="text-[13.5px] font-medium flex items-center gap-1.5">
                 <span className="truncate">{p.name}</span>
-                {p.default && <span className="text-accent" title="Default for new sessions">★</span>}
-                {p.builtin && <span className="text-[11px] text-faint font-normal">· built-in</span>}
+                {p.default && <span className="text-accent" title={t("personas.default_for_new")}>★</span>}
+                {p.builtin && <span className="text-[11px] text-faint font-normal">· {t("personas.builtin")}</span>}
               </div>
               <div className="text-[12px] text-muted truncate">{p.tagline}</div>
             </div>
@@ -121,7 +122,7 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
                   e.target.checked ? toggle(p.id, { enabled: true }) : requestDisable(p)
                 }
               />
-              Enabled
+              {t("personas.enabled")}
             </label>
             <label className={CHECK + (p.enabled ? "" : " opacity-40")}>
               <input
@@ -130,20 +131,20 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
                 disabled={!p.enabled}
                 onChange={(e) => toggle(p.id, { surfaced: e.target.checked })}
               />
-              In picker
+              {t("personas.in_picker")}
             </label>
             <button
               className={BTN_BORDERED}
               disabled={p.default || !p.enabled}
               onClick={() => toggle(p.id, { default: true })}
             >
-              Set default
+              {t("personas.set_default")}
             </button>
             {onOpenPersona && (
               <button
                 className="text-faint hover:text-ink shrink-0 p-1"
-                title={`Configure ${p.name}`}
-                aria-label={`Configure ${p.name}`}
+                title={t("personas.configure_title", { name: p.name })}
+                aria-label={t("personas.configure_title", { name: p.name })}
                 data-testid={`persona-configure-${p.id}`}
                 onClick={() => onOpenPersona(p.id)}
               >
@@ -158,17 +159,17 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
                     data-testid={`persona-delete-confirm-${p.id}`}
                     onClick={() => remove(p.id)}
                   >
-                    Delete
+                    {t("personas.delete")}
                   </button>
                   <button className={BTN_BORDERED} onClick={() => setConfirmDel(null)}>
-                    Keep
+                    {t("personas.keep")}
                   </button>
                 </span>
               ) : (
                 <button
                   className="text-faint hover:text-danger shrink-0 p-1"
-                  title="Delete this persona"
-                  aria-label={`Delete ${p.name}`}
+                  title={t("personas.delete_tooltip")}
+                  aria-label={t("personas.delete_title", { name: p.name })}
                   data-testid={`persona-delete-${p.id}`}
                   onClick={() => setConfirmDel(p.id)}
                 >
@@ -182,9 +183,7 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
                 data-testid={`persona-disable-warning-${p.id}`}
               >
                 <span className="min-w-0">
-                  Disabling archives its {liveCount(p.id)} conversation
-                  {liveCount(p.id) === 1 ? "" : "s"} — they stay available under “Show
-                  archived”.
+                  {t("personas.disable_warning", { count: liveCount(p.id) })}
                 </span>
                 <button
                   className="text-[12px] px-2.5 py-1.5 rounded-lg bg-accent text-white shrink-0"
@@ -194,10 +193,10 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
                     toggle(p.id, { enabled: false });
                   }}
                 >
-                  Disable
+                  {t("personas.disable")}
                 </button>
                 <button className={BTN_BORDERED} onClick={() => setConfirmOff(null)}>
-                  Keep enabled
+                  {t("personas.keep_enabled")}
                 </button>
               </div>
             )}
@@ -205,26 +204,24 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
         ))}
       </div>
 
-      <div className={SEC_H + " mb-1.5"}>Add personas</div>
+      <div className={SEC_H + " mb-1.5"}>{t("personas.add_section")}</div>
       <p className="text-[12px] text-muted mb-3 leading-relaxed">
-        Load from a local directory or a public GitHub repo. Files are copied into a managed area (a
-        snapshot), so the persona stays stable even if the source changes. No code runs — a persona only
-        composes vetted tools.
+        {t("personas.add_help")}
       </p>
       <div className="flex items-center gap-2">
         <select className={SELECT} value={mode} onChange={(e) => setMode(e.target.value as "git" | "dir")}>
-          <option value="git">GitHub URL</option>
-          <option value="dir">Local directory</option>
+          <option value="git">{t("personas.mode_github")}</option>
+          <option value="dir">{t("personas.mode_local")}</option>
         </select>
         <input
           className={INPUT}
-          placeholder={mode === "git" ? "https://github.com/acme/ops-persona" : "/path/to/personas"}
+          placeholder={mode === "git" ? t("personas.placeholder_github") : t("personas.placeholder_local")}
           value={src}
           onChange={(e) => setSrc(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && install()}
         />
         <button className={BTN_ACCENT} disabled={busy || !src.trim()} onClick={install}>
-          {busy ? "Installing…" : "Install"}
+          {busy ? t("personas.installing") : t("personas.install")}
         </button>
       </div>
       {msg && <div className="text-[12.5px] text-muted mt-2.5">{msg}</div>}
@@ -235,15 +232,17 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
             <div key={c.id} className={CARD + " p-3.5"}>
               <div className="text-[13.5px] font-medium">{c.name}</div>
               <div className="text-[12px] text-muted mt-0.5 mb-2">{c.description}</div>
-              <div className="text-[12px] text-ink">Tools: {c.tools.join(", ") || "—"}</div>
               <div className="text-[12px] text-ink">
-                Risk: {c.risk.join(", ") || "read"}
-                {c.connectors ? " · connectors" : ""}
-                {c.messaging ? " · messaging" : ""}
-                {c.mcp.length ? ` · mcp: ${c.mcp.join(", ")}` : ""}
+                {t("personas.tools_label", { tools: c.tools.join(", ") || "—" })}
+              </div>
+              <div className="text-[12px] text-ink">
+                {t("personas.risk_label", { risk: c.risk.join(", ") || "read" })}
+                {c.connectors ? ` · ${t("personas.connectors_tag")}` : ""}
+                {c.messaging ? ` · ${t("personas.messaging_tag")}` : ""}
+                {c.mcp.length ? ` · ${t("personas.mcp_tag")}: ${c.mcp.join(", ")}` : ""}
               </div>
               <div className="text-[12px] text-faint mt-1">
-                Recommended mode: {c.recommended_mode}. Enable it above to use it.
+                {t("personas.recommended_mode", { mode: c.recommended_mode })}
               </div>
             </div>
           ))}
