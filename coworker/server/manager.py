@@ -1268,7 +1268,7 @@ class SessionManager:
     MAX_BINARY_PREVIEW = 25 * 1024 * 1024  # base64-over-JSON gets heavy past this
 
     def _artifact_target(
-        self, session_id: str, path: str
+        self, session_id: str, path: str, *, allow_dir: bool = False
     ) -> tuple[Optional[Path], Optional[str]]:
         """Resolve an artifact path under the session's workspace, or (None, error)."""
         record = self.session_store.load(session_id)
@@ -1281,14 +1281,36 @@ class SessionManager:
             target.relative_to(root)
         except ValueError:
             return None, "path escapes workspace"
+        if allow_dir and target.is_dir():
+            return target, None
         if not target.is_file():
-            return None, "not found"
+            return None, (
+                "This isn't in the conversation's folder anymore — it may have been "
+                "moved or deleted."
+            )
         return target, None
 
     def read_artifact(self, session_id: str, path: str) -> dict[str, Any]:
-        target, err = self._artifact_target(session_id, path)
+        # Folders are readable too (a model sometimes links a whole package, e.g. a skill
+        # build dir): return a listing the viewer can render instead of a dead end.
+        target, err = self._artifact_target(session_id, path, allow_dir=True)
         if target is None:
             return {"ok": False, "error": err}
+        if target.is_dir():
+            entries: list[dict[str, Any]] = []
+            try:
+                children = sorted(
+                    target.iterdir(), key=lambda c: (c.is_file(), c.name.lower())
+                )
+            except OSError as exc:
+                return {"ok": False, "error": str(exc)}
+            for child in children[:500]:
+                try:
+                    size = 0 if child.is_dir() else child.stat().st_size
+                except OSError:
+                    continue
+                entries.append({"name": child.name, "dir": child.is_dir(), "size": size})
+            return {"ok": True, "path": path, "kind": "folder", "entries": entries}
         kind = _artifact_kind(target)
         if kind == "office":
             # PowerPoint/Word binaries can't be previewed inline; the UI offers
@@ -1342,27 +1364,29 @@ class SessionManager:
         import subprocess
         import sys
 
-        target, err = self._artifact_target(session_id, path)
+        target, err = self._artifact_target(session_id, path, allow_dir=True)
         if target is None:
             return {"ok": False, "error": err}
+        # A folder "opens" as itself in the file manager, whatever the mode.
+        is_dir = target.is_dir()
         try:
             if sys.platform == "darwin":
                 args = (
                     ["open", "-R", str(target)]
-                    if mode == "reveal"
+                    if mode == "reveal" and not is_dir
                     else ["open", str(target)]
                 )
                 subprocess.Popen(
                     args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
             elif sys.platform == "win32":
-                if mode == "reveal":
+                if mode == "reveal" and not is_dir:
                     # Explorer wants the path glued to the switch: /select,<path>
                     subprocess.Popen(["explorer", f"/select,{target}"])
                 else:
                     os.startfile(str(target))  # type: ignore[attr-defined]  # open in default app
             else:  # Linux/BSD
-                tgt = str(target.parent) if mode == "reveal" else str(target)
+                tgt = str(target.parent) if mode == "reveal" and not is_dir else str(target)
                 subprocess.Popen(
                     ["xdg-open", tgt],
                     stdout=subprocess.DEVNULL,

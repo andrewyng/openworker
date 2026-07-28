@@ -192,6 +192,8 @@ export interface ArtifactContent {
   content?: string;
   data_url?: string;
   truncated?: boolean;
+  // kind === "folder": a directory listing (models sometimes link a whole package dir).
+  entries?: { name: string; dir: boolean; size: number }[];
 }
 
 export async function getArtifacts(sessionId: string): Promise<ArtifactInfo[]> {

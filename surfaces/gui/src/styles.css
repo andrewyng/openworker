@@ -1606,3 +1606,14 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
      fussy on a pill); small + high keeps the wordmark the star. */
   vertical-align: 3px;
 }
+
+/* Folder artifact listing (a linked package dir renders as rows, not "not found"). */
+.artifact-folderlist { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; }
+.artifact-folder-row {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  padding: 7px 10px; border: 0; border-radius: 8px; background: none; cursor: pointer;
+  color: var(--ink); font-size: 12.5px;
+}
+.artifact-folder-row:hover { background: var(--paper); }
+.artifact-folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-folder-size { font-size: 11px; color: var(--faint); }

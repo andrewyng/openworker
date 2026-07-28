@@ -159,6 +159,15 @@ export function RightRail({
           content={content}
           onReload={reloadSelected}
           onBack={() => setSelected(null)}
+          onOpenEntry={(path) =>
+            setSelected({
+              path,
+              name: path.split("/").pop() || path,
+              kind: kindFromPath(path),
+              size: 0,
+              modified_at: 0,
+            })
+          }
         />
       ) : (
         <>
@@ -291,12 +300,15 @@ function ArtifactViewer({
   content,
   onReload,
   onBack,
+  onOpenEntry,
 }: {
   sessionId: string;
   artifact: ArtifactInfo;
   content: ArtifactContent | null;
   onReload: () => Promise<void>;
   onBack: () => void;
+  // Folder listings: open a child entry in the viewer (files and subfolders alike).
+  onOpenEntry?: (path: string) => void;
 }) {
   const [reloadKey, setReloadKey] = useState(0);
   const isHtml = content?.kind === "html" && !content.error;
@@ -381,6 +393,22 @@ function ArtifactViewer({
           <CsvTable text={content.content || ""} />
         ) : content.kind === "sheet" ? (
           <SheetViewer dataUrl={content.data_url || ""} />
+        ) : content.kind === "folder" ? (
+          // A linked directory (e.g. a skill package): render the listing, click through.
+          <div className="artifact-folderlist" data-testid="artifact-folder">
+            {(content.entries || []).map((e) => (
+              <button
+                key={e.name}
+                className="artifact-folder-row"
+                onClick={() => onOpenEntry?.(`${artifact.path.replace(/\/+$/, "")}/${e.name}`)}
+              >
+                <Icon name={e.dir ? "folder" : "file"} size={14} />
+                <span className="artifact-folder-name">{e.name}</span>
+                {!e.dir && <span className="artifact-folder-size">{formatBytes(e.size)}</span>}
+              </button>
+            ))}
+            {!content.entries?.length && <div className="rail-muted">This folder is empty.</div>}
+          </div>
         ) : content.kind === "office" ? (
           <div className="artifact-open-prompt">
             <Icon name="panelOpen" size={28} />
