@@ -525,7 +525,7 @@ def make_integration_tools(
     enabled_tools: Optional[set[str]] = None,
     roots: Optional[list[Any]] = None,
 ) -> list[Callable[..., Any]]:
-    tools: list[Callable[..., Any]] = make_browser_automation_tools()
+    tools: list[Callable[..., Any]] = make_browser_automation_tools(roots=roots)
     # Email needs the session roots: attachment downloads land in the primary scratch
     # and outgoing attachments must resolve inside a granted directory.
     tools.extend(make_email_tools(secrets, roots=roots))
