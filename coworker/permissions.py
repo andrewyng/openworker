@@ -162,7 +162,7 @@ class PermissionEngine:
 
                 if is_readonly_command(command):
                     return Decision(True, "read-only command (session grant)")
-        if tool_name in self.session_allow_tools and not is_connector:
+        if tool_name in self.session_allow_tools and not is_connector and not is_shell:
             return Decision(True, "tool allowed for session")
 
         # Task-scoped standing rules (§25): tool + exact target, owned by the automation.
