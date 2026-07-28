@@ -69,6 +69,7 @@ def test_load_merges_global_and_workspace(tmp_path, monkeypatch):
                 "fs": {
                     "command": "echo",
                     "args": ["workspace-wins"],
+                    "connection_key": "not-a-user-config-field",
                 },  # overrides global
             }
         },
@@ -77,6 +78,7 @@ def test_load_merges_global_and_workspace(tmp_path, monkeypatch):
     servers = {s.name: s for s in load_mcp_servers(ws, secrets=SecretStore())}
     assert servers["fs"].args == ["workspace-wins"]
     assert servers["fs"].transport == "stdio"
+    assert "connection_key" not in vars(servers["fs"])
     assert servers["docs"].transport == "http" and servers["docs"].enabled is False
     assert servers["docs"].requires_approval is True  # default
 
@@ -119,6 +121,7 @@ def test_builtin_kordoc_server_is_ready_only_and_pins_the_exact_mcp_surface(tmp_
     server = builtin_kordoc_server(KordocRuntimeStatus("ready", runtime=runtime))
 
     assert server is not None
+    assert server.name == "kordoc"
     assert server.command == str(node.resolve())
     assert server.args == [str(mcp.resolve())]
     assert server.requires_approval is True
@@ -151,8 +154,11 @@ async def test_mcp_manager_reuses_same_definition_and_retires_replaced_connectio
                 structuredContent=None,
             )
 
-    async def fake_serve(server, ready, *, interactive=False):
+    async def fake_serve(
+        server, ready, *, interactive=False, connection_key=None
+    ):
         del interactive
+        assert connection_key == server.name
         starts.append(server.command)
         session = FakeSession(server.command)
         conn = SimpleNamespace(
@@ -210,13 +216,96 @@ async def test_mcp_manager_reuses_same_definition_and_retires_replaced_connectio
     assert len(sessions) == 2
 
 
+async def test_mcp_manager_connection_key_isolates_same_named_servers(monkeypatch):
+    mcp = MCPManager()
+    builtin_key = object()
+    starts: list[tuple[str, object, str]] = []
+
+    class FakeSession:
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        async def call_tool(self, tool, arguments):
+            return SimpleNamespace(
+                content=[SimpleNamespace(text=f"{self.label}:{tool}")],
+                isError=False,
+                structuredContent=None,
+            )
+
+    async def fake_serve(server, ready, *, interactive=False, connection_key=None):
+        del interactive
+        starts.append((server.name, connection_key, server.command))
+        conn = SimpleNamespace(
+            session=FakeSession(server.command),
+            tools=[_fake_tool("parse_chunks")],
+            shutdown=asyncio.Event(),
+        )
+        ready.set_result(conn)
+        await conn.shutdown.wait()
+
+    monkeypatch.setattr(mcp, "_serve", fake_serve)
+    configured = MCPServerDef(
+        name="kordoc", transport="stdio", command="configured-node"
+    )
+    builtin = MCPServerDef(
+        name="kordoc",
+        transport="stdio",
+        command="trusted-node",
+    )
+
+    configured_conn, builtin_conn = await asyncio.gather(
+        mcp.ensure(configured), mcp.ensure(builtin, connection_key=builtin_key)
+    )
+
+    assert configured_conn is not builtin_conn
+    assert starts == [
+        ("kordoc", "kordoc", "configured-node"),
+        ("kordoc", builtin_key, "trusted-node"),
+    ]
+    assert set(mcp._conns) == {"kordoc", builtin_key}
+    assert await mcp.call_on_connection(configured_conn, "parse_chunks", {}) == (
+        "configured-node:parse_chunks"
+    )
+    assert await mcp.call_on_connection(builtin_conn, "parse_chunks", {}) == (
+        "trusted-node:parse_chunks"
+    )
+    assert await mcp.call("kordoc", "parse_chunks", {}) == (
+        "configured-node:parse_chunks"
+    )
+
+    replacement_builtin = MCPServerDef(
+        name="kordoc",
+        transport="stdio",
+        command="trusted-node-v2",
+    )
+    current_builtin = await mcp.ensure(
+        replacement_builtin, connection_key=builtin_key
+    )
+
+    assert builtin_conn.shutdown.is_set()
+    assert not configured_conn.shutdown.is_set()
+    with pytest.raises(RuntimeError, match="replaced"):
+        await mcp.call_on_connection(builtin_conn, "parse_chunks", {})
+    assert await mcp.call_on_connection(current_builtin, "parse_chunks", {}) == (
+        "trusted-node-v2:parse_chunks"
+    )
+    assert await mcp.call("kordoc", "parse_chunks", {}) == (
+        "configured-node:parse_chunks"
+    )
+
+    await mcp.aclose()
+
+
 async def test_mcp_manager_cancelled_startup_does_not_orphan_server_task(monkeypatch):
     mcp = MCPManager()
     started = asyncio.Event()
     stopped = asyncio.Event()
 
-    async def pending_serve(_server, _ready, *, interactive=False):
+    async def pending_serve(
+        _server, _ready, *, interactive=False, connection_key=None
+    ):
         del interactive
+        del connection_key
         started.set()
         try:
             await asyncio.Event().wait()

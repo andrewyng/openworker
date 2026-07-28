@@ -15,7 +15,6 @@ import re
 import shutil
 import subprocess
 import time
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -88,8 +87,7 @@ from ..sessions import SessionRecord
 from ..skills import SkillLoader
 
 _SCOPES = {s.value for s in Scope}
-_BUILTIN_KORDOC_CONNECTION_NAME = "__openworker_kordoc_rag__"
-
+_BUILTIN_KORDOC_CONNECTION_KEY = object()
 logger = logging.getLogger("coworker.manager")
 
 
@@ -162,6 +160,7 @@ class SessionManager:
         # feeds list_mcp's status so the GUI can show "authorizing…" and failures.
         self._mcp_authorizing: set[str] = set()
         self._mcp_errors: dict[str, str] = {}
+        self._kordoc_mcp_error: Optional[str] = None
         self.gateway: Optional[Gateway] = None
         self._data_base = base
         # Desktop/UI prefs (default model, onboarding state) — not secrets; a plain JSON file.
@@ -985,7 +984,7 @@ class SessionManager:
         if server is None:
             # No absolute paths, command lines, or runtime diagnostics enter session
             # state; the MCP page already has a safe error/status field for this.
-            self._mcp_errors["kordoc"] = (
+            self._kordoc_mcp_error = (
                 "Kordoc runtime is unavailable — install the pinned Kordoc runtime, then retry."
             )
             return []
@@ -999,7 +998,7 @@ class SessionManager:
             or not server.command
             or not server.args
         ):
-            self._mcp_errors["kordoc"] = (
+            self._kordoc_mcp_error = (
                 "Kordoc runtime is unavailable — verify the pinned local runtime, then retry."
             )
             return []
@@ -1007,14 +1006,15 @@ class SessionManager:
         server.requires_approval = True
 
         # The model-facing name stays ``kordoc`` while the connection registry uses
-        # a reserved key. A user-configured server with the same public name can
+        # an opaque private key. A user-configured server with the same public name can
         # therefore coexist without retiring or replacing this trusted connection.
-        connection_server = replace(server, name=_BUILTIN_KORDOC_CONNECTION_NAME)
         try:
-            conn = await self.mcp.ensure(connection_server)
+            conn = await self.mcp.ensure(
+                server, connection_key=_BUILTIN_KORDOC_CONNECTION_KEY
+            )
         except Exception:
             logger.info("pinned Kordoc MCP unavailable; skipped for this session")
-            self._mcp_errors["kordoc"] = (
+            self._kordoc_mcp_error = (
                 "Kordoc tools are unavailable — verify the pinned local runtime, then retry."
             )
             return []
@@ -1033,7 +1033,7 @@ class SessionManager:
         )
         for fn in callables:
             fn.__aisuite_tool_metadata__.requires_approval = True
-        self._mcp_errors.pop("kordoc", None)
+        self._kordoc_mcp_error = None
         return callables
 
     def list_mcp(self) -> list[dict[str, Any]]:

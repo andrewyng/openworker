@@ -99,8 +99,9 @@ def test_korean_docs_uses_only_builtin_kordoc_and_forces_approval(
     )
     seen: list[MCPServerDef] = []
 
-    async def ensure(server):
+    async def ensure(server, *, connection_key=None):
         seen.append(server)
+        assert connection_key is manager_module._BUILTIN_KORDOC_CONNECTION_KEY
         return SimpleNamespace(
             tools=[*[_tool(name) for name in RAG_TOOLS], _tool("untrusted_extra")]
         )
@@ -111,7 +112,7 @@ def test_korean_docs_uses_only_builtin_kordoc_and_forces_approval(
     tools = asyncio.run(manager.prepare_mcp_tools("korean-session", agent="code"))
 
     assert len(seen) == 1
-    assert seen[0].name == manager_module._BUILTIN_KORDOC_CONNECTION_NAME
+    assert seen[0].name == "kordoc"
     assert seen[0].command == trusted.command
     assert seen[0].args == trusted.args
     assert trusted.name == "kordoc"
@@ -141,7 +142,8 @@ def test_kordoc_rag_paths_are_canonicalized_before_any_mcp_call(tmp_path, monkey
     monkeypatch.setattr(manager_module, "builtin_kordoc_server", lambda: trusted)
     connection = SimpleNamespace(tools=[*[_tool(name) for name in RAG_TOOLS], _tool("write")])
 
-    async def ensure(_server):
+    async def ensure(_server, *, connection_key=None):
+        assert connection_key is manager_module._BUILTIN_KORDOC_CONNECTION_KEY
         return connection
 
     calls: list[tuple[str, dict]] = []
@@ -288,7 +290,8 @@ def test_korean_docs_provisions_its_engine_scratch_before_binding_path_guard(
     connection = SimpleNamespace(tools=[_tool("parse_metadata")])
     calls: list[tuple[str, dict]] = []
 
-    async def ensure(_server):
+    async def ensure(_server, *, connection_key=None):
+        assert connection_key is manager_module._BUILTIN_KORDOC_CONNECTION_KEY
         return connection
 
     async def call_on_connection(_connection, tool, arguments):
@@ -342,10 +345,18 @@ def test_configured_kordoc_and_builtin_kordoc_keep_distinct_connections(
             "include_tools": ["parse_chunks"],
         },
     )
+    put_global_server(
+        "__openworker_kordoc_rag__",
+        {
+            "command": "legacy-name-node",
+            "args": ["legacy-name-mcp.js"],
+            "include_tools": ["parse_chunks"],
+        },
+    )
     monkeypatch.setattr(
         manager_module, "builtin_kordoc_server", _trusted_kordoc_server
     )
-    starts: list[tuple[str, str]] = []
+    starts: list[tuple[str, object, str]] = []
 
     class FakeSession:
         def __init__(self, command):
@@ -358,9 +369,9 @@ def test_configured_kordoc_and_builtin_kordoc_keep_distinct_connections(
                 structuredContent=None,
             )
 
-    async def fake_serve(server, ready, *, interactive=False):
+    async def fake_serve(server, ready, *, interactive=False, connection_key=None):
         del interactive
-        starts.append((server.name, server.command))
+        starts.append((server.name, connection_key, server.command))
         connection = SimpleNamespace(
             session=FakeSession(server.command),
             tools=[_tool("parse_chunks")],
@@ -392,13 +403,28 @@ def test_configured_kordoc_and_builtin_kordoc_keep_distinct_connections(
             builtin_parse, file_path="source.hwp"
         ) == "trusted-node:parse_chunks"
         assert starts == [
-            ("kordoc", "configured-node"),
-            (manager_module._BUILTIN_KORDOC_CONNECTION_NAME, "trusted-node"),
+            ("kordoc", "kordoc", "configured-node"),
+            (
+                "__openworker_kordoc_rag__",
+                "__openworker_kordoc_rag__",
+                "legacy-name-node",
+            ),
+            ("kordoc", manager_module._BUILTIN_KORDOC_CONNECTION_KEY, "trusted-node"),
         ]
         assert set(manager.mcp._conns) == {
             "kordoc",
-            manager_module._BUILTIN_KORDOC_CONNECTION_NAME,
+            "__openworker_kordoc_rag__",
+            manager_module._BUILTIN_KORDOC_CONNECTION_KEY,
         }
+        builtin_connection = manager.mcp._conns[
+            manager_module._BUILTIN_KORDOC_CONNECTION_KEY
+        ]
+        await manager.signout_mcp("kordoc")
+        await manager.signout_mcp("__openworker_kordoc_rag__")
+        assert not builtin_connection.shutdown.is_set()
+        assert await asyncio.to_thread(
+            builtin_parse, file_path="source.hwp"
+        ) == "trusted-node:parse_chunks"
         await manager.aclose()
 
     asyncio.run(exercise())
@@ -426,8 +452,9 @@ def test_korean_sessions_share_pinned_connection_and_bound_callables(
                 structuredContent=None,
             )
 
-    async def fake_serve(server, ready, *, interactive=False):
+    async def fake_serve(server, ready, *, interactive=False, connection_key=None):
         del interactive
+        assert connection_key is manager_module._BUILTIN_KORDOC_CONNECTION_KEY
         starts.append(server.command)
         connection = SimpleNamespace(
             session=FakeSession(),
@@ -480,14 +507,18 @@ def test_korean_docs_runtime_unavailable_skips_without_using_config(tmp_path, mo
         ),
     )
 
-    async def must_not_connect(server):
+    async def must_not_connect(server, *, connection_key=None):
+        del connection_key
         raise AssertionError(f"unexpected connection: {server.name}")
 
     monkeypatch.setattr(manager.mcp, "ensure", must_not_connect)
 
+    manager._mcp_errors["kordoc"] = "configured server error"
+
     assert asyncio.run(manager.prepare_mcp_tools("new", agent="korean-docs")) == []
-    assert "install" in manager._mcp_errors["kordoc"].lower()
-    assert str(tmp_path) not in manager._mcp_errors["kordoc"]
+    assert manager._mcp_errors["kordoc"] == "configured server error"
+    assert "install" in manager._kordoc_mcp_error.lower()
+    assert str(tmp_path) not in manager._kordoc_mcp_error
     assert config_path.read_text(encoding="utf-8") == config_before
 
 

@@ -39,7 +39,9 @@ permission mode and any explicit session grant the user chooses. The source must
 an existing regular file in the session workspace. OpenWorker resolves accepted
 paths to canonical absolute paths before dispatch and rejects traversal, missing
 files, directories, and symlink or junction escapes. A user-configured MCP server
-also named `kordoc` cannot replace the pinned server used by this persona.
+also named `kordoc` cannot replace the pinned server used by this persona: the
+built-in runtime has a private connection key that is never loaded from user
+`mcp.json` settings, while its model-facing tool namespace remains `kordoc`.
 
 ## RAG boundary
 
