@@ -132,3 +132,16 @@ def test_install_snapshots_independently_of_source(tmp_path):
     reg2 = PersonaRegistry(state_path=tmp_path / "personas.json")
     assert "acme-ops" in reg2.ids() and reg2.is_enabled("acme-ops")
     assert reg2.agent("acme-ops").family == "knowledge"
+
+
+def test_korean_docs_builtin_has_normal_builtin_lifecycle(tmp_path):
+    reg = PersonaRegistry(state_path=tmp_path / "personas.json")
+
+    entry = reg.get("korean-docs")
+    assert entry is not None and entry.builtin is True
+    assert entry.tools == ["search", "todo"]
+    assert reg.is_enabled("korean-docs") is False
+    reg.set_enabled("korean-docs", True)
+    assert reg.is_enabled("korean-docs") is True
+    with pytest.raises(ValueError):
+        reg.uninstall("korean-docs")

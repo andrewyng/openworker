@@ -15,6 +15,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from ..integrations.kordoc import (
+    KORDOC_MCP_TOOL_ALLOWLIST,
+    KordocRuntimeStatus,
+    detect_kordoc_runtime,
+)
 from ..secrets import SecretStore, state_dir
 
 _HTTP_TYPES = {"http", "https", "sse", "streamable-http", "streamable_http"}
@@ -37,6 +42,28 @@ class MCPServerDef:
     # "oauth" → browser OAuth 2.1 + PKCE with Dynamic Client Registration (mcp/oauth.py).
     # HTTP transport only; tokens live in the SecretStore, never in this file.
     auth: Optional[str] = None
+
+
+def builtin_kordoc_server(
+    runtime_status: Optional[KordocRuntimeStatus] = None,
+) -> Optional[MCPServerDef]:
+    """Return the pinned local Kordoc MCP definition when its runtime is ready.
+
+    This is a pure definition helper: discovery only reads local runtime metadata
+    (plus npm's global-root query), and this function never persists config or
+    starts the Kordoc MCP process.
+    """
+    status = runtime_status or detect_kordoc_runtime()
+    if not status.ready or status.runtime is None:
+        return None
+    return MCPServerDef(
+        name="kordoc",
+        transport="stdio",
+        command=str(status.runtime.node_executable),
+        args=[str(status.runtime.mcp_path)],
+        include_tools=list(KORDOC_MCP_TOOL_ALLOWLIST),
+        requires_approval=True,
+    )
 
 
 def global_mcp_path() -> Path:

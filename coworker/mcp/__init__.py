@@ -8,6 +8,7 @@ from __future__ import annotations
 from .client import MCPManager
 from .config import (
     MCPServerDef,
+    builtin_kordoc_server,
     delete_global_server,
     load_mcp_servers,
     patch_global_server,
@@ -19,6 +20,7 @@ from .tools import build_callables, tool_name
 __all__ = [
     "MCPManager",
     "MCPServerDef",
+    "builtin_kordoc_server",
     "load_mcp_servers",
     "read_global",
     "put_global_server",

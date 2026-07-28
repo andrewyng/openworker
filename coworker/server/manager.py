@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -62,6 +63,7 @@ from ..connectors.browser_automation import (
 from ..connectors.parked import ParkedStore
 from ..mcp import (
     MCPManager,
+    builtin_kordoc_server,
     build_callables,
     delete_global_server,
     load_mcp_servers,
@@ -69,6 +71,8 @@ from ..mcp import (
     put_global_server,
     read_global,
 )
+from ..mcp.tools import validate_kordoc_workspace_arguments
+from ..integrations.kordoc import KORDOC_MCP_TOOL_ALLOWLIST
 from ..memory import MemoryStore, Scope, SQLiteMemoryStore
 from ..permissions import Mode
 from ..agents import list_agents as _list_agents
@@ -84,6 +88,7 @@ from ..sessions import SessionRecord
 from ..skills import SkillLoader
 
 _SCOPES = {s.value for s in Scope}
+_BUILTIN_KORDOC_CONNECTION_NAME = "__openworker_kordoc_rag__"
 
 logger = logging.getLogger("coworker.manager")
 
@@ -867,6 +872,26 @@ class SessionManager:
         """
         if session_id in self._engines:
             return []
+
+        # Match the agent that get_engine() will materialize: a persisted session's
+        # persona wins over a reconnect's omitted/default query parameter.
+        record = self.session_store.load(session_id)
+        active_persona = (record.agent if record else agent) or "code"
+        if active_persona == "korean-docs":
+            # This persona has a closed local integration boundary. In particular,
+            # never load its similarly named entry from global/workspace config.
+            session_workspace = self.engine_workspace(
+                session_id, workspace=workspace, agent=active_persona
+            )
+            if not session_workspace or not Path(session_workspace).is_dir():
+                # prepare_mcp_tools() runs before get_engine(). Knowledge personas
+                # normally receive a deterministic scratch workspace during engine
+                # construction. Provision that same directory now when the workspace
+                # is absent or a persisted path has gone stale, rather than capturing
+                # an unusable path in the Kordoc callables.
+                session_workspace = self._provision_scratch(session_id)
+            return await self._prepare_kordoc_mcp_tools(session_workspace)
+
         from ..connectors.descriptors import get_descriptor
         from ..connectors.tool_defs import (
             approval_for_tool,
@@ -928,7 +953,9 @@ class SessionManager:
             callables = build_callables(
                 server,
                 conn.tools,
-                lambda tool, args, name=server.name: self.mcp.call(name, tool, args),
+                lambda tool, args, connection=conn: self.mcp.call_on_connection(
+                    connection, tool, args
+                ),
                 loop,
             )
             if backed:
@@ -941,6 +968,73 @@ class SessionManager:
                     )
             out.extend(callables)
         return out
+
+    async def _prepare_kordoc_mcp_tools(
+        self, workspace: Optional[str]
+    ) -> list[Any]:
+        """Attach the pinned, read-only Kordoc RAG surface for Korean Documents.
+
+        Kordoc is intentionally isolated from the user-configurable MCP registry:
+        a configured server named ``kordoc`` must not replace this version-pinned
+        local runtime for the Korean Documents persona.
+        """
+        # Runtime discovery performs a bounded npm subprocess query. Keep it off
+        # the shared async server loop so a slow local npm installation cannot
+        # freeze unrelated sessions.
+        server = await asyncio.to_thread(builtin_kordoc_server)
+        if server is None:
+            # No absolute paths, command lines, or runtime diagnostics enter session
+            # state; the MCP page already has a safe error/status field for this.
+            self._mcp_errors["kordoc"] = (
+                "Kordoc runtime is unavailable — install the pinned Kordoc runtime, then retry."
+            )
+            return []
+
+        # Keep the manager-side boundary explicit even if the definition helper is
+        # changed later: no configured tool list can broaden this five-tool surface,
+        # and every Kordoc operation remains marked as approval-required.
+        if (
+            server.name != "kordoc"
+            or server.transport != "stdio"
+            or not server.command
+            or not server.args
+        ):
+            self._mcp_errors["kordoc"] = (
+                "Kordoc runtime is unavailable — verify the pinned local runtime, then retry."
+            )
+            return []
+        server.include_tools = list(KORDOC_MCP_TOOL_ALLOWLIST)
+        server.requires_approval = True
+
+        # The model-facing name stays ``kordoc`` while the connection registry uses
+        # a reserved key. A user-configured server with the same public name can
+        # therefore coexist without retiring or replacing this trusted connection.
+        connection_server = replace(server, name=_BUILTIN_KORDOC_CONNECTION_NAME)
+        try:
+            conn = await self.mcp.ensure(connection_server)
+        except Exception:
+            logger.info("pinned Kordoc MCP unavailable; skipped for this session")
+            self._mcp_errors["kordoc"] = (
+                "Kordoc tools are unavailable — verify the pinned local runtime, then retry."
+            )
+            return []
+
+        loop = asyncio.get_running_loop()
+        callables = build_callables(
+            server,
+            conn.tools,
+            lambda tool, args, connection=conn: self.mcp.call_on_connection(
+                connection, tool, args
+            ),
+            loop,
+            argument_validator=lambda tool, args: validate_kordoc_workspace_arguments(
+                tool, args, workspace
+            ),
+        )
+        for fn in callables:
+            fn.__aisuite_tool_metadata__.requires_approval = True
+        self._mcp_errors.pop("kordoc", None)
+        return callables
 
     def list_mcp(self) -> list[dict[str, Any]]:
         """Servers from the global config + connection status (does not connect)."""

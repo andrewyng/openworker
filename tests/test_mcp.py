@@ -13,7 +13,18 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from coworker.mcp import build_callables, load_mcp_servers, tool_name
+from coworker.integrations.kordoc import (
+    KORDOC_MCP_TOOL_ALLOWLIST,
+    KordocRuntime,
+    KordocRuntimeStatus,
+)
+from coworker.mcp import (
+    MCPManager,
+    build_callables,
+    builtin_kordoc_server,
+    load_mcp_servers,
+    tool_name,
+)
 from coworker.mcp.config import MCPServerDef
 from coworker.secrets import SecretStore
 from coworker.server.app import create_app
@@ -87,6 +98,143 @@ def test_var_resolution(tmp_path, monkeypatch):
     )
     docs = load_mcp_servers(None, secrets=SecretStore())[0]
     assert docs.headers["Authorization"] == "Bearer sekret"
+
+
+def test_builtin_kordoc_server_is_ready_only_and_pins_the_exact_mcp_surface(tmp_path):
+    node = tmp_path / "node.exe"
+    cli = tmp_path / "kordoc" / "dist" / "cli.js"
+    mcp = tmp_path / "kordoc" / "dist" / "mcp.js"
+    for path in (node, cli, mcp):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    runtime = KordocRuntime(
+        node_executable=node.resolve(),
+        npm_root=(tmp_path / "npm").resolve(),
+        package_dir=(tmp_path / "kordoc").resolve(),
+        cli_path=cli.resolve(),
+        mcp_path=mcp.resolve(),
+    )
+
+    assert builtin_kordoc_server(KordocRuntimeStatus("not_installed")) is None
+    server = builtin_kordoc_server(KordocRuntimeStatus("ready", runtime=runtime))
+
+    assert server is not None
+    assert server.command == str(node.resolve())
+    assert server.args == [str(mcp.resolve())]
+    assert server.requires_approval is True
+    assert server.include_tools == [
+        "detect_format",
+        "parse_metadata",
+        "parse_chunks",
+        "parse_pages",
+        "parse_table",
+    ] == KORDOC_MCP_TOOL_ALLOWLIST
+
+
+async def test_mcp_manager_reuses_same_definition_and_retires_replaced_connections(
+    monkeypatch,
+):
+    mcp = MCPManager()
+    starts: list[str] = []
+    sessions = []
+
+    class FakeSession:
+        def __init__(self, label: str) -> None:
+            self.label = label
+            self.calls: list[tuple[str, dict]] = []
+
+        async def call_tool(self, tool, arguments):
+            self.calls.append((tool, arguments))
+            return SimpleNamespace(
+                content=[SimpleNamespace(text=self.label)],
+                isError=False,
+                structuredContent=None,
+            )
+
+    async def fake_serve(server, ready, *, interactive=False):
+        del interactive
+        starts.append(server.command)
+        session = FakeSession(server.command)
+        conn = SimpleNamespace(
+            session=session,
+            tools=[_fake_tool("read_document")],
+            shutdown=asyncio.Event(),
+        )
+        sessions.append(conn)
+        ready.set_result(conn)
+        await conn.shutdown.wait()
+
+    monkeypatch.setattr(mcp, "_serve", fake_serve)
+    pinned = MCPServerDef(
+        name="kordoc",
+        transport="stdio",
+        command="trusted-node",
+        args=["trusted-mcp.js"],
+    )
+    same_definition = MCPServerDef(
+        name="kordoc",
+        transport="stdio",
+        command="trusted-node",
+        args=["trusted-mcp.js"],
+    )
+
+    first, second = await asyncio.gather(
+        mcp.ensure(pinned), mcp.ensure(same_definition)
+    )
+    assert first is second
+    assert starts == ["trusted-node"]
+    assert await mcp.call_on_connection(first, "read_document", {"path": "one"}) == (
+        "trusted-node"
+    )
+    assert await mcp.call_on_connection(second, "read_document", {"path": "two"}) == (
+        "trusted-node"
+    )
+
+    replacement = MCPServerDef(
+        name="kordoc",
+        transport="stdio",
+        command="replacement-node",
+        args=["replacement-mcp.js"],
+    )
+    current = await mcp.ensure(replacement)
+    assert current is not first
+    assert first.shutdown.is_set()
+    assert starts == ["trusted-node", "replacement-node"]
+    with pytest.raises(RuntimeError, match="replaced"):
+        await mcp.call_on_connection(first, "read_document", {})
+    assert await mcp.call_on_connection(current, "read_document", {}) == "replacement-node"
+
+    await mcp.aclose()
+    assert current.shutdown.is_set()
+    assert not mcp._conns and not mcp._tasks
+    assert len(sessions) == 2
+
+
+async def test_mcp_manager_cancelled_startup_does_not_orphan_server_task(monkeypatch):
+    mcp = MCPManager()
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def pending_serve(_server, _ready, *, interactive=False):
+        del interactive
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(mcp, "_serve", pending_serve)
+    server = MCPServerDef(name="slow", transport="stdio", command="slow-server")
+
+    startup = asyncio.create_task(mcp.ensure(server))
+    await started.wait()
+    startup.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await startup
+
+    await asyncio.wait_for(stopped.wait(), timeout=1)
+    assert not mcp._tasks
+    assert not mcp._conns
 
 
 # -- tool wrapping + bridge ----------------------------------------------------

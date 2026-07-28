@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from coworker.personas.manifest import ManifestError, parse_manifest
+from coworker.personas.manifest import ManifestError, load_manifest_file, parse_manifest
 
 VALID = """---
 id: demo
@@ -165,3 +167,23 @@ def test_invalid_recommends_rejected(text, needle):
     with pytest.raises(ManifestError) as e:
         parse_manifest(text)
     assert needle in str(e.value).lower()
+
+
+def test_korean_docs_builtin_manifest_is_the_constrained_document_schema():
+    path = (
+        Path(__file__).parents[1]
+        / "coworker"
+        / "personas"
+        / "builtin"
+        / "korean-docs.md"
+    )
+    m = load_manifest_file(path, builtin=True)
+
+    assert m.id == "korean-docs" and m.builtin is True
+    assert m.family == "knowledge" and m.workspace == "deliverable"
+    assert m.tools == ["search", "todo"]
+    assert "files" not in m.tools and "shell" not in m.tools
+    assert m.mcp == ["kordoc"] and m.default_permission_mode == "interactive"
+    assert "신뢰할 수 없는 입력" in m.system_prompt
+    assert "단일" in m.system_prompt and "breadcrumb" in m.system_prompt
+    assert "영구 인덱스" in m.system_prompt

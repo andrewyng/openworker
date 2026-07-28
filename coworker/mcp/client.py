@@ -13,6 +13,7 @@ Tool execution from the (sync) ToolRegistry bridges back here via
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import AsyncExitStack
 from typing import Any, Optional
 
@@ -28,10 +29,13 @@ class _Conn:
         self.session = session
         self.tools = tools  # list[mcp.types.Tool]
         self.shutdown = asyncio.Event()
+        self.name: Optional[str] = None
+        self.definition: Optional[str] = None
+        self.retired = False
 
 
 class MCPManager:
-    """Owns persistent MCP connections keyed by server name; lazy-connects on demand."""
+    """Owns definition-aware persistent MCP connections, keyed by server name."""
 
     def __init__(self, secrets: Any = None) -> None:
         self._conns: dict[str, _Conn] = {}
@@ -42,22 +46,45 @@ class MCPManager:
         self._secrets = secrets
 
     async def ensure(self, server: MCPServerDef, *, interactive: bool = False) -> _Conn:
-        """Return a live connection for `server`, connecting (once) if needed.
+        """Return a live connection for this exact `server` definition.
 
         `interactive=True` (explicit connect actions only) lets an OAuth server run
         the browser sign-in flow; the default refuses it — stored tokens and silent
         refresh still work, but a server that insists on re-authorization raises
         InteractiveAuthRequired instead of hijacking the user's browser.
+
+        A server name is not enough to identify a trusted connection: a changed
+        command, transport, endpoint, environment, or credentials configuration
+        replaces the older connection. Same-definition callers share one live
+        connection, while callers holding an older connection cannot be routed to
+        its replacement through :meth:`call_on_connection`.
         """
+        definition = _definition_fingerprint(server)
         async with self._lock:
             existing = self._conns.get(server.name)
-            if existing is not None:
+            if existing is not None and existing.definition == definition:
                 return existing
+            if existing is not None:
+                await self._retire_locked(server.name, existing)
             ready: asyncio.Future = asyncio.get_running_loop().create_future()
-            self._tasks[server.name] = asyncio.create_task(
+            task = asyncio.create_task(
                 self._serve(server, ready, interactive=interactive)
             )
-            conn = await ready  # propagates connection errors
+            self._tasks[server.name] = task
+            try:
+                conn = await ready  # propagates connection errors
+            except BaseException:
+                # Cancellation while startup is pending must not leave _serve
+                # blocked forever on its private shutdown event. The task is still
+                # ours here because the definition lock serializes replacements.
+                if self._tasks.get(server.name) is task:
+                    self._tasks.pop(server.name, None)
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                raise
+            conn.name = server.name
+            conn.definition = definition
+            conn.retired = False
             self._conns[server.name] = conn
             return conn
 
@@ -70,24 +97,58 @@ class MCPManager:
         conn = self._conns.get(name)
         if conn is None:
             raise RuntimeError(f"MCP server not connected: {name}")
+        return await self.call_on_connection(conn, tool, arguments)
+
+    async def call_on_connection(
+        self, conn: _Conn, tool: str, arguments: Optional[dict[str, Any]]
+    ) -> Any:
+        """Call through one exact connection instead of looking it up by name.
+
+        This is the safe callable binding for isolated integrations. If another
+        definition replaced the name since a tool was prepared, the old callable
+        fails closed rather than being redirected to the new server.
+        """
+        if conn.retired or conn.name is None or self._conns.get(conn.name) is not conn:
+            raise RuntimeError("MCP connection was replaced; prepare tools again")
         result = await conn.session.call_tool(tool, arguments or {})
         return _result_payload(result)
 
     async def aclose(self) -> None:
-        for conn in self._conns.values():
-            conn.shutdown.set()
-        for task in list(self._tasks.values()):
+        async with self._lock:
+            conns = list(self._conns.values())
+            tasks = list(self._tasks.values())
+            for conn in conns:
+                conn.retired = True
+                conn.shutdown.set()
+            self._conns.clear()
+            self._tasks.clear()
+        for task in tasks:
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=5)
             except (asyncio.TimeoutError, Exception):
                 task.cancel()
-        self._conns.clear()
-        self._tasks.clear()
+
+    async def _retire_locked(self, name: str, conn: _Conn) -> None:
+        """Retire one replaced connection while the definition lock is held."""
+        conn.retired = True
+        conn.shutdown.set()
+        task = self._tasks.get(name)
+        if task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=5)
+            except (asyncio.TimeoutError, Exception):
+                task.cancel()
+        if self._conns.get(name) is conn:
+            self._conns.pop(name, None)
+        if task is not None and self._tasks.get(name) is task and task.done():
+            self._tasks.pop(name, None)
 
     # -- per-server lifecycle (one task owns enter+exit) ------------------------
     async def _serve(
         self, server: MCPServerDef, ready: asyncio.Future, *, interactive: bool = False
     ) -> None:
+        conn: Optional[_Conn] = None
+        task = asyncio.current_task()
         try:
             async with AsyncExitStack() as stack:
                 if server.transport == "http":
@@ -136,8 +197,35 @@ class MCPManager:
             if not ready.done():
                 ready.set_exception(exc)
         finally:
-            self._conns.pop(server.name, None)
-            self._tasks.pop(server.name, None)
+            # A replacement task may already own this name. Never let a retiring
+            # task erase its successor's registration.
+            if self._tasks.get(server.name) is task:
+                self._tasks.pop(server.name, None)
+            if conn is not None and self._conns.get(server.name) is conn:
+                self._conns.pop(server.name, None)
+
+
+def _definition_fingerprint(server: MCPServerDef) -> str:
+    """Stable identity for fields that select or authenticate an MCP endpoint."""
+    return json.dumps(
+        {
+            "name": server.name,
+            "transport": server.transport,
+            "command": server.command,
+            "args": server.args,
+            "env": server.env,
+            "cwd": server.cwd,
+            "url": server.url,
+            "headers": server.headers,
+            "enabled": server.enabled,
+            "include_tools": server.include_tools,
+            "exclude_tools": server.exclude_tools,
+            "requires_approval": server.requires_approval,
+            "auth": server.auth,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _result_payload(result: Any) -> Any:

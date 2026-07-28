@@ -23,7 +23,7 @@ hides the window while keeping stdio intact.
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 # SPECPATH is injected by PyInstaller and points at this file's directory
 # (<repo>/packaging). Derive everything else from it — no hardcoded paths.
@@ -40,6 +40,13 @@ INCLUDE_EXPERIMENTAL = os.environ.get("COWORKER_EXPERIMENTAL") == "1"
 hiddenimports = []
 datas = []
 binaries = []
+
+# Markdown-backed built-in personas are read at runtime beside the frozen
+# ``coworker.personas`` package. Keep their package-relative destination so
+# PersonaRegistry's default ``Path(__file__).parent / "builtin"`` lookup works
+# in the onedir sidecar too. The narrow include intentionally excludes other
+# package data from this collection.
+datas += collect_data_files("coworker", includes=["personas/builtin/*.md"])
 
 for pkg in ("coworker", "aisuite", "mcp", "ddgs", "croniter", "docstring_parser"):
     hiddenimports += collect_submodules(pkg)
