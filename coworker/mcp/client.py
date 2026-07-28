@@ -19,7 +19,18 @@ from typing import Any, IO, Optional
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+try:
+    # mcp >= 2.0.0 renamed streamablehttp_client to streamable_http_client and
+    # moved headers/auth/timeout onto an injected httpx.AsyncClient.
+    from mcp.client.streamable_http import streamable_http_client as _streamable_http_client_v2
+    import httpx
+except ImportError:
+    _streamable_http_client_v2 = None
+
+try:
+    from mcp.client.streamable_http import streamablehttp_client
+except ImportError:  # mcp >= 2.0.0
+    streamablehttp_client = None
 
 from .config import MCPServerDef
 
@@ -157,11 +168,23 @@ class MCPManager:
                             self._secrets,
                             interactive=interactive,
                         )
-                    read, write, *_ = await stack.enter_async_context(
-                        streamablehttp_client(
-                            server.url, headers=server.headers or None, auth=auth
+                    if streamablehttp_client is not None:
+                        # mcp < 2.0.0: headers/auth are direct parameters.
+                        read, write, *_ = await stack.enter_async_context(
+                            streamablehttp_client(
+                                server.url, headers=server.headers or None, auth=auth
+                            )
                         )
-                    )
+                    else:
+                        # mcp >= 2.0.0: headers/auth ride on an httpx client.
+                        read, write, *_ = await stack.enter_async_context(
+                            _streamable_http_client_v2(
+                                server.url,
+                                http_client=httpx.AsyncClient(
+                                    headers=server.headers or None, auth=auth
+                                ),
+                            )
+                        )
                 else:
                     if not server.command:
                         raise ValueError(
