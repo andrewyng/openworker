@@ -13,6 +13,8 @@ from typing import Any, Callable
 
 import aisuite as ai
 
+from .guard import get_checked
+
 _MAX = 20000  # default chars returned
 
 _SCHEMA = {
@@ -84,16 +86,20 @@ def make_web_fetch_tool() -> Callable[..., Any]:
         try:
             import httpx
 
+            # follow_redirects=False: guard.get_checked walks the chain so every hop is
+            # address-checked, not just the URL the model first supplied.
             with httpx.Client(
-                follow_redirects=True,
+                follow_redirects=False,
                 timeout=20.0,
                 headers={"User-Agent": "coworker/0.1 (+desktop)"},
             ) as client:
-                resp = client.get(url)
+                resp = get_checked(client, url)
                 resp.raise_for_status()
                 ctype = resp.headers.get("content-type", "")
                 body = resp.text
                 final_url = str(resp.url)
+        except PermissionError as exc:  # blocked address (loopback, private, metadata)
+            return {"error": str(exc)}
         except Exception as exc:  # network / HTTP / TLS
             return {"error": f"fetch failed: {exc}"}
         text = _html_to_text(body) if "html" in ctype.lower() else body
