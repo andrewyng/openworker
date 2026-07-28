@@ -6,6 +6,7 @@ tools return a clear setup error instead of breaking engine construction.
 
 from __future__ import annotations
 
+import os
 import re
 import tempfile
 import threading
@@ -575,9 +576,17 @@ def make_browser_automation_tools(
             if err:
                 return err
         else:
-            out = (
-                Path(tempfile.gettempdir()) / "coworker-browser-screenshot.png"
-            ).resolve()
+            # A fixed name in the shared temp dir is two problems on a
+            # multi-user host (Linux /tmp; macOS gives each uid its own).
+            # Another user can pre-create the path as a symlink and the
+            # screenshot follows it, and the image itself — which may show a
+            # logged-in inbox or bank page — lands world-readable. mkstemp
+            # gives a random name created 0600 with O_EXCL.
+            fd, name = tempfile.mkstemp(
+                prefix="coworker-browser-screenshot.", suffix=".png"
+            )
+            os.close(fd)
+            out = Path(name).resolve()
 
         def run(page):
             out.parent.mkdir(parents=True, exist_ok=True)

@@ -12,6 +12,7 @@ the same rule for the browser tools.
 """
 
 from pathlib import Path
+import tempfile as tempfile_mod
 
 import pytest
 
@@ -132,3 +133,33 @@ def test_tools_are_constructible_without_roots(session):
     """CLI/direct callers pass no roots; construction must still work (and deny)."""
     upload = _tools(None)["browser_upload_file"]
     assert "error" in upload("input", str(session["outside"] / "id_rsa"))
+
+
+# -- the default screenshot location ------------------------------------------
+
+def test_default_screenshot_path_is_unpredictable_and_private(tmp_path, monkeypatch):
+    """A fixed name in a shared temp dir is pre-creatable by another local user.
+
+    On Linux /tmp is shared, so `coworker-browser-screenshot.png` could be planted as a
+    symlink (the write then follows it) and the image — potentially a logged-in inbox — was
+    left at the umask default. mkstemp gives a random name created 0600 with O_EXCL.
+    """
+    import re
+    import stat
+
+    shared = tmp_path / "shared_tmp"
+    shared.mkdir()
+    monkeypatch.setattr(tempfile_mod, "gettempdir", lambda: str(shared))
+
+    shot = _tools([RootDir(path=tmp_path / "scratch", writable=True)])["browser_screenshot"]
+    shot()  # no path -> default location
+    shot()
+
+    created = sorted(shared.iterdir())
+    assert len(created) == 2, "each call must get its own file, not a shared fixed name"
+    assert created[0].name != created[1].name
+
+    for f in created:
+        assert re.match(r"coworker-browser-screenshot\..+\.png$", f.name), f.name
+        mode = stat.S_IMODE(f.stat().st_mode)
+        assert mode & (stat.S_IRGRP | stat.S_IROTH) == 0, f"{f.name} was {oct(mode)}"
