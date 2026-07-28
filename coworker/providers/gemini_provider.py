@@ -99,6 +99,36 @@ def resolve_api_key(secrets: Any = None) -> Optional[str]:
     return None
 
 
+def resolve_vertex_config(
+    secrets: Any = None,
+) -> tuple[Optional[str], str, Optional[str]]:
+    """Resolve Vertex AI parameters: (project_id, location, credentials_path).
+    Env `GOOGLE_CLOUD_PROJECT` (or `GOOGLE_PROJECT_ID`), `GOOGLE_CLOUD_LOCATION` (or `GOOGLE_REGION`),
+    and `GOOGLE_APPLICATION_CREDENTIALS` take precedence, falling back to SecretStore `provider:vertex-gemini`.
+    Location defaults to 'global' if unspecified."""
+    import os
+
+    project = (
+        os.environ.get("GOOGLE_CLOUD_PROJECT")
+        or os.environ.get("GOOGLE_PROJECT_ID")
+    )
+    location = (
+        os.environ.get("GOOGLE_CLOUD_LOCATION")
+        or os.environ.get("GOOGLE_REGION")
+        or os.environ.get("GOOGLE_LOCATION")
+    )
+    creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+
+    if secrets is not None:
+        profile = secrets.get("provider:vertex-gemini") or {}
+        project = project or profile.get("project_id") or None
+        location = location or profile.get("location") or profile.get("region") or None
+        creds = creds or profile.get("credentials_path") or None
+
+    location = location or "global"
+    return (project, location, creds)
+
+
 def _image_part(url: str) -> Optional[dict[str, Any]]:
     """An OpenAI `image_url` part → a Gemini inline_data part. Attachments are always data
     URLs (attachments.py). Plain http(s) URLs are not fetchable by the API → None."""
@@ -387,15 +417,23 @@ class GeminiProvider(ProviderClient):
         self,
         client: Any = None,
         *,
-        default_model: str = "gemini-2.5-flash",
+        default_model: str = "gemini-3.6-flash",
         api_key: Optional[str] = None,
+        vertexai: bool = False,
+        project: Optional[str] = None,
+        location: Optional[str] = None,
+        credentials_path: Optional[str] = None,
         secrets: Any = None,
     ):
         # Mirrors AnthropicProvider: the SDK client is built lazily so engines can be assembled
         # before any key exists; the key resolves at call time (explicit → env → SecretStore).
-        # Tests inject a `client` directly.
+        # Tests inject a `client` directly. When `vertexai=True`, uses Google Cloud Vertex AI credentials.
         self._client = client
         self._api_key = api_key
+        self._vertexai = vertexai
+        self._project = project
+        self._location = location
+        self._credentials_path = credentials_path
         self._secrets = secrets
         self.default_model = default_model
 
@@ -403,14 +441,36 @@ class GeminiProvider(ProviderClient):
         if self._client is None:
             # Lazy import so the SDK is only required when actually talking to Gemini.
             from google import genai
+            import os
 
-            key = self._api_key or resolve_api_key(self._secrets)
-            if not key:
-                raise RuntimeError(
-                    "No Gemini API key configured. Set GEMINI_API_KEY in the environment, "
-                    "or add your key in Manage → Configure Models."
+            if self._vertexai:
+                project, location, creds = resolve_vertex_config(self._secrets)
+                project = self._project or project
+                location = self._location or location
+                creds = self._credentials_path or creds
+
+                if creds and os.path.exists(creds):
+                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds
+
+                if not project or not location:
+                    raise RuntimeError(
+                        "Vertex AI requires a GCP Project ID and Location/Region. "
+                        "Set GOOGLE_PROJECT_ID and GOOGLE_REGION in the environment, "
+                        "or configure them in Settings ▸ Models."
+                    )
+                self._client = genai.Client(
+                    vertexai=True,
+                    project=project,
+                    location=location,
                 )
-            self._client = genai.Client(api_key=key)
+            else:
+                key = self._api_key or resolve_api_key(self._secrets)
+                if not key:
+                    raise RuntimeError(
+                        "No Gemini API key configured. Set GEMINI_API_KEY in the environment, "
+                        "or add your key in Manage → Configure Models."
+                    )
+                self._client = genai.Client(api_key=key)
         return self._client
 
     def _request_kwargs(

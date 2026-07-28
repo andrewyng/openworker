@@ -320,6 +320,7 @@ def test_manager_curated_models(tmp_path, monkeypatch):
     for d in provider_descriptors():  # ambient dev-shell keys must not leak in
         if d.env_key:
             monkeypatch.delenv(d.env_key, raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     from coworker.server.manager import SessionManager
 
     # `ollama:*` selectability is an HTTP probe of a local server; pin it so this test

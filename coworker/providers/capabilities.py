@@ -29,10 +29,10 @@ def capabilities_for(model: str) -> ModelCapabilities:
             tools=True, vision=False, parallel_tool_calls=False, streaming=True
         )
 
-    # Claude / Gemini (both native): tools + vision + parallel tool calls + streaming. The
+    # Claude / Gemini (native / Vertex AI): tools + vision + parallel tool calls + streaming. The
     # engine executes parallel calls sequentially and each converter folds the results into
     # the single next user message — exactly what both APIs require.
-    if provider in ("anthropic", "gemini"):
+    if provider in ("anthropic", "gemini", "vertex-gemini"):
         return ModelCapabilities(
             tools=True, vision=True, pdf=True, parallel_tool_calls=True, streaming=True
         )
