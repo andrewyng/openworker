@@ -13,6 +13,12 @@
         document.documentElement.dataset.theme = dark ? "dark" : "light";
       } catch (e) {}
     </script>
+    <!-- Apply the saved display language before React mounts. -->
+    <script>
+      try {
+        document.documentElement.lang = localStorage.getItem("openwork-language") === "zh-CN" ? "zh-CN" : "en";
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

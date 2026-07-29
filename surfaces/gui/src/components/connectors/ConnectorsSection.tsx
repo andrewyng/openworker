@@ -13,6 +13,7 @@ import { AllowlistBlock, ConnectorTools, ListeningSessionsBlock, UnauthorizedBlo
 import { AccountsDetail } from "./AccountsDetail";
 import { AvailableDetail } from "./AvailableDetail";
 import { CalendarDetail } from "./CalendarDetail";
+import { useLanguage } from "../../i18n";
 import { ConnectorsList } from "./ConnectorsList";
 import { GithubDetail } from "./GithubDetail";
 import { GmailDetail } from "./GmailDetail";
@@ -50,6 +51,7 @@ const DETAIL_PAGES: Record<string, (p: DetailProps) => JSX.Element> = {
 };
 
 export function ConnectorsSection() {
+  const { t } = useLanguage();
   const [detail, setDetail] = useState<string | null>(null);
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
@@ -78,10 +80,10 @@ export function ConnectorsSection() {
           data-testid="connectors-breadcrumb"
           onClick={() => setDetail(null)}
         >
-          ‹ Connectors
+          ‹ {t("Connectors")}
         </button>
         {!c ? (
-          <div className="text-[13px] text-muted">Loading…</div>
+          <div className="text-[13px] text-muted">{t("Loading…")}</div>
         ) : !c.connected ? (
           /* Pre-connect page (§38). When a connect completes, the poll flips
              c.connected and this same route re-renders as the connected page. */
@@ -122,6 +124,7 @@ function GenericDetail({
   onChanged,
   onGone,
 }: DetailProps & { onGone: () => void }) {
+  const { t } = useLanguage();
   return (
     <div>
       <div className="flex items-center gap-3.5 mb-5">
@@ -130,7 +133,7 @@ function GenericDetail({
           <h2 className="text-[20px] font-semibold tracking-tight leading-tight">{c.title}</h2>
           <div className="text-[12.5px] text-muted flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-ok" />
-            {c.account || (c.auth === "none" ? "Built in" : "Connected")}
+            {c.account || (c.auth === "none" ? t("Built in") : t("Connected"))}
           </div>
         </div>
         {c.auth !== "none" && (
@@ -142,7 +145,7 @@ function GenericDetail({
               onGone();
             }}
           >
-            Disconnect
+            {t("Disconnect")}
           </button>
         )}
       </div>
