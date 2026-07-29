@@ -130,9 +130,9 @@ def resolve_from_reply(
         return None
     item_id = m.group(1)
     lowered = reply.lower()
-    if any(w in lowered for w in ("approve", "allow", "yes", "👍", "✅")):
+    if re.search(r"\b(?:approve|allow(?:ed)?|yes)\b", lowered) or "👍" in lowered or "✅" in lowered:
         resolution = "allow"
-    elif any(w in lowered for w in ("deny", "reject", "no", "👎", "❌")):
+    elif re.search(r"\b(?:deny|denied|reject|rejected|no)\b", lowered) or "👎" in lowered or "❌" in lowered:
         resolution = "deny"
     else:
         resolution = _ID_TOKEN.sub("", reply).strip()  # free-text answer to a question
