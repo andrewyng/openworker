@@ -49,6 +49,9 @@ test("artifact comments stage a selected Markdown segment and send it with the t
   await expect(page.getByText("Quarterly result", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Comment" }).click();
+  const overlay = page.getByTestId("annotation-overlay");
+  await expect(overlay).toHaveCSS("cursor", /data:image\/svg\+xml/);
+  await expect(page.getByRole("button", { name: "Commenting" })).toHaveCSS("cursor", "pointer");
   const heading = page.getByText("Quarterly result", { exact: true });
   const bounds = await heading.boundingBox();
   expect(bounds).not.toBeNull();
@@ -56,6 +59,7 @@ test("artifact comments stage a selected Markdown segment and send it with the t
 
   const comment = page.getByPlaceholder("Describe this change…");
   await expect(comment).toBeVisible();
+  await expect(comment).toHaveCSS("cursor", "text");
   await comment.fill("Make this heading more specific.");
   await comment.press("Enter");
 
@@ -63,4 +67,47 @@ test("artifact comments stage a selected Markdown segment and send it with the t
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator(".message-annotation-count")).toHaveText("1 comment");
   await expect(page.getByRole("button", { name: /1 comment/ })).toHaveCount(1);
+
+  await page.getByRole("button", { name: "Commenting" }).click();
+  await expect(overlay).toHaveCount(0);
+  await expect(heading).toHaveCSS("cursor", "auto");
+});
+
+test("HTML comments use the same comment cursor and restore the page cursor on exit", async ({
+  page,
+}) => {
+  const artifact = {
+    path: "output/preview.html",
+    abs_path: "/tmp/openworker/output/preview.html",
+    name: "preview.html",
+    kind: "html",
+    size: 128,
+    modified_at: 1_753_900_000,
+  };
+  await page.route("**/v1/sessions/*/artifacts", (route) =>
+    route.fulfill({ json: { artifacts: [artifact] } }),
+  );
+  await page.route("**/v1/sessions/*/artifacts/read?*", (route) =>
+    route.fulfill({
+      json: {
+        ok: true,
+        path: artifact.path,
+        kind: "html",
+        sha256: "b".repeat(64),
+        content: "<main><h1>Preview heading</h1><p>Review this paragraph.</p></main>",
+      },
+    }),
+  );
+
+  await page.goto("/");
+  await page.getByRole("button", { name: /preview\.html/ }).click();
+  await page.getByRole("button", { name: "Comment" }).click();
+
+  const overlay = page
+    .frameLocator("iframe.artifact-frame")
+    .locator(".artifact-annotation-overlay");
+  await expect(overlay).toHaveCSS("cursor", /data:image\/svg\+xml/);
+
+  await page.getByRole("button", { name: "Commenting" }).click();
+  await expect(overlay).toHaveCount(0);
 });
