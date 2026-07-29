@@ -30,10 +30,19 @@ import {
   type SurfaceVisibility,
   type WorkspaceCommandTrust,
 } from "./api";
-import type { ApprovalDecision, Attachment, Item, SessionInfo, TodoItem, WsEvent } from "./types";
+import type {
+  ApprovalDecision,
+  Attachment,
+  Item,
+  SessionInfo,
+  SessionUsage,
+  TodoItem,
+  WsEvent,
+} from "./types";
 import { isProjectScoped } from "./personaScope";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
+import { addTurnUsage, emptyUsage, usageFromMessages } from "./usage";
 import { streamMode } from "./streamGate";
 import { InboxItemCard } from "./components/InboxItemCard";
 import { isTauri, platformOS, startWindowDrag } from "./tauri";
@@ -41,7 +50,6 @@ import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
-import { ContextWindowBar } from "./components/ContextWindowBar";
 import { Markdown } from "./components/Markdown";
 import { SearchModal } from "./components/SearchModal";
 import { SessionIntro } from "./components/SessionIntro";
@@ -155,24 +163,19 @@ export function App() {
   const [agent, setAgent] = useState("cowork");
   const [model, setModel] = useState("gpt-5.6-sol");
   const [models, setModels] = useState<string[]>([]);
-  // Context-window status bar (Ollama only — every other provider hides the real cap, so no
-  // bar rather than a guessed number). `contextUsage` is the LATEST turn's usage: since the
-  // engine resends the full history every call, its `total_tokens` already IS current context
-  // occupancy — no client-side accumulation needed.
+  // The curated matrix (`modelContextWindows` below) has no entries for `ollama:` models —
+  // it can't: those are arbitrary local models, not something a static table can cover. So for
+  // Ollama specifically we look the number up live from the server instead (the model's ACTUAL
+  // loaded context size — Modelfile override, server OLLAMA_CONTEXT_LENGTH default, or Ollama's
+  // own built-in default — which is often far below the model's trained max). `ollamaNumCtx`
+  // feeds into the SAME composer usage chip every other provider uses (see `contextWindow` at
+  // the Composer call site below), just sourced live instead of from the matrix.
   //
-  // `numCtx` is refetched after EVERY turn's usage, not just once per model: Ollama only fixes
-  // a model's REAL context size when it loads it (Modelfile override, server
-  // OLLAMA_CONTEXT_LENGTH default, or its own built-in default), and that's often far below the
-  // model's trained max. Before the model has ever been loaded, the backend can only offer a
-  // best-effort estimate (see `providers.registry.ollama_context_window`) — refetching once a
-  // turn has actually completed (the model is now guaranteed loaded) gets the authoritative
-  // number instead.
-  const [contextUsage, setContextUsage] = useState<{
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  } | null>(null);
-  const [numCtx, setNumCtx] = useState<number | null>(null);
+  // Refetched after EVERY turn's usage, not just once per model: before the model has ever
+  // been loaded, the backend can only offer a best-effort estimate (see
+  // `providers.registry.ollama_context_window`) — refetching once a turn has actually
+  // completed (the model is now guaranteed loaded) gets the authoritative number instead.
+  const [ollamaNumCtx, setOllamaNumCtx] = useState<number | null>(null);
   // The WS event handler closure (below) is built once per socket connect and doesn't
   // re-run when `model` changes alone (same staleness problem `streamingRef` solves for the
   // streaming buffer) — read this ref there instead of the closed-over `model`.
@@ -180,13 +183,19 @@ export function App() {
   useEffect(() => {
     modelRef.current = model;
   }, [model]);
-  const refreshNumCtx = (forModel: string) => {
+  const refreshOllamaNumCtx = (forModel: string) => {
     if (!forModel.startsWith("ollama:")) return;
     getOllamaContextWindow(forModel.slice("ollama:".length)).then((r) => {
-      if (r.ok && typeof r.num_ctx === "number") setNumCtx(r.num_ctx);
+      if (r.ok && typeof r.num_ctx === "number") setOllamaNumCtx(r.num_ctx);
     });
   };
   const [modelLabels, setModelLabels] = useState<Record<string, string>>({});
+  // {full model id → context window in tokens} from the curated matrix (verified only);
+  // drives the composer usage chip's context-fill meter.
+  const [modelContextWindows, setModelContextWindows] = useState<Record<string, number>>({});
+  // Per-session token usage (OPE-42): rebuilt from the transcript on session load,
+  // accumulated live from assistant_message events, reset with the transcript.
+  const [usage, setUsage] = useState<SessionUsage>(emptyUsage());
   const [surfaces, setSurfaces] = useState<SurfaceVisibility>({ cowork: true, chat: false, code: false });
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
@@ -212,15 +221,13 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
-  // A previous model's/session's usage/cap must never linger against a newly selected one
-  // (either a model switch, or opening a different chat with the SAME model — each session has
-  // its own independent message history, so the bar must not keep showing the last session's
-  // count) — re-fetch the (possibly-estimated) number right away so switching shows something
-  // promptly.
+  // A previous model's/session's live Ollama cap must never linger against a newly selected
+  // one (either a model switch, or opening a different chat with the SAME model — each session
+  // has its own independent message history) — re-fetch the (possibly-estimated) number right
+  // away so switching shows something promptly.
   useEffect(() => {
-    setContextUsage(null);
-    setNumCtx(null);
-    refreshNumCtx(model);
+    setOllamaNumCtx(null);
+    refreshOllamaNumCtx(model);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, sessionId]);
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
@@ -440,9 +447,12 @@ export function App() {
           setBranch(null);
         }
         try {
-          setItems(itemsFromMessages(await getSessionMessages(last.session_id)));
+          const messages = await getSessionMessages(last.session_id);
+          setItems(itemsFromMessages(messages));
+          setUsage(usageFromMessages(messages));
         } catch {
           setItems([]);
+          setUsage(emptyUsage());
         }
         setSessionId(last.session_id);
         setShowGate(false);
@@ -531,6 +541,7 @@ export function App() {
       .then((s) => {
         setModels(s.models || []);
         setModelLabels(s.model_labels || {});
+        setModelContextWindows(s.model_context_windows || {});
         setModelReady(s.model_ready);
         setDefaultModelId(s.model || "");
         if (s.surfaces) setSurfaces(s.surfaces);
@@ -655,6 +666,13 @@ export function App() {
           setReasoningStream(reasoningRef.current + (d.text || ""));
           break;
         case "assistant_message": {
+          if (d.usage) {
+            setUsage((u) => addTurnUsage(u, d.usage));
+            // The model is now guaranteed loaded — refetch for the authoritative live Ollama
+            // num_ctx (see the comment by its state declaration for why the pre-turn value can
+            // be an overestimate). modelRef, not `model`: this closure is stale on model switch.
+            refreshOllamaNumCtx(modelRef.current);
+          }
           // The event's reasoning is authoritative (covers background-delivered turns);
           // the local buffer is the fallback for older servers.
           const reasoning = d.reasoning || reasoningRef.current;
@@ -670,13 +688,6 @@ export function App() {
             ]);
           setStreaming(""); // finalized into items (or empty tool-only turn)
           setReasoningStream("");
-          if (d.usage) {
-            setContextUsage(d.usage);
-            // The model is now guaranteed loaded — refetch for the authoritative num_ctx
-            // (see the comment by its state declaration for why the pre-turn value can be
-            // an overestimate). modelRef, not `model`: this closure is stale on model switch.
-            refreshNumCtx(modelRef.current);
-          }
           break;
         }
         case "tool_proposed":
@@ -942,6 +953,7 @@ export function App() {
     const target = forAgent || agent;
     setSurface("session"); // return to the conversation view if we were on a sub-view
     setItems([]);
+    setUsage(emptyUsage());
     setStreaming("");
     setTodo([]);
     setRunning(false);
@@ -1006,8 +1018,10 @@ export function App() {
     try {
       const messages = await getSessionMessages(id);
       setItems(itemsFromMessages(messages));
+      setUsage(usageFromMessages(messages));
     } catch {
       setItems([]);
+      setUsage(emptyUsage());
     }
   };
   const switchAgent = async (name: string) => {
@@ -1020,6 +1034,7 @@ export function App() {
 
     setAgent(name);
     setItems([]);
+    setUsage(emptyUsage());
     setStreaming("");
     setTodo([]);
     setRunning(false);
@@ -1048,9 +1063,12 @@ export function App() {
       else setShowGate(true);
       setSessionId(target.sessionId);
       try {
-        setItems(itemsFromMessages(await getSessionMessages(target.sessionId)));
+        const messages = await getSessionMessages(target.sessionId);
+        setItems(itemsFromMessages(messages));
+        setUsage(usageFromMessages(messages));
       } catch {
         setItems([]);
+        setUsage(emptyUsage());
       }
       return;
     }
@@ -1074,6 +1092,7 @@ export function App() {
     setShowGate(false);
     setGateCreate(false);
     setItems([]);
+    setUsage(emptyUsage());
     setStreaming("");
     setTodo([]);
     setSessionId(newId());
@@ -1086,6 +1105,7 @@ export function App() {
     const target = forAgent || agent;
     setSurface("session");
     setItems([]);
+    setUsage(emptyUsage());
     setStreaming("");
     setTodo([]);
     setRunning(false);
@@ -1110,6 +1130,7 @@ export function App() {
     // Archiving the open chat: leave it and start fresh (it moves to the Archived section).
     if (archived && id === sessionId) {
       setItems([]);
+      setUsage(emptyUsage());
       setStreaming("");
       setTodo([]);
       setRunning(false);
@@ -1122,6 +1143,7 @@ export function App() {
     refreshSessions();
     if (id === sessionId) {
       setItems([]);
+      setUsage(emptyUsage());
       setStreaming("");
       setTodo([]);
       setRunning(false);
@@ -1582,10 +1604,6 @@ export function App() {
               </div>
             )}
 
-            {numCtx != null && contextUsage != null && (
-              <ContextWindowBar usedTokens={contextUsage.total_tokens} maxTokens={numCtx} />
-            )}
-
             <Composer
               mode={mode}
               model={model}
@@ -1607,6 +1625,8 @@ export function App() {
               onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}
               prefill={composerPrefill}
               resetKey={sessionId}
+              usage={usage}
+              contextWindow={model.startsWith("ollama:") ? ollamaNumCtx ?? undefined : modelContextWindows[model]}
               placeholder={
                 agent === "code"
                   ? "Ask the coder to build, fix, or explain…  (drop or paste files)"

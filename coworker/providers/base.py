@@ -22,6 +22,35 @@ class ToolCall:
 
 
 @dataclass
+class TokenUsage:
+    """Normalized token counts for one model round-trip.
+
+    `input` counts only fresh (uncached) prompt tokens; cached prompt tokens are
+    split into `cache_read`/`cache_write`. Providers that don't report a cache
+    split (Ollama, most compat vendors) leave the cache fields at 0. `output`
+    includes thinking tokens where the vendor bills them as output (Gemini).
+    """
+
+    input: int = 0
+    output: int = 0
+    cache_read: int = 0
+    cache_write: int = 0
+
+    @property
+    def context_tokens(self) -> int:
+        """Prompt-side total — what actually occupied the context window."""
+        return self.input + self.cache_read + self.cache_write
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "input": self.input,
+            "output": self.output,
+            "cache_read": self.cache_read,
+            "cache_write": self.cache_write,
+        }
+
+
+@dataclass
 class AssistantTurn:
     """One assistant response: free text and/or a set of tool calls."""
 
@@ -38,13 +67,9 @@ class AssistantTurn:
     # owning provider consumes its own key when converting history; every other
     # provider must strip or ignore foreign underscore keys before its wire call.
     extras: dict[str, Any] = field(default_factory=dict)
-    # Token accounting for this call, when the provider returns it: {prompt_tokens,
-    # completion_tokens, total_tokens}. `total_tokens` is the FULL context occupancy
-    # for this turn (the provider tokenized whatever we sent, which — since the engine
-    # resends the entire message history every turn, see `_outbound_messages` — is
-    # already the whole conversation, not just the latest message). Display-only;
-    # never persisted or replayed as context.
-    usage: Optional[dict[str, int]] = None
+    # Token counts for this round-trip, normalized across providers. None when the
+    # backend didn't report usage (some compat servers) — never guessed.
+    usage: Optional[TokenUsage] = None
 
     @property
     def has_tool_calls(self) -> bool:

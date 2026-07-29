@@ -15,6 +15,7 @@ from .base import (
     ModelCapabilities,
     ProviderClient,
     StreamChunk,
+    TokenUsage,
     ToolCall,
 )
 from .capabilities import capabilities_for
@@ -75,11 +76,6 @@ def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, An
 
 _MAX_TOKENS_ERROR = "'max_tokens' is not supported"
 
-# Some OpenAI-compatible servers 400 on an unrecognized `stream_options` field rather than
-# ignoring it. We only learn that from the rejection, so — same contract as the other
-# param-fix retries — drop it and retry once rather than gating it up front per vendor.
-_STREAM_OPTIONS_ERROR = "stream_options"
-
 
 def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
     """Kwargs for the one retry an unsupported-parameter error earns, or re-raise.
@@ -96,29 +92,28 @@ def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
         fixed = dict(kwargs)
         fixed["max_completion_tokens"] = fixed.pop("max_tokens")
         return fixed
-    if _STREAM_OPTIONS_ERROR in msg and "stream_options" in kwargs:
+    if "stream_options" in msg and "stream_options" in kwargs:
+        # Older compat servers don't know the usage opt-in; drop it, lose only metering.
         fixed = dict(kwargs)
         fixed.pop("stream_options")
         return fixed
     raise exc
 
 
-def _usage_dict(usage: Any) -> Optional[dict[str, int]]:
-    """Normalize an OpenAI-SDK `usage` object (present on non-streaming responses, and on the
-    final chunk of a stream when `stream_options.include_usage` was requested) into a plain
-    dict, or None when the server didn't return one (older/minimal compat servers)."""
+def _usage_from(usage: Any) -> Optional[TokenUsage]:
+    """chat.completions usage → normalized counts. `prompt_tokens` INCLUDES cached
+    tokens, so the cached share is subtracted into `cache_read`; no write-side split
+    exists on this API shape."""
     if usage is None:
         return None
-    prompt = getattr(usage, "prompt_tokens", None)
-    completion = getattr(usage, "completion_tokens", None)
-    total = getattr(usage, "total_tokens", None)
-    if prompt is None and completion is None and total is None:
-        return None
-    return {
-        "prompt_tokens": prompt or 0,
-        "completion_tokens": completion or 0,
-        "total_tokens": total if total is not None else (prompt or 0) + (completion or 0),
-    }
+    prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+    details = getattr(usage, "prompt_tokens_details", None)
+    cached = int(getattr(details, "cached_tokens", 0) or 0)
+    return TokenUsage(
+        input=max(prompt - cached, 0),
+        output=int(getattr(usage, "completion_tokens", 0) or 0),
+        cache_read=cached,
+    )
 
 
 class OpenAIProvider(ProviderClient):
@@ -201,7 +196,7 @@ class OpenAIProvider(ProviderClient):
             finish_reason=getattr(choice, "finish_reason", None),
             raw=response,
             reasoning=_delta_reasoning(message),
-            usage=_usage_dict(getattr(response, "usage", None)),
+            usage=_usage_from(getattr(response, "usage", None)),
         )
 
     def capabilities(self, model: str) -> ModelCapabilities:
@@ -219,10 +214,8 @@ class OpenAIProvider(ProviderClient):
             "model": model,
             "messages": _strip_foreign_sidecars(messages),
             "stream": True,
-            # Ask for a final usage-only chunk (OpenAI's own streaming contract; most
-            # compat servers — Ollama included — honor it too). Servers that reject the
-            # field outright are handled by _param_fix_retry below, so this stays
-            # unconditional rather than gated per-vendor.
+            # Usage on the final chunk (empty `choices`). Compat servers that reject
+            # the option get a one-shot retry without it (_param_fix_retry).
             "stream_options": {"include_usage": True},
             **settings,
         }
@@ -235,7 +228,7 @@ class OpenAIProvider(ProviderClient):
         reasoning_parts: list[str] = []
         tool_accum: dict[int, dict[str, str]] = {}
         finish_reason = None
-        usage: Optional[dict[str, int]] = None
+        usage: Optional[TokenUsage] = None
 
         # Up to three param-fix retries: effort, max_tokens, and stream_options can each
         # independently need fixing.
@@ -248,7 +241,7 @@ class OpenAIProvider(ProviderClient):
         else:
             chunks = client.chat.completions.create(**kwargs)
         for chunk in chunks:
-            chunk_usage = _usage_dict(getattr(chunk, "usage", None))
+            chunk_usage = _usage_from(getattr(chunk, "usage", None))
             if chunk_usage is not None:
                 usage = chunk_usage
             choices = getattr(chunk, "choices", None)

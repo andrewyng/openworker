@@ -75,6 +75,7 @@ from ..agents import list_agents as _list_agents
 from ..providers import (
     ProviderClient,
     ProviderRouter,
+    descriptor_configured,
     get_descriptor,
     ollama_context_window as ollama_context_window_lookup,
     provider_descriptors,
@@ -1392,17 +1393,10 @@ class SessionManager:
         """Descriptor + per-provider status for the Settings UI. Never returns secret values;
         non-secret field values (e.g. the Ollama base URL) ARE returned so the form can prefill.
         """
-        import os
-
         out: list[dict[str, Any]] = []
         for d in provider_descriptors():
             profile = self.secrets.get(f"provider:{d.name}") or {}
-            if d.needs_key:
-                configured = bool(profile.get("api_key")) or bool(
-                    d.env_key and os.environ.get(d.env_key)
-                )
-            else:
-                configured = True  # keyless (Ollama) — usable out of the box
+            configured = descriptor_configured(d, profile)
             values = {
                 f.key: profile.get(f.key)
                 for f in d.fields
@@ -1567,8 +1561,8 @@ class SessionManager:
         self, name: str, fields: Optional[dict[str, Any]]
     ) -> dict[str, Any]:
         """Test a provider's credentials with a live read-only call, WITHOUT persisting them, so
-        onboarding can offer a "Test" button. Falls back to the stored/env key when the form left
-        the key blank (e.g. testing an already-configured provider)."""
+        onboarding can offer a "Test" button. Falls back to stored/env values when the form left
+        a field blank (e.g. testing an already-configured provider)."""
         import os
 
         d = get_descriptor(name)
@@ -1576,13 +1570,28 @@ class SessionManager:
             return {"ok": False, "error": f"unknown provider: {name}"}
         fields = fields or {}
         profile = self.secrets.get(f"provider:{name}") or {}
-        api_key = (fields.get("api_key") or profile.get("api_key") or "").strip()
+        merged = {}
+        for f in d.fields:
+            val = fields.get(f.key) or profile.get(f.key) or ""
+            if isinstance(val, str):
+                val = val.strip()
+            if val:
+                merged[f.key] = val
+        api_key = merged.get("api_key", "")
         if not api_key and d.env_key:
             api_key = os.environ.get(d.env_key, "").strip()
-        base_url = (fields.get("base_url") or profile.get("base_url") or "").strip()
-        if d.needs_key and not api_key:
+        has_key_field = any(f.key == "api_key" for f in d.fields)
+        if d.needs_key and has_key_field and not api_key:
             return {"ok": False, "error": "Enter an API key to test."}
-        return verify_provider_key(name, api_key=api_key, base_url=base_url)
+        if d.needs_key and not has_key_field:
+            # Multi-field cloud providers (Bedrock): required fields must be present;
+            # actual credentials may be ambient (~/.aws, env) and are checked by the call.
+            missing = [f.label for f in d.fields if f.required and not merged.get(f.key)]
+            if missing:
+                return {"ok": False, "error": "missing: " + ", ".join(missing)}
+        return verify_provider_key(
+            name, api_key=api_key, base_url=merged.get("base_url", ""), fields=merged
+        )
 
     def ollama_context_window(self, model: str) -> dict[str, Any]:
         """The context window configured for an `ollama:`-routed model, for the GUI's
@@ -1607,12 +1616,7 @@ class SessionManager:
         d = get_descriptor(name)
         if d is None:
             return False
-        if not d.needs_key:
-            return True  # keyless (Ollama)
-        profile = self.secrets.get(f"provider:{name}") or {}
-        return bool(profile.get("api_key")) or bool(
-            d.env_key and os.environ.get(d.env_key)
-        )
+        return descriptor_configured(d, self.secrets.get(f"provider:{name}") or {})
 
     # -- settings / prefs (model API key, default model, onboarding) -------------
     def _prefs_path(self) -> Path:
@@ -1763,7 +1767,7 @@ class SessionManager:
         selectable = [m for m in self._curated_models() if _selectable(m)]
         if self.model not in selectable:
             selectable.insert(0, self.model)
-        from ..providers.matrix import model_labels
+        from ..providers.matrix import model_context_windows, model_labels
 
         return {
             "provider": "openai",
@@ -1772,6 +1776,9 @@ class SessionManager:
             # Curated-matrix display names ({full id → "GLM-5.2 · via Together"}) so every
             # picker shows human labels; custom models absent here render their raw id.
             "model_labels": model_labels(),
+            # {full id → context window in tokens}, verified matrix entries only —
+            # drives the composer's context-fill meter (absent id → meter hides).
+            "model_context_windows": model_context_windows(),
             "has_key": env_key or stored,
             # Provider-agnostic "can this default model actually run?" — true when the default
             # model's provider is configured (any provider, not just OpenAI). Drives the GUI's
