@@ -75,6 +75,11 @@ def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, An
 
 _MAX_TOKENS_ERROR = "'max_tokens' is not supported"
 
+# Some OpenAI-compatible servers 400 on an unrecognized `stream_options` field rather than
+# ignoring it. We only learn that from the rejection, so — same contract as the other
+# param-fix retries — drop it and retry once rather than gating it up front per vendor.
+_STREAM_OPTIONS_ERROR = "stream_options"
+
 
 def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
     """Kwargs for the one retry an unsupported-parameter error earns, or re-raise.
@@ -91,7 +96,29 @@ def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
         fixed = dict(kwargs)
         fixed["max_completion_tokens"] = fixed.pop("max_tokens")
         return fixed
+    if _STREAM_OPTIONS_ERROR in msg and "stream_options" in kwargs:
+        fixed = dict(kwargs)
+        fixed.pop("stream_options")
+        return fixed
     raise exc
+
+
+def _usage_dict(usage: Any) -> Optional[dict[str, int]]:
+    """Normalize an OpenAI-SDK `usage` object (present on non-streaming responses, and on the
+    final chunk of a stream when `stream_options.include_usage` was requested) into a plain
+    dict, or None when the server didn't return one (older/minimal compat servers)."""
+    if usage is None:
+        return None
+    prompt = getattr(usage, "prompt_tokens", None)
+    completion = getattr(usage, "completion_tokens", None)
+    total = getattr(usage, "total_tokens", None)
+    if prompt is None and completion is None and total is None:
+        return None
+    return {
+        "prompt_tokens": prompt or 0,
+        "completion_tokens": completion or 0,
+        "total_tokens": total if total is not None else (prompt or 0) + (completion or 0),
+    }
 
 
 class OpenAIProvider(ProviderClient):
@@ -174,6 +201,7 @@ class OpenAIProvider(ProviderClient):
             finish_reason=getattr(choice, "finish_reason", None),
             raw=response,
             reasoning=_delta_reasoning(message),
+            usage=_usage_dict(getattr(response, "usage", None)),
         )
 
     def capabilities(self, model: str) -> ModelCapabilities:
@@ -191,6 +219,11 @@ class OpenAIProvider(ProviderClient):
             "model": model,
             "messages": _strip_foreign_sidecars(messages),
             "stream": True,
+            # Ask for a final usage-only chunk (OpenAI's own streaming contract; most
+            # compat servers — Ollama included — honor it too). Servers that reject the
+            # field outright are handled by _param_fix_retry below, so this stays
+            # unconditional rather than gated per-vendor.
+            "stream_options": {"include_usage": True},
             **settings,
         }
         if tools:
@@ -202,9 +235,11 @@ class OpenAIProvider(ProviderClient):
         reasoning_parts: list[str] = []
         tool_accum: dict[int, dict[str, str]] = {}
         finish_reason = None
+        usage: Optional[dict[str, int]] = None
 
-        # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
-        for _ in range(2):
+        # Up to three param-fix retries: effort, max_tokens, and stream_options can each
+        # independently need fixing.
+        for _ in range(3):
             try:
                 chunks = client.chat.completions.create(**kwargs)
                 break
@@ -213,6 +248,9 @@ class OpenAIProvider(ProviderClient):
         else:
             chunks = client.chat.completions.create(**kwargs)
         for chunk in chunks:
+            chunk_usage = _usage_dict(getattr(chunk, "usage", None))
+            if chunk_usage is not None:
+                usage = chunk_usage
             choices = getattr(chunk, "choices", None)
             if not choices:
                 continue
@@ -262,6 +300,7 @@ class OpenAIProvider(ProviderClient):
                 tool_calls=tool_calls,
                 finish_reason=finish_reason,
                 reasoning="".join(reasoning_parts) or None,
+                usage=usage,
             )
         )
 

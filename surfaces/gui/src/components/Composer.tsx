@@ -56,6 +56,11 @@ interface Props {
   // False when the default model's provider has no key — the composer shows a "connect a model"
   // banner and routes sends to setup (preserving the draft) instead of dropping them.
   modelReady?: boolean;
+  // The app-wide default model (used for brand-new sessions) and a setter for it — surfaced as
+  // a "Make default" action on the picker's non-default rows, so switching the default doesn't
+  // require a trip to Settings → Configure Models.
+  defaultModel?: string;
+  onMakeDefault?: (model: string) => void;
   onConnectModel?: () => void;
   onConfigureVoiceInput?: () => void;
   onSend: (text: string, attachments?: Attachment[]) => void;
@@ -476,7 +481,14 @@ export function Composer(props: Props) {
               <span className="model-warn-ico" aria-hidden>⚠</span>
             </button>
           ) : modelsLoaded ? (
-            <Dropdown value={props.model} options={modelOptions} onChange={props.onModelChange} align="right" />
+            <Dropdown
+              value={props.model}
+              options={modelOptions}
+              onChange={props.onModelChange}
+              align="right"
+              defaultValue={props.defaultModel}
+              onMakeDefault={props.onMakeDefault}
+            />
           ) : (
             <button
               className="pill chip text-faint cursor-default"

@@ -454,3 +454,84 @@ def test_complete_picks_up_reasoning_content():
     provider = OpenAIProvider(client=_FakeClient(SimpleNamespace(choices=[choice])))
     turn = provider.complete(model="deepseek-v4-pro", messages=[{"role": "user", "content": "x"}])
     assert turn.text == "Answer" and turn.reasoning == "deep thought"
+
+
+# -- usage capture (context-window status bar, Ollama-only feature) -------------------
+
+
+def test_complete_captures_usage():
+    usage = SimpleNamespace(prompt_tokens=120, completion_tokens=30, total_tokens=150)
+    message = SimpleNamespace(content="hi", tool_calls=None)
+    choice = SimpleNamespace(message=message, finish_reason="stop")
+    response = SimpleNamespace(choices=[choice], usage=usage)
+    provider = OpenAIProvider(client=_FakeClient(response))
+
+    turn = provider.complete(model="qwen3-coder:30b", messages=[])
+
+    assert turn.usage == {
+        "prompt_tokens": 120,
+        "completion_tokens": 30,
+        "total_tokens": 150,
+    }
+
+
+def test_complete_usage_absent_is_none():
+    """Older/minimal compat servers that don't send `usage` at all must not crash the call —
+    the bar just doesn't render (see engine.py's `if turn.usage:` gate)."""
+    client = _FakeClient(_response(content="hi"))  # no `usage` attr at all
+    provider = OpenAIProvider(client=client)
+    turn = provider.complete(model="gpt-5.5", messages=[])
+    assert turn.usage is None
+
+
+def test_stream_requests_usage_and_captures_final_chunk():
+    """The engine resends full history every turn (see `_outbound_messages`), so the LAST
+    response's `total_tokens` already reflects current context occupancy — this is why the
+    bar needs no client-side accumulation, only the final chunk's usage."""
+
+    def uchunk(prompt, completion, total):
+        return SimpleNamespace(
+            choices=[],
+            usage=SimpleNamespace(
+                prompt_tokens=prompt, completion_tokens=completion, total_tokens=total
+            ),
+        )
+
+    chunks = [_chunk(content="Hi"), _chunk(finish="stop"), uchunk(200, 10, 210)]
+    client = _StreamClient(chunks)
+    provider = OpenAIProvider(client=client)
+
+    out = list(provider.stream(model="qwen3-coder:30b", messages=[]))
+
+    assert out[-1].turn.usage == {
+        "prompt_tokens": 200,
+        "completion_tokens": 10,
+        "total_tokens": 210,
+    }
+
+
+def test_stream_options_dropped_on_rejection_and_retried():
+    """A compat server that 400s on an unrecognized `stream_options` field must not break
+    streaming entirely — the same param-fix-retry contract as reasoning_effort/max_tokens."""
+
+    class _StreamOptionsRejecting:
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            if "stream_options" in kwargs:
+                raise RuntimeError(
+                    "Error code: 400 - Unrecognized request argument supplied: stream_options"
+                )
+            return iter([_chunk(content="ok"), _chunk(finish="stop")])
+
+    client = _StreamClient([])
+    client.chat.completions = _StreamOptionsRejecting()
+    provider = OpenAIProvider(client=client)
+
+    turn = list(provider.stream(model="some-model", messages=[]))[-1].turn
+
+    assert turn.text == "ok"
+    calls = client.chat.completions.calls
+    assert "stream_options" in calls[0] and "stream_options" not in calls[1]

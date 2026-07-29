@@ -1319,6 +1319,19 @@ export async function verifyProvider(
   return res.json();
 }
 
+/** Context window configured for an `ollama:`-routed model, for the context-window status bar.
+ * Ollama-only: it's the one provider whose native API exposes the real configured number
+ * instead of one we'd have to hardcode per model. `model` is the bare model name (no
+ * `ollama:` prefix). */
+export async function getOllamaContextWindow(
+  model: string,
+): Promise<{ ok: boolean; num_ctx?: number; error?: string }> {
+  const res = await fetch(
+    `${httpBase()}/v1/providers/ollama/context-window?model=${encodeURIComponent(model)}`,
+  );
+  return res.json();
+}
+
 /** Client-side provider guess from an API key's shape (mirrors the server's detect_provider). */
 export function detectProvider(apiKey: string): string | null {
   const key = (apiKey || "").trim();

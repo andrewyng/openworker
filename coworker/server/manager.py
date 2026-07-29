@@ -76,6 +76,7 @@ from ..providers import (
     ProviderClient,
     ProviderRouter,
     get_descriptor,
+    ollama_context_window as ollama_context_window_lookup,
     provider_descriptors,
     verify_provider_key,
 )
@@ -1582,6 +1583,17 @@ class SessionManager:
         if d.needs_key and not api_key:
             return {"ok": False, "error": "Enter an API key to test."}
         return verify_provider_key(name, api_key=api_key, base_url=base_url)
+
+    def ollama_context_window(self, model: str) -> dict[str, Any]:
+        """The context window configured for an `ollama:`-routed model, for the GUI's
+        context-window status bar (Ollama only — every other provider hides or lacks this;
+        see `providers.registry.ollama_context_window`). `model` is the bare model name
+        (any `ollama:` prefix already stripped by the caller)."""
+        profile = self.secrets.get("provider:ollama") or {}
+        num_ctx = ollama_context_window_lookup(profile.get("base_url"), model)
+        if num_ctx is None:
+            return {"ok": False, "error": "Couldn't read the context window from Ollama."}
+        return {"ok": True, "num_ctx": num_ctx}
 
     def _model_provider(self, model: str) -> str:
         """The provider a model string routes to (known `prefix:` or the OpenAI default)."""

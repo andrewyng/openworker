@@ -501,9 +501,12 @@ button.btn.danger { color: var(--accent); }
 .dd-item { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
 .dd-item:hover { background: var(--paper); }
 .dd-item.sel .dd-label { color: var(--accent); }
-.dd-label { font-size: 13.5px; color: var(--ink); display: flex; justify-content: space-between; align-items: center; }
+.dd-label { font-size: 13.5px; color: var(--ink); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.dd-label-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-label-right { display: flex; align-items: center; gap: 6px; flex: none; }
 .dd-item .chk { color: var(--accent); }
 .dd-desc { font-size: 12px; color: var(--faint); margin-top: 1px; }
+.dd-item:hover .dd-make { visibility: visible; }
 .send { width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--accent); color: #fff; cursor: pointer; font-size: 16px; }
 .send:disabled { opacity: 0.4; cursor: default; }
 .statusline { max-width: 760px; margin: 6px auto 0; font-size: 12px; color: var(--faint); display: flex; gap: 12px; }

@@ -15,6 +15,7 @@ from .registry import (
     build_provider_client,
     detect_provider,
     get_descriptor,
+    ollama_context_window,
     provider_descriptors,
     provider_names,
     verify_provider_key,
@@ -41,4 +42,5 @@ __all__ = [
     "build_provider_client",
     "detect_provider",
     "verify_provider_key",
+    "ollama_context_window",
 ]

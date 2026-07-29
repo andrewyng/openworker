@@ -133,6 +133,73 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     return OpenAIProvider(api_key="ollama", base_url=base_url)
 
 
+def ollama_context_window(
+    base_url: Optional[str], model: str, timeout: float = 5.0
+) -> Optional[int]:
+    """The context window actually configured for `model` on this Ollama server — the number
+    the context-window status bar compares token usage against. Unlike every other provider
+    here, Ollama exposes this directly (no hardcoded per-model table to maintain).
+
+    Ollama fixes a model's ACTUAL context size at load time — resolved from whichever wins:
+    an explicit per-request `options.num_ctx` (we don't send one), a Modelfile `num_ctx`
+    override, the server's `OLLAMA_CONTEXT_LENGTH` env default, or Ollama's own built-in
+    default. None of that resolution is visible from the Modelfile alone, so:
+
+    1. `/api/ps` (native, root — currently LOADED models) is checked first: it reports the
+       loaded instance's real `context_length`, i.e. the number actually in effect. This is
+       the authoritative source whenever it's available, and is very often smaller than the
+       model's trained maximum (e.g. a model trained for 128k tokens still defaults to a
+       modest window unless something explicitly raised it).
+    2. Not loaded yet (nothing's run against this model since the server started) → best-effort
+       fallback via `/api/show`: a Modelfile `num_ctx` override if the model was created with
+       one, else the model's trained max from `model_info["<arch>.context_length"]` (the
+       arch-prefixed key varies — `llama.`, `qwen3.`, … — so we scan by suffix). This estimate
+       can be wrong (too high) until the model actually loads; callers that can refetch after
+       a turn completes (the model is then guaranteed loaded) should do so for the accurate
+       number — see the GUI's context-window bar, which refetches on every turn's usage event.
+
+    Returns None on any failure (server unreachable, unknown model, no field found) — callers
+    should treat that as "can't show the bar" rather than fall back to a guessed number.
+    """
+    import httpx
+
+    root = _normalize_ollama_url(base_url)
+    if root.endswith("/v1"):
+        root = root[: -len("/v1")]
+
+    try:
+        resp = httpx.get(f"{root}/api/ps", timeout=timeout)
+        resp.raise_for_status()
+        for entry in resp.json().get("models", []):
+            if model in (entry.get("name"), entry.get("model")):
+                ctx = entry.get("context_length")
+                if isinstance(ctx, int):
+                    return ctx
+    except Exception:
+        pass
+
+    try:
+        resp = httpx.post(f"{root}/api/show", json={"model": model}, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return None
+
+    for line in str(data.get("parameters") or "").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "num_ctx":
+            try:
+                return int(parts[1])
+            except ValueError:
+                pass
+
+    model_info = data.get("model_info") or {}
+    for key, value in model_info.items():
+        if key.endswith(".context_length") and isinstance(value, int):
+            return value
+    return None
+
+
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
     Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its

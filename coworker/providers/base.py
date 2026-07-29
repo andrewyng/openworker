@@ -38,6 +38,13 @@ class AssistantTurn:
     # owning provider consumes its own key when converting history; every other
     # provider must strip or ignore foreign underscore keys before its wire call.
     extras: dict[str, Any] = field(default_factory=dict)
+    # Token accounting for this call, when the provider returns it: {prompt_tokens,
+    # completion_tokens, total_tokens}. `total_tokens` is the FULL context occupancy
+    # for this turn (the provider tokenized whatever we sent, which — since the engine
+    # resends the entire message history every turn, see `_outbound_messages` — is
+    # already the whole conversation, not just the latest message). Display-only;
+    # never persisted or replayed as context.
+    usage: Optional[dict[str, int]] = None
 
     @property
     def has_tool_calls(self) -> bool:

@@ -360,6 +360,13 @@ class TurnEngine:
             }
             if turn.reasoning:
                 payload["reasoning"] = turn.reasoning
+            if turn.usage:
+                # `total_tokens` already reflects the FULL context occupancy for this turn,
+                # not just the latest message — `_outbound_messages` resends the entire
+                # history every call, so the provider tokenized all of it to produce this
+                # number. The context-window status bar (Ollama only) reads this directly,
+                # no client-side accumulation needed.
+                payload["usage"] = turn.usage
             yield Event(EventType.ASSISTANT_MESSAGE, payload)
 
             if not turn.tool_calls:

@@ -4,6 +4,7 @@ import {
   finalizeAutomationRun,
   getArtifacts,
   getHealth,
+  getOllamaContextWindow,
   getRecentWorkspaces,
   getSessionMessages,
   getSessions,
@@ -18,6 +19,7 @@ import {
   deleteSession,
   renameSession,
   runAutomation,
+  setDefaultModel,
   setSessionFlags,
   setUnattended,
   Session,
@@ -39,6 +41,7 @@ import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
+import { ContextWindowBar } from "./components/ContextWindowBar";
 import { Markdown } from "./components/Markdown";
 import { SearchModal } from "./components/SearchModal";
 import { SessionIntro } from "./components/SessionIntro";
@@ -152,6 +155,37 @@ export function App() {
   const [agent, setAgent] = useState("cowork");
   const [model, setModel] = useState("gpt-5.6-sol");
   const [models, setModels] = useState<string[]>([]);
+  // Context-window status bar (Ollama only — every other provider hides the real cap, so no
+  // bar rather than a guessed number). `contextUsage` is the LATEST turn's usage: since the
+  // engine resends the full history every call, its `total_tokens` already IS current context
+  // occupancy — no client-side accumulation needed.
+  //
+  // `numCtx` is refetched after EVERY turn's usage, not just once per model: Ollama only fixes
+  // a model's REAL context size when it loads it (Modelfile override, server
+  // OLLAMA_CONTEXT_LENGTH default, or its own built-in default), and that's often far below the
+  // model's trained max. Before the model has ever been loaded, the backend can only offer a
+  // best-effort estimate (see `providers.registry.ollama_context_window`) — refetching once a
+  // turn has actually completed (the model is now guaranteed loaded) gets the authoritative
+  // number instead.
+  const [contextUsage, setContextUsage] = useState<{
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  } | null>(null);
+  const [numCtx, setNumCtx] = useState<number | null>(null);
+  // The WS event handler closure (below) is built once per socket connect and doesn't
+  // re-run when `model` changes alone (same staleness problem `streamingRef` solves for the
+  // streaming buffer) — read this ref there instead of the closed-over `model`.
+  const modelRef = useRef(model);
+  useEffect(() => {
+    modelRef.current = model;
+  }, [model]);
+  const refreshNumCtx = (forModel: string) => {
+    if (!forModel.startsWith("ollama:")) return;
+    getOllamaContextWindow(forModel.slice("ollama:".length)).then((r) => {
+      if (r.ok && typeof r.num_ctx === "number") setNumCtx(r.num_ctx);
+    });
+  };
   const [modelLabels, setModelLabels] = useState<Record<string, string>>({});
   const [surfaces, setSurfaces] = useState<SurfaceVisibility>({ cowork: true, chat: false, code: false });
   const [mode, setMode] = useState("interactive");
@@ -178,6 +212,17 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
+  // A previous model's/session's usage/cap must never linger against a newly selected one
+  // (either a model switch, or opening a different chat with the SAME model — each session has
+  // its own independent message history, so the bar must not keep showing the last session's
+  // count) — re-fetch the (possibly-estimated) number right away so switching shows something
+  // promptly.
+  useEffect(() => {
+    setContextUsage(null);
+    setNumCtx(null);
+    refreshNumCtx(model);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, sessionId]);
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
   // to, driving the banner + "Back to runs". Best-effort — a run session without context still
   // shows a generic banner (detected by its __run__ id).
@@ -200,6 +245,9 @@ export function App() {
   // composer's "No model connected" chip. Default true so we don't flash the chip before settings
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
+  // App-wide default model (new sessions start on this); kept for the composer picker's
+  // "Make default" affordance. Corrected by loadSettings, same as modelReady above.
+  const [defaultModelId, setDefaultModelId] = useState("");
   const [surface, setSurface] = useState<
     "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings"
   >("session");
@@ -484,9 +532,18 @@ export function App() {
         setModels(s.models || []);
         setModelLabels(s.model_labels || {});
         setModelReady(s.model_ready);
+        setDefaultModelId(s.model || "");
         if (s.surfaces) setSurfaces(s.surfaces);
       })
       .catch(() => {});
+
+  // "Make default" from the composer's model picker (§ owner ask 2026-07-29): same effect as
+  // Settings → Configure Models' "Make default" row action, just reachable without leaving the
+  // chat. Only flips the app-wide default for NEW sessions — never rebinds the current one.
+  const makeDefaultModel = async (m: string) => {
+    const res = await setDefaultModel(m);
+    if (res.ok) setDefaultModelId(m);
+  };
 
   // Open Settings → Configure Models (from the composer's "No model connected" chip).
   const openModelSetup = () => openSettings("models");
@@ -613,6 +670,13 @@ export function App() {
             ]);
           setStreaming(""); // finalized into items (or empty tool-only turn)
           setReasoningStream("");
+          if (d.usage) {
+            setContextUsage(d.usage);
+            // The model is now guaranteed loaded — refetch for the authoritative num_ctx
+            // (see the comment by its state declaration for why the pre-turn value can be
+            // an overestimate). modelRef, not `model`: this closure is stale on model switch.
+            refreshNumCtx(modelRef.current);
+          }
           break;
         }
         case "tool_proposed":
@@ -1500,10 +1564,12 @@ export function App() {
               )}
             </div>
 
-            {/* Scrolled up while the transcript is still growing → offer the way back down.
+            {/* Scrolled up anywhere in the transcript → offer the way back down, regardless of
+                whether a turn is actively running (reading old messages in a finished
+                conversation wants this just as much as following a live stream does).
                 Zero-height strip keeps the pill floating over the scroll area, above the
                 composer, without reserving layout space. */}
-            {!following && (running || !!streaming) && (
+            {!following && (
               <div className="relative h-0 z-10">
                 <button
                   className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-line bg-panel shadow-md text-[12px] text-muted hover:text-ink cursor-pointer whitespace-nowrap"
@@ -1516,6 +1582,10 @@ export function App() {
               </div>
             )}
 
+            {numCtx != null && contextUsage != null && (
+              <ContextWindowBar usedTokens={contextUsage.total_tokens} maxTokens={numCtx} />
+            )}
+
             <Composer
               mode={mode}
               model={model}
@@ -1524,6 +1594,8 @@ export function App() {
               running={running}
               connected={connected}
               modelReady={modelReady}
+              defaultModel={defaultModelId}
+              onMakeDefault={makeDefaultModel}
               onConnectModel={openModelSetup}
               onConfigureVoiceInput={() => openSettings("voice")}
               onSend={send}
