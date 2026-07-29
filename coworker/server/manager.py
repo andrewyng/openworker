@@ -2432,6 +2432,21 @@ class SessionManager:
             if not clients:
                 self._session_clients.pop(session_id, None)
 
+    @staticmethod
+    def _shutdown_engine(engine: TurnEngine) -> None:
+        """Stop all processes owned by an engine before dropping its last reference."""
+        try:
+            engine.request_interrupt()
+        except Exception:
+            pass
+        executor = getattr(engine, "executor", None)
+        shutdown = getattr(executor, "shutdown", None)
+        if callable(shutdown):
+            try:
+                shutdown()
+            except Exception:
+                pass
+
     async def broadcast_session(self, session_id: str, message: dict) -> None:
         """Fan a turn event out to every socket viewing this session. Best-effort: a dead socket
         is dropped, never fatal to the turn (delivery is socket-independent)."""
@@ -2445,7 +2460,19 @@ class SessionManager:
         await self.scheduler.stop()
         await self.stop_gateway()
         await self.mcp.aclose()
-        self.audit_store.close()
+        for engine in list(self._engines.values()):
+            self._shutdown_engine(engine)
+        self._engines.clear()
+        for store in (
+            self.audit_store,
+            self.session_store,
+            self.memory_store,
+            self.task_store,
+        ):
+            try:
+                store.close()
+            except Exception:
+                pass
 
     # -- automation (scheduled tasks) -------------------------------------------
     def approval_prompt_data(self, session_id: str, request) -> dict[str, Any]:
@@ -3558,12 +3585,7 @@ class SessionManager:
             return {"ok": False, "error": "internal sessions cannot be deleted here"}
         engine = self._engines.pop(session_id, None)
         if engine is not None:
-            try:
-                # (was engine.interrupt() — a method that never existed; the AttributeError
-                # was silently swallowed, so deleting a running session never stopped it.)
-                engine.request_interrupt()
-            except Exception:
-                pass
+            self._shutdown_engine(engine)
         record = self.session_store.load(session_id)
         ok = self.session_store.delete(session_id)
         # Deleting a session is the one implicit unsubscribe (otherwise subscriptions are permanent).

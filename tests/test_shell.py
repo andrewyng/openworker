@@ -171,6 +171,21 @@ def test_background_task_kill(executor):
     assert res["status"] == "exited"
 
 
+def test_shutdown_stops_shell_and_background_tasks(tmp_path):
+    ex = LocalExecutor(cwd=tmp_path, default_timeout=10)
+    try:
+        shell = ex._proc
+        started = ex.run_background(ECHO_THEN_SLEEP)
+        task = ex._bg_tasks[started["task_id"]]
+
+        ex.shutdown()
+
+        assert shell.poll() is not None
+        assert task.proc.poll() is not None
+    finally:
+        ex.shutdown()
+
+
 def test_background_unknown_task_errors(executor):
     reg = ToolRegistry()
     reg.register_all(shell_tools(executor))

@@ -71,6 +71,15 @@ class Executor(ABC):
     def close(self) -> None:  # pragma: no cover - default no-op
         pass
 
+    def shutdown(self) -> None:
+        """Release every process owned by this executor.
+
+        ``close`` deliberately leaves detached background work alone so a transient shell
+        recovery does not kill it. Session deletion and server shutdown need the opposite
+        guarantee: no command started by the session may outlive that session.
+        """
+        self.close()
+
 
 class _BackgroundTask:
     """One detached background command: its own process (not the persistent shell), a
@@ -414,6 +423,17 @@ class LocalExecutor(Executor):
             self._proc.terminate()
         except (ProcessLookupError, OSError):
             pass
+        try:
+            self._proc.wait(timeout=5)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+    def shutdown(self) -> None:
+        """Stop the persistent shell and all detached background tasks for this session."""
+        self.interrupt_now()
+        self.close()
+        for task_id in list(self._bg_tasks):
+            self.background_kill(task_id)
 
     def _result(
         self, command, exit_code, output, *, timed_out, truncated=False, error=None
