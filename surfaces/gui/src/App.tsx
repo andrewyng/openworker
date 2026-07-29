@@ -28,10 +28,19 @@ import {
   type SurfaceVisibility,
   type WorkspaceCommandTrust,
 } from "./api";
-import type { ApprovalDecision, Attachment, Item, SessionInfo, TodoItem, WsEvent } from "./types";
+import type {
+  ApprovalDecision,
+  Attachment,
+  Item,
+  SessionInfo,
+  SessionUsage,
+  TodoItem,
+  WsEvent,
+} from "./types";
 import { isProjectScoped } from "./personaScope";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
+import { addTurnUsage, emptyUsage, usageFromMessages } from "./usage";
 import { streamMode } from "./streamGate";
 import { InboxItemCard } from "./components/InboxItemCard";
 import { isTauri, platformOS, startWindowDrag } from "./tauri";
@@ -153,6 +162,12 @@ export function App() {
   const [model, setModel] = useState("gpt-5.6-sol");
   const [models, setModels] = useState<string[]>([]);
   const [modelLabels, setModelLabels] = useState<Record<string, string>>({});
+  // {full model id → context window in tokens} from the curated matrix (verified only);
+  // drives the composer usage chip's context-fill meter.
+  const [modelContextWindows, setModelContextWindows] = useState<Record<string, number>>({});
+  // Per-session token usage (OPE-42): rebuilt from the transcript on session load,
+  // accumulated live from assistant_message events, reset with the transcript.
+  const [usage, setUsage] = useState<SessionUsage>(emptyUsage());
   const [surfaces, setSurfaces] = useState<SurfaceVisibility>({ cowork: true, chat: false, code: false });
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
@@ -394,9 +409,12 @@ export function App() {
           setBranch(null);
         }
         try {
-          setItems(itemsFromMessages(await getSessionMessages(last.session_id)));
+          const messages = await getSessionMessages(last.session_id);
+          setItems(itemsFromMessages(messages));
+          setUsage(usageFromMessages(messages));
         } catch {
           setItems([]);
+          setUsage(emptyUsage());
         }
         setSessionId(last.session_id);
         setShowGate(false);
@@ -485,6 +503,7 @@ export function App() {
       .then((s) => {
         setModels(s.models || []);
         setModelLabels(s.model_labels || {});
+        setModelContextWindows(s.model_context_windows || {});
         setModelReady(s.model_ready);
         if (s.surfaces) setSurfaces(s.surfaces);
       })
@@ -603,6 +622,7 @@ export function App() {
           setReasoningStream(reasoningRef.current + (d.text || ""));
           break;
         case "assistant_message": {
+          if (d.usage) setUsage((u) => addTurnUsage(u, d.usage));
           // The event's reasoning is authoritative (covers background-delivered turns);
           // the local buffer is the fallback for older servers.
           const reasoning = d.reasoning || reasoningRef.current;
@@ -886,6 +906,7 @@ export function App() {
     const target = forAgent || agent;
     setSurface("session"); // return to the conversation view if we were on a sub-view
     setItems([]);
+    setUsage(emptyUsage());
     setStreaming("");
     setTodo([]);
     setRunning(false);
@@ -950,8 +971,10 @@ export function App() {
     try {
       const messages = await getSessionMessages(id);
       setItems(itemsFromMessages(messages));
+      setUsage(usageFromMessages(messages));
     } catch {
       setItems([]);
+      setUsage(emptyUsage());
     }
   };
   const switchAgent = async (name: string) => {
@@ -964,6 +987,7 @@ export function App() {
 
     setAgent(name);
     setItems([]);
+    setUsage(emptyUsage());
     setStreaming("");
     setTodo([]);
     setRunning(false);
@@ -992,9 +1016,12 @@ export function App() {
       else setShowGate(true);
       setSessionId(target.sessionId);
       try {
-        setItems(itemsFromMessages(await getSessionMessages(target.sessionId)));
+        const messages = await getSessionMessages(target.sessionId);
+        setItems(itemsFromMessages(messages));
+        setUsage(usageFromMessages(messages));
       } catch {
         setItems([]);
+        setUsage(emptyUsage());
       }
       return;
     }
@@ -1018,6 +1045,7 @@ export function App() {
     setShowGate(false);
     setGateCreate(false);
     setItems([]);
+    setUsage(emptyUsage());
     setStreaming("");
     setTodo([]);
     setSessionId(newId());
@@ -1030,6 +1058,7 @@ export function App() {
     const target = forAgent || agent;
     setSurface("session");
     setItems([]);
+    setUsage(emptyUsage());
     setStreaming("");
     setTodo([]);
     setRunning(false);
@@ -1054,6 +1083,7 @@ export function App() {
     // Archiving the open chat: leave it and start fresh (it moves to the Archived section).
     if (archived && id === sessionId) {
       setItems([]);
+      setUsage(emptyUsage());
       setStreaming("");
       setTodo([]);
       setRunning(false);
@@ -1066,6 +1096,7 @@ export function App() {
     refreshSessions();
     if (id === sessionId) {
       setItems([]);
+      setUsage(emptyUsage());
       setStreaming("");
       setTodo([]);
       setRunning(false);
@@ -1555,6 +1586,8 @@ export function App() {
               onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}
               prefill={composerPrefill}
               resetKey={sessionId}
+              usage={usage}
+              contextWindow={modelContextWindows[model]}
               placeholder={
                 agent === "code"
                   ? "Ask the coder to build, fix, or explain…  (drop or paste files)"
