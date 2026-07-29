@@ -8,13 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import stat
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 from coworker.mcp import build_callables, load_mcp_servers, tool_name
-from coworker.mcp.config import MCPServerDef
+from coworker.mcp.config import MCPServerDef, global_mcp_path, put_global_server
 from coworker.secrets import SecretStore
 from coworker.server.app import create_app
 from coworker.server.manager import SessionManager
@@ -87,6 +91,30 @@ def test_var_resolution(tmp_path, monkeypatch):
     )
     docs = load_mcp_servers(None, secrets=SecretStore())[0]
     assert docs.headers["Authorization"] == "Bearer sekret"
+
+
+def test_global_mcp_config_is_private(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    put_global_server(
+        "docs",
+        {
+            "url": "https://x/mcp",
+            "headers": {"Authorization": "Bearer secret"},
+        },
+    )
+    path = global_mcp_path()
+    assert "Bearer secret" in path.read_text(encoding="utf-8")
+
+    if sys.platform == "win32":
+        out = subprocess.run(
+            ["icacls", str(path)], capture_output=True, text=True
+        ).stdout
+        user = os.environ.get("USERNAME", "")
+        assert user and user in out
+        assert "NT AUTHORITY\\SYSTEM" not in out
+        assert "BUILTIN\\Administrators" not in out
+    else:
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
 
 
 # -- tool wrapping + bridge ----------------------------------------------------
