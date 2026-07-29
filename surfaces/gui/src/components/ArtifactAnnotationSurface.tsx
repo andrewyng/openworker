@@ -41,6 +41,18 @@ interface LocalRect {
 
 const BLOCK_SELECTOR =
   "p,h1,h2,h3,h4,h5,h6,li,pre,blockquote,table,figure,img,section,article,header,footer,nav,button,a";
+const GENERIC_BLOCK_TAGS = new Set(["div", "span", "main", "aside", "form"]);
+const BLOCK_DISPLAYS = new Set([
+  "block",
+  "flex",
+  "grid",
+  "inline-block",
+  "inline-flex",
+  "inline-grid",
+  "list-item",
+  "table",
+  "flow-root",
+]);
 const SELECTION_PAD_X = 2.3409;
 const SELECTION_PAD_TOP = 2.85;
 const SELECTION_PAD_BOTTOM = 3.993;
@@ -138,6 +150,32 @@ function cssPath(element: Element, root: Element): string {
     current = parentElement;
   }
   return parts.join(" > ") || element.tagName.toLowerCase();
+}
+
+function closestAnnotationElement(
+  hit: Element | null,
+  root: HTMLElement,
+  win: Window,
+): HTMLElement | null {
+  let current = hit;
+  while (current && current !== root) {
+    if (current.matches(BLOCK_SELECTOR)) return current as HTMLElement;
+    const tag = current.tagName.toLowerCase();
+    if (GENERIC_BLOCK_TAGS.has(tag)) {
+      const style = win.getComputedStyle(current);
+      const bounds = current.getBoundingClientRect();
+      if (
+        BLOCK_DISPLAYS.has(style.display)
+        && style.visibility !== "hidden"
+        && bounds.width >= 6
+        && bounds.height >= 6
+      ) {
+        return current as HTMLElement;
+      }
+    }
+    current = current.parentElement;
+  }
+  return null;
 }
 
 function FocusBox({ rect, number, draft = false }: {
@@ -503,8 +541,8 @@ function HtmlSurface({
       overlay.style.display = "none";
       const hit = doc.elementFromPoint(event.clientX, event.clientY);
       overlay.style.display = "block";
-      const block = hit?.closest(BLOCK_SELECTOR);
-      if (!block || !doc.body.contains(block)) return;
+      const block = closestAnnotationElement(hit, doc.body, win);
+      if (!block) return;
       const blockBounds = block.getBoundingClientRect();
       const rect = {
         x: blockBounds.left + win.scrollX,

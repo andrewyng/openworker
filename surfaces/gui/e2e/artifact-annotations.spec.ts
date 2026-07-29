@@ -76,6 +76,9 @@ test("artifact comments stage a selected Markdown segment and send it with the t
 test("HTML comments use the same comment cursor and restore the page cursor on exit", async ({
   page,
 }) => {
+  page.on("pageerror", (error) => {
+    throw error;
+  });
   const artifact = {
     path: "output/preview.html",
     abs_path: "/tmp/openworker/output/preview.html",
@@ -94,7 +97,24 @@ test("HTML comments use the same comment cursor and restore the page cursor on e
         path: artifact.path,
         kind: "html",
         sha256: "b".repeat(64),
-        content: "<main><h1>Preview heading</h1><p>Review this paragraph.</p></main>",
+        content: [
+          "<style>",
+          "body { margin: 0; font-family: system-ui; }",
+          ".header { padding: 24px; text-align: center; }",
+          ".subtitle { display: block; margin-top: 8px; }",
+          ".card { margin: 20px; padding: 20px; border-radius: 16px; background: white; }",
+          ".facts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }",
+          ".fact-item { padding: 12px; border-radius: 10px; background: #f8f1e8; }",
+          ".fact-item strong { display: block; }",
+          "</style>",
+          "<main>",
+          "<div class='header'><h1>Preview heading</h1><div class='subtitle'>A styled div subtitle</div></div>",
+          "<div class='card'><h2>Quick Facts</h2><div class='facts-grid'>",
+          "<div class='fact-item'><strong>Size</strong>107–134 cm</div>",
+          "<div class='fact-item'><strong>Weight</strong>35–66 kg</div>",
+          "</div></div>",
+          "</main>",
+        ].join(""),
       },
     }),
   );
@@ -107,6 +127,30 @@ test("HTML comments use the same comment cursor and restore the page cursor on e
     .frameLocator("iframe.artifact-frame")
     .locator(".artifact-annotation-overlay");
   await expect(overlay).toHaveCSS("cursor", "crosshair");
+
+  const frame = page.frameLocator("iframe.artifact-frame");
+  const factItem = frame.locator(".fact-item").filter({ hasText: "107–134 cm" });
+  await expect(factItem).toHaveCount(1);
+  const factBounds = await factItem.boundingBox();
+  expect(factBounds).not.toBeNull();
+  await page.mouse.click(factBounds!.x + 12, factBounds!.y + 12);
+
+  const comment = page.getByPlaceholder("Describe this change…");
+  await expect(comment).toBeVisible();
+  await comment.fill("Make this fact more prominent.");
+  await comment.press("Enter");
+
+  const subtitle = frame.locator(".subtitle");
+  const subtitleBounds = await subtitle.boundingBox();
+  expect(subtitleBounds).not.toBeNull();
+  await page.mouse.click(
+    subtitleBounds!.x + subtitleBounds!.width / 2,
+    subtitleBounds!.y + subtitleBounds!.height / 2,
+  );
+  await expect(comment).toBeVisible();
+  await comment.fill("Shorten this subtitle.");
+  await comment.press("Enter");
+  await expect(page.getByRole("button", { name: /2 comments/ })).toBeVisible();
 
   await page.getByRole("button", { name: "Commenting" }).click();
   await expect(overlay).toHaveCount(0);
