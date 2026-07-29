@@ -116,3 +116,6 @@ class ProviderRouter(ProviderClient):
 
     def capabilities(self, model: str):
         return capabilities_for(model)
+
+    def replay_sidecar_keys(self, model: str) -> frozenset[str]:
+        return self._client_for(model).replay_sidecar_keys(self._bare(model))

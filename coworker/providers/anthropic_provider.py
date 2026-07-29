@@ -520,6 +520,10 @@ class AnthropicProvider(ProviderClient):
     def capabilities(self, model: str) -> ModelCapabilities:
         return capabilities_for(model)
 
+    def replay_sidecar_keys(self, model: str) -> frozenset[str]:
+        # Signed thinking blocks must be replayed verbatim with their tool-use turn.
+        return frozenset({"_anthropic"})
+
     def stream(
         self,
         *,

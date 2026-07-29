@@ -577,3 +577,7 @@ class BedrockProvider(ProviderClient):
     def capabilities(self, model: str) -> ModelCapabilities:
         qualified = model if model.startswith("bedrock:") else f"bedrock:{model}"
         return capabilities_for(qualified)
+
+    def replay_sidecar_keys(self, model: str) -> frozenset[str]:
+        family, rest = self._split(model)
+        return self._family_client(family).replay_sidecar_keys(rest)

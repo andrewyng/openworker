@@ -288,6 +288,21 @@ def test_family_dispatch():
     ]
 
 
+def test_family_replay_sidecars_follow_native_provider():
+    from coworker.providers import AnthropicProvider
+
+    p = BedrockProvider(
+        region="us-east-1",
+        claude_client=AnthropicProvider(client=object()),
+        converse_client=_Recorder(),
+    )
+
+    assert p.replay_sidecar_keys(
+        "claude/anthropic.claude-sonnet-4-6-v1:0"
+    ) == frozenset({"_anthropic"})
+    assert p.replay_sidecar_keys("other/amazon.nova-2-pro-v1:0") == frozenset()
+
+
 def test_claude_family_builds_native_anthropic_over_bedrock(monkeypatch):
     from anthropic import AnthropicBedrock
 

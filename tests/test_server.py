@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+
+import anyio
 import pytest
 from fastapi.testclient import TestClient
 
@@ -321,6 +324,46 @@ def test_ws_simple_turn(tmp_path):
         types = _drain(ws)
         assert "assistant_message" in types
         assert "turn_end" in types
+
+
+def test_ws_final_save_failure_still_marks_idle_and_broadcasts_turn_done(
+    tmp_path, monkeypatch
+):
+    manager = SessionManager(
+        workspace=tmp_path, provider=ScriptedProvider([_text("done")])
+    )
+    original_save = manager.save
+    save_calls = 0
+    failures = 0
+
+    def fail_final_save(session_id, engine):
+        nonlocal save_calls, failures
+        save_calls += 1
+        if save_calls == 2:
+            failures += 1
+            raise RuntimeError("final save failed")
+        return original_save(session_id, engine)
+
+    async def receive_event_with_timeout(ws):
+        with anyio.fail_after(1):
+            message = await ws._send_rx.receive()
+        ws._raise_on_close(message)
+        return json.loads(message["text"])
+
+    monkeypatch.setattr(manager, "save", fail_final_save)
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/final-save-fails") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "user_message", "text": "hello"})
+        types = []
+        while "turn_done" not in types:
+            event = ws.portal.call(receive_event_with_timeout, ws)
+            types.append(event["type"])
+
+    assert failures == 1
+    assert save_calls == 2
+    assert "turn_done" in types
+    assert manager.is_running("final-save-fails") is False
 
 
 def test_ws_rejects_oversized_message(tmp_path):

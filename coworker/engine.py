@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -24,6 +25,8 @@ from .permissions import Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
 from .providers.errors import friendly_model_error
 from .tools import ToolRegistry
+
+logger = logging.getLogger("coworker.engine")
 
 
 class ApprovalOutcome(str, Enum):
@@ -73,6 +76,9 @@ class TurnEngine:
         question_asker: Optional[
             Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
         ] = None,
+        tool_output_store: Any = None,
+        context_windows: Optional[dict[str, int]] = None,
+        context_budget: Any = None,
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
         interrupt_hooks: Optional[list[Callable[[], None]]] = None,
@@ -103,6 +109,23 @@ class TurnEngine:
         # (answerable inline in a live session or from the Inbox when unattended). None on surfaces
         # that can't ask (the tool then no-ops).
         self.question_asker = question_asker
+        self.tool_output_store = tool_output_store
+        self._tool_projector = None
+        self._ephemeral_output_dir = None
+        if tool_output_store is not None:
+            from .tool_outputs import ToolResultProjector
+
+            self._tool_projector = ToolResultProjector(tool_output_store)
+        from .providers.matrix import model_context_windows
+
+        self.context_windows = {
+            **model_context_windows(),
+            **(context_windows or {}),
+        }
+        from .context import ContextBudget
+
+        self.context_budget = context_budget or ContextBudget()
+        self.last_context_projection = None
         self.audit_context: dict[str, Any] = {}
         if instructions and not (
             self.messages and self.messages[0].get("role") == "system"
@@ -395,7 +418,7 @@ class TurnEngine:
         tools = self.registry.schemas() or None
         model, messages, settings = (
             self.model,
-            self._outbound_messages(),
+            self._outbound_messages(tools=tools),
             self.model_settings,
         )
         provider = self.provider
@@ -651,7 +674,31 @@ class TurnEngine:
         if isinstance(result, dict) and "_display" in result:
             display = result.get("_display") or None
             result = {k: v for k, v in result.items() if k != "_display"}
-        message = _tool_result_message(tool_call, result)
+        projected: Any = result
+        stored = None
+        try:
+            if self._tool_projector is not None:
+                outcome = self._tool_projector.project(
+                    tool_call.id,
+                    tool_call.name,
+                    result,
+                )
+                projected, stored = outcome.model_value, outcome.stored
+        except Exception:
+            original_chars: Optional[int] = (
+                len(result) if isinstance(result, str) else None
+            )
+            projected = {
+                "error": "tool output could not be retained",
+                "recoverable": False,
+                **(
+                    {"original_chars": original_chars}
+                    if original_chars is not None
+                    else {}
+                ),
+            }
+            status = "error"
+        message = _tool_result_message(tool_call, projected)
         if display:
             message["_display"] = display
         self.messages.append(message)
@@ -670,12 +717,30 @@ class TurnEngine:
                 status="hidden",
                 reason=" · ".join(parts) + " by privacy filters",
             )
+        spill_meta = (
+            {
+                "output_ref": stored.ref,
+                "original_chars": stored.chars,
+                "original_bytes": stored.bytes,
+                "truncated": True,
+                "content_complete": stored.content_complete,
+            }
+            if stored is not None
+            else {}
+        )
         self._audit(
             tool_call,
             stage="finished",
             status=status,
-            result=result,
-            result_preview=_preview(result),
+            # The audit log follows the same bounded disclosure policy as the model feed.
+            result_preview=_preview(projected),
+            projected_chars=len(_serialize_result(projected)),
+            resource=(
+                str(result["url"])
+                if isinstance(result, dict) and result.get("url")
+                else ""
+            ),
+            **spill_meta,
         )
         rule = self._standing_notes.pop(tool_call.id, "")
         return Event(
@@ -683,7 +748,8 @@ class TurnEngine:
             {
                 "name": tool_call.name,
                 "status": status,
-                "result_preview": _preview(result),
+                "result_preview": _preview(projected),
+                **spill_meta,
                 **({"display": display} if display else {}),
                 **({"standing_rule": rule} if rule else {}),
             },
@@ -870,6 +936,10 @@ class TurnEngine:
             message: dict[str, Any] = {
                 "role": "user",
                 "content": text,
+                # Internal durable marker: context projection uses it to distinguish
+                # in-turn steering from a later standalone user turn when it follows
+                # tool results. Unknown underscore sidecars never reach providers.
+                "_steering": True,
                 "ts": time.time(),
             }
             if source is not None:
@@ -877,15 +947,20 @@ class TurnEngine:
             self.messages.append(message)
         self._steering = []
 
-    def _outbound_messages(self) -> list[dict[str, Any]]:
+    def _outbound_messages(
+        self,
+        *,
+        tools: Optional[list[dict[str, Any]]] = None,
+    ) -> list[dict[str, Any]]:
         """`self.messages` prepared for the provider. The SOLE provider feed (see `_astream`).
 
         Every message is stripped of the display-only sidecars — `source`, `_display`, and
         `ts` — (providers reject unknown keys), unconditionally — whether or not a
         `<system-context>` block is added. When a context
         provider yields a non-empty string, an ephemeral `<system-context>` block is appended to the
-        last user message. Never mutates `self.messages`, so neither the strip nor the block is
-        persisted/replayed.
+        last user message. The resulting copy is then projected inside the provider's
+        message, byte, and token budgets. Never mutates `self.messages`, so neither the
+        strip, the block, argument redactions, nor history omissions are persisted.
         """
         # Strip the display-only sidecars — `source` (connector cards), `_display`
         # (e.g. filter-hidden counts), `ts` (append-time timestamps), `reasoning`
@@ -966,23 +1041,56 @@ class TurnEngine:
         context = (
             self.context_provider() if self.context_provider is not None else ""
         ) or ""
-        if not context:
-            return out
-        block = f"\n\n<system-context>\n{context}\n</system-context>"
-        for i in range(len(out) - 1, -1, -1):
-            if out[i].get("role") != "user":
-                continue
-            msg = dict(out[i])
-            content = msg.get("content")
-            if isinstance(content, str):
-                msg["content"] = content + block
-            elif isinstance(content, list):  # content-parts (text + images)
-                msg["content"] = [*content, {"type": "text", "text": block}]
-            else:
-                msg["content"] = block
-            out[i] = msg
-            break
-        return out
+        if context:
+            block = f"\n\n<system-context>\n{context}\n</system-context>"
+            for i in range(len(out) - 1, -1, -1):
+                if out[i].get("role") != "user":
+                    continue
+                msg = dict(out[i])
+                content = msg.get("content")
+                if isinstance(content, str):
+                    msg["content"] = content + block
+                elif isinstance(content, list):  # content-parts (text + images)
+                    msg["content"] = [*content, {"type": "text", "text": block}]
+                else:
+                    msg["content"] = block
+                out[i] = msg
+                break
+
+        from .context import ContextProjection
+
+        replay_sidecar_keys = getattr(self.provider, "replay_sidecar_keys", None)
+        projection = ContextProjection.build(
+            out,
+            budget=self.context_budget,
+            model=self.model,
+            model_context_window=self.context_windows.get(self.model),
+            tools=tools,
+            settings=self.model_settings,
+            replay_sidecar_keys=(
+                replay_sidecar_keys(self.model)
+                if callable(replay_sidecar_keys)
+                else frozenset()
+            ),
+        )
+        self.last_context_projection = projection
+        if (
+            projection.omitted_message_count
+            or projection.redacted_tool_argument_bytes
+        ):
+            logger.info(
+                "bounded provider context model=%s messages=%d request_bytes=%d "
+                "estimated_tokens=%d omitted_messages=%d omitted_groups=%d "
+                "redacted_tool_argument_bytes=%d",
+                self.model,
+                projection.message_count,
+                projection.request_bytes,
+                projection.estimated_tokens,
+                projection.omitted_message_count,
+                projection.omitted_group_count,
+                projection.redacted_tool_argument_bytes,
+            )
+        return projection.messages
 
 
 def _assistant_message(turn: AssistantTurn, model: Optional[str] = None) -> dict[str, Any]:
@@ -1017,13 +1125,17 @@ def _assistant_message(turn: AssistantTurn, model: Optional[str] = None) -> dict
 
 
 def _tool_result_message(tool_call: ToolCall, result: Any) -> dict[str, Any]:
-    content = result if isinstance(result, str) else json.dumps(result, default=str)
+    content = _serialize_result(result)
     return {
         "role": "tool",
         "tool_call_id": tool_call.id,
         "content": content,
         "ts": time.time(),
     }
+
+
+def _serialize_result(result: Any) -> str:
+    return result if isinstance(result, str) else json.dumps(result, default=str)
 
 
 def _tool_error_message(tool_call: ToolCall, reason: str) -> dict[str, Any]:

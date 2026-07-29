@@ -38,9 +38,11 @@ class ScriptedProvider(ProviderClient):
         self._turns = list(turns)
         self._loop = loop
         self.calls = 0
+        self.requests = []
 
     def complete(self, *, model, messages, tools=None, **settings):
         self.calls += 1
+        self.requests.append(messages)
         return self._turns[0] if self._loop else self._turns.pop(0)
 
     def capabilities(self, model):
@@ -196,6 +198,33 @@ def test_steering_injects_next_turn(tmp_path):
         for m in engine.messages
     )
     assert events[-1].data["status"] == "completed"
+
+
+def test_steering_after_tool_result_preserves_active_exchange(tmp_path):
+    (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
+    engine, provider = _engine(
+        tmp_path,
+        [_tool_turn("read_file", {"path": "a.txt"}), _text_turn("second")],
+    )
+    engine.queue_steering("focus on the greeting")
+
+    _collect(engine, "read a.txt")
+
+    follow_up = provider.requests[1]
+    assert [message["role"] for message in follow_up] == [
+        "user",
+        "assistant",
+        "tool",
+        "user",
+    ]
+    assert follow_up[0]["content"] == "read a.txt"
+    assert follow_up[-1] == {"role": "user", "content": "focus on the greeting"}
+    durable_steering = next(
+        message
+        for message in engine.messages
+        if message.get("content") == "focus on the greeting"
+    )
+    assert durable_steering["_steering"] is True
 
 
 # -- parallel tool execution ------------------------------------------------------
@@ -366,14 +395,19 @@ def test_outbound_keeps_pdf_for_native_models(tmp_path):
 
 def test_provider_extras_persist_on_message_and_survive_outbound(tmp_path):
     """A turn's provider-private sidecar (`extras`, e.g. Gemini thought signatures) rides
-    the persisted assistant message and is NOT stripped by _outbound_messages — the owning
-    provider needs it back; foreign providers strip it themselves."""
+    the persisted assistant message and survives outbound projection for its owning provider."""
+
+    class GeminiScriptedProvider(ScriptedProvider):
+        def replay_sidecar_keys(self, model):
+            return frozenset({"_gemini"})
+
     turn = AssistantTurn(
         text="ok",
         finish_reason="stop",
         extras={"_gemini": {"text_sig": "c2ln", "call_sigs": []}},
     )
     engine, _ = _engine(tmp_path, [turn])
+    engine.provider = GeminiScriptedProvider([turn])
     _collect(engine, "hi")
 
     persisted = engine.messages[-1]

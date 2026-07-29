@@ -120,6 +120,15 @@ class ProviderClient(ABC):
     def capabilities(self, model: str) -> ModelCapabilities:
         """Return capability flags for the given model."""
 
+    def replay_sidecar_keys(self, model: str) -> frozenset[str]:
+        """Provider-private message keys that must survive history replay.
+
+        Unknown and foreign underscore-prefixed keys are excluded from provider-facing
+        context before it is budgeted. Providers that persist signed replay state opt in
+        only their own keys here.
+        """
+        return frozenset()
+
     def stream(
         self,
         *,

@@ -67,6 +67,26 @@ def test_raw_ids_route_by_name():
     assert openweight.seen == ["deepseek-ai/deepseek-v4-maas"]
 
 
+def test_family_replay_sidecars_follow_native_provider():
+    from coworker.providers import AnthropicProvider, GeminiProvider, OpenAIProvider
+
+    p = VertexProvider(
+        project="proj",
+        location="us-east5",
+        gemini_client=GeminiProvider(client=object()),
+        claude_client=AnthropicProvider(client=object()),
+        openweight_client=OpenAIProvider(client=object()),
+    )
+
+    assert p.replay_sidecar_keys("gemini/gemini-3.6-flash") == frozenset(
+        {"_gemini"}
+    )
+    assert p.replay_sidecar_keys("claude/claude-sonnet-4-6") == frozenset(
+        {"_anthropic"}
+    )
+    assert p.replay_sidecar_keys("openweight/meta/llama") == frozenset()
+
+
 # -- openweight bearer refresh ---------------------------------------------------------
 
 

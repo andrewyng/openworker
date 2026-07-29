@@ -122,6 +122,7 @@ def build_engine(
     extra_tools: Optional[list[Any]] = None,
     secrets: Optional[SecretStore] = None,
     task_store: Optional[Any] = None,
+    automation_deleter: Optional[Any] = None,
     wake_store: Optional[Any] = None,
     session_id: Optional[str] = None,
     audit_sink: Optional[Any] = None,
@@ -133,6 +134,9 @@ def build_engine(
     channel_buffer: Optional[Any] = None,
     routing_targets: Optional[list[str]] = None,
     connector_filter: Optional[set[str]] = None,
+    tool_output_store: Optional[Any] = None,
+    context_windows: Optional[dict[str, int]] = None,
+    context_budget: Optional[Any] = None,
 ) -> TurnEngine:
     ws = Path(workspace).expanduser().resolve() if workspace else None
     if agent.needs_workspace and ws is None:
@@ -150,6 +154,30 @@ def build_engine(
 
     workspace_trusted = bool(ws and WorkspaceTrustStore().is_trusted(ws))
     config = load_config(ws, workspace_trusted=workspace_trusted)
+
+    # Every engine needs a session-isolated output store so oversized tool
+    # results remain recoverable without being replayed into model context.
+    # The manager supplies its data-rooted store; direct callers get durable
+    # storage when they name a session and a self-cleaning temporary store
+    # otherwise.
+    ephemeral_output_dir = None
+    if tool_output_store is None:
+        import tempfile
+        import uuid
+
+        from .tool_outputs import SessionToolOutputStore
+
+        if session_id:
+            tool_output_store = SessionToolOutputStore(state_dir(), session_id)
+        else:
+            ephemeral_output_dir = tempfile.TemporaryDirectory(
+                prefix="ow-tool-outputs-"
+            )
+            tool_output_store = SessionToolOutputStore(
+                ephemeral_output_dir.name,
+                uuid.uuid4().hex,
+            )
+
     executor = (
         LocalExecutor(cwd=ws) if (agent.needs_workspace and ws is not None) else None
     )
@@ -221,6 +249,8 @@ def build_engine(
                 provider=provider,
                 model=model,
                 model_settings=model_settings,
+                context_windows=context_windows,
+                context_budget=context_budget,
             )
         )
     # Scheduling: knowledge surfaces with a workspace can set up scheduled tasks (origin = this
@@ -233,7 +263,12 @@ def build_engine(
             "agent": agent.name,
         }
         registry.register_all(
-            scheduling_tools(task_store, origin=origin, default_workspace=str(ws))
+            scheduling_tools(
+                task_store,
+                origin=origin,
+                default_workspace=str(ws),
+                delete_task=automation_deleter,
+            )
         )
     # Self-wake: knowledge surfaces can suspend + schedule their own resumption (timer /
     # on-completion / on-event). The scheduler tick resumes due wakes.
@@ -283,6 +318,11 @@ def build_engine(
     # plan mode via set_mode, and the registry is fixed at build); the engine rejects the
     # call whenever the session isn't actually in plan mode.
     registry.register(propose_plan_tool())
+    # Internal retrieval is registered last. A user, connector, MCP, memory, or
+    # skill tool may not shadow this session-scoped capability.
+    from .tool_outputs import read_tool_output_tool
+
+    registry.register(read_tool_output_tool(tool_output_store), replace=False)
 
     # Per-turn ephemeral context, appended to the latest user message since mid-thread system
     # messages aren't reliable across providers. Two producers: the plan-mode reminder (mode can
@@ -325,6 +365,9 @@ def build_engine(
         directory_requester=directory_requester,
         plan_approver=plan_approver,
         question_asker=question_asker,
+        tool_output_store=tool_output_store,
+        context_windows=context_windows,
+        context_budget=context_budget,
     )
     engine.executor = executor  # type: ignore[attr-defined]
     engine.todo = todo  # type: ignore[attr-defined]
@@ -336,6 +379,8 @@ def build_engine(
         "workspace": str(ws) if ws else "",
     }
     engine.skill_loader = skill_loader  # type: ignore[attr-defined]
+    if ephemeral_output_dir is not None:
+        engine._ephemeral_output_dir = ephemeral_output_dir
     return engine
 
 

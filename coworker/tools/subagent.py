@@ -45,6 +45,8 @@ def build_explorer_engine(
     provider: Any,
     model: str,
     model_settings: Optional[dict[str, Any]] = None,
+    context_windows: Optional[dict[str, int]] = None,
+    context_budget: Any = None,
     max_iterations: int = _CHILD_MAX_ITERATIONS,
 ) -> TurnEngine:
     """A child engine with the Code agent's read-only tools and a fresh context."""
@@ -73,6 +75,8 @@ def build_explorer_engine(
         instructions=EXPLORER_INSTRUCTIONS,
         max_iterations=max_iterations,
         model_settings=model_settings,
+        context_windows=context_windows,
+        context_budget=context_budget,
     )
 
 
@@ -82,6 +86,8 @@ def explorer_tools(
     provider: Any,
     model: str,
     model_settings: Optional[dict[str, Any]] = None,
+    context_windows: Optional[dict[str, int]] = None,
+    context_budget: Any = None,
 ) -> list:
     def explore(task: str) -> dict:
         """Delegate a broad, read-only research task to a subagent with its own fresh
@@ -101,6 +107,8 @@ def explorer_tools(
             provider=provider,
             model=model,
             model_settings=model_settings,
+            context_windows=context_windows,
+            context_budget=context_budget,
         )
 
         async def _run() -> tuple[str, str]:

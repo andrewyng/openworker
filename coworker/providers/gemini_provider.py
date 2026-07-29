@@ -489,6 +489,10 @@ class GeminiProvider(ProviderClient):
     def capabilities(self, model: str) -> ModelCapabilities:
         return capabilities_for(model)
 
+    def replay_sidecar_keys(self, model: str) -> frozenset[str]:
+        # Gemini validates thought signatures when prior function calls are replayed.
+        return frozenset({"_gemini"})
+
     def stream(
         self,
         *,

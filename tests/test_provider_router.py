@@ -76,6 +76,7 @@ class _Recorder(ProviderClient):
     def __init__(self, name: str):
         self.name = name
         self.models: list[str] = []
+        self.sidecar_models: list[str] = []
 
     def complete(self, *, model, messages, tools=None, **settings):
         self.models.append(model)
@@ -87,6 +88,10 @@ class _Recorder(ProviderClient):
 
     def capabilities(self, model):
         return ModelCapabilities()
+
+    def replay_sidecar_keys(self, model):
+        self.sidecar_models.append(model)
+        return frozenset({f"_{self.name}"})
 
 
 def _patch_build(monkeypatch):
@@ -146,6 +151,16 @@ def test_router_capabilities_prefix_aware():
     router = ProviderRouter(secrets=None)
     assert router.capabilities("ollama:qwen2.5-coder").tools is True
     assert router.capabilities("ollama:qwen2.5-coder").parallel_tool_calls is False
+
+
+def test_router_delegates_replay_sidecars_with_the_bare_model(monkeypatch):
+    state = _patch_build(monkeypatch)
+    router = ProviderRouter(secrets=None)
+
+    assert router.replay_sidecar_keys("gemini:gemini-3.6-flash") == frozenset(
+        {"_gemini"}
+    )
+    assert state["latest"]["gemini"].sidecar_models == ["gemini-3.6-flash"]
 
 
 # -- capabilities ---------------------------------------------------------------

@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -140,6 +141,15 @@ class SessionManager:
         self._running_sessions: set[str] = (
             set()
         )  # sessions with an in-flight turn (busy)
+        # Explicit deletion is terminal for this manager lifetime. A stale in-flight
+        # turn may still reach its finally/checkpoint save after delete_session returns;
+        # tombstones prevent that callback from resurrecting the conversation.
+        self._deleted_sessions: set[str] = set()
+        self._deleted_automation_tasks: set[str] = set()
+        self._session_lifecycle_lock = threading.RLock()
+        # Reuse stores so successful digest verification is cached across HTTP pages
+        # and concurrent writers share one session quota lock.
+        self._tool_output_stores: dict[str, Any] = {}
         # Sessions with an auto-title LLM call in flight (FB-010) — one call at a time.
         self._autotitle_inflight: set[str] = set()
         self._autotitle_tasks: set[asyncio.Task] = set()
@@ -371,6 +381,35 @@ class SessionManager:
         plan_approver: Optional[Any] = None,
         question_asker: Optional[Any] = None,
     ) -> Optional[TurnEngine]:
+        # Building publishes several coupled resources (engine, output store, and
+        # possibly a scratch directory). Keep deletion from interleaving halfway
+        # through that publication.
+        with self._session_lifecycle_lock:
+            return self._get_engine_locked(
+                session_id,
+                workspace=workspace,
+                agent=agent,
+                approver=approver,
+                extra_tools=extra_tools,
+                directory_requester=directory_requester,
+                plan_approver=plan_approver,
+                question_asker=question_asker,
+            )
+
+    def _get_engine_locked(
+        self,
+        session_id: str,
+        *,
+        workspace: Optional[str] = None,
+        agent: str = "code",
+        approver: Optional[Approver] = None,
+        extra_tools: Optional[list[Any]] = None,
+        directory_requester: Optional[Any] = None,
+        plan_approver: Optional[Any] = None,
+        question_asker: Optional[Any] = None,
+    ) -> Optional[TurnEngine]:
+        if session_id in self._deleted_sessions:
+            return None
         engine = self._engines.get(session_id)
         if engine is not None:
             if approver is not None:
@@ -427,6 +466,9 @@ class SessionManager:
             extra_tools=extra_tools,
             secrets=self.secrets,
             task_store=self.task_store,
+            automation_deleter=lambda task_id: bool(
+                self.delete_automation(task_id).get("ok")
+            ),
             wake_store=self.wakes,
             session_id=session_id,
             audit_sink=self.audit_store.append,
@@ -446,6 +488,7 @@ class SessionManager:
             routing_targets=self._routing_targets(session_id, agent),
             # Per-session connection hierarchy: expose only effective-enabled connectors' tools.
             connector_filter=self.effective_connectors(session_id, agent_name),
+            tool_output_store=self.tool_output_store(session_id),
         )
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
@@ -849,7 +892,8 @@ class SessionManager:
         engine = self.get_engine(item.session_id)
         if engine is None or not hasattr(engine, "resume"):
             return
-        self.mark_running(item.session_id)
+        if not self.try_mark_running(item.session_id):
+            return
         try:
             async for _event in engine.resume():
                 pass
@@ -2490,7 +2534,8 @@ class SessionManager:
         target = standing_rule_candidate(tool_name, arguments or {}, metadata)
         if not target or not task.add_rule(tool_name, target):
             return False
-        self.task_store.save(task)
+        if self.task_store.save(task) is None:
+            return False
         engine = self._engines.get(session_id)
         if engine is not None:
             engine.permissions.task_rules.setdefault(tool_name, set()).add(target)
@@ -2513,8 +2558,6 @@ class SessionManager:
         """Map an approval resolution (from any surface) to an ApprovalOutcome, handling
         the task-persistent "always_task" vocabulary alongside the session-scoped ones.
         """
-        from ..engine import ApprovalOutcome
-
         if resolution == "always_task":
             self.mint_task_rule(
                 session_id,
@@ -2534,7 +2577,6 @@ class SessionManager:
         return ApprovalOutcome.DENY
 
     def _scheduled_approver(self, task, session_id: str):
-        from ..engine import ApprovalOutcome
         from ..permissions import WRITE_TOOLS
 
         name_allowed = task.name_allowed_tools()
@@ -2594,6 +2636,7 @@ class SessionManager:
             # Scheduled runs respect the same per-session connection hierarchy as live sessions:
             # expose only the persona's effective-enabled connectors' tools (§4.3).
             connector_filter=self.effective_connectors(session_id, task.agent),
+            tool_output_store=self.tool_output_store(session_id),
         )
         self._seed_task_permissions(engine, task)
         return engine
@@ -2723,24 +2766,36 @@ class SessionManager:
         return resumed
 
     def mark_running(self, session_id: str) -> None:
-        self._running_sessions.add(session_id)
+        with self._session_lifecycle_lock:
+            if session_id not in self._deleted_sessions:
+                self._running_sessions.add(session_id)
 
     def try_mark_running(self, session_id: str) -> bool:
         """Atomically claim an idle session for one turn on the server event loop."""
-        if session_id in self._running_sessions:
-            return False
-        self._running_sessions.add(session_id)
-        return True
+        with self._session_lifecycle_lock:
+            if (
+                session_id in self._running_sessions
+                or session_id in self._deleted_sessions
+            ):
+                return False
+            self._running_sessions.add(session_id)
+            return True
 
     def mark_idle(self, session_id: str) -> None:
-        self._running_sessions.discard(session_id)
+        with self._session_lifecycle_lock:
+            self._running_sessions.discard(session_id)
+            deleted = session_id in self._deleted_sessions
+        if deleted:
+            self._delete_tool_outputs(session_id)
+            return
         # Every turn path (WS, background delivery, durable resume) marks idle when it
         # finishes — the one shared post-turn moment, so auto-titling hooks in here and
         # can never add latency to the response itself.
         self._maybe_autotitle(session_id)
 
     def is_running(self, session_id: str) -> bool:
-        return session_id in self._running_sessions
+        with self._session_lifecycle_lock:
+            return session_id in self._running_sessions
 
     async def _resume_wake(self, wake) -> None:
         await self.deliver_to_session(wake.session_id, self._wake_message(wake))
@@ -2980,7 +3035,16 @@ class SessionManager:
         run = TaskRun(
             task_id=task.id, trigger=trigger
         )  # __post_init__ sets run.session_id
-        self.task_store.add_run(run)  # mark "running"
+        with self._session_lifecycle_lock:
+            if (
+                task.id in self._deleted_automation_tasks
+                or self.task_store.get(task.id) is None
+            ):
+                run.status = "error"
+                run.error = "automation was deleted"
+                run.finished_at = _epoch()
+                return run
+            self.task_store.add_run(run)  # mark "running"
         # UX-026: tell every open app window a SCHEDULED run just started (the 5s
         # top-right toast). Manual runs never come through here — the user is
         # already watching those live.
@@ -3000,10 +3064,17 @@ class SessionManager:
         # Each run is a real, persisted conversation thread: it runs the instructions under its
         # own session id, then saves the transcript. The user can reopen that session and ask a
         # follow-up — the scheduled agent is no longer fire-and-forget.
-        engine = self._build_task_engine(task, session_id=run.session_id)
-        # Register the live engine up-front: a parked approval persists the session
-        # mid-run (durable suspend), and resolving from the Inbox must find this engine.
-        self._engines[run.session_id] = engine
+        with self._session_lifecycle_lock:
+            if task.id in self._deleted_automation_tasks:
+                run.status = "error"
+                run.error = "automation was deleted"
+                run.finished_at = _epoch()
+                return run
+            engine = self._build_task_engine(task, session_id=run.session_id)
+            # Register the live engine up-front: a parked approval persists the session
+            # mid-run (durable suspend), and resolving from the Inbox must find this engine.
+            self._engines[run.session_id] = engine
+            self._running_sessions.add(run.session_id)
         # The first turn is the task itself. The framing matters: instructions often restate the
         # schedule ("every day at 5:32pm…"), so make explicit that the schedule already fired and
         # the job now is to execute, not to (re)schedule.
@@ -3029,10 +3100,13 @@ class SessionManager:
             # follow-up; record the run (now carrying its session_id).
             try:
                 self.save(run.session_id, engine)
-                self._engines[run.session_id] = engine
             except Exception:
                 pass
-            self.task_store.add_run(run)
+            self.mark_idle(run.session_id)
+            with self._session_lifecycle_lock:
+                if task.id not in self._deleted_automation_tasks:
+                    self._engines[run.session_id] = engine
+                    self.task_store.add_run(run)
         return run
 
     async def _notify_task_done(self, task, run: TaskRun) -> None:
@@ -3088,12 +3162,18 @@ class SessionManager:
         return {"tasks": tasks}
 
     def mark_automation_seen(self, task_id: str) -> dict[str, Any]:
-        task = self.task_store.get(task_id)
-        if task is None:
-            return {"ok": False, "error": "not found"}
-        task.seen_runs_at = time.time()
-        self.task_store.save(task)
-        return {"ok": True}
+        with self._session_lifecycle_lock:
+            task = (
+                None
+                if task_id in self._deleted_automation_tasks
+                else self.task_store.get(task_id)
+            )
+            if task is None:
+                return {"ok": False, "error": "not found"}
+            task.seen_runs_at = time.time()
+            if self.task_store.save(task) is None:
+                return {"ok": False, "error": "not found"}
+            return {"ok": True}
 
     def get_automation(self, task_id: str) -> dict[str, Any]:
         task = self.task_store.get(task_id)
@@ -3155,102 +3235,141 @@ class SessionManager:
     def update_automation(
         self, task_id: str, changes: dict[str, Any]
     ) -> dict[str, Any]:
-        task = self.task_store.get(task_id)
-        if task is None:
-            return {"ok": False, "error": "not found"}
-        if "enabled" in changes:
-            task.enabled = bool(changes["enabled"])
-        if changes.get("instructions") is not None:
-            task.instructions = changes["instructions"]
-        if changes.get("title") is not None:
-            task.title = changes["title"]
-        if changes.get("cron") is not None:
-            from croniter import croniter
+        with self._session_lifecycle_lock:
+            task = (
+                None
+                if task_id in self._deleted_automation_tasks
+                else self.task_store.get(task_id)
+            )
+            if task is None:
+                return {"ok": False, "error": "not found"}
+            if "enabled" in changes:
+                task.enabled = bool(changes["enabled"])
+            if changes.get("instructions") is not None:
+                task.instructions = changes["instructions"]
+            if changes.get("title") is not None:
+                task.title = changes["title"]
+            if changes.get("cron") is not None:
+                from croniter import croniter
 
-            if not croniter.is_valid(changes["cron"]):
-                return {"ok": False, "error": "invalid cron"}
-            task.schedule.cron, task.schedule.kind = changes["cron"], "cron"
-        if changes.get("revoke"):
-            # Revocation from the task detail page ("Allowed without asking … · Revoke").
-            # Human-only, like minting; the agent-facing update tool has no such field.
-            task.revoke_rule(str(changes["revoke"]))
-        self.task_store.save(task)
-        if changes.get("revoke"):
-            # A live run engine may still hold the revoked rule — reseed from the record.
-            for sid, engine in self._engines.items():
-                owner = self.task_store.task_for_run_session(sid)
-                if owner is not None and owner.id == task.id:
-                    engine.permissions.task_rules = task.standing_rules()
-        return {"ok": True, "task": task.public()}
+                if not croniter.is_valid(changes["cron"]):
+                    return {"ok": False, "error": "invalid cron"}
+                task.schedule.cron, task.schedule.kind = changes["cron"], "cron"
+            if changes.get("revoke"):
+                # Revocation from the task detail page ("Allowed without asking … · Revoke").
+                # Human-only, like minting; the agent-facing update tool has no such field.
+                task.revoke_rule(str(changes["revoke"]))
+            if self.task_store.save(task) is None:
+                return {"ok": False, "error": "not found"}
+            if changes.get("revoke"):
+                # A live run engine may still hold the revoked rule — reseed from the record.
+                for sid, engine in self._engines.items():
+                    owner = self.task_store.task_for_run_session(sid)
+                    if owner is not None and owner.id == task.id:
+                        engine.permissions.task_rules = task.standing_rules()
+            return {"ok": True, "task": task.public()}
 
     def delete_automation(self, task_id: str) -> dict[str, Any]:
-        return {"ok": self.task_store.delete(task_id), "id": task_id}
+        with self._session_lifecycle_lock:
+            task = self.task_store.get(task_id)
+            if task is None:
+                return {"ok": False, "id": task_id}
+            self._deleted_automation_tasks.add(task_id)
+            run_session_ids = {
+                run.session_id for run in self.task_store.runs(task_id, limit=None)
+            }
+            ok = self.task_store.delete(task_id)
+        for session_id in run_session_ids:
+            self._delete_session(session_id, allow_internal=True)
+        self._delete_session(task.task_session_id, allow_internal=True)
+        return {"ok": ok, "id": task_id}
 
     def prepare_manual_run(self, task_id: str) -> dict[str, Any]:
         """Create a 'running' manual run and return its session, so the GUI can open it and
         drive the task LIVE over the normal session WS (you watch the agent + follow up). The
         automatic scheduler path stays headless (`_run_scheduled_task`)."""
-        task = self.task_store.get(task_id)
-        if task is None:
-            return {"ok": False, "error": "not found"}
-        Path(task.workspace).mkdir(parents=True, exist_ok=True)
-        run = TaskRun(
-            task_id=task.id, trigger="manual"
-        )  # status "running", session_id auto
-        self.task_store.add_run(run)
-        return {
-            "ok": True,
-            "run_id": run.run_id,
-            "session_id": run.session_id,
-            "workspace": task.workspace,
-            "agent": task.agent,
-            # Same execute-now framing as the headless path — manual runs ride a normal live
-            # session whose engine DOES have scheduling tools, so be explicit.
-            "prompt": (
-                f"⏰ Running automation '{task.title}' now. Carry out these instructions "
-                "immediately and produce the result. The schedule already exists — do not create "
-                f"or modify any scheduled tasks.\n\n{task.instructions}"
-            ),
-        }
+        with self._session_lifecycle_lock:
+            task = (
+                None
+                if task_id in self._deleted_automation_tasks
+                else self.task_store.get(task_id)
+            )
+            if task is None:
+                return {"ok": False, "error": "not found"}
+            Path(task.workspace).mkdir(parents=True, exist_ok=True)
+            run = TaskRun(
+                task_id=task.id, trigger="manual"
+            )  # status "running", session_id auto
+            if self.task_store.add_run(run) is None:
+                return {"ok": False, "error": "not found"}
+            return {
+                "ok": True,
+                "run_id": run.run_id,
+                "session_id": run.session_id,
+                "workspace": task.workspace,
+                "agent": task.agent,
+                # Same execute-now framing as the headless path — manual runs ride a normal live
+                # session whose engine DOES have scheduling tools, so be explicit.
+                "prompt": (
+                    f"⏰ Running automation '{task.title}' now. Carry out these instructions "
+                    "immediately and produce the result. The schedule already exists — do not "
+                    "create or modify any scheduled tasks.\n\n"
+                    f"{task.instructions}"
+                ),
+            }
 
     def finalize_manual_run(self, task_id: str, run_id: str) -> dict[str, Any]:
         """Mark a manual run complete once its first turn finished (the WS already saved the
         session). Pulls result text + artifacts from the persisted transcript/workspace.
         """
-        run = next(
-            (r for r in self.task_store.runs(task_id) if r.run_id == run_id), None
-        )
-        task = self.task_store.get(task_id)
-        if run is None or task is None:
-            return {"ok": False, "error": "not found"}
-        if run.status == "running":
-            record = self.session_store.load(run.session_id)
-            run.result_text = _last_assistant_text(record.messages) if record else None
-            run.artifacts = _recent_files(task.workspace, since=run.started_at)
-            run.status = "ok"
-            run.finished_at = _epoch()
-            self.task_store.add_run(run)
-            task.last_run, task.last_status = run.finished_at, "ok"
-            task.run_count += 1
-            self.task_store.save(task)
-        return {"ok": True, "run": run.to_dict()}
+        with self._session_lifecycle_lock:
+            if task_id in self._deleted_automation_tasks:
+                return {"ok": False, "error": "not found"}
+            run = next(
+                (r for r in self.task_store.runs(task_id) if r.run_id == run_id),
+                None,
+            )
+            task = self.task_store.get(task_id)
+            if run is None or task is None:
+                return {"ok": False, "error": "not found"}
+            if run.status == "running":
+                record = self.session_store.load(run.session_id)
+                run.result_text = (
+                    _last_assistant_text(record.messages) if record else None
+                )
+                run.artifacts = _recent_files(task.workspace, since=run.started_at)
+                run.status = "ok"
+                run.finished_at = _epoch()
+                if self.task_store.add_run(run) is None:
+                    return {"ok": False, "error": "not found"}
+                task.last_run, task.last_status = run.finished_at, "ok"
+                task.run_count += 1
+                if self.task_store.save(task) is None:
+                    return {"ok": False, "error": "not found"}
+            return {"ok": True, "run": run.to_dict()}
 
     def save(self, session_id: str, engine: TurnEngine) -> None:
-        executor = getattr(engine, "executor", None)
-        workspace = os.path.realpath(str(executor.cwd)) if executor else ""
-        self.session_store.save(
-            SessionRecord(
-                session_id=session_id,
-                workspace=workspace,
-                model=engine.model,
-                mode=engine.permissions.mode.value,
-                messages=engine.messages,
-                title=title_from(engine.messages),
-                agent=getattr(engine, "agent_name", "code"),
-                extra_roots=self._extra_roots_of(engine),
-                grants=_grants_of(engine),
+        # The tombstone check and durable write are one lifecycle transaction.
+        # Otherwise delete_session can remove the row between them and this stale
+        # callback will recreate it after deletion has returned.
+        with self._session_lifecycle_lock:
+            if session_id in self._deleted_sessions:
+                return
+            executor = getattr(engine, "executor", None)
+            workspace = os.path.realpath(str(executor.cwd)) if executor else ""
+            self.session_store.save(
+                SessionRecord(
+                    session_id=session_id,
+                    workspace=workspace,
+                    model=engine.model,
+                    mode=engine.permissions.mode.value,
+                    messages=engine.messages,
+                    title=title_from(engine.messages),
+                    agent=getattr(engine, "agent_name", "code"),
+                    extra_roots=self._extra_roots_of(engine),
+                    grants=_grants_of(engine),
+                )
             )
-        )
 
     @staticmethod
     def _apply_grants(engine: TurnEngine, grants: dict[str, Any]) -> None:
@@ -3379,6 +3498,12 @@ class SessionManager:
 
     # -- session roots (orphan Cowork: scratch + added folders) ------------------
     def get_roots(self, session_id: str) -> list[dict[str, Any]]:
+        with self._session_lifecycle_lock:
+            if session_id in self._deleted_sessions:
+                return []
+            return self._get_roots_locked(session_id)
+
+    def _get_roots_locked(self, session_id: str) -> list[dict[str, Any]]:
         """The directories this session can touch: primary scratch first, then added folders.
         Reads the live engine when one is running; otherwise reconstructs from persisted state.
         """
@@ -3424,6 +3549,14 @@ class SessionManager:
         return out
 
     def add_root(
+        self, session_id: str, path: str, writable: bool = False
+    ) -> dict[str, Any]:
+        with self._session_lifecycle_lock:
+            if session_id in self._deleted_sessions:
+                return {"ok": False, "error": "session was deleted"}
+            return self._add_root_locked(session_id, path, writable)
+
+    def _add_root_locked(
         self, session_id: str, path: str, writable: bool = False
     ) -> dict[str, Any]:
         """Grant the session access to another folder (read-only or read-write). Mutates the live
@@ -3481,6 +3614,12 @@ class SessionManager:
         return {"ok": True, "roots": self.get_roots(session_id)}
 
     def remove_root(self, session_id: str, path: str) -> dict[str, Any]:
+        with self._session_lifecycle_lock:
+            if session_id in self._deleted_sessions:
+                return {"ok": False, "error": "session was deleted"}
+            return self._remove_root_locked(session_id, path)
+
+    def _remove_root_locked(self, session_id: str, path: str) -> dict[str, Any]:
         """Revoke a previously-added folder. The primary scratch cannot be removed."""
         resolved = Path(path).expanduser().resolve()
         engine = self._engines.get(session_id)
@@ -3525,16 +3664,24 @@ class SessionManager:
         # A live engine's in-memory thread is authoritative: mid-turn it's ahead of the
         # persisted record — which may not even exist yet for a scheduled run's first turn
         # (opening a "running" automation showed a blank session; owner report 2026-07-04).
-        engine = self._engines.get(session_id)
-        if engine is not None:
-            return list(engine.messages)
-        record = self.session_store.load(session_id)
-        return record.messages if record else []
+        with self._session_lifecycle_lock:
+            if session_id in self._deleted_sessions:
+                return []
+            engine = self._engines.get(session_id)
+            if engine is not None:
+                return list(engine.messages)
+            record = self.session_store.load(session_id)
+            return record.messages if record else []
 
     def rename_session(self, session_id: str, title: str) -> dict[str, Any]:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal sessions cannot be renamed"}
-        ok = self.session_store.rename(session_id, title)
+        with self._session_lifecycle_lock:
+            ok = (
+                False
+                if session_id in self._deleted_sessions
+                else self.session_store.rename(session_id, title)
+            )
         return {
             "ok": ok,
             "session_id": session_id,
@@ -3550,13 +3697,36 @@ class SessionManager:
     ) -> dict[str, Any]:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal sessions cannot be modified here"}
-        ok = self.session_store.set_flags(session_id, pinned=pinned, archived=archived)
+        with self._session_lifecycle_lock:
+            ok = (
+                False
+                if session_id in self._deleted_sessions
+                else self.session_store.set_flags(
+                    session_id,
+                    pinned=pinned,
+                    archived=archived,
+                )
+            )
         return {"ok": ok, "session_id": session_id}
 
     def delete_session(self, session_id: str) -> dict[str, Any]:
-        if session_id.startswith("__"):
+        return self._delete_session(session_id)
+
+    def _delete_session(
+        self,
+        session_id: str,
+        *,
+        allow_internal: bool = False,
+    ) -> dict[str, Any]:
+        if session_id.startswith("__") and not allow_internal:
             return {"ok": False, "error": "internal sessions cannot be deleted here"}
-        engine = self._engines.pop(session_id, None)
+        with self._session_lifecycle_lock:
+            was_running = session_id in self._running_sessions
+            engine = self._engines.pop(session_id, None)
+            record = self.session_store.load(session_id)
+            if was_running or engine is not None or record is not None:
+                self._deleted_sessions.add(session_id)
+            ok = self.session_store.delete(session_id)
         if engine is not None:
             try:
                 # (was engine.interrupt() — a method that never existed; the AttributeError
@@ -3564,8 +3734,11 @@ class SessionManager:
                 engine.request_interrupt()
             except Exception:
                 pass
-        record = self.session_store.load(session_id)
-        ok = self.session_store.delete(session_id)
+        # An active tool may still be publishing its retained result. Interrupt it
+        # now, but defer filesystem cleanup until the shared turn-finally calls
+        # mark_idle; saves are already blocked by the tombstone above.
+        if not was_running:
+            self._delete_tool_outputs(session_id)
         # Deleting a session is the one implicit unsubscribe (otherwise subscriptions are permanent).
         self.subscriptions.remove_session(session_id)
         # ...and releases any Slack threads it owned (§31): the next tag there spawns fresh.
@@ -3591,6 +3764,95 @@ class SessionManager:
             except OSError:
                 pass  # a stale/foreign path must not fail the delete
         return {"ok": ok, "session_id": session_id}
+
+    def session_exists(self, session_id: str) -> bool:
+        """Cheap route guard that never parses the conversation JSONL."""
+
+        with self._session_lifecycle_lock:
+            return (
+                session_id not in self._deleted_sessions
+                and (
+                    session_id in self._engines
+                    or self.session_store.exists(session_id)
+                )
+            )
+
+    def tool_output_store(self, session_id: str, *, create: bool = True):
+        """Open the filesystem-backed output store isolated to one session."""
+        from ..tool_outputs import SessionToolOutputStore
+
+        with self._session_lifecycle_lock:
+            if create and session_id in self._deleted_sessions:
+                raise FileNotFoundError("session was deleted")
+            store = self._tool_output_stores.get(session_id)
+            if store is not None:
+                if store.is_available():
+                    return store
+                self._tool_output_stores.pop(session_id, None)
+            store = SessionToolOutputStore(self._data_base, session_id, create=create)
+            self._tool_output_stores[session_id] = store
+            return store
+
+    def _delete_tool_outputs(self, session_id: str) -> None:
+        """Remove one session's retained data after no writer can still use it."""
+
+        from ..tool_outputs import SessionToolOutputStore, ToolOutputStoreError
+
+        with self._session_lifecycle_lock:
+            store = self._tool_output_stores.pop(session_id, None)
+        try:
+            if store is None:
+                store = SessionToolOutputStore(
+                    self._data_base,
+                    session_id,
+                    create=False,
+                )
+            store.delete_all()
+        except FileNotFoundError:
+            pass
+        except (OSError, ToolOutputStoreError):
+            logger.warning(
+                "failed to remove retained tool outputs for session %s",
+                session_id,
+                exc_info=True,
+            )
+
+    def collect_tool_output_orphans(
+        self,
+        grace_seconds: float = 24 * 60 * 60,
+        *,
+        policy: Optional[Any] = None,
+        now: Optional[float] = None,
+    ) -> int:
+        """Apply orphan, age, and global-cap retention at server startup."""
+
+        from ..tool_outputs import collect_retained_output_stores
+
+        result = collect_retained_output_stores(
+            self._data_base,
+            known_session_ids={
+                record.session_id for record in self.session_store.list()
+            },
+            active_session_ids={
+                *self._engines.keys(),
+                *self._running_sessions,
+            },
+            orphan_grace_seconds=grace_seconds,
+            policy=policy,
+            now=now,
+        )
+        if result.skipped_unsafe_entries:
+            logger.warning(
+                "skipped %d unsafe retained tool output entries",
+                result.skipped_unsafe_entries,
+            )
+        if result.over_cap_bytes:
+            logger.warning(
+                "retained tool outputs remain %d bytes over the global cap "
+                "because active or unsafe stores cannot be evicted",
+                result.over_cap_bytes,
+            )
+        return result.removed_sessions
 
     # -- provider proxy ---------------------------------------------------------
     def provider_complete(self, model, messages, tools=None):

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 import aisuite as ai
-from coworker.permissions import Decision, Mode, PermissionEngine
+from coworker.permissions import Mode, PermissionEngine
 from coworker.tools import ToolRegistry
 
 
@@ -48,6 +48,16 @@ def test_registry_execute_unknown_tool(tmp_path):
     reg = _registry(tmp_path)
     with pytest.raises(KeyError):
         reg.execute("nope", {})
+
+
+def test_registry_can_reserve_an_internal_tool_name():
+    def internal_tool():
+        return "internal"
+
+    reg = ToolRegistry()
+    reg.register(internal_tool)
+    with pytest.raises(ValueError, match="reserved or already registered"):
+        reg.register(internal_tool, replace=False)
 
 
 # -- PermissionEngine -----------------------------------------------------------

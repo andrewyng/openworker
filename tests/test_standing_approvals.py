@@ -8,9 +8,9 @@ task-persistent "Allow every time" on run approvals, and revocation. No network,
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import aisuite as ai
-import pytest
 
 from coworker.automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
 from coworker.automation.models import grant_entries, rule_entry, rule_parts
@@ -334,6 +334,56 @@ def test_mint_task_rule_validates(tmp_path, monkeypatch):
     assert manager.task_store.get(task.id).always_allowed_tools == [
         "send_message slack:C1"
     ]
+
+
+def test_mint_task_rule_cannot_resurrect_deleted_task(tmp_path, monkeypatch):
+    from coworker.server.manager import SessionManager
+
+    manager = SessionManager(data_dir=tmp_path / "data", provider=_provider())
+    task = _task()
+    manager.task_store.save(task)
+    run = TaskRun(task_id=task.id)
+    manager.task_store.add_run(run)
+    write_entered = threading.Event()
+    release_write = threading.Event()
+    results = []
+    errors = []
+    original_save = manager.task_store.save
+    mint_thread = None
+
+    def blocked_save(stale_task):
+        if threading.current_thread() is mint_thread:
+            write_entered.set()
+            assert release_write.wait(timeout=5)
+        return original_save(stale_task)
+
+    monkeypatch.setattr(manager.task_store, "save", blocked_save)
+
+    def mint():
+        try:
+            results.append(
+                manager.mint_task_rule(
+                    run.session_id,
+                    "send_message",
+                    {"target": "slack:C1"},
+                    _Meta(),
+                )
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    mint_thread = threading.Thread(target=mint)
+    mint_thread.start()
+    assert write_entered.wait(timeout=5)
+    assert manager.delete_automation(task.id)["ok"] is True
+    release_write.set()
+    mint_thread.join(timeout=5)
+
+    assert not mint_thread.is_alive()
+    assert errors == []
+    assert results == [False]
+    assert manager.task_store.get(task.id) is None
+    assert manager.task_store.runs(task.id, limit=None) == []
 
 
 def test_get_engine_seeds_run_session_rules(tmp_path, monkeypatch):

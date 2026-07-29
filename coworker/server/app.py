@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -165,6 +165,7 @@ from .manager import SessionManager
 def create_app(manager: SessionManager) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        manager.collect_tool_output_orphans()
         try:
             live = (
                 await manager.start_gateway()
@@ -592,6 +593,38 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.get("/v1/sessions/{session_id}/messages")
     def session_messages(session_id: str) -> dict[str, Any]:
         return {"messages": manager.session_messages(session_id)}
+
+    @app.get("/v1/sessions/{session_id}/tool-outputs/{output_ref}")
+    def tool_output(
+        session_id: str,
+        output_ref: str,
+        offset_bytes: int = 0,
+        limit_bytes: int = 4_000,
+    ) -> dict[str, Any]:
+        from ..tool_outputs import ToolOutputStoreError, is_valid_output_ref
+
+        if not is_valid_output_ref(output_ref):
+            raise HTTPException(status_code=400, detail="invalid output reference")
+        if not manager.session_exists(session_id):
+            raise HTTPException(status_code=404, detail="session not found")
+        try:
+            store = manager.tool_output_store(session_id, create=False)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="tool output not found",
+            ) from exc
+        try:
+            return store.read(output_ref, offset_bytes, limit_bytes)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="tool output not found",
+            ) from exc
+        except ToolOutputStoreError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.patch("/v1/sessions/{session_id}")
     def session_patch(session_id: str, body: dict) -> dict[str, Any]:
@@ -1724,11 +1757,15 @@ def create_app(manager: SessionManager) -> FastAPI:
                     if event.type.value in _CHECKPOINTS:
                         manager.save(session_id, engine)
             finally:
-                manager.mark_idle(session_id)
-                manager.save(session_id, engine)
-                await manager.broadcast_session(
-                    session_id, {"type": "turn_done", "data": {}}
-                )
+                try:
+                    manager.save(session_id, engine)
+                finally:
+                    try:
+                        manager.mark_idle(session_id)
+                    finally:
+                        await manager.broadcast_session(
+                            session_id, {"type": "turn_done", "data": {}}
+                        )
 
         # This socket is now a live view of the session; background turns (channel delivery,
         # self-wake, durable resume) broadcast here too, not just locally driven run_turns.

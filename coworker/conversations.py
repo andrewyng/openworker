@@ -247,6 +247,16 @@ class ConversationStore:
             origin_label=row["origin_label"],
         )
 
+    def exists(self, session_id: str) -> bool:
+        """Check for a session row without loading and parsing its transcript."""
+
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM sessions WHERE session_id = ? LIMIT 1",
+                (session_id,),
+            ).fetchone()
+        return row is not None
+
     def set_extra_roots(self, session_id: str, extra_roots: list[dict]) -> None:
         """Persist just the session's added folders, independent of its message log — used when
         the user adds/removes a folder (which may happen with no active engine)."""

@@ -202,6 +202,13 @@ class OpenAIProvider(ProviderClient):
     def capabilities(self, model: str) -> ModelCapabilities:
         return capabilities_for(model)
 
+    def replay_sidecar_keys(self, model: str) -> frozenset[str]:
+        # Direct DeepSeek V4 Chat Completions replay reasoning state between tool
+        # calls via the `_openai` sidecar. GPT and other compat models do not.
+        if model.lower().startswith("deepseek-v4"):
+            return frozenset({"_openai"})
+        return frozenset()
+
     def stream(
         self,
         *,

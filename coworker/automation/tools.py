@@ -153,6 +153,7 @@ def scheduling_tools(
     *,
     origin: dict[str, Any],
     default_workspace: str,
+    delete_task: Optional[Callable[[str], bool]] = None,
 ) -> list[Callable[..., Any]]:
     def create_scheduled_task(
         title, instructions, cron=None, fire_at=None, timezone="local", permissions=None
@@ -219,11 +220,15 @@ def scheduling_tools(
             task.instructions = instructions
         if title is not None:
             task.title = title
-        store.save(task)
+        if store.save(task) is None:
+            return {"error": f"no such task: {id}"}
         return {"ok": True, "task": task.public()}
 
     def delete_scheduled_task(id):
-        return {"ok": store.delete(id), "id": id}
+        return {
+            "ok": delete_task(id) if delete_task is not None else store.delete(id),
+            "id": id,
+        }
 
     return [
         _gated(create_scheduled_task, _CREATE_SCHEMA, approval=True),

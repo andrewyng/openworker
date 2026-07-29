@@ -66,6 +66,10 @@ class TaskStore:
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
         self._lock = threading.RLock()
+        # A task object loaded before deletion can still be held by the scheduler,
+        # an agent tool, or a standing-approval callback. Keep same-process
+        # tombstones so their later save/add_run cannot recreate deleted rows.
+        self._deleted_task_ids: set[str] = set()
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init()
@@ -90,10 +94,12 @@ class TaskStore:
             self._conn.commit()
 
     # -- tasks ------------------------------------------------------------------
-    def save(self, task: ScheduledTask) -> ScheduledTask:
+    def save(self, task: ScheduledTask) -> Optional[ScheduledTask]:
         task.updated_at = _epoch_now()
         task.next_run = compute_next_run(task) if task.enabled else None
         with self._lock:
+            if task.id in self._deleted_task_ids:
+                return None
             self._conn.execute(
                 "INSERT OR REPLACE INTO scheduled_tasks (id, enabled, next_run, data) VALUES (?, ?, ?, ?)",
                 (
@@ -127,7 +133,10 @@ class TaskStore:
             )
             self._conn.execute("DELETE FROM task_runs WHERE task_id=?", (task_id,))
             self._conn.commit()
-            return cur.rowcount > 0
+            deleted = cur.rowcount > 0
+            if deleted:
+                self._deleted_task_ids.add(task_id)
+            return deleted
 
     def due(self, *, now: Optional[float] = None) -> list[ScheduledTask]:
         now = now if now is not None else _epoch_now()
@@ -139,8 +148,10 @@ class TaskStore:
         return [ScheduledTask.from_dict(json.loads(r["data"])) for r in rows]
 
     # -- runs -------------------------------------------------------------------
-    def add_run(self, run: TaskRun) -> TaskRun:
+    def add_run(self, run: TaskRun) -> Optional[TaskRun]:
         with self._lock:
+            if run.task_id in self._deleted_task_ids:
+                return None
             self._conn.execute(
                 "INSERT OR REPLACE INTO task_runs (run_id, task_id, started_at, data) VALUES (?, ?, ?, ?)",
                 (run.run_id, run.task_id, run.started_at, json.dumps(run.to_dict())),
@@ -163,12 +174,19 @@ class TaskStore:
         run = self.find_run(session_id[len("__run__") :])
         return self.get(run.task_id) if run else None
 
-    def runs(self, task_id: str, *, limit: int = 50) -> list[TaskRun]:
+    def runs(self, task_id: str, *, limit: Optional[int] = 50) -> list[TaskRun]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT data FROM task_runs WHERE task_id=? ORDER BY started_at DESC LIMIT ?",
-                (task_id, limit),
-            ).fetchall()
+            if limit is None:
+                rows = self._conn.execute(
+                    "SELECT data FROM task_runs WHERE task_id=? ORDER BY started_at DESC",
+                    (task_id,),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT data FROM task_runs WHERE task_id=? "
+                    "ORDER BY started_at DESC LIMIT ?",
+                    (task_id, limit),
+                ).fetchall()
         return [TaskRun.from_dict(json.loads(r["data"])) for r in rows]
 
     def close(self) -> None:
