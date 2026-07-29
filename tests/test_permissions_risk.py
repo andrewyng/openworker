@@ -208,6 +208,35 @@ def test_runner_check_matches_on_the_program_not_the_path(tmp_path):
     assert not d.allowed and d.needs_user
 
 
+@pytest.mark.parametrize(
+    "entry,command",
+    [
+        ("python.exe", "python.exe C:/tmp/evil.py"),
+        ("python3.exe", "python3.exe evil.py"),
+        ("node.exe", "node.exe evil.js"),
+        ("npm.cmd", "npm.cmd install attacker-pkg"),
+        ("Python3", "Python3 evil.py"),
+        ("PYTHON3", "PYTHON3 evil.py"),
+        (r"C:\\Python\\python.exe", r"C:\\Python\\python.exe evil.py"),
+    ],
+)
+def test_runner_check_survives_windows_spelling(tmp_path, entry, command):
+    # Windows names the same interpreters python.exe / npm.cmd, and paths use backslashes.
+    # Matching on the bare lowercased stem keeps the rule from being spelled around.
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=[entry])
+    d = eng.evaluate("run_shell", {"command": command}, None)
+    assert not d.allowed and d.needs_user, command
+
+
+def test_positional_script_interpreters_are_held_back(tmp_path):
+    # `sed`/`awk` carry their program as a POSITIONAL argument (`sed 'e ls'` shells out on
+    # GNU sed), so there is no flag to key on and they belong with the interpreters.
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=["sed", "awk"])
+    assert eng.evaluate("run_shell", {"command": "sed"}, None).allowed
+    assert eng.evaluate("run_shell", {"command": "sed e_ls README.md"}, None).needs_user
+    assert eng.evaluate("run_shell", {"command": "awk BEGIN_system README.md"}, None).needs_user
+
+
 def test_project_local_task_runners_are_unaffected(tmp_path):
     # `pytest`/`make` run the workspace's own code, which the agent can already edit, so
     # they stay on the ordinary prefix rule. Pointing them outside the workspace is a

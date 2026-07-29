@@ -56,11 +56,17 @@ from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOO
 # edit. Their escape is a path pointing outside the workspace (`pytest /tmp/evil_test.py`,
 # `make -f /tmp/evil.mk`) - the same axis as `cat /etc/passwd`, and one the command
 # allowlist cannot express. That belongs to path scoping, not to program matching.
+#
+# Names are matched lowercased and without a Windows executable suffix (see
+# `_program_name`), so `python.exe` and `npm.cmd` are the same programs as `python`
+# and `npm`.
 _RUNNER_ANY_ARG = frozenset(
     {
-        # language interpreters
-        "python", "python3", "node", "deno", "bun", "ruby", "perl", "php", "Rscript",
-        "awk", "gawk", "osascript",
+        # language interpreters. `awk`/`sed` are here rather than in the flag table below
+        # because their program text is a POSITIONAL argument (`sed 'e ls'`, `awk
+        # 'BEGIN{system(...)}'`), so no flag is what carries the escape.
+        "python", "python3", "node", "deno", "bun", "ruby", "perl", "php", "rscript",
+        "awk", "gawk", "sed", "osascript",
         # package managers: install/exec fetch remote code and run its build hooks
         "npm", "npx", "pnpm", "yarn", "pip", "pip3", "uv", "uvx", "pipx",
         "cargo", "go", "gem", "bundle", "gradle", "mvn",
@@ -81,11 +87,24 @@ _RUNNER_ESCAPES: dict[str, frozenset[str]] = {
     "git": frozenset({"-c", "--exec-path", "--upload-pack", "--receive-pack"}),
     "tar": frozenset({"--checkpoint-action", "--to-command", "--use-compress-program"}),
     "rsync": frozenset({"-e", "--rsh", "--rsync-path"}),
-    "sed": frozenset({"-e", "--expression", "-f", "--file"}),
     "vim": frozenset({"-c", "--cmd"}),
     "vi": frozenset({"-c", "--cmd"}),
     "nvim": frozenset({"-c", "--cmd"}),
 }
+
+# Windows spells the same programs `python.exe`, `npm.cmd`, `node.exe`.
+_EXE_SUFFIXES = (".exe", ".cmd", ".bat", ".com", ".ps1")
+
+
+def _program_name(argv0: str) -> str:
+    """The program a command invokes, normalised for lookup: directories dropped, case
+    folded, Windows executable suffix removed. Backslashes are treated as separators
+    regardless of host OS so a Windows-style path is not read as one long filename."""
+    name = PurePath(argv0.replace("\\", "/")).name.lower()
+    for suffix in _EXE_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
 
 
 def _flag_name(token: str) -> str:
@@ -98,7 +117,7 @@ def _delegates_execution(argv: list[str], prefix: list[str]) -> bool:
     what code runs. Deliberately conservative: an unclear case returns True, which only
     means "ask the user" - the safe direction for an approval gate.
     """
-    program = PurePath(argv[0]).name  # tolerate /usr/bin/python3 and .../npm
+    program = _program_name(argv[0])
     extra = argv[len(prefix) :]
     if not extra:
         return False  # exactly the allowlisted invocation, nothing added
