@@ -1,5 +1,9 @@
-"""DM routing + super-agent retirement: a DM goes to the user-designated session (delivered like any
-background turn) or is parked as unrouted; the legacy super-agent surface is gone."""
+"""DM routing + super-agent retirement.
+
+Inbound DMs auto-create/reuse a dedicated external-conversation session. The legacy
+dm_session endpoint still exists as a fallback/manual control surface, but regular DM traffic
+no longer needs a user-designated UI session.
+"""
 
 import asyncio
 
@@ -29,6 +33,19 @@ def _dm(text, chat_id="D1", user="bob"):
     )
 
 
+def _feishu_dm(text, chat_id="oc_1", user="ou_1", user_name=None):
+    return MessageEvent(
+        text=text,
+        source=SessionSource(
+            platform="feishu",
+            chat_id=chat_id,
+            user_id=user,
+            user_name=user_name or user,
+            chat_type="dm",
+        ),
+    )
+
+
 def _connect_slack(mgr):
     """Inbound delivery is gated on the connector being CONNECTED (§4.3). Tests used to pass
     by riding the developer's real Slack profile; with the isolated state dir (conftest) each
@@ -39,7 +56,14 @@ def _connect_slack(mgr):
     )
 
 
-def test_dm_with_designated_session_delivers(tmp_path, monkeypatch):
+def _connect_feishu(mgr):
+    mgr.secrets.put(
+        "feishu:default",
+        {"app_id": "cli_test", "app_secret": "sec", "enabled": True},
+    )
+
+
+def test_dm_auto_routes_to_dedicated_session(tmp_path, monkeypatch):
     mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider())
     _connect_slack(mgr)
     delivered: list[tuple[str, str]] = []
@@ -48,17 +72,44 @@ def test_dm_with_designated_session_delivers(tmp_path, monkeypatch):
         delivered.append((session_id, message))
 
     monkeypatch.setattr(mgr, "deliver_to_session", fake_deliver)
-    mgr.set_dm_session("sDM")
 
     asyncio.run(mgr._dispatch_inbound(_dm("ping")))
-    assert delivered[0][0] == "sDM"
+    sid = delivered[0][0]
+    assert sid != "sDM"
     assert (
         "ping" in delivered[0][1]
     )  # the tagged text carries the message + a reply handle
     assert mgr.unrouted.list() == []
+    links = mgr.inbound_sessions.all()
+    assert links == [
+        {
+            "route_key": "slack:dm:D1",
+            "session_id": sid,
+            "platform": "slack",
+            "chat_type": "dm",
+            "chat_id": "D1",
+            "user_id": "",
+            "user_name": "bob",
+            "chat_name": "",
+            "thread_id": "",
+            "team_id": "",
+            "origin": "slack",
+            "origin_label": "bob",
+            "created_at": links[0]["created_at"],
+            "updated_at": links[0]["updated_at"],
+        }
+    ]
+    record = mgr.session_store.load(sid)
+    assert record is not None
+    assert record.origin == "slack"
+    assert record.origin_label == "bob"
+    assert "slack:D1" in mgr._engines[sid].permissions.task_rules["send_message"]
+
+    asyncio.run(mgr._dispatch_inbound(_dm("again")))
+    assert delivered[-1][0] == sid
 
 
-def test_dm_without_designation_is_parked(tmp_path):
+def test_dm_without_connected_connector_is_parked(tmp_path):
     mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider())
     assert mgr.dm_session() is None
 
@@ -66,7 +117,41 @@ def test_dm_without_designation_is_parked(tmp_path):
     parked = mgr.unrouted.list()
     assert len(parked) == 1
     assert parked[0]["text"] == "hello there"
-    assert parked[0]["reason"] == "no DM session designated"
+    assert parked[0]["reason"] == "connector muted for inbound session"
+
+
+def test_feishu_dm_auto_route_persists_across_manager_reload(tmp_path, monkeypatch):
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider())
+    _connect_feishu(mgr)
+    delivered: list[str] = []
+
+    async def fake_deliver(session_id, message, *, source=None):
+        delivered.append(session_id)
+
+    monkeypatch.setattr(mgr, "deliver_to_session", fake_deliver)
+    asyncio.run(mgr._dispatch_inbound(_feishu_dm("你好")))
+    sid = delivered[0]
+    assert "feishu:oc_1" in mgr._engines[sid].permissions.task_rules["send_message"]
+
+    reborn = SessionManager(
+        workspace=tmp_path, data_dir=mgr._data_base, provider=ScriptedProvider()
+    )
+    _connect_feishu(reborn)
+    delivered2: list[str] = []
+
+    async def fake_deliver2(session_id, message, *, source=None):
+        delivered2.append(session_id)
+
+    monkeypatch.setattr(reborn, "deliver_to_session", fake_deliver2)
+    asyncio.run(reborn._dispatch_inbound(_feishu_dm("继续", user_name="Ada Feishu")))
+    assert delivered2 == [sid]
+    refreshed = reborn.inbound_sessions.all()[0]
+    assert refreshed["route_key"] == "feishu:dm:oc_1"
+    assert refreshed["user_name"] == "Ada Feishu"
+    assert "feishu:oc_1" in reborn._engines[sid].permissions.task_rules["send_message"]
+    record = reborn.session_store.load(sid)
+    assert record.origin_label == "Ada Feishu"
+    assert record.title == "Ada Feishu"
 
 
 def test_dm_route_endpoints(tmp_path):
@@ -88,6 +173,61 @@ def test_dm_route_endpoints(tmp_path):
         ]
         is None
     )
+
+
+def test_feishu_dm_file_is_saved_to_session_record_dir(tmp_path, monkeypatch):
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider())
+    _connect_feishu(mgr)
+    delivered: list[tuple[str, str, dict | None]] = []
+
+    async def fake_deliver(session_id, message, *, source=None):
+        delivered.append((session_id, message, source))
+
+    def fake_download(token, message_id, file_key, resource_type="file"):
+        assert message_id == "om_file"
+        assert file_key == "file_v3_1"
+        assert resource_type == "file"
+        return b"abc123", "report.csv"
+
+    monkeypatch.setattr(
+        "coworker.server.manager._download_feishu_resource", fake_download
+    )
+    monkeypatch.setattr(mgr, "deliver_to_session", fake_deliver)
+
+    asyncio.run(
+        mgr._dispatch_inbound(
+            MessageEvent(
+                text="report.csv",
+                source=SessionSource(
+                    platform="feishu",
+                    chat_id="oc_1",
+                    user_id="ou_1",
+                    user_name="Ada",
+                    chat_type="dm",
+                ),
+                message_id="om_file",
+                attachments=[
+                    {
+                        "platform": "feishu",
+                        "type": "file",
+                        "resource_type": "file",
+                        "key": "file_v3_1",
+                        "filename": "report.csv",
+                        "message_id": "om_file",
+                    }
+                ],
+            )
+        )
+    )
+
+    sid = delivered[0][0]
+    assert "Downloaded files:" in delivered[0][1]
+    saved = mgr.session_record_files_dir(sid) / "report.csv"
+    assert saved.read_bytes() == b"abc123"
+    assert any(
+        r["path"] == str(mgr.session_record_files_dir(sid)) for r in mgr.get_roots(sid)
+    )
+    assert delivered[0][2]["attachments"][0]["saved_path"] == str(saved)
 
 
 def test_dm_session_persists_across_manager_reload(tmp_path):

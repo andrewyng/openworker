@@ -2064,6 +2064,6 @@ def _tool_error_message(tool_call: ToolCall, reason: str) -> dict[str, Any]:
 
 
 def _preview(value: Any, max_chars: int = 300) -> str:
-    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    text = value if isinstance(value, str) else json.dumps(value, default=str, ensure_ascii=False)
     text = text.replace("\n", "\\n")
     return text if len(text) <= max_chars else text[: max_chars - 3] + "..."

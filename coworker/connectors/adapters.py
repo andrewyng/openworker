@@ -8,19 +8,33 @@ mappers are pure functions (testable with plain objects/dicts, no SDK).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
+import threading
 from typing import Any, Optional
+from urllib.parse import quote
 
 from .base import (
     BasePlatformAdapter,
     InteractionEvent,
     MessageEvent,
+    MessageType,
     SendResult,
     SessionSource,
 )
-from .senders import _send_slack, _send_slack_interactive, _send_telegram
+from .senders import (
+    _feishu_api_base,
+    _patch_feishu_message,
+    _feishu_tenant_token,
+    _send_feishu,
+    _send_feishu_interactive,
+    _send_slack,
+    _send_slack_interactive,
+    _send_telegram,
+)
+from .feishu_cards import prompt_card, resolved_card, submitted_card
 
 logger = logging.getLogger("coworker.connectors")
 
@@ -82,6 +96,232 @@ def slack_event_to_event(
     )
     return MessageEvent(
         text=text, source=source, message_id=event.get("ts"), mentions_me=mentions_me
+    )
+
+
+def _as_dict(value: Any) -> Any:
+    """Best-effort conversion for lark-oapi model objects into plain dicts."""
+    if isinstance(value, dict):
+        return {k: _as_dict(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_as_dict(v) for v in value]
+    for attr in ("to_dict", "model_dump"):
+        fn = getattr(value, attr, None)
+        if callable(fn):
+            try:
+                return _as_dict(fn())
+            except Exception:
+                pass
+    if hasattr(value, "__dict__"):
+        return {
+            k.lstrip("_"): _as_dict(v)
+            for k, v in vars(value).items()
+            if not callable(v) and not k.startswith("__")
+        }
+    return value
+
+
+def _first_sender_id(sender_id: dict) -> Optional[str]:
+    for key in ("open_id", "user_id", "union_id"):
+        value = sender_id.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def _feishu_text_from_content(content: Any) -> str:
+    if not content:
+        return ""
+    data = _feishu_content_data(content)
+    if isinstance(data, str):
+        return data
+    if isinstance(data, dict):
+        text = data.get("text")
+        if isinstance(text, str):
+            return text
+        post_text = _feishu_text_from_post(data)
+        if post_text:
+            return post_text
+        # Post/rich text messages arrive as nested title/content blocks. Keep a compact text view.
+        if isinstance(data.get("title"), str):
+            return data["title"]
+    return ""
+
+
+def _feishu_content_data(content: Any) -> Any:
+    if isinstance(content, str):
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return content
+    return content
+
+
+def _feishu_text_from_post(data: dict) -> str:
+    locale = data.get("zh_cn") or data.get("en_us") or data
+    if not isinstance(locale, dict):
+        return ""
+    blocks = locale.get("content")
+    if not isinstance(blocks, list):
+        return ""
+    lines: list[str] = []
+    for block in blocks:
+        if not isinstance(block, list):
+            continue
+        parts: list[str] = []
+        for item in block:
+            if not isinstance(item, dict):
+                continue
+            tag = str(item.get("tag") or "")
+            if tag in {"text", "md"}:
+                parts.append(str(item.get("text") or ""))
+            elif tag == "a":
+                label = str(item.get("text") or item.get("href") or "")
+                href = str(item.get("href") or "")
+                parts.append(f"{label} ({href})" if href and href != label else label)
+            elif tag == "at":
+                parts.append(str(item.get("user_name") or item.get("user_id") or ""))
+        line = "".join(parts).strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _feishu_attachments_from_message(message: dict) -> list[dict[str, Any]]:
+    message_type = str(message.get("message_type") or "")
+    data = _feishu_content_data(message.get("content"))
+    if not isinstance(data, dict):
+        return []
+    message_id = str(message.get("message_id") or "")
+    if message_type == "image":
+        key = str(data.get("image_key") or "")
+        if not key:
+            return []
+        return [
+            {
+                "platform": "feishu",
+                "type": "image",
+                "resource_type": "image",
+                "key": key,
+                "filename": str(
+                    data.get("file_name") or data.get("name") or f"{key}.png"
+                ),
+                "message_id": message_id,
+            }
+        ]
+    if message_type in {"file", "audio", "media", "video"}:
+        key = str(data.get("file_key") or "")
+        if not key:
+            return []
+        return [
+            {
+                "platform": "feishu",
+                "type": message_type,
+                "resource_type": "file",
+                "key": key,
+                "filename": str(data.get("file_name") or data.get("name") or key),
+                "message_id": message_id,
+            }
+        ]
+    return []
+
+
+def _feishu_attachment_text(attachments: list[dict[str, Any]]) -> str:
+    if not attachments:
+        return ""
+    names = [
+        str(a.get("filename") or a.get("key") or "attachment") for a in attachments
+    ]
+    return "User sent attachment: " + ", ".join(names)
+
+
+def feishu_event_to_event(event: Any) -> Optional[MessageEvent]:
+    data = _as_dict(event)
+    if isinstance(data, dict) and "event" in data:
+        data = data.get("event") or {}
+    if not isinstance(data, dict):
+        return None
+    message = data.get("message") or {}
+    if not isinstance(message, dict):
+        return None
+    message_type = str(message.get("message_type") or "text")
+    if message_type not in (
+        "text",
+        "post",
+        "file",
+        "image",
+        "audio",
+        "media",
+        "video",
+    ):
+        return None
+    text = _feishu_text_from_content(message.get("content"))
+    attachments = _feishu_attachments_from_message(message)
+    if not text and attachments:
+        text = _feishu_attachment_text(attachments)
+    if not text:
+        return None
+    sender = data.get("sender") or {}
+    sender_id = sender.get("sender_id") if isinstance(sender, dict) else {}
+    sender_id = sender_id if isinstance(sender_id, dict) else {}
+    user_id = _first_sender_id(sender_id)
+    chat_id = str(message.get("chat_id") or "")
+    if not chat_id:
+        return None
+    chat_type_raw = str(message.get("chat_type") or "").lower()
+    chat_type = "dm" if chat_type_raw in {"p2p", "private", "dm"} else "channel"
+    source = SessionSource(
+        platform="feishu",
+        chat_id=chat_id,
+        user_id=user_id,
+        user_name=user_id,
+        chat_name=message.get("chat_name") or chat_id,
+        chat_type=chat_type,
+        thread_id=message.get("thread_id") or None,
+    )
+    return MessageEvent(
+        text=text,
+        source=source,
+        message_id=message.get("message_id"),
+        message_type=MessageType.MEDIA if attachments else MessageType.TEXT,
+        raw=event,
+        attachments=attachments,
+    )
+
+
+def feishu_card_action_to_interaction(event: Any) -> Optional[InteractionEvent]:
+    data = _as_dict(event)
+    if isinstance(data, dict) and "event" in data:
+        data = data.get("event") or {}
+    if not isinstance(data, dict):
+        return None
+    action = data.get("action") or {}
+    context = data.get("context") or {}
+    operator = data.get("operator") or {}
+    if not isinstance(action, dict) or not isinstance(context, dict):
+        return None
+    raw_value = action.get("value")
+    value = ""
+    if isinstance(raw_value, dict):
+        for key in ("ocw_value", "value", "v"):
+            if raw_value.get(key):
+                value = str(raw_value.get(key))
+                break
+    elif raw_value is not None:
+        value = str(raw_value)
+    if not value:
+        return None
+    chat_id = str(context.get("open_chat_id") or context.get("chat_id") or "")
+    if not chat_id:
+        return None
+    user_id = _first_sender_id(operator if isinstance(operator, dict) else {})
+    return InteractionEvent(
+        platform="feishu",
+        chat_id=chat_id,
+        message_id=str(context.get("open_message_id") or "") or None,
+        value=value,
+        user_id=user_id,
+        user_name=user_id,
     )
 
 
@@ -395,6 +635,255 @@ class SlackAdapter(BasePlatformAdapter):
             logger.debug("slack chat_update failed", exc_info=True)
 
 
+class FeishuAdapter(BasePlatformAdapter):
+    platform = "feishu"
+
+    def __init__(self, profile: dict) -> None:
+        super().__init__()
+        self.app_id = str(profile.get("app_id") or "")
+        self.app_secret = str(profile.get("app_secret") or "")
+        self.base_url = str(profile.get("base_url") or "")
+        self._client = None
+        self._thread: Optional[threading.Thread] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._closing = False
+        self._user_cache: dict[str, str] = {}
+        self._chat_cache: dict[str, str] = {}
+        self._identity_lock = threading.Lock()
+
+    async def connect(self) -> bool:
+        try:
+            import lark_oapi as lark
+        except ImportError:
+            logger.warning("lark-oapi not installed — `pip install coworker[messaging]`")
+            return False
+
+        self._loop = asyncio.get_running_loop()
+
+        def _on_message(data: Any) -> None:
+            event = feishu_event_to_event(data)
+            if event is None or self._loop is None or self._closing:
+                return
+            asyncio.run_coroutine_threadsafe(
+                self._handle_feishu_message(event), self._loop
+            )
+
+        def _on_card_action(data: Any):
+            event = feishu_card_action_to_interaction(data)
+            if event is not None and self._loop is not None and not self._closing:
+                asyncio.run_coroutine_threadsafe(
+                    self._handle_feishu_interaction(event), self._loop
+                )
+            try:
+                from lark_oapi.event.callback.model.p2_card_action_trigger import (
+                    P2CardActionTriggerResponse,
+                )
+
+                return P2CardActionTriggerResponse(
+                    {
+                        "toast": {"type": "success", "content": "已收到操作"},
+                        "card": {
+                            "type": "raw",
+                            "data": submitted_card("你的选择已提交，正在继续执行。"),
+                        },
+                    }
+                )
+            except Exception:
+                return {}
+
+        builder = lark.EventDispatcherHandler.builder(
+            "", ""
+        ).register_p2_im_message_receive_v1(_on_message)
+        register_card_action = getattr(builder, "register_p2_card_action_trigger", None)
+        if callable(register_card_action):
+            builder = register_card_action(_on_card_action)
+        else:
+            logger.warning(
+                "lark-oapi does not support card action events; Feishu approval "
+                "buttons will require the UI fallback"
+            )
+        handler = builder.build()
+        self._client = lark.ws.Client(self.app_id, self.app_secret, event_handler=handler)
+
+        def _run() -> None:
+            thread_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(thread_loop)
+            try:
+                ws_client_module = getattr(getattr(lark, "ws", None), "client", None)
+                if ws_client_module is not None and hasattr(ws_client_module, "loop"):
+                    ws_client_module.loop = thread_loop
+                self._client.start()
+            except Exception:
+                if not self._closing:
+                    logger.exception("feishu websocket client stopped unexpectedly")
+            finally:
+                try:
+                    thread_loop.close()
+                finally:
+                    asyncio.set_event_loop(None)
+
+        self._closing = False
+        self._thread = threading.Thread(target=_run, name="feishu-ws", daemon=True)
+        self._thread.start()
+        logger.info("feishu adapter websocket started")
+        return True
+
+    async def _handle_feishu_message(self, event: MessageEvent) -> None:
+        try:
+            await asyncio.to_thread(self._enrich_event, event)
+        except Exception:
+            logger.debug("feishu identity enrichment failed", exc_info=True)
+        await self.handle_message(event)
+
+    async def _handle_feishu_interaction(self, event: InteractionEvent) -> None:
+        user_id = str(event.user_id or "")
+        if user_id and (not event.user_name or event.user_name == user_id):
+            try:
+                name = await asyncio.to_thread(self._resolve_user_name, user_id)
+            except Exception:
+                logger.debug("feishu interaction identity enrichment failed", exc_info=True)
+                name = None
+            if name:
+                event.user_name = name
+        await self.handle_interaction(event)
+
+    def _enrich_event(self, event: MessageEvent) -> None:
+        source = event.source
+        user_id = str(source.user_id or "")
+        if user_id and (not source.user_name or source.user_name == user_id):
+            name = self._resolve_user_name(user_id)
+            if name:
+                source.user_name = name
+        chat_id = str(source.chat_id or "")
+        if chat_id and (not source.chat_name or source.chat_name == chat_id):
+            name = self._resolve_chat_name(chat_id)
+            if name:
+                source.chat_name = name
+
+    def _resolve_user_name(self, user_id: str) -> Optional[str]:
+        with self._identity_lock:
+            cached = self._user_cache.get(user_id)
+        if cached:
+            return cached
+        data = self._feishu_get(
+            f"/open-apis/contact/v3/users/{quote(user_id, safe='')}",
+            params={"user_id_type": "open_id"},
+        )
+        user = (data.get("data") or {}).get("user") if isinstance(data, dict) else None
+        if not isinstance(user, dict):
+            return None
+        name = (
+            user.get("name")
+            or user.get("nickname")
+            or user.get("en_name")
+            or user.get("email")
+        )
+        if not name:
+            return None
+        name = str(name)
+        with self._identity_lock:
+            self._user_cache[user_id] = name
+        return name
+
+    def _resolve_chat_name(self, chat_id: str) -> Optional[str]:
+        with self._identity_lock:
+            cached = self._chat_cache.get(chat_id)
+        if cached:
+            return cached
+        data = self._feishu_get(f"/open-apis/im/v1/chats/{quote(chat_id, safe='')}")
+        body = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(body, dict):
+            return None
+        name = body.get("name") or body.get("chat_name")
+        if not name:
+            return None
+        name = str(name)
+        with self._identity_lock:
+            self._chat_cache[chat_id] = name
+        return name
+
+    def _feishu_get(self, path: str, *, params: Optional[dict[str, str]] = None) -> dict:
+        import httpx
+
+        base_url = _feishu_api_base(self.base_url)
+        token, err = _feishu_tenant_token(self.app_id, self.app_secret, base_url)
+        if err or not token:
+            return {}
+        try:
+            resp = httpx.get(
+                f"{base_url}{path}",
+                params=params,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10.0,
+            )
+            data = resp.json()
+        except Exception:
+            return {}
+        if resp.status_code >= 400 or data.get("code") not in (0, None):
+            logger.debug(
+                "feishu identity lookup failed: path=%s status=%s code=%s msg=%s",
+                path,
+                resp.status_code,
+                data.get("code"),
+                data.get("msg") or data.get("error"),
+            )
+            return {}
+        return data
+
+    async def disconnect(self) -> None:
+        self._closing = True
+        client = self._client
+        self._client = None
+        if client is not None:
+            for name in ("stop", "close"):
+                fn = getattr(client, name, None)
+                if callable(fn):
+                    try:
+                        await asyncio.to_thread(fn)
+                    except Exception:
+                        logger.debug("feishu websocket %s failed", name, exc_info=True)
+                    break
+        self._thread = None
+
+    async def send(
+        self, chat_id: str, text: str, *, thread_id: Optional[str] = None
+    ) -> SendResult:
+        return await asyncio.to_thread(
+            _send_feishu, self._token_bundle(), chat_id, text, thread_id
+        )
+
+    async def send_interactive(
+        self, chat_id: str, text: str, buttons, *, thread_id: Optional[str] = None
+    ) -> SendResult:
+        return await asyncio.to_thread(
+            _send_feishu_interactive,
+            self._token_bundle(),
+            chat_id,
+            prompt_card(text, buttons),
+        )
+
+    async def update_message(self, chat_id: str, message_id: str, text: str) -> None:
+        if not message_id:
+            return
+        result = await asyncio.to_thread(
+            _patch_feishu_message,
+            self._token_bundle(),
+            message_id,
+            resolved_card(text),
+        )
+        if not result.ok:
+            logger.debug("feishu interactive card update failed: %s", result.error)
+
+    def _token_bundle(self) -> str:
+        return json.dumps(
+            {
+                "app_id": self.app_id,
+                "app_secret": self.app_secret,
+                "base_url": self.base_url,
+            }
+        )
+
+
 def _load_slack_teams(secrets) -> dict[str, dict]:
     """Per-team bot tokens for managed relay, from `slack:team:<team_id>` profiles
     (written by the managed OAuth install). Returns {team_id: {bot_token, bot_user_id}}.
@@ -459,6 +948,8 @@ def make_adapter(
             )
         if profile.get("bot_token") and profile.get("app_token"):
             return SlackAdapter(profile["bot_token"], profile["app_token"])
+    if platform == "feishu" and profile.get("app_id") and profile.get("app_secret"):
+        return FeishuAdapter(profile)
     if platform == "github" and profile.get("mode") == "relay":
         if not (relay_url and token_provider):
             logger.warning(

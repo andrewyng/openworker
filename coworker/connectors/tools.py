@@ -7,6 +7,7 @@ gated (`requires_approval=True` → asks outside Auto mode).
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -22,8 +23,8 @@ _SCHEMA = {
     "function": {
         "name": "send_message",
         "description": (
-            "Send a message to a connected chat (Slack or Telegram). `target` is the "
-            "reply handle from an inbound message (e.g. 'telegram:12345' or 'slack:C0123', "
+            "Send a message to a connected chat (Slack, Telegram, or Feishu/Lark). `target` is the "
+            "reply handle from an inbound message (e.g. 'telegram:12345', 'slack:C0123', or 'feishu:oc_abc'), "
             "optionally with a ':<thread>' suffix) — or, for Slack, just the channel NAME "
             "('#general' or 'general'; resolved against the connected workspaces). Use this to "
             "actually reach a person — plain assistant text is not delivered anywhere."
@@ -127,6 +128,17 @@ def _resolve_token(secrets: SecretStore, platform: str, chat_id: str) -> Optiona
         if team:
             per_team = secrets.get(f"slack:team:{team}") or {}
             return per_team.get("bot_token")
+    if platform == "feishu":
+        creds = secrets.get("feishu:default") or {}
+        if not (creds.get("app_id") and creds.get("app_secret")):
+            return None
+        return json.dumps(
+            {
+                "app_id": creds["app_id"],
+                "app_secret": creds["app_secret"],
+                "base_url": creds.get("base_url") or "",
+            }
+        )
     creds = secrets.get(f"{platform}:default") or {}
     return creds.get("bot_token")
 
@@ -184,12 +196,13 @@ _FILE_SCHEMA = {
     "function": {
         "name": "send_file",
         "description": (
-            "Upload a file from the session's workspace into a connected chat (Slack). "
-            "`target` is the same handle send_message uses. Slack shows its own previews "
-            "for pdf/csv/images — send the actual file, not a screenshot of it. For .html "
-            "artifacts (which Slack can't preview) set as_screenshot=true to send a "
-            "rendered PNG instead. This is a DISTINCT permission from send_message: it "
-            "asks for approval even in threads where text replies are pre-approved."
+            "Upload a file from the session's workspace into a connected chat (Slack or "
+            "Feishu/Lark). `target` is the same handle send_message uses. Chat apps show "
+            "their own previews for pdf/csv/images — send the actual file, not a "
+            "screenshot of it. For .html artifacts (which Slack can't preview) set "
+            "as_screenshot=true to send a rendered PNG instead. This is a DISTINCT "
+            "permission from send_message: it asks for approval even in threads where text "
+            "replies are pre-approved."
         ),
         "parameters": {
             "type": "object",

@@ -2047,8 +2047,14 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
 
         async def _mirror(item) -> None:
-            # Unattended items mirror to a bound channel as buttons (see mirror_inbox_item).
+            # Mirror to a bound channel, and also back to a Feishu-origin DM even while this
+            # session is attended in the UI. The Inbox item stays single-source-of-truth.
             await manager.mirror_inbox_item(item)
+
+        def _should_mirror(item) -> bool:
+            return item.visibility == VIS_INBOX or manager.has_feishu_inbound_target(
+                session_id
+            )
 
         def _route() -> str:
             return manager.inbox_routing.route_for(session_id, agent)
@@ -2080,7 +2086,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                 manager.persist_session(
                     session_id
                 )  # the pending tool call is now on disk
-                if item.visibility == VIS_INBOX:
+                if _should_mirror(item):
                     await _mirror(item)
             resolution = await manager.inbox.wait(item.id)
             # Accept every vocabulary: the live card sends once/always_tool/always_command/
@@ -2103,7 +2109,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             if item.state == "pending":
                 manager.persist_session(session_id)
-                if item.visibility == VIS_INBOX:
+                if _should_mirror(item):
                     await _mirror(item)
                 else:
                     await ws.send_json(
@@ -2199,7 +2205,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             if item.state == "pending":
                 manager.persist_session(session_id)
-                if item.visibility == VIS_INBOX:
+                if _should_mirror(item):
                     await _mirror(item)
             resp = _parse_json(
                 await manager.inbox.wait(item.id)
@@ -2277,7 +2283,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             if item.state == "pending":
                 manager.persist_session(session_id)
-                if item.visibility == VIS_INBOX:
+                if _should_mirror(item):
                     await _mirror(item)
             resp = _parse_json(
                 await manager.inbox.wait(item.id)

@@ -13,8 +13,11 @@ from .base import (
     parse_target,
 )
 from .adapters import (
+    FeishuAdapter,
     SlackAdapter,
     TelegramAdapter,
+    feishu_card_action_to_interaction,
+    feishu_event_to_event,
     make_adapter,
     slack_event_to_event,
     telegram_message_to_event,
@@ -70,7 +73,10 @@ __all__ = [
     "SlackAdapter",
     "SlackRelayAdapter",
     "TelegramAdapter",
+    "FeishuAdapter",
     "make_adapter",
+    "feishu_card_action_to_interaction",
+    "feishu_event_to_event",
     "slack_event_to_event",
     "telegram_message_to_event",
     "slack_qualify",
