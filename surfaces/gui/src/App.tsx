@@ -30,6 +30,7 @@ import {
 } from "./api";
 import type {
   ApprovalDecision,
+  ArtifactAnnotation,
   Attachment,
   Item,
   SessionInfo,
@@ -304,6 +305,11 @@ export function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   // A pending composer prefill (text + attachments) pushed from the session start panel.
   const [composerPrefill, setComposerPrefill] = useState<{ text: string; attachments?: Attachment[]; nonce: number }>();
+  const [stagedAnnotations, setStagedAnnotations] = useState<ArtifactAnnotation[]>([]);
+
+  useEffect(() => {
+    setStagedAnnotations([]);
+  }, [sessionId]);
 
   // Persona metadata drives workspace behavior by FAMILY, not by hardcoded id (so a DevOps/SecOps
   // code-family persona gates a folder like Code, and a knowledge persona starts orphan like Cowork).
@@ -842,10 +848,24 @@ export function App() {
     return () => clearInterval(t);
   }, [surface, sessionId, browserRefreshKey, markUnattended]);
 
-  const send = (text: string, attachments?: Attachment[]) => {
-    setItems((p) => [...p, { kind: "user", text, attachments, ts: Date.now() / 1000 }]);
+  const send = (
+    text: string,
+    attachments?: Attachment[],
+    annotations?: ArtifactAnnotation[],
+  ) => {
+    setItems((p) => [
+      ...p,
+      {
+        kind: "user",
+        text,
+        attachments,
+        annotations,
+        ts: Date.now() / 1000,
+      },
+    ]);
     // The visible model rides along with the message (single source of truth per turn).
-    sessionRef.current?.userMessage(text, attachments, model);
+    sessionRef.current?.userMessage(text, attachments, model, annotations);
+    if (annotations?.length) setStagedAnnotations([]);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
   };
   // Resolving a LIVE prompt also resolves its parked Inbox mirror server-side, but the polled
@@ -1565,6 +1585,12 @@ export function App() {
               unattended={unattended}
               onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}
               prefill={composerPrefill}
+              annotations={stagedAnnotations}
+              onRemoveAnnotation={(id) =>
+                setStagedAnnotations((current) =>
+                  current.filter((annotation) => annotation.id !== id),
+                )
+              }
               resetKey={sessionId}
               usage={usage}
               contextWindow={modelContextWindows[model]}
@@ -1628,6 +1654,12 @@ export function App() {
             scratchPrimary={agent === "cowork"}
             openAccessKey={accessKey}
             onOpenIntegrations={() => setSurface("integrations")}
+            stagedAnnotations={stagedAnnotations}
+            onStageAnnotation={(annotation) =>
+              setStagedAnnotations((current) =>
+                [...current.filter((item) => item.id !== annotation.id), annotation].slice(0, 8),
+              )
+            }
           />
         </div>
       </div>

@@ -608,7 +608,7 @@ button.btn.danger { color: var(--accent); }
 .artifact-title span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .artifact-sep { color: var(--faint); font-weight: 400; }
 .artifact-path { font-size: 11.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
-.artifact-preview { min-height: 0; flex: 1; overflow: auto; background: var(--panel); }
+.artifact-preview { min-height: 0; flex: 1; overflow: auto; background: var(--panel); position: relative; }
 .artifact-frame { width: 100%; height: 100%; min-height: calc(100vh - 86px); border: 0; background: #fff; }
 /* Checkerboard backdrop so white/transparent images still read as an image, not a blank pane. */
 .artifact-image {
@@ -650,6 +650,96 @@ button.btn.danger { color: var(--accent); }
 .artifact-md { padding: 26px 28px 70px; font-size: 14.5px; line-height: 1.6; color: var(--ink); }
 .artifact-md .md h1 { font-size: 24px; }
 .artifact-md .md h2 { font-size: 19px; margin-top: 22px; }
+
+/* Artifact annotations: one interaction language, renderer-specific selection underneath. */
+.artifact-annotate-btn {
+  height: 28px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px;
+  border: 1px solid var(--line); border-radius: 8px; background: transparent;
+  color: var(--muted); font: inherit; font-size: 11.5px; font-weight: 500;
+  cursor: pointer; white-space: nowrap;
+}
+.artifact-annotate-btn:hover { color: var(--ink); background: var(--paper); }
+.artifact-annotate-btn.active {
+  color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  background: var(--accent-soft);
+}
+.artifact-annotate-btn:disabled { cursor: default; opacity: .45; }
+.annotation-head-count {
+  min-width: 15px; height: 15px; display: grid; place-items: center; padding: 0 3px;
+  border-radius: 999px; background: var(--accent); color: white; font-size: 9px;
+}
+.annotation-document-surface { position: relative; min-height: 100%; }
+.annotation-image-stage { min-height: 100%; padding: 20px; display: flex; justify-content: center; align-items: flex-start; }
+.annotation-image-surface { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
+.annotation-image-surface .artifact-image { margin: 0; max-width: 100%; }
+.artifact-annotation-overlay {
+  position: absolute; inset: 0; z-index: 20; cursor: crosshair; touch-action: none;
+  user-select: none;
+}
+.annotation-live-box, .annotation-focus-anchor, .annotation-focus-box {
+  position: absolute; pointer-events: none; box-sizing: border-box;
+}
+.annotation-live-box {
+  border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.annotation-live-box { z-index: 21; }
+.annotation-focus-anchor { z-index: 19; }
+.annotation-focus-box {
+  border: 1.5px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.annotation-focus-box.draft {
+  border: 1px dashed var(--accent);
+}
+.annotation-marker {
+  position: absolute; top: -11px; right: -11px; width: 20px; height: 20px;
+  display: grid; place-items: center; box-sizing: border-box;
+  border: 2px solid var(--panel); border-radius: 50%;
+  background: var(--accent); color: white; font-size: 10px; font-weight: 650;
+  line-height: 1;
+}
+.artifact-pdf-page-wrap {
+  position: relative; margin: 0 auto 14px; overflow: hidden; background: white;
+  border: 1px solid var(--line); border-radius: 4px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+.artifact-pdf-page-wrap .artifact-pdf-page {
+  width: 100%; height: 100%; margin: 0; border: 0; border-radius: 0; box-shadow: none;
+}
+.artifact-pdf-text-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.artifact-pdf-text-layer span { position: absolute; background: transparent; }
+.annotation-comment-card {
+  position: fixed; z-index: 90; width: 296px; padding: 7px;
+  border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel);
+  color: var(--ink); box-shadow: 0 12px 34px rgba(18, 22, 28, .16);
+}
+.annotation-comment-card textarea {
+  display: block; width: 100%; min-height: 54px; resize: none; padding: 8px 9px;
+  border: 0; border-radius: 9px; background: transparent; color: var(--ink);
+  font: inherit; font-size: 13px; line-height: 1.4; outline: none;
+}
+.annotation-comment-card textarea::placeholder { color: var(--faint); }
+.annotation-comment-actions {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 7px; padding-top: 6px; border-top: 1px solid var(--line);
+}
+.annotation-comment-actions button {
+  border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px; background: transparent;
+  color: var(--muted); font: inherit; font-size: 12px; cursor: pointer;
+}
+.annotation-comment-actions button:hover { color: var(--ink); background: var(--paper); }
+.annotation-comment-actions .annotation-comment-save {
+  width: 32px; height: 32px; display: grid; place-items: center; padding: 0;
+  border: 0; background: var(--accent); color: white; font-size: 17px;
+}
+.annotation-comment-actions .annotation-comment-save:hover {
+  background: var(--accent); color: white; filter: brightness(1.04);
+}
+.annotation-comment-actions button:disabled { opacity: .45; cursor: default; }
+.annotation-stale-banner {
+  position: sticky; top: 0; z-index: 30; padding: 7px 12px; border-bottom: 1px solid var(--warn-ink);
+  background: var(--warn-soft); color: var(--warn-ink); font-size: 12px; text-align: center;
+}
 
 /* working-directory bar */
 /* Workspace chip lives INSIDE the composer card's head row (top chip row, Tailwind-laid-out). */
@@ -1206,6 +1296,50 @@ button.btn.ghost:hover { color: var(--ink); }
 .bubble-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
 .msg-img { max-width: 220px; max-height: 220px; border-radius: 10px; border: 1px solid var(--line-strong); display: block; }
 .msg-file { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+.annotation-compose-summary {
+  padding: 8px 10px 0;
+}
+.annotation-compose-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 25px; padding: 0 8px;
+  border: 1px solid var(--line-strong); border-radius: 999px; background: var(--paper);
+  color: var(--muted); font: inherit; font-size: 11px; cursor: pointer;
+}
+.annotation-compose-chip:hover { color: var(--ink); }
+.annotation-compose-items {
+  display: flex; gap: 7px; overflow-x: auto; padding: 7px 0 1px;
+}
+.annotation-compose-item {
+  position: relative; flex: 0 0 132px; height: 44px; display: flex; align-items: center; gap: 7px;
+  padding: 4px 22px 4px 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper);
+}
+.annotation-compose-item img { width: 42px; height: 34px; object-fit: cover; border-radius: 5px; background: white; }
+.annotation-compose-number {
+  position: absolute; left: 3px; top: 3px; min-width: 15px; height: 15px; display: grid; place-items: center;
+  padding: 0 3px; border-radius: 999px; background: var(--accent); color: white; font-size: 9px;
+}
+.annotation-compose-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
+.annotation-compose-item > button {
+  position: absolute; right: 4px; top: 4px; width: 18px; height: 18px;
+  display: grid; place-items: center; padding: 0; border: 0; background: transparent;
+  color: var(--faint); cursor: pointer;
+}
+.message-annotation-bundle { margin-bottom: 7px; }
+.message-annotation-previews { display: flex; gap: 5px; }
+.message-annotation-previews button {
+  position: relative; width: 92px; height: 68px; padding: 0; overflow: hidden;
+  border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); cursor: pointer;
+}
+.message-annotation-previews img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.message-annotation-previews span {
+  position: absolute; left: 4px; top: 4px; min-width: 16px; height: 16px; display: grid; place-items: center;
+  padding: 0 3px; border-radius: 999px; background: rgba(23, 25, 28, .82); color: white; font-size: 9px;
+}
+.message-annotation-count {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; padding: 3px 7px;
+  border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel);
+  color: var(--muted); font: inherit; font-size: 11px; cursor: pointer;
+}
+.message-user-text { margin-top: 2px; }
 
 /* ---- Automation form inputs (the form/template cards themselves are Tailwind, §28) ---- */
 

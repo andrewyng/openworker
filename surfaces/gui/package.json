@@ -14,6 +14,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "html2canvas": "^1.4.1",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

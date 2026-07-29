@@ -1,8 +1,8 @@
 import { useState } from "react";
-import type { ApprovalDecision, Item } from "../types";
+import type { ApprovalDecision, ArtifactAnnotation, Item } from "../types";
 import { shortArgs } from "./ApprovalCard";
 import { humanizeAsk, humanizeTool, type HumanLine } from "../humanize";
-import { Markdown } from "./Markdown";
+import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
 import { ConnectorMessageCard } from "./ConnectorMessageCard";
 import { Icon } from "./Icon";
 
@@ -46,6 +46,41 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+function AnnotationBundleCard({ annotations }: { annotations: ArtifactAnnotation[] }) {
+  const open = (annotation: ArtifactAnnotation) => {
+    window.dispatchEvent(
+      new CustomEvent(OPEN_ARTIFACT_EVENT, {
+        detail: { path: annotation.artifact.path, annotation },
+      }),
+    );
+  };
+  return (
+    <div className="message-annotation-bundle">
+      <div className="message-annotation-previews">
+        {annotations.slice(0, 3).map((annotation, index) => (
+          <button
+            type="button"
+            key={annotation.id}
+            onClick={() => open(annotation)}
+            title={`Open comment ${index + 1} in ${annotation.artifact.name}`}
+          >
+            <img src={annotation.preview.data_url} alt="" />
+            <span>{index + 1}</span>
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="message-annotation-count"
+        onClick={() => open(annotations[0])}
+      >
+        <Icon name="chat" size={12} />
+        {annotations.length} comment{annotations.length === 1 ? "" : "s"}
+      </button>
     </div>
   );
 }
@@ -387,6 +422,9 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
             return (
               <div className="group self-end max-w-[78%] flex flex-col items-end" key={bi}>
                 <div className="bubble-user px-3.5 py-2.5 rounded-[14px_14px_4px_14px] bg-solid text-onSolid text-[14.5px] leading-relaxed whitespace-pre-wrap">
+                  {!!item.annotations?.length && (
+                    <AnnotationBundleCard annotations={item.annotations} />
+                  )}
                   {item.attachments && item.attachments.length > 0 && (
                     <div className="bubble-attachments">
                       {item.attachments.map((a, i) =>
@@ -398,7 +436,7 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
                       )}
                     </div>
                   )}
-                  {item.text}
+                  {item.text && <div className="message-user-text">{item.text}</div>}
                 </div>
                 <BubbleMeta text={item.text} ts={item.ts} align="right" />
               </div>

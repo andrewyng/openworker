@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import type { Attachment, SessionUsage } from "../types";
+import type { ArtifactAnnotation, Attachment, SessionUsage } from "../types";
 import { isPdfFile, readFile } from "../attach";
 import { getSettings, inspectPdf } from "../api";
 import { formatTokens, totalTokens } from "../usage";
@@ -59,7 +59,11 @@ interface Props {
   modelReady?: boolean;
   onConnectModel?: () => void;
   onConfigureVoiceInput?: () => void;
-  onSend: (text: string, attachments?: Attachment[]) => void;
+  onSend: (
+    text: string,
+    attachments?: Attachment[],
+    annotations?: ArtifactAnnotation[],
+  ) => void;
   onInterrupt: () => void;
   onModeChange: (mode: string) => void;
   onModelChange: (model: string) => void;
@@ -74,6 +78,8 @@ interface Props {
   // Push text + attachments into the composer (e.g. a start-panel task card). The `nonce` makes
   // repeated identical prefills re-apply; the user can still edit before sending.
   prefill?: { text: string; attachments?: Attachment[]; nonce: number };
+  annotations?: ArtifactAnnotation[];
+  onRemoveAnnotation?: (id: string) => void;
   // Changes when the active conversation changes; clears any unsent draft.
   resetKey?: string;
   // Surface-specific hint shown in the empty textarea.
@@ -96,6 +102,7 @@ export function Composer(props: Props) {
   const [dictationError, setDictationError] = useState<string | null>(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [attachNotice, setAttachNotice] = useState<string | null>(null);
+  const [commentsOpen, setCommentsOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const noticeTimer = useRef<number | null>(null);
@@ -136,6 +143,7 @@ export function Composer(props: Props) {
   useEffect(() => {
     setText("");
     setAttachments([]);
+    setCommentsOpen(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.resetKey]);
 
@@ -263,13 +271,23 @@ export function Composer(props: Props) {
 
   const submit = () => {
     const t = text.trim();
-    if ((!t && attachments.length === 0) || props.running || dictation?.recording || dictationBusy) return;
+    const annotations = props.annotations || [];
+    if (
+      (!t && attachments.length === 0 && annotations.length === 0)
+      || props.running
+      || dictation?.recording
+      || dictationBusy
+    ) return;
+    if (attachments.length + annotations.length > 8) {
+      showAttachNotice("Send at most 8 combined files and annotations in one message.");
+      return;
+    }
     // No model connected: keep the draft (don't drop it) and send the user to setup instead.
     if (needsModel) {
       props.onConnectModel?.();
       return;
     }
-    props.onSend(t, attachments);
+    props.onSend(t, attachments, annotations);
     setText("");
     setAttachments([]);
   };
@@ -340,7 +358,10 @@ export function Composer(props: Props) {
 
   // The send button is accent only when there's something to send — subtle grey otherwise, so the
   // composer isn't carrying a constant blue dot.
-  const hasContent = text.trim().length > 0 || attachments.length > 0;
+  const hasContent =
+    text.trim().length > 0
+    || attachments.length > 0
+    || !!props.annotations?.length;
 
   return (
     <div className="composer-wrap px-6 pb-5 pt-4">
@@ -369,7 +390,6 @@ export function Composer(props: Props) {
         </div>
       )}
 
-      {/* Attachments preview — a strip ABOVE the input box (mock/Claude-style). */}
       {attachments.length > 0 && (
         <div className="max-w-3xl mx-auto mb-1.5 flex flex-wrap gap-2">
           {attachments.map((a, i) => (
@@ -394,6 +414,45 @@ export function Composer(props: Props) {
           if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
         }}
       >
+        {!!props.annotations?.length && (
+          <div className="annotation-compose-summary">
+            <button
+              type="button"
+              className="annotation-compose-chip"
+              aria-expanded={commentsOpen}
+              onClick={() => setCommentsOpen((open) => !open)}
+            >
+              <Icon name="chat" size={12} />
+              {props.annotations.length} comment{props.annotations.length === 1 ? "" : "s"}
+              <Icon
+                name={commentsOpen ? "chevronDown" : "chevronRight"}
+                size={11}
+              />
+            </button>
+            {commentsOpen && (
+              <div className="annotation-compose-items">
+                {props.annotations.map((annotation, index) => (
+                  <div className="annotation-compose-item" key={annotation.id}>
+                    <img
+                      src={annotation.preview.data_url}
+                      alt={`Comment ${index + 1} preview`}
+                    />
+                    <span className="annotation-compose-number">{index + 1}</span>
+                    <span className="annotation-compose-name">{annotation.artifact.name}</span>
+                    <button
+                      type="button"
+                      aria-label={`Remove comment ${index + 1}`}
+                      title="Remove comment"
+                      onClick={() => props.onRemoveAnnotation?.(annotation.id)}
+                    >
+                      <Icon name="x" size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           className="w-full block px-3.5 pt-3.5 pb-1.5 text-[14.5px]"

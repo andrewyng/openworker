@@ -31,6 +31,47 @@ describe("itemsFromMessages _display sidecar", () => {
     expect(tools[1].hidden).toBeUndefined();
     expect(tools[0].preview).not.toContain("hidden"); // content stays clean
   });
+
+  it("replays artifact annotations as structured user-message context", () => {
+    const annotation = {
+      id: "ann-1",
+      comment: "Make this clearer.",
+      artifact: {
+        path: "report.md",
+        name: "report.md",
+        kind: "markdown",
+        sha256: "a".repeat(64),
+      },
+      target: {
+        kind: "dom",
+        selector: "h2",
+        exact: "Results",
+        rect: { x: 0.1, y: 0.2, width: 0.5, height: 0.08 },
+      },
+      preview: {
+        data_url: "data:image/png;base64,AA==",
+        width: 200,
+        height: 60,
+      },
+    };
+    const items = itemsFromMessages([
+      {
+        role: "user",
+        content: "",
+        _display: { text: "", annotations: [annotation] },
+        ts: 1752969720,
+      },
+    ] as any);
+
+    expect(items).toEqual([
+      {
+        kind: "user",
+        text: "",
+        annotations: [annotation],
+        ts: 1752969720,
+      },
+    ]);
+  });
 });
 
 describe("itemsFromMessages timestamps", () => {

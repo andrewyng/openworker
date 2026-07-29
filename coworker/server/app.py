@@ -155,6 +155,7 @@ from ..attachments import (
     MAX_TEXT_CHARS,
     build_user_content,
 )
+from ..annotations import validate_annotations
 from ..engine import ApprovalOutcome
 from ..inbox import VIS_INBOX, VIS_INLINE, args_preview
 from ..permissions import Mode
@@ -1710,11 +1711,15 @@ def create_app(manager: SessionManager) -> FastAPI:
             "iteration_end",
         }
 
-        async def run_turn(content, *, retry: bool = False) -> None:
+        async def run_turn(content, *, retry: bool = False, display=None) -> None:
             # The receive loop atomically claims this session before scheduling the task.
             # Keeping the claim outside prevents two back-to-back frames from both starting.
             try:
-                events = engine.retry() if retry else engine.run(content)
+                events = (
+                    engine.retry()
+                    if retry
+                    else engine.run(content, display=display)
+                )
                 async for event in events:
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.
@@ -1740,13 +1745,15 @@ def create_app(manager: SessionManager) -> FastAPI:
             # or flush an in-progress assistant stream in the GUI.
             await ws.send_json({"type": "input_rejected", "data": {"error": reason}})
 
-        async def claim_turn(*, retry: bool = False, content=None) -> None:
+        async def claim_turn(
+            *, retry: bool = False, content=None, display=None
+        ) -> None:
             if not manager.try_mark_running(session_id):
                 await reject_input(
                     "This session is already running a turn. Wait for it to finish or stop it."
                 )
                 return
-            asyncio.create_task(run_turn(content, retry=retry))
+            asyncio.create_task(run_turn(content, retry=retry, display=display))
 
         try:
             while True:
@@ -1826,6 +1833,12 @@ def create_app(manager: SessionManager) -> FastAPI:
                     text = raw_text.strip()
                     raw_attachments = message.get("attachments")
                     attachments = [] if raw_attachments is None else raw_attachments
+                    annotations, annotation_error = validate_annotations(
+                        message.get("annotations"),
+                        attachment_count=(
+                            len(attachments) if isinstance(attachments, list) else 0
+                        ),
+                    )
                     # Reject an oversized frame instead of buffering it into a turn. Send a
                     # visible error so the surface can tell the user, and drop the message.
                     if not isinstance(attachments, list):
@@ -1844,8 +1857,16 @@ def create_app(manager: SessionManager) -> FastAPI:
                         )
                     elif any(not isinstance(a, dict) for a in attachments):
                         reject = "Invalid attachment: expected an object."
-                    elif _json_value_size(attachments) > _MAX_ATTACHMENTS_BYTES:
-                        reject = "Attachments too large (limit 15 MB per message)."
+                    elif (
+                        _json_value_size(attachments) + _json_value_size(annotations)
+                        > _MAX_ATTACHMENTS_BYTES
+                    ):
+                        reject = (
+                            "Combined attachments and annotations are too large "
+                            "(limit 15 MB per message)."
+                        )
+                    elif annotation_error:
+                        reject = annotation_error
                     else:
                         for attachment in attachments:
                             attachment_kind = attachment.get("kind")
@@ -1900,9 +1921,16 @@ def create_app(manager: SessionManager) -> FastAPI:
                         await reject_input("Invalid model: expected a string.")
                         continue
                     await _apply_model(model)
-                    if text or attachments:
+                    if text or attachments or annotations:
                         content = build_user_content(text, attachments)
-                        await claim_turn(content=content)
+                        await claim_turn(
+                            content=content,
+                            display=(
+                                {"text": text, "annotations": annotations}
+                                if annotations
+                                else None
+                            ),
+                        )
                 else:
                     await reject_input(f"Unknown WebSocket message type: {kind}.")
         except WebSocketDisconnect:

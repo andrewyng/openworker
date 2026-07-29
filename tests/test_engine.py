@@ -439,3 +439,49 @@ def test_outbound_replaces_images_for_non_vision_models(tmp_path):
     assert all(p["type"] != "image_url" for p in parts)
     assert "not viewable" in parts[-1]["text"]
     assert engine.messages[-1]["content"][1]["type"] == "image_url"  # history untouched
+
+
+def test_outbound_expands_annotation_sidecar_for_model_without_mutating_history(tmp_path):
+    class VisionProvider(ScriptedProvider):
+        def capabilities(self, model):
+            return ModelCapabilities(vision=True)
+
+    engine, _ = _engine(tmp_path, [_text_turn("ok")])
+    engine.provider = VisionProvider([_text_turn("ok")])
+    annotation = {
+        "id": "ann-1",
+        "comment": "Increase the contrast.",
+        "artifact": {
+            "path": "result.html",
+            "name": "result.html",
+            "kind": "html",
+            "sha256": "b" * 64,
+        },
+        "target": {
+            "kind": "dom",
+            "selector": "main > p",
+            "exact": "Important result",
+            "rect": {"x": 0.1, "y": 0.2, "width": 0.4, "height": 0.1},
+        },
+        "preview": {
+            "data_url": "data:image/png;base64,AA==",
+            "width": 100,
+            "height": 40,
+        },
+    }
+    message = {
+        "role": "user",
+        "content": "Revise this.",
+        "_display": {"text": "Revise this.", "annotations": [annotation]},
+    }
+    engine.messages.append(message)
+
+    outbound = engine._outbound_messages()[-1]
+    assert "_display" not in outbound
+    assert isinstance(outbound["content"], list)
+    assert any(
+        part.get("type") == "text" and "Increase the contrast." in part.get("text", "")
+        for part in outbound["content"]
+    )
+    assert any(part.get("type") == "image_url" for part in outbound["content"])
+    assert engine.messages[-1] == message  # canonical replay shape remains structured
