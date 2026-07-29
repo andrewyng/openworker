@@ -50,7 +50,7 @@ test("artifact comments stage a selected Markdown segment and send it with the t
 
   await page.getByRole("button", { name: "Comment" }).click();
   const overlay = page.getByTestId("annotation-overlay");
-  await expect(overlay).toHaveCSS("cursor", /data:image\/svg\+xml/);
+  await expect(overlay).toHaveCSS("cursor", "crosshair");
   await expect(page.getByRole("button", { name: "Commenting" })).toHaveCSS("cursor", "pointer");
   const heading = page.getByText("Quarterly result", { exact: true });
   const bounds = await heading.boundingBox();
@@ -106,7 +106,7 @@ test("HTML comments use the same comment cursor and restore the page cursor on e
   const overlay = page
     .frameLocator("iframe.artifact-frame")
     .locator(".artifact-annotation-overlay");
-  await expect(overlay).toHaveCSS("cursor", /data:image\/svg\+xml/);
+  await expect(overlay).toHaveCSS("cursor", "crosshair");
 
   await page.getByRole("button", { name: "Commenting" }).click();
   await expect(overlay).toHaveCount(0);

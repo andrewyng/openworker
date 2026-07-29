@@ -54,12 +54,6 @@ const SELECTION_VISUAL_INSET =
   + `calc(-${SELECTION_PAD_X}px - ${SELECTION_GROWTH_X_PERCENT}%) `
   + `calc(-${SELECTION_PAD_BOTTOM}px - ${SELECTION_GROWTH_BOTTOM_PERCENT}%) `
   + `calc(-${SELECTION_PAD_X}px - ${SELECTION_GROWTH_X_PERCENT}%)`;
-const ANNOTATION_CURSOR =
-  `url("data:image/svg+xml,`
-  + `%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E`
-  + `%3Ccircle cx='12' cy='12' r='9' fill='%232f80ed' stroke='white' stroke-width='2'/%3E`
-  + `%3Cpath d='M8 12h8M12 8v8' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round'/%3E`
-  + `%3C/svg%3E") 12 12, crosshair`;
 
 function normalizedRect(rect: LocalRect, width: number, height: number): AnnotationRect {
   const safeWidth = Math.max(1, width);
@@ -210,7 +204,6 @@ function SelectionOverlay({
     <div
       className="artifact-annotation-overlay"
       data-testid="annotation-overlay"
-      style={{ cursor: ANNOTATION_CURSOR }}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -411,7 +404,7 @@ function HtmlSurface({
       position: "fixed",
       inset: "0",
       zIndex: "2147483646",
-      cursor: ANNOTATION_CURSOR,
+      cursor: "crosshair",
       background: "transparent",
     });
     const live = doc.createElement("div");
