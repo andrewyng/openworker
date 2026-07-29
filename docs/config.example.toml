@@ -8,11 +8,18 @@ model = "gpt-5.5"            # default model id (override per session in the UI/
 mode = "interactive"         # plan | interactive | auto | custom
 max_iterations = 12          # max model<->tool iterations per turn before stopping
 
-# Commands auto-allowed without an approval prompt (prefix match).
+# Commands auto-allowed without an approval prompt, matched as an argv prefix (so
+# "git status" also covers "git status -s", but never "git statusfoo" or a bare "git").
+# The built-in default is EMPTY: nothing auto-runs until you list it here.
+#
+# Keep entries to programs that only report. A bare interpreter, package manager or exec
+# wrapper is not a safe entry, because its arguments are what choose the code to run:
+# "python3" would auto-run "python3 anything.py", "npm" would auto-run "npm install
+# <pkg>" (which executes that package's install scripts). Those entries are held back
+# unless they name the operation as well - use "npm test" or "python3 -m pytest".
 allowed_commands = [
-  "ls", "cat", "pwd", "grep", "find",
+  "ls", "pwd", "grep", "find",
   "git status", "git diff", "git log",
-  "python3", "pytest", "node", "npm",
 ]
 
 # In "custom" permission mode, these tools are auto-approved (everything else still
