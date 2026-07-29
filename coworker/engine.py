@@ -225,13 +225,24 @@ class TurnEngine:
             return message.get("kind") == "error"
         return False
 
-    def _append_notice(self, kind: str, text: Optional[str] = None) -> None:
+    def _append_notice(
+        self, kind: str, text: Optional[str] = None, raw: Optional[str] = None
+    ) -> None:
         """Persist a turn-ending marker (error/interrupted) as a display-only `notice`
         message: it survives reload like the transcript does, but `_outbound_messages`
-        drops the role so no provider ever sees it."""
+        drops the role so no provider ever sees it.
+
+        `raw` is the provider's untranslated message, stored only when `text` is one of our
+        rewrites (providers/errors.py) and therefore differs from what the provider actually
+        said. Those rewrites infer a cause from an error body and can infer the wrong one —
+        a per-minute throttle phrased as "quota" reads as exhausted credits — so the original
+        has to remain recoverable after a reload, not just for the life of the socket.
+        """
         notice: dict[str, Any] = {"role": "notice", "kind": kind, "ts": time.time()}
         if text:
             notice["text"] = text
+        if raw and raw != text:
+            notice["raw"] = raw
         self.messages.append(notice)
 
     async def retry(self) -> AsyncIterator[Event]:
@@ -340,7 +351,9 @@ class TurnEngine:
                 }
                 if friendly:
                     payload["raw"] = str(exc)
-                self._append_notice("error", friendly or str(exc))
+                self._append_notice(
+                    "error", friendly or str(exc), raw=str(exc) if friendly else None
+                )
                 yield Event(EventType.ERROR, payload)
                 return
             if self._cancel.is_set() and turn is None:

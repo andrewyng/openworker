@@ -206,3 +206,56 @@ describe("humanizeTool", () => {
     expect(line.obj).toContain("Old plan");
   });
 });
+
+// The rewrite is a guess at the cause; the provider's own words are the evidence. They stay
+// collapsed so the common case reads cleanly, and one click away so a wrong guess is checkable.
+describe("error notice raw disclosure", () => {
+  const SCALEWAY_429 =
+    "Error code: 429 - {'status': 429, 'error': 'INSUFFICIENT QUOTA', 'message': 'You " +
+    "exceeded your current quota of tokens per minute.'}";
+
+  it("hides the provider body until asked, then shows it verbatim", () => {
+    const { container } = render(
+      <Transcript
+        items={[
+          { kind: "user", text: "review the package" },
+          { kind: "notice", tone: "warn", text: "Error: out of quota", retriable: true, raw: SCALEWAY_429 },
+        ]}
+        onApprove={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/out of quota/)).toBeTruthy();
+    expect(screen.queryByTestId("notice-raw")).toBeNull();
+    expect(container.textContent).not.toContain("tokens per minute");
+
+    fireEvent.click(screen.getByTestId("notice-raw-toggle"));
+    expect(screen.getByTestId("notice-raw").textContent).toBe(SCALEWAY_429);
+  });
+
+  it("offers no toggle when the message was never rewritten", () => {
+    render(
+      <Transcript
+        items={[{ kind: "notice", tone: "warn", text: "Error: connection reset", retriable: true }]}
+        onApprove={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("notice-raw-toggle")).toBeNull();
+  });
+
+  it("keeps Retry working next to the raw toggle", () => {
+    const onRetry = vi.fn();
+    render(
+      <Transcript
+        items={[
+          { kind: "user", text: "go" },
+          { kind: "notice", tone: "warn", text: "Error: out of quota", retriable: true, raw: SCALEWAY_429 },
+        ]}
+        onApprove={vi.fn()}
+        onRetry={onRetry}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("notice-retry"));
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+});

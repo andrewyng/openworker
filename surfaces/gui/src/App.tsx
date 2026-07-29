@@ -717,7 +717,15 @@ export function App() {
           flushPartialStream();
           setItems((p) => [
             ...p,
-            { kind: "notice", tone: "warn", text: "Error: " + (d.error || "unknown"), retriable: true },
+            {
+              kind: "notice",
+              tone: "warn",
+              text: "Error: " + (d.error || "unknown"),
+              retriable: true,
+              // The server sends `raw` only when it rewrote the provider's message; keeping it
+              // is what makes a misnamed cause diagnosable instead of a support thread.
+              raw: typeof d.raw === "string" ? d.raw : undefined,
+            },
           ]);
           break;
         case "input_rejected":

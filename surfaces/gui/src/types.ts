@@ -136,4 +136,7 @@ export type Item =
       multi?: boolean;
       resolved?: string;
     }
-  | { kind: "notice"; tone: "info" | "warn"; text: string; retriable?: boolean };
+  // `raw` = the provider's own error text, present only when `text` is one of the server's
+  // rewrites (coworker/providers/errors.py). Those rewrites can name the wrong cause, so the
+  // original stays one click away. Rendered behind a "raw" toggle, never shown by default.
+  | { kind: "notice"; tone: "info" | "warn"; text: string; retriable?: boolean; raw?: string };

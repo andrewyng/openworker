@@ -72,7 +72,15 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
           ? { kind: "notice", tone: "warn", text: "Interrupted." }
           : m.kind === "model_switch"
             ? { kind: "notice", tone: "info", text: m.text || "Model switched" }
-            : { kind: "notice", tone: "warn", text: "Error: " + (m.text || "unknown"), retriable: true },
+            : {
+                kind: "notice",
+                tone: "warn",
+                text: "Error: " + (m.text || "unknown"),
+                retriable: true,
+                // Persisted by the engine alongside the rewrite, so the provider's own words
+                // survive a reload rather than living only on the socket that delivered them.
+                ...(typeof m.raw === "string" && m.raw ? { raw: m.raw } : {}),
+              },
       );
     }
     // system messages are omitted; tool-result messages are folded into the tool row above
