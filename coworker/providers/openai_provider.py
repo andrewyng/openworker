@@ -230,8 +230,9 @@ class OpenAIProvider(ProviderClient):
         finish_reason = None
         usage: Optional[TokenUsage] = None
 
-        # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
-        for _ in range(2):
+        # Up to three param-fix retries: effort, max_tokens, and stream_options can each
+        # independently need fixing.
+        for _ in range(3):
             try:
                 chunks = client.chat.completions.create(**kwargs)
                 break

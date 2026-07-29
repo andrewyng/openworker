@@ -1320,6 +1320,13 @@ def create_app(manager: SessionManager) -> FastAPI:
             manager.verify_provider, name, (body or {}).get("fields")
         )
 
+    @app.get("/v1/providers/ollama/context-window")
+    async def providers_ollama_context_window(model: str) -> dict[str, Any]:
+        # Backs the GUI's context-window status bar (Ollama only — see
+        # `providers.registry.ollama_context_window` for why). Live httpx call — off the
+        # event loop, same as the verify endpoint above.
+        return await asyncio.to_thread(manager.ollama_context_window, model)
+
     # -- settings (model API key) -----------------------------------------------
     @app.get("/v1/settings")
     def settings_get() -> dict[str, Any]:

@@ -15,9 +15,24 @@ interface Props {
   align?: "left" | "right";
   // Extra classes appended to the trigger pill (e.g. "chip" for a bordered composer-head chip).
   className?: string;
+  // Optional per-item "make default" affordance (currently only the composer's model picker
+  // uses this): `defaultValue` badges its row "default", every other row reveals a "Make
+  // default" button on hover. Independent of `value`/`onChange` — the active model for THIS
+  // chat and the app-wide default for NEW chats are separate concepts.
+  defaultValue?: string;
+  onMakeDefault?: (value: string) => void;
 }
 
-export function Dropdown({ prefix, value, options, onChange, align = "left", className }: Props) {
+export function Dropdown({
+  prefix,
+  value,
+  options,
+  onChange,
+  align = "left",
+  className,
+  defaultValue,
+  onMakeDefault,
+}: Props) {
   const [open, setOpen] = useState(false);
   const current = options.find((o) => o.value === value);
   const label = (prefix ? `${prefix}: ` : "") + (current?.label || value);
@@ -45,8 +60,25 @@ export function Dropdown({ prefix, value, options, onChange, align = "left", cla
                 }}
               >
                 <div className="dd-label">
-                  {o.label}
-                  {o.value === value && <span className="chk">✓</span>}
+                  <span className="dd-label-text">{o.label}</span>
+                  <span className="dd-label-right">
+                    {o.value === value && <span className="chk">✓</span>}
+                    {onMakeDefault &&
+                      (o.value === defaultValue ? (
+                        <span className="mlist-default">default</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="mlist-make dd-make"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onMakeDefault(o.value);
+                          }}
+                        >
+                          Make default
+                        </button>
+                      ))}
+                  </span>
                 </div>
                 {o.description && <div className="dd-desc">{o.description}</div>}
               </div>

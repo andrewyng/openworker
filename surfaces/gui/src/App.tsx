@@ -4,6 +4,7 @@ import {
   finalizeAutomationRun,
   getArtifacts,
   getHealth,
+  getOllamaContextWindow,
   getRecentWorkspaces,
   getSessionMessages,
   getSessions,
@@ -18,6 +19,7 @@ import {
   deleteSession,
   renameSession,
   runAutomation,
+  setDefaultModel,
   setSessionFlags,
   setUnattended,
   Session,
@@ -161,6 +163,32 @@ export function App() {
   const [agent, setAgent] = useState("cowork");
   const [model, setModel] = useState("gpt-5.6-sol");
   const [models, setModels] = useState<string[]>([]);
+  // The curated matrix (`modelContextWindows` below) has no entries for `ollama:` models —
+  // it can't: those are arbitrary local models, not something a static table can cover. So for
+  // Ollama specifically we look the number up live from the server instead (the model's ACTUAL
+  // loaded context size — Modelfile override, server OLLAMA_CONTEXT_LENGTH default, or Ollama's
+  // own built-in default — which is often far below the model's trained max). `ollamaNumCtx`
+  // feeds into the SAME composer usage chip every other provider uses (see `contextWindow` at
+  // the Composer call site below), just sourced live instead of from the matrix.
+  //
+  // Refetched after EVERY turn's usage, not just once per model: before the model has ever
+  // been loaded, the backend can only offer a best-effort estimate (see
+  // `providers.registry.ollama_context_window`) — refetching once a turn has actually
+  // completed (the model is now guaranteed loaded) gets the authoritative number instead.
+  const [ollamaNumCtx, setOllamaNumCtx] = useState<number | null>(null);
+  // The WS event handler closure (below) is built once per socket connect and doesn't
+  // re-run when `model` changes alone (same staleness problem `streamingRef` solves for the
+  // streaming buffer) — read this ref there instead of the closed-over `model`.
+  const modelRef = useRef(model);
+  useEffect(() => {
+    modelRef.current = model;
+  }, [model]);
+  const refreshOllamaNumCtx = (forModel: string) => {
+    if (!forModel.startsWith("ollama:")) return;
+    getOllamaContextWindow(forModel.slice("ollama:".length)).then((r) => {
+      if (r.ok && typeof r.num_ctx === "number") setOllamaNumCtx(r.num_ctx);
+    });
+  };
   const [modelLabels, setModelLabels] = useState<Record<string, string>>({});
   // {full model id → context window in tokens} from the curated matrix (verified only);
   // drives the composer usage chip's context-fill meter.
@@ -193,6 +221,15 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
+  // A previous model's/session's live Ollama cap must never linger against a newly selected
+  // one (either a model switch, or opening a different chat with the SAME model — each session
+  // has its own independent message history) — re-fetch the (possibly-estimated) number right
+  // away so switching shows something promptly.
+  useEffect(() => {
+    setOllamaNumCtx(null);
+    refreshOllamaNumCtx(model);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, sessionId]);
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
   // to, driving the banner + "Back to runs". Best-effort — a run session without context still
   // shows a generic banner (detected by its __run__ id).
@@ -215,6 +252,9 @@ export function App() {
   // composer's "No model connected" chip. Default true so we don't flash the chip before settings
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
+  // App-wide default model (new sessions start on this); kept for the composer picker's
+  // "Make default" affordance. Corrected by loadSettings, same as modelReady above.
+  const [defaultModelId, setDefaultModelId] = useState("");
   const [surface, setSurface] = useState<
     "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings"
   >("session");
@@ -503,9 +543,18 @@ export function App() {
         setModelLabels(s.model_labels || {});
         setModelContextWindows(s.model_context_windows || {});
         setModelReady(s.model_ready);
+        setDefaultModelId(s.model || "");
         if (s.surfaces) setSurfaces(s.surfaces);
       })
       .catch(() => {});
+
+  // "Make default" from the composer's model picker (§ owner ask 2026-07-29): same effect as
+  // Settings → Configure Models' "Make default" row action, just reachable without leaving the
+  // chat. Only flips the app-wide default for NEW sessions — never rebinds the current one.
+  const makeDefaultModel = async (m: string) => {
+    const res = await setDefaultModel(m);
+    if (res.ok) setDefaultModelId(m);
+  };
 
   // Open Settings → Configure Models (from the composer's "No model connected" chip).
   const openModelSetup = () => openSettings("models");
@@ -617,7 +666,13 @@ export function App() {
           setReasoningStream(reasoningRef.current + (d.text || ""));
           break;
         case "assistant_message": {
-          if (d.usage) setUsage((u) => addTurnUsage(u, d.usage));
+          if (d.usage) {
+            setUsage((u) => addTurnUsage(u, d.usage));
+            // The model is now guaranteed loaded — refetch for the authoritative live Ollama
+            // num_ctx (see the comment by its state declaration for why the pre-turn value can
+            // be an overestimate). modelRef, not `model`: this closure is stale on model switch.
+            refreshOllamaNumCtx(modelRef.current);
+          }
           // The event's reasoning is authoritative (covers background-delivered turns);
           // the local buffer is the fallback for older servers.
           const reasoning = d.reasoning || reasoningRef.current;
@@ -1531,10 +1586,12 @@ export function App() {
               )}
             </div>
 
-            {/* Scrolled up while the transcript is still growing → offer the way back down.
+            {/* Scrolled up anywhere in the transcript → offer the way back down, regardless of
+                whether a turn is actively running (reading old messages in a finished
+                conversation wants this just as much as following a live stream does).
                 Zero-height strip keeps the pill floating over the scroll area, above the
                 composer, without reserving layout space. */}
-            {!following && (running || !!streaming) && (
+            {!following && (
               <div className="relative h-0 z-10">
                 <button
                   className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-line bg-panel shadow-md text-[12px] text-muted hover:text-ink cursor-pointer whitespace-nowrap"
@@ -1555,6 +1612,8 @@ export function App() {
               running={running}
               connected={connected}
               modelReady={modelReady}
+              defaultModel={defaultModelId}
+              onMakeDefault={makeDefaultModel}
               onConnectModel={openModelSetup}
               onConfigureVoiceInput={() => openSettings("voice")}
               onSend={send}
@@ -1567,7 +1626,7 @@ export function App() {
               prefill={composerPrefill}
               resetKey={sessionId}
               usage={usage}
-              contextWindow={modelContextWindows[model]}
+              contextWindow={model.startsWith("ollama:") ? ollamaNumCtx ?? undefined : modelContextWindows[model]}
               placeholder={
                 agent === "code"
                   ? "Ask the coder to build, fix, or explain…  (drop or paste files)"
