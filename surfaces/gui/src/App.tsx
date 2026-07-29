@@ -635,6 +635,16 @@ export function App() {
           setReasoningStream("");
           break;
         }
+        case "context_compacted":
+          setUsage((u) => ({
+            ...u,
+            context: Math.max(0, Number(d.context_tokens) || 0),
+          }));
+          setItems((p) => [
+            ...p,
+            { kind: "compaction", automatic: !!d.automatic },
+          ]);
+          break;
         case "tool_proposed":
           if (d.name === "todo_write" && (d.arguments?.todos || d.arguments?.items))
             setTodo(normalizeTodos(d.arguments.todos ?? d.arguments.items));
@@ -843,6 +853,12 @@ export function App() {
   }, [surface, sessionId, browserRefreshKey, markUnattended]);
 
   const send = (text: string, attachments?: Attachment[]) => {
+    if (text.trim() === "/compact" && !attachments?.length) {
+      setRunning(true);
+      sessionRef.current?.compact();
+      followLatest();
+      return;
+    }
     setItems((p) => [...p, { kind: "user", text, attachments, ts: Date.now() / 1000 }]);
     // The visible model rides along with the message (single source of truth per turn).
     sessionRef.current?.userMessage(text, attachments, model);

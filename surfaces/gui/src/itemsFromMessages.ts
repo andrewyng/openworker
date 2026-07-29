@@ -68,7 +68,9 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
       // reload exactly like the live view rendered them. An error notice is retriable —
       // the Transcript only offers the button when it's the transcript tail.
       items.push(
-        m.kind === "interrupted"
+        m.kind === "context_compaction"
+          ? { kind: "compaction", automatic: !!m.automatic }
+          : m.kind === "interrupted"
           ? { kind: "notice", tone: "warn", text: "Interrupted." }
           : m.kind === "model_switch"
             ? { kind: "notice", tone: "info", text: m.text || "Model switched" }

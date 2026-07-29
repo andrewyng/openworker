@@ -50,6 +50,10 @@ export function usageFromMessages(messages: ConversationMessage[]): SessionUsage
   let acc = emptyUsage();
   for (const m of messages || []) {
     if (m.role === "assistant" && m.usage) acc = addTurnUsage(acc, m.usage);
+    else if (m.role === "notice" && m.kind === "context_compaction") {
+      const context = num(m.context_tokens);
+      acc = { ...acc, context };
+    }
   }
   return acc;
 }

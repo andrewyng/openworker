@@ -215,6 +215,21 @@ def model_context_windows() -> dict[str, int]:
     }
 
 
+def context_window_for(model: str) -> int | None:
+    """Resolve an exact model id or an unambiguous provider-managed alias."""
+    exact = entry_for(model)
+    if exact is not None:
+        return exact.context_window
+    alias = model.split(":", 1)[1] if ":" in model else model
+    matches = {
+        entry.context_window
+        for model_id, entry in MATRIX.items()
+        if entry.context_window
+        and (model_id == alias or model_id.endswith(f":{alias}"))
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
 def models_for_provider(provider: str) -> list[str]:
     """BARE model ids (prefix stripped) the matrix curates for a provider — feeds the
     Settings pane's suggestions and the composer picker so both stay in lockstep with the

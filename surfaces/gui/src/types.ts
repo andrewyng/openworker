@@ -5,6 +5,7 @@ export type EventType =
   | "assistant_delta"
   | "reasoning_delta"
   | "assistant_message"
+  | "context_compacted"
   | "tool_proposed"
   | "permission_required"
   | "directory_requested"
@@ -100,6 +101,7 @@ export type Item =
   // registry — no per-connector special-casing.
   | { kind: "connector"; source: MessageSource }
   | { kind: "assistant"; text: string; ts?: number; reasoning?: string }
+  | { kind: "compaction"; automatic: boolean }
   // `hidden` = results the user's privacy filters removed before the agent saw them
   // (from the tool message's `_display` sidecar; the agent-visible content has no trace).
   // `standingRule` = the task-scoped rule that auto-allowed this call ("tool → target").

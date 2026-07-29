@@ -83,6 +83,30 @@ describe("itemsFromMessages model switch", () => {
   });
 });
 
+describe("itemsFromMessages compaction checkpoints", () => {
+  it("replays automatic and manual checkpoints as action items", () => {
+    const items = itemsFromMessages([
+      {
+        role: "notice",
+        kind: "context_compaction",
+        automatic: true,
+        summary: "private model context",
+      },
+      {
+        role: "notice",
+        kind: "context_compaction",
+        automatic: false,
+        summary: "another private model context",
+      },
+    ] as any);
+
+    expect(items).toEqual([
+      { kind: "compaction", automatic: true },
+      { kind: "compaction", automatic: false },
+    ]);
+  });
+});
+
 describe("itemsFromMessages reasoning", () => {
   it("attaches the reasoning sidecar to assistant items; thinking-only messages still render", () => {
     const items = itemsFromMessages([
