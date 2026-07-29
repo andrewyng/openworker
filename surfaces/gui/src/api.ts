@@ -1,4 +1,4 @@
-import type { SessionInfo, WsEvent } from "./types";
+import type { PromptPart, SessionInfo, SkillRef, WsEvent } from "./types";
 
 declare const __COWORKER_DEV_TOKEN__: string;
 
@@ -150,6 +150,28 @@ export interface ConversationMessage {
 export async function getSessionMessages(sessionId: string): Promise<ConversationMessage[]> {
   const res = await fetch(`${httpBase()}/v1/sessions/${sessionId}/messages`);
   return (await res.json()).messages ?? [];
+}
+
+export type SkillInfo = SkillRef;
+
+export interface SkillContent extends SkillInfo {
+  content: string;
+}
+
+export async function getSkills(workspace?: string): Promise<SkillInfo[]> {
+  const q = new URLSearchParams();
+  if (workspace) q.set("workspace", workspace);
+  const res = await fetch(`${httpBase()}/v1/skills${q.size ? `?${q.toString()}` : ""}`);
+  return (await res.json()).skills ?? [];
+}
+
+export async function readSkill(path: string, workspace?: string): Promise<SkillContent> {
+  const q = new URLSearchParams({ path });
+  if (workspace) q.set("workspace", workspace);
+  const res = await fetch(`${httpBase()}/v1/skills/read?${q.toString()}`);
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || "Skill not found");
+  return body;
 }
 
 export async function renameSession(sessionId: string, title: string): Promise<{ ok: boolean; error?: string }> {
@@ -1807,12 +1829,18 @@ export class Session {
    * exactly what the user sees — immune to set_model races across reconnects (a new cowork
    * session always reconnects once to adopt its scratch dir, which could drop a queued
    * set_model and leave the engine on a stale/resumed model; found 2026-07-04). */
-  userMessage(text: string, attachments?: unknown[], model?: string) {
+  userMessage(
+    text: string,
+    attachments?: unknown[],
+    model?: string,
+    parts?: PromptPart[],
+  ) {
     this.send({
       type: "user_message",
       text,
       ...(model ? { model } : {}),
       ...(attachments?.length ? { attachments } : {}),
+      ...(parts?.some((part) => part.type === "skill") ? { parts } : {}),
     });
   }
 

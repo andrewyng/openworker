@@ -32,7 +32,7 @@ test("three rows, no Set-me-up; gated rows show Configure › and expand the rai
   await hs.click();
   await expect(page.getByRole("region", { name: "Session access" })).toBeVisible();
   // No composer prefill happened on the gated click.
-  await expect(page.getByPlaceholder(/Ask the coworker/)).toHaveValue("");
+  await expect(page.getByPlaceholder(/Ask the coworker/)).toHaveText("");
 });
 
 test("ready rows reveal Start → on hover and prefill the composer", async ({ page }) => {
@@ -61,13 +61,13 @@ test("ready rows reveal Start → on hover and prefill the composer", async ({ p
   await expect(hs.locator(".task-card-act")).toHaveCSS("opacity", "1");
 
   await hs.click();
-  await expect(page.getByPlaceholder(/Ask the coworker/)).toHaveValue(/HubSpot leads/);
+  await expect(page.getByPlaceholder(/Ask the coworker/)).toHaveText(/HubSpot leads/);
 
   // Both sources live → the automation row is ready too; its prefill is the recipe stem.
   const gh = page.getByTestId("intro-task-github-slack");
   await expect(gh).toContainText("Start →");
   await gh.click();
-  await expect(page.getByPlaceholder(/Ask the coworker/)).toHaveValue(/weekly progress report/);
+  await expect(page.getByPlaceholder(/Ask the coworker/)).toHaveText(/weekly progress report/);
 });
 
 test("folder task opens the inline add-folder form; adding a folder prefills the composer", async ({
@@ -82,7 +82,7 @@ test("folder task opens the inline add-folder form; adding a folder prefills the
   await path.fill("/Users/me/Reports");
   await page.getByRole("button", { name: "Add", exact: true }).click();
 
-  await expect(page.getByPlaceholder(/Ask the coworker/)).toHaveValue(
+  await expect(page.getByPlaceholder(/Ask the coworker/)).toHaveText(
     /Analyze the files in this folder/,
   );
 });

@@ -20,8 +20,12 @@ class ScriptedProvider(ProviderClient):
 
     def __init__(self, turns):
         self._turns = list(turns)
+        self.last_messages = None
+        self.message_calls = []
 
     def complete(self, *, model, messages, tools=None, **settings):
+        self.last_messages = messages
+        self.message_calls.append(messages)
         return self._turns.pop(0)
 
     def capabilities(self, model):
@@ -72,6 +76,42 @@ def test_agents_and_memory_rest(tmp_path):
         m["content"] == "prefer pathlib"
         for m in client.get("/v1/memory").json()["memory"]
     )
+
+
+def test_skills_catalog_and_read_are_workspace_aware_and_path_verified(tmp_path):
+    skill_file = tmp_path / ".coworker" / "skills" / "review" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True)
+    skill_file.write_text(
+        "---\nname: review\ndescription: Review carefully\n---\n\nCheck every claim.",
+        encoding="utf-8",
+    )
+    client = _client(tmp_path, [])
+
+    catalog = client.get("/v1/skills", params={"workspace": str(tmp_path)}).json()
+    selected = next(
+        skill
+        for skill in catalog["skills"]
+        if skill["name"] == "review" and skill["source"] == "project"
+    )
+    assert selected == {
+        "name": "review",
+        "description": "Review carefully",
+        "path": str(skill_file.resolve()),
+        "source": "project",
+    }
+
+    read = client.get(
+        "/v1/skills/read",
+        params={"workspace": str(tmp_path), "path": selected["path"]},
+    )
+    assert read.status_code == 200
+    assert "Check every claim." in read.json()["content"]
+
+    forged = client.get(
+        "/v1/skills/read",
+        params={"workspace": str(tmp_path), "path": str(tmp_path / "secret.txt")},
+    )
+    assert forged.status_code == 404
 
 
 def test_disable_persona_archives_its_sessions(tmp_path):
@@ -323,6 +363,78 @@ def test_ws_simple_turn(tmp_path):
         assert "turn_end" in types
 
 
+def test_ws_accepts_skill_only_prompt_and_rejects_un_cataloged_paths(tmp_path):
+    skill_file = tmp_path / ".coworker" / "skills" / "review" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True)
+    raw_skill = (
+        "---\nname: review\ndescription: Review carefully\n---\n\nCheck every claim."
+    )
+    skill_file.write_text(raw_skill, encoding="utf-8")
+    provider = ScriptedProvider([_text("reviewed")])
+    manager = SessionManager(workspace=tmp_path, provider=provider)
+    client = TestClient(create_app(manager))
+
+    with client.websocket_connect("/ws/session/skill-turn") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json(
+            {
+                "type": "user_message",
+                "text": "",
+                "parts": [
+                    {
+                        "type": "skill",
+                        "name": "review",
+                        "path": str(tmp_path / "secret.txt"),
+                    }
+                ],
+            }
+        )
+        rejected = ws.receive_json()
+        assert rejected["type"] == "input_rejected"
+        assert "skill" in rejected["data"]["error"].lower()
+
+        ws.send_json(
+            {
+                "type": "user_message",
+                "text": "/review",
+                "parts": [
+                    {
+                        "type": "skill",
+                        "name": "review",
+                        "path": str(skill_file.resolve()),
+                    }
+                ],
+            }
+        )
+        assert "turn_done" in _drain(ws)
+
+    user_message = next(
+        message
+        for message in manager._engines["skill-turn"].messages
+        if message["role"] == "user"
+    )
+    assert user_message["content"] == "/review"
+    assert user_message["skill_parts"] == [
+        {
+            "type": "skill",
+            "name": "review",
+            "path": str(skill_file.resolve()),
+            "source": "project",
+            "content": raw_skill,
+        }
+    ]
+    provider_user = next(
+        message
+        for messages in provider.message_calls
+        for message in messages
+        if message["role"] == "user" and "<name>review</name>" in message["content"]
+    )
+    assert "<name>review</name>" in provider_user["content"]
+    assert f"<path>{skill_file.resolve()}</path>" in provider_user["content"]
+    assert "Check every claim." in provider_user["content"]
+    assert "skill_parts" not in provider_user
+
+
 def test_ws_rejects_oversized_message(tmp_path):
     from coworker.server import app as app_mod
     from coworker.attachments import MAX_ATTACHMENTS
@@ -366,6 +478,12 @@ def test_ws_rejects_malformed_payloads_without_killing_socket(tmp_path):
             [],
             {"type": "user_message", "text": ["not", "text"]},
             {"type": "user_message", "text": "x", "attachments": {}},
+            {"type": "user_message", "text": "x", "parts": {}},
+            {
+                "type": "user_message",
+                "text": "x",
+                "parts": [{"type": "text", "text": ["not", "text"]}],
+            },
             {
                 "type": "user_message",
                 "text": "x",

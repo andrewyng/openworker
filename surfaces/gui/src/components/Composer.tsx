@@ -1,11 +1,15 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import type { Attachment, SessionUsage } from "../types";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { Attachment, PromptPart, SessionUsage, SkillRef } from "../types";
 import { isPdfFile, readFile } from "../attach";
-import { getSettings, inspectPdf } from "../api";
+import { getSettings, getSkills, inspectPdf } from "../api";
 import { formatTokens, totalTokens } from "../usage";
 import { Dropdown, type Option } from "./Dropdown";
 import { Icon } from "./Icon";
 import { Toggle } from "./Toggle";
+import {
+  SkillPromptEditor,
+  type SkillPromptEditorHandle,
+} from "./SkillPromptEditor";
 import {
   cancelDictation,
   getDictationLevel,
@@ -59,7 +63,7 @@ interface Props {
   modelReady?: boolean;
   onConnectModel?: () => void;
   onConfigureVoiceInput?: () => void;
-  onSend: (text: string, attachments?: Attachment[]) => void;
+  onSend: (text: string, attachments?: Attachment[], parts?: PromptPart[]) => void;
   onInterrupt: () => void;
   onModeChange: (mode: string) => void;
   onModelChange: (model: string) => void;
@@ -88,6 +92,8 @@ interface Props {
 
 export function Composer(props: Props) {
   const [text, setText] = useState("");
+  const [promptParts, setPromptParts] = useState<PromptPart[]>([]);
+  const [skills, setSkills] = useState<SkillRef[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragging, setDragging] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
@@ -97,7 +103,7 @@ export function Composer(props: Props) {
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [attachNotice, setAttachNotice] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const editorRef = useRef<SkillPromptEditorHandle | null>(null);
   const noticeTimer = useRef<number | null>(null);
 
   // Rejected-attachment notice: visible ~8s, then clears (or on ✕).
@@ -107,15 +113,15 @@ export function Composer(props: Props) {
     noticeTimer.current = window.setTimeout(() => setAttachNotice(null), 8000);
   };
 
-  useLayoutEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    const max = parseFloat(getComputedStyle(el).lineHeight || "22") * 4;
-    const next = Math.min(el.scrollHeight, max);
-    el.style.height = `${Math.max(next, 24)}px`;
-    el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
-  }, [text]);
+  useEffect(() => {
+    let active = true;
+    getSkills(props.workspace)
+      .then((catalog) => active && setSkills(catalog))
+      .catch(() => active && setSkills([]));
+    return () => {
+      active = false;
+    };
+  }, [props.workspace]);
 
   // Apply a prefill (text + attachments) pushed from outside, then focus the composer. Applied at
   // most once per nonce (a ref guards against StrictMode/re-render double-fires), and attachments
@@ -125,16 +131,18 @@ export function Composer(props: Props) {
     const p = props.prefill;
     if (!p || p.nonce === appliedNonce.current) return;
     appliedNonce.current = p.nonce;
-    setText(p.text);
+    editorRef.current?.setText(p.text);
     if (p.attachments?.length) setAttachments((cur) => mergeAttachments(cur, p.attachments!));
-    textareaRef.current?.focus();
+    editorRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.prefill?.nonce]);
 
   // Clear the draft when the conversation changes, so a half-typed message / picked file doesn't
   // bleed from one session into another.
   useEffect(() => {
+    editorRef.current?.clear();
     setText("");
+    setPromptParts([]);
     setAttachments([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.resetKey]);
@@ -269,19 +277,14 @@ export function Composer(props: Props) {
       props.onConnectModel?.();
       return;
     }
-    props.onSend(t, attachments);
+    props.onSend(t, attachments, promptParts);
+    editorRef.current?.clear();
     setText("");
+    setPromptParts([]);
     setAttachments([]);
   };
 
-  const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      submit();
-    }
-  };
-
-  const onPaste = (e: React.ClipboardEvent) => {
+  const onPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
     const imgs = Array.from(e.clipboardData.items)
       .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
       .map((it) => it.getAsFile())
@@ -301,10 +304,11 @@ export function Composer(props: Props) {
         const transcript = await stopDictation();
         if (transcript === null) throw new Error("Could not transcribe your recording.");
         if (transcript.trim()) {
-          setText((draft) => (draft.trim() ? `${draft.trimEnd()} ${transcript.trim()}` : transcript.trim()));
+          const addition = text.trim() ? ` ${transcript.trim()}` : transcript.trim();
+          editorRef.current?.appendText(addition);
         }
         setDictation(await getDictationStatus());
-        textareaRef.current?.focus();
+        editorRef.current?.focus();
         return;
       }
 
@@ -394,15 +398,16 @@ export function Composer(props: Props) {
           if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
         }}
       >
-        <textarea
-          ref={textareaRef}
-          className="w-full block px-3.5 pt-3.5 pb-1.5 text-[14.5px]"
+        <SkillPromptEditor
+          ref={editorRef}
           placeholder={props.placeholder || "Ask the coworker…  (drop or paste files)"}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKey}
+          skills={skills}
+          onChange={(draft) => {
+            setText(draft.text);
+            setPromptParts(draft.parts);
+          }}
+          onSubmit={submit}
           onPaste={onPaste}
-          rows={1}
         />
 
         {/* Three-control row (§22): + attach · Mode ⌄ …(right)… model (fresh only) · send */}

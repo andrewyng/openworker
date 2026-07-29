@@ -14,6 +14,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@lexical/react": "^0.38.2",
+    "lexical": "^0.38.2",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

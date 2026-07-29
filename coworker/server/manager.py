@@ -82,7 +82,7 @@ from ..providers import (
 )
 from ..secrets import SecretStore, state_dir
 from ..sessions import SessionRecord
-from ..skills import SkillLoader
+from ..skills import SkillLoader, skill_roots
 
 _SCOPES = {s.value for s in Scope}
 
@@ -3647,9 +3647,26 @@ class SessionManager:
     def list_agents(self) -> list[dict[str, Any]]:
         return _list_agents()
 
-    def list_skills(self) -> list[dict[str, Any]]:
-        loader = SkillLoader([state_dir() / "skills"])
-        return loader.catalog()
+    def skill_loader(self, workspace: Optional[str] = None) -> SkillLoader:
+        resolved = self.resolve_workspace(workspace)
+        return SkillLoader(skill_roots(resolved))
+
+    def list_skills(self, workspace: Optional[str] = None) -> list[dict[str, Any]]:
+        return self.skill_loader(workspace).catalog_all()
+
+    def read_skill(
+        self, path: str, workspace: Optional[str] = None
+    ) -> Optional[dict[str, Any]]:
+        skill = self.skill_loader(workspace).get_path(path)
+        if skill is None:
+            return None
+        return {
+            "name": skill.name,
+            "description": skill.description,
+            "path": skill.path,
+            "source": skill.source,
+            "content": skill.raw_content,
+        }
 
     def list_memory(self) -> list[dict[str, Any]]:
         return [

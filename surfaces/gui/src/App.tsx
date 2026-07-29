@@ -32,6 +32,7 @@ import type {
   ApprovalDecision,
   Attachment,
   Item,
+  PromptPart,
   SessionInfo,
   SessionUsage,
   TodoItem,
@@ -65,6 +66,7 @@ import { ApprovalCard } from "./components/ApprovalCard";
 import { DirectoryRequestCard } from "./components/DirectoryRequestCard";
 import { PlanCard } from "./components/PlanCard";
 import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
+import { OPEN_SKILL_EVENT } from "./skillEvents";
 
 const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
@@ -237,6 +239,7 @@ export function App() {
   };
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
   const [railHidden, setRailHidden] = useState(false);
+  const [skillRailOpen, setSkillRailOpen] = useState(false);
   // Left-nav collapse (⌘B): when collapsed the sidebar leaves the grid so content reclaims the
   // width; hovering the left edge peeks it back as a floating overlay. Persisted per-device.
   const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
@@ -258,6 +261,7 @@ export function App() {
   // #3: collapse the nav while a full artifact preview is open, restore it on close (unless the
   // user manually toggled meanwhile). The collapse is transient — it never overwrites the pref.
   const onArtifactPreview = useCallback((open: boolean) => {
+    if (!open) setSkillRailOpen(false);
     if (open) {
       if (navBeforePreview.current === null) navBeforePreview.current = navCollapsed;
       setNavPeek(false);
@@ -292,12 +296,20 @@ export function App() {
     setRailHidden(false);
     setAccessKey((k) => k + 1);
   };
-  // §34 (UX-016): clicking an artifact chip in the transcript must land somewhere visible —
-  // RightRail opens the viewer; this just makes sure the rail isn't hidden.
+  // Clicking an artifact or skill chip must land somewhere visible — RightRail opens the
+  // matching viewer; this just makes sure the rail isn't hidden.
   useEffect(() => {
-    const show = () => setRailHidden(false);
-    window.addEventListener("ocw-open-artifact", show);
-    return () => window.removeEventListener("ocw-open-artifact", show);
+    const showArtifact = () => setRailHidden(false);
+    const showSkill = () => {
+      setSkillRailOpen(true);
+      setRailHidden(false);
+    };
+    window.addEventListener("ocw-open-artifact", showArtifact);
+    window.addEventListener(OPEN_SKILL_EVENT, showSkill);
+    return () => {
+      window.removeEventListener("ocw-open-artifact", showArtifact);
+      window.removeEventListener(OPEN_SKILL_EVENT, showSkill);
+    };
   }, []);
   // The command-palette search, openable from the collapsed-sidebar topbar cluster (§22). The
   // expanded sidebar owns its own instance; this one exists so search never disappears with it.
@@ -602,11 +614,22 @@ export function App() {
                 : [...p, { kind: "connector", source: src }];
             });
           } else if (typeof d.input === "string" && d.input) {
+            const parts = Array.isArray(d.skill_parts)
+              ? (d.skill_parts as PromptPart[])
+              : undefined;
             setItems((p) => {
               const last = p[p.length - 1];
               return last && last.kind === "user" && last.text === d.input
                 ? p
-                : [...p, { kind: "user", text: d.input as string, ts: Date.now() / 1000 }];
+                : [
+                    ...p,
+                    {
+                      kind: "user",
+                      text: d.input as string,
+                      ...(parts ? { parts } : {}),
+                      ts: Date.now() / 1000,
+                    },
+                  ];
             });
           }
           break;
@@ -842,10 +865,19 @@ export function App() {
     return () => clearInterval(t);
   }, [surface, sessionId, browserRefreshKey, markUnattended]);
 
-  const send = (text: string, attachments?: Attachment[]) => {
-    setItems((p) => [...p, { kind: "user", text, attachments, ts: Date.now() / 1000 }]);
+  const send = (text: string, attachments?: Attachment[], parts?: PromptPart[]) => {
+    setItems((p) => [
+      ...p,
+      {
+        kind: "user",
+        text,
+        attachments,
+        ...(parts?.some((part) => part.type === "skill") ? { parts } : {}),
+        ts: Date.now() / 1000,
+      },
+    ]);
     // The visible model rides along with the message (single source of truth per turn).
-    sessionRef.current?.userMessage(text, attachments, model);
+    sessionRef.current?.userMessage(text, attachments, model, parts);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
   };
   // Resolving a LIVE prompt also resolves its parked Inbox mirror server-side, but the polled
@@ -1344,7 +1376,7 @@ export function App() {
           onOpenIntegrations={() => setSurface("integrations")}
         />
       ) : (
-      <div className={"main" + (surface === "session" && agent !== "chat" && !railHidden ? " rail-open" : "")}>
+      <div className={"main" + (surface === "session" && (agent !== "chat" || skillRailOpen) && !railHidden ? " rail-open" : "")}>
         <div className="main-topbar">
           {/* Left: the contextual cluster — [sidebar] [+ new session] [search] — rendered ONLY
               while the sidebar is collapsed (§22; the expanded sidebar already owns those
@@ -1421,7 +1453,7 @@ export function App() {
             )}
             {/* §32: the panel toggle is the ONE session-panel entry, for every non-chat persona
                 (the rail now carries Access, so code-family gets it too). */}
-            {agent !== "chat" && (
+            {(agent !== "chat" || skillRailOpen) && (
               <button
                 className="topbar-icon-btn"
                 onMouseDown={(e) => e.stopPropagation()}
@@ -1613,7 +1645,7 @@ export function App() {
             />
                   </div>
           <RightRail
-            active={surface === "session" && agent !== "chat" && !railHidden}
+            active={surface === "session" && (agent !== "chat" || skillRailOpen) && !railHidden}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}
             toolNames={items.filter((i) => i.kind === "tool").map((i: any) => i.name)}

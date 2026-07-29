@@ -63,6 +63,63 @@ def _json_value_size(value: Any) -> int:
     return 8  # numbers, booleans, null, separators
 
 
+def _verified_skill_parts(
+    engine: Any, raw_parts: Any
+) -> tuple[Optional[list[dict[str, str]]], Optional[str]]:
+    """Resolve client skill refs against this session's catalog and snapshot exact files."""
+    if raw_parts is None:
+        return None, None
+    if not isinstance(raw_parts, list) or len(raw_parts) > 64:
+        return None, "Invalid skill parts: expected at most 64 parts."
+
+    verified: list[dict[str, str]] = []
+    for part in raw_parts:
+        if not isinstance(part, dict):
+            return None, "Invalid skill part: expected an object."
+        part_type = part.get("type")
+        if part_type == "text":
+            part_text = part.get("text")
+            if not isinstance(part_text, str):
+                return None, "Invalid skill text part: expected a string."
+            verified.append({"type": "text", "text": part_text})
+            continue
+        if part_type != "skill":
+            return None, "Invalid skill part type: expected text or skill."
+
+        name, path = part.get("name"), part.get("path")
+        if not isinstance(name, str) or not isinstance(path, str):
+            return None, "Invalid skill reference: name and path are required."
+        skill = engine.skill_loader.resolve(name, path)
+        if skill is None:
+            return (
+                None,
+                "Invalid skill reference: path is not in the active workspace catalog.",
+            )
+        verified.append(
+            {
+                "type": "skill",
+                "name": skill.name,
+                "path": skill.path or "",
+                "source": skill.source,
+                "content": skill.raw_content,
+            }
+        )
+
+    part_text_chars = sum(
+        len(part["text"]) for part in verified if part["type"] == "text"
+    )
+    if part_text_chars > _MAX_MESSAGE_TEXT_CHARS:
+        return (
+            None,
+            "Skill prompt text too long "
+            f"({part_text_chars} chars; limit {_MAX_MESSAGE_TEXT_CHARS}).",
+        )
+    return (
+        verified if any(part["type"] == "skill" for part in verified) else None,
+        None,
+    )
+
+
 # Brand colors for the connector badge riding the ✓ (UX-DECISIONS §30). The GUI owns the
 # real logos; this page must render offline with zero assets, so a colored initial stands in.
 _BRAND_COLORS = {
@@ -555,8 +612,15 @@ def create_app(manager: SessionManager) -> FastAPI:
         )
 
     @app.get("/v1/skills")
-    def skills() -> dict[str, Any]:
-        return {"skills": manager.list_skills()}
+    def skills(workspace: Optional[str] = None) -> dict[str, Any]:
+        return {"skills": manager.list_skills(workspace)}
+
+    @app.get("/v1/skills/read")
+    def skill_read(path: str, workspace: Optional[str] = None):
+        skill = manager.read_skill(path, workspace)
+        if skill is None:
+            return JSONResponse({"error": "skill not found"}, status_code=404)
+        return skill
 
     @app.get("/v1/workspaces/recent")
     def recent_workspaces() -> dict[str, Any]:
@@ -1710,11 +1774,17 @@ def create_app(manager: SessionManager) -> FastAPI:
             "iteration_end",
         }
 
-        async def run_turn(content, *, retry: bool = False) -> None:
+        async def run_turn(
+            content, *, retry: bool = False, skill_parts=None
+        ) -> None:
             # The receive loop atomically claims this session before scheduling the task.
             # Keeping the claim outside prevents two back-to-back frames from both starting.
             try:
-                events = engine.retry() if retry else engine.run(content)
+                events = (
+                    engine.retry()
+                    if retry
+                    else engine.run(content, skill_parts=skill_parts)
+                )
                 async for event in events:
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.
@@ -1740,13 +1810,17 @@ def create_app(manager: SessionManager) -> FastAPI:
             # or flush an in-progress assistant stream in the GUI.
             await ws.send_json({"type": "input_rejected", "data": {"error": reason}})
 
-        async def claim_turn(*, retry: bool = False, content=None) -> None:
+        async def claim_turn(
+            *, retry: bool = False, content=None, skill_parts=None
+        ) -> None:
             if not manager.try_mark_running(session_id):
                 await reject_input(
                     "This session is already running a turn. Wait for it to finish or stop it."
                 )
                 return
-            asyncio.create_task(run_turn(content, retry=retry))
+            asyncio.create_task(
+                run_turn(content, retry=retry, skill_parts=skill_parts)
+            )
 
         try:
             while True:
@@ -1824,6 +1898,12 @@ def create_app(manager: SessionManager) -> FastAPI:
                         await reject_input("Invalid message text: expected a string.")
                         continue
                     text = raw_text.strip()
+                    selected_skill_parts, parts_error = _verified_skill_parts(
+                        engine, message.get("parts")
+                    )
+                    if parts_error is not None:
+                        await reject_input(parts_error)
+                        continue
                     raw_attachments = message.get("attachments")
                     attachments = [] if raw_attachments is None else raw_attachments
                     # Reject an oversized frame instead of buffering it into a turn. Send a
@@ -1900,9 +1980,11 @@ def create_app(manager: SessionManager) -> FastAPI:
                         await reject_input("Invalid model: expected a string.")
                         continue
                     await _apply_model(model)
-                    if text or attachments:
+                    if text or attachments or selected_skill_parts:
                         content = build_user_content(text, attachments)
-                        await claim_turn(content=content)
+                        await claim_turn(
+                            content=content, skill_parts=selected_skill_parts
+                        )
                 else:
                     await reject_input(f"Unknown WebSocket message type: {kind}.")
         except WebSocketDisconnect:

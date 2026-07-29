@@ -5,7 +5,7 @@ from __future__ import annotations
 from coworker.agent import build_engine
 from coworker.agents import AgentContext, chat_agent, code_agent, get_agent
 from coworker.providers import ModelCapabilities
-from coworker.skills import SkillLoader, skill_catalog_text, skill_tools
+from coworker.skills import SkillLoader, SkillRoot, skill_catalog_text, skill_tools
 from coworker.tools import ToolRegistry
 from coworker.tools.shell import LocalExecutor
 from coworker.tools.todo import TodoList
@@ -78,6 +78,65 @@ def test_skill_loader_catalog_and_load(tmp_path):
     loaded = reg.execute("load_skill", {"name": "pdf"})
     assert "pdfplumber" in loaded["instructions"]
     assert reg.execute("load_skill", {"name": "missing"})["error"]
+
+
+def test_skill_loader_catalogs_duplicate_names_by_exact_file_path(tmp_path):
+    shared = tmp_path / "shared"
+    project = tmp_path / "project"
+    _make_skill(shared, "review", "shared review", "Use the shared checklist.")
+    _make_skill(project, "review", "project review", "Use the project checklist.")
+
+    loader = SkillLoader(
+        [
+            SkillRoot(shared, "shared"),
+            SkillRoot(project, "project"),
+        ]
+    )
+
+    assert loader.catalog_all() == [
+        {
+            "name": "review",
+            "description": "shared review",
+            "path": str((shared / "review" / "SKILL.md").resolve()),
+            "source": "shared",
+        },
+        {
+            "name": "review",
+            "description": "project review",
+            "path": str((project / "review" / "SKILL.md").resolve()),
+            "source": "project",
+        },
+    ]
+    selected = loader.resolve(
+        "review", str(project / "review" / "SKILL.md")
+    )
+    assert selected is not None
+    assert selected.instructions == "Use the project checklist."
+    assert loader.resolve("review", str(tmp_path / "forged" / "SKILL.md")) is None
+
+
+def test_skill_loader_parses_multiline_descriptions_and_tool_lists(tmp_path):
+    skill_file = tmp_path / "skills" / "research" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True)
+    skill_file.write_text(
+        "---\n"
+        "name: research\n"
+        "description: |\n"
+        "  Search primary sources.\n"
+        "  Cite every claim.\n"
+        "allowed-tools:\n"
+        "  - web_search\n"
+        "  - read_file\n"
+        "---\n\n"
+        "Follow the evidence.",
+        encoding="utf-8",
+    )
+
+    skill = SkillLoader([tmp_path / "skills"]).get("research")
+
+    assert skill is not None
+    assert skill.description == "Search primary sources.\nCite every claim.\n"
+    assert skill.allowed_tools == ["web_search", "read_file"]
 
 
 # -- engine assembly per agent --------------------------------------------------

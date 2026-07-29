@@ -49,6 +49,41 @@ describe("itemsFromMessages timestamps", () => {
   });
 });
 
+describe("itemsFromMessages skill parts", () => {
+  it("restores ordered exact-path chips without exposing injected skill content", () => {
+    const items = itemsFromMessages([
+      {
+        role: "user",
+        content: "Review with /review, then summarize.",
+        skill_parts: [
+          { type: "text", text: "Review with " },
+          {
+            type: "skill",
+            name: "review",
+            path: "/repo/.coworker/skills/review/SKILL.md",
+            content: "private injected body",
+          },
+          { type: "text", text: ", then summarize." },
+        ],
+      },
+    ] as any);
+
+    expect(items[0]).toEqual({
+      kind: "user",
+      text: "Review with /review, then summarize.",
+      parts: [
+        { type: "text", text: "Review with " },
+        {
+          type: "skill",
+          name: "review",
+          path: "/repo/.coworker/skills/review/SKILL.md",
+        },
+        { type: "text", text: ", then summarize." },
+      ],
+    });
+  });
+});
+
 describe("itemsFromMessages notices", () => {
   it("replays persisted error/interrupted markers; only errors are retriable", () => {
     const items = itemsFromMessages([
