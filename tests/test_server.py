@@ -11,6 +11,7 @@ from coworker.providers import (
     ProviderClient,
     ToolCall,
 )
+from coworker.inbound_sessions import InboundSessionLink
 from coworker.server import SessionManager, create_app
 from coworker.sessions import SessionRecord
 
@@ -645,6 +646,69 @@ def test_ws_approval_round_trip(tmp_path):
         assert "permission_required" in types
         assert "tool_finished" in types
     assert (tmp_path / "made.py").read_text() == "print(1)\n"
+
+
+def test_ws_feishu_origin_mirrors_inline_directory_prompt(tmp_path):
+    deliveries = []
+
+    class GatewayStub:
+        async def deliver_interactive(self, *args):
+            deliveries.append(args)
+
+        async def deliver(self, *args):
+            deliveries.append(args)
+
+    manager = SessionManager(
+        workspace=tmp_path,
+        provider=ScriptedProvider(
+            [
+                _tool(
+                    "request_directory",
+                    {
+                        "path": "/tmp",
+                        "reason": "inspect /tmp",
+                        "writable": False,
+                    },
+                ),
+                _text("done"),
+            ]
+        ),
+    )
+    manager.gateway = GatewayStub()
+    manager.inbound_sessions.upsert(
+        InboundSessionLink(
+            route_key="feishu:dm:oc_1",
+            session_id="feishu-live",
+            platform="feishu",
+            chat_type="dm",
+            chat_id="oc_1",
+            user_id="ou_1",
+        )
+    )
+    client = TestClient(create_app(manager))
+
+    with client.websocket_connect("/ws/session/feishu-live") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "user_message", "text": "查看 /tmp"})
+        while True:
+            event = ws.receive_json()
+            if event["type"] == "directory_requested":
+                break
+        assert deliveries
+        target, body, buttons = deliveries[0]
+        assert target == "feishu:oc_1"
+        assert "Grant access to a folder?" in body
+        assert [button.label for button in buttons] == ["Grant", "Deny"]
+        ws.send_json(
+            {
+                "type": "directory_response",
+                "granted": False,
+                "path": "/tmp",
+                "writable": False,
+            }
+        )
+        while ws.receive_json()["type"] != "turn_done":
+            pass
 
 
 def test_ws_session_persisted_while_parked_on_approval(tmp_path):

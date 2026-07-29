@@ -22,6 +22,15 @@ def _secrets(tmp_path, token="xoxb-1") -> SecretStore:
     return s
 
 
+def _feishu_secrets(tmp_path) -> SecretStore:
+    s = SecretStore(tmp_path / "secrets.json")
+    s.put(
+        "feishu:default",
+        {"app_id": "cli_test", "app_secret": "sec", "enabled": True},
+    )
+    return s
+
+
 def _fake_sender(record: list):
     def sender(token, chat_id, thread_id, filename, data, title, comment):
         record.append(
@@ -38,6 +47,11 @@ def _fake_sender(record: list):
         return SendResult(True, message_id="F123")
 
     return {"slack": sender}
+
+
+def _fake_multi_sender(record: list):
+    sender = _fake_sender(record)["slack"]
+    return {"slack": sender, "feishu": sender}
 
 
 def test_send_file_success_within_workspace(tmp_path):
@@ -59,6 +73,31 @@ def test_send_file_success_within_workspace(tmp_path):
     sent = record[0]
     assert sent["chat_id"] == "C9" and sent["thread_id"] == "1700.1"
     assert sent["data"] == b"%PDF-fake" and sent["comment"] == "here you go"
+
+
+def test_send_file_feishu_uses_app_credentials(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "data.csv").write_bytes(b"a,b\n1,2\n")
+    record: list = []
+    tool = make_send_file_tool(
+        _feishu_secrets(tmp_path), workspace=ws, file_senders=_fake_multi_sender(record)
+    )
+
+    out = tool("feishu:oc_1", "data.csv", title="result.csv", comment="结果见附件")
+
+    assert out == {
+        "ok": True,
+        "file_id": "F123",
+        "target": "feishu:oc_1",
+        "filename": "data.csv",
+    }
+    sent = record[0]
+    assert sent["chat_id"] == "oc_1"
+    assert sent["filename"] == "data.csv"
+    assert sent["title"] == "result.csv"
+    assert sent["comment"] == "结果见附件"
+    assert '"app_id": "cli_test"' in sent["token"]
 
 
 def test_send_file_rejects_paths_outside_roots(tmp_path):

@@ -19,6 +19,9 @@ ABOUT: dict[str, str] = {
     "slack": "Bring your coworker into Slack: mention it in a channel or DM it, "
     "and replies land in-thread. Any number of workspaces can be connected, "
     "each with its own allow-list of who may talk to the agent.",
+    "feishu": "Bring your coworker into Feishu or Lark: add the bot to a chat, "
+    "messages reach the agent through Open Platform events, and replies land "
+    "back in the same chat.",
     "email": "Read, search, and send mail on any IMAP account — Gmail, iCloud, "
     "Fastmail, or your own server — using an app password instead of your "
     "account password.",
@@ -69,6 +72,11 @@ ACCESS: dict[str, list[str]] = {
         "Posts messages and uploads files as the bot.",
         "Reads files shared in those channels.",
         "Reads member and channel names to resolve who's talking.",
+    ],
+    "feishu": [
+        "Reads messages sent in chats where the bot is present.",
+        "Sends text messages as the bot.",
+        "Only senders on your allow-list are answered.",
     ],
     "email": [
         "Reads and searches mail over IMAP.",

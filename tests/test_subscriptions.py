@@ -173,15 +173,16 @@ def test_dispatch_fans_out_to_subscribers(tmp_path, monkeypatch):
     assert delivered == []
     assert mgr.channel_buffer.recent("slack:C2")[-1]["text"] == "noise"
 
-    # a DM with no designated session → parked as unrouted, nobody delivered
+    # a DM with no designated session → auto-routed to a dedicated inbound session
     asyncio.run(mgr._dispatch_inbound(_event("hi there", chat_type="dm", chat_id="D1")))
-    assert delivered == []
-    assert mgr.unrouted.list()[0]["reason"] == "no DM session designated"
+    dm_sid = delivered[-1][0]
+    assert mgr.inbound_sessions.all()[0]["session_id"] == dm_sid
+    assert mgr.unrouted.list() == []
 
-    # a DM with a designated session → delivered to it
+    # Legacy dm_session no longer steals an already-routed external conversation.
     mgr.set_dm_session("sDM")
     asyncio.run(mgr._dispatch_inbound(_event("hello", chat_type="dm", chat_id="D1")))
-    assert delivered[-1][0] == "sDM"
+    assert delivered[-1][0] == dm_sid
 
 
 def test_subscriptions_endpoint_and_collision(tmp_path):
