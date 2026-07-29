@@ -59,7 +59,7 @@ ABOUT: dict[str, str] = {
     "the agent can search your meetings, read action items, look up the people "
     "you work with, and prepare a source-linked agenda before a 1:1 or an "
     "upcoming meeting. The connection is local — the app's own server on this "
-    "Mac, no account and no sign-in — and read-only. What the agent reads still "
+    "computer, no account and no sign-in — and read-only. What the agent reads still "
     "reaches your AI provider like anything else in a session, so reading a full "
     "transcript is a separate tool you approve on its own.",
 }
@@ -121,7 +121,7 @@ ACCESS: dict[str, list[str]] = {
         "Creates tasks as you.",
     ],
     "inwise": [
-        "Needs the free Inwise desktop app installed and running on this Mac.",
+        "Needs the free Inwise desktop app installed and running on this computer.",
         "Reads your meetings, action items, people, and upcoming meetings from it.",
         "Talks only to the app's local server — no account, no tokens, nothing hosted.",
         "Reading a full transcript is its own tool, so you approve verbatim text separately.",

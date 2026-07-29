@@ -736,7 +736,7 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
             "In the app, leave Settings → Connect to AI switched on — that's the local "
             "server this reads from.",
             "One click connects — no account, no sign-in.",
-            "Keep the app running. The connector reads only what it recorded on this Mac, "
+            "Keep the app running. The connector reads only what it recorded on this computer, "
             "and only while the app is up — including when a scheduled automation runs.",
             "Reading a full transcript is a separate tool. Everything else is summarized; "
             "verbatim text goes to your AI provider only when you approve that one.",

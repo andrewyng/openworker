@@ -62,10 +62,16 @@ def connector_list(secrets: SecretStore) -> list[dict[str, Any]]:
             continue
         profile = secrets.get(f"{d.name}:default") or {}
         if d.mcp_url and profile.get("mode") == "mcp":
-            # MCP-backed connect: the profile is just a marker — connected-ness
-            # lives with the OAuth tokens (mcp-oauth:<name> in the SecretStore).
-            connected = _mcp_tokens_present(secrets, d.name)
+            # OAuth-backed servers additionally need tokens; local no-auth
+            # servers (Inwise) use the successful mode marker itself because
+            # there is intentionally no credential to store.
+            connected = d.auth != "oauth" or _mcp_tokens_present(secrets, d.name)
+        elif d.mcp_url and not d.fields:
+            # MCP-only connectors start disconnected. `auth="none"` would
+            # otherwise make a local app look paired before we have reached it.
+            connected = False
         else:
+            # Hybrid connectors such as Jira retain their manual credential path.
             connected = _profile_connected(d, profile)
         entry = {
             "name": d.name,
