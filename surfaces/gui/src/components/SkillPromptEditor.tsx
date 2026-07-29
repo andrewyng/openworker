@@ -304,7 +304,7 @@ function SkillChooser({
     <div
       role="listbox"
       aria-label="Skills"
-      className="absolute z-50 left-2 right-2 top-full mt-1 max-h-72 overflow-auto rounded-xl border border-line bg-panel p-1.5 shadow-2xl"
+      className="absolute z-50 bottom-full left-2 right-2 mb-1 max-h-72 overflow-auto rounded-xl border border-line bg-panel p-1.5 shadow-2xl"
     >
       {matches.map((skill, index) => (
         <button

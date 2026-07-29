@@ -80,6 +80,11 @@ test("chooser keyboard navigation, Tab selection, atomic deletion, and Escape", 
 
   await composer.fill("/");
   await expect(chooser).toBeVisible();
+  const composerBox = await composer.boundingBox();
+  const chooserBox = await chooser.boundingBox();
+  expect(composerBox).not.toBeNull();
+  expect(chooserBox).not.toBeNull();
+  expect(chooserBox!.y + chooserBox!.height).toBeLessThanOrEqual(composerBox!.y);
   await page.keyboard.press("ArrowDown");
   await expect(
     chooser.getByRole("option", { name: /release-notes/i }),
