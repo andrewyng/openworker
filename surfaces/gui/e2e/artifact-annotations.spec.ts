@@ -3,6 +3,9 @@ import { test, expect } from "./fixtures";
 test("artifact comments stage a selected Markdown segment and send it with the turn", async ({
   page,
 }) => {
+  page.on("pageerror", (error) => {
+    throw error;
+  });
   const artifact = {
     path: "output/report.md",
     abs_path: "/tmp/openworker/output/report.md",
@@ -21,7 +24,22 @@ test("artifact comments stage a selected Markdown segment and send it with the t
         path: artifact.path,
         kind: "markdown",
         sha256: "a".repeat(64),
-        content: "# Quarterly result\n\nRevenue grew by 18%.",
+        content: [
+          "# Quarterly result",
+          "",
+          "> Revenue grew by 18%.",
+          "",
+          "![Remote chart](https://example.com/chart.png)",
+          "",
+          "---",
+          "",
+          "## Breakdown",
+          "",
+          "| Segment | Growth |",
+          "| --- | ---: |",
+          "| Enterprise | 24% |",
+          "| Self-serve | 11% |",
+        ].join("\n"),
       },
     }),
   );

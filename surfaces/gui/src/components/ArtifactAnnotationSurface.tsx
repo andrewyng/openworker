@@ -106,6 +106,7 @@ function cropCanvas(
 async function captureDom(root: HTMLElement, rect: LocalRect) {
   const canvas = await html2canvas(root, {
     backgroundColor: "#ffffff",
+    foreignObjectRendering: true,
     logging: false,
     scale: 1,
     useCORS: true,
@@ -421,6 +422,7 @@ function HtmlSurface({
     const capture = async (rect: LocalRect, target: AnnotationTarget, anchor: DOMRect) => {
       const canvas = await html2canvas(doc.documentElement, {
         backgroundColor: "#ffffff",
+        foreignObjectRendering: true,
         logging: false,
         scale: 1,
         useCORS: true,
