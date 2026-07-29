@@ -1,8 +1,8 @@
 """Web search providers — a keyless default + pluggable third-party services.
 
-`duckduckgo` works with no API key (our "starting version of our own"). `tavily` and `brave`
-give better results but need a key (configured via the SecretStore / env). All providers
-return a uniform `list[SearchResult]`; the heavy client libs are lazy-imported.
+`duckduckgo` works with no API key (our "starting version of our own"). `tavily`, `brave`,
+and `fastcrw` give better results but need a key (configured via the SecretStore / env). All
+providers return a uniform `list[SearchResult]`; the heavy client libs are lazy-imported.
 """
 
 from __future__ import annotations
@@ -108,10 +108,101 @@ class BraveProvider(WebSearchProvider):
         ]
 
 
+class FastCRWProvider(WebSearchProvider):
+    """fastCRW web search (https://docs.fastcrw.com) via the hosted /v1 API."""
+
+    name = "fastcrw"
+    requires_key = True
+
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
+
+    def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        import httpx
+
+        resp = httpx.post(
+            "https://api.fastcrw.com/v1/search",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            # No `scrapeOptions`: it would scrape every hit for page content that
+            # SearchResult discards. `limit` maxes out at 20.
+            json={"query": query, "limit": max_results},
+            timeout=_TIMEOUT,
+        )
+        try:
+            data = resp.json()
+        except ValueError:  # a gateway's HTML error page, not a fastCRW envelope
+            data = {}
+        if not isinstance(data, dict) or data.get("success") is not True:
+            # fastCRW reports a bad key, quota and disabled search as
+            # {"success": false, "error": ...}, and can do so with a 200. Raise so the
+            # tool surfaces the message rather than the empty list a .get() chain would
+            # produce, which reads to the user as "no results for that query".
+            err = data if isinstance(data, dict) else {}
+            raise RuntimeError(err.get("error") or f"HTTP {resp.status_code}")
+        rows = data.get("data")
+        if not isinstance(rows, list):
+            # `data` is a required array. Anything else is a response we don't understand,
+            # and treating it as "no results" would be the same silent lie as above.
+            raise RuntimeError(f"unexpected response shape (HTTP {resp.status_code})")
+        results = [
+            SearchResult(
+                # `or ""` rather than a .get() default: JSON null is a present key.
+                title=r.get("title") or "",
+                url=r.get("url") or "",
+                # `snippet` is fastCRW's alias of `description`; either may be sent.
+                snippet=r.get("description") or r.get("snippet") or "",
+            )
+            for r in rows
+            if isinstance(r, dict) and r.get("url")  # a hit with no URL is not a hit
+        ]
+        if rows and not results:
+            raise RuntimeError(f"unexpected result shape (HTTP {resp.status_code})")
+        return results
+
+    def scrape(self, url: str) -> dict[str, str]:
+        """Markdown for one page. Optional capability, duck-typed by web/fetch.py."""
+        import httpx
+
+        resp = httpx.post(
+            "https://api.fastcrw.com/v1/scrape",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            # deadlineMs is the server-side budget (max 60000). Keeping it under the
+            # client timeout means a slow page comes back as a message we can report
+            # rather than as a socket we hung up on.
+            json={
+                "url": url,
+                "formats": ["markdown"],
+                "onlyMainContent": True,
+                "deadlineMs": 15000,
+            },
+            timeout=_TIMEOUT,
+        )
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {}
+        if not isinstance(body, dict) or body.get("success") is not True:
+            err = body if isinstance(body, dict) else {}
+            raise RuntimeError(err.get("error") or f"HTTP {resp.status_code}")
+        data = body.get("data") or {}
+        meta = data.get("metadata") or {}
+        status = meta.get("statusCode")
+        if isinstance(status, int) and status >= 400:
+            # Follows the local path's raise_for_status(): an error page is not content,
+            # even though the scrape itself succeeded in fetching it. Weaker than the
+            # local check though — a JS-rendered page can report 200 for an origin 404.
+            raise RuntimeError(f"upstream HTTP {status}")
+        return {
+            "url": meta.get("sourceURL") or url,
+            "text": data.get("markdown") or "",
+        }
+
+
 _PROVIDERS = {
     "duckduckgo": DuckDuckGoProvider,
     "tavily": TavilyProvider,
     "brave": BraveProvider,
+    "fastcrw": FastCRWProvider,
 }
 
 
