@@ -131,6 +131,85 @@ def test_allowlist_prefix_is_argv_boundary(tmp_path):
     assert eng.evaluate("run_shell", {"command": "lsof"}, None).needs_user
 
 
+def _scoped_engine(tmp_path):
+    """Workspace + a second granted (read-only) root, with reader commands allowlisted."""
+    ws = tmp_path / "ws"
+    (ws / "src").mkdir(parents=True)
+    (ws / "README.md").write_text("hello\n")
+    (ws / "src" / "app.py").write_text("x = 1\n")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "notes.md").write_text("notes\n")
+    return ws, docs, PermissionEngine(
+        workspace_root=ws,
+        allowed_commands=["ls", "cat", "pwd", "grep", "find", "head", "wc", "pytest"],
+        roots=[{"path": ws, "writable": True}, {"path": docs, "writable": False}],
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat /etc/passwd",
+        "cat ~/.ssh/id_rsa",
+        "cat ../../../etc/passwd",
+        "head -n 5 /etc/hosts",
+        "wc -l /etc/passwd",
+        "grep -r AKIA /Users",
+        "ls /",
+        "pytest --collect-only /tmp/evil_test.py",
+        "grep --file=/etc/passwd pattern",  # path hidden on the right of `=`
+    ],
+)
+def test_allowlisted_reader_does_not_auto_run_outside_the_roots(tmp_path, command):
+    # `read_file` already refuses to leave the granted roots ("path escapes the
+    # workspace"). An allowlisted `cat` must not hand back through the shell what the
+    # file tool declines to read.
+    _, _, eng = _scoped_engine(tmp_path)
+    d = eng.evaluate("run_shell", {"command": command}, None)
+    assert not d.allowed and d.needs_user, command
+
+
+def test_symlink_out_of_the_workspace_does_not_launder_the_read(tmp_path):
+    ws, _, eng = _scoped_engine(tmp_path)
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    (secret / "id_rsa").write_text("SECRET\n")
+    (ws / "link").symlink_to(secret)
+    # The argument is workspace-relative, but it resolves outside the roots.
+    d = eng.evaluate("run_shell", {"command": "cat link/id_rsa"}, None)
+    assert not d.allowed and d.needs_user
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ls -la",
+        "pwd",
+        "grep -n TODO README.md",
+        "grep -rn TODO src/",
+        "find . -name '*.py'",
+        "find . -type f -maxdepth 2",
+        "cat README.md",
+        "cat ./src/app.py",
+        "wc -l src/app.py",
+        "pytest -q",
+    ],
+)
+def test_reads_inside_the_roots_still_auto_run(tmp_path, command):
+    # Patterns and subcommands are not paths, and a relative path stays inside the
+    # workspace unless it climbs out, so ordinary use is untouched.
+    _, _, eng = _scoped_engine(tmp_path)
+    assert eng.evaluate("run_shell", {"command": command}, None).allowed, command
+
+
+def test_absolute_paths_inside_a_granted_root_still_auto_run(tmp_path):
+    ws, docs, eng = _scoped_engine(tmp_path)
+    assert eng.evaluate("run_shell", {"command": f"cat {ws}/README.md"}, None).allowed
+    # A second granted root is readable too, not just the primary workspace.
+    assert eng.evaluate("run_shell", {"command": f"cat {docs}/notes.md"}, None).allowed
+
+
 def test_shell_commands_not_auto_allowed_by_default(tmp_path):
     # There is no generally safe executable: these examples cover code execution,
     # environment disclosure, reads outside the workspace, and helper execution.
