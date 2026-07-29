@@ -215,7 +215,7 @@ def build_engine(
     provider = provider or ProviderRouter(secrets, default_provider="openai")
     # Code-family personas can fan broad research out to read-only explorer subagents, keeping
     # their own context for the actual change.
-    if agent.family == "code" and ws is not None:
+    if ws is not None:
         registry.register_all(repomap_tool(workspace=str(ws)))
         registry.register_all(
             explorer_tools(

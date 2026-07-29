@@ -63,3 +63,8 @@ coworker = ["personas/builtin/*.md"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.21.0",
+]

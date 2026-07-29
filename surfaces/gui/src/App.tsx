@@ -65,6 +65,7 @@ import { ApprovalCard } from "./components/ApprovalCard";
 import { DirectoryRequestCard } from "./components/DirectoryRequestCard";
 import { PlanCard } from "./components/PlanCard";
 import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
+import { TracePanel } from "./components/TracePanel";
 
 const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
@@ -1643,7 +1644,9 @@ export function App() {
             active={surface === "session" && agent !== "chat" && !railHidden}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}
-            toolNames={items.filter((i) => i.kind === "tool").map((i: any) => i.name)}
+            usage={usage}
+            model={model}
+            contextWindow={modelContextWindows[model] || 128000}
             tools={[...new Set(items.filter((i) => i.kind === "tool").map((i: any) => i.name))]}
             skills={[
               ...new Set(
@@ -1705,6 +1708,7 @@ export function App() {
           onClose={() => setWorkspaceTrustRequest(null)}
         />
       )}
+      <TracePanel />
     </div>
   );
 }

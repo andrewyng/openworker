@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 // Emits the asset URL only; the worker itself loads lazily with the pdfjs chunk.
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
@@ -8,12 +8,13 @@ import {
   type ArtifactContent,
   type ArtifactInfo,
 } from "../api";
-import type { TodoItem } from "../types";
+import type { TodoItem, SessionUsage } from "../types";
 import { AccessSection } from "./AccessSection";
 import { Icon } from "./Icon";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
+import { TelemetryTab } from "./TelemetryTab";
 
-type Panel = "progress" | "tools" | "skills" | "artifacts";
+type Tab = "artifacts" | "telemetry" | "tools" | "skills" | "access";
 
 // Quiet file-type icons for the artifact list (the colored kind pills read as noisy).
 function kindIcon(kind: string): "file" | "fileCode" | "image" | "table" {
@@ -40,11 +41,13 @@ interface Props {
   active: boolean;
   sessionId: string;
   refreshKey: number;
-  toolNames: string[];
   tools: string[];
   skills: string[];
   todo: TodoItem[];
   running: boolean;
+  usage?: SessionUsage;
+  model?: string;
+  contextWindow?: number;
   // Fires when a full artifact preview opens/closes, so the app can auto-collapse the left nav
   // to give the preview (PDF/webpage/sheet) more room (#3).
   onPreviewChange?: (open: boolean) => void;
@@ -65,11 +68,13 @@ export function RightRail({
   active,
   sessionId,
   refreshKey,
-  toolNames,
   tools,
   skills,
   todo,
   running,
+  usage,
+  model,
+  contextWindow,
   onPreviewChange,
   showArtifacts = true,
   personaId,
@@ -80,12 +85,7 @@ export function RightRail({
   openAccessKey = 0,
   onOpenIntegrations,
 }: Props) {
-  const [open, setOpen] = useState<Record<Panel, boolean>>({
-    progress: true,
-    tools: true,
-    skills: true,
-    artifacts: true,
-  });
+  const [activeTab, setActiveTab] = useState<Tab>("telemetry");
   const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
   const [selected, setSelected] = useState<ArtifactInfo | null>(null);
   const [content, setContent] = useState<ArtifactContent | null>(null);
@@ -157,130 +157,122 @@ export function RightRail({
   if (!active) return null;
 
   return (
-    <aside className={"right-rail" + (selected ? " artifact-mode" : "")}>
-      {selected ? (
-        <ArtifactViewer
-          sessionId={sessionId}
-          artifact={selected}
-          content={content}
-          onReload={reloadSelected}
-          onBack={() => setSelected(null)}
-        />
-      ) : (
-        <>
-          <RailSection title="Progress" open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
-            <ProgressSummary running={running} toolNames={toolNames} todo={todo} />
-          </RailSection>
-
-          {tools.length > 0 && (
-            <RailSection
-              title={`Tools (${new Set(tools).size})`}
-              open={open.tools}
-              onToggle={() => setOpen({ ...open, tools: !open.tools })}
+    <aside className={"right-rail flex flex-col h-full bg-panel border-l border-line z-20" + (selected ? " artifact-mode" : "")}>
+      
+      {/* Tabs Header */}
+      {!selected && (
+        <header className="px-2 h-14 flex items-end border-b border-line shrink-0">
+          <div className="flex w-full px-1">
+            <button 
+              className={`flex-1 pb-2 text-[12.5px] font-medium border-b-2 ${activeTab === 'artifacts' ? 'text-ink border-accent' : 'text-faint border-transparent hover:text-ink'}`}
+              onClick={() => setActiveTab('artifacts')}
             >
-              <LoadedToolsSection tools={tools} />
-            </RailSection>
-          )}
-
-          {skills.length > 0 && (
-            <RailSection
-              title={`Skills (${new Set(skills).size})`}
-              open={open.skills}
-              onToggle={() => setOpen({ ...open, skills: !open.skills })}
+              Artifacts {artifacts.length ? `(${artifacts.length})` : ''}
+            </button>
+            <button 
+              className={`flex-1 pb-2 text-[12.5px] font-medium border-b-2 ${activeTab === 'telemetry' ? 'text-ink border-accent' : 'text-faint border-transparent hover:text-ink'}`}
+              onClick={() => setActiveTab('telemetry')}
             >
-              <LoadedSkillsSection skills={skills} />
-            </RailSection>
-          )}
+              Telemetry
+            </button>
+            <button 
+              className={`flex-1 pb-2 text-[12.5px] font-medium border-b-2 ${activeTab === 'tools' ? 'text-ink border-accent' : 'text-faint border-transparent hover:text-ink'}`}
+              onClick={() => setActiveTab('tools')}
+            >
+              Tools
+            </button>
+            <button 
+              className={`flex-1 pb-2 text-[12.5px] font-medium border-b-2 ${activeTab === 'access' ? 'text-ink border-accent' : 'text-faint border-transparent hover:text-ink'}`}
+              onClick={() => setActiveTab('access')}
+            >
+              Access
+            </button>
+          </div>
+        </header>
+      )}
 
-          {showArtifacts && (
-          <RailSection
-            title={`Artifacts${artifacts.length ? ` (${artifacts.length})` : ""}`}
-            open={open.artifacts}
-            onToggle={() => setOpen({ ...open, artifacts: !open.artifacts })}
-            action={
-              <>
-                {artifacts.length > 0 && (
-                  <button
-                    className="rail-mini-btn"
-                    onClick={(e) => { e.stopPropagation(); revealArtifact(sessionId, artifacts[0].path, "reveal"); }}
-                    title="Show the folder where these files are saved"
-                  >
-                    <Icon name="folder" size={13} />
-                  </button>
+      <div className="flex-1 overflow-y-auto hairline-scroll relative">
+        {selected ? (
+          <ArtifactViewer
+            sessionId={sessionId}
+            artifact={selected}
+            content={content}
+            onReload={reloadSelected}
+            onBack={() => setSelected(null)}
+          />
+        ) : (
+          <div className="tab-content h-full">
+            {/* ARTIFACTS TAB */}
+            {activeTab === 'artifacts' && (
+              <div className="p-4">
+                <div className="flex gap-2 mb-4">
+                  {artifacts.length > 0 && (
+                    <button className="rail-mini-btn" onClick={(e) => { e.stopPropagation(); revealArtifact(sessionId, artifacts[0].path, "reveal"); }}>
+                      <Icon name="folder" size={13} />
+                    </button>
+                  )}
+                  <button className="rail-mini-btn" onClick={(e) => { e.stopPropagation(); refreshArtifacts(); }} title="Refresh artifacts"><Icon name="refresh" size={13} /></button>
+                </div>
+                {artifacts.length === 0 ? (
+                  <div className="rail-muted">No previewable files yet.</div>
+                ) : (
+                  <div className="artifact-list">
+                    {artifacts.map((a) => (
+                      <button className="artifact-row" key={a.path} onClick={() => setSelected(a)}>
+                        <span className="artifact-ico" title={a.kind}>
+                          <Icon name={kindIcon(a.kind)} size={17} />
+                        </span>
+                        <span className="artifact-name">
+                          {a.name}
+                          <span className="artifact-row-meta">{formatBytes(a.size)} · {formatTime(a.modified_at)}</span>
+                        </span>
+                        <span className="artifact-open">Open</span>
+                      </button>
+                    ))}
+                  </div>
                 )}
-                <button className="rail-mini-btn" onClick={(e) => { e.stopPropagation(); refreshArtifacts(); }} title="Refresh artifacts"><Icon name="refresh" size={13} /></button>
-              </>
-            }
-          >
-            {artifacts.length === 0 ? (
-              <div className="rail-muted">No previewable files yet.</div>
-            ) : (
-              <div className="artifact-list">
-                {artifacts.slice(0, 16).map((a) => (
-                  <button className="artifact-row" key={a.path} onClick={() => setSelected(a)}>
-                    <span className="artifact-ico" title={a.kind}>
-                      <Icon name={kindIcon(a.kind)} size={17} />
-                    </span>
-                    <span className="artifact-name">
-                      {a.name}
-                      <span className="artifact-row-meta">{formatBytes(a.size)} · {formatTime(a.modified_at)}</span>
-                    </span>
-                    <span className="artifact-open">Open</span>
-                  </button>
-                ))}
               </div>
             )}
-          </RailSection>
-          )}
 
-          {/* §32: Access — the former Session-settings drawer, one section among peers.
-              key: its data ownership resets with the conversation, like the old row did. */}
-          <AccessSection
-            key={sessionId}
-            sessionId={sessionId}
-            personaId={personaId}
-            projectScoped={projectScoped}
-            workspace={workspace}
-            branch={branch}
-            scratchPrimary={scratchPrimary}
-            openKey={openAccessKey}
-            onOpenIntegrations={onOpenIntegrations}
-          />
-        </>
-      )}
-    </aside>
-  );
-}
+            {/* TELEMETRY TAB */}
+            {activeTab === 'telemetry' && (
+              <TelemetryTab running={running} todo={todo} usage={usage} model={model} contextWindow={contextWindow} />
+            )}
 
-function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolNames: string[]; todo: TodoItem[] }) {
-  if (todo.length) {
-    return (
-      <div className="rail-todo-list">
-        {todo.map((item, index) => (
-          <div className={"rail-todo " + item.status} key={index}>
-            <span className="rail-todo-mark" />
-            <span>{item.content}</span>
-          </div>
-        ))}
-        {running && (
-          <div className="rail-muted">
-            {toolNames.length ? `${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"} so far.` : "Working..."}
+            {/* TOOLS TAB */}
+            {activeTab === 'tools' && (
+              <div className="p-4 space-y-6">
+                <div>
+                  <h3 className="text-[13px] font-semibold mb-3">Tools ({new Set(tools).size})</h3>
+                  <LoadedToolsSection tools={tools} />
+                </div>
+                <div>
+                  <h3 className="text-[13px] font-semibold mb-3">Skills ({new Set(skills).size})</h3>
+                  <LoadedSkillsSection skills={skills} />
+                </div>
+              </div>
+            )}
+
+            {/* ACCESS TAB */}
+            {activeTab === 'access' && (
+              <div className="p-4">
+                <AccessSection
+                  key={sessionId}
+                  sessionId={sessionId}
+                  personaId={personaId}
+                  projectScoped={projectScoped}
+                  workspace={workspace}
+                  branch={branch}
+                  scratchPrimary={scratchPrimary}
+                  openKey={openAccessKey}
+                  onOpenIntegrations={onOpenIntegrations}
+                />
+              </div>
+            )}
           </div>
         )}
       </div>
-    );
-  }
-  if (running) {
-    return (
-      <div className="rail-muted">
-        Working on this task{toolNames.length ? ` with ${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"} so far.` : "."}
-      </div>
-    );
-  }
-  return (
-    <div className="rail-muted">
-      For longer multi-step tasks, progress will appear here while OpenWorker plans, uses tools, waits for approval, and produces artifacts.
-    </div>
+    </aside>
   );
 }
 
@@ -314,32 +306,6 @@ function LoadedSkillsSection({ skills }: { skills: string[] }) {
   );
 }
 
-function RailSection({
-  title,
-  open,
-  onToggle,
-  children,
-  action,
-}: {
-  title: string;
-  open: boolean;
-  onToggle: () => void;
-  children: ReactNode;
-  action?: ReactNode;
-}) {
-  return (
-    <section className="rail-section">
-      <div className="rail-section-head">
-        <button className="rail-section-toggle" onClick={onToggle}>
-          <Icon name={open ? "chevronDown" : "chevronRight"} size={14} className="rail-chev" />
-          <span>{title}</span>
-        </button>
-        {action}
-      </div>
-      {open && <div className="rail-section-body">{children}</div>}
-    </section>
-  );
-}
 
 function ArtifactViewer({
   sessionId,

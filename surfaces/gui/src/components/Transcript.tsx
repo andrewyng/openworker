@@ -4,6 +4,7 @@ import { shortArgs } from "./ApprovalCard";
 import { humanizeAsk, humanizeTool, type HumanLine } from "../humanize";
 import { Markdown } from "./Markdown";
 import { ConnectorMessageCard } from "./ConnectorMessageCard";
+import { SwarmGraph } from "./SwarmGraph";
 import { Icon } from "./Icon";
 import { synthesizeAndPlay, stopTts, isTauri, getTtsStatus } from "../tauri";
 
@@ -250,6 +251,11 @@ function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }
   const [raw, setRaw] = useState(false);
   const running = tool.status === "…";
   const failed = tool.status !== "ok" && !running;
+  
+  if (tool.name === "delegate") {
+    return <SwarmGraph />;
+  }
+  
   return (
     <div>
       <div className="group flex items-baseline gap-2 px-2 py-0.5 rounded-lg hover:bg-paper" data-testid="turn-step">
