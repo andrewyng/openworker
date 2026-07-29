@@ -100,19 +100,34 @@ def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
     raise exc
 
 
+def _detail_int(details: Any, key: str) -> int:
+    """Read an int from prompt_tokens_details whether the SDK returned an object or a dict."""
+    if details is None:
+        return 0
+    if isinstance(details, dict):
+        return int(details.get(key) or 0)
+    return int(getattr(details, key, 0) or 0)
+
+
 def _usage_from(usage: Any) -> Optional[TokenUsage]:
-    """chat.completions usage → normalized counts. `prompt_tokens` INCLUDES cached
-    tokens, so the cached share is subtracted into `cache_read`; no write-side split
-    exists on this API shape."""
+    """chat.completions usage → normalized counts.
+
+    `prompt_tokens` INCLUDES cache hits (OpenAI + DashScope) and, on Alibaba
+    Bailian, newly created explicit-cache tokens (`cache_creation_input_tokens`).
+    Carve those into `cache_read`/`cache_write` so `input` is the fresh share —
+    the same billing-class split Anthropic reports natively.
+    """
     if usage is None:
         return None
     prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
     details = getattr(usage, "prompt_tokens_details", None)
-    cached = int(getattr(details, "cached_tokens", 0) or 0)
+    cached = _detail_int(details, "cached_tokens")
+    cache_write = _detail_int(details, "cache_creation_input_tokens")
     return TokenUsage(
-        input=max(prompt - cached, 0),
+        input=max(prompt - cached - cache_write, 0),
         output=int(getattr(usage, "completion_tokens", 0) or 0),
         cache_read=cached,
+        cache_write=cache_write,
     )
 
 
