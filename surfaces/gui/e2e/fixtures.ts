@@ -65,6 +65,54 @@ const PERSONAS = {
   ],
 };
 
+const SKILLS = [
+  {
+    name: "pdf",
+    description: "Extract, inspect, and summarize PDF documents",
+    path: "/Users/test/.agents/skills/pdf/SKILL.md",
+    source: "shared",
+  },
+  {
+    name: "release-notes",
+    description: "Turn completed work into concise release notes",
+    path: "/Users/test/.config/coworker/skills/release-notes/SKILL.md",
+    source: "global",
+  },
+  {
+    name: "pdf",
+    description: "Project-specific PDF workflow",
+    path: "/Users/test/OpenWorker/launch-note/.coworker/skills/pdf/SKILL.md",
+    source: "project",
+  },
+];
+
+const SKILL_CONTENT: Record<string, string> = {
+  [SKILLS[0].path]: [
+    "---",
+    "name: pdf",
+    "description: Extract, inspect, and summarize PDF documents",
+    "---",
+    "",
+    "Inspect the supplied PDF and ground every claim in its contents.",
+  ].join("\n"),
+  [SKILLS[1].path]: [
+    "---",
+    "name: release-notes",
+    "description: Turn completed work into concise release notes",
+    "---",
+    "",
+    "Write concise release notes for the completed work.",
+  ].join("\n"),
+  [SKILLS[2].path]: [
+    "---",
+    "name: pdf",
+    "description: Project-specific PDF workflow",
+    "---",
+    "",
+    "Use the launch-note project's exact PDF workflow.",
+  ].join("\n"),
+};
+
 // The boot-resume target (most recent updated_at) — existing specs open it by title.
 const PINNED_SESSION = {
   session_id: "pinned-cowork-1",
@@ -711,8 +759,14 @@ export async function mockApi(page: import("@playwright/test").Page) {
         // composer's visible model must ride on every user_message; 2026-07-04 fix).
         // `usage` mirrors the real engine's assistant_message sidecar (OPE-42): fixed
         // counts per turn so the usage-chip specs can assert exact accumulation.
+        const selected = Array.isArray(msg.parts)
+          ? msg.parts.filter((part: any) => part?.type === "skill")
+          : [];
+        const selectedSkills = selected.length
+          ? ` [skills=${selected.map((skill: any) => skill.name).join(",")}]`
+          : "";
         send("assistant_message", {
-          text: `Echo: ${msg.text} [model=${msg.model || "none"}]`,
+          text: `Echo: ${msg.text} [model=${msg.model || "none"}]${selectedSkills}`,
           usage: {
             model: msg.model || "anthropic:claude-opus-4-8",
             input: 1_000,
@@ -826,6 +880,13 @@ export async function mockApi(page: import("@playwright/test").Page) {
 
     if (p.endsWith("/v1/health")) return json(HEALTH);
     if (p.endsWith("/v1/settings")) return json(SETTINGS);
+    if (p.endsWith("/v1/skills/read")) {
+      const path = new URL(req.url()).searchParams.get("path") ?? "";
+      const content = SKILL_CONTENT[path];
+      if (!content) return json({ ok: false, error: "skill not found" }, 404);
+      return json({ ok: true, ...SKILLS.find((skill) => skill.path === path), path, content });
+    }
+    if (p.endsWith("/v1/skills")) return json({ skills: SKILLS });
     if (p.endsWith("/v1/settings/pdf") && m === "POST") {
       Object.assign(SETTINGS, req.postDataJSON());
       return json({

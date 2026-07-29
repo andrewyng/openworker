@@ -6,7 +6,7 @@
 // generalizes to any connector via the registry — no Slack special-casing here.
 
 import type { ConversationMessage } from "./api";
-import type { Attachment, Item } from "./types";
+import type { Attachment, Item, PromptPart } from "./types";
 
 export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
   const items: Item[] = [];
@@ -33,6 +33,27 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
         continue;
       }
       const user = userItemFromContent(m.content);
+      if (Array.isArray(m.skill_parts)) {
+        const restored: PromptPart[] = [];
+        for (const part of m.skill_parts) {
+          if (part?.type === "text" && typeof part.text === "string") {
+            restored.push({ type: "text", text: part.text });
+          }
+          else if (
+            part?.type === "skill" &&
+            typeof part.name === "string" &&
+            typeof part.path === "string"
+          ) {
+            restored.push({
+              type: "skill",
+              name: part.name,
+              path: part.path,
+              ...(typeof part.source === "string" ? { source: part.source } : {}),
+            });
+          }
+        }
+        user.parts = restored;
+      }
       // `ts` (unix seconds) is the server's canonical-message stamp; older sessions have none.
       if (typeof m.ts === "number") user.ts = m.ts;
       if (user.text || user.attachments?.length) items.push(user);

@@ -4,14 +4,17 @@ import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
   getArtifacts,
   readArtifact,
+  readSkill,
   revealArtifact,
   type ArtifactContent,
   type ArtifactInfo,
+  type SkillInfo,
 } from "../api";
 import type { TodoItem } from "../types";
 import { AccessSection } from "./AccessSection";
 import { Icon } from "./Icon";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
+import { OPEN_SKILL_EVENT } from "../skillEvents";
 
 type Panel = "progress" | "artifacts";
 
@@ -82,6 +85,7 @@ export function RightRail({
   });
   const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
   const [selected, setSelected] = useState<ArtifactInfo | null>(null);
+  const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
   const [content, setContent] = useState<ArtifactContent | null>(null);
 
   const refreshArtifacts = () => getArtifacts(sessionId).then(setArtifacts).catch(() => setArtifacts([]));
@@ -95,21 +99,58 @@ export function RightRail({
   // workspace, which the new session can't (and shouldn't) read.
   useEffect(() => {
     setSelected(null);
+    setSelectedSkill(null);
     setContent(null);
   }, [sessionId]);
 
   useEffect(() => {
+    if (selectedSkill) return;
     setContent(null);
     if (!selected) return;
     readArtifact(sessionId, selected.path).then(setContent).catch(() => setContent(null));
-  }, [selected?.path, sessionId]);
+  }, [selected?.path, selectedSkill, sessionId]);
+
+  useEffect(() => {
+    if (!selectedSkill) return;
+    setContent(null);
+    readSkill(selectedSkill.path, workspace)
+      .then((skill) =>
+        setContent({
+          ok: true,
+          path: skill.path,
+          kind: "markdown",
+          content: skill.content,
+        }),
+      )
+      .catch((error) =>
+        setContent({
+          ok: false,
+          path: selectedSkill.path,
+          kind: "markdown",
+          error: error instanceof Error ? error.message : "Skill not found",
+        }),
+      );
+  }, [selectedSkill?.path, workspace]);
 
   // Notify the app when a preview opens/closes (drives the left-nav auto-collapse).
   useEffect(() => {
-    onPreviewChange?.(!!selected);
-  }, [!!selected, onPreviewChange]);
+    onPreviewChange?.(!!selected || !!selectedSkill);
+  }, [!!selected, !!selectedSkill, onPreviewChange]);
 
   const reloadSelected = () => {
+    if (selectedSkill) {
+      setContent(null);
+      return readSkill(selectedSkill.path, workspace)
+        .then((skill) =>
+          setContent({
+            ok: true,
+            path: skill.path,
+            kind: "markdown",
+            content: skill.content,
+          }),
+        )
+        .catch(() => setContent(null));
+    }
     if (!selected) return Promise.resolve();
     setContent(null);
     return readArtifact(sessionId, selected.path).then(setContent).catch(() => setContent(null));
@@ -119,7 +160,6 @@ export function RightRail({
   // Resolve against the loaded list first; on a miss, refresh once (the file may be
   // seconds old), then fall back to a minimal record — readArtifact validates the path.
   useEffect(() => {
-    if (!active) return;
     const minimal = (path: string): ArtifactInfo => ({
       path,
       name: path.split("/").pop() || path,
@@ -132,6 +172,7 @@ export function RightRail({
     const onOpen = (e: Event) => {
       const path = String((e as CustomEvent).detail?.path || "");
       if (!path) return;
+      setSelectedSkill(null);
       const found = match(artifacts, path);
       if (found) {
         setSelected(found);
@@ -146,19 +187,44 @@ export function RightRail({
     };
     window.addEventListener(OPEN_ARTIFACT_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_ARTIFACT_EVENT, onOpen);
-  }, [active, sessionId, artifacts]);
+  }, [sessionId, artifacts]);
+
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const detail = (event as CustomEvent<SkillInfo>).detail;
+      if (!detail?.path || !detail?.name) return;
+      setSelected(null);
+      setSelectedSkill(detail);
+    };
+    window.addEventListener(OPEN_SKILL_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_SKILL_EVENT, onOpen);
+  }, []);
 
   if (!active) return null;
 
   return (
-    <aside className={"right-rail" + (selected ? " artifact-mode" : "")}>
-      {selected ? (
+    <aside className={"right-rail" + (selected || selectedSkill ? " artifact-mode" : "")}>
+      {selected || selectedSkill ? (
         <ArtifactViewer
           sessionId={sessionId}
-          artifact={selected}
+          artifact={
+            selected ||
+            {
+              path: selectedSkill!.path,
+              abs_path: selectedSkill!.path,
+              name: "SKILL.md",
+              kind: "markdown",
+              size: 0,
+              modified_at: 0,
+            }
+          }
+          isSkill={!!selectedSkill}
           content={content}
           onReload={reloadSelected}
-          onBack={() => setSelected(null)}
+          onBack={() => {
+            setSelected(null);
+            setSelectedSkill(null);
+          }}
         />
       ) : (
         <>
@@ -291,12 +357,14 @@ function ArtifactViewer({
   content,
   onReload,
   onBack,
+  isSkill = false,
 }: {
   sessionId: string;
   artifact: ArtifactInfo;
   content: ArtifactContent | null;
   onReload: () => Promise<void>;
   onBack: () => void;
+  isSkill?: boolean;
 }) {
   const [reloadKey, setReloadKey] = useState(0);
   const isHtml = content?.kind === "html" && !content.error;
@@ -306,11 +374,16 @@ function ArtifactViewer({
   return (
     <div className="artifact-viewer">
       <div className="artifact-head">
-        <button className="artifact-icon-btn" onClick={onBack} aria-label="Back to artifacts" title="Back">
+        <button
+          className="artifact-icon-btn"
+          onClick={onBack}
+          aria-label={isSkill ? "Back to skills" : "Back to artifacts"}
+          title="Back"
+        >
           <Icon name="arrowLeft" size={16} />
         </button>
         <div className="artifact-heading">
-          <div className="artifact-title"><span>Artifacts</span><span className="artifact-sep">/</span><span>{artifact.name}</span></div>
+          <div className="artifact-title"><span>{isSkill ? "Skills" : "Artifacts"}</span><span className="artifact-sep">/</span><span>{artifact.name}</span></div>
           <div className="artifact-path">{artifact.path}</div>
         </div>
         <div className="rail-actions">
@@ -327,7 +400,7 @@ function ArtifactViewer({
               <Icon name="refresh" size={16} />
             </button>
           )}
-          {isApp && (
+          {!isSkill && isApp && (
             <button
               className="artifact-icon-btn"
               onClick={() => revealArtifact(sessionId, artifact.path, "open")}
@@ -347,14 +420,16 @@ function ArtifactViewer({
           >
             <Icon name="copy" size={16} />
           </button>
-          <button
-            className="artifact-icon-btn"
-            onClick={() => revealArtifact(sessionId, artifact.path, "reveal")}
-            aria-label="Show in folder"
-            title="Show in folder"
-          >
-            <Icon name="folder" size={16} />
-          </button>
+          {!isSkill && (
+            <button
+              className="artifact-icon-btn"
+              onClick={() => revealArtifact(sessionId, artifact.path, "reveal")}
+              aria-label="Show in folder"
+              title="Show in folder"
+            >
+              <Icon name="folder" size={16} />
+            </button>
+          )}
         </div>
       </div>
       <div className="artifact-preview">

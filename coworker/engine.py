@@ -13,6 +13,7 @@ engine says `needs_user`, the engine emits `PERMISSION_REQUIRED` and awaits the 
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import time
 from dataclasses import dataclass
@@ -43,6 +44,23 @@ class PermissionRequest:
 
 
 Approver = Callable[[PermissionRequest], Awaitable[ApprovalOutcome]]
+
+
+def _render_skill_parts(parts: list[dict[str, str]]) -> str:
+    """Render a path-verified rich prompt for the provider, preserving draft order."""
+    rendered: list[str] = []
+    for part in parts:
+        if part.get("type") == "text":
+            rendered.append(part.get("text", ""))
+        elif part.get("type") == "skill":
+            name = html.escape(part.get("name", ""))
+            path = html.escape(part.get("path", ""))
+            content = part.get("content", "")
+            rendered.append(
+                f"<skill>\n<name>{name}</name>\n<path>{path}</path>\n"
+                f"{content}\n</skill>"
+            )
+    return "".join(rendered)
 
 
 async def _deny_all(_request: PermissionRequest) -> ApprovalOutcome:
@@ -154,12 +172,19 @@ class TurnEngine:
 
     # -- main loop --------------------------------------------------------------
     async def run(
-        self, user_input: "str | list", *, source: Optional[dict[str, Any]] = None
+        self,
+        user_input: "str | list",
+        *,
+        source: Optional[dict[str, Any]] = None,
+        skill_parts: Optional[list[dict[str, str]]] = None,
     ) -> AsyncIterator[Event]:
         # `user_input` is a string, or OpenAI content-parts (text + image_url) for attachments.
         # `source` (a MessageSource dict) is a display-only sidecar for connector messages: it
         # rides on the persisted user message + the TURN_START event, but is stripped before the
         # message reaches a provider (see `_outbound_messages`). `content` stays the framed text.
+        # `skill_parts` is another persisted sidecar: ingress has already resolved every selected
+        # exact path and snapshotted its raw SKILL.md. The provider sees its ordered expansion;
+        # the transcript keeps the compact, readable `content` plus structured chip identity.
         # `ts` (unix seconds, stamped on every appended message) is the same kind of sidecar.
         message: dict[str, Any] = {
             "role": "user",
@@ -168,11 +193,18 @@ class TurnEngine:
         }
         if source is not None:
             message["source"] = source
+        if skill_parts is not None:
+            message["skill_parts"] = skill_parts
         self.messages.append(message)
         self._cancel.clear()
         data: dict[str, Any] = {"input": user_input}
         if source is not None:
             data["source"] = source
+        if skill_parts is not None:
+            data["skill_parts"] = [
+                {key: value for key, value in part.items() if key != "content"}
+                for part in skill_parts
+            ]
         yield Event(EventType.TURN_START, data)
         async for event in self._loop():
             yield event
@@ -880,25 +912,62 @@ class TurnEngine:
     def _outbound_messages(self) -> list[dict[str, Any]]:
         """`self.messages` prepared for the provider. The SOLE provider feed (see `_astream`).
 
-        Every message is stripped of the display-only sidecars — `source`, `_display`, and
-        `ts` — (providers reject unknown keys), unconditionally — whether or not a
-        `<system-context>` block is added. When a context
+        Every message is stripped of the non-provider sidecars — `source`, `_display`, `ts`,
+        and `skill_parts` — (providers reject unknown keys), unconditionally. Before stripping,
+        a user message's verified `skill_parts` become ordered full-body `<skill>` blocks.
+        When a context
         provider yields a non-empty string, an ephemeral `<system-context>` block is appended to the
         last user message. Never mutates `self.messages`, so neither the strip nor the block is
         persisted/replayed.
         """
-        # Strip the display-only sidecars — `source` (connector cards), `_display`
+        # Strip non-provider sidecars — `source` (connector cards), `_display`
         # (e.g. filter-hidden counts), `ts` (append-time timestamps), `reasoning`
-        # (thinking text), and `usage` (token counts) — copying only messages that carry
-        # one. Whole `notice` messages (error/interrupted/model-switch markers) are
-        # display-only too: dropped entirely.
-        _SIDECARS = ("source", "_display", "ts", "reasoning", "usage")
-        out = [
-            (
-                {k: v for k, v in msg.items() if k not in _SIDECARS}
-                if any(s in msg for s in _SIDECARS)
+        # (thinking text), `usage` (token counts), and the expanded-below `skill_parts` —
+        # copying only messages that carry one. Whole `notice` messages
+        # (error/interrupted/model-switch markers) are display-only too: dropped entirely.
+        _SIDECARS = (
+            "source",
+            "_display",
+            "ts",
+            "reasoning",
+            "usage",
+            "skill_parts",
+        )
+
+        def prepare(msg: dict[str, Any]) -> dict[str, Any]:
+            prepared = (
+                {key: value for key, value in msg.items() if key not in _SIDECARS}
+                if any(sidecar in msg for sidecar in _SIDECARS)
                 else msg
             )
+            skill_parts = msg.get("skill_parts")
+            if not isinstance(skill_parts, list):
+                return prepared
+
+            expanded = _render_skill_parts(skill_parts)
+            content = prepared.get("content")
+            if isinstance(content, str):
+                return {**prepared, "content": expanded}
+            if isinstance(content, list):
+                replaced = False
+                content_parts: list[Any] = []
+                for part in content:
+                    if (
+                        not replaced
+                        and isinstance(part, dict)
+                        and part.get("type") == "text"
+                    ):
+                        content_parts.append({**part, "text": expanded})
+                        replaced = True
+                    else:
+                        content_parts.append(part)
+                if not replaced:
+                    content_parts.insert(0, {"type": "text", "text": expanded})
+                return {**prepared, "content": content_parts}
+            return prepared
+
+        out = [
+            prepare(msg)
             for msg in self.messages
             if msg.get("role") != "notice"
         ]

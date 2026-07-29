@@ -30,7 +30,7 @@ from .roots import RootDir, normalize_roots, render_context
 from .providers import ProviderClient, ProviderRouter
 from .overrides import RiskOverrideStore
 from .secrets import SecretStore, state_dir
-from .skills import SkillLoader, skill_catalog_text, skill_tools
+from .skills import SkillLoader, skill_catalog_text, skill_roots, skill_tools
 from .tools import ToolRegistry
 from .tools.ask import ask_user_tool
 from .tools.directories import request_directory_tool
@@ -97,13 +97,6 @@ def _enabled_connector_tools(secrets: SecretStore) -> tuple[set[str], set[str]]:
         if tool.get("enabled")
     }
     return enabled_connectors, enabled_tools
-
-
-def _skill_dirs(workspace: Optional[Path]) -> list[Path]:
-    dirs = [state_dir() / "skills"]
-    if workspace is not None:
-        dirs.append(workspace / ".coworker" / "skills")
-    return dirs
 
 
 def build_engine(
@@ -259,7 +252,7 @@ def build_engine(
         if block:
             instructions = f"{instructions}\n\n{block}"
 
-    skill_loader = SkillLoader(_skill_dirs(ws))
+    skill_loader = SkillLoader(skill_roots(ws))
     registry.register_all(skill_tools(skill_loader))
     catalog = skill_catalog_text(skill_loader)
     if catalog:

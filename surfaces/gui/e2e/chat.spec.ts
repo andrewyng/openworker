@@ -26,7 +26,7 @@ test("send → user bubble → streamed echo reply renders", async ({ page }) =>
   await expect(page.locator(".dd").filter({ hasText: "Claude Opus" })).toBeVisible();
   await expect(page.getByTestId("session-subtitle")).toContainText("Claude Opus 4.8");
   // Composer cleared and re-armed for the next turn.
-  await expect(box).toHaveValue("");
+  await expect(box).toHaveText("");
 });
 
 test("approval: tool request suspends the turn; Allow once resumes it", async ({ page }) => {

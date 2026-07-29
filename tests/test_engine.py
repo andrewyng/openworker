@@ -38,9 +38,11 @@ class ScriptedProvider(ProviderClient):
         self._turns = list(turns)
         self._loop = loop
         self.calls = 0
+        self.last_messages = None
 
     def complete(self, *, model, messages, tools=None, **settings):
         self.calls += 1
+        self.last_messages = messages
         return self._turns[0] if self._loop else self._turns.pop(0)
 
     def capabilities(self, model):
@@ -70,6 +72,16 @@ def _collect(engine, user_input):
     return asyncio.run(_run())
 
 
+def _collect_with_skill_parts(engine, user_input, skill_parts):
+    async def _run():
+        return [
+            ev
+            async for ev in engine.run(user_input, skill_parts=skill_parts)
+        ]
+
+    return asyncio.run(_run())
+
+
 def _types(events):
     return [ev.type for ev in events]
 
@@ -87,6 +99,45 @@ def test_no_tool_turn(tmp_path):
     ]
     assert events[1].data["text"] == "all done"
     assert events[-1].data["status"] == "completed"
+
+
+def test_selected_skills_expand_in_order_without_leaking_transport_sidecars(
+    tmp_path,
+):
+    skill_path = str(tmp_path / ".coworker" / "skills" / "review" / "SKILL.md")
+    skill_parts = [
+        {"type": "text", "text": "Review this with "},
+        {
+            "type": "skill",
+            "name": "review",
+            "path": skill_path,
+            "content": "---\nname: review\n---\n\nInspect every claim.",
+        },
+        {"type": "text", "text": ", then answer briefly."},
+    ]
+    visible = "Review this with /review, then answer briefly."
+    engine, provider = _engine(tmp_path, [_text_turn("ok")])
+
+    events = _collect_with_skill_parts(engine, visible, skill_parts)
+
+    persisted = next(message for message in engine.messages if message["role"] == "user")
+    assert persisted["content"] == visible
+    assert persisted["skill_parts"] == skill_parts
+
+    outbound = next(
+        message for message in provider.last_messages if message["role"] == "user"
+    )
+    assert "skill_parts" not in outbound
+    content = outbound["content"]
+    assert content.startswith("Review this with <skill>\n")
+    assert f"<path>{skill_path}</path>" in content
+    assert "Inspect every claim." in content
+    assert content.endswith("</skill>, then answer briefly.")
+    assert events[0].data["skill_parts"][1] == {
+        "type": "skill",
+        "name": "review",
+        "path": skill_path,
+    }
 
 
 def test_tool_turn_order_and_execution(tmp_path):

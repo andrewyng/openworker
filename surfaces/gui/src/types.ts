@@ -90,11 +90,22 @@ export interface Attachment {
   text?: string; // text files
 }
 
+export interface SkillRef {
+  name: string;
+  description?: string;
+  path: string;
+  source?: "project" | "global" | "shared" | string;
+}
+
+export type PromptPart =
+  | { type: "text"; text: string }
+  | ({ type: "skill" } & SkillRef);
+
 // Transcript items
 // `ts` = unix seconds (the server's canonical-message stamp; live items stamp locally).
 // Optional: sessions saved before the server stamped timestamps have none.
 export type Item =
-  | { kind: "user"; text: string; attachments?: Attachment[]; ts?: number }
+  | { kind: "user"; text: string; attachments?: Attachment[]; parts?: PromptPart[]; ts?: number }
   // A connector-delivered inbound message (Slack/Salesforce/…), rendered as a structured card
   // (ConnectorMessageCard) instead of a plain user bubble. Generalizes to any connector via the
   // registry — no per-connector special-casing.

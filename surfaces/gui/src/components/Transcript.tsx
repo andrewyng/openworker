@@ -1,10 +1,42 @@
 import { useState } from "react";
-import type { ApprovalDecision, Item } from "../types";
+import type { ApprovalDecision, Item, PromptPart } from "../types";
 import { shortArgs } from "./ApprovalCard";
 import { humanizeAsk, humanizeTool, type HumanLine } from "../humanize";
 import { Markdown } from "./Markdown";
 import { ConnectorMessageCard } from "./ConnectorMessageCard";
 import { Icon } from "./Icon";
+import { openSkill } from "../skillEvents";
+
+function UserPrompt({
+  parts,
+  fallback,
+}: {
+  parts?: PromptPart[];
+  fallback: string;
+}) {
+  if (!parts?.some((part) => part.type === "skill")) return <>{fallback}</>;
+  return (
+    <>
+      {parts.map((part, index) =>
+        part.type === "text" ? (
+          <span key={index}>{part.text}</span>
+        ) : (
+          <button
+            key={`${part.path}:${index}`}
+            type="button"
+            data-testid="transcript-skill-chip"
+            className="mx-0.5 inline-flex items-center gap-1 rounded-md bg-white/20 px-1.5 py-0.5 text-[13px] font-medium text-onSolid hover:bg-white/30"
+            title={`${part.source || "skill"} · ${part.path}`}
+            onClick={() => openSkill(part)}
+          >
+            <Icon name="diamond" size={12} />
+            {part.name}
+          </button>
+        ),
+      )}
+    </>
+  );
+}
 
 // Hover affordances for a message bubble (FB-005): copy the raw text + the message's time.
 // Lives in a ZERO-HEIGHT strip under the bubble (absolute, inside the transcript's 20px gap)
@@ -398,7 +430,7 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
                       )}
                     </div>
                   )}
-                  {item.text}
+                  <UserPrompt parts={item.parts} fallback={item.text} />
                 </div>
                 <BubbleMeta text={item.text} ts={item.ts} align="right" />
               </div>
