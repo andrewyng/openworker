@@ -241,6 +241,15 @@ def _validate_hunter(creds: dict) -> ValidationResult:
     )
 
 
+def _validate_apify(creds: dict) -> ValidationResult:
+    return _validate_whoami(
+        "GET",
+        "https://api.apify.com/v2/users/me",
+        headers={"Authorization": f"Bearer {creds.get('api_token', '')}"},
+        identity=lambda d: "@" + str(d["data"]["username"]),
+    )
+
+
 def _validate_linear(creds: dict) -> ValidationResult:
     return _validate_whoami(
         "POST",
@@ -1426,6 +1435,88 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         brand_color="#fa5320",
         logo="hunter",
         account_field="@identity",
+    ),
+    ConnectorDescriptor(
+        name="apify",
+        title="Apify",
+        icon="◈",
+        blurb="Search data scraped by your Apify web crawler, cached locally.",
+        auth="api_token",
+        two_way=False,
+        fields=[
+            Field(
+                "api_token",
+                "API token",
+                secret=True,
+                help="Apify Console → Settings → API & Integrations → Personal API token.",
+                placeholder="apify_api_…",
+            ),
+            Field(
+                "dataset_id",
+                "Dataset",
+                help="Dataset id, or the stable username~dataset-name form. One "
+                "dataset per account — connect again to add another. "
+                "Case-sensitive — kept exactly as entered.",
+                placeholder="alice~job-openings",
+            ),
+            Field(
+                "key_field",
+                "Unique field",
+                required=False,
+                help="Field that identifies a record, so refreshes update instead "
+                "of duplicating. Dotted paths work (e.g. meta.id). Leave empty to "
+                "use 'url'; records with no value there fall back to a hash of "
+                "the whole item.",
+                placeholder="url",
+            ),
+            Field(
+                "title_field",
+                "Title field",
+                required=False,
+                help="Field shown as each result's title. Leave empty for 'title'.",
+                placeholder="title",
+            ),
+            Field(
+                "url_field",
+                "Link field",
+                required=False,
+                help="Field holding each record's link. Leave empty for 'url'.",
+                placeholder="url",
+            ),
+            Field(
+                "text_fields",
+                "Searchable fields",
+                required=False,
+                help="Comma-separated fields to index for search. Leave empty to "
+                "index every text value in the record.",
+                placeholder="title, description, location",
+            ),
+        ],
+        instructions=[
+            "In Apify Console, open Settings → API & Integrations and copy your "
+            "personal API token.",
+            "Open the dataset you want (Storage → Datasets, or an actor run's "
+            "output) and copy its id.",
+            "Leave the field settings empty unless the dataset has no `url` — "
+            "the defaults suit typical web-crawler output.",
+            "After connecting, ask the agent to refresh the cache once; later "
+            "questions are answered from the local copy without hitting Apify "
+            "again.",
+        ],
+        validate=_validate_apify,
+        brand_color="#97d700",
+        logo="apify",
+        aliases=(
+            "scraper",
+            "scraping",
+            "crawler",
+            "crawl",
+            "dataset",
+            "actor",
+            "web scraping",
+        ),
+        # One connected account == one cached dataset (tools call this a "source").
+        account_field="dataset_id",
     ),
     ConnectorDescriptor(
         name="pagerduty",

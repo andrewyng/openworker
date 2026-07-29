@@ -1089,6 +1089,30 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "read",
         "Poll an export job for download URLs.",
     ),
+    # apify_refresh_cache only writes the local cache — nothing in the user's Apify
+    # account changes — so it's "read" like the others, and a scheduled hourly
+    # refresh can run unattended instead of parking on an approval card.
+    ConnectorToolDef(
+        "apify",
+        "apify_refresh_cache",
+        "Refresh cache",
+        "read",
+        "Pull the connected Apify dataset into the local cache (idempotent upsert).",
+    ),
+    ConnectorToolDef(
+        "apify",
+        "apify_search_cache",
+        "Search cache",
+        "read",
+        "Keyword-search the locally cached dataset records. Never hits the network.",
+    ),
+    ConnectorToolDef(
+        "apify",
+        "apify_cache_status",
+        "Cache status",
+        "read",
+        "Report cached record count, last refresh time, and search mode.",
+    ),
 )
 
 _KIND_BY_NAME = {d.name: d.kind for d in TOOL_DEFS}
