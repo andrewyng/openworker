@@ -174,8 +174,92 @@ class TurnEngine:
         if source is not None:
             data["source"] = source
         yield Event(EventType.TURN_START, data)
+        if self._should_auto_compact():
+            try:
+                yield await self._compact_context(automatic=True)
+            except Exception as exc:
+                friendly = friendly_model_error(self.model, exc)
+                self._append_notice("error", friendly or str(exc))
+                yield Event(
+                    EventType.ERROR,
+                    {
+                        "error": friendly or str(exc),
+                        "error_type": type(exc).__name__,
+                        **({"raw": str(exc)} if friendly else {}),
+                    },
+                )
+                return
         async for event in self._loop():
             yield event
+
+    async def compact(self) -> AsyncIterator[Event]:
+        """Run a standalone manual compaction turn (the `/compact` operation)."""
+        self._cancel.clear()
+        yield Event(EventType.TURN_START, {"input": ""})
+        try:
+            yield await self._compact_context(automatic=False)
+        except Exception as exc:
+            friendly = friendly_model_error(self.model, exc)
+            self._append_notice("error", friendly or str(exc))
+            yield Event(
+                EventType.ERROR,
+                {
+                    "error": friendly or str(exc),
+                    "error_type": type(exc).__name__,
+                    **({"raw": str(exc)} if friendly else {}),
+                },
+            )
+            return
+        yield Event(
+            EventType.TURN_END,
+            {"status": "completed", "iterations": 0},
+        )
+
+    def _should_auto_compact(self) -> bool:
+        from .compaction import should_auto_compact
+        from .providers.matrix import context_window_for
+
+        return should_auto_compact(
+            self.messages,
+            context_window=context_window_for(self.model),
+        )
+
+    async def _compact_context(self, *, automatic: bool) -> Event:
+        from .compaction import (
+            SUMMARIZATION_PROMPT,
+            SUMMARY_PREFIX,
+            compacted_history,
+            estimate_messages_tokens,
+        )
+
+        request = [
+            *self._outbound_messages(),
+            {"role": "user", "content": SUMMARIZATION_PROMPT},
+        ]
+        turn = await asyncio.to_thread(
+            self.provider.complete,
+            model=self.model,
+            messages=request,
+            tools=None,
+            **self.model_settings,
+        )
+        marker = {
+            "role": "notice",
+            "kind": "context_compaction",
+            "automatic": automatic,
+            "summary": f"{SUMMARY_PREFIX}\n{turn.text or '(no summary available)'}",
+            "ts": time.time(),
+        }
+        self.messages.append(marker)
+        replacement = compacted_history(self.messages) or []
+        marker["context_tokens"] = estimate_messages_tokens(replacement)
+        return Event(
+            EventType.CONTEXT_COMPACTED,
+            {
+                "automatic": automatic,
+                "context_tokens": marker["context_tokens"],
+            },
+        )
 
     def switch_model(self, model: str) -> Optional[str]:
         """Rebind the session's model mid-conversation (roadmap item 3). History is
@@ -893,13 +977,16 @@ class TurnEngine:
         # one. Whole `notice` messages (error/interrupted/model-switch markers) are
         # display-only too: dropped entirely.
         _SIDECARS = ("source", "_display", "ts", "reasoning", "usage")
+        from .compaction import compacted_history
+
+        source_messages = compacted_history(self.messages) or self.messages
         out = [
             (
                 {k: v for k, v in msg.items() if k not in _SIDECARS}
                 if any(s in msg for s in _SIDECARS)
                 else msg
             )
-            for msg in self.messages
+            for msg in source_messages
             if msg.get("role") != "notice"
         ]
         # PDF attachments (stored as `file` parts) are adapted to the ACTIVE model right

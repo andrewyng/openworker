@@ -81,6 +81,29 @@ describe("TurnGroup (Transcript §33)", () => {
     expect(container.querySelector("details.stepgroup")).toBeNull();
     expect(screen.getByText("Hello there.")).toBeTruthy();
   });
+
+  it("shows automatic compaction as an action inside the expanded steps", () => {
+    const items: Item[] = [
+      { kind: "user", text: "continue" },
+      { kind: "compaction", automatic: true },
+      { kind: "assistant", text: "Done." },
+    ];
+    const { container } = render(<Transcript items={items} onApprove={vi.fn()} />);
+
+    expect(screen.getByText("1 step")).toBeTruthy();
+    expect(screen.queryByText("Context automatically compacted")).toBeNull();
+    fireEvent.click(container.querySelector("summary.stepgroup-head")!);
+    expect(screen.getByText("Context automatically compacted")).toBeTruthy();
+    expect(screen.getByText("Done.")).toBeTruthy();
+  });
+
+  it("distinguishes a manual compaction action", () => {
+    const items: Item[] = [{ kind: "compaction", automatic: false }];
+    const { container } = render(<Transcript items={items} onApprove={vi.fn()} />);
+
+    fireEvent.click(container.querySelector("summary.stepgroup-head")!);
+    expect(screen.getByText("Context compacted")).toBeTruthy();
+  });
 });
 
 describe("live turns (§33 flicker fix)", () => {

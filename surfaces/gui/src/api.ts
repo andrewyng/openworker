@@ -1816,6 +1816,10 @@ export class Session {
     });
   }
 
+  compact() {
+    this.send({ type: "compact" });
+  }
+
   approve(decision: string) {
     this.send({ type: "approval", decision });
   }

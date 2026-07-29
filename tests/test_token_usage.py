@@ -22,7 +22,7 @@ from coworker.providers.anthropic_provider import AnthropicProvider
 from coworker.providers.base import TokenUsage
 from coworker.providers.bedrock_provider import _BedrockConverseClient
 from coworker.providers.gemini_provider import GeminiProvider
-from coworker.providers.matrix import model_context_windows
+from coworker.providers.matrix import context_window_for, model_context_windows
 from coworker.providers.openai_provider import OpenAIProvider
 from coworker.tools import ToolRegistry
 
@@ -354,3 +354,9 @@ def test_model_context_windows_covers_verified_entries_only():
     assert windows["anthropic:claude-fable-5"] == 1_000_000
     assert "together:thinkingmachines/Inkling" not in windows  # unverified stays absent
     assert all(isinstance(v, int) and v > 0 for v in windows.values())
+
+
+def test_context_window_resolves_provider_managed_aliases():
+    assert context_window_for("companion:gpt-5.6-sol") == 400_000
+    assert context_window_for("companion:deepseek-v4-flash") == 128_000
+    assert context_window_for("companion:unknown-model") is None

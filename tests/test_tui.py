@@ -75,3 +75,26 @@ async def test_tui_approval_then_write(tmp_path):
 
     assert (tmp_path / "made.py").read_text() == "print(1)\n"
     assert any("done, wrote made.py" in line for line in app.rendered)
+
+
+@pytest.mark.asyncio
+async def test_tui_slash_compact_runs_manual_compaction(tmp_path):
+    app = CoworkerApp(
+        workspace=tmp_path,
+        provider=_ScriptedProvider([_text_turn("summary of the durable facts")]),
+    )
+    async with app.run_test() as pilot:
+        assert app.engine is not None
+        app.engine.messages.extend(
+            [
+                {"role": "user", "content": "remember ORCHID"},
+                {"role": "assistant", "content": "remembered"},
+            ]
+        )
+        await _submit(pilot, "/compact")
+
+        assert any("Context compacted" in line for line in app.rendered)
+        assert any(
+            m.get("kind") == "context_compaction" and m.get("automatic") is False
+            for m in app.engine.messages
+        )

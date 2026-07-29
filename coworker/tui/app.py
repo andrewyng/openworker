@@ -156,6 +156,16 @@ class CoworkerApp(App):
             self._write(f"[red]error:[/red] {exc}")
         self._persist_session()
 
+    @work(exclusive=True)
+    async def run_compact(self) -> None:
+        assert self.engine is not None
+        try:
+            async for event in self.engine.compact():
+                self._render_event(event)
+        except Exception as exc:  # pragma: no cover - surfaced to the user
+            self._write(f"[red]error:[/red] {exc}")
+        self._persist_session()
+
     def _persist_session(self) -> None:
         if self._session_store is None or self.engine is None or not self._session_id:
             return
@@ -190,6 +200,12 @@ class CoworkerApp(App):
             self._write("[red]⏹ interrupted[/red]")
         elif event.type is EventType.ERROR:
             self._write(f"[red]error: {data.get('error')}[/red]")
+        elif event.type is EventType.CONTEXT_COMPACTED:
+            self._write(
+                "[dim]Context automatically compacted[/dim]"
+                if data.get("automatic")
+                else "[dim]Context compacted[/dim]"
+            )
         elif event.type is EventType.TURN_END:
             if data.get("status") == "max_iterations_exceeded":
                 self._write("[red]⚠ stopped: max iterations reached[/red]")
@@ -208,7 +224,8 @@ class CoworkerApp(App):
             self.exit()
         elif name == "/help":
             self._write(
-                "commands: /mode plan|interactive|auto · /model <id> · /clear · /quit"
+                "commands: /mode plan|interactive|auto · /model <id> · "
+                "/compact · /clear · /quit"
             )
         elif name == "/mode" and arg in {"plan", "interactive", "auto"}:
             self.mode = Mode(arg)
@@ -220,6 +237,8 @@ class CoworkerApp(App):
             if self.engine:
                 self.engine.model = arg
             self._write(f"model → {arg}")
+        elif name == "/compact" and arg is None:
+            self.run_compact()
         elif name == "/clear":
             if self.engine:
                 self.engine.messages = []

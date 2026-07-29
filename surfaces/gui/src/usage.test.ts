@@ -58,6 +58,16 @@ describe("usageFromMessages", () => {
     expect(u.byModel["anthropic:claude-fable-5"].input).toBe(400);
     expect(u.context).toBe(360);
   });
+
+  it("resets active context at a durable compaction checkpoint", () => {
+    const u = usageFromMessages([
+      { role: "assistant", usage: turn({ input: 360_000 }) },
+      { role: "notice", kind: "context_compaction", context_tokens: 1_250 },
+    ] as any);
+
+    expect(u.context).toBe(1_250);
+    expect(u.byModel["anthropic:claude-fable-5"].input).toBe(360_000);
+  });
 });
 
 describe("totalTokens / formatTokens", () => {

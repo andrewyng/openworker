@@ -79,7 +79,8 @@ export function ThinkingBlock({ text, live }: { text: string; live?: boolean }) 
 type ToolItem = Extract<Item, { kind: "tool" }>;
 type ApprovalItem = Extract<Item, { kind: "approval" }>;
 type AssistantItem = Extract<Item, { kind: "assistant" }>;
-type TurnItem = ToolItem | ApprovalItem | AssistantItem;
+type CompactionItem = Extract<Item, { kind: "compaction" }>;
+type TurnItem = ToolItem | ApprovalItem | AssistantItem | CompactionItem;
 
 // TurnGroup (§33, absorbs §7's StepGroup): the whole user-message → final-answer span collapses
 // as ONE disclosure — "N steps" — with the agent's narration (assistant text followed by more
@@ -91,18 +92,21 @@ type TurnItem = ToolItem | ApprovalItem | AssistantItem;
 type TurnRow =
   | { type: "narr"; text: string }
   | { type: "step"; tool: ToolItem; approval?: ApprovalItem }
+  | { type: "compact"; item: CompactionItem }
   | { type: "ask"; approval: ApprovalItem };
 
 function buildRows(items: TurnItem[]): TurnRow[] {
   // First pass: tool rows in order; then pair each resolved approval with the nearest
   // same-name tool that doesn't have one yet (approvals may stream before or after their call).
-  const rows: TurnRow[] = items
-    .filter((it): it is ToolItem | AssistantItem => it.kind !== "approval")
-    // Thinking-only assistant items (no text) carry nothing narratable — skip the row.
-    .filter((it) => it.kind !== "assistant" || it.text)
-    .map((it) =>
-      it.kind === "assistant" ? { type: "narr" as const, text: it.text } : { type: "step" as const, tool: it },
-    );
+  const rows: TurnRow[] = [];
+  for (const item of items) {
+    if (item.kind === "assistant" && item.text)
+      rows.push({ type: "narr", text: item.text });
+    else if (item.kind === "tool")
+      rows.push({ type: "step", tool: item });
+    else if (item.kind === "compaction")
+      rows.push({ type: "compact", item });
+  }
   const approvals = items.filter((it): it is ApprovalItem => it.kind === "approval");
   for (const ap of approvals) {
     const at = items.indexOf(ap);
@@ -279,6 +283,21 @@ function TurnGroup({
                 <LineText line={humanizeAsk(row.approval.name, row.approval.args)} />
                 {approvalChip(row.approval.resolved)}
               </div>
+            ) : row.type === "compact" ? (
+              <div
+                className="flex items-center gap-2 px-2 py-0.5 text-[13px] leading-relaxed text-muted"
+                key={i}
+                data-testid="context-compaction-step"
+              >
+                <span className="w-3.5 flex justify-center text-faint shrink-0">
+                  <Icon name="refresh" size={12} />
+                </span>
+                <span>
+                  {row.item.automatic
+                    ? "Context automatically compacted"
+                    : "Context compacted"}
+                </span>
+              </div>
             ) : (
               <StepRow tool={row.tool} approval={row.approval} key={i} />
             ),
@@ -349,7 +368,12 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
     answers.forEach((a) => blocks.push({ item: a, i: -1 }));
   };
   items.forEach((item, i) => {
-    if (item.kind === "tool" || item.kind === "assistant" || (item.kind === "approval" && item.resolved))
+    if (
+      item.kind === "tool" ||
+      item.kind === "assistant" ||
+      item.kind === "compaction" ||
+      (item.kind === "approval" && item.resolved)
+    )
       run.push(item);
     else if (
       // PENDING interactive items render elsewhere (approval/question → composer head) and

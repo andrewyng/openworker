@@ -583,10 +583,9 @@ function UpdateInline() {
 
 // -- Sidebar density -------------------------------------------------------------
 // -- Token savings (PDF attachments; owner ask, 2026-07-17) ---------------------
-// Attachments replay with EVERY turn, so a big PDF quietly multiplies token spend.
-// Auto-compaction of long histories is a planned follow-up (punchlist §7) — until
-// then this card is the user's dial: attach thresholds + the fallback for models
-// without native PDF support.
+// Attachments replay until the next context checkpoint, so a big PDF can still multiply
+// token spend across several turns. This card remains the user's immediate dial: attach
+// thresholds + the fallback for models without native PDF support.
 function TokenSavingsCard() {
   const [pdf, setPdf] = useState<PdfSettings | null>(null);
 

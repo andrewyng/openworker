@@ -16,6 +16,7 @@ class EventType(str, Enum):
     ASSISTANT_DELTA = "assistant_delta"
     REASONING_DELTA = "reasoning_delta"  # model thinking text (display-only, never replayed)
     ASSISTANT_MESSAGE = "assistant_message"
+    CONTEXT_COMPACTED = "context_compacted"
     TOOL_PROPOSED = "tool_proposed"
     PERMISSION_REQUIRED = "permission_required"
     DIRECTORY_REQUESTED = "directory_requested"  # agent asks the user to grant a folder
