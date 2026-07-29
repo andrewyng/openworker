@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import signal
 import subprocess
 import sys
@@ -535,12 +536,29 @@ def shell_tools(executor: Executor) -> list:
     """Return the shell tools (`run_shell` + background-task helpers) bound to a
     persistent executor."""
 
+    def _validate_shell_command(command: str) -> Optional[str]:
+        # Blocklist for destructive commands (e.g. root deletion, disk formatting, raw disk writes)
+        blocklist = [
+            r"rm\s+-r[fF]?\s+(/|/\*)\s*$", # rm -rf / or rm -rf /*
+            r"mkfs.*",                     # mkfs commands
+            r"dd\s+.*if=.*of=/dev/.*",     # dd writes to raw devices
+        ]
+        for pattern in blocklist:
+            if re.search(pattern, command.strip()):
+                return f"BLOCKED by safety hook: Destructive command pattern detected ('{pattern}')."
+        return None
+
     def run_shell(
         command: str,
         description: Optional[str] = None,
         timeout_seconds: Optional[int] = None,
         run_in_background: bool = False,
     ) -> dict:
+        # Check safety hook before executing
+        error_msg = _validate_shell_command(command)
+        if error_msg:
+            return {"error": error_msg}
+
         # `description` is not used here on purpose: it rides along in the call arguments
         # so approval prompts and the audit log can show intent, not just the raw command.
         if run_in_background:
