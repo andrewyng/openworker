@@ -31,10 +31,13 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections import deque
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import aisuite as ai
+
+from ..local_state import restrict_to_user
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -42,6 +45,12 @@ _IS_WINDOWS = sys.platform == "win32"
 # a model-requested timeout can't wedge the turn for more than ten minutes.
 _DEFAULT_TIMEOUT = 120.0
 _MAX_TIMEOUT = 600.0
+# Foreground commands remain bounded before their result reaches the engine. If a command
+# exceeds this capture quota, preserve both ends (where invocations and verdicts tend to
+# appear) and report the omitted byte count explicitly. The projector carries that
+# incompleteness into its envelope instead of claiming the original stream is recoverable.
+_MAX_FOREGROUND_RETAINED_BYTES = 8 * 1024 * 1024
+_MAX_SESSION_CAPTURE_BYTES = 512 * 1024 * 1024
 
 # Env defaults that discourage commands from blocking on a prompt.
 _NONINTERACTIVE_ENV = {
@@ -73,12 +82,37 @@ class Executor(ABC):
 
 
 class _BackgroundTask:
-    """One detached background command: its own process (not the persistent shell), a
-    reader thread draining output into a buffer, and an incremental-read cursor."""
+    """One detached background command.
 
-    def __init__(self, task_id: str, command: str, cwd: str, env: dict[str, str]):
+    Output streams to an append-only capture file under the session capture
+    directory (or a temp dir when none is configured). The reader thread never
+    retains the full process output in memory. Incremental polls advance a byte
+    cursor; older bytes remain on disk until the session is deleted.
+    """
+
+    # Same ceiling as ToolOutputPolicy.max_single_output_bytes.
+    MAX_RETAINED_BYTES = 64 * 1024 * 1024
+
+    def __init__(
+        self,
+        task_id: str,
+        command: str,
+        cwd: str,
+        env: dict[str, str],
+        capture_dir: Path,
+        append_capture: Callable[[Path, bytes], int],
+        max_retained_bytes: int,
+    ):
         self.id = task_id
         self.command = command
+        # Task ids restart when an executor is rebuilt. Keep the public id simple,
+        # but make the on-disk capture unique so a new bg-1 never appends to stale bg-1.
+        self.capture_path = (
+            Path(capture_dir) / f"{task_id}-{uuid.uuid4().hex}.log"
+        )
+        self._append_capture = append_capture
+        self._max_retained_bytes = max_retained_bytes
+        self.capture_path.parent.mkdir(parents=True, exist_ok=True)
         if _IS_WINDOWS:
             argv = ["powershell.exe", "-NoProfile", "-Command", command]
             spawn_kwargs: dict[str, Any] = {
@@ -93,28 +127,91 @@ class _BackgroundTask:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             cwd=cwd,
-            text=True,
-            bufsize=1,
+            # Binary mode so we can enforce a byte quota and UTF-8-safe paging later.
+            text=False,
+            bufsize=0,
             env=env,
             **spawn_kwargs,
         )
         self._lock = threading.Lock()
-        self._lines: list[str] = []
-        self._cursor = 0
+        self._cursor = 0  # bytes already returned by incremental polls
+        self._retained_bytes = 0
+        self._discarded_bytes = 0
+        self._retained_complete = True
+        self.capture_path.touch()
+        try:
+            restrict_to_user(self.capture_path, is_dir=False)
+        except OSError:
+            pass
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
 
     def _read_loop(self) -> None:
         assert self.proc.stdout is not None
-        for line in self.proc.stdout:
+        while True:
+            chunk = self.proc.stdout.read(8192)
+            if not chunk:
+                break
             with self._lock:
-                self._lines.append(line)
+                per_task_remaining = self._max_retained_bytes - self._retained_bytes
+                requested = min(len(chunk), max(0, per_task_remaining))
+                retained = self._append_capture(
+                    self.capture_path, chunk[:requested]
+                )
+                if retained <= 0:
+                    self._discarded_bytes += len(chunk)
+                    self._retained_complete = False
+                    continue
+                self._retained_bytes += retained
+                if len(chunk) > retained:
+                    self._discarded_bytes += len(chunk) - retained
+                    self._retained_complete = False
 
-    def read_new(self) -> str:
+    def read_new(self, *, max_bytes: int | None = None) -> str:
+        """Return newly retained output since the last poll and advance the cursor."""
         with self._lock:
-            new = "".join(self._lines[self._cursor :])
-            self._cursor = len(self._lines)
-        return new
+            size = self._retained_bytes
+            start = self._cursor
+            if start >= size:
+                return ""
+            end = size if max_bytes is None else min(size, start + max_bytes)
+            # Don't advance past bytes we aren't returning.
+            path = self.capture_path
+        with open(path, "rb") as handle:
+            handle.seek(start)
+            raw = handle.read(end - start)
+        # Preserve a trailing partial UTF-8 sequence for the next poll. Invalid
+        # process bytes are replacement-decoded rather than wedging every future read.
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            if exc.reason == "unexpected end of data":
+                raw = raw[: exc.start]
+            text = raw.decode("utf-8", errors="replace")
+        with self._lock:
+            self._cursor = start + len(raw)
+        return text
+
+    def read_retained(self, offset_bytes: int = 0, limit_bytes: int = 8_000) -> bytes:
+        """Read a byte range from the durable capture (for tests / recovery)."""
+        with open(self.capture_path, "rb") as handle:
+            handle.seek(offset_bytes)
+            return handle.read(limit_bytes)
+
+    @property
+    def retained_bytes(self) -> int:
+        with self._lock:
+            return self._retained_bytes
+
+    @property
+    def discarded_bytes(self) -> int:
+        with self._lock:
+            return self._discarded_bytes
+
+    @property
+    def retained_complete(self) -> bool:
+        with self._lock:
+            return self._retained_complete
 
     def kill(self) -> None:
         if self.proc.poll() is not None:
@@ -143,6 +240,9 @@ class LocalExecutor(Executor):
         shell_path: Optional[str] = None,
         default_timeout: float = _DEFAULT_TIMEOUT,
         max_output_chars: int = 20_000,
+        capture_dir: Optional[str | Path] = None,
+        capture_writer: Optional[Callable[[Path, bytes], int]] = None,
+        max_capture_bytes: int = _BackgroundTask.MAX_RETAINED_BYTES,
     ) -> None:
         self.cwd = str(Path(cwd).expanduser().resolve())
         self.default_timeout = default_timeout
@@ -151,6 +251,25 @@ class LocalExecutor(Executor):
         self._is_windows = _IS_WINDOWS
         self._bg_tasks: dict[str, _BackgroundTask] = {}
         self._bg_counter = 0
+        self._capture_quota_lock = threading.Lock()
+        # Capture directory for background tasks. When unset, use a per-executor temp dir.
+        if capture_dir is not None:
+            self._capture_dir = Path(capture_dir)
+            self._capture_dir.mkdir(parents=True, exist_ok=True)
+            self._own_capture_dir = False
+        else:
+            import tempfile
+
+            self._capture_tmpdir = tempfile.TemporaryDirectory(prefix="ow-shell-cap-")
+            self._capture_dir = Path(self._capture_tmpdir.name)
+            self._own_capture_dir = True
+        self._capture_retained_bytes = sum(
+            path.stat().st_size
+            for path in self._capture_dir.glob("*.log")
+            if path.is_file()
+        )
+        self._capture_writer = capture_writer or self._append_capture
+        self._max_capture_bytes = max_capture_bytes
         # Set by interrupt_now() (user Stop) — run()'s read loop treats it like an
         # early deadline, so the in-flight foreground command dies within one tick.
         self._abort = threading.Event()
@@ -163,6 +282,21 @@ class LocalExecutor(Executor):
         self._shell_path = shell_path
         self._env = {**os.environ, **_NONINTERACTIVE_ENV, **(env or {})}
         self._spawn()
+
+    def _append_capture(self, path: Path, data: bytes) -> int:
+        """Fallback capture writer for standalone executors without a session store."""
+        if not data:
+            return 0
+        with self._capture_quota_lock:
+            remaining = _MAX_SESSION_CAPTURE_BYTES - self._capture_retained_bytes
+            granted = min(len(data), max(0, remaining))
+            if granted <= 0:
+                return 0
+            with path.open("ab") as handle:
+                handle.write(data[:granted])
+                handle.flush()
+            self._capture_retained_bytes += granted
+            return granted
 
     def _spawn(self) -> None:
         """Start (or restart) the shell process and its reader. Reused for self-healing:
@@ -238,7 +372,12 @@ class LocalExecutor(Executor):
         timed_out = False
         aborted = False
         exit_code: Optional[int] = None
-        lines: list[str] = []
+        head_limit = _MAX_FOREGROUND_RETAINED_BYTES // 2
+        tail_limit = _MAX_FOREGROUND_RETAINED_BYTES - head_limit
+        head = bytearray()
+        tail: deque[bytes] = deque()
+        tail_bytes = 0
+        total_output_bytes = 0
 
         while True:
             if self._abort.is_set():
@@ -281,14 +420,46 @@ class LocalExecutor(Executor):
                 if cwd:
                     self.cwd = cwd
                 break
-            lines.append(item)
+            encoded = item.encode("utf-8")
+            total_output_bytes += len(encoded)
+            if len(head) < head_limit:
+                take = min(head_limit - len(head), len(encoded))
+                head.extend(encoded[:take])
+                encoded = encoded[take:]
+            if encoded:
+                tail.append(encoded)
+                tail_bytes += len(encoded)
+                overflow = tail_bytes - tail_limit
+                while overflow > 0 and tail:
+                    oldest = tail[0]
+                    if len(oldest) <= overflow:
+                        tail.popleft()
+                        tail_bytes -= len(oldest)
+                        overflow -= len(oldest)
+                    else:
+                        tail[0] = oldest[overflow:]
+                        tail_bytes -= overflow
+                        overflow = 0
 
-        output = "".join(lines)
-        truncated = len(output) > self.max_output_chars
+        truncated = total_output_bytes > _MAX_FOREGROUND_RETAINED_BYTES
+        tail_raw = b"".join(tail)
         if truncated:
-            # Keep the TAIL: builds and test runners put the verdict at the end.
-            output = output[-self.max_output_chars :]
-        return self._result(
+            head_text, head_bytes = _decode_utf8_head(bytes(head))
+            tail_text, decoded_tail_bytes = _decode_utf8_tail(tail_raw)
+            retained_bytes = head_bytes + decoded_tail_bytes
+            discarded_bytes = max(0, total_output_bytes - retained_bytes)
+            output = (
+                head_text
+                + f"\n\n[... {discarded_bytes} bytes discarded by shell capture quota ...]\n\n"
+                + tail_text
+            )
+        else:
+            raw = bytes(head) + tail_raw
+            output = raw.decode("utf-8", errors="replace")
+            retained_bytes = total_output_bytes
+            discarded_bytes = 0
+
+        result = self._result(
             command,
             exit_code,
             output,
@@ -296,6 +467,15 @@ class LocalExecutor(Executor):
             truncated=truncated,
             error="interrupted by user" if aborted else None,
         )
+        if truncated:
+            result.update(
+                {
+                    "retained_complete": False,
+                    "retained_bytes": retained_bytes,
+                    "discarded_bytes": discarded_bytes,
+                }
+            )
+        return result
 
     def interrupt_now(self) -> None:
         """User Stop: make an in-flight foreground `run()` bail on its next read tick
@@ -308,7 +488,15 @@ class LocalExecutor(Executor):
         self._bg_counter += 1
         task_id = f"bg-{self._bg_counter}"
         try:
-            task = _BackgroundTask(task_id, command, self.cwd, self._env)
+            task = _BackgroundTask(
+                task_id,
+                command,
+                self.cwd,
+                self._env,
+                self._capture_dir,
+                self._capture_writer,
+                self._max_capture_bytes,
+            )
         except OSError as exc:
             return {"error": f"failed to start background task: {exc}"}
         self._bg_tasks[task_id] = task
@@ -324,16 +512,16 @@ class LocalExecutor(Executor):
         if task is None:
             return {"error": f"unknown task: {task_id}"}
         output = task.read_new()
-        truncated = len(output) > self.max_output_chars
-        if truncated:
-            output = output[-self.max_output_chars :]
         exit_code = task.proc.poll()
         return {
             "task_id": task_id,
             "status": "running" if exit_code is None else "exited",
             "exit_code": exit_code,
             "output": output,
-            "truncated": truncated,
+            "truncated": False,
+            "retained_complete": task.retained_complete,
+            "retained_bytes": task.retained_bytes,
+            "discarded_bytes": task.discarded_bytes,
         }
 
     def background_kill(self, task_id: str) -> dict[str, Any]:
@@ -350,6 +538,17 @@ class LocalExecutor(Executor):
             "status": "running" if task.proc.poll() is None else "killed",
             "exit_code": task.proc.poll(),
         }
+
+    def close_background_tasks(self) -> None:
+        """Stop and reap every detached task when its owning session is deleted."""
+        for task in self._bg_tasks.values():
+            task.kill()
+        for task in self._bg_tasks.values():
+            try:
+                task.proc.wait(timeout=5)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+            task._reader.join(timeout=1)
 
     def _trailer(self) -> str:
         """Command appended after each user command. Emits one line `<marker> <exit> <cwd>`
@@ -431,6 +630,27 @@ class LocalExecutor(Executor):
         return result
 
 
+def _decode_utf8_head(raw: bytes) -> tuple[str, int]:
+    """Decode a prefix, dropping only a trailing split UTF-8 character."""
+    while raw:
+        try:
+            return raw.decode("utf-8"), len(raw)
+        except UnicodeDecodeError as exc:
+            if exc.reason != "unexpected end of data":
+                return raw.decode("utf-8", errors="replace"), len(raw)
+            raw = raw[: exc.start]
+    return "", 0
+
+
+def _decode_utf8_tail(raw: bytes) -> tuple[str, int]:
+    """Decode a suffix, dropping only leading UTF-8 continuation bytes."""
+    start = 0
+    while start < len(raw) and raw[start] & 0xC0 == 0x80:
+        start += 1
+    kept = raw[start:]
+    return kept.decode("utf-8", errors="replace"), len(kept)
+
+
 def _parse_exit_code(line: str, marker: str) -> Optional[int]:
     parts = line.strip().split()
     try:
@@ -453,8 +673,9 @@ _RUN_SHELL_SCHEMA = {
         "name": "run_shell",
         "description": (
             "Run a shell command in the persistent session (cwd and env persist across "
-            "calls). Output longer than the limit keeps the END (where test/build verdicts "
-            "are). Set run_in_background for long-running processes like dev servers, then "
+            "calls). Large output is projected by the engine for model context; output "
+            "beyond the shell capture quota preserves both ends and is marked partial. "
+            "Set run_in_background for long-running processes like dev servers, then "
             "poll with shell_task_output."
         ),
         "parameters": {

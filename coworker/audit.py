@@ -53,7 +53,7 @@ class AuditStore:
         tool = str(event.get("tool") or event.get("tool_name") or "")
         connector = str(event.get("connector") or connector_for_tool(tool) or "")
         args = _sanitize_args(tool, event.get("arguments") or {})
-        resource = _resource(
+        resource = event.get("resource") or _resource(
             tool, event.get("arguments") or {}, event.get("result") or {}
         )
         with self._lock:

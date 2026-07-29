@@ -117,6 +117,7 @@ class CoworkerApp(App):
             provider=self._provider,
             memory_store=self._memory_store,
             messages=self._resume_messages,
+            session_id=self._session_id,
         )
         self._write(
             f"[b]coworker · code[/b]  ·  model {self.model}  ·  mode {self.mode.value}"
@@ -182,7 +183,13 @@ class CoworkerApp(App):
         elif event.type is EventType.TOOL_FINISHED:
             status = data.get("status")
             tag = "green" if status == "ok" else "red"
-            extra = data.get("result_preview") or data.get("reason") or ""
+            if data.get("truncated") and data.get("output_ref"):
+                chars = data.get("original_chars")
+                extra = (
+                    f"retained locally ({chars} chars)" if chars else "retained locally"
+                )
+            else:
+                extra = data.get("result_preview") or data.get("reason") or ""
             self._write(
                 f"  [{tag}]✓ {data['name']} · {status}[/{tag}] {_short(extra, 100)}"
             )
@@ -222,13 +229,27 @@ class CoworkerApp(App):
             self._write(f"model → {arg}")
         elif name == "/clear":
             if self.engine:
-                self.engine.messages = []
+                old_engine = self.engine
+                old_engine.messages = []
+                self._persist_session()
+                executor = getattr(old_engine, "executor", None)
+                if executor is not None:
+                    close_background = getattr(
+                        executor, "close_background_tasks", None
+                    )
+                    if callable(close_background):
+                        close_background()
+                    executor.close()
+                output_store = getattr(old_engine, "tool_output_store", None)
+                if output_store is not None:
+                    output_store.delete_all()
                 self.engine = build_code_engine(
                     workspace=self.workspace,
                     model=self.model,
                     mode=self.mode,
                     approver=self._approve,
                     provider=self._provider,
+                    session_id=self._session_id,
                 )
             self.query_one("#log", RichLog).clear()
             self.rendered.clear()

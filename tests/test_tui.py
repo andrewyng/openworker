@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from coworker.conversations import ConversationStore
 from coworker.providers import (
     AssistantTurn,
     ModelCapabilities,
@@ -75,3 +76,25 @@ async def test_tui_approval_then_write(tmp_path):
 
     assert (tmp_path / "made.py").read_text() == "print(1)\n"
     assert any("done, wrote made.py" in line for line in app.rendered)
+
+
+@pytest.mark.asyncio
+async def test_tui_clear_removes_retained_outputs_and_persists_empty_history(tmp_path):
+    session_store = ConversationStore(tmp_path / "state")
+    app = CoworkerApp(
+        workspace=tmp_path,
+        provider=_ScriptedProvider([]),
+        session_store=session_store,
+        session_id="clear-session",
+    )
+    async with app.run_test():
+        output_store = app.engine.tool_output_store
+        record = output_store.put("call", "tool", "retained")
+        content_path = output_store.directory / f"{record.ref}.txt"
+        app.engine.messages.append({"role": "user", "content": "old history"})
+
+        app._handle_command("/clear")
+
+        assert not content_path.exists()
+        assert app.engine.tool_output_store.list_references() == set()
+        assert session_store.load("clear-session").messages == []

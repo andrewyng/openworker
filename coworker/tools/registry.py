@@ -32,10 +32,13 @@ class ToolRegistry:
         *,
         metadata: Any = None,
         schema: Optional[dict[str, Any]] = None,
+        replace: bool = True,
     ) -> ToolSpec:
         name = getattr(func, "__name__", None)
         if not name:
             raise ValueError("Tool function must have a __name__.")
+        if not replace and name in self._tools:
+            raise ValueError(f"Tool name is reserved or already registered: {name}")
         meta = metadata or getattr(func, "__aisuite_tool_metadata__", None)
         # Allow an explicit schema override (param or a `__coworker_schema__` attribute)
         # for tools whose signature can't be auto-converted to a valid JSON schema.

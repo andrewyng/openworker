@@ -13,15 +13,15 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
 
+from .local_state import restrict_to_user
+
 _REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-_IS_WINDOWS = sys.platform == "win32"
 
 
 def state_dir() -> Path:
@@ -56,49 +56,17 @@ def _load_dotenv(path: Path) -> dict[str, str]:
     return env
 
 
-def _restrict_to_user(path: Path, *, is_dir: bool) -> None:
-    """Restrict a path so only the current user can access it.
-
-    POSIX expresses this with mode bits (0700 dir / 0600 file). Windows has no such bits —
-    `os.chmod` there only toggles the read-only flag, so a 0600 chmod is a silent no-op and
-    the file inherits broad ACLs (SYSTEM, Administrators, …). Use an ACL instead: strip
-    inherited entries and grant the current user alone. Best-effort on Windows so a transient
-    icacls failure never blocks saving a key."""
-    if _IS_WINDOWS:
-        user = os.environ.get("USERNAME")
-        if not user:
-            return
-        domain = os.environ.get("USERDOMAIN")
-        account = f"{domain}\\{user}" if domain else user
-        # A directory grant MUST be inheritable — (OI) object-inherit for files, (CI)
-        # container-inherit for subdirs — so everything created inside (the SQLite stores,
-        # conversations, …) inherits the user's access. Without these flags, /inheritance:r
-        # leaves the directory with a non-inheritable ACE and any child file ends up with an
-        # empty DACL → sqlite3 "unable to open database file", crashing the server on launch.
-        grant = f"{account}:(OI)(CI)F" if is_dir else f"{account}:F"
-        try:
-            subprocess.run(
-                ["icacls", str(path), "/inheritance:r", "/grant:r", grant],
-                capture_output=True,
-                check=False,
-            )
-        except OSError:
-            pass
-        return
-    os.chmod(path, 0o700 if is_dir else 0o600)
-
-
 def write_private_text(path: str | Path, content: str) -> Path:
     """Atomically write a user-only text file using the SecretStore's OS protections."""
     target = Path(path).expanduser()
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
-        _restrict_to_user(target.parent, is_dir=True)
+        restrict_to_user(target.parent, is_dir=True)
     except OSError:
         pass
     tmp = target.with_name(target.name + ".tmp")
     tmp.write_text(content, encoding="utf-8")
-    _restrict_to_user(tmp, is_dir=False)
+    restrict_to_user(tmp, is_dir=False)
     os.replace(tmp, target)
     return target
 
@@ -184,10 +152,10 @@ class SecretStore:
     def _write(self, store: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            _restrict_to_user(self.path.parent, is_dir=True)
+            restrict_to_user(self.path.parent, is_dir=True)
         except OSError:
             pass
         tmp = self.path.with_name(self.path.name + ".tmp")
         tmp.write_text(json.dumps(store, indent=2), encoding="utf-8")
-        _restrict_to_user(tmp, is_dir=False)
+        restrict_to_user(tmp, is_dir=False)
         os.replace(tmp, self.path)
