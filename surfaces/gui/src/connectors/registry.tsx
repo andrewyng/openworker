@@ -10,10 +10,11 @@
 // the same format. Brands with no published monochrome mark (Attio, Apollo.io, Hunter,
 // Amplitude, Descript, Clay, Close, Docusign — whose current post-rebrand mark no icon pack
 // ships) and the non-brand utilities (email, browser, MCP, fallback plug) keep simple custom
-// glyphs. Inwise is the one full-color mark: its owl is multi-color by design, so it carries
-// its own fills and ignores the tint (the badge background still uses `brand_color`).
+// glyphs. Inwise is the one full-color raster mark: its supplied owl artwork is multi-color and
+// ignores the tint (the badge background still uses `brand_color`).
 // (Filename is `.tsx` because the entries are JSX — the spec's `registry.ts` can't hold JSX.)
 
+import inwiseLogoUrl from "../assets/inwise-logo.png";
 import type { SimpleIcon } from "simple-icons";
 import {
   siAsana,
@@ -134,41 +135,11 @@ const MondayLogo = strokeLogo(
   </>,
 );
 
-// Inwise's mark is a bespectacled owl. Unlike every other entry here it carries its
-// own fills instead of `currentColor`: the brand mark is multi-color (teal body, mint
-// tufts and chest, navy glasses, amber beak) and reads as a different bird in one tone.
-// `brand_color` still drives the badge background, so the descriptor stays the source
-// of truth for everything the tint controls.
+// The supplied full-color Inwise owl is bundled as a transparent image so the connector uses
+// the actual brand artwork rather than a hand-drawn approximation. `brand_color` still drives
+// the badge background, so the descriptor remains the source of truth for the surrounding tint.
 const InwiseLogo: LogoComponent = () => (
-  <svg viewBox="0 0 64 64" width="100%" height="100%" aria-hidden="true">
-    {/* ear tufts — behind the head so they read as horns */}
-    <path d="M17 27C10 17 9 8 12 5c4 2 12 11 15 20z" fill="#61C1B6" />
-    <path d="M47 27c7-10 8-19 5-22-4 2-12 11-15 20z" fill="#61C1B6" />
-    {/* body + head silhouette */}
-    <ellipse cx="32" cy="45" rx="22" ry="17" fill="#2A7F93" />
-    <circle cx="32" cy="28" r="20" fill="#2A7F93" />
-    {/* mint chest */}
-    <path d="M20 44c2-4 6-6 12-6s10 2 12 6c3 4 4 8 4 11-4 5-10 7-16 7s-12-2-16-7c0-3 1-7 4-11z" fill="#61C1B6" />
-    {/* forehead marking between the lenses */}
-    <path d="M32 15c-2 6-2.5 11-2 16l2-3 2 3c.5-5 0-10-2-16z" fill="#61C1B6" />
-    {/* glasses: white lenses, navy rims, bridge and temples */}
-    <circle cx="20" cy="32" r="10.5" fill="#FFFFFF" stroke="#16357C" strokeWidth="3.5" />
-    <circle cx="44" cy="32" r="10.5" fill="#FFFFFF" stroke="#16357C" strokeWidth="3.5" />
-    <path
-      d="M30.5 31h3M9.5 31H5M54.5 31H59"
-      stroke="#16357C"
-      strokeWidth="3.5"
-      strokeLinecap="round"
-      fill="none"
-    />
-    {/* eyes */}
-    <circle cx="20" cy="33" r="5.5" fill="#2A7F93" />
-    <circle cx="44" cy="33" r="5.5" fill="#2A7F93" />
-    <circle cx="18" cy="30" r="2" fill="#FFFFFF" />
-    <circle cx="42" cy="30" r="2" fill="#FFFFFF" />
-    {/* beak — rounded at the brow, pointed at the tip */}
-    <path d="M32 44c-2-3-3.2-6.2-2.6-9.2 1-2.4 4.2-2.4 5.2 0C35.2 37.8 34 41 32 44z" fill="#F9B119" />
-  </svg>
+  <img className="inwise-logo" src={inwiseLogoUrl} alt="" aria-hidden="true" />
 );
 
 const AmplitudeLogo = strokeLogo(
