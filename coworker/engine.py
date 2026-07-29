@@ -154,7 +154,11 @@ class TurnEngine:
 
     # -- main loop --------------------------------------------------------------
     async def run(
-        self, user_input: "str | list", *, source: Optional[dict[str, Any]] = None
+        self,
+        user_input: "str | list",
+        *,
+        source: Optional[dict[str, Any]] = None,
+        display: Optional[dict[str, Any]] = None,
     ) -> AsyncIterator[Event]:
         # `user_input` is a string, or OpenAI content-parts (text + image_url) for attachments.
         # `source` (a MessageSource dict) is a display-only sidecar for connector messages: it
@@ -168,6 +172,8 @@ class TurnEngine:
         }
         if source is not None:
             message["source"] = source
+        if display is not None:
+            message["_display"] = display
         self.messages.append(message)
         self._cancel.clear()
         data: dict[str, Any] = {"input": user_input}
@@ -893,15 +899,32 @@ class TurnEngine:
         # one. Whole `notice` messages (error/interrupted/model-switch markers) are
         # display-only too: dropped entirely.
         _SIDECARS = ("source", "_display", "ts", "reasoning", "usage")
-        out = [
-            (
+        out: list[dict[str, Any]] = []
+        for msg in self.messages:
+            if msg.get("role") == "notice":
+                continue
+            clean = (
                 {k: v for k, v in msg.items() if k not in _SIDECARS}
                 if any(s in msg for s in _SIDECARS)
                 else msg
             )
-            for msg in self.messages
-            if msg.get("role") != "notice"
-        ]
+            display = msg.get("_display")
+            annotations = (
+                display.get("annotations")
+                if isinstance(display, dict)
+                and isinstance(display.get("annotations"), list)
+                else []
+            )
+            if annotations and msg.get("role") == "user":
+                from .annotations import append_annotation_context
+
+                clean = {
+                    **clean,
+                    "content": append_annotation_context(
+                        clean.get("content"), annotations
+                    ),
+                }
+            out.append(clean)
         # PDF attachments (stored as `file` parts) are adapted to the ACTIVE model right
         # here — never in the persisted history — so a mid-session model switch always
         # re-decides: native PDF models get the real document, the rest get the local

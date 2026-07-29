@@ -102,3 +102,41 @@ describe("Composer voice input (§37)", () => {
     expect(screen.getByLabelText("Start dictation").hasAttribute("disabled")).toBe(false);
   });
 });
+
+describe("Composer artifact annotations", () => {
+  it("shows staged comments and the normal send button or Enter sends the full bundle", () => {
+    delete (globalThis as any).__TAURI__;
+    const onSend = vi.fn();
+    const annotation = {
+      id: "ann-1",
+      comment: "Clarify this result.",
+      artifact: {
+        path: "report.md",
+        name: "report.md",
+        kind: "markdown",
+        sha256: "a".repeat(64),
+      },
+      target: {
+        kind: "dom" as const,
+        selector: "h2",
+        exact: "Results",
+        rect: { x: 0.1, y: 0.2, width: 0.4, height: 0.08 },
+      },
+      preview: {
+        data_url: "data:image/png;base64,AA==",
+        width: 180,
+        height: 50,
+      },
+    };
+    render(<Composer {...props({ onSend, annotations: [annotation] })} />);
+
+    expect(screen.getByRole("button", { name: /1 comment/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSend).toHaveBeenCalledWith("", [], [annotation]);
+
+    onSend.mockClear();
+    const box = screen.getByPlaceholderText(/Ask the coworker/);
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(onSend).toHaveBeenCalledWith("", [], [annotation]);
+  });
+});

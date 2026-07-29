@@ -1277,10 +1277,16 @@ class SessionManager:
         if target is None:
             return {"ok": False, "error": err}
         kind = _artifact_kind(target)
+        sha256 = _sha256_file(target)
         if kind == "office":
             # PowerPoint/Word binaries can't be previewed inline; the UI offers
             # "Open in default app" instead of trying to render them.
-            return {"ok": True, "path": path, "kind": "office"}
+            return {
+                "ok": True,
+                "path": path,
+                "kind": "office",
+                "sha256": sha256,
+            }
         if kind in ("image", "pdf", "sheet"):
             import base64
 
@@ -1304,6 +1310,7 @@ class SessionManager:
                 "ok": True,
                 "path": path,
                 "kind": kind,
+                "sha256": sha256,
                 "data_url": f"data:{mime};base64,{data}",
             }
         try:
@@ -1314,6 +1321,7 @@ class SessionManager:
             "ok": True,
             "path": path,
             "kind": kind,
+            "sha256": sha256,
             "content": text[:500000],
             "truncated": len(text) > 500000,
         }
@@ -3743,6 +3751,16 @@ def _artifact_kind(path: Path) -> str:
     if suffix in {".py", ".js", ".ts", ".tsx", ".css", ".json"}:
         return "code"
     return "text"
+
+
+def _sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _redact(raw: dict[str, Any]) -> dict[str, Any]:

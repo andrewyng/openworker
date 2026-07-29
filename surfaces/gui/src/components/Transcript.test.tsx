@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Transcript } from "./Transcript";
+import { OPEN_ARTIFACT_EVENT } from "./Markdown";
 import { humanizeTool } from "../humanize";
 import type { Item } from "../types";
 
@@ -177,6 +178,49 @@ describe("bubble hover affordances (FB-005)", () => {
     const when = new Date(TS * 1000);
     expect(stamps[0].textContent).toBe(when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
     expect(stamps[0].getAttribute("title")).toBe(when.toLocaleString());
+  });
+});
+
+describe("artifact annotation bundles", () => {
+  it("reopens the exact persisted annotation from its transcript thumbnail", () => {
+    const annotation = {
+      id: "annotation-1",
+      comment: "Emphasize this total.",
+      artifact: {
+        path: "output/invoice.pdf",
+        name: "invoice.pdf",
+        kind: "pdf",
+        sha256: "a".repeat(64),
+      },
+      target: {
+        kind: "region" as const,
+        page: 1,
+        rect: { x: 0.5, y: 0.7, width: 0.2, height: 0.08 },
+      },
+      preview: {
+        data_url: "data:image/png;base64,AA==",
+        width: 200,
+        height: 80,
+      },
+    };
+    const listener = vi.fn();
+    window.addEventListener(OPEN_ARTIFACT_EVENT, listener);
+
+    render(
+      <Transcript
+        items={[{ kind: "user", text: "", annotations: [annotation] }]}
+        onApprove={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTitle("Open comment 1 in invoice.pdf"));
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    const event = listener.mock.calls[0][0] as CustomEvent;
+    expect(event.detail).toEqual({
+      path: "output/invoice.pdf",
+      annotation,
+    });
+    window.removeEventListener(OPEN_ARTIFACT_EVENT, listener);
   });
 });
 

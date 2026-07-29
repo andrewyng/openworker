@@ -90,11 +90,67 @@ export interface Attachment {
   text?: string; // text files
 }
 
+export interface AnnotationRect {
+  // Coordinates are normalized to the annotated page, image, or rendered document.
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export type AnnotationTarget =
+  | {
+      kind: "region";
+      rect: AnnotationRect;
+      page?: number;
+    }
+  | {
+      kind: "text";
+      exact: string;
+      prefix?: string;
+      suffix?: string;
+      rect: AnnotationRect;
+      page?: number;
+    }
+  | {
+      kind: "dom";
+      selector: string;
+      tag?: string;
+      exact?: string;
+      rect: AnnotationRect;
+    };
+
+// A structured, replayable selection from an artifact preview. The preview image is both the
+// conversation thumbnail and visual context for vision-capable models; target remains useful to
+// text-only models and lets the viewer reopen the original selection.
+export interface ArtifactAnnotation {
+  id: string;
+  comment: string;
+  artifact: {
+    path: string;
+    name: string;
+    kind: string;
+    sha256: string;
+  };
+  target: AnnotationTarget;
+  preview: {
+    data_url: string;
+    width: number;
+    height: number;
+  };
+}
+
 // Transcript items
 // `ts` = unix seconds (the server's canonical-message stamp; live items stamp locally).
 // Optional: sessions saved before the server stamped timestamps have none.
 export type Item =
-  | { kind: "user"; text: string; attachments?: Attachment[]; ts?: number }
+  | {
+      kind: "user";
+      text: string;
+      attachments?: Attachment[];
+      annotations?: ArtifactAnnotation[];
+      ts?: number;
+    }
   // A connector-delivered inbound message (Slack/Salesforce/…), rendered as a structured card
   // (ConnectorMessageCard) instead of a plain user bubble. Generalizes to any connector via the
   // registry — no per-connector special-casing.

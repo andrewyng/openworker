@@ -6,7 +6,7 @@
 // generalizes to any connector via the registry — no Slack special-casing here.
 
 import type { ConversationMessage } from "./api";
-import type { Attachment, Item } from "./types";
+import type { ArtifactAnnotation, Attachment, Item } from "./types";
 
 export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
   const items: Item[] = [];
@@ -33,9 +33,16 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
         continue;
       }
       const user = userItemFromContent(m.content);
+      const annotations = Array.isArray(m._display?.annotations)
+        ? (m._display.annotations as ArtifactAnnotation[])
+        : [];
+      if (annotations.length) {
+        user.text = typeof m._display?.text === "string" ? m._display.text : user.text;
+        user.annotations = annotations;
+      }
       // `ts` (unix seconds) is the server's canonical-message stamp; older sessions have none.
       if (typeof m.ts === "number") user.ts = m.ts;
-      if (user.text || user.attachments?.length) items.push(user);
+      if (user.text || user.attachments?.length || user.annotations?.length) items.push(user);
     } else if (m.role === "assistant") {
       if (m.content || m.reasoning)
         items.push({

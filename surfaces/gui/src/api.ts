@@ -192,6 +192,7 @@ export interface ArtifactContent {
   error?: string;
   path: string;
   kind: string;
+  sha256?: string;
   content?: string;
   data_url?: string;
   truncated?: boolean;
@@ -1807,12 +1808,13 @@ export class Session {
    * exactly what the user sees — immune to set_model races across reconnects (a new cowork
    * session always reconnects once to adopt its scratch dir, which could drop a queued
    * set_model and leave the engine on a stale/resumed model; found 2026-07-04). */
-  userMessage(text: string, attachments?: unknown[], model?: string) {
+  userMessage(text: string, attachments?: unknown[], model?: string, annotations?: unknown[]) {
     this.send({
       type: "user_message",
       text,
       ...(model ? { model } : {}),
       ...(attachments?.length ? { attachments } : {}),
+      ...(annotations?.length ? { annotations } : {}),
     });
   }
 

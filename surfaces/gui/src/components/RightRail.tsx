@@ -1,6 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-// Emits the asset URL only; the worker itself loads lazily with the pdfjs chunk.
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   getArtifacts,
   readArtifact,
@@ -8,10 +6,14 @@ import {
   type ArtifactContent,
   type ArtifactInfo,
 } from "../api";
-import type { TodoItem } from "../types";
+import type { ArtifactAnnotation, TodoItem } from "../types";
 import { AccessSection } from "./AccessSection";
+import {
+  ArtifactAnnotationSurface,
+  type CapturedSelection,
+} from "./ArtifactAnnotationSurface";
 import { Icon } from "./Icon";
-import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
+import { OPEN_ARTIFACT_EVENT } from "./Markdown";
 
 type Panel = "progress" | "artifacts";
 
@@ -57,6 +59,8 @@ interface Props {
   scratchPrimary?: boolean;
   openAccessKey?: number;
   onOpenIntegrations?: () => void;
+  stagedAnnotations?: ArtifactAnnotation[];
+  onStageAnnotation?: (annotation: ArtifactAnnotation) => void;
 }
 
 export function RightRail({
@@ -75,6 +79,8 @@ export function RightRail({
   scratchPrimary,
   openAccessKey = 0,
   onOpenIntegrations,
+  stagedAnnotations = [],
+  onStageAnnotation,
 }: Props) {
   const [open, setOpen] = useState<Record<Panel, boolean>>({
     progress: true,
@@ -83,6 +89,7 @@ export function RightRail({
   const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
   const [selected, setSelected] = useState<ArtifactInfo | null>(null);
   const [content, setContent] = useState<ArtifactContent | null>(null);
+  const [focusAnnotation, setFocusAnnotation] = useState<ArtifactAnnotation | null>(null);
 
   const refreshArtifacts = () => getArtifacts(sessionId).then(setArtifacts).catch(() => setArtifacts([]));
 
@@ -96,6 +103,7 @@ export function RightRail({
   useEffect(() => {
     setSelected(null);
     setContent(null);
+    setFocusAnnotation(null);
   }, [sessionId]);
 
   useEffect(() => {
@@ -130,8 +138,10 @@ export function RightRail({
     const match = (list: ArtifactInfo[], path: string) =>
       list.find((a) => a.path === path || a.path.endsWith("/" + path) || a.name === path);
     const onOpen = (e: Event) => {
-      const path = String((e as CustomEvent).detail?.path || "");
+      const detail = (e as CustomEvent).detail || {};
+      const path = String(detail.path || "");
       if (!path) return;
+      setFocusAnnotation(detail.annotation || null);
       const found = match(artifacts, path);
       if (found) {
         setSelected(found);
@@ -157,8 +167,14 @@ export function RightRail({
           sessionId={sessionId}
           artifact={selected}
           content={content}
+          focusAnnotation={focusAnnotation}
+          stagedAnnotations={stagedAnnotations}
+          onStageAnnotation={onStageAnnotation}
           onReload={reloadSelected}
-          onBack={() => setSelected(null)}
+          onBack={() => {
+            setSelected(null);
+            setFocusAnnotation(null);
+          }}
         />
       ) : (
         <>
@@ -191,7 +207,14 @@ export function RightRail({
             ) : (
               <div className="artifact-list">
                 {artifacts.slice(0, 16).map((a) => (
-                  <button className="artifact-row" key={a.path} onClick={() => setSelected(a)}>
+                  <button
+                    className="artifact-row"
+                    key={a.path}
+                    onClick={() => {
+                      setSelected(a);
+                      setFocusAnnotation(null);
+                    }}
+                  >
                     <span className="artifact-ico" title={a.kind}>
                       <Icon name={kindIcon(a.kind)} size={17} />
                     </span>
@@ -289,19 +312,79 @@ function ArtifactViewer({
   sessionId,
   artifact,
   content,
+  focusAnnotation,
+  stagedAnnotations,
+  onStageAnnotation,
   onReload,
   onBack,
 }: {
   sessionId: string;
   artifact: ArtifactInfo;
   content: ArtifactContent | null;
+  focusAnnotation: ArtifactAnnotation | null;
+  stagedAnnotations: ArtifactAnnotation[];
+  onStageAnnotation?: (annotation: ArtifactAnnotation) => void;
   onReload: () => Promise<void>;
   onBack: () => void;
 }) {
   const [reloadKey, setReloadKey] = useState(0);
+  const [annotating, setAnnotating] = useState(false);
+  const [selection, setSelection] = useState<CapturedSelection | null>(null);
+  const [comment, setComment] = useState("");
   const isHtml = content?.kind === "html" && !content.error;
+  const annotationKind =
+    content && ["html", "markdown", "image", "pdf"].includes(content.kind)
+      ? (content.kind as "html" | "markdown" | "image" | "pdf")
+      : null;
+  const stagedHere = stagedAnnotations.filter(
+    (annotation) => annotation.artifact.path === artifact.path,
+  );
+  const stale =
+    !!focusAnnotation
+    && !!content?.sha256
+    && focusAnnotation.artifact.sha256 !== content.sha256;
   // Best viewed in a real app: spreadsheets, PDFs, and Office docs (pptx/docx can't preview inline)
   const isApp = content?.kind === "sheet" || content?.kind === "pdf" || content?.kind === "office";
+
+  useEffect(() => {
+    setAnnotating(false);
+    setSelection(null);
+    setComment("");
+  }, [artifact.path]);
+
+  const captureSelection = useCallback((captured: CapturedSelection) => {
+    setSelection(captured);
+    setComment("");
+  }, []);
+
+  const stageSelection = () => {
+    if (!selection || !comment.trim() || !content?.sha256 || !onStageAnnotation) return;
+    onStageAnnotation({
+      id:
+        globalThis.crypto?.randomUUID?.()
+        || `annotation-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      comment: comment.trim(),
+      artifact: {
+        path: artifact.path,
+        name: artifact.name,
+        kind: content.kind,
+        sha256: content.sha256,
+      },
+      target: selection.target,
+      preview: selection.preview,
+    });
+    setSelection(null);
+    setComment("");
+  };
+
+  const commentLeft = selection
+    ? Math.max(12, Math.min(selection.anchor.left, window.innerWidth - 308))
+    : 0;
+  const commentTop = selection
+    ? selection.anchor.bottom + 8 + 126 > window.innerHeight
+      ? Math.max(12, selection.anchor.top - 118)
+      : selection.anchor.bottom + 8
+    : 0;
 
   return (
     <div className="artifact-viewer">
@@ -314,6 +397,25 @@ function ArtifactViewer({
           <div className="artifact-path">{artifact.path}</div>
         </div>
         <div className="rail-actions">
+          {annotationKind && (
+            <button
+              className={"artifact-annotate-btn" + (annotating ? " active" : "")}
+              onClick={() => {
+                setAnnotating((value) => !value);
+                setSelection(null);
+                setComment("");
+              }}
+              disabled={!content?.sha256}
+              aria-pressed={annotating}
+              title={annotating ? "Stop commenting" : "Comment on this artifact"}
+            >
+              <Icon name="chat" size={13} />
+              {annotating ? "Commenting" : "Comment"}
+              {stagedHere.length > 0 && (
+                <span className="annotation-head-count">{stagedHere.length}</span>
+              )}
+            </button>
+          )}
           {isHtml && (
             <button
               className="artifact-icon-btn"
@@ -362,21 +464,26 @@ function ArtifactViewer({
           <div className="rail-muted">Loading...</div>
         ) : content.error ? (
           <div className="rail-error">{content.error}</div>
-        ) : content.kind === "html" ? (
-          <iframe
-            key={`${artifact.path}-${reloadKey}`}
-            sandbox="allow-scripts allow-same-origin"
-            className="artifact-frame"
-            srcDoc={content.content || ""}
-          />
-        ) : content.kind === "markdown" ? (
-          <div className="artifact-md">
-            <Markdown text={content.content || ""} />
-          </div>
-        ) : content.kind === "image" ? (
-          <img className="artifact-image" src={content.data_url} />
-        ) : content.kind === "pdf" ? (
-          <PdfViewer dataUrl={content.data_url || ""} />
+        ) : annotationKind ? (
+          <>
+            {stale && (
+              <div className="annotation-stale-banner">
+                This annotation belongs to an earlier version of the artifact.
+              </div>
+            )}
+            <ArtifactAnnotationSurface
+              key={`${artifact.path}-${reloadKey}`}
+              kind={annotationKind}
+              dataUrl={content.data_url}
+              content={content.content}
+              reloadKey={reloadKey}
+              annotating={annotating}
+              focusAnnotation={stale ? null : focusAnnotation}
+              stagedAnnotations={stagedHere}
+              draftTarget={selection?.target}
+              onSelection={captureSelection}
+            />
+          </>
         ) : content.kind === "csv" ? (
           <CsvTable text={content.content || ""} />
         ) : content.kind === "sheet" ? (
@@ -393,6 +500,44 @@ function ArtifactViewer({
           <pre className="artifact-code">{content.content}</pre>
         )}
       </div>
+      {selection && (
+        <div
+          className="annotation-comment-card"
+          style={{ left: commentLeft, top: commentTop }}
+          role="dialog"
+          aria-label="Add comment"
+        >
+          <textarea
+            autoFocus
+            value={comment}
+            placeholder="Describe this change…"
+            onChange={(event) => setComment(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setSelection(null);
+              } else if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                stageSelection();
+              }
+            }}
+            rows={2}
+          />
+          <div className="annotation-comment-actions">
+            <button type="button" onClick={() => setSelection(null)}>Cancel</button>
+            <button
+              type="button"
+              className="annotation-comment-save"
+              disabled={!comment.trim()}
+              onClick={stageSelection}
+              aria-label="Save comment"
+              title="Save comment"
+            >
+              <span aria-hidden="true">✓</span>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -468,57 +613,6 @@ function CsvTable({ text }: { text: string }) {
 
 // xlsx/xls preview via SheetJS (loaded on demand — it's a heavy module): sheet tabs + a capped
 // grid. Real spreadsheet work belongs in Numbers/Excel via "Open in default app".
-// WKWebView has no inline PDF plugin (<embed> shows a gray pane in the Tauri shell), so we
-// rasterize pages with pdf.js onto stacked canvases — same lazy-chunk pattern as SheetViewer.
-function PdfViewer({ dataUrl }: { dataUrl: string }) {
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const holder = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setError("");
-    setLoading(true);
-    const base64 = dataUrl.split(",")[1] || "";
-    import("pdfjs-dist")
-      .then(async (pdfjs) => {
-        pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-        const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-        const doc = await pdfjs.getDocument({ data: bytes }).promise;
-        const el = holder.current;
-        if (cancelled || !el) return;
-        el.innerHTML = "";
-        const width = el.clientWidth || 640;
-        const dpr = window.devicePixelRatio || 1;
-        for (let i = 1; i <= doc.numPages; i++) {
-          const page = await doc.getPage(i);
-          const base = page.getViewport({ scale: 1 });
-          const viewport = page.getViewport({ scale: (width / base.width) * dpr });
-          const canvas = document.createElement("canvas");
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          canvas.className = "artifact-pdf-page";
-          await page.render({ canvasContext: canvas.getContext("2d")!, viewport }).promise;
-          if (cancelled) return;
-          el.appendChild(canvas);
-        }
-        setLoading(false);
-      })
-      .catch((e) => !cancelled && setError(String(e?.message || e)));
-    return () => {
-      cancelled = true;
-    };
-  }, [dataUrl]);
-
-  if (error) return <div className="rail-error artifact-table-note">Could not render PDF: {error}</div>;
-  return (
-    <div className="artifact-pdfjs">
-      {loading && <div className="rail-muted artifact-table-note">Rendering PDF…</div>}
-      <div ref={holder} />
-    </div>
-  );
-}
-
 function SheetViewer({ dataUrl }: { dataUrl: string }) {
   const [sheets, setSheets] = useState<{ name: string; rows: unknown[][] }[] | null>(null);
   const [error, setError] = useState("");
