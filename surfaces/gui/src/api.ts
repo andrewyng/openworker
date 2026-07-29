@@ -141,6 +141,9 @@ export interface ConversationMessage {
   tool_calls?: any[];
   tool_call_id?: string;
   source?: MessageSource;
+  // Token counts for the round-trip that produced an assistant message
+  // ({model, input, output, cache_read, cache_write}); absent on older servers.
+  usage?: import("./types").TurnUsage;
   [key: string]: any;
 }
 
@@ -691,6 +694,9 @@ export interface ModelSettings {
   sessions_peek?: number;
   // Curated-matrix display names ({full id → "GLM-5.2 · via Together"}); custom models absent.
   model_labels?: Record<string, string>;
+  // {full id → context window in tokens}, verified matrix entries only — drives the
+  // composer's context-fill meter (absent id → the meter hides). Optional for older backends.
+  model_context_windows?: Record<string, number>;
   // Token savings (PDF attachments): fallback for models without native PDF support,
   // and attach-time thresholds. Optional so the GUI is robust to an older backend.
   pdf_fallback?: "text" | "images";
@@ -1278,6 +1284,10 @@ export interface ProviderField {
   help: string;
   placeholder: string;
   default?: string; // pre-filled editable value (e.g. an OpenAI-compatible vendor's endpoint)
+  // Non-empty → segmented choice, not a text input. tag = tiny badge ("Easiest");
+  // desc = one-liner atop the method panel; command = copyable terminal command.
+  choices?: { value: string; label: string; tag?: string; desc?: string; command?: string }[];
+  show_when?: Record<string, string> | null; // render only while these fields hold these values
 }
 
 export interface ProviderInfo {
@@ -1337,6 +1347,7 @@ export function detectProvider(apiKey: string): string | null {
   const key = (apiKey || "").trim();
   if (!key) return null;
   if (key.startsWith("sk-ant-")) return "anthropic";
+  if (key.startsWith("sk-or-")) return "openrouter";
   if (key.startsWith("AIza")) return "gemini";
   if (key.startsWith("sk-") || key.startsWith("sk_")) return "openai";
   return null;

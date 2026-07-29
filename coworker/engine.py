@@ -353,13 +353,15 @@ class TurnEngine:
             if turn is None:
                 turn = AssistantTurn()
 
-            self.messages.append(_assistant_message(turn))
+            self.messages.append(_assistant_message(turn, model=self.model))
             payload: dict[str, Any] = {
                 "text": turn.text,
                 "tool_calls": [tc.name for tc in turn.tool_calls],
             }
             if turn.reasoning:
                 payload["reasoning"] = turn.reasoning
+            if turn.usage is not None:
+                payload["usage"] = {"model": self.model, **turn.usage.as_dict()}
             yield Event(EventType.ASSISTANT_MESSAGE, payload)
 
             if not turn.tool_calls:
@@ -486,11 +488,17 @@ class TurnEngine:
             for tool_call in concurrent:
                 yield Event(EventType.TOOL_STARTED, {"name": tool_call.name})
                 self._audit(tool_call, stage="started")
-            outcomes = await asyncio.gather(
-                *[asyncio.to_thread(self._execute_sync, tc) for tc in concurrent]
-            )
-            for tool_call, (result, status) in zip(concurrent, outcomes):
-                yield self._record_result(tool_call, result, status)
+
+            async def _run_concurrent(tc: ToolCall) -> tuple[ToolCall, Any, str]:
+                try:
+                    res, stat = await asyncio.to_thread(self._execute_sync, tc)
+                    return tc, res, stat
+                except Exception as exc:
+                    return tc, {"error": str(exc), "error_type": type(exc).__name__}, "error"
+
+            for coro in asyncio.as_completed([_run_concurrent(tc) for tc in concurrent]):
+                tc, result, status = await coro
+                yield self._record_result(tc, result, status)
 
         for tool_call in serial:
             if self._cancel.is_set():
@@ -519,9 +527,15 @@ class TurnEngine:
         # concurrently; writes, shell, and anything unannotated stay strictly ordered.
         spec = self.registry.get(tool_call.name)
         metadata = spec.metadata if spec else None
-        return getattr(metadata, "risk_level", "") == "low" and not getattr(
-            metadata, "requires_approval", False
-        )
+        
+        if isinstance(metadata, dict):
+            risk_level = metadata.get("risk_level", "")
+            requires_approval = metadata.get("requires_approval", False)
+        else:
+            risk_level = getattr(metadata, "risk_level", "")
+            requires_approval = getattr(metadata, "requires_approval", False)
+            
+        return risk_level == "low" and not requires_approval
 
     async def _authorize(self, tool_call: ToolCall) -> "AsyncIterator[Event | bool]":
         """Permission flow for one call (TOOL_PROPOSED is emitted by the caller). Yields
@@ -886,10 +900,11 @@ class TurnEngine:
         persisted/replayed.
         """
         # Strip the display-only sidecars — `source` (connector cards), `_display`
-        # (e.g. filter-hidden counts), `ts` (append-time timestamps), and `reasoning`
-        # (thinking text) — copying only messages that carry one. Whole `notice` messages
-        # (error/interrupted/model-switch markers) are display-only too: dropped entirely.
-        _SIDECARS = ("source", "_display", "ts", "reasoning")
+        # (e.g. filter-hidden counts), `ts` (append-time timestamps), `reasoning`
+        # (thinking text), and `usage` (token counts) — copying only messages that carry
+        # one. Whole `notice` messages (error/interrupted/model-switch markers) are
+        # display-only too: dropped entirely.
+        _SIDECARS = ("source", "_display", "ts", "reasoning", "usage")
         out = [
             (
                 {k: v for k, v in msg.items() if k not in _SIDECARS}
@@ -982,12 +997,17 @@ class TurnEngine:
         return out
 
 
-def _assistant_message(turn: AssistantTurn) -> dict[str, Any]:
+def _assistant_message(turn: AssistantTurn, model: Optional[str] = None) -> dict[str, Any]:
     message: dict[str, Any] = {
         "role": "assistant",
         "content": turn.text or "",
         "ts": time.time(),
     }
+    if turn.usage is not None:
+        # Display/aggregation sidecar (like `reasoning`): persisted with the message,
+        # stripped before provider calls. Tagged with the model that produced it so
+        # per-model rollups survive mid-session model switches.
+        message["usage"] = {"model": model, **turn.usage.as_dict()}
     if turn.reasoning:
         # Display-only thinking text — rendered by the GUI, stripped for every provider
         # (`_outbound_messages`); provider-private replay blocks go via `extras` instead.

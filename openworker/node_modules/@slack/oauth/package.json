@@ -1,0 +1,54 @@
+{
+  "name": "@slack/oauth",
+  "version": "4.0.0",
+  "description": "Official library for interacting with Slack's Oauth endpoints",
+  "author": "Slack Technologies, LLC",
+  "license": "MIT",
+  "keywords": [
+    "slack",
+    "oauth",
+    "bot",
+    "http",
+    "api"
+  ],
+  "main": "dist/index.js",
+  "files": [
+    "dist/**/*"
+  ],
+  "engines": {
+    "node": ">=20",
+    "npm": ">=9.6.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/slackapi/node-slack-sdk.git"
+  },
+  "homepage": "https://docs.slack.dev/tools/node-slack-sdk/oauth/",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bugs": {
+    "url": "https://github.com/slackapi/node-slack-sdk/issues"
+  },
+  "scripts": {
+    "build": "npm run build:clean && tsc",
+    "build:clean": "shx rm -rf ./dist",
+    "docs": "npx typedoc --plugin typedoc-plugin-markdown",
+    "prepack": "npm run build",
+    "test": "npm run build && bash -c 'node --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results.xml --import tsx --test src/**/*.test.ts'",
+    "test:coverage": "npm run build && node --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=lcov.info --test-reporter=junit --test-reporter-destination=test-results.xml --import tsx --test src/**/*.test.ts",
+    "watch": "npx nodemon --watch 'src' --ext 'ts' --exec npm run build"
+  },
+  "dependencies": {
+    "@slack/logger": "^5.0.0",
+    "@slack/web-api": "^8.0.0",
+    "@types/jsonwebtoken": "^9",
+    "@types/node": ">=20",
+    "jsonwebtoken": "^9"
+  },
+  "devDependencies": {
+    "@types/sinon": "^21",
+    "rewiremock": "^3",
+    "sinon": "^21"
+  }
+}

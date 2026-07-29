@@ -1,0 +1,47 @@
+{
+  "name": "@slack/types",
+  "version": "3.0.0",
+  "description": "Shared type definitions for the Node Slack SDK",
+  "author": "Slack Technologies, LLC",
+  "license": "MIT",
+  "keywords": [
+    "slack",
+    "typescript",
+    "types",
+    "api"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*"
+  ],
+  "engines": {
+    "node": ">= 20",
+    "npm": ">=9.6.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/slackapi/node-slack-sdk.git"
+  },
+  "homepage": "https://docs.slack.dev/tools/node-slack-sdk/reference/types/",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bugs": {
+    "url": "https://github.com/slackapi/node-slack-sdk/issues"
+  },
+  "scripts": {
+    "build": "npm run build:clean && tsc",
+    "build:clean": "shx rm -rf ./dist",
+    "docs": "npx typedoc --plugin typedoc-plugin-markdown",
+    "prepack": "npm run build",
+    "test": "npm run build && npm run test:types",
+    "test:types": "tsd"
+  },
+  "devDependencies": {
+    "tsd": "^0.33.0"
+  },
+  "tsd": {
+    "directory": "test"
+  }
+}

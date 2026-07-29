@@ -1,0 +1,20 @@
+{
+  "name": "@biomejs/cli-darwin-arm64",
+  "version": "2.5.5",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/biomejs/biome.git",
+    "directory": "packages/@biomejs/biome"
+  },
+  "engines": {
+    "node": ">=14.21.3"
+  },
+  "homepage": "https://biomejs.dev",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ]
+}

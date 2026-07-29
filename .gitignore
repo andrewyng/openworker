@@ -7,3 +7,4 @@ build/
 dist/
 .coverage
 .claude/
+.env

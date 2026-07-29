@@ -35,6 +35,7 @@ from .tools import ToolRegistry
 from .tools.ask import ask_user_tool
 from .tools.directories import request_directory_tool
 from .tools.plan import propose_plan_tool
+from .tools.repomap import repomap_tool
 from .tools.subagent import explorer_tools
 from .web import make_web_fetch_tool, make_web_search_tool
 from .workspace_trust import WorkspaceTrustStore
@@ -215,6 +216,7 @@ def build_engine(
     # Code-family personas can fan broad research out to read-only explorer subagents, keeping
     # their own context for the actual change.
     if agent.family == "code" and ws is not None:
+        registry.register_all(repomap_tool(workspace=str(ws)))
         registry.register_all(
             explorer_tools(
                 workspace=ws,
