@@ -70,9 +70,9 @@ const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
 
 const SUGGESTIONS = [
-  { ico: "⚙", text: "Run the test suite and summarize any failures." },
-  { ico: "✦", text: "Read the project and give me a 5-bullet overview." },
-  { ico: "↻", text: "Find and fix the failing build." },
+  { ico: "⚙", text: "运行测试套件并总结失败项。" },
+  { ico: "✦", text: "阅读项目并给我一个 5 点概览。" },
+  { ico: "↻", text: "查找并修复失败的构建。" },
 ];
 
 // Tools whose success means a new/changed file should show up under Artifacts right away.
@@ -348,7 +348,7 @@ export function App() {
     return p ? isProjectScoped(p) : gatesWorkspaceFallback(a);
   };
 
-  // The desktop tray's "Settings" item dispatches this on the window.
+  // The desktop tray's settings menu item dispatches this on the window.
   useEffect(() => {
     const open = () => openSettings("appearance");
     window.addEventListener("coworker:open-settings", open);
@@ -701,29 +701,29 @@ export function App() {
           break;
         case "turn_end":
           if (d.status === "max_iterations_exceeded")
-            setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Stopped: max iterations reached." }]);
+            setItems((p) => [...p, { kind: "notice", tone: "warn", text: "已停止：达到最大迭代次数。" }]);
           break;
         case "model_changed":
           // Mid-session switch (server-applied): update the header fact and drop the
           // persisted marker into the live transcript (replay renders it from history).
           if (d.model) setModel(d.model);
-          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || "Model switched" }]);
+          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || "已切换模型" }]);
           break;
         case "interrupted":
           flushPartialStream();
-          setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Interrupted." }]);
+          setItems((p) => [...p, { kind: "notice", tone: "warn", text: "已中断。" }]);
           break;
         case "error":
           flushPartialStream();
           setItems((p) => [
             ...p,
-            { kind: "notice", tone: "warn", text: "Error: " + (d.error || "unknown"), retriable: true },
+            { kind: "notice", tone: "warn", text: "错误：" + (d.error || "未知"), retriable: true },
           ]);
           break;
         case "input_rejected":
           setItems((p) => [
             ...p,
-            { kind: "notice", tone: "warn", text: d.error || "That message was rejected." },
+            { kind: "notice", tone: "warn", text: d.error || "该消息已被拒绝。" },
           ]);
           break;
         case "turn_done":
@@ -902,7 +902,7 @@ export function App() {
     setStreaming("");
     setTodo([]);
     setRunning(false);
-    // "New session" under a browsed persona switches to it (expand≠switch: the header alone
+    // Starting a new session under a browsed persona switches to it (expand≠switch: the header alone
     // doesn't switch; this explicit action does).
     if (target !== agent) {
       setAgent(target);
@@ -1136,7 +1136,7 @@ export function App() {
   const subtitleParts = [modelDisplay];
   if (isProjectScoped(personaOf(agent)) && workspace) subtitleParts.push(baseName(workspace));
   const activeInfo = sessions.find((s) => s.session_id === sessionId);
-  const activeTitle = activeInfo?.title || "New session";
+  const activeTitle = activeInfo?.title || "新建会话";
 
   const desktop = isTauri();
   // Dev-only: `?overlay=1` simulates the desktop overlay layout in the browser (adds the
@@ -1175,7 +1175,7 @@ export function App() {
           <Icon name="logo" size={38} />
         </div>
         <div className="boot-text">
-          {resumedExisting ? "Restoring your session…" : "Starting OpenWorker…"}
+          {resumedExisting ? "正在恢复您的会话…" : "正在启动 OpenWorker…"}
           <span className="beta-tag">BETA</span>
         </div>
       </div>
@@ -1208,10 +1208,10 @@ export function App() {
         >
           <div className="flex items-center gap-2 text-[12.5px] font-semibold">
             <span className="w-[7px] h-[7px] rounded-full bg-faint toast-pulse" />
-            Automation started
+            自动化已启动
           </div>
           <div className="text-[12.5px] text-muted mt-0.5 ml-[15px] truncate">
-            {runToast.title} · {runToast.time} run
+            {runToast.title} · {runToast.time} 运行
           </div>
           <div className="flex items-center justify-between ml-[15px] mt-1.5">
             <button
@@ -1222,12 +1222,12 @@ export function App() {
                 setRunToast(null);
               }}
             >
-              View run ›
+              查看运行 ›
             </button>
             <button
               className="text-[12px] text-faint px-0.5"
               data-testid="toast-dismiss"
-              title="Dismiss"
+              title="关闭"
               onClick={() => setRunToast(null)}
             >
               ✕
@@ -1254,8 +1254,8 @@ export function App() {
           className="nav-reveal-btn"
           onClick={toggleNav}
           onMouseEnter={() => setNavPeek(true)}
-          title="Show sidebar (⌘B)"
-          aria-label="Show sidebar"
+          title="显示侧边栏 (⌘B)"
+          aria-label="显示侧边栏"
         >
           <Icon name="sidebar" size={16} />
         </button>
@@ -1359,24 +1359,24 @@ export function App() {
                 <button
                   className="topbar-icon-btn"
                   onClick={toggleNav}
-                  aria-label="Show sidebar"
-                  title="Show sidebar (⌘B)"
+                  aria-label="显示侧边栏"
+                  title="显示侧边栏 (⌘B)"
                 >
                   <Icon name="sidebar" size={16} />
                 </button>
                 <button
                   className="topbar-icon-btn"
                   onClick={() => startNewSession()}
-                  aria-label="New session"
-                  title="New session"
+                  aria-label="新建会话"
+                  title="新建会话"
                 >
                   <Icon name="plus" size={16} />
                 </button>
                 <button
                   className="topbar-icon-btn"
                   onClick={() => setSearchOpen(true)}
-                  aria-label="Search"
-                  title="Search"
+                  aria-label="搜索"
+                  title="搜索"
                 >
                   <Icon name="search" size={16} />
                 </button>
@@ -1412,10 +1412,10 @@ export function App() {
                 className="topbar-artifacts-btn"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setRailHidden(false)}
-                title="Show files this conversation produced"
+                title="显示此会话生成的文件"
               >
                 <Icon name="file" size={14} />
-                <span>Artifacts</span>
+                <span>产出</span>
                 <span className="topbar-artifacts-count">{artifactCount}</span>
               </button>
             )}
@@ -1426,8 +1426,8 @@ export function App() {
                 className="topbar-icon-btn"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setRailHidden((h) => !h)}
-                aria-label={railHidden ? "Show side panel" : "Hide side panel"}
-                title={railHidden ? "Show side panel" : "Hide side panel"}
+                aria-label={railHidden ? "显示侧边面板" : "隐藏侧边面板"}
+                title={railHidden ? "显示侧边面板" : "隐藏侧边面板"}
               >
                 <Icon name="sidebarRight" size={16} />
               </button>
@@ -1447,14 +1447,14 @@ export function App() {
               >
                 <Icon name="clock" size={14} className="text-accent shrink-0" />
                 <span className="truncate text-muted">
-                  Scheduled run
+                  计划运行
                   {runContext?.title ? (
                     <>
-                      {" — "}
+                      {" - "}
                       <span className="text-ink font-medium">{runContext.title}</span>
                     </>
                   ) : null}{" "}
-                  · started by an automation
+                  · 由自动化启动
                 </span>
                 <button
                   className="ml-auto shrink-0 text-accent font-medium hover:underline"
@@ -1463,7 +1463,7 @@ export function App() {
                     setSurface("scheduled");
                   }}
                 >
-                  ← Back to runs
+                  ← 返回运行
                 </button>
               </div>
             )}
@@ -1479,11 +1479,11 @@ export function App() {
                   <div className="hero">
                     <h1 className="greeting">
                       <span className="mark">✦</span>
-                      {agent === "chat" ? "How can I help?" : "Let's build something."}
+                      {agent === "chat" ? "我能帮您什么？" : "一起来做点什么吧。"}
                     </h1>
                     {needsWorkspace(agent) && (
                       <div className="suggestions">
-                        <div className="suggest-head">Try a task</div>
+                        <div className="suggest-head">试试一个任务</div>
                         {SUGGESTIONS.map((s, i) => (
                           <div className="suggest" key={i} onClick={() => workspace && send(s.text)}>
                             <span className="ico">{s.ico}</span>
@@ -1521,7 +1521,7 @@ export function App() {
                   {streaming && streamMode(streaming, items, running) === "answer" && (
                     <div className="transcript">
                       <div className="bubble-assistant">
-                        <div className="who">assistant</div>
+                        <div className="who">助手</div>
                         <Markdown text={streaming} />
                         <span className="stream-cursor">▍</span>
                       </div>
@@ -1542,7 +1542,7 @@ export function App() {
                   onClick={followLatest}
                 >
                   <Icon name="chevronDown" size={13} />
-                  Jump to latest
+                  跳转到最新
                 </button>
               </div>
             )}
@@ -1570,10 +1570,10 @@ export function App() {
               contextWindow={modelContextWindows[model]}
               placeholder={
                 agent === "code"
-                  ? "Ask the coder to build, fix, or explain…  (drop or paste files)"
+                  ? "请编码助手构建、修复或解释…  （拖放或粘贴文件）"
                   : agent === "chat"
-                    ? "Ask anything…  (drop or paste files)"
-                    : "Ask the coworker…  (drop or paste files)"
+                    ? "随便问问…  （拖放或粘贴文件）"
+                    : "向协作助手提问…  （拖放或粘贴文件）"
               }
               approvalSlot={
                 // Live inline cards are for ATTENDED sessions only; when Unattended the prompt is
@@ -1685,7 +1685,7 @@ function WaitingForAgent() {
     <div className="waiting-transcript">
       <div className="waiting-row" aria-live="polite">
         <span className="waiting-spinner" />
-        <span>Waiting for agent...</span>
+        <span>等待智能体…</span>
       </div>
     </div>
   );

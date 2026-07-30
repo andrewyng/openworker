@@ -88,7 +88,7 @@ export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
                 </span>
               </>
             ) : (
-              <span>Not connected</span>
+              <span>未连接</span>
             )}
           </div>
         </div>

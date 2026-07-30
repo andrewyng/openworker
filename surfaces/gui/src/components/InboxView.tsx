@@ -145,7 +145,7 @@ export function InboxView({
       <div className="flex-1 min-w-0 overflow-y-auto hairline-scroll">
         <div className="max-w-4xl mx-auto px-7 py-6">
           <PanelHead
-            title="Inbox"
+            title="收件箱"
             sub="Approvals, questions, and notifications from your coworkers — including sessions running unattended."
           />
 
@@ -196,10 +196,10 @@ export function InboxView({
                     — replies there resolve items here.{" "}
                   </span>
                 ) : slackConnected ? (
-                  <span>Delivered here only. </span>
+                  <span>仅在此处送达。 </span>
                 ) : (
                   <span>
-                    Delivered here only. Connect Slack (Connectors page) to also get these in a
+                    仅在此处送达。 Connect Slack (Connectors page) to also get these in a
                     channel — more platforms later.{" "}
                   </span>
                 )}

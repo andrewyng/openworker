@@ -9,7 +9,7 @@ import { chooseFolder } from "../tauri";
 interface Props {
   onChoose: (path: string, branch?: string | null) => void;
   onCancel?: () => void; // present when changing folder mid-session
-  create?: boolean; // "New project" mode: create the folder if missing
+  create?: boolean; // "新建项目" mode: create the folder if missing
 }
 
 export function FolderGate({ onChoose, onCancel, create }: Props) {
@@ -40,7 +40,7 @@ export function FolderGate({ onChoose, onCancel, create }: Props) {
     <div className="gate-overlay">
       <div className="gate">
         <div className="gate-mark">✦</div>
-        <h2>{create ? "New project" : "Choose a project folder"}</h2>
+        <h2>{create ? "新建项目" : "选择项目文件夹"}</h2>
         <p className="gate-sub">
           {create
             ? "Pick a folder or enter a path. If the path doesn't exist, it will be created."

@@ -22,7 +22,7 @@ export function PlanCard({
     <div className="dirreq-card plan-card">
       <div className="dirreq-head">
         <Icon name="sparkle" size={16} className="ico" />
-        <span>The agent proposed a plan</span>
+        <span>智能体提出了一个计划</span>
       </div>
       <div className="plan-body">
         <Markdown text={item.plan} />

@@ -43,7 +43,7 @@ export function GmailDetail({ c, cloud, slack: _slack, onChanged }: DetailProps)
                 </span>
               </>
             ) : (
-              <span>Not connected</span>
+              <span>未连接</span>
             )}
           </div>
         </div>
@@ -153,7 +153,7 @@ function FiltersGroup({ c, onChanged }: Pick<DetailProps, "c" | "onChanged">) {
         <ChipListRow
           label="Labels"
           testid="gmail-filter-labels"
-          placeholder="Label name, e.g. Personal"
+          placeholder="标签名称，如：个人"
           values={filters.labels}
           onSave={async (labels) => {
             await setGmailFilters({ labels });

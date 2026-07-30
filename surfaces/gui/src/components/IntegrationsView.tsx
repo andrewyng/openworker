@@ -14,7 +14,7 @@ type IntTab = "connectors" | "mcp";
 // Fixed sub-nav (UX-DECISIONS §21): connector detail lives as a SUBPAGE under
 // Connectors, never as a nav item — the nav must not grow per connector.
 const INT_TABS: { key: IntTab; label: string; icon: "plug" | "code" }[] = [
-  { key: "connectors", label: "Connectors", icon: "plug" },
+  { key: "connectors", label: "连接器", icon: "plug" },
   { key: "mcp", label: "MCP servers", icon: "code" },
 ];
 
@@ -69,8 +69,8 @@ export function IntegrationsView() {
           {tab === "connectors" ? (
             <section>
               <PanelHead
-                title="Connectors"
-                sub="Apps and tools your coworkers can use. Connected ones come first."
+                title="连接器"
+                sub="协作者可使用的应用和工具。已连接的排在前面。"
               />
               <ConnectorsSection />
             </section>
@@ -78,7 +78,7 @@ export function IntegrationsView() {
             <section>
               <PanelHead
                 title="MCP servers"
-                sub="External tool servers (stdio or HTTP), shared across all agents."
+                sub="外部工具服务器（stdio 或 HTTP），所有智能体共享。"
               />
               <McpTab />
             </section>

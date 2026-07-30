@@ -66,8 +66,8 @@ const TEMPLATES: QuickTemplate[] = [
     blurb: "Merged PRs and commits, posted to your team's Slack.",
     cadence: "Weekly",
     conns: [
-      { name: "slack", why: "Where the digest posts" },
-      { name: "github", why: "What the digest summarizes" },
+      { name: "slack", why: "摘要发布位置" },
+      { name: "github", why: "摘要内容来源" },
     ],
     needsRepo: true,
     needsChannel: true,
@@ -85,7 +85,7 @@ const TEMPLATES: QuickTemplate[] = [
     blurb: "Deals that moved — and deals going quiet — posted to Slack.",
     cadence: "Weekly",
     conns: [
-      { name: "slack", why: "Where the digest posts" },
+      { name: "slack", why: "摘要发布位置" },
       { name: "hubspot", why: "Pipeline and deal activity" },
     ],
     needsChannel: true,
@@ -104,7 +104,7 @@ const TEMPLATES: QuickTemplate[] = [
     cadence: "Daily",
     conns: [
       { name: "google_calendar", why: "Today's meetings and gaps" },
-      { name: "gmail", why: "What arrived overnight" },
+      { name: "gmail", why: "隔夜到达的内容" },
     ],
     deliver: true,
     day: "daily",
@@ -128,17 +128,17 @@ const TEMPLATES: QuickTemplate[] = [
   },
   {
     key: "inboxdigest",
-    title: "Inbox digest",
+    title: "收件箱摘要",
     blurb: "One short digest of your unread email.",
     cadence: "Weekdays",
-    conns: [{ name: "gmail", why: "Your unread email" }],
+    conns: [{ name: "gmail", why: "你的未读邮件" }],
     day: "weekdays",
     time: "09:00",
     instructions: () => "Summarize my unread email into one short digest note.",
   },
   {
     key: "cleanup",
-    title: "Folder cleanup",
+    title: "文件夹清理",
     blurb: "Sort recent Downloads into tidy folders by type.",
     cadence: "Weekly",
     conns: [],
@@ -521,10 +521,10 @@ export function AutomationQuickstart({
                 <>
                   <label className={label}>Deliver to</label>
                   <SelectMenu
-                    ariaLabel="Deliver to"
+                    ariaLabel="发送至"
                     value={deliver}
                     options={[
-                      { value: "app", label: "In the app" },
+                      { value: "app", label: "在应用中" },
                       { value: "slack", label: "Slack DM (connect Slack later)" },
                     ]}
                     onChange={(v) => setDeliver(v as "app" | "slack")}

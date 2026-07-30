@@ -34,7 +34,7 @@ export function AuditView() {
       <div className="flex-1 min-w-0 overflow-y-auto hairline-scroll">
         <div className="max-w-4xl mx-auto px-7 py-6">
           <PanelHead
-            title="Activity"
+            title="活动"
             sub="Recent connector and browser tool activity. Arguments are sanitized before storage."
           />
 

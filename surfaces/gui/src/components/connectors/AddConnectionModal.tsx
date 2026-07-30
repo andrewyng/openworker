@@ -351,9 +351,9 @@ function SlackManual({ onConnected }: { onConnected: () => void }) {
   return (
     <div className="px-5 py-4 space-y-3">
       <ol className="list-decimal pl-4 text-[13px] text-muted space-y-1">
-        <li>Create an app at api.slack.com/apps</li>
+        <li>在 api.slack.com/apps 创建应用</li>
         <li>Enable Socket Mode, add bot scopes, install it to your workspace</li>
-        <li>Paste both tokens</li>
+        <li>粘贴两个令牌</li>
       </ol>
       <input className={INPUT} type="password" placeholder="Bot token · xoxb-…" value={bot} spellCheck={false} onChange={(e) => setBot(e.target.value)} />
       <input className={INPUT} type="password" placeholder="App token · xapp-…" value={app} spellCheck={false} onChange={(e) => setApp(e.target.value)} />

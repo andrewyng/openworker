@@ -214,7 +214,7 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
       <div className="flex items-center gap-2">
         <select className={SELECT} value={mode} onChange={(e) => setMode(e.target.value as "git" | "dir")}>
           <option value="git">GitHub URL</option>
-          <option value="dir">Local directory</option>
+          <option value="dir">本地目录</option>
         </select>
         <input
           className={INPUT}

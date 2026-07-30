@@ -38,7 +38,7 @@ export function HubSpotDetail({ c, cloud, slack: _slack, onChanged }: DetailProp
                 </span>
               </>
             ) : (
-              <span>Not connected</span>
+              <span>未连接</span>
             )}
           </div>
         </div>
@@ -168,7 +168,7 @@ function PrivacyGroup({ c, onChanged }: Pick<DetailProps, "c" | "onChanged">) {
             ))}
             <input
               className="flex-1 min-w-[140px] bg-transparent text-[12.5px] outline-none placeholder:text-faint"
-              placeholder="Property name, e.g. salary"
+              placeholder="属性名称，如：薪资"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {

@@ -145,7 +145,7 @@ export function GalleryModal({
           [
             ["all", "All"],
             ["openworker", "From OpenWorker"],
-            ["team", "From your team"],
+            ["team", "来自你的团队"],
           ] as [Source, string][]
         ).map(([key, label]) => (
           <button
@@ -388,7 +388,7 @@ export function GalleryModal({
           <button
             className="text-faint hover:text-ink shrink-0"
             onClick={onClose}
-            aria-label="Close gallery"
+            aria-label="关闭画廊"
             data-testid="gallery-close"
           >
             <Icon name="x" size={16} />
@@ -417,7 +417,7 @@ export function GalleryModal({
                 </div>
               </div>
               <button className={BTN_ACCENT} onClick={signIn} disabled={signingIn}>
-                {signingIn ? "Check your browser…" : "Sign in"}
+                {signingIn ? "请检查浏览器…" : "登录"}
               </button>
             </div>
           ) : detailSlug ? (

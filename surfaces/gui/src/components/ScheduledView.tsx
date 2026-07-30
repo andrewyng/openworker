@@ -246,7 +246,7 @@ function NewAutomationForm({
             value={freq}
             onChange={(e) => setFreq(e.target.value)}
           >
-            <option value="daily">Every day</option>
+            <option value="daily">每天</option>
             <option value="weekdays">Weekdays</option>
             <option value="weekends">Weekends</option>
           </select>
@@ -385,7 +385,7 @@ function TaskDetail({
             {editing ? (
               <>
                 <button className="btn-primary sm" disabled={saving || !title.trim() || !instructions.trim()} onClick={saveEdit}>
-                  {saving ? "Saving…" : "Save"}
+                  {saving ? "保存中…" : "保存"}
                 </button>
                 <button className="link" onClick={() => setEditing(false)}>cancel</button>
               </>
@@ -412,7 +412,7 @@ function TaskDetail({
             <label className="tmpl-field">
               <span>Repeat</span>
               <select className="tmpl-input tmpl-select" value={freq} onChange={(e) => setFreq(e.target.value)}>
-                <option value="daily">Every day</option>
+                <option value="daily">每天</option>
                 <option value="weekdays">Weekdays</option>
                 <option value="weekends">Weekends</option>
               </select>

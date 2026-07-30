@@ -37,5 +37,10 @@
     "typescript": "^5.5.3",
     "vite": "^5.4.0",
     "vitest": "^2.1.9"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true,
+    "fsevents@2.3.3": true,
+    "fsevents@2.3.2": true
   }
 }

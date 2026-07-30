@@ -26,7 +26,7 @@ export function DirectoryRequestCard({
     <div className="dirreq-card">
       <div className="dirreq-head">
         <Icon name="folderPlus" size={16} className="ico" />
-        <span>The agent is requesting access to a folder</span>
+        <span>智能体正在请求访问文件夹</span>
       </div>
       {item.reason && <div className="dirreq-reason">“{item.reason}”</div>}
       <div className="dirreq-pathrow">

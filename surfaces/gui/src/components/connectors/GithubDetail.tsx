@@ -80,7 +80,7 @@ export function GithubDetail({ c, cloud, onChanged }: DetailProps) {
                 </span>
               </>
             ) : (
-              <span>Not connected</span>
+              <span>未连接</span>
             )}
           </div>
         </div>

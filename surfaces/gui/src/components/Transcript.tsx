@@ -440,7 +440,7 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
                   <span className={"status " + (item.resolved === "approved" ? "ok" : "denied")}>
                     {item.resolved === "approved" ? "✓" : "✕"}
                   </span>
-                  <span>{item.resolved === "approved" ? "Plan approved" : "Sent back with feedback"}</span>
+                  <span>{item.resolved === "approved" ? "计划已批准" : "已退回并附带反馈"}</span>
                 </div>
               </div>
             );

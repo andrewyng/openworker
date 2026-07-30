@@ -14,7 +14,7 @@ import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_ACCENT, XBTN } from "./ui";
 // The generic detail page for multi-account connectors on the accounts layer
 // (Notion, Attio, PostHog, Mixpanel, Amplitude, Apollo, Hunter — batch 2).
 // Same grammar as the Calendar page: an Accounts group with a Default badge,
-// make-default, per-account ×. "＋ Add account" launches managed OAuth when
+// make-default, per-account ×. "＋ 添加账户" launches managed OAuth when
 // the connector has it (and the user is signed in); the manual token form is
 // always available underneath — signed out or in, local-only stays first-class.
 
@@ -47,7 +47,7 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
                 </span>
               </>
             ) : (
-              <span>Not connected</span>
+              <span>未连接</span>
             )}
           </div>
         </div>
@@ -62,7 +62,7 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
               : ""
           }
         >
-          {busy ? "Check your browser…" : "＋ Add account"}
+          {busy ? "请检查浏览器…" : "＋ 添加账户"}
         </button>
       </div>
 
@@ -80,7 +80,7 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
       {(showManual || !c.connected) && (
         <>
           <div className={GRP_H + (accounts.length ? "" : " !mt-0")}>
-            {c.managed ? "Add manually" : "Add an account"}
+            {c.managed ? "手动添加" : "添加账户"}
           </div>
           <div className={GRP} data-testid="accounts-manual-add">
             <div className="px-1.5 py-1">

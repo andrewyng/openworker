@@ -162,13 +162,13 @@ export function RightRail({
         />
       ) : (
         <>
-          <RailSection title="Progress" open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
+          <RailSection title="进度" open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
             <ProgressSummary running={running} toolNames={toolNames} todo={todo} />
           </RailSection>
 
           {showArtifacts && (
           <RailSection
-            title={`Artifacts${artifacts.length ? ` (${artifacts.length})` : ""}`}
+            title={`产出${artifacts.length ? ` (${artifacts.length})` : ""}`}
             open={open.artifacts}
             onToggle={() => setOpen({ ...open, artifacts: !open.artifacts })}
             action={
@@ -177,17 +177,17 @@ export function RightRail({
                   <button
                     className="rail-mini-btn"
                     onClick={(e) => { e.stopPropagation(); revealArtifact(sessionId, artifacts[0].path, "reveal"); }}
-                    title="Show the folder where these files are saved"
+                    title="显示这些文件的保存文件夹"
                   >
                     <Icon name="folder" size={13} />
                   </button>
                 )}
-                <button className="rail-mini-btn" onClick={(e) => { e.stopPropagation(); refreshArtifacts(); }} title="Refresh artifacts"><Icon name="refresh" size={13} /></button>
+                <button className="rail-mini-btn" onClick={(e) => { e.stopPropagation(); refreshArtifacts(); }} title="刷新产出"><Icon name="refresh" size={13} /></button>
               </>
             }
           >
             {artifacts.length === 0 ? (
-              <div className="rail-muted">No previewable files yet.</div>
+              <div className="rail-muted">暂无可预览的文件。</div>
             ) : (
               <div className="artifact-list">
                 {artifacts.slice(0, 16).map((a) => (
@@ -199,7 +199,7 @@ export function RightRail({
                       {a.name}
                       <span className="artifact-row-meta">{formatBytes(a.size)} · {formatTime(a.modified_at)}</span>
                     </span>
-                    <span className="artifact-open">Open</span>
+                    <span className="artifact-open">打开</span>
                   </button>
                 ))}
               </div>
@@ -238,7 +238,7 @@ function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolN
         ))}
         {running && (
           <div className="rail-muted">
-            {toolNames.length ? `${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"} so far.` : "Working..."}
+            {toolNames.length ? `目前已进行 ${toolNames.length} 次工具调用。` : "处理中…"}
           </div>
         )}
       </div>
@@ -247,13 +247,13 @@ function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolN
   if (running) {
     return (
       <div className="rail-muted">
-        Working on this task{toolNames.length ? ` with ${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"} so far.` : "."}
+        正在处理此任务{toolNames.length ? `，目前已进行 ${toolNames.length} 次工具调用。` : "。"}
       </div>
     );
   }
   return (
     <div className="rail-muted">
-      For longer multi-step tasks, progress will appear here while OpenWorker plans, uses tools, waits for approval, and produces artifacts.
+      对于较长的多步骤任务，OpenWorker 在规划、使用工具、等待批准以及生成产出时，进度将显示在此处。
     </div>
   );
 }
@@ -306,11 +306,11 @@ function ArtifactViewer({
   return (
     <div className="artifact-viewer">
       <div className="artifact-head">
-        <button className="artifact-icon-btn" onClick={onBack} aria-label="Back to artifacts" title="Back">
+        <button className="artifact-icon-btn" onClick={onBack} aria-label="返回产出" title="返回">
           <Icon name="arrowLeft" size={16} />
         </button>
         <div className="artifact-heading">
-          <div className="artifact-title"><span>Artifacts</span><span className="artifact-sep">/</span><span>{artifact.name}</span></div>
+          <div className="artifact-title"><span>产出</span><span className="artifact-sep">/</span><span>{artifact.name}</span></div>
           <div className="artifact-path">{artifact.path}</div>
         </div>
         <div className="rail-actions">
@@ -321,8 +321,8 @@ function ArtifactViewer({
                 await onReload();
                 setReloadKey((k) => k + 1);
               }}
-              aria-label="Reload preview"
-              title="Reload"
+              aria-label="重新加载预览"
+              title="重新加载"
             >
               <Icon name="refresh" size={16} />
             </button>
@@ -331,8 +331,8 @@ function ArtifactViewer({
             <button
               className="artifact-icon-btn"
               onClick={() => revealArtifact(sessionId, artifact.path, "open")}
-              aria-label="Open in default app"
-              title="Open in default app"
+              aria-label="用默认应用打开"
+              title="用默认应用打开"
             >
               <Icon name="panelOpen" size={16} />
             </button>
@@ -342,16 +342,16 @@ function ArtifactViewer({
           <button
             className="artifact-icon-btn"
             onClick={() => navigator.clipboard?.writeText(artifact.abs_path || artifact.path)}
-            aria-label="Copy path"
-            title="Copy full path"
+            aria-label="复制路径"
+            title="复制完整路径"
           >
             <Icon name="copy" size={16} />
           </button>
           <button
             className="artifact-icon-btn"
             onClick={() => revealArtifact(sessionId, artifact.path, "reveal")}
-            aria-label="Show in folder"
-            title="Show in folder"
+            aria-label="在访达中显示"
+            title="在访达中显示"
           >
             <Icon name="folder" size={16} />
           </button>
@@ -359,7 +359,7 @@ function ArtifactViewer({
       </div>
       <div className="artifact-preview">
         {!content ? (
-          <div className="rail-muted">Loading...</div>
+          <div className="rail-muted">加载中…</div>
         ) : content.error ? (
           <div className="rail-error">{content.error}</div>
         ) : content.kind === "html" ? (
@@ -384,9 +384,9 @@ function ArtifactViewer({
         ) : content.kind === "office" ? (
           <div className="artifact-open-prompt">
             <Icon name="panelOpen" size={28} />
-            <p>This {/\.pptx?$/i.test(artifact.name) ? "PowerPoint" : "Word"} file can’t be previewed here.</p>
+            <p>此 {/\.pptx?$/i.test(artifact.name) ? "PowerPoint" : "Word"} 文件无法在此预览。</p>
             <button className="btn sm" onClick={() => revealArtifact(sessionId, artifact.path, "open")}>
-              Open in default app
+              用默认应用打开
             </button>
           </div>
         ) : (
@@ -418,7 +418,7 @@ function GridTable({ rows, note }: { rows: unknown[][]; note?: string }) {
       {(note || body.length > MAX_TABLE_ROWS) && (
         <div className="rail-muted artifact-table-note">
           {note}
-          {body.length > MAX_TABLE_ROWS ? ` Showing first ${MAX_TABLE_ROWS} of ${body.length} rows.` : ""}
+          {body.length > MAX_TABLE_ROWS ? ` 显示前 ${MAX_TABLE_ROWS} 行，共 ${body.length} 行。` : ""}
         </div>
       )}
     </div>
@@ -462,7 +462,7 @@ function parseCsv(text: string): string[][] {
 
 function CsvTable({ text }: { text: string }) {
   const rows = parseCsv(text);
-  if (!rows.length) return <div className="rail-muted artifact-table-note">Empty file.</div>;
+  if (!rows.length) return <div className="rail-muted artifact-table-note">空文件。</div>;
   return <GridTable rows={rows} />;
 }
 
@@ -510,10 +510,10 @@ function PdfViewer({ dataUrl }: { dataUrl: string }) {
     };
   }, [dataUrl]);
 
-  if (error) return <div className="rail-error artifact-table-note">Could not render PDF: {error}</div>;
+  if (error) return <div className="rail-error artifact-table-note">无法渲染 PDF：{error}</div>;
   return (
     <div className="artifact-pdfjs">
-      {loading && <div className="rail-muted artifact-table-note">Rendering PDF…</div>}
+      {loading && <div className="rail-muted artifact-table-note">正在渲染 PDF…</div>}
       <div ref={holder} />
     </div>
   );
@@ -547,8 +547,8 @@ function SheetViewer({ dataUrl }: { dataUrl: string }) {
     };
   }, [dataUrl]);
 
-  if (error) return <div className="rail-error artifact-table-note">Could not parse spreadsheet: {error}</div>;
-  if (!sheets) return <div className="rail-muted artifact-table-note">Parsing spreadsheet…</div>;
+  if (error) return <div className="rail-error artifact-table-note">无法解析电子表格：{error}</div>;
+  if (!sheets) return <div className="rail-muted artifact-table-note">正在解析电子表格…</div>;
   const sheet = sheets[active];
   return (
     <div className="sheet-viewer">
@@ -561,7 +561,7 @@ function SheetViewer({ dataUrl }: { dataUrl: string }) {
           ))}
         </div>
       )}
-      {sheet.rows.length ? <GridTable rows={sheet.rows} /> : <div className="rail-muted artifact-table-note">Empty sheet.</div>}
+      {sheet.rows.length ? <GridTable rows={sheet.rows} /> : <div className="rail-muted artifact-table-note">空工作表。</div>}
     </div>
   );
 }
