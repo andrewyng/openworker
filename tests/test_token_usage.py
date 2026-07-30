@@ -203,6 +203,57 @@ def test_openai_complete_captures_usage_without_cache_details():
     assert turn.usage == TokenUsage(input=30, output=4)
 
 
+def test_openai_usage_carves_dashscope_cache_creation():
+    """Bailian OpenAI-compat: prompt_tokens includes cache reads AND writes
+    (help.aliyun.com OpenAI-compat Chat / context-cache docs)."""
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="hi", tool_calls=None),
+                finish_reason="stop",
+            )
+        ],
+        usage=SimpleNamespace(
+            prompt_tokens=3019,
+            completion_tokens=104,
+            prompt_tokens_details=SimpleNamespace(
+                cached_tokens=2048,
+                cache_creation_input_tokens=500,
+            ),
+        ),
+    )
+    fake = _FakeOpenAIClient(response)
+    provider = OpenAIProvider(client=fake)
+    turn = provider.complete(model="m", messages=[{"role": "user", "content": "x"}])
+    # fresh = 3019 - 2048 - 500
+    assert turn.usage == TokenUsage(
+        input=471, output=104, cache_read=2048, cache_write=500
+    )
+
+
+def test_openai_usage_accepts_dict_shaped_prompt_details():
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="hi", tool_calls=None),
+                finish_reason="stop",
+            )
+        ],
+        usage=SimpleNamespace(
+            prompt_tokens=100,
+            completion_tokens=10,
+            prompt_tokens_details={
+                "cached_tokens": 40,
+                "cache_creation_input_tokens": 20,
+            },
+        ),
+    )
+    fake = _FakeOpenAIClient(response)
+    provider = OpenAIProvider(client=fake)
+    turn = provider.complete(model="m", messages=[{"role": "user", "content": "x"}])
+    assert turn.usage == TokenUsage(input=40, output=10, cache_read=40, cache_write=20)
+
+
 # -- Gemini -------------------------------------------------------------------------
 
 
@@ -352,5 +403,23 @@ def test_outbound_messages_strip_usage_sidecar(tmp_path):
 def test_model_context_windows_covers_verified_entries_only():
     windows = model_context_windows()
     assert windows["anthropic:claude-fable-5"] == 1_000_000
+    assert windows["qwen:qwen3.7-plus"] == 1_000_000
+    assert windows["qwen:qwen3.7-max"] == 1_000_000
+    assert windows["qwen:qwen3.7-flash"] == 1_000_000
+    assert windows["qwen:qwen3.8-max-preview"] == 1_000_000
+    assert windows["qwen:qwen3-coder-plus"] == 1_000_000
+    assert windows["qwen:qwen-plus"] == 1_000_000
+    assert windows["qwen:qwen-long"] == 10_000_000
+    assert windows["deepseek:deepseek-v4-pro"] == 1_000_000
+    assert windows["deepseek:deepseek-v4-flash"] == 1_000_000
+    assert windows["zai:glm-5.2"] == 1_000_000
+    assert windows["kimi:kimi-k2.6"] == 256_000
+    assert windows["kimi:kimi-k2.7-code"] == 256_000
+    assert windows["minimax:MiniMax-M3"] == 1_000_000
+    assert windows["minimax:MiniMax-M2.5"] == 204_800
+    # Sanity: every curated qwen id has a positive window.
+    assert all(
+        windows[mid] > 0 for mid in windows if mid.startswith("qwen:")
+    )
     assert "together:thinkingmachines/Inkling" not in windows  # unverified stays absent
     assert all(isinstance(v, int) and v > 0 for v in windows.values())

@@ -95,24 +95,121 @@ MATRIX: dict[str, ModelEntry] = {
             tools=True, vision=True, parallel_tool_calls=True, streaming=True
         ),
     ),
-    "zai:glm-5.2": ModelEntry("GLM-5.2 · Z AI", _AGENTIC, 128_000),
+    # Compat-vendor windows re-verified 2026-07-29/30 against vendor docs (and
+    # cross-checked on Alibaba Bailian model catalog where the same ids appear):
+    #   Z.AI GLM-5.2 → 1M (docs.z.ai/guides/llm/glm-5.2)
+    #   DeepSeek V4 → 1M (api-docs.deepseek.com pricing)
+    #   Kimi K2.6 / K2.7 Code → 256k / 262_144 (platform.kimi.ai)
+    #   MiniMax M3 → 1M; M2.5 → 204_800 (platform.minimax.io text-generation)
+    #   Qwen 3.7 → 1M (help.aliyun.com model catalog / text-generation)
+    "zai:glm-5.2": ModelEntry("GLM-5.2 · Z AI", _AGENTIC, 1_000_000),
     "deepseek:deepseek-v4-flash": ModelEntry(
-        "DeepSeek V4 Flash · DeepSeek", _AGENTIC, 128_000
+        "DeepSeek V4 Flash · DeepSeek", _AGENTIC, 1_000_000
     ),
     "deepseek:deepseek-v4-pro": ModelEntry(
-        "DeepSeek V4 Pro · DeepSeek", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · DeepSeek", _AGENTIC, 1_000_000
     ),
+    "kimi:kimi-k2.7-code": ModelEntry("Kimi K2.7 Code · Moonshot", _AGENTIC, 256_000),
     "kimi:kimi-k2.6": ModelEntry("Kimi K2.6 · Moonshot", _AGENTIC, 256_000),
-    "minimax:MiniMax-M2.5": ModelEntry("MiniMax M2.5 · MiniMax"),
+    "minimax:MiniMax-M3": ModelEntry("MiniMax M3 · MiniMax", _AGENTIC, 1_000_000),
+    "minimax:MiniMax-M2.5": ModelEntry("MiniMax M2.5 · MiniMax", _AGENTIC, 204_800),
+    # Qwen / Alibaba Model Studio (verified 2026-07-30 against
+    # help.aliyun.com/zh|en/model-studio/text-generation-model). Rolling ids
+    # only — dated snapshots stay as user-typed custom strings. Includes Token
+    # Plan–only qwen3.8-max-preview. qwen-long has no function calling (doc), so
+    # caps.tools=False; still metered for long-doc sessions.
+    "qwen:qwen3.8-max-preview": ModelEntry(
+        "Qwen3.8 Max Preview · Alibaba", _AGENTIC, 1_000_000
+    ),
+    "qwen:qwen3.7-max": ModelEntry("Qwen3.7 Max · Alibaba", _AGENTIC, 1_000_000),
+    "qwen:qwen3.7-plus": ModelEntry("Qwen3.7 Plus · Alibaba", _AGENTIC, 1_000_000),
+    "qwen:qwen3.7-flash": ModelEntry("Qwen3.7 Flash · Alibaba", _AGENTIC, 1_000_000),
+    "qwen:qwen3.6-max-preview": ModelEntry(
+        "Qwen3.6 Max Preview · Alibaba", _AGENTIC, 256_000
+    ),
+    "qwen:qwen3.6-plus": ModelEntry("Qwen3.6 Plus · Alibaba", _AGENTIC, 1_000_000),
+    "qwen:qwen3.6-flash": ModelEntry("Qwen3.6 Flash · Alibaba", _AGENTIC, 1_000_000),
+    "qwen:qwen3.5-plus": ModelEntry("Qwen3.5 Plus · Alibaba", _AGENTIC, 1_000_000),
+    "qwen:qwen3.5-flash": ModelEntry("Qwen3.5 Flash · Alibaba", _AGENTIC, 1_000_000),
+    "qwen:qwen3.5-397b-a17b": ModelEntry(
+        "Qwen3.5 397B · Alibaba", _AGENTIC, 256_000
+    ),
+    "qwen:qwen3.5-122b-a10b": ModelEntry(
+        "Qwen3.5 122B · Alibaba", _AGENTIC, 256_000
+    ),
+    "qwen:qwen3.5-35b-a3b": ModelEntry("Qwen3.5 35B · Alibaba", _AGENTIC, 256_000),
+    "qwen:qwen3.5-27b": ModelEntry("Qwen3.5 27B · Alibaba", _AGENTIC, 256_000),
     "qwen:qwen3-max": ModelEntry("Qwen3 Max · Alibaba", _AGENTIC, 256_000),
+    "qwen:qwen3-max-preview": ModelEntry(
+        "Qwen3 Max Preview · Alibaba", _AGENTIC, 256_000
+    ),
+    "qwen:qwen3-235b-a22b": ModelEntry("Qwen3 235B · Alibaba", _AGENTIC, 256_000),
+    "qwen:qwen3-235b-a22b-thinking-2507": ModelEntry(
+        "Qwen3 235B Thinking · Alibaba", _AGENTIC, 256_000
+    ),
+    "qwen:qwen3-235b-a22b-instruct-2507": ModelEntry(
+        "Qwen3 235B Instruct · Alibaba", _AGENTIC, 256_000
+    ),
+    "qwen:qwen3-next-80b-a3b-thinking": ModelEntry(
+        "Qwen3 Next 80B Thinking · Alibaba", _AGENTIC, 256_000
+    ),
+    "qwen:qwen3-next-80b-a3b-instruct": ModelEntry(
+        "Qwen3 Next 80B Instruct · Alibaba", _AGENTIC, 256_000
+    ),
+    "qwen:qwen3-32b": ModelEntry("Qwen3 32B · Alibaba", _AGENTIC, 256_000),
+    "qwen:qwen3-30b-a3b": ModelEntry("Qwen3 30B · Alibaba", _AGENTIC, 256_000),
+    "qwen:qwen3-30b-a3b-thinking-2507": ModelEntry(
+        "Qwen3 30B Thinking · Alibaba", _AGENTIC, 256_000
+    ),
+    "qwen:qwen3-30b-a3b-instruct-2507": ModelEntry(
+        "Qwen3 30B Instruct · Alibaba", _AGENTIC, 256_000
+    ),
+    "qwen:qwen3-14b": ModelEntry("Qwen3 14B · Alibaba", _AGENTIC, 256_000),
+    "qwen:qwen3-8b": ModelEntry("Qwen3 8B · Alibaba", _AGENTIC, 256_000),
+    "qwen:qwen3-4b": ModelEntry("Qwen3 4B · Alibaba", _AGENTIC, 256_000),
+    "qwen:qwen3-1.7b": ModelEntry("Qwen3 1.7B · Alibaba", _AGENTIC, 256_000),
+    "qwen:qwen3-0.6b": ModelEntry("Qwen3 0.6B · Alibaba", _AGENTIC, 256_000),
+    "qwen:qwen3-coder-plus": ModelEntry(
+        "Qwen3 Coder Plus · Alibaba", _AGENTIC, 1_000_000
+    ),
+    "qwen:qwen3-coder-flash": ModelEntry(
+        "Qwen3 Coder Flash · Alibaba", _AGENTIC, 1_000_000
+    ),
+    "qwen:qwen3-coder-next": ModelEntry(
+        "Qwen3 Coder Next · Alibaba", _AGENTIC, 256_000
+    ),
+    "qwen:qwen3-coder-480b-a35b-instruct": ModelEntry(
+        "Qwen3 Coder 480B · Alibaba", _AGENTIC, 256_000
+    ),
+    "qwen:qwen3-coder-30b-a3b-instruct": ModelEntry(
+        "Qwen3 Coder 30B · Alibaba", _AGENTIC, 256_000
+    ),
+    "qwen:qwen-plus": ModelEntry("Qwen-Plus · Alibaba", _AGENTIC, 1_000_000),
+    "qwen:qwen-flash": ModelEntry("Qwen-Flash · Alibaba", _AGENTIC, 1_000_000),
+    "qwen:qwen-turbo": ModelEntry("Qwen-Turbo · Alibaba", _AGENTIC, 1_000_000),
+    "qwen:qwen-max": ModelEntry("Qwen-Max · Alibaba", _AGENTIC, 128_000),
+    "qwen:qwq-plus": ModelEntry("QwQ-Plus · Alibaba", _AGENTIC, 128_000),
+    "qwen:qwen-long": ModelEntry(
+        "Qwen-Long · Alibaba",
+        ModelCapabilities(
+            tools=False, vision=False, parallel_tool_calls=False, streaming=True
+        ),
+        10_000_000,
+    ),
+    "qwen:qwen-long-latest": ModelEntry(
+        "Qwen-Long Latest · Alibaba",
+        ModelCapabilities(
+            tools=False, vision=False, parallel_tool_calls=False, streaming=True
+        ),
+        10_000_000,
+    ),
     "xai:grok-4.3": ModelEntry("Grok 4.3 · xAI", _AGENTIC, 256_000),
     "mistral:mistral-large-latest": ModelEntry(
         "Mistral Large · Mistral", _AGENTIC, 128_000
     ),
     # -- resellers (their model namespaces, verbatim) -----------------------------
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
-    "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together", _AGENTIC, 128_000),
-    # Kimi K3 (2026-07-16) is not on Together yet — weights land ~07-27; revisit then.
+    "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together", _AGENTIC, 1_000_000),
     "together:moonshotai/Kimi-K2.7-Code": ModelEntry(
         "Kimi K2.7 Code · via Together", _AGENTIC, 256_000
     ),
@@ -120,31 +217,31 @@ MATRIX: dict[str, ModelEntry] = {
         "Kimi K2.6 · via Together", _AGENTIC, 256_000
     ),
     "together:deepseek-ai/DeepSeek-V4-Pro": ModelEntry(
-        "DeepSeek V4 Pro · via Together", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · via Together", _AGENTIC, 1_000_000
     ),
     "together:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": ModelEntry(
         "Llama 4 Maverick · via Together", _AGENTIC, 1_000_000
     ),
     "fireworks:accounts/fireworks/models/glm-5p2": ModelEntry(
-        "GLM-5.2 · via Fireworks", _AGENTIC, 128_000
+        "GLM-5.2 · via Fireworks", _AGENTIC, 1_000_000
     ),
     "fireworks:accounts/fireworks/models/kimi-k2p6": ModelEntry(
         "Kimi K2.6 · via Fireworks", _AGENTIC, 256_000
     ),
     "fireworks:accounts/fireworks/models/deepseek-v4-pro": ModelEntry(
-        "DeepSeek V4 Pro · via Fireworks", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · via Fireworks", _AGENTIC, 1_000_000
     ),
     "fireworks:accounts/fireworks/models/llama4-maverick-instruct-basic": ModelEntry(
         "Llama 4 Maverick · via Fireworks", _AGENTIC, 1_000_000
     ),
     # OpenRouter slugs are lowercase `<lab>/<model>` (checked against their catalog
     # 2026-07-25); same labs as above, one key for all of them.
-    "openrouter:z-ai/glm-5.2": ModelEntry("GLM-5.2 · via OpenRouter", _AGENTIC, 128_000),
+    "openrouter:z-ai/glm-5.2": ModelEntry("GLM-5.2 · via OpenRouter", _AGENTIC, 1_000_000),
     "openrouter:moonshotai/kimi-k2.6": ModelEntry(
         "Kimi K2.6 · via OpenRouter", _AGENTIC, 256_000
     ),
     "openrouter:deepseek/deepseek-v4-pro": ModelEntry(
-        "DeepSeek V4 Pro · via OpenRouter", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · via OpenRouter", _AGENTIC, 1_000_000
     ),
     "openrouter:meta-llama/llama-4-maverick": ModelEntry(
         "Llama 4 Maverick · via OpenRouter", _AGENTIC, 1_000_000

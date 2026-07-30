@@ -349,6 +349,7 @@ def test_compat_models_route_and_get_tool_capabilities():
         "deepseek:deepseek-v4-flash",
         "kimi:kimi-k2.6",
         "minimax:MiniMax-M2.5",
+        "qwen:qwen3.7-plus",
         "qwen:qwen3-max",
         "xai:grok-4.3",
         "mistral:mistral-large-latest",
@@ -394,9 +395,13 @@ def test_matrix_labels_and_custom_model_fallback():
     labels = model_labels()
     assert labels["together:zai-org/GLM-5.2"] == "GLM-5.2 · via Together"
     assert labels["zai:glm-5.2"] == "GLM-5.2 · Z AI"
-    # Deliberately small: agent-capable current models only (owner call, 2026-07-04).
-    assert len(MATRIX) < 60
-    assert all(e.caps.tools for e in MATRIX.values())
+    # Kept small historically; Qwen Bailian catalog expansion (2026-07-30) added
+    # the full rolling text/coder lineup, so the ceiling tracks that growth.
+    assert len(MATRIX) < 120
+    # Almost every curated row is agent-capable; qwen-long is the documented
+    # exception (10M context, no function calling per Alibaba text-generation).
+    nont = sorted(mid for mid, e in MATRIX.items() if not e.caps.tools)
+    assert nont == ["qwen:qwen-long", "qwen:qwen-long-latest"]
     # A custom (unlisted) reseller model falls back to the conservative default — usable,
     # but at the user's own risk (no parallel tool calls assumed).
     caps = capabilities_for("together:some-org/Brand-New-Model")
