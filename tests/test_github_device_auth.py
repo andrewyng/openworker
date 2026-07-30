@@ -159,6 +159,8 @@ def test_poll_enforces_interval_handles_slow_down_and_stores_token(
 
 def test_denial_removes_pending_flow(tmp_path, monkeypatch):
     monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path))
+    clock = [0.0]
+    monkeypatch.setattr(github_auth.time, "monotonic", lambda: clock[0])
 
     def post(url, **_kwargs):
         if url == github_auth.DEVICE_CODE_URL:
@@ -177,6 +179,7 @@ def test_denial_removes_pending_flow(tmp_path, monkeypatch):
     auth = GitHubDeviceAuth(SecretStore())
     flow_id = auth.start("client")["flow_id"]
 
+    clock[0] = 5.0
     denied = auth.poll(flow_id)
     assert denied["state"] == "denied"
     assert auth.poll(flow_id)["error"] == "Device sign-in flow not found."
