@@ -574,10 +574,30 @@ export async function mockApi(page: import("@playwright/test").Page) {
     eventSockets.set(page, ws);
   });
 
+  // Sessions mid-turn keep running after the viewing socket closes (real server
+  // behavior) so a reconnect can seed `ready.running` (#311).
+  const runningSessions = new Set<string>();
   await page.routeWebSocket(/\/ws\/session\//, (ws) => {
-    const send = (type: string, data: Record<string, unknown> = {}) =>
-      ws.send(JSON.stringify({ type, data }));
-    send("ready");
+    const sid = (() => {
+      try {
+        const path = new URL(ws.url()).pathname;
+        return path.split("/").filter(Boolean).pop() || "";
+      } catch {
+        return "";
+      }
+    })();
+    const send = (type: string, data: Record<string, unknown> = {}) => {
+      try {
+        ws.send(JSON.stringify({ type, data }));
+      } catch {
+        /* socket may already be closed after a session switch */
+      }
+    };
+    const endTurn = () => {
+      runningSessions.delete(sid);
+      send("turn_done");
+    };
+    send("ready", { running: runningSessions.has(sid), session_id: sid });
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
     let hadTurn = false; // a user_message landed — set_model is now a mid-session switch
@@ -585,6 +605,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const msg = JSON.parse(String(raw));
       if (msg.type === "user_message") {
         hadTurn = true;
+        runningSessions.add(sid);
         send("turn_start", { input: msg.text });
         if (/run a tool/i.test(msg.text)) {
           pendingTool = "run_shell";
@@ -677,7 +698,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
               text: "Decision made.",
               reasoning: thoughts.join(""),
             });
-            send("turn_done");
+            endTurn();
           }, 120);
           return;
         }
@@ -686,13 +707,13 @@ export async function mockApi(page: import("@playwright/test").Page) {
         if (/compact the context/i.test(msg.text)) {
           send("compacted", { text: "Context compacted — earlier turns were summarized" });
           send("assistant_message", { text: "Still on it — continuing where I left off." });
-          send("turn_done");
+          endTurn();
           return;
         }
         // A turn that dies on a provider error; the follow-up {type:"retry"} recovers.
         if (/fail the turn/i.test(msg.text)) {
           send("error", { error: "model unreachable" });
-          send("turn_done");
+          endTurn();
           return;
         }
         // A deliberately SLOW multi-second stream (~40 ticks × 120ms) so specs can
@@ -708,7 +729,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
               clearInterval(epicTimer!);
               epicTimer = null;
               send("assistant_message", { text: ("The epic concludes. " + line).repeat(20) });
-              send("turn_done");
+              endTurn();
             }
           }, 120);
           return;
@@ -729,7 +750,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
             cache_write: 800,
           },
         });
-        send("turn_done");
+        endTurn();
       } else if (msg.type === "approval") {
         if (pendingTool === "run_shell") {
           if (msg.decision === "deny") {
@@ -747,7 +768,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
           // The decision echoes back so specs can pin what rode the wire (e.g. always_task).
           send("assistant_message", { text: `Done via ${pendingTool} [decision=${msg.decision}]` });
         }
-        send("turn_done");
+        endTurn();
       } else if (msg.type === "interrupt") {
         // Stop mid-stream: like the real engine, end the turn with `interrupted` and
         // NO assistant_message — the client owns promoting the partial into the transcript.
@@ -756,7 +777,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
           epicTimer = null;
         }
         send("interrupted", {});
-        send("turn_done");
+        endTurn();
       } else if (msg.type === "set_model") {
         // Mid-session switch: the server applies it and broadcasts the persisted marker.
         // Like the real server, the FIRST bind (fresh session) is silent.
@@ -767,9 +788,10 @@ export async function mockApi(page: import("@playwright/test").Page) {
           });
       } else if (msg.type === "retry") {
         // Like the real engine: re-runs with NO new user message (turn_start input is empty).
+        runningSessions.add(sid);
         send("turn_start", { input: "" });
         send("assistant_message", { text: "Recovered after retry." });
-        send("turn_done");
+        endTurn();
       }
     });
   });

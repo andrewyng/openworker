@@ -323,6 +323,23 @@ def test_ws_simple_turn(tmp_path):
         assert "turn_end" in types
 
 
+def test_ws_ready_reports_running_for_mid_turn_reconnect(tmp_path):
+    # #311: a client that reconnects mid-turn must learn the session is still live —
+    # turn_start already fired and won't re-fire for that turn.
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    manager.mark_running("mid-turn")
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/mid-turn") as ws:
+        ready = ws.receive_json()
+        assert ready["type"] == "ready"
+        assert ready["data"]["running"] is True
+    manager.mark_idle("mid-turn")
+    with client.websocket_connect("/ws/session/mid-turn") as ws:
+        ready = ws.receive_json()
+        assert ready["type"] == "ready"
+        assert ready["data"]["running"] is False
+
+
 def test_ws_rejects_oversized_message(tmp_path):
     from coworker.server import app as app_mod
     from coworker.attachments import MAX_ATTACHMENTS
