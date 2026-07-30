@@ -48,6 +48,11 @@ class Config:
     cloud_auth_domain: str = "opencoworker.us.auth0.com"
     cloud_client_id: str = "g1l4Q1lhYWmyS03qPSf4KEJGrgq02Qam"
     cloud_audience: str = "https://api.opencoworker.app"
+    # Public OAuth App identifier used by GitHub's brokerless Device Flow.
+    # This is intentionally configuration (and not a secret) so forks and
+    # GitHub Enterprise deployments can use an app they own.
+    github_oauth_client_id: str = ""
+    github_oauth_scopes: str = "repo"
     # Managed relay WebSocket endpoint (Slack/GitHub inbound). Defaults to the
     # PRODUCTION relay so a fresh install relays out of the box — an empty
     # default shipped once as "connected but relay OFF" on every machine
@@ -71,6 +76,8 @@ _FIELDS = {
     "cloud_auth_domain",
     "cloud_client_id",
     "cloud_audience",
+    "github_oauth_client_id",
+    "github_oauth_scopes",
     "cloud_relay_ws_url",
 }
 

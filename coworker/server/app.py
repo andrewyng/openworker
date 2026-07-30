@@ -163,6 +163,10 @@ from .manager import SessionManager
 
 
 def create_app(manager: SessionManager) -> FastAPI:
+    from ..connectors.github.auth import GitHubDeviceAuth
+
+    github_device_auth = GitHubDeviceAuth(manager.secrets)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         try:
@@ -816,6 +820,28 @@ def create_app(manager: SessionManager) -> FastAPI:
     async def github_status() -> dict[str, Any]:
         """GitHub health: relay socket / cloud sign-in / per-installation tokens."""
         return manager.github_status()
+
+    @app.post("/v1/connectors/github/device/start")
+    async def github_device_start() -> dict[str, Any]:
+        """Start a direct GitHub Device Flow; no cloud broker or secret involved."""
+        from ..config import load_config
+
+        cfg = load_config(manager.default_workspace)
+        return await asyncio.to_thread(
+            github_device_auth.start,
+            cfg.github_oauth_client_id,
+            cfg.github_oauth_scopes,
+        )
+
+    @app.post("/v1/connectors/github/device/{flow_id}/poll")
+    async def github_device_poll(flow_id: str) -> dict[str, Any]:
+        """Poll GitHub no faster than its requested interval and persist success."""
+        return await asyncio.to_thread(github_device_auth.poll, flow_id)
+
+    @app.delete("/v1/connectors/github/device/{flow_id}")
+    def github_device_cancel(flow_id: str) -> dict[str, Any]:
+        """Forget local pending state; GitHub lets the short-lived code expire."""
+        return github_device_auth.cancel(flow_id)
 
     @app.post("/v1/connectors/gmail/accounts/{email}/disconnect")
     async def gmail_account_disconnect(email: str) -> dict[str, Any]:

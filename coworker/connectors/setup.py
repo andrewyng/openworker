@@ -103,6 +103,9 @@ def connector_list(secrets: SecretStore) -> list[dict[str, Any]]:
             "managed_paused": d.managed_paused,
             # Whether THIS profile came from managed OAuth (vs manual paste).
             "managed_profile": bool(profile.get("managed")),
+            # Local credential source when present ("device" for GitHub Device
+            # Flow; empty for legacy/manual profiles). Never exposes credentials.
+            "auth_method": profile.get("auth_method") or "",
             # "relay" for the managed cloud path; empty for manual/token connect.
             "mode": profile.get("mode") or "",
         }

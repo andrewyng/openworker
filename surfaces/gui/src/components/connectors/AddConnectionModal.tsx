@@ -10,6 +10,7 @@ import {
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { ConnectSetup } from "../ManageTabs";
 import { CloudSignInInline, CloudStatusPending } from "./CloudSignIn";
+import { GitHubDeviceAuth } from "./GitHubDeviceAuth";
 import { PILL_ACCENT, PILL_LINE, TAG_ACCENT } from "./ui";
 
 // The ONE place a connection gets added (UX-DECISIONS §21): the detail page's header
@@ -103,6 +104,18 @@ export function AddConnectionModal({
               )
             ) : c.name === "slack" ? (
               <SlackManual onConnected={() => { onChanged(); onClose(); }} />
+            ) : c.name === "github" ? (
+              <div className="pb-2">
+                <GitHubDeviceAuth onConnected={() => { onChanged(); onClose(); }} />
+                <div className="mx-5 flex items-center gap-3 text-[11px] uppercase tracking-wide text-faint">
+                  <span className="h-px flex-1 bg-line" />
+                  Advanced: personal access token
+                  <span className="h-px flex-1 bg-line" />
+                </div>
+                <div className="px-1.5">
+                  <ConnectSetup c={c} cloud={cloud} onConnected={() => { onChanged(); onClose(); }} manualOnly />
+                </div>
+              </div>
             ) : (
               <div className="px-1.5 pb-2">
                 <ConnectSetup c={c} cloud={cloud} onConnected={() => { onChanged(); onClose(); }} manualOnly />
