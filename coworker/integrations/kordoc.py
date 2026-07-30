@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 KORDOC_VERSION = "4.2.3"
 KORDOC_MCP_TOOL_ALLOWLIST = [
@@ -19,7 +19,45 @@ KORDOC_MCP_TOOL_ALLOWLIST = [
     "parse_table",
 ]
 
+_KORDOC_ZIP_FORMAT_CORRECTIONS = frozenset({"docx", "xlsx"})
+
 _NPM_ROOT_TIMEOUT_SECONDS = 5.0
+
+
+def kordoc_metadata_needs_format_check(metadata: Any) -> bool:
+    """Whether an upstream payload has the exact coarse-ZIP defect we correct."""
+    if not isinstance(metadata, str):
+        return False
+    try:
+        payload = json.loads(metadata)
+    except json.JSONDecodeError:
+        return False
+    return (
+        isinstance(payload, dict)
+        and isinstance(payload.get("format"), str)
+        and payload["format"].lower() == "hwpx"
+    )
+
+
+def normalize_kordoc_metadata_format(metadata: Any, detection: Any) -> Any:
+    """Correct Kordoc 4.2.3's coarse ZIP format without changing bad results.
+
+    ``parse_metadata`` dispatches DOCX/XLSX through the right parser but serializes
+    its earlier generic ZIP classification (``hwpx``). ``detect_format`` performs
+    the missing ZIP inspection, so use only its final, known format token. Any
+    malformed/error/unknown response leaves the upstream metadata untouched.
+    """
+    if not kordoc_metadata_needs_format_check(metadata) or not isinstance(
+        detection, str
+    ):
+        return metadata
+    _, separator, detected = detection.rpartition(": ")
+    detected = detected.strip().lower()
+    if not separator or detected not in _KORDOC_ZIP_FORMAT_CORRECTIONS:
+        return metadata
+    payload = json.loads(metadata)
+    payload["format"] = detected
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 @dataclass(frozen=True)

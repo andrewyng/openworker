@@ -12,6 +12,7 @@ from coworker.integrations.kordoc import (
     KORDOC_MCP_TOOL_ALLOWLIST,
     KORDOC_VERSION,
     detect_kordoc_runtime,
+    normalize_kordoc_metadata_format,
 )
 
 
@@ -48,6 +49,35 @@ def test_allowlist_is_the_exact_read_only_parse_surface():
         "parse_pages",
         "parse_table",
     ]
+
+
+def test_metadata_format_normalizer_uses_detector_and_preserves_bad_results():
+    upstream = json.dumps(
+        {"format": "hwpx", "title": "Synthetic DOCX"}, ensure_ascii=False, indent=2
+    )
+
+    normalized = normalize_kordoc_metadata_format(
+        upstream, r"C:\workspace\synthetic.docx: docx"
+    )
+
+    assert json.loads(normalized) == {
+        "format": "docx",
+        "title": "Synthetic DOCX",
+    }
+    assert json.loads(
+        normalize_kordoc_metadata_format(upstream, "source.xlsx: xlsx")
+    )["format"] == "xlsx"
+    unrelated = json.dumps({"format": "pdf", "title": "PDF"})
+    assert (
+        normalize_kordoc_metadata_format(unrelated, "source.docx: docx")
+        == unrelated
+    )
+    assert (
+        normalize_kordoc_metadata_format(upstream, "source.hwp: hwp") == upstream
+    )
+    assert normalize_kordoc_metadata_format(upstream, "malformed") == upstream
+    error = {"error": "metadata failed"}
+    assert normalize_kordoc_metadata_format(error, "source.docx: docx") is error
 
 
 def test_detects_exact_global_package_and_uses_non_shell_npm_lookup(tmp_path):

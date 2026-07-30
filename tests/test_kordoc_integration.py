@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -149,6 +150,7 @@ def test_kordoc_rag_paths_are_canonicalized_before_any_mcp_call(tmp_path, monkey
     calls: list[tuple[str, dict]] = []
 
     async def call_on_connection(_connection, tool, arguments):
+        assert _connection is connection
         calls.append((tool, arguments))
         return {"ok": tool}
 
@@ -201,6 +203,192 @@ def test_kordoc_rag_paths_are_canonicalized_before_any_mcp_call(tmp_path, monkey
         )
         assert "error" in result and "session workspace" in result["error"]
         assert len(calls) == before
+
+    asyncio.run(exercise())
+
+
+def test_metadata_verification_rechecks_workspace_before_second_file_read(
+    tmp_path, monkeypatch
+):
+    manager = _manager(tmp_path, monkeypatch)
+    workspace = tmp_path / "workspace"
+    source = workspace / "source.docx"
+    source.write_bytes(b"synthetic")
+    trusted = _trusted_kordoc_server()
+    monkeypatch.setattr(manager_module, "builtin_kordoc_server", lambda: trusted)
+    connection = SimpleNamespace(
+        tools=[_tool("detect_format"), _tool("parse_metadata")]
+    )
+
+    async def ensure(_server, *, connection_key=None):
+        assert connection_key is manager_module._BUILTIN_KORDOC_CONNECTION_KEY
+        return connection
+
+    mcp_calls: list[str] = []
+
+    async def call_on_connection(_connection, tool, arguments):
+        assert _connection is connection
+        mcp_calls.append(tool)
+        if tool == "parse_metadata":
+            return json.dumps({"format": "hwpx", "title": "Synthetic DOCX"})
+        raise AssertionError("detect_format must not run after failed revalidation")
+
+    real_validator = manager_module.validate_kordoc_workspace_arguments
+    validations: list[str] = []
+
+    def validator(tool, arguments, root):
+        validations.append(tool)
+        if len(validations) == 2:
+            return "Kordoc blocked this call: source changed after metadata parsing."
+        return real_validator(tool, arguments, root)
+
+    monkeypatch.setattr(manager.mcp, "ensure", ensure)
+    monkeypatch.setattr(manager.mcp, "call_on_connection", call_on_connection)
+    monkeypatch.setattr(
+        manager_module, "validate_kordoc_workspace_arguments", validator
+    )
+
+    async def exercise():
+        tools = await manager.prepare_mcp_tools(
+            "korean", workspace=str(workspace), agent="korean-docs"
+        )
+        parse_metadata = next(
+            tool for tool in tools if tool.__name__.endswith("parse_metadata")
+        )
+
+        result = await asyncio.to_thread(parse_metadata, file_path="source.docx")
+
+        assert json.loads(result)["format"] == "hwpx"
+        assert validations == ["parse_metadata", "detect_format"]
+        assert mcp_calls == ["parse_metadata"]
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    "upstream, detector_available",
+    [
+        (json.dumps({"format": "pdf"}), True),
+        ("malformed", True),
+        ({"error": "metadata failed"}, True),
+        (json.dumps({"format": "hwpx"}), False),
+    ],
+)
+def test_metadata_verification_skips_detector_for_non_candidates(
+    tmp_path, monkeypatch, upstream, detector_available
+):
+    manager = _manager(tmp_path, monkeypatch)
+    source = tmp_path / "workspace" / "source.docx"
+    source.write_bytes(b"synthetic")
+    connection = SimpleNamespace(
+        tools=[
+            _tool("parse_metadata"),
+            *([_tool("detect_format")] if detector_available else []),
+        ]
+    )
+    calls: list[str] = []
+
+    async def call_on_connection(_connection, tool, arguments):
+        assert _connection is connection
+        calls.append(tool)
+        return upstream
+
+    monkeypatch.setattr(manager.mcp, "call_on_connection", call_on_connection)
+
+    result = asyncio.run(
+        manager._call_kordoc_mcp_tool(
+            connection,
+            "parse_metadata",
+            {"file_path": str(source.resolve())},
+            str(source.parent),
+        )
+    )
+
+    assert result == upstream
+    assert calls == ["parse_metadata"]
+
+
+def test_metadata_verification_preserves_upstream_on_detector_exception(
+    tmp_path, monkeypatch
+):
+    manager = _manager(tmp_path, monkeypatch)
+    source = tmp_path / "workspace" / "source.docx"
+    source.write_bytes(b"synthetic")
+    connection = SimpleNamespace(
+        tools=[_tool("parse_metadata"), _tool("detect_format")]
+    )
+    upstream = json.dumps({"format": "hwpx", "title": "Synthetic DOCX"})
+    calls: list[str] = []
+
+    async def call_on_connection(_connection, tool, arguments):
+        assert _connection is connection
+        calls.append(tool)
+        if tool == "parse_metadata":
+            return upstream
+        raise RuntimeError("detector unavailable")
+
+    monkeypatch.setattr(manager.mcp, "call_on_connection", call_on_connection)
+
+    result = asyncio.run(
+        manager._call_kordoc_mcp_tool(
+            connection,
+            "parse_metadata",
+            {"file_path": str(source.resolve())},
+            str(source.parent),
+        )
+    )
+
+    assert result == upstream
+    assert calls == ["parse_metadata", "detect_format"]
+
+
+def test_korean_docs_normalizes_metadata_format_on_bound_connection(
+    tmp_path, monkeypatch
+):
+    manager = _manager(tmp_path, monkeypatch)
+    workspace = tmp_path / "workspace"
+    source = workspace / "source.docx"
+    source.write_bytes(b"synthetic")
+    trusted = _trusted_kordoc_server()
+    monkeypatch.setattr(manager_module, "builtin_kordoc_server", lambda: trusted)
+    connection = SimpleNamespace(
+        tools=[_tool("detect_format"), _tool("parse_metadata")]
+    )
+
+    async def ensure(_server, *, connection_key=None):
+        assert connection_key is manager_module._BUILTIN_KORDOC_CONNECTION_KEY
+        return connection
+
+    calls: list[tuple[str, dict]] = []
+
+    async def call_on_connection(_connection, tool, arguments):
+        assert _connection is connection
+        calls.append((tool, arguments))
+        if tool == "parse_metadata":
+            return json.dumps({"format": "hwpx", "title": "Synthetic DOCX"})
+        if tool == "detect_format":
+            return f"{arguments['file_path']}: docx"
+        raise AssertionError(f"unexpected tool: {tool}")
+
+    monkeypatch.setattr(manager.mcp, "ensure", ensure)
+    monkeypatch.setattr(manager.mcp, "call_on_connection", call_on_connection)
+
+    async def exercise():
+        tools = await manager.prepare_mcp_tools(
+            "korean", workspace=str(workspace), agent="korean-docs"
+        )
+        parse_metadata = next(
+            tool for tool in tools if tool.__name__.endswith("parse_metadata")
+        )
+
+        result = await asyncio.to_thread(parse_metadata, file_path="source.docx")
+
+        assert json.loads(result)["format"] == "docx"
+        canonical = str(source.resolve())
+        assert calls == [
+            ("parse_metadata", {"file_path": canonical}),
+            ("detect_format", {"file_path": canonical}),
+        ]
 
     asyncio.run(exercise())
 

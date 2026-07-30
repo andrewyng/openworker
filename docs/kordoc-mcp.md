@@ -34,6 +34,11 @@ All other Kordoc tools remain unavailable. In particular, the integration does n
 fill or patch forms, generate or render documents, place seals, redact files, or
 write an index.
 
+For `parse_metadata`, OpenWorker cross-checks Kordoc 4.2.3's reported format with
+the same bound server's `detect_format` result. This corrects the upstream generic
+ZIP label for DOCX/XLSX without trusting file extensions; if verification is
+unavailable or malformed, the original metadata response is preserved.
+
 Each tool is marked approval-required. Prompt frequency still follows the active
 permission mode and any explicit session grant the user chooses. The source must be
 an existing regular file in the session workspace. OpenWorker resolves accepted

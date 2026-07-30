@@ -71,7 +71,11 @@ from ..mcp import (
     read_global,
 )
 from ..mcp.tools import validate_kordoc_workspace_arguments
-from ..integrations.kordoc import KORDOC_MCP_TOOL_ALLOWLIST
+from ..integrations.kordoc import (
+    KORDOC_MCP_TOOL_ALLOWLIST,
+    kordoc_metadata_needs_format_check,
+    normalize_kordoc_metadata_format,
+)
 from ..memory import MemoryStore, Scope, SQLiteMemoryStore
 from ..permissions import Mode
 from ..agents import list_agents as _list_agents
@@ -1023,8 +1027,8 @@ class SessionManager:
         callables = build_callables(
             server,
             conn.tools,
-            lambda tool, args, connection=conn: self.mcp.call_on_connection(
-                connection, tool, args
+            lambda tool, args, connection=conn: self._call_kordoc_mcp_tool(
+                connection, tool, args, workspace
             ),
             loop,
             argument_validator=lambda tool, args: validate_kordoc_workspace_arguments(
@@ -1035,6 +1039,39 @@ class SessionManager:
             fn.__aisuite_tool_metadata__.requires_approval = True
         self._kordoc_mcp_error = None
         return callables
+
+    async def _call_kordoc_mcp_tool(
+        self,
+        connection: Any,
+        tool: str,
+        arguments: dict[str, Any],
+        workspace: Optional[str],
+    ) -> Any:
+        """Call one bound Kordoc tool and correct its known metadata format defect."""
+        result = await self.mcp.call_on_connection(connection, tool, arguments)
+        if tool != "parse_metadata" or not kordoc_metadata_needs_format_check(result):
+            return result
+        if not any(
+            getattr(candidate, "name", None) == "detect_format"
+            for candidate in connection.tools
+        ):
+            return result
+        file_path = arguments.get("file_path")
+        if not isinstance(file_path, str):
+            return result
+        detection_arguments = {"file_path": file_path}
+        if validate_kordoc_workspace_arguments(
+            "detect_format", detection_arguments, workspace
+        ):
+            return result
+        try:
+            detection = await self.mcp.call_on_connection(
+                connection, "detect_format", detection_arguments
+            )
+        except Exception:
+            logger.info("Kordoc metadata format verification unavailable; using upstream value")
+            return result
+        return normalize_kordoc_metadata_format(result, detection)
 
     def list_mcp(self) -> list[dict[str, Any]]:
         """Servers from the global config + connection status (does not connect)."""
