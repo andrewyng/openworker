@@ -55,10 +55,8 @@ def test_load_merges_global_and_workspace(tmp_path, monkeypatch):
         ws / ".coworker" / "mcp.json",
         {
             "mcpServers": {
-                "fs": {
-                    "command": "echo",
-                    "args": ["workspace-wins"],
-                },  # overrides global
+                "fs": {"command": "echo", "args": ["workspace-loses"]},  # clashes: global wins
+                "ws_only": {"command": "echo", "args": ["ws"], "enabled": True},
             }
         },
     )
@@ -67,7 +65,9 @@ def test_load_merges_global_and_workspace(tmp_path, monkeypatch):
         s.name: s
         for s in load_mcp_servers(ws, secrets=SecretStore(), workspace_trusted=True)
     }
-    assert servers["fs"].args == ["workspace-wins"]
+    # Global wins on name clash; a non-clashing trusted workspace server still loads.
+    assert servers["fs"].args == ["global"]
+    assert servers["ws_only"].args == ["ws"]
     assert servers["fs"].transport == "stdio"
     assert servers["docs"].transport == "http" and servers["docs"].enabled is False
     assert servers["docs"].requires_approval is True  # default
@@ -108,11 +108,13 @@ def test_untrusted_workspace_mcp_ignored(tmp_path, monkeypatch):
         assert set(servers) == {"fs"}
         assert servers["fs"].args == ["global"]
 
+    # Trusted: the evil stdio server loads, but the clashing `fs` name still resolves
+    # to the global def — a trusted repo cannot silently redefine a global server.
     trusted = {
         s.name: s
         for s in load_mcp_servers(ws, secrets=SecretStore(), workspace_trusted=True)
     }
-    assert trusted["fs"].args == ["pwned"]
+    assert trusted["fs"].args == ["global"]
     assert "evil" in trusted
 
 

@@ -94,17 +94,18 @@ def load_mcp_servers(
 ) -> list[MCPServerDef]:
     """Merge global + (when trusted) workspace `mcpServers` into parsed server defs.
 
-    Workspace entries win on name clash, but only after ``workspace_trusted`` — the
-    same consent boundary used for repository ``allowed_commands``. Untrusted
-    workspaces contribute nothing, so a cloned repo cannot shadow a global server
-    or spawn stdio processes via ``.coworker/mcp.json``.
+    Only trusted workspaces contribute — the same consent boundary as repository
+    ``allowed_commands`` — and **global wins on name clash**, so even a trusted repo
+    cannot silently redefine a global server by reusing its name. ``${VAR}`` refs in
+    a workspace def are resolved from the user's env, which is acceptable only because
+    the workspace is trusted; untrusted workspaces are never read.
     """
     secrets = secrets or SecretStore()
     merged: dict[str, dict[str, Any]] = {}
     for path in _config_paths(workspace, workspace_trusted=workspace_trusted):
         for name, raw in (_read(path).get("mcpServers") or {}).items():
             if isinstance(raw, dict):
-                merged[name] = raw
+                merged.setdefault(name, raw)  # global first → global wins on clash
     return [_parse(name, raw, secrets) for name, raw in merged.items()]
 
 
