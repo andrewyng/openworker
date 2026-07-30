@@ -1784,6 +1784,7 @@ class SessionManager:
             # hardcoded POSIX one (Windows -> %APPDATA%\coworker, macOS/Linux -> ~/.config).
             "secrets_path": str(self.secrets.path),
             **self.pdf_settings(),
+            "enter_behavior": self.enter_behavior(),
         }
 
     def _surfaces(self) -> dict[str, bool]:
@@ -1909,6 +1910,20 @@ class SessionManager:
         self._prefs["default_model"] = model
         self._save_prefs()
         return {"ok": True, **self.get_settings()}
+
+    def enter_behavior(self) -> str:
+        """Composer Enter key behavior: ``"send"`` (Enter sends, Shift+Enter newline — default)
+        or ``"newline"`` (Enter newline, Shift+Enter sends)."""
+        return self._prefs.get("enter_behavior", "send")
+
+    def set_enter_behavior(self, value: str) -> dict[str, Any]:
+        """Set + persist the composer Enter key behavior."""
+        v = (value or "").strip()
+        if v not in ("send", "newline"):
+            return {"ok": False, "error": "enter_behavior must be 'send' or 'newline'"}
+        self._prefs["enter_behavior"] = v
+        self._save_prefs()
+        return {"ok": True, "enter_behavior": v}
 
     def set_onboarded(self, value: bool = True) -> dict[str, Any]:
         """Record that first-run setup is complete (so it isn't shown again)."""
