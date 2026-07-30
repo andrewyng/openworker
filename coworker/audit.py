@@ -128,8 +128,8 @@ def _sanitize_args(tool: str, args: dict[str, Any]) -> dict[str, Any]:
         lk = str(key).lower()
         if any(s in lk for s in _SECRET_KEYS):
             out[key] = "[redacted]"
-        elif tool == "browser_type" and lk == "text":
-            out[key] = "[redacted input]"
+        elif tool == "browser_exec" and lk == "code":
+            out[key] = "[redacted browser code]"
         elif any(b == lk or lk.endswith("_" + b) for b in _BODY_KEYS):
             out[key] = "[redacted body]"
         else:

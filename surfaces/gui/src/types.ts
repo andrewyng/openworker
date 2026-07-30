@@ -105,7 +105,8 @@ export type Item =
   // `hidden` = results the user's privacy filters removed before the agent saw them
   // (from the tool message's `_display` sidecar; the agent-visible content has no trace).
   // `standingRule` = the task-scoped rule that auto-allowed this call ("tool → target").
-  | { kind: "tool"; id: string; name: string; args: any; status: string; preview?: string; hidden?: number; standingRule?: string }
+  // `browser_exec` uses the model's own leading `#` comment) or file name produced
+| { kind: "tool"; id: string; name: string; args: any; status: string; preview?: string; hidden?: number; standingRule?: string; label?: string; files?: { name: string; path: string; bytes: number; media_type?: string }[] }
   | {
       kind: "approval";
       name: string;

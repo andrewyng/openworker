@@ -785,10 +785,30 @@ class TurnEngine:
         if isinstance(result, dict) and "_display" in result:
             display = result.get("_display") or None
             result = {k: v for k, v in result.items() if k != "_display"}
+        # `_images` on a tool result = pictures the model should see
+        images: list[str] = []
+        if isinstance(result, dict) and "_images" in result:
+            images = [u for u in (result.get("_images") or []) if isinstance(u, str)]
+            result = {k: v for k, v in result.items() if k != "_images"}
         message = _tool_result_message(tool_call, result)
         if display:
             message["_display"] = display
         self.messages.append(message)
+        if images:
+            self.messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"[{len(images)} screenshot{'s' if len(images) > 1 else ''} from {tool_call.name}]",
+                        },
+                        *({"type": "image_url", "image_url": {"url": url}} for url in images),
+                    ],
+                    "ts": time.time(),
+                    "_tool_images": True,
+                }
+            )
         hidden = int((display or {}).get("hidden_by_filters") or 0)
         stripped = int((display or {}).get("hidden_fields") or 0)
         if hidden or stripped:

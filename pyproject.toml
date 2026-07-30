@@ -43,7 +43,9 @@ dev = ["pytest>=8", "pytest-asyncio", "httpx"]
 # drives the real handler) — declare it so CI installs it, not just transitively.
 messaging = ["python-telegram-bot>=21", "slack-bolt>=1.18", "aiohttp>=3.9"]
 # Interactive Cowork browser automation.
-browser = ["playwright>=1.44"]
+# the browser connector shells out to the `browser-use` command
+# playwright is only for send_file's html -> png render now
+render = ["playwright>=1.44"]
 # AWS Bedrock provider (lazy-imported; desktop builds bundle it, pip users opt in).
 bedrock = ["boto3>=1.34"]
 
@@ -57,7 +59,7 @@ where = ["."]
 include = ["coworker*"]
 
 [tool.setuptools.package-data]
-coworker = ["personas/builtin/*.md"]
+coworker = ["personas/builtin/*.md", "skills/builtin/*/SKILL.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

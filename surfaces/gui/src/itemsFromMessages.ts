@@ -16,16 +16,24 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
   // `_display` sidecar on a tool message = user-facing metadata the agent never saw
   // (e.g. how many hits the privacy filters hid) — surfaces on the tool card.
   const hiddenCounts: Record<string, number> = {};
+  const labels: Record<string, string> = {};
+  const files: Record<string, any[]> = {};
   for (const m of messages || []) {
     if (m.role === "tool" && m.tool_call_id) {
       results[m.tool_call_id] =
         typeof m.content === "string" ? m.content : JSON.stringify(m.content);
       const hidden = Number(m._display?.hidden_by_filters || 0);
       if (hidden > 0) hiddenCounts[m.tool_call_id] = hidden;
+      const label = String(m._display?.label || "");
+      if (label) labels[m.tool_call_id] = label;
+      if (Array.isArray(m._display?.files) && m._display.files.length) files[m.tool_call_id] = m._display.files;
     }
   }
   for (const m of messages || []) {
     if (m.role === "user") {
+      // Tool-screenshot carrier: the model sees it, but no human sent it — the pictures
+      // already surface in the browser rail, so the transcript skips it
+      if (m._tool_images) continue;
       // Connector message → structured card; the framed `content` stays for the model, but display
       // renders from the source sidecar.
       if (m.source?.connector) {
@@ -53,6 +61,8 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
         }
         const preview = results[tc.id];
         const hidden = hiddenCounts[tc.id];
+        const label = labels[tc.id];
+        const produced = files[tc.id];
         items.push({
           kind: "tool",
           id: tc.id,
@@ -61,6 +71,8 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
           status: "ok",
           preview,
           ...(hidden ? { hidden } : {}),
+          ...(label ? { label } : {}),
+          ...(produced ? { files: produced } : {}),
         });
       }
     } else if (m.role === "notice") {

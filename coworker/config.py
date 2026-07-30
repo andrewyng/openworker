@@ -39,6 +39,12 @@ class Config:
     port: int = 8765
     # Web search provider: "duckduckgo" (keyless default) | "tavily" | "brave" (need a key).
     web_search_provider: str = "duckduckgo"
+    # Where the browser tools run. "local" drives the user's own Chrome; "cloud" routes
+    # every call to a Browser Use Cloud browser (needs `browser-use auth login`).
+    # Cloud is off for now
+    browser_backend: str = "local"
+    # Daemon name for the cloud browser
+    browser_cloud_name: str = "coworker"
     # OpenWorker Cloud (sign-in + managed connectors). Config, never constants:
     # dev/staging/BYO-VPC deployments point these at their own instances.
     cloud_base_url: str = "https://api.openworker.com"
@@ -67,6 +73,8 @@ _FIELDS = {
     "host",
     "port",
     "web_search_provider",
+    "browser_backend",
+    "browser_cloud_name",
     "cloud_base_url",
     "cloud_auth_domain",
     "cloud_client_id",
@@ -77,7 +85,8 @@ _FIELDS = {
 # These fields change what consequential actions can run without a prompt, so the normal
 # workspace override pass never applies them. `allowed_commands` is added separately only
 # for a canonically trusted workspace; `auto_allow` remains user-global only.
-_GLOBAL_ONLY_FIELDS = {"allowed_commands", "auto_allow"}
+
+_GLOBAL_ONLY_FIELDS = {"allowed_commands", "auto_allow", "browser_backend", "browser_cloud_name"}
 _WORKSPACE_FIELDS = _FIELDS - _GLOBAL_ONLY_FIELDS
 
 

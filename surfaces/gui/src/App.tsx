@@ -702,6 +702,8 @@ export function App() {
               d.result_preview || d.reason,
               d.display?.hidden_by_filters,
               d.standing_rule,
+              d.display?.label,
+              d.display?.files,
             ),
           );
           // Refresh the right rail when something it shows may have changed: browser state, or a
@@ -1722,6 +1724,8 @@ function updateLastTool(
   preview?: string,
   hidden?: number,
   standingRule?: string,
+  label?: string,
+  files?: any[],
 ): Item[] {
   const copy = [...items];
   for (let i = copy.length - 1; i >= 0; i--) {
@@ -1733,6 +1737,8 @@ function updateLastTool(
         preview,
         ...(hidden ? { hidden } : {}),
         ...(standingRule ? { standingRule } : {}),
+        ...(label ? { label } : {}),
+        ...(files && files.length ? { files } : {}),
       };
       break;
     }

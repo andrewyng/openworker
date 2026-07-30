@@ -601,7 +601,10 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         logo="browser",
         fields=[],
         instructions=[
-            "No setup required. Browser tools are available to Cowork sessions."
+            "Uses the Browser Use CLI. Installed automatically on first browser "
+            "use (via uv or pipx); or install it yourself: `uv tool install browser-use`.",
+            "Drives your own Chrome. Set BU_NAME (and BROWSER_USE_API_KEY) to use a "
+            "Browser Use Cloud browser instead — see `browser-use auth login`.",
         ],
         available=True,
     ),
