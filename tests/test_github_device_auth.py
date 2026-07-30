@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 
 import httpx
 from fastapi.testclient import TestClient
@@ -117,6 +118,14 @@ def test_poll_enforces_interval_handles_slow_down_and_stores_token(
     auth = GitHubDeviceAuth(store)
     flow_id = auth.start("public-client")["flow_id"]
 
+    # The first GUI poll is answered locally until GitHub's interval elapses.
+    assert auth.poll(flow_id) == {
+        "ok": True,
+        "state": "pending",
+        "retry_after": 5,
+    }
+    assert len(token_polls) == 0
+    clock[0] = 105.0
     assert auth.poll(flow_id) == {
         "ok": True,
         "state": "pending",
@@ -126,14 +135,14 @@ def test_poll_enforces_interval_handles_slow_down_and_stores_token(
     assert auth.poll(flow_id)["state"] == "pending"
     assert len(token_polls) == 1
 
-    clock[0] = 105.0
+    clock[0] = 110.0
     slowed = auth.poll(flow_id)
     assert slowed == {"ok": True, "state": "pending", "retry_after": 10}
-    clock[0] = 114.0
+    clock[0] = 119.0
     assert auth.poll(flow_id)["state"] == "pending"
     assert len(token_polls) == 2
 
-    clock[0] = 115.0
+    clock[0] = 120.0
     complete = auth.poll(flow_id)
     assert complete == {"ok": True, "state": "complete", "account": "octocat"}
     assert "gho_local-token" not in json.dumps(complete)
@@ -172,6 +181,81 @@ def test_denial_removes_pending_flow(tmp_path, monkeypatch):
     assert denied["state"] == "denied"
     assert auth.poll(flow_id)["error"] == "Device sign-in flow not found."
     assert SecretStore().get("github:default") is None
+
+
+def test_local_expiry_has_distinct_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path))
+    clock = [10.0]
+    monkeypatch.setattr(github_auth.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        github_auth.httpx,
+        "post",
+        lambda *_args, **_kwargs: _response(
+            {
+                "device_code": "device",
+                "user_code": "ABCD-EFGH",
+                "verification_uri": "https://github.com/login/device",
+                "expires_in": 1,
+                "interval": 5,
+            }
+        ),
+    )
+    auth = GitHubDeviceAuth(SecretStore())
+    flow_id = auth.start("client")["flow_id"]
+
+    clock[0] = 11.0
+    expired = auth.poll(flow_id)
+    assert expired == {
+        "ok": False,
+        "state": "expired",
+        "error": "The GitHub device code expired. Start again.",
+    }
+
+
+def test_cancel_wins_against_inflight_success(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path))
+    clock = [0.0]
+    monkeypatch.setattr(github_auth.time, "monotonic", lambda: clock[0])
+    entered = threading.Event()
+    release = threading.Event()
+
+    def post(url, **_kwargs):
+        if url == github_auth.DEVICE_CODE_URL:
+            return _response(
+                {
+                    "device_code": "device",
+                    "user_code": "ABCD-EFGH",
+                    "verification_uri": "https://github.com/login/device",
+                    "expires_in": 900,
+                    "interval": 1,
+                }
+            )
+        entered.set()
+        assert release.wait(timeout=2)
+        return _response({"access_token": "gho_must-not-persist"})
+
+    monkeypatch.setattr(github_auth.httpx, "post", post)
+    monkeypatch.setattr(
+        github_auth.httpx,
+        "get",
+        lambda *_args, **_kwargs: _response({"id": 42, "login": "octocat"}),
+    )
+    store = SecretStore()
+    auth = GitHubDeviceAuth(store)
+    flow_id = auth.start("client")["flow_id"]
+    clock[0] = 1.0
+    result = {}
+
+    thread = threading.Thread(target=lambda: result.update(auth.poll(flow_id)))
+    thread.start()
+    assert entered.wait(timeout=2)
+    assert auth.cancel(flow_id) == {"ok": True, "cancelled": True}
+    release.set()
+    thread.join(timeout=2)
+
+    assert result["state"] == "error"
+    assert result["error"] == "Device sign-in was cancelled."
+    assert store.get("github:default") is None
 
 
 def test_sidecar_routes_use_config_and_never_expose_device_code(tmp_path, monkeypatch):

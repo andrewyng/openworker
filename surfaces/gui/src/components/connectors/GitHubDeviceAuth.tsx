@@ -56,6 +56,9 @@ export function GitHubDeviceAuth({ onConnected }: { onConnected: () => void }) {
     return () => {
       stopped = true;
       if (timer) clearTimeout(timer);
+      // Closing the modal, switching panes, or navigating away must also
+      // forget the server-side device code rather than merely stopping UI polls.
+      void cancelGithubDeviceAuth(flow.id).catch(() => undefined);
     };
   }, [flow]);
 

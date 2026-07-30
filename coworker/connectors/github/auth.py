@@ -100,7 +100,9 @@ class GitHubDeviceAuth:
             interval=interval,
             expires_at=time.time() + expires_in,
             expires_at_monotonic=now + expires_in,
-            next_poll_at=now,
+            # RFC 8628 §3.5 requires waiting the server-provided interval
+            # before the first token request as well as every later request.
+            next_poll_at=now + interval,
         )
         with self._lock:
             self._prune_locked(now)
@@ -119,10 +121,17 @@ class GitHubDeviceAuth:
         flow_id = str(flow_id or "").strip()
         now = time.monotonic()
         with self._lock:
-            self._prune_locked(now)
             flow = self._flows.get(flow_id)
             if flow is None:
+                self._prune_locked(now)
                 return {"ok": False, "state": "error", "error": "Device sign-in flow not found."}
+            if now >= flow.expires_at_monotonic:
+                self._flows.pop(flow_id, None)
+                return {
+                    "ok": False,
+                    "state": "expired",
+                    "error": "The GitHub device code expired. Start again.",
+                }
             if now < flow.next_poll_at:
                 return {
                     "ok": True,
@@ -159,8 +168,17 @@ class GitHubDeviceAuth:
             if not identity.get("ok"):
                 self.cancel(flow_id)
                 return {"ok": False, "state": "error", "error": identity["error"]}
-            self._store_token(data, identity)
-            self.cancel(flow_id)
+            # Linearize completion against cancellation. If cancel won the
+            # lock while either GitHub request was in flight, never persist.
+            with self._lock:
+                if self._flows.get(flow_id) is not flow:
+                    return {
+                        "ok": False,
+                        "state": "error",
+                        "error": "Device sign-in was cancelled.",
+                    }
+                self._store_token(data, identity)
+                self._flows.pop(flow_id, None)
             return {
                 "ok": True,
                 "state": "complete",

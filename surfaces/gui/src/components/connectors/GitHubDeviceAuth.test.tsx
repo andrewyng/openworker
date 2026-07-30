@@ -79,6 +79,19 @@ describe("GitHubDeviceAuth", () => {
     await waitFor(() => expect(connected).toHaveBeenCalledTimes(1));
   });
 
+  it("cancels sidecar state when the modal unmounts", async () => {
+    mocks.start.mockResolvedValue(started);
+    mocks.poll.mockResolvedValue({ ok: true, state: "pending", retry_after: 30 });
+    mocks.cancel.mockResolvedValue({ ok: true });
+    const view = render(<GitHubDeviceAuth onConnected={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("github-device-start"));
+    await screen.findByTestId("github-user-code");
+
+    view.unmount();
+
+    await waitFor(() => expect(mocks.cancel).toHaveBeenCalledWith("opaque-flow"));
+  });
+
   it("shows configuration failures without entering the waiting state", async () => {
     mocks.start.mockResolvedValue({
       ok: false,
