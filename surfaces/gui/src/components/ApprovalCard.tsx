@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ApprovalDecision, Item } from "../types";
 import { humanizeApprovalTitle, type HumanLine } from "../humanize";
 import { Icon } from "./Icon";
+import { useLanguage } from "../i18n";
 
 export function shortArgs(args: any): string {
   if (!args || typeof args !== "object") return "";
@@ -131,6 +132,7 @@ function Buttons({
   runTask?: { id: string; title: string } | null;
   primaryLabel: string;
 }) {
+  const { t } = useLanguage();
   const connector = item.category === "connector";
   const offerStanding = !!(runTask && item.standingTarget);
   return (
@@ -141,10 +143,14 @@ function Buttons({
       {offerStanding && (
         <button
           className="btn"
-          title={`Always allow ${item.name} → ${item.standingTarget} for “${runTask?.title || "this automation"}” — revoke any time on its Automations page`}
+          title={t("Always allow {{tool}} → {{target}} for “{{automation}}” — revoke any time on its Automations page", {
+            tool: item.name,
+            target: item.standingTarget || "",
+            automation: runTask?.title || t("this automation"),
+          })}
           onClick={() => onApprove("always_task")}
         >
-          Allow every time
+          {t("Allow every time")}
         </button>
       )}
       {/* In a run context the task-persistent grant replaces the session-scoped one —
@@ -155,20 +161,20 @@ function Buttons({
       {!connector && !offerStanding && item.name !== "run_shell" && (
         <button
           className="btn"
-          title={`Always allow ${TOOL_VERBS[item.name]?.toLowerCase() || item.name} for this session`}
+          title={t("Always allow {{tool}} for this session", { tool: TOOL_VERBS[item.name]?.toLowerCase() || item.name })}
           onClick={() => onApprove("always_tool")}
         >
-          Always allow
+          {t("Always allow")}
         </button>
       )}
       {item.name === "run_shell" && (
         <button className="btn" onClick={() => onApprove("always_command")}>
-          Always allow this command
+          {t("Always allow this command")}
         </button>
       )}
       <span className="spacer" />
       <button className="btn quiet-deny" onClick={() => onApprove("deny")}>
-        Deny
+        {t("Deny")}
       </button>
     </div>
   );
@@ -187,6 +193,7 @@ export function ApprovalCard({
   runTask?: { id: string; title: string } | null;
   compact?: boolean;
 }) {
+  const { t } = useLanguage();
   const [peek, setPeek] = useState(false);
   const title = humanizeApprovalTitle(item.name, item.args);
   const scope = scopeNote(item.name, item.args, item.category);
@@ -206,11 +213,11 @@ export function ApprovalCard({
           <TitleText line={title} />
           {content && (
             <button className="approval-peek" onClick={() => setPeek((v) => !v)}>
-              preview {peek ? "▴" : "▾"}
+              {t("preview")} {peek ? "▴" : "▾"}
             </button>
           )}
           <span className="spacer" />
-          <Buttons item={item} onApprove={onApprove} runTask={runTask} primaryLabel="Allow" />
+          <Buttons item={item} onApprove={onApprove} runTask={runTask} primaryLabel={t("Allow")} />
         </div>
         {peek && content && <PreviewBlock text={content} />}
         {reason && <div className="approval-reason">{reason}</div>}
@@ -278,9 +285,9 @@ export function ApprovalCard({
       {reason && <div className="approval-reason">{reason}</div>}
 
       {item.resolved ? (
-        <div className="resolved">Approved: {item.resolved.replace("_", " ")}</div>
+        <div className="resolved">{t("Approved")}: {item.resolved.replace("_", " ")}</div>
       ) : (
-        <Buttons item={item} onApprove={onApprove} runTask={runTask} primaryLabel="Allow once" />
+        <Buttons item={item} onApprove={onApprove} runTask={runTask} primaryLabel={t("Allow once")} />
       )}
     </div>
   );

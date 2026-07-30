@@ -17,20 +17,21 @@ import { useState, type CSSProperties } from "react";
 import type { MessageSource } from "../api";
 import { ConnectorBadge, hexToRgba, NEUTRAL } from "../connectors/ConnectorIcon";
 import { resolveConnector } from "../connectors/registry";
+import { useLanguage } from "../i18n";
 
 /** Coarse relative time from epoch seconds: "just now" / "5m ago" / "2h ago" / "3d ago" / a date. */
-function relativeTime(tsSeconds: number): string {
+function relativeTime(tsSeconds: number, t: (key: string, vars?: Record<string, string | number>) => string): string {
   if (!tsSeconds || !isFinite(tsSeconds)) return "";
   const then = tsSeconds * 1000;
   const diff = Date.now() - then;
-  if (diff < 0) return "just now";
-  if (diff < 45_000) return "just now";
+  if (diff < 0) return t("just now");
+  if (diff < 45_000) return t("just now");
   const mins = Math.round(diff / 60_000);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return t("{{count}}m ago", { count: mins });
   const hrs = Math.round(diff / 3_600_000);
-  if (hrs < 24) return `${hrs}h ago`;
+  if (hrs < 24) return t("{{count}}h ago", { count: hrs });
   const days = Math.round(diff / 86_400_000);
-  if (days < 7) return `${days}d ago`;
+  if (days < 7) return t("{{count}}d ago", { count: days });
   return new Date(then).toLocaleDateString();
 }
 
@@ -47,6 +48,7 @@ export function ConnectorMessageCard({
   source: MessageSource;
   brandColor?: string;
 }) {
+  const { t } = useLanguage();
   const [showIds, setShowIds] = useState(false);
   const { key, entry } = resolveConnector(source.connector);
   const color = (brandColor || "").trim() || NEUTRAL;
@@ -85,11 +87,11 @@ export function ConnectorMessageCard({
             </span>
             <span className="text-faint">·</span>
             <span className="text-[12.5px] font-medium">{source.sender_name}</span>
-            <span className="text-[11px] text-faint ml-0.5">via {entry.label}</span>
+            <span className="text-[11px] text-faint ml-0.5">{t("via")} {entry.label}</span>
           </>
         )}
         <time className="ml-auto text-[11px] text-faint whitespace-nowrap" title={clockTime(source.ts)}>
-          {relativeTime(source.ts)}
+          {relativeTime(source.ts, t)}
         </time>
       </header>
       <div className="px-3.5 py-2.5 text-[14.5px] leading-relaxed whitespace-pre-wrap">{source.text}</div>

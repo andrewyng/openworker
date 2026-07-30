@@ -3,6 +3,7 @@ import { type CloudStatus, type Connector } from "../../api";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_QUIET } from "./ui";
+import { useLanguage } from "../../i18n";
 
 // Pre-connect detail page (UX-DECISIONS §38): what a connector is for and what
 // access it gets, BEFORE any credentials exist. About paragraph, honest Access
@@ -19,6 +20,7 @@ export function AvailableDetail({
   cloud: CloudStatus | null;
   onChanged: () => void;
 }) {
+  const { t: tr } = useLanguage();
   const [connecting, setConnecting] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const tools = c.tools || [];
@@ -36,7 +38,7 @@ export function AvailableDetail({
           data-testid="available-connect"
           onClick={() => setConnecting(true)}
         >
-          Connect
+          {tr("Connect")}
         </button>
       </div>
 
@@ -44,7 +46,7 @@ export function AvailableDetail({
 
       {(c.access?.length ?? 0) > 0 && (
         <>
-          <div className={GRP_H}>Access</div>
+          <div className={GRP_H}>{tr("Access")}</div>
           <div className={GRP} data-testid="available-access">
             {c.access!.map((line) => (
               <div key={line} className={ROW + " !min-h-[36px] !py-2 text-[13px]"}>
@@ -53,14 +55,14 @@ export function AvailableDetail({
             ))}
           </div>
           <div className={FOOT}>
-            Keys and tokens are stored only on this computer. Disconnect anytime.
+            {tr("Keys and tokens are stored only on this computer. Disconnect anytime.")}
           </div>
         </>
       )}
 
       {tools.length > 0 && (
         <>
-          <div className={GRP_H}>Tools</div>
+          <div className={GRP_H}>{tr("Tools")}</div>
           <div className={GRP}>
             <button
               className={ROW + " w-full text-left hover:bg-paper/60 text-[13px]"}
@@ -68,9 +70,9 @@ export function AvailableDetail({
               onClick={() => setShowTools((v) => !v)}
             >
               <span className="min-w-0 flex-1 text-muted">
-                {tools.length} tool{tools.length === 1 ? "" : "s"} this connector adds
+                {tr("{{count}} tools this connector adds", { count: tools.length })}
               </span>
-              <span className="text-faint text-[13px] shrink-0">{showTools ? "Hide" : "View"}</span>
+              <span className="text-faint text-[13px] shrink-0">{showTools ? tr("Hide") : tr("View")}</span>
             </button>
             {showTools &&
               tools.map((t) => (
@@ -79,7 +81,7 @@ export function AvailableDetail({
                     <span className="text-[13px]">{t.label}</span>
                     <span className="block text-[12px] text-muted">{t.description}</span>
                   </span>
-                  {t.kind !== "read" && <span className={TAG_QUIET}>asks first</span>}
+                  {t.kind !== "read" && <span className={TAG_QUIET}>{tr("asks first")}</span>}
                 </div>
               ))}
           </div>
