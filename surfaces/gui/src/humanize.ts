@@ -26,6 +26,21 @@ function messageTarget(target: string): { platform: string; tail: string } {
   return { platform: names[platform] || platform, tail };
 }
 
+// browser_exec code starts with a one-line `#` comment describing the step (the tool's
+// contract) — that description is what every surface shows, never the raw Python
+export function browserStepLabel(code: unknown): string {
+  for (const line of String(code ?? "").split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    if (t.startsWith("#")) {
+      const label = t.replace(/^#+\s*/, "");
+      return label ? trunc(label, 80) : "Browser step";
+    }
+    return trunc(t, 80);
+  }
+  return "Browser step";
+}
+
 export function humanizeTool(name: string, args: any): HumanLine {
   const a = args && typeof args === "object" ? args : {};
   switch (name) {
@@ -94,6 +109,8 @@ export function humanizeTool(name: string, args: any): HumanLine {
       return { pre: "Proposed a plan" };
     case "request_directory":
       return { pre: "Asked for folder access — ", obj: String(a.path ?? "") };
+    case "browser_exec":
+      return { pre: "", obj: browserStepLabel(a.code) };
     default: {
       const rest = trunc(shortArgs(a), 80);
       return { pre: `Used ${name}`, ...(rest ? { post: ` — ${rest}` } : {}) };
@@ -131,6 +148,8 @@ export function humanizeApprovalTitle(name: string, args: any): HumanLine {
       return a.title
         ? { pre: "Create the automation ", obj: `“${trunc(String(a.title), 60)}”` }
         : { pre: "Create an automation" };
+    case "browser_exec":
+      return { pre: "Browser step — ", obj: browserStepLabel(a.code) };
     default:
       return { pre: `Use ${name}` };
   }
@@ -153,6 +172,8 @@ export function humanizeAsk(name: string, args: any): HumanLine {
       if (!tail) return { pre: "Wanted to send a message" };
       return { pre: `Wanted to message `, obj: tail, post: ` on ${platform}` };
     }
+    case "browser_exec":
+      return { pre: "Wanted a browser step — ", obj: browserStepLabel(a.code) };
     default:
       return { pre: `Wanted to use ${name}` };
   }

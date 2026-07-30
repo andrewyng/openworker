@@ -177,6 +177,13 @@ function LineText({ line }: { line: HumanLine }) {
   );
 }
 
+function fmtBytes(n: number): string {
+  if (!Number.isFinite(n)) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
 function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }) {
   const [raw, setRaw] = useState(false);
   const running = tool.status === "…";
@@ -187,8 +194,21 @@ function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }
         <span className={"w-3.5 text-center text-[10px] shrink-0 " + (failed ? "text-danger" : running ? "text-accent" : "text-ok")}>
           {running ? <span className="spinner" data-testid="step-running" /> : "●"}
         </span>
-        <LineText line={humanizeTool(tool.name, tool.args)} />
+        <LineText line={tool.label ? { pre: "", obj: tool.label } : humanizeTool(tool.name, tool.args)} />
         {approval && approvalChip(approval.resolved)}
+        {!!tool.files?.length && (
+          <span className="flex flex-wrap gap-1 min-w-0" data-testid="tool-files">
+            {tool.files.map((f, i) => (
+              <span
+                key={i}
+                className="text-[10.5px] px-1.5 rounded-full bg-paper border border-line text-muted shrink-0"
+                title={`${f.path} · ${fmtBytes(f.bytes)}`}
+              >
+                📄 {f.name}
+              </span>
+            ))}
+          </span>
+        )}
         {!!tool.standingRule && (
           <span
             className="text-[10.5px] px-1.5 rounded-full bg-tealSoft text-tealInk shrink-0"

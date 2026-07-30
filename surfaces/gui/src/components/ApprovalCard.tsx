@@ -274,6 +274,7 @@ export function ApprovalCard({
       {!FILE_WRITES.has(item.name) &&
         !["run_shell", "send_message", "send_file"].includes(item.name) &&
         !grants.length &&
+        item.name !== "browser_exec" &&
         shortArgs(item.args) && <div className="approval-rest">{shortArgs(item.args)}</div>}
       {reason && <div className="approval-reason">{reason}</div>}
 

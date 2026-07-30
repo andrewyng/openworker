@@ -100,7 +100,7 @@ def _enabled_connector_tools(secrets: SecretStore) -> tuple[set[str], set[str]]:
 
 
 def _skill_dirs(workspace: Optional[Path]) -> list[Path]:
-    dirs = [state_dir() / "skills"]
+    dirs = [Path(__file__).parent / "skills" / "builtin", state_dir() / "skills"]
     if workspace is not None:
         dirs.append(workspace / ".coworker" / "skills")
     return dirs

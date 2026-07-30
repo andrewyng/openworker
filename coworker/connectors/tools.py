@@ -247,8 +247,7 @@ def _resolve_within(path: str, bases: list[Path]) -> Optional[Path]:
 
 
 def _render_html_png(path: Path) -> bytes:
-    """Headless render of a local HTML artifact → viewport PNG (1280×800). Uses the
-    Playwright chromium we already ship for the browser connector."""
+    """Headless render of a local HTML artifact → viewport PNG (1280×800)."""
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as pw:

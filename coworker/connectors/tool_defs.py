@@ -22,6 +22,8 @@ class ConnectorToolDef:
     # single-argument targets are declarable in v1 (no wildcards, no composite targets), and
     # only write tools should declare one — reads never gate, so a rule would be meaningless.
     target_arg: Optional[str] = None
+    # Skip the interactive approval gate while keeping the write classification
+    auto_approve: bool = False
 
 
 TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
@@ -34,69 +36,11 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
     ),
     ConnectorToolDef(
         "browser",
-        "browser_open_url",
-        "Open URL",
-        "read",
-        "Open a URL in the Playwright browser.",
-    ),
-    ConnectorToolDef(
-        "browser",
-        "browser_snapshot",
-        "Snapshot page",
-        "read",
-        "Read page text and visible controls.",
-    ),
-    ConnectorToolDef(
-        "browser",
-        "browser_get_text",
-        "Read page text",
-        "read",
-        "Read visible text from the current browser page.",
-    ),
-    ConnectorToolDef(
-        "browser",
-        "browser_click",
-        "Click page",
+        "browser_exec",
+        "Run browser code",
         "write",
-        "Click a visible browser element.",
-    ),
-    ConnectorToolDef(
-        "browser",
-        "browser_type",
-        "Fill field",
-        "write",
-        "Type into or fill a browser field.",
-    ),
-    ConnectorToolDef(
-        "browser",
-        "browser_select",
-        "Select option",
-        "write",
-        "Select a dropdown option.",
-    ),
-    ConnectorToolDef(
-        "browser",
-        "browser_upload_file",
-        "Upload file",
-        "write",
-        "Upload a local file through a file input.",
-    ),
-    ConnectorToolDef(
-        "browser", "browser_wait", "Wait", "read", "Wait for time or an element."
-    ),
-    ConnectorToolDef(
-        "browser",
-        "browser_screenshot",
-        "Screenshot",
-        "read",
-        "Capture a browser screenshot.",
-    ),
-    ConnectorToolDef(
-        "browser",
-        "browser_close",
-        "Close browser",
-        "write",
-        "Close the browser session.",
+        "Run Python against the browser through the Browser Use CLI.",
+        auto_approve=True,
     ),
     ConnectorToolDef(
         "github",
@@ -1092,6 +1036,7 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
 )
 
 _KIND_BY_NAME = {d.name: d.kind for d in TOOL_DEFS}
+_AUTO_APPROVE = {d.name for d in TOOL_DEFS if d.auto_approve}
 
 
 # §36: the registry's read/write kind is the SINGLE source of truth for whether a
@@ -1100,10 +1045,16 @@ _KIND_BY_NAME = {d.name: d.kind for d in TOOL_DEFS}
 # without a registry entry keep their call-site default (MCP/experimental stay
 # conservative).
 def approval_for_tool(name: str, default: bool = True) -> bool:
+    if name in _AUTO_APPROVE:
+        return False
     kind = _KIND_BY_NAME.get(name)
     if kind is None:
         return default
     return kind != "read"
+
+
+def kind_for_tool(name: str, default: str = "") -> str:
+    return _KIND_BY_NAME.get(name, default)
 
 
 TOOL_TO_CONNECTOR = {d.name: d.connector for d in TOOL_DEFS}
@@ -1197,7 +1148,9 @@ def tool_dicts(secrets: SecretStore, connector: str) -> list[dict[str, Any]]:
                 "kind": tool.kind,
                 "description": tool.description,
                 "enabled": bool(overrides.get(tool.name, tool.default_enabled)),
-                "requires_approval": True,
+                # The real gate, not a blanket True: reads and auto_approve writes run
+                # without asking, and the settings UI should say so.
+                "requires_approval": approval_for_tool(tool.name),
             }
         )
     return out
