@@ -89,6 +89,7 @@ export function Composer(props: Props) {
   const [dictationError, setDictationError] = useState<string | null>(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [attachNotice, setAttachNotice] = useState<string | null>(null);
+  const [enterBehavior, setEnterBehavior] = useState<"send" | "newline">("send");
   const fileInput = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const noticeTimer = useRef<number | null>(null);
@@ -131,6 +132,13 @@ export function Composer(props: Props) {
     setAttachments([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.resetKey]);
+
+  // Load the Enter key behavior preference (Settings → Composer).
+  useEffect(() => {
+    getSettings()
+      .then((s) => setEnterBehavior(s.enter_behavior || "send"))
+      .catch(() => {});
+  }, []);
 
   // Dictation is intentionally native-only: the browser/dev build remains a local server client
   // and never turns on the browser microphone or ships audio anywhere.
@@ -268,7 +276,8 @@ export function Composer(props: Props) {
   };
 
   const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    const sendOnEnter = enterBehavior === "send";
+    if (e.key === "Enter" && (sendOnEnter ? !e.shiftKey : e.shiftKey)) {
       e.preventDefault();
       submit();
     }

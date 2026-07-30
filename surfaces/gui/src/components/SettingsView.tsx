@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   getSettings,
   getTrustedWorkspaces,
+  setEnterBehavior,
   setOnboarded,
   setPdfSettings,
   setScratchBase,
@@ -425,6 +426,8 @@ function AppearanceSection() {
 
       <SidebarCard />
 
+      <ComposerCard />
+
       <FilesCard />
 
       <TrustedWorkspacesCard />
@@ -463,6 +466,46 @@ function AppearanceSection() {
         <div className={FIELD_HELP}>Replays the first-run setup: model, first automation, tips.</div>
       </div>
     </section>
+  );
+}
+
+// -- Composer Enter key behavior -----------------------------------------------
+function ComposerCard() {
+  const [behavior, setBehavior] = useState<"send" | "newline">("send");
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => setBehavior(s.enter_behavior || "send"))
+      .catch(() => {});
+  }, []);
+
+  const save = async (v: "send" | "newline") => {
+    setBehavior(v);
+    await setEnterBehavior(v);
+  };
+
+  return (
+    <div className={CARD + " p-4 mb-4"}>
+      <div className={FIELD_LABEL}>Composer</div>
+      <div className="seg mt-2.5" role="radiogroup" aria-label="Enter key behavior">
+        <button
+          className={behavior === "send" ? "active" : ""}
+          onClick={() => save("send")}
+        >
+          Send on Enter
+        </button>
+        <button
+          className={behavior === "newline" ? "active" : ""}
+          onClick={() => save("newline")}
+        >
+          Newline on Enter
+        </button>
+      </div>
+      <div className={FIELD_HELP}>
+        Send on Enter (default): Enter sends the message, Shift+Enter adds a new line.
+        Newline on Enter: Enter adds a new line, Shift+Enter sends.
+      </div>
+    </div>
   );
 }
 

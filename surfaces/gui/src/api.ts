@@ -696,6 +696,8 @@ export interface ModelSettings {
   pdf_fallback?: "text" | "images";
   pdf_max_pages?: number; // default 20, 1–100
   pdf_max_mb?: number; // default 10, 1–10
+  // Composer Enter key behavior: "send" (default) or "newline".
+  enter_behavior?: "send" | "newline";
 }
 
 export interface PdfSettings {
@@ -736,6 +738,18 @@ export async function setSessionsPeek(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessions_peek: n }),
+  });
+  return res.json();
+}
+
+/** Persist the composer Enter key behavior ("send" or "newline"). */
+export async function setEnterBehavior(
+  value: "send" | "newline",
+): Promise<{ ok: boolean; enter_behavior?: string; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/enter-behavior`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enter_behavior: value }),
   });
   return res.json();
 }

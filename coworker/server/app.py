@@ -1378,6 +1378,11 @@ def create_app(manager: SessionManager) -> FastAPI:
             max_mb=b.get("pdf_max_mb"),
         )
 
+    @app.post("/v1/settings/enter-behavior")
+    def settings_set_enter_behavior(body: dict) -> dict[str, Any]:
+        # Composer Enter key: "send" (default) or "newline".
+        return manager.set_enter_behavior((body or {}).get("enter_behavior", ""))
+
     @app.post("/v1/attachments/inspect-pdf")
     def attachments_inspect_pdf(body: dict) -> dict[str, Any]:
         # Attach-time page/size probe for the composer's threshold check. Local only.
