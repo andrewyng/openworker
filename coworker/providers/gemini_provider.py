@@ -405,13 +405,17 @@ class GeminiProvider(ProviderClient):
         *,
         default_model: str = "gemini-2.5-flash",
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         secrets: Any = None,
     ):
         # Mirrors AnthropicProvider: the SDK client is built lazily so engines can be assembled
         # before any key exists; the key resolves at call time (explicit → env → SecretStore).
-        # Tests inject a `client` directly.
+        # Tests inject a `client` directly. `base_url` points the SDK at a proxy gateway (e.g.
+        # LiteLLM) that mimics the Generative Language API; None behaves identically to stock
+        # generativelanguage.googleapis.com.
         self._client = client
         self._api_key = api_key
+        self._base_url = base_url
         self._secrets = secrets
         self.default_model = default_model
 
@@ -419,6 +423,7 @@ class GeminiProvider(ProviderClient):
         if self._client is None:
             # Lazy import so the SDK is only required when actually talking to Gemini.
             from google import genai
+            from google.genai import types
 
             key = self._api_key or resolve_api_key(self._secrets)
             if not key:
@@ -426,7 +431,10 @@ class GeminiProvider(ProviderClient):
                     "No Gemini API key configured. Set GEMINI_API_KEY in the environment, "
                     "or add your key in Manage → Configure Models."
                 )
-            self._client = genai.Client(api_key=key)
+            kwargs: dict[str, Any] = {"api_key": key}
+            if self._base_url:
+                kwargs["http_options"] = types.HttpOptions(base_url=self._base_url)
+            self._client = genai.Client(**kwargs)
         return self._client
 
     def _request_kwargs(

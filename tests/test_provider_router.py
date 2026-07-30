@@ -71,6 +71,37 @@ def test_build_ollama_client_uses_base_url(monkeypatch):
     assert captured["api_key"] == "ollama"  # placeholder, Ollama ignores it
 
 
+# -- anthropic/gemini proxy-gateway base_url ------------------------------------
+def test_build_anthropic_client_carries_profile_base_url():
+    client = build_provider_client(
+        "anthropic",
+        {"api_key": "sk-ant-x", "base_url": "https://gw.example/anthropic"},
+        secrets=None,
+    )
+    assert client._api_key == "sk-ant-x"
+    assert client._base_url == "https://gw.example/anthropic"
+
+
+def test_build_anthropic_client_base_url_none_when_unset():
+    client = build_provider_client("anthropic", {"api_key": "sk-ant-x"}, secrets=None)
+    assert client._base_url is None
+
+
+def test_build_gemini_client_carries_profile_base_url():
+    client = build_provider_client(
+        "gemini",
+        {"api_key": "AIza-x", "base_url": "https://gw.example/gemini"},
+        secrets=None,
+    )
+    assert client._api_key == "AIza-x"
+    assert client._base_url == "https://gw.example/gemini"
+
+
+def test_build_gemini_client_base_url_none_when_unset():
+    client = build_provider_client("gemini", {"api_key": "AIza-x"}, secrets=None)
+    assert client._base_url is None
+
+
 # -- router routing -------------------------------------------------------------
 class _Recorder(ProviderClient):
     def __init__(self, name: str):

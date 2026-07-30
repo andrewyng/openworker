@@ -278,6 +278,23 @@ def test_stream_accumulates_tool_calls():
     )
 
 
+# -- native SDK providers expose an optional proxy-gateway endpoint --------------
+
+
+def test_anthropic_gemini_descriptors_expose_optional_base_url():
+    from coworker.providers.registry import get_descriptor
+
+    for name in ("anthropic", "gemini"):
+        d = get_descriptor(name)
+        assert d is not None
+        base = next(f for f in d.fields if f.key == "base_url")
+        assert not base.required
+        assert not base.secret
+        # Unlike the OpenAI-compatible vendors, these have no vendor endpoint to
+        # prefill — blank means "use the provider's official API".
+        assert base.default == ""
+
+
 # -- OpenAI-compatible vendor providers (Z AI, DeepSeek, Kimi, MiniMax, Qwen, xAI, Mistral) ------
 
 COMPAT_VENDORS = {

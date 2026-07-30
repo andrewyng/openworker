@@ -76,11 +76,31 @@ def test_verify_anthropic_headers(monkeypatch):
     assert "anthropic-version" in cap["headers"]
 
 
+def test_verify_anthropic_custom_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    verify_provider_key(
+        "anthropic", api_key="sk-ant-x", base_url="https://gw.example/anthropic/"
+    )
+    # trailing slash trimmed, /v1/models appended to the custom endpoint
+    assert cap["url"] == "https://gw.example/anthropic/v1/models"
+
+
 def test_verify_gemini_key_param(monkeypatch):
     cap: dict = {}
     _patch_get(monkeypatch, status=200, capture=cap)
     verify_provider_key("gemini", api_key="AIza-x")
     assert cap["params"]["key"] == "AIza-x"
+
+
+def test_verify_gemini_custom_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    verify_provider_key(
+        "gemini", api_key="AIza-x", base_url="https://gw.example/gemini/"
+    )
+    # trailing slash trimmed, /v1beta/models appended to the custom endpoint
+    assert cap["url"] == "https://gw.example/gemini/v1beta/models"
 
 
 def test_verify_ollama_uses_v1_models_no_key(monkeypatch):

@@ -396,6 +396,38 @@ def test_ensure_client_without_key_raises(monkeypatch):
         GeminiProvider()._ensure_client()
 
 
+def test_ensure_client_passes_custom_base_url(monkeypatch):
+    """`base_url` (a proxy gateway endpoint) reaches the SDK as `http_options.base_url`."""
+    from google import genai
+
+    captured: dict = {}
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(genai, "Client", _FakeClient)
+    GeminiProvider(
+        api_key="AIza-test", base_url="https://gw.example/gemini"
+    )._ensure_client()
+    assert captured["api_key"] == "AIza-test"
+    assert captured["http_options"].base_url == "https://gw.example/gemini"
+
+
+def test_ensure_client_omits_http_options_when_base_url_unset(monkeypatch):
+    from google import genai
+
+    captured: dict = {}
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(genai, "Client", _FakeClient)
+    GeminiProvider(api_key="AIza-test")._ensure_client()
+    assert captured == {"api_key": "AIza-test"}
+
+
 # -- stream() ------------------------------------------------------------------------
 
 

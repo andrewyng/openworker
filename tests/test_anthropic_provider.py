@@ -355,6 +355,40 @@ def test_ensure_client_without_key_raises(monkeypatch):
         AnthropicProvider()._ensure_client()
 
 
+def test_ensure_client_passes_custom_base_url(monkeypatch):
+    """`base_url` (a proxy gateway endpoint) reaches the SDK constructor when set."""
+    import anthropic
+
+    captured: dict = {}
+
+    class _FakeAnthropic:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
+    AnthropicProvider(
+        api_key="sk-ant-test", base_url="https://gw.example/anthropic"
+    )._ensure_client()
+    assert captured == {
+        "api_key": "sk-ant-test",
+        "base_url": "https://gw.example/anthropic",
+    }
+
+
+def test_ensure_client_omits_base_url_when_unset(monkeypatch):
+    import anthropic
+
+    captured: dict = {}
+
+    class _FakeAnthropic:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
+    AnthropicProvider(api_key="sk-ant-test")._ensure_client()
+    assert captured == {"api_key": "sk-ant-test"}
+
+
 # -- stream() ------------------------------------------------------------------------
 
 

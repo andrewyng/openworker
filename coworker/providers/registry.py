@@ -126,19 +126,24 @@ def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     from .anthropic_provider import DEFAULT_THINKING_BUDGET
 
     api_key = ((profile or {}).get("api_key") or "").strip() or None
+    base_url = ((profile or {}).get("base_url") or "").strip() or None
     try:
         thinking_budget = int(str((profile or {}).get("thinking_budget") or "").strip())
     except ValueError:
         thinking_budget = DEFAULT_THINKING_BUDGET
     return AnthropicProvider(
-        api_key=api_key, secrets=secrets, thinking_budget=thinking_budget
+        api_key=api_key,
+        base_url=base_url,
+        secrets=secrets,
+        thinking_budget=thinking_budget,
     )
 
 
 def _build_gemini(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Same deferred-key contract as anthropic (GeminiProvider/resolve_api_key).
     api_key = ((profile or {}).get("api_key") or "").strip() or None
-    return GeminiProvider(api_key=api_key, secrets=secrets)
+    base_url = ((profile or {}).get("base_url") or "").strip() or None
+    return GeminiProvider(api_key=api_key, base_url=base_url, secrets=secrets)
 
 
 def _build_bedrock(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -280,6 +285,15 @@ DESCRIPTORS: list[ProviderDescriptor] = [
             ),
             # No thinking_budget field (owner call 2026-07-23): extended thinking is
             # on by default; the profile key stays a hidden override (0 = off).
+            ProviderField(
+                "base_url",
+                "Custom endpoint (optional)",
+                secret=False,
+                required=False,
+                placeholder="https://…/anthropic",
+                help="Route through a proxy gateway (e.g. LiteLLM) that mimics the "
+                "Anthropic API. Leave blank for api.anthropic.com.",
+            ),
         ],
         build=_build_anthropic,
         recommended_model="claude-fable-5",
@@ -295,6 +309,15 @@ DESCRIPTORS: list[ProviderDescriptor] = [
                 "Gemini API key",
                 secret=True,
                 placeholder="AIza…",
+            ),
+            ProviderField(
+                "base_url",
+                "Custom endpoint (optional)",
+                secret=False,
+                required=False,
+                placeholder="https://…/gemini",
+                help="Route through a proxy gateway (e.g. LiteLLM) that mimics the "
+                "Generative Language API. Leave blank for the default Google endpoint.",
             ),
         ],
         build=_build_gemini,
@@ -812,14 +835,19 @@ def verify_provider_key(
         return _verify_vertex(fields or {}, timeout)
     try:
         if name == "anthropic":
+            base = (base_url or "").strip().rstrip("/") or "https://api.anthropic.com"
             resp = httpx.get(
-                "https://api.anthropic.com/v1/models",
+                base + "/v1/models",
                 headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
                 timeout=timeout,
             )
         elif name == "gemini":
+            base = (
+                (base_url or "").strip().rstrip("/")
+                or "https://generativelanguage.googleapis.com"
+            )
             resp = httpx.get(
-                "https://generativelanguage.googleapis.com/v1beta/models",
+                base + "/v1beta/models",
                 params={"key": key},
                 timeout=timeout,
             )
