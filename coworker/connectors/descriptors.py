@@ -65,13 +65,34 @@ class ConnectorDescriptor:
     # Extra search terms for the catalog typeahead — capability words the title
     # doesn't carry (e.g. "calendar" must surface Outlook, not just Google Calendar).
     aliases: tuple = ()
-    # Vendor-hosted MCP server URL → this connector is MCP-BACKED: one-click connect
-    # runs the local MCP OAuth flow (DCR, tokens on this Mac — no broker), and the
-    # tool surface is the PINNED subset in tool_defs (names `mcp__<name>__<tool>`),
-    # never the vendor's full catalog (drift can only shrink capability, not grow it).
-    # A connector may carry BOTH mcp_url and manual fields (jira): the profile's
-    # mode decides which tool set is live.
+    # Vendor-hosted MCP server URL → this connector is MCP-BACKED: connect
+    # runs the MCP flow named by `mcp_auth` below, and the tool surface is the
+    # PINNED subset in tool_defs (names `mcp__<name>__<tool>`), never the vendor's
+    # full catalog (drift can only shrink capability, not grow it). A connector may
+    # carry BOTH mcp_url and manual fields (jira): the profile's mode decides which
+    # tool set is live.
     mcp_url: str = ""
+    # How the MCP-backed connect authenticates — independent of `auth` above, which
+    # describes the MANUAL field form only (jira's `auth` is "api_token" for its
+    # manual REST tools, but its one-click MCP path is full browser OAuth, because
+    # Atlassian's MCP server supports Dynamic Client Registration):
+    #   "oauth"     → one-click browser OAuth 2.1 + PKCE + DCR (jira, monday, default).
+    #   "connector" → NOT one-click: the manual field form's connect flow seeds the
+    #     MCP entry itself, and mcp/client.py injects the key from the SecretStore
+    #     at connect time. For a connector whose OAuth needs a vendor-registered
+    #     redirect our dynamic sidecar port can't provide (New Relic's fixed OAuth
+    #     client id; the same DCR wall Asana hit — Asana just has no mcp_url at all,
+    #     since it has no non-oauth path to fall back to).
+    mcp_auth: str = "oauth"
+    # For an mcp_auth="connector" descriptor: given the resolved field values,
+    # returns the URL to seed instead of `mcp_url` as-is (e.g. New Relic's
+    # per-region endpoint). None means always use `mcp_url`.
+    mcp_url_for: Optional[Callable[[dict], str]] = None
+    # Extra STATIC (non-secret) headers to seed alongside an mcp_auth="connector"
+    # connector's config, e.g. New Relic's `include-tags` tool-corpus filter. Never
+    # put a secret here — the seeded config is plain text and paste-shareable; the
+    # API key itself is injected at connect time from the SecretStore (mcp/client.py).
+    mcp_headers: dict = field(default_factory=dict)
     # Experimental connectors are hidden unless the user enables them in settings, require an
     # explicit risk acknowledgment to connect, and ship in a separate package
     # (connectors/experimental/) that release builds exclude entirely.
@@ -406,6 +427,27 @@ def _validate_outlook(creds: dict) -> ValidationResult:
         "https://graph.microsoft.com/v1.0/me",
         headers={"Authorization": f"Bearer {creds.get('access_token', '')}"},
         identity=lambda d: d.get("mail") or d["userPrincipalName"],
+    )
+
+
+def _newrelic_region_prefix(region: str) -> str:
+    """us (default) has no prefix; eu/jp prefix both the MCP and NerdGraph hostnames."""
+    r = str(region or "").strip().lower()
+    return f"{r}." if r in ("eu", "jp") else ""
+
+
+def _newrelic_mcp_url(region: str) -> str:
+    return f"https://mcp.{_newrelic_region_prefix(region)}newrelic.com/mcp/"
+
+
+def _validate_newrelic(creds: dict) -> ValidationResult:
+    region = _newrelic_region_prefix(creds.get("region", ""))
+    return _validate_whoami(
+        "POST",
+        f"https://api.{region}newrelic.com/graphql",
+        headers={"Api-Key": creds.get("api_key", ""), "Content-Type": "application/json"},
+        json={"query": "{ actor { user { email } } }"},
+        identity=lambda d: d["data"]["actor"]["user"]["email"],
     )
 
 
@@ -1026,6 +1068,49 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
             "Intuit access tokens expire after about an hour. Managed sign-in will replace this manual step later.",
         ],
         validate=_validate_quickbooks,
+    ),
+    ConnectorDescriptor(
+        name="newrelic",
+        title="New Relic",
+        icon="◔",
+        blurb="Query alerts, entities, and NRQL for incident triage.",
+        auth="api_token",
+        two_way=False,
+        brand_color="#008c99",
+        logo="newrelic",
+        aliases=("observability", "apm", "on-call", "on call", "incidents", "monitoring", "alerts"),
+        # New Relic's OAuth needs a vendor-registered redirect our dynamic sidecar port
+        # can't provide (the DCR wall Asana also hit) — API key is the supported path
+        # here. mcp_url is the US default; mcp_url_for picks the region the user set.
+        mcp_url=_newrelic_mcp_url(""),
+        mcp_auth="connector",
+        mcp_url_for=lambda raw: _newrelic_mcp_url(raw.get("region", "")),
+        # No include-tags header (docs.newrelic.com/docs/agentic-ai/mcp/setup): we pin
+        # every tool (tool_defs.py) including convert_time_period_to_epoch_ms, which
+        # exists but carries none of the 6 documented tags — a tag filter here would
+        # silently drop it. The pin is the only allowlist that matters.
+        fields=[
+            Field(
+                "api_key",
+                "User API key",
+                secret=True,
+                help="New Relic → user menu → API keys → create (or copy) a User key.",
+                placeholder="NRAK-…",
+            ),
+            Field(
+                "region",
+                "Region",
+                required=False,
+                help="us (default), eu, or jp — matches your account's data center.",
+                placeholder="us",
+            ),
+        ],
+        instructions=[
+            "In New Relic, enable the preview: user menu (bottom left) → Administration → Previews & Trials → New Relic AI MCP server.",
+            "User menu → API keys → create a User key (format NRAK-…) and paste it below.",
+            "Only set a region if your account is EU or JP — leave it blank for US.",
+        ],
+        validate=_validate_newrelic,
     ),
     # -- placeholders (available=False) --------------------------------------------
     # Not yet shipped, but referenced by persona `recommends` (e.g. Ops → datadog/pagerduty) so

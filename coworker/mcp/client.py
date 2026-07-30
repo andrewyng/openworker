@@ -96,6 +96,7 @@ class MCPManager:
                             f"MCP server '{server.name}' is http but has no url"
                         )
                     auth = None
+                    headers = dict(server.headers or {})
                     if server.auth == "oauth":
                         from ..secrets import SecretStore
                         from .oauth import build_auth
@@ -108,9 +109,21 @@ class MCPManager:
                             self._secrets,
                             interactive=interactive,
                         )
+                    elif server.auth == "connector":
+                        # Non-oauth MCP-backed connector (New Relic): the API key
+                        # lives in that connector's SecretStore profile, never in
+                        # this plain-text, paste-shareable config — fetched fresh
+                        # on every connect instead of persisted to server.headers.
+                        from ..secrets import SecretStore
+
+                        if self._secrets is None:
+                            self._secrets = SecretStore()
+                        profile = self._secrets.get(f"{server.name}:default") or {}
+                        if profile.get("api_key"):
+                            headers["Api-Key"] = profile["api_key"]
                     read, write, *_ = await stack.enter_async_context(
                         streamablehttp_client(
-                            server.url, headers=server.headers or None, auth=auth
+                            server.url, headers=headers or None, auth=auth
                         )
                     )
                 else:

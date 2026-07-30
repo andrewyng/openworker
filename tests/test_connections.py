@@ -76,30 +76,32 @@ def test_persona_defaults_seeded_from_manifest(tmp_path):
     store = PersonaConnectionStore(p)
     manifest = (
         _ops_manifest()
-    )  # recommends: github/slack/datadog core, pagerduty optional, +mcp
+    )  # recommends: github/slack/newrelic core, datadog/pagerduty optional, +mcp
 
-    # Every CORE connector seeds ON regardless of whether it's connected yet; the optional one
-    # (pagerduty) seeds OFF; the mcp recommend is not a connector and is ignored. datadog is core but
-    # NOT in the connected set here — it still seeds True (effective() gates connectedness, not the
-    # seed), so it self-lights when datadog is later connected instead of being frozen False.
+    # Every CORE connector seeds ON regardless of whether it's connected yet; the optional ones
+    # (datadog, pagerduty) seed OFF; the mcp recommend is not a connector and is ignored. newrelic
+    # is core but NOT in the connected set here — it still seeds True (effective() gates
+    # connectedness, not the seed), so it self-lights when newrelic later connects instead of
+    # being frozen False.
     seeded = store.defaults_for("ops", manifest, connected={"github", "slack"})
     assert seeded == {
         "github": True,
         "slack": True,
-        "datadog": True,
+        "newrelic": True,
+        "datadog": False,
         "pagerduty": False,
     }
 
-    # While datadog is disconnected, effective() excludes it (connected-gate) but keeps github/slack.
+    # While newrelic is disconnected, effective() excludes it (connected-gate) but keeps github/slack.
     assert effective(
         connected={"github", "slack"}, persona_defaults=seeded, session_overrides={}
     ) == {"github": True, "slack": True}
-    # Once datadog connects, its True seed now lights up — no re-seed, no manual toggle needed.
+    # Once newrelic connects, its True seed now lights up — no re-seed, no manual toggle needed.
     assert effective(
-        connected={"github", "slack", "datadog"},
+        connected={"github", "slack", "newrelic"},
         persona_defaults=seeded,
         session_overrides={},
-    ) == {"github": True, "slack": True, "datadog": True}
+    ) == {"github": True, "slack": True, "newrelic": True}
 
     # persisted on first read: a fresh store over the same path reads the seeded row back
     assert PersonaConnectionStore(p).get("ops") == seeded

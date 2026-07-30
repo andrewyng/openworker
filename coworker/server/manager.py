@@ -1046,6 +1046,11 @@ class SessionManager:
         d = get_descriptor(name)
         if d is None or not d.mcp_url:
             return {"ok": False, "error": f"{name} has no MCP connect path"}
+        if d.mcp_auth != "oauth":
+            # Not one-click (New Relic: API key only) — the GUI gates this on
+            # `mcp_auth`, but fail closed here too rather than seed a broken
+            # oauth entry if this is ever reached some other way.
+            return {"ok": False, "error": f"{name} has no one-click MCP connect path"}
         put_global_server(
             name,
             {

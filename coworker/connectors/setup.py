@@ -83,9 +83,12 @@ def connector_list(secrets: SecretStore) -> list[dict[str, Any]]:
             "brand_color": d.brand_color,
             "logo": d.logo,
             "aliases": list(d.aliases),
-            # MCP-backed one-click (vendor-hosted MCP server + local OAuth) —
-            # distinct from `managed` (broker OAuth): no cloud sign-in needed.
+            # MCP-backed (vendor-hosted MCP server) — distinct from `managed` (broker
+            # OAuth): no cloud sign-in needed either way. `mcp_auth` tells the GUI
+            # whether that's a one-click browser OAuth ("oauth") or manual-only,
+            # the field form's own connect seeding the MCP entry ("connector").
             "mcp": bool(d.mcp_url),
+            "mcp_auth": d.mcp_auth if d.mcp_url else None,
             "fields": [f.to_dict() for f in d.fields],
             "instructions": d.instructions,
             "connected": connected,
@@ -382,7 +385,33 @@ def connect_connector(
             return result
         return {"ok": True, "account": identity or account_id, "account_id": account_id}
     secrets.put(f"{name}:default", profile)
+    if d.mcp_url and d.mcp_auth != "oauth":
+        _seed_header_mcp_server(d, raw)
     return {"ok": True, "account": identity}
+
+
+def _seed_header_mcp_server(d, raw: dict[str, Any]) -> None:
+    """Seed the global MCP config for a non-oauth MCP-backed connector (New Relic):
+    pinned tools, the descriptor's static (non-secret) headers, and the connector's
+    OWN url for these creds (region, etc). The API key itself is never written here —
+    mcp.json is plain text and paste-shareable; mcp/client.py injects it fresh from
+    the SecretStore at connect time (`auth: "connector"`)."""
+    from ..mcp.config import put_global_server
+    from .tool_defs import mcp_pinned_tools
+
+    put_global_server(
+        d.name,
+        {
+            "url": d.mcp_url_for(raw) if d.mcp_url_for else d.mcp_url,
+            "auth": "connector",
+            "headers": dict(d.mcp_headers),
+            # Server-level approval off: writes (none, today) would gate per-tool via
+            # the pinned read/write classification, same as the oauth-backed connectors.
+            "requires_approval": False,
+            "include_tools": mcp_pinned_tools(d.name),
+            "enabled": True,
+        },
+    )
 
 
 def managed_connect_connector(
@@ -520,5 +549,13 @@ def disconnect_connector(secrets: SecretStore, name: str) -> dict[str, Any]:
         from ..mcp import oauth as mcp_oauth
 
         dropped_accounts = mcp_oauth.sign_out(name, secrets) or dropped_accounts
+        mcp_config.delete_global_server(name)
+    d = get_descriptor(name)
+    if d is not None and d.mcp_url and d.mcp_auth != "oauth":
+        # Non-oauth MCP-backed connect (New Relic): the manual flow seeded the
+        # global server entry itself (no profile `mode` marker) — take it with us,
+        # same "no dangling config" invariant as the oauth teardown above.
+        from ..mcp import config as mcp_config
+
         mcp_config.delete_global_server(name)
     return {"ok": secrets.delete(f"{name}:default") or dropped_accounts}

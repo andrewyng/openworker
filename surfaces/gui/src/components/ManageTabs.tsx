@@ -811,8 +811,9 @@ export function ConnectSetup({
 
   return (
     <div className="border-t border-line px-3.5 py-3 space-y-3">
-      {c.mcp && !manualOnly && (
-        /* MCP-backed one-click needs no cloud sign-in — the OAuth flow is local. */
+      {c.mcp && c.mcp_auth === "oauth" && !manualOnly && (
+        /* MCP-backed one-click needs no cloud sign-in — the OAuth flow is local.
+           mcp_auth:"connector" connectors (New Relic) have no one-click path. */
         <div className="space-y-2" data-testid="mcp-connect">
           <button className={BTN_ACCENT} onClick={mcpOneClick} disabled={waiting}>
             {waiting ? "Check your browser…" : `Connect ${c.title} with one click`}

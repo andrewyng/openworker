@@ -445,7 +445,11 @@ export interface Connector {
   brand_color: string; // hex brand color, e.g. "#611f69" (fallback gray "#6b7280")
   logo: string; // stable logo id keyed into the frontend registry (empty → fallback glyph)
   aliases?: string[]; // extra typeahead terms ("calendar" surfaces Outlook)
-  mcp?: boolean; // MCP-backed one-click (vendor-hosted MCP + local OAuth — no cloud sign-in)
+  mcp?: boolean; // MCP-backed (vendor-hosted MCP server — no cloud sign-in either way)
+  // How the MCP-backed connect authenticates: "oauth" = one-click browser OAuth
+  // (jira, monday); "connector" = manual-only, the field form's own connect seeds
+  // the MCP entry (New Relic — its OAuth needs a redirect we can't provide).
+  mcp_auth?: string | null;
   allowed_users: string[]; // the allow-list (managed inline in the Connectors tab)
   allowed_user_names?: Record<string, string | null>; // id → display name (people directory)
   approval_owner_ids?: string[]; // Manual Slack: humans allowed to resolve approvals

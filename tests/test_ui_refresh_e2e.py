@@ -294,10 +294,11 @@ async def test_ui_refresh_cross_cutting_e2e(fake_slack, tmp_path, monkeypatch):
         ]
         view = client.get(f"/v1/sessions/{SID}/connections").json()
         assert view["attention"] == len(unconnected)
-        # only slack is account-connected here -> github/datadog/pagerduty remain
-        assert view["attention"] == 3
+        # only slack is account-connected here -> github/newrelic/datadog/pagerduty remain
+        assert view["attention"] == 4
         assert {r["connector"] for r in view["recommended"]} == {
             "github",
+            "newrelic",
             "datadog",
             "pagerduty",
         }
