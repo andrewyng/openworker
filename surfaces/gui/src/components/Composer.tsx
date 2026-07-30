@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Attachment, SessionUsage } from "../types";
 import { isPdfFile, readFile } from "../attach";
-import { getSettings, inspectPdf } from "../api";
+import { getSettings, getSkills, inspectPdf, type SkillInfo } from "../api";
 import { formatTokens, totalTokens } from "../usage";
 import { Dropdown, type Option } from "./Dropdown";
 import { Icon } from "./Icon";
@@ -98,6 +98,10 @@ export function Composer(props: Props) {
   const [attachNotice, setAttachNotice] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [skillPaletteOpen, setSkillPaletteOpen] = useState(false);
+  const [skillQuery, setSkillQuery] = useState("");
+  const [skillIndex, setSkillIndex] = useState(0);
   const noticeTimer = useRef<number | null>(null);
 
   // Rejected-attachment notice: visible ~8s, then clears (or on ✕).
@@ -116,6 +120,13 @@ export function Composer(props: Props) {
     el.style.height = `${Math.max(next, 24)}px`;
     el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
   }, [text]);
+
+  useEffect(() => { getSkills().then(setSkills).catch(() => {}); }, []);
+
+  const matchedSkills = skillQuery
+    ? skills.filter((s) => s.name.toLowerCase().includes(skillQuery.toLowerCase()))
+    : skills;
+  const paletteVisible = skillPaletteOpen && matchedSkills.length > 0;
 
   // Apply a prefill (text + attachments) pushed from outside, then focus the composer. Applied at
   // most once per nonce (a ref guards against StrictMode/re-render double-fires), and attachments
@@ -261,23 +272,118 @@ export function Composer(props: Props) {
 
   const needsModel = props.modelReady === false;
 
+  const submitWithSkill = (skill: SkillInfo, restText: string) => {
+    if (props.running || dictation?.recording || dictationBusy) return;
+    if (needsModel) { props.onConnectModel?.(); return; }
+    const prompt = `请加载 skill「${skill.name}」（${skill.description}）。${restText ? `\n\n用户请求：${restText}` : ""}`;
+    props.onSend(prompt, attachments);
+    setText("");
+    setAttachments([]);
+    setSkillPaletteOpen(false);
+  };
+
   const submit = () => {
     const t = text.trim();
     if ((!t && attachments.length === 0) || props.running || dictation?.recording || dictationBusy) return;
-    // No model connected: keep the draft (don't drop it) and send the user to setup instead.
     if (needsModel) {
       props.onConnectModel?.();
       return;
     }
+    // Check if text is a /skill command with a space (skill already selected, user typed intent)
+    const cmdMatch = t.match(/^\/(\S+)\s+(.*)$/s);
+    if (cmdMatch) {
+      const [, skillName, restText] = cmdMatch;
+      const skill = skills.find((s) => s.name.toLowerCase() === skillName.toLowerCase());
+      if (skill) {
+        submitWithSkill(skill, restText.trim());
+        return;
+      }
+    }
+    // Bare /skill with no args -> send with empty intent
+    const bareMatch = t.match(/^\/(\S+)$/);
+    if (bareMatch) {
+      const skill = skills.find((s) => s.name.toLowerCase() === bareMatch[1].toLowerCase());
+      if (skill) {
+        submitWithSkill(skill, "");
+        return;
+      }
+    }
     props.onSend(t, attachments);
     setText("");
     setAttachments([]);
+    setSkillPaletteOpen(false);
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    if (paletteVisible) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSkillIndex((i) => (i + 1) % matchedSkills.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSkillIndex((i) => (i - 1 + matchedSkills.length) % matchedSkills.length);
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        const skill = matchedSkills[skillIndex];
+        if (skill) {
+          // Step 1: select the skill, close palette, keep /name in input for user to type intent
+          setText(`/${skill.name} `);
+          setSkillPaletteOpen(false);
+          // Refocus and place cursor at end
+          requestAnimationFrame(() => {
+            const el = textareaRef.current;
+            if (el) {
+              el.focus();
+              el.setSelectionRange(el.value.length, el.value.length);
+            }
+          });
+          return;
+        }
+      }
+      if (e.key === "Tab" && !e.shiftKey) {
+        e.preventDefault();
+        const skill = matchedSkills[skillIndex];
+        if (skill) {
+          setText(`/${skill.name} `);
+          setSkillPaletteOpen(false);
+          requestAnimationFrame(() => {
+            const el = textareaRef.current;
+            if (el) {
+              el.focus();
+              el.setSelectionRange(el.value.length, el.value.length);
+            }
+          });
+          return;
+        }
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSkillPaletteOpen(false);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
+    }
+  };
+
+  const onTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const v = e.target.value;
+    setText(v);
+    // Only show palette when typing /query WITHOUT a space (still searching)
+    // Once there's a space after /name, the skill is "locked in" - no palette
+    if (v.startsWith("/") && !v.slice(1).includes(" ")) {
+      const query = v.slice(1);
+      setSkillQuery(query);
+      setSkillIndex(0);
+      setSkillPaletteOpen(true);
+    } else {
+      setSkillPaletteOpen(false);
     }
   };
 
@@ -394,12 +500,39 @@ export function Composer(props: Props) {
           if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
         }}
       >
+        {paletteVisible && (
+          <div className="skill-palette border-b border-line bg-paper">
+            {matchedSkills.slice(0, 8).map((s, i) => (
+              <button
+                key={s.name}
+                className={
+                  "w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-[13px] " +
+                  (i === skillIndex ? "bg-accentSoft text-accent" : "hover:bg-paper text-ink")
+                }
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  const restText = text.replace(/^\/\S+\s*/, "").trim();
+                  submitWithSkill(s, restText);
+                }}
+                onMouseEnter={() => setSkillIndex(i)}
+              >
+                <span className="shrink-0 w-5 h-5 rounded grid place-items-center bg-accentSoft text-accent text-[11px] font-bold">
+                  /
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium truncate">{s.name}</span>
+                  <span className="block text-[11px] text-muted truncate">{s.description}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           className="w-full block px-3.5 pt-3.5 pb-1.5 text-[14.5px]"
           placeholder={props.placeholder || "向协作者提问…  （拖放或粘贴文件）"}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={onTextChange}
           onKeyDown={onKey}
           onPaste={onPaste}
           rows={1}

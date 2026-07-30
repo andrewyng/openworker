@@ -467,7 +467,7 @@ export interface Connector {
   installations?: GithubInstallation[]; // GitHub only: App installations (managed relay)
 }
 
-// --- OpenWorker Cloud (optional sign-in; manual token paste always works) ---
+// --- Gamer Worker Cloud (optional sign-in; manual token paste always works) ---
 
 export interface CloudStatus {
   signed_in: boolean;
@@ -1213,6 +1213,17 @@ export async function getSettings(): Promise<ModelSettings> {
   return res.json();
 }
 
+export interface SkillInfo {
+  name: string;
+  description: string;
+}
+
+export async function getSkills(): Promise<SkillInfo[]> {
+  const res = await fetch(`${httpBase()}/v1/skills`);
+  const data = await res.json();
+  return data.skills ?? [];
+}
+
 export async function setModelKey(
   apiKey: string,
 ): Promise<{ ok: boolean; error?: string; has_key?: boolean; source?: string }> {
@@ -1544,7 +1555,7 @@ export interface SlackMember {
 }
 
 // One channel from the workspace roster. Private channels appear only where the
-// bot is a member (Slack API constraint); is_member=false → "invite @OpenWorker" hint.
+// bot is a member (Slack API constraint); is_member=false → "invite @Gamer Worker" hint.
 export interface SlackChannelEntry {
   id: string;
   name: string;

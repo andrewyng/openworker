@@ -735,7 +735,7 @@ export function ConnectorTools({ c, onChanged }: { c: Connector; onChanged: () =
     );
   return (
     <div className="border-t border-line px-3.5 py-3">
-      <div className={SEC_H + " mb-2"}>Tools exposed to OpenWorker</div>
+      <div className={SEC_H + " mb-2"}>Tools exposed to Gamer Worker</div>
       <div className="space-y-1.5">
         {c.tools.map((tool) => (
           <label

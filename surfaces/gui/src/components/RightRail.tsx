@@ -253,7 +253,7 @@ function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolN
   }
   return (
     <div className="rail-muted">
-      对于较长的多步骤任务，OpenWorker 在规划、使用工具、等待批准以及生成产出时，进度将显示在此处。
+      对于较长的多步骤任务，Gamer Worker 在规划、使用工具、等待批准以及生成产出时，进度将显示在此处。
     </div>
   );
 }

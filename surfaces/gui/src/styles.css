@@ -456,6 +456,8 @@ button.btn.danger { color: var(--accent); }
   background: transparent; color: var(--ink); min-height: 24px; max-height: 88px; overflow: hidden;
 }
 .composer textarea::placeholder { color: var(--faint); }
+.skill-palette { max-height: 280px; overflow-y: auto; border-radius: 16px 16px 0 0; }
+.skill-palette button { border: none; cursor: pointer; }
 .voice-wave-line { flex: 1; min-width: 28px; border-top: 1px dashed var(--line-strong); }
 .voice-wave-bars { height: 28px; display: inline-flex; align-items: center; gap: 2px; color: var(--accent); }
 .voice-wave-bars i {

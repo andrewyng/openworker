@@ -119,9 +119,9 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
         {step === 0 && (
           <section data-testid="ob-step-model" className="flex-1 min-h-0 flex flex-col">
             {/* Persistent header — stays put while the region below swaps (§39). */}
-            <h1 className="text-[19px] font-semibold">欢迎使用 OpenWorker<span className="beta-tag">测试版</span></h1>
+            <h1 className="text-[19px] font-semibold">欢迎使用 Gamer Worker<span className="beta-tag">测试版</span></h1>
             <p className="text-[13px] text-muted mt-0.5 mb-4">
-              选择一个模型提供商以开始使用 - OpenWorker 使用您自己的密钥运行，您的密钥和数据都保留在这台 Mac 上。
+              选择一个模型提供商以开始使用 - Gamer Worker 使用您自己的密钥运行，您的密钥和数据都保留在这台 Mac 上。
             </p>
 
             {!ps.sel ? (
@@ -237,7 +237,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                   <span className="block text-[13px] font-semibold text-ink mb-0.5">
                     登录以实现一键连接
                   </span>
-                  OpenWorker 为 20+ 个工具处理 OAuth - 无需开发者控制台，无需粘贴密钥。
+                  Gamer Worker 为 20+ 个工具处理 OAuth - 无需开发者控制台，无需粘贴密钥。
                   令牌保留在这台 Mac 上。
                 </span>
                 {signinPhase ? (

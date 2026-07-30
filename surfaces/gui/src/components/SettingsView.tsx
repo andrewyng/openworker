@@ -263,7 +263,7 @@ function VoiceInputSection() {
       />
 
       {!desktop ? (
-        <div className={CARD + " p-4 text-[13px] text-muted"}>Voice Input setup is available in the OpenWorker desktop app.</div>
+        <div className={CARD + " p-4 text-[13px] text-muted"}>语音输入设置可在 Gamer Worker 桌面应用中使用。</div>
       ) : (
         <div className="space-y-4">
           <div className="rounded-xl border border-green-200 bg-green-50/70 px-4 py-3 text-[12.5px] text-green-800">
@@ -371,7 +371,7 @@ function PersonasSection({ onOpenPersona }: { onOpenPersona?: (id: string) => vo
         <span className="min-w-0 flex-1">
           <span className="block text-[13.5px] font-medium">Browse the Persona Gallery</span>
           <span className="block text-[12px] text-muted">
-            Curated coworkers from the OpenWorker team — see what each can do before installing.
+            来自 Gamer Worker 团队的精选协作者 — see what each can do before installing.
           </span>
         </span>
         <span className="text-[12.5px] text-accent shrink-0">Open →</span>
@@ -409,7 +409,7 @@ function AppearanceSection() {
 
   return (
     <section>
-      <PanelHead title="General" sub="How OpenWorker looks and behaves on this machine." />
+      <PanelHead title="General" sub="Gamer Worker 在此设备上的外观和行为 on this machine." />
 
       <div className={CARD + " p-4 mb-4"}>
         <div className={FIELD_LABEL}>Theme</div>
@@ -436,7 +436,7 @@ function AppearanceSection() {
             <input type="checkbox" className="mt-0.5" checked={autostart} onChange={(e) => toggleAuto(e.target.checked)} />
             <span>
               <span className="block text-[13px] text-ink">Open at login</span>
-              <span className="block text-[12px] text-muted">Launch OpenWorker automatically when you sign in.</span>
+              <span className="block text-[12px] text-muted">Gamer Worker 开机自动启动 when you sign in.</span>
             </span>
           </label>
           <label className="flex items-start gap-3 py-2">
@@ -571,7 +571,7 @@ function UpdateInline() {
             ? "You're on the latest version."
             : state === "error"
               ? "Couldn't check right now — try again later."
-              : "Downloading — OpenWorker restarts by itself when it's ready."}
+              : "Downloading — Gamer Worker restarts by itself when it's ready."}
         </span>
       )}
     </span>
@@ -752,7 +752,7 @@ function FilesCard() {
           <input
             className={INPUT}
             type="text"
-            placeholder="~/OpenWorker"
+            placeholder="~/Gamer Worker"
             value={scratchDraft}
             spellCheck={false}
             autoComplete="off"

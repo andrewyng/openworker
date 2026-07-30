@@ -6,3 +6,5 @@ __pycache__/
 build/
 dist/
 .coverage
+.DS_Store
+*/.DS_Store

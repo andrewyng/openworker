@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenWorker",
+  "productName": "Gamer Worker",
   "version": "0.1.6",
   "identifier": "com.openworker.desktop",
   "build": {
@@ -19,7 +19,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "publisher": "OpenWorker",
+    "publisher": "Gamer Worker",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
