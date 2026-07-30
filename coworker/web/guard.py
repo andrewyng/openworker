@@ -28,6 +28,11 @@ from urllib.parse import urlsplit
 
 MAX_REDIRECTS = 5
 
+# RFC 6598 shared address space. Python's is_private misses it, but it is carrier grade
+# NAT space and Tailscale hands out internal hosts here (100.64.0.0/10), so a fetch to it
+# is the same "reach the machine's network position" class as RFC1918.
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")
+
 
 def _blocked_reason(ip: ipaddress._BaseAddress) -> Optional[str]:
     if ip.is_loopback:
@@ -36,6 +41,8 @@ def _blocked_reason(ip: ipaddress._BaseAddress) -> Optional[str]:
         return "link-local (includes the cloud metadata endpoint)"
     if ip.is_private:
         return "a private network"
+    if ip.version == 4 and ip in _CGNAT:
+        return "shared address space (CGNAT / RFC 6598)"
     if ip.is_multicast:
         return "multicast"
     if ip.is_reserved or ip.is_unspecified:

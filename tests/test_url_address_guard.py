@@ -31,10 +31,20 @@ def _resolves_to(monkeypatch, ip: str):
     ("http://192.168.1.1/", "private"),
     ("http://172.16.4.4/", "private"),
     ("http://0.0.0.0/", "refusing to fetch"),  # 0.0.0.0/8 lands in is_private first
+    ("http://100.64.0.1/", "CGNAT"),  # RFC 6598 shared space (Tailscale, CGNAT)
+    ("http://100.127.255.254/", "CGNAT"),
 ])
 def test_blocked_literals(url, needle):
     reason = guard.check_url(url)
     assert reason and needle in reason
+
+
+def test_cgnat_neighbours_still_allowed(monkeypatch):
+    """100.64.0.0/10 is blocked, but the adjacent public 100.63/100.128 space is not."""
+    _resolves_to(monkeypatch, "100.63.255.255")
+    assert guard.check_url("http://below.example/") is None
+    _resolves_to(monkeypatch, "100.128.0.0")
+    assert guard.check_url("http://above.example/") is None
 
 
 def test_ipv4_mapped_ipv6_loopback_is_blocked():
@@ -155,3 +165,14 @@ def test_web_fetch_returns_the_refusal_as_a_tool_error(monkeypatch):
 
 def test_web_fetch_still_rejects_non_http_schemes():
     assert "http" in make_web_fetch_tool()("file:///etc/passwd")["error"]
+
+
+def test_browser_open_url_is_guarded_and_never_launches(monkeypatch):
+    """The Playwright browser_open_url is approval gated, but the address guard still
+    refuses a blocked URL before the browser is touched (defense in depth)."""
+    from coworker.connectors.browser_automation import make_browser_automation_tools
+
+    open_url = {t.__name__: t for t in make_browser_automation_tools()}["browser_open_url"]
+    out = open_url("http://169.254.169.254/latest/meta-data/")
+    assert "link-local" in out["error"]
+    assert out.get("ok") is None
