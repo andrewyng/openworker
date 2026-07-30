@@ -25,6 +25,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from .jsonstore import read_json, write_json_atomic
+
 
 @dataclass
 class Subscription:
@@ -42,17 +44,12 @@ class SubscriptionStore:
         self._load()
 
     def _load(self) -> None:
-        if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            self._subs = [Subscription(**raw) for raw in data.get("subscriptions", [])]
+        data = read_json(self.path, {}) or {}
+        self._subs = [Subscription(**raw) for raw in data.get("subscriptions", [])]
 
     def _save(self) -> None:
-        if not self.path:
-            return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"subscriptions": [asdict(s) for s in self._subs]}, indent=2),
-            encoding="utf-8",
+        write_json_atomic(
+            self.path, {"subscriptions": [asdict(s) for s in self._subs]}
         )
 
     # -- mutations --------------------------------------------------------------

@@ -1,0 +1,73 @@
+# Guard rules — safety policies for tool calls.
+#
+# Rules are evaluated in order. The FIRST matching rule wins.
+# When no rule matches, the base PermissionEngine decision applies.
+#
+# Each rule can match on:
+#   - tool name (required)
+#   - command patterns: contains / prefix / regex
+#   - argument key-value pairs
+#   - fan-out concurrency limits (for subagent/spawn tools)
+#
+# Actions: allow | deny | limit
+
+rules:
+  # --- Exec (shell) safety ---
+
+  - name: block-recursive-delete
+    tool: run_shell
+    match:
+      command:
+        contains: "rm -rf "
+    action: deny
+    reason: "Block recursive delete commands"
+
+  - name: block-force-delete
+    tool: run_shell
+    match:
+      command:
+        contains: "rm -f"
+    action: deny
+    reason: "Block force delete commands"
+
+  - name: block-destructive-disk-wipe
+    tool: run_shell
+    match:
+      command:
+        contains: "dd if="
+    action: deny
+    reason: "Block raw disk write commands"
+
+  - name: block-chmod-recursive
+    tool: run_shell
+    match:
+      command:
+        contains: "chmod -R"
+    action: deny
+    reason: "Block recursive permission changes"
+
+  - name: block-chown-recursive
+    tool: run_shell
+    match:
+      command:
+        contains: "chown -R"
+    action: deny
+    reason: "Block recursive owner changes"
+
+  - name: block-mkfs
+    tool: run_shell
+    match:
+      command:
+        contains: "mkfs"
+    action: deny
+    reason: "Block filesystem creation commands"
+
+  # --- Subagent fan-out limits ---
+  # Limit concurrent explorer subagents to prevent resource exhaustion.
+
+  - name: limit-explorer-fanout
+    tool: explore
+    fanout:
+      max_concurrent: 3
+    action: deny
+    reason: "Limit concurrent explorer subagents"

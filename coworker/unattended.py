@@ -8,25 +8,21 @@ the agent suspends until answered; the composer is disabled. Turning it on is a 
 
 from __future__ import annotations
 
-import json
 import threading
 from pathlib import Path
 from typing import Optional
+
+from .jsonstore import read_json, write_json_atomic
 
 
 class UnattendedRegistry:
     def __init__(self, path: Optional[str | Path] = None) -> None:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
-        self._flags: dict[str, bool] = {}
-        if self.path and self.path.is_file():
-            self._flags = dict(json.loads(self.path.read_text(encoding="utf-8")))
+        self._flags: dict[str, bool] = dict(read_json(self.path, {}) or {})
 
     def _save(self) -> None:
-        if not self.path:
-            return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self._flags, indent=2), encoding="utf-8")
+        write_json_atomic(self.path, self._flags)
 
     def is_unattended(self, session_id: str) -> bool:
         return bool(self._flags.get(session_id, False))

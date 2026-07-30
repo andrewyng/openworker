@@ -74,6 +74,8 @@ class TurnEngine:
         question_asker: Optional[
             Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
         ] = None,
+        # Guard middleware for fan-out subagent safety policies.
+        guard_middleware: Optional[Any] = None,
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
         interrupt_hooks: Optional[list[Callable[[], None]]] = None,
@@ -123,6 +125,7 @@ class TurnEngine:
         # tool_call.id → the standing rule that auto-allowed it ("tool → target"), so the
         # TOOL_FINISHED event can carry the note to the tool card (§25).
         self._standing_notes: dict[str, str] = {}
+        self.guard_middleware = guard_middleware
         self._interrupt_hooks: list[Callable[[], None]] = list(interrupt_hooks or [])
 
     # -- external controls ------------------------------------------------------
@@ -606,22 +609,77 @@ class TurnEngine:
         serial = [tc for tc in cleared if tc not in concurrent]
 
         if concurrent:
+            to_run: list[ToolCall] = []
             for tool_call in concurrent:
+                if self.guard_middleware is not None:
+                    if not self.guard_middleware.track_start(tool_call.name):
+                        # Fan-out limit exceeded — deny immediately.
+                        self.messages.append(
+                            _tool_error_message(
+                                tool_call,
+                                "guard: fanout limit exceeded (max concurrent)",
+                            )
+                        )
+                        yield Event(
+                            EventType.TOOL_FINISHED,
+                            {
+                                "name": tool_call.name,
+                                "status": "denied",
+                                "reason": "guard: fanout limit exceeded",
+                            },
+                        )
+                        self._audit(
+                            tool_call,
+                            stage="finished",
+                            status="denied",
+                            reason="fanout limit exceeded",
+                        )
+                        continue
+                to_run.append(tool_call)
                 yield Event(EventType.TOOL_STARTED, {"name": tool_call.name})
                 self._audit(tool_call, stage="started")
-            outcomes = await asyncio.gather(
-                *[asyncio.to_thread(self._execute_sync, tc) for tc in concurrent]
-            )
-            for tool_call, (result, status) in zip(concurrent, outcomes):
-                yield self._record_result(tool_call, result, status)
+            if to_run:
+                outcomes = await asyncio.gather(
+                    *[asyncio.to_thread(self._execute_sync, tc) for tc in to_run]
+                )
+                for tool_call, (result, status) in zip(to_run, outcomes):
+                    if self.guard_middleware is not None:
+                        self.guard_middleware.track_end(tool_call.name)
+                    yield self._record_result(tool_call, result, status)
 
         for tool_call in serial:
             if self._cancel.is_set():
                 yield self._interrupted_tool(tool_call)
                 continue
+            if self.guard_middleware is not None:
+                if not self.guard_middleware.track_start(tool_call.name):
+                    # Fan-out limit exceeded — deny immediately.
+                    self.messages.append(
+                        _tool_error_message(
+                            tool_call,
+                            "guard: fanout limit exceeded (max concurrent)",
+                        )
+                    )
+                    yield Event(
+                        EventType.TOOL_FINISHED,
+                        {
+                            "name": tool_call.name,
+                            "status": "denied",
+                            "reason": "guard: fanout limit exceeded",
+                        },
+                    )
+                    self._audit(
+                        tool_call,
+                        stage="finished",
+                        status="denied",
+                        reason="fanout limit exceeded",
+                    )
+                    continue
             yield Event(EventType.TOOL_STARTED, {"name": tool_call.name})
             self._audit(tool_call, stage="started")
             result, status = await asyncio.to_thread(self._execute_sync, tool_call)
+            if self.guard_middleware is not None:
+                self.guard_middleware.track_end(tool_call.name)
             yield self._record_result(tool_call, result, status)
 
     def _interrupted_tool(self, tool_call: ToolCall) -> Event:
@@ -655,9 +713,14 @@ class TurnEngine:
         spec = self.registry.get(tool_call.name)
         metadata = spec.metadata if spec else None
 
-        decision = self.permissions.evaluate(
-            tool_call.name, tool_call.arguments, metadata
-        )
+        if self.guard_middleware is not None:
+            decision = self.guard_middleware.evaluate(
+                tool_call.name, tool_call.arguments, metadata
+            )
+        else:
+            decision = self.permissions.evaluate(
+                tool_call.name, tool_call.arguments, metadata
+            )
         allowed = decision.allowed
         reason = decision.reason
 

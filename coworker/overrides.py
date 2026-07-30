@@ -11,12 +11,12 @@ the persona-loading path never touches this file (see ``PERMISSIONS-AND-INBOX.md
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Callable, Optional
 
+from .jsonstore import read_json, write_json_atomic
 from .risk import RiskClass
 
 
@@ -39,32 +39,19 @@ class RiskOverrideStore:
         self._rules: list[_Rule] = self._load()
 
     def _load(self) -> list[_Rule]:
-        if not (self.path and self.path.is_file()):
-            return []
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        data = read_json(self.path, {}) or {}
         rules = []
         for r in data.get("rules", []):
             try:
                 rules.append(_Rule(str(r["pattern"]), RiskClass(str(r["risk"]))))
-            except (KeyError, ValueError):
+            except (KeyError, ValueError, TypeError):
                 continue  # skip malformed rules rather than failing the whole store
         return rules
 
     def save(self) -> None:
-        if not self.path:
-            return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(
-                {
-                    "rules": [
-                        {"pattern": r.pattern, "risk": r.risk.value}
-                        for r in self._rules
-                    ]
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
+        write_json_atomic(
+            self.path,
+            {"rules": [{"pattern": r.pattern, "risk": r.risk.value} for r in self._rules]},
         )
 
     def set_rule(self, pattern: str, risk: RiskClass | str) -> None:
