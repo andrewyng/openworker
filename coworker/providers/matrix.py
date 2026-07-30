@@ -149,6 +149,19 @@ MATRIX: dict[str, ModelEntry] = {
     "openrouter:meta-llama/llama-4-maverick": ModelEntry(
         "Llama 4 Maverick · via OpenRouter", _AGENTIC, 1_000_000
     ),
+    # SambaNova (added 2026-07-29)
+    "sambanova:MiniMax-M2.7": ModelEntry(
+        "MiniMax-M2.7 · SambaNova", _AGENTIC, 196_608
+    ),
+    "sambanova:DeepSeek-V3.1": ModelEntry(
+        "DeepSeek-V3.1 · SambaNova", _AGENTIC, 131_072
+    ),
+    "sambanova:Meta-Llama-3.3-70B-Instruct": ModelEntry(
+        "Meta-Llama-3.3-70B-Instruct · SambaNova", _AGENTIC, 131_072
+    ),
+    "sambanova:gpt-oss-120b": ModelEntry(
+        "gpt-oss-120b · SambaNova", _AGENTIC, 131_072
+    ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
     # Converse) plus AWS's own `-v<n>:<m>` version suffix. Some regions require the

@@ -544,6 +544,13 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="z-ai/glm-5.2",
         env_key="OPENROUTER_API_KEY",
     ),
+    _compat(
+        "sambanova",
+        "SambaNova",
+        base_url="https://api.sambanova.ai/v1",
+        recommended_model="MiniMax-M2.7",
+        env_key="SAMBANOVA_API_KEY",
+    ),
     ProviderDescriptor(
         name="ollama",
         title="Ollama (local models)",
