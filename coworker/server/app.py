@@ -1707,6 +1707,10 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "command_trust": manager.workspace_command_trust(
                         str(getattr(engine, "audit_context", {}).get("workspace", ""))
                     ),
+                    # Mid-turn reconnect (#311): the client resets `running` on every
+                    # session switch, and turn_start already fired — seed from the
+                    # manager so Stop / Thinking / WaitingForAgent reappear.
+                    "running": manager.is_running(session_id),
                 },
             }
         )

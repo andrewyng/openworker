@@ -584,6 +584,9 @@ export function App() {
           if (d.command_trust?.required) setWorkspaceTrustRequest(d.command_trust);
           // Cowork: adopt the server-provisioned scratch dir (only when we don't already have one).
           if (d.workspace) setWorkspace((cur) => cur || d.workspace);
+          // Mid-turn reconnect (#311): selectSession clears `running`, and turn_start
+          // won't re-fire for an already-live turn — trust the server's claim.
+          if (typeof d.running === "boolean") setRunning(d.running);
           break;
         case "turn_start":
           setRunning(true);
@@ -957,6 +960,7 @@ export function App() {
     setSurface("session"); // selecting a conversation always returns to the conversation view
     setTodo([]);
     setStreaming("");
+    setReasoningStream("");
     setRunning(false);
     if (ag) setAgent(ag);
     if (!gatesWorkspace(ag)) setShowGate(false);
