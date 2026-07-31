@@ -102,3 +102,18 @@ describe("Composer voice input (§37)", () => {
     expect(screen.getByLabelText("Start dictation").hasAttribute("disabled")).toBe(false);
   });
 });
+
+describe("Composer IME input", () => {
+  it("does not submit Enter while an IME composition is active", () => {
+    const onSend = vi.fn();
+    render(<Composer {...props({ onSend })} />);
+    const box = screen.getByPlaceholderText(/Ask the coworker/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "ni hao" } });
+
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(box, { key: "Enter", keyCode: 229 });
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(box.value).toBe("ni hao");
+  });
+});
