@@ -34,8 +34,11 @@ def ask_user_tool() -> object:
         - `multi`: allow the user to pick more than one option.
         - `header`: a short (≤ ~12 char) label for the Inbox card chip, e.g. "Region".
 
-        Returns `{"answer": "..."}` — the chosen option(s) or the typed text. Don't ask what you can
-        reasonably decide yourself; reserve this for choices that are actually the user's to make.
+        Returns `{"answer": "..."}` — the chosen option(s) or the typed text. If the user cancels
+        the question (Cancel / Esc), returns `{"answer": "", "error": "cancelled by user"}` — treat
+        that as a declined prompt and continue without re-asking the same thing in a loop. Don't
+        ask what you can reasonably decide yourself; reserve this for choices that are actually
+        the user's to make.
         """
         # Real handling lives in the engine (it needs the out-of-band Inbox round-trip). This body
         # only runs if no question_asker is wired (e.g. a headless surface).

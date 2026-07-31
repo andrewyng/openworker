@@ -694,16 +694,21 @@ export function App() {
           ]);
           break;
         case "tool_finished":
-          setItems((p) =>
-            updateLastTool(
+          setItems((p) => {
+            const updated = updateLastTool(
               p,
               d.name,
               d.status,
               d.result_preview || d.reason,
               d.display?.hidden_by_filters,
               d.standing_rule,
-            ),
-          );
+            );
+            // ask_user can finish because it was answered, cancelled, or interrupted.
+            // In every case its live card is no longer actionable.
+            return d.name === "ask_user"
+              ? resolveLastQuestion(updated, d.result_preview || "closed")
+              : updated;
+          });
           // Refresh the right rail when something it shows may have changed: browser state, or a
           // file write that should appear under Artifacts immediately (not only after the turn).
           if (String(d.name || "").startsWith("browser_") || FILE_WRITE_TOOLS.has(d.name)) {
@@ -747,6 +752,10 @@ export function App() {
           break;
         case "turn_done":
           setRunning(false);
+          // Catch abnormal paths that ended without a tool_finished frame. No
+          // question remains actionable after the turn itself is done.
+          setItems((p) => resolveLastQuestion(p, "closed"));
+          setSessionInbox((p) => p.filter((item) => item.kind !== "question"));
           refreshSessions();
           // Catch-all artifact refresh: files created via shell or on a brand-new session (whose
           // record only exists after the first save) appear once the turn completes.
@@ -1776,7 +1785,7 @@ function resolveLastPlan(items: Item[], resolved: "approved" | "rejected"): Item
   return copy;
 }
 
-function resolveLastQuestion(items: Item[], answer: string): Item[] {
+export function resolveLastQuestion(items: Item[], answer: string): Item[] {
   const copy = [...items];
   for (let i = copy.length - 1; i >= 0; i--) {
     const it = copy[i];

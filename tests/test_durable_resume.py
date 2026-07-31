@@ -94,6 +94,42 @@ def test_durable_resume_question(tmp_path):
     assert mgr.inbox.pending(sid) == []  # nothing left pending
 
 
+def test_durable_resume_question_cancel(tmp_path):
+    """Cancel resolves the parked question; agent continues with cancelled-by-user tool result."""
+    from coworker.interactions import QUESTION_CANCELLED
+
+    mgr = SessionManager(
+        workspace=tmp_path,
+        provider=ScriptedProvider(
+            [
+                _tool(
+                    "ask_user",
+                    {"question": "Which region?", "options": ["us-east-1"]},
+                    "call_qc",
+                ),
+                _text("Understood — skipping the region pick."),
+            ]
+        ),
+    )
+    sid = "dur-qc"
+
+    async def scenario():
+        engine = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+        item = await _run_until_pending(mgr, sid, engine)
+        await mgr.resolve_inbox(item.id, QUESTION_CANCELLED)
+
+    asyncio.run(scenario())
+    assert any("skipping" in (t or "").lower() for t in _final_assistant_texts(mgr, sid))
+    assert mgr.inbox.pending(sid) == []
+    # Tool result should carry the cancel error, not the sentinel as a fake answer.
+    rec = mgr.session_store.load(sid)
+    tool_msgs = [m for m in rec.messages if m.get("role") == "tool"]
+    assert tool_msgs
+    content = tool_msgs[-1].get("content") or ""
+    assert "cancelled by user" in content
+    assert QUESTION_CANCELLED not in content
+
+
 def test_durable_resume_approval_executes_tool(tmp_path):
     # The model wants a write (needs approval); on durable resume "allow" must RE-EXECUTE the tool.
     target = tmp_path / "scratch_marker.txt"

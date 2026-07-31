@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { InboxItem } from "../api";
 import { humanizeApprovalTitle } from "../humanize";
 import { PreviewBlock, scopeNote, TitleText } from "./ApprovalCard";
@@ -6,7 +6,11 @@ import { PreviewBlock, scopeNote, TitleText } from "./ApprovalCard";
 // One Inbox item, rendered identically in the Inbox list and inline in its own session view
 // (answer-in-context). Resolving either place hits the same item id — first responder wins.
 // Questions (ask_user) mirror Claude Code's AskUserQuestion: optional quick-reply options + an
-// always-available free-text escape, with optional multi-select.
+// always-available free-text escape, with optional multi-select — plus Cancel (Esc) to decline.
+
+// Reserved Inbox resolution for declining a question. Wire value only — the button label is
+// "Cancel". Must match coworker/interactions.py QUESTION_CANCELLED.
+export const QUESTION_CANCELLED = "__cancelled__";
 
 // Shared styles (mock parity — same language as SourcesDrawer/PersonaView).
 const SEC = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
@@ -42,6 +46,37 @@ export function InboxItemCard({
   const multi = !!item.multi;
   const allowText = item.allow_text !== false;
 
+  const cancelQuestion = () => onResolve(item.id, QUESTION_CANCELLED);
+
+  // HIG: Escape is Cancel's key equivalent for the active inline prompt. Inbox-list cards do
+  // not claim a global shortcut: several can be mounted at once, and one Esc must never cancel
+  // multiple questions. Distinct from Stop (whole-turn interrupt): this resolves only the
+  // ask_user item.
+  useEffect(() => {
+    if (item.kind !== "question" || !compact) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (e.defaultPrevented) return;
+      if (e.repeat) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      onResolve(item.id, QUESTION_CANCELLED);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [item.kind, item.id, onResolve, compact]);
+
+  const cancelButton = () => (
+    <button
+      type="button"
+      className={BTN_BORDERED}
+      title="Cancel (Esc)"
+      onClick={cancelQuestion}
+    >
+      Cancel
+    </button>
+  );
+
   const textRow = (placeholder: string) => (
     <div className="flex items-center gap-2 mt-2.5">
       <input
@@ -53,6 +88,7 @@ export function InboxItemCard({
           if (e.key === "Enter" && answer.trim()) onResolve(item.id, answer);
         }}
       />
+      {cancelButton()}
       <button className={BTN_PRIMARY} disabled={!answer.trim()} onClick={() => onResolve(item.id, answer)}>
         Send
       </button>
@@ -147,7 +183,8 @@ export function InboxItemCard({
             </div>
           )}
           {multi && options.length > 0 && (
-            <div className="mt-2.5">
+            <div className="flex items-center justify-end gap-2 mt-2.5">
+              {!allowText && cancelButton()}
               <button
                 className={BTN_PRIMARY}
                 disabled={!selected.length}
@@ -159,6 +196,9 @@ export function InboxItemCard({
           )}
           {(allowText || options.length === 0) &&
             textRow(options.length ? "Or type your own answer…" : "Your answer…")}
+          {!allowText && !multi && (
+            <div className="flex justify-end mt-2.5">{cancelButton()}</div>
+          )}
         </>
       ) : item.kind === "directory" ? (
         <div className="flex items-center gap-2 mt-2.5">
