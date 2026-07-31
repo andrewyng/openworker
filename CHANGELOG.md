@@ -2,6 +2,11 @@
 
 本项目基于 [andrewyng/openworker](https://github.com/andrewyng/openworker) 二次开发，感谢原作者 Andrew Ng 及 OpenWorker 团队的开源贡献。
 
+## [0.3.1] - 2026-07-31
+
+### 修复
+- **Skill 弹窗键盘滚动**：移除只显示前 8 项的截断限制，上下键导航时选中项自动滚动到可视区域
+
 ## [0.3.0] - 2026-07-31
 
 ### 新增

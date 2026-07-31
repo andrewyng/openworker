@@ -104,6 +104,8 @@ export function Composer(props: Props) {
   const [skillPaletteOpen, setSkillPaletteOpen] = useState(false);
   const [skillQuery, setSkillQuery] = useState("");
   const [skillIndex, setSkillIndex] = useState(0);
+  const paletteRef = useRef<HTMLDivElement | null>(null);
+  const skillItemRef = useRef<HTMLButtonElement | null>(null);
   const noticeTimer = useRef<number | null>(null);
 
   // Rejected-attachment notice: visible ~8s, then clears (or on ✕).
@@ -129,6 +131,12 @@ export function Composer(props: Props) {
     ? skills.filter((s) => s.name.toLowerCase().includes(skillQuery.toLowerCase()))
     : skills;
   const paletteVisible = skillPaletteOpen && matchedSkills.length > 0;
+
+  useEffect(() => {
+    if (paletteVisible && skillItemRef.current) {
+      skillItemRef.current.scrollIntoView({ block: "nearest" });
+    }
+  }, [skillIndex, paletteVisible]);
 
   // Apply a prefill (text + attachments) pushed from outside, then focus the composer. Applied at
   // most once per nonce (a ref guards against StrictMode/re-render double-fires), and attachments
@@ -503,10 +511,11 @@ export function Composer(props: Props) {
         }}
       >
         {paletteVisible && (
-          <div className="skill-palette border-b border-line bg-paper">
-            {matchedSkills.slice(0, 8).map((s, i) => (
+          <div className="skill-palette border-b border-line bg-paper" ref={paletteRef}>
+            {matchedSkills.map((s, i) => (
               <button
                 key={s.name}
+                ref={(el) => { if (i === skillIndex) skillItemRef.current = el; }}
                 className={
                   "w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-[13px] " +
                   (i === skillIndex ? "bg-accentSoft text-accent" : "hover:bg-paper text-ink")
