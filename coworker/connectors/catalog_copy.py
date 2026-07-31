@@ -19,6 +19,9 @@ ABOUT: dict[str, str] = {
     "slack": "Bring your coworker into Slack: mention it in a channel or DM it, "
     "and replies land in-thread. Any number of workspaces can be connected, "
     "each with its own allow-list of who may talk to the agent.",
+    "matrix": "Chat with your coworker over Matrix (Element) on your own "
+    "homeserver. End-to-end encrypted rooms are supported; approve Inbox "
+    "requests with emoji reactions on mirrored prompts.",
     "email": "Read, search, and send mail on any IMAP account — Gmail, iCloud, "
     "Fastmail, or your own server — using an app password instead of your "
     "account password.",
@@ -69,6 +72,13 @@ ACCESS: dict[str, list[str]] = {
         "Posts messages and uploads files as the bot.",
         "Reads files shared in those channels.",
         "Reads member and channel names to resolve who's talking.",
+    ],
+    "matrix": [
+        "Reads messages in rooms the bot has joined (E2EE when enabled).",
+        "Sends encrypted messages and uploads files as the bot user.",
+        "Downloads media you share in those rooms (size-capped).",
+        "Inbox approvals resolve via emoji reactions on mirrored prompts.",
+        "Only senders on your allow-list are answered.",
     ],
     "email": [
         "Reads and searches mail over IMAP.",
