@@ -19,6 +19,7 @@ from urllib.parse import quote
 import aisuite as ai
 
 from ..secrets import SecretStore
+from ..web.guard import get_checked
 from .browser_automation import make_browser_automation_tools
 from .email_tools import make_email_tools
 from .tool_defs import approval_for_tool, connector_for_tool
@@ -305,15 +306,39 @@ def _gmail_is_hidden(
 
 
 def _request(
-    method: str, url: str, *, headers=None, params=None, json=None, auth=None
+    method: str,
+    url: str,
+    *,
+    headers=None,
+    params=None,
+    json=None,
+    auth=None,
+    check_addresses: bool = False,
 ) -> dict[str, Any]:
+    """HTTP for the connectors.
+
+    `check_addresses` is for URLs the *model* supplies (browser_read_url). It turns off
+    automatic redirects and walks the chain through the address guard instead, so a public
+    URL cannot 302 into loopback or the metadata endpoint. The vendor endpoints everything
+    else in this module calls are hardcoded, so they skip the guard and its DNS lookup.
+    """
     try:
         import httpx
 
-        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-            resp = client.request(
-                method, url, headers=headers, params=params, json=json, auth=auth
-            )
+        with httpx.Client(
+            timeout=30.0, follow_redirects=not check_addresses
+        ) as client:
+            if check_addresses:
+                if method.upper() != "GET":
+                    return {"error": "address-checked requests must be GET"}
+                try:
+                    resp = get_checked(client, url)
+                except PermissionError as exc:
+                    return {"error": str(exc)}
+            else:
+                resp = client.request(
+                    method, url, headers=headers, params=params, json=json, auth=auth
+                )
             ctype = resp.headers.get("content-type", "")
             data: Any = resp.json() if "json" in ctype.lower() else resp.text
             if resp.status_code >= 400:
@@ -533,7 +558,13 @@ def make_integration_tools(
     def browser_read_url(url: str, max_chars: int = 20000) -> dict[str, Any]:
         if not url.lower().startswith(("http://", "https://")):
             return {"error": "url must start with http:// or https://"}
-        out = _request("GET", url, headers={"User-Agent": "coworker/0.1 (+connector)"})
+        # Model-supplied URL: address-check every hop, same guard as web_fetch.
+        out = _request(
+            "GET",
+            url,
+            headers={"User-Agent": "coworker/0.1 (+connector)"},
+            check_addresses=True,
+        )
         if "error" in out:
             return out
         data = out["data"]

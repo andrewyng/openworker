@@ -31,6 +31,8 @@ class EventType(str, Enum):
     TURN_END = "turn_end"
     ERROR = "error"
     INTERRUPTED = "interrupted"
+    COMPACTING = "compacting"  # compaction started — surfaces show a transient signal
+    COMPACTED = "compacted"  # outbound history was compacted (summary or trim)
 
 
 @dataclass
