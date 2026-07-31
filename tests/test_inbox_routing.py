@@ -88,3 +88,37 @@ def test_inbound_legacy_ocw_token_still_resolves(tmp_path):
     item = store.add_approval("s1", "Deploy?", inbox="ops")
     assert resolve_from_reply(f"deny [ocw:{item.id}]", store.resolve) is True
     assert store.get(item.id).resolution == "deny"
+
+
+def test_disallow_is_not_parsed_as_allow(tmp_path):
+    store = InboxStore(tmp_path / "inbox.json")
+    item = store.add_approval("s1", "Deploy?", inbox="ops")
+    assert resolve_from_reply(f"disallow [ow:{item.id}]", store.resolve) is True
+    assert store.get(item.id).resolution != "allow"
+
+
+def test_words_containing_no_are_not_parsed_as_deny(tmp_path):
+    store = InboxStore(tmp_path / "inbox.json")
+    q = store.add_question("s1", "Which region?")
+    assert resolve_from_reply(f"north-east node [ow:{q.id}]", store.resolve) is True
+    assert store.get(q.id).resolution == "north-east node"
+
+
+def test_denied_and_approved_word_forms(tmp_path):
+    store = InboxStore(tmp_path / "inbox.json")
+    a = store.add_approval("s1", "Deploy?", inbox="ops")
+    b = store.add_approval("s1", "Restart?", inbox="ops")
+    resolve_from_reply(f"denied [ow:{a.id}]", store.resolve)
+    resolve_from_reply(f"approved [ow:{b.id}]", store.resolve)
+    assert store.get(a.id).resolution == "deny"
+    assert store.get(b.id).resolution == "allow"
+
+
+def test_emoji_reactions_still_resolve(tmp_path):
+    store = InboxStore(tmp_path / "inbox.json")
+    a = store.add_approval("s1", "Deploy?", inbox="ops")
+    b = store.add_approval("s1", "Restart?", inbox="ops")
+    resolve_from_reply(f"👍 [ow:{a.id}]", store.resolve)
+    resolve_from_reply(f"❌ [ow:{b.id}]", store.resolve)
+    assert store.get(a.id).resolution == "allow"
+    assert store.get(b.id).resolution == "deny"
