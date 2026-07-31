@@ -33,7 +33,94 @@ def test_create_automation_success(tmp_path, monkeypatch):
     saved = manager.task_store.get(task["id"])
     assert saved is not None
     assert saved.agent == "cowork"
+    assert saved.sources == []
+    assert saved.delivery == {"kind": "app"}
     assert Path(saved.workspace).is_dir()
+
+
+def test_create_automation_persists_sources_and_delivery(tmp_path, monkeypatch):
+    manager = _manager(tmp_path, monkeypatch)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(manager, "_provision_scratch", lambda _session_id: str(scratch))
+    monkeypatch.setattr(
+        "coworker.server.manager.connector_list",
+        lambda _secrets: [
+            {"name": "github", "connected": True},
+            {"name": "slack", "connected": True},
+        ],
+    )
+    out = manager.create_automation(
+        {
+            "title": "Engineering digest",
+            "instructions": "Summarize the latest changes.",
+            "cron": "0 9 * * 1",
+            "sources": ["github"],
+            "delivery": {
+                "kind": "channel",
+                "connector": "slack",
+                "target": "slack:C0123",
+            },
+        }
+    )
+    assert out["ok"] is True
+    saved = manager.task_store.get(out["task"]["id"])
+    assert saved is not None
+    assert saved.sources == ["github"]
+    assert saved.delivery == {
+        "kind": "channel",
+        "connector": "slack",
+        "target": "slack:C0123",
+    }
+
+
+def test_create_automation_accepts_feishu_delivery(tmp_path, monkeypatch):
+    manager = _manager(tmp_path, monkeypatch)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(manager, "_provision_scratch", lambda _session_id: str(scratch))
+    monkeypatch.setattr(
+        "coworker.server.manager.connector_list",
+        lambda _secrets: [{"name": "feishu", "connected": True}],
+    )
+    out = manager.create_automation(
+        {
+            "title": "Daily brief",
+            "instructions": "Summarize the day.",
+            "cron": "0 9 * * *",
+            "delivery": {
+                "kind": "channel",
+                "connector": "feishu",
+                "target": "feishu:oc_chat_123",
+            },
+        }
+    )
+    assert out["ok"] is True
+    saved = manager.task_store.get(out["task"]["id"])
+    assert saved is not None
+    assert saved.delivery == {
+        "kind": "channel",
+        "connector": "feishu",
+        "target": "feishu:oc_chat_123",
+    }
+
+
+def test_create_automation_rejects_unconnected_source(tmp_path, monkeypatch):
+    manager = _manager(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "coworker.server.manager.connector_list",
+        lambda _secrets: [{"name": "github", "connected": False}],
+    )
+    out = manager.create_automation(
+        {
+            "title": "Digest",
+            "instructions": "Summarize changes.",
+            "cron": "0 9 * * *",
+            "sources": ["github"],
+        }
+    )
+    assert out["ok"] is False
+    assert "connect source" in out["error"]
 
 
 def test_create_automation_invalid_cron(tmp_path, monkeypatch):

@@ -128,6 +128,10 @@ def test_connector_tool_settings_and_audit_rest(tmp_path):
         c["name"]: c for c in client.get("/v1/connectors").json()["connectors"]
     }
     assert any(t["name"] == "browser_open_url" for t in connectors["browser"]["tools"])
+    assert connectors["browser"]["source_capable"] is False
+    assert connectors["github"]["source_capable"] is True
+    assert connectors["feishu"]["source_capable"] is False
+    assert connectors["feishu"]["delivery_capable"] is True
 
     res = client.patch(
         "/v1/connectors/browser/tools", json={"enabled": {"browser_open_url": False}}

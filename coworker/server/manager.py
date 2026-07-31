@@ -8,8 +8,10 @@ sessions span folders.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import mimetypes
 import os
 import re
 import shlex
@@ -22,6 +24,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..agent import build_engine
+from ..attachments import MAX_IMAGE_CHARS, build_user_content, content_to_text
 from ..agents import get_agent
 from ..connections import (
     PersonaConnectionStore,
@@ -117,6 +120,47 @@ from ..skills import (
 _SCOPES = {s.value for s in Scope}
 
 logger = logging.getLogger("coworker.manager")
+
+
+def _image_attachment_part(data: bytes, filename: str) -> Optional[dict[str, str]]:
+    """Encode a downloaded Feishu image for the existing provider-neutral image path."""
+    mime_type = mimetypes.guess_type(filename)[0] or _image_mime_type(data)
+    if not mime_type or not mime_type.startswith("image/"):
+        return None
+    encoded_size = ((len(data) + 2) // 3) * 4
+    prefix = f"data:{mime_type};base64,"
+    if len(prefix) + encoded_size > MAX_IMAGE_CHARS:
+        return None
+    return {
+        "kind": "image",
+        "name": filename,
+        "data_url": prefix + base64.b64encode(data).decode("ascii"),
+    }
+
+
+def _image_mime_type(data: bytes) -> Optional[str]:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _attachment_text_preview(data: bytes, filename: str) -> str:
+    """Inline small plain-text attachments, matching the useful part of Hermes media intake."""
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {".txt", ".md", ".markdown", ".csv", ".json", ".yaml", ".yml", ".log"}:
+        return ""
+    if not data or len(data) > 100_000:
+        return ""
+    try:
+        return data.decode("utf-8").strip()[:20_000]
+    except UnicodeDecodeError:
+        return ""
 
 
 def _grants_of(engine) -> dict[str, Any]:
@@ -681,6 +725,12 @@ class SessionManager:
             else:
                 # A session id we won't put in a filesystem path: primary root only.
                 roots = [{"path": ws, "writable": True, "label": "workspace"}, *extra]
+        owning_task = self.task_store.task_for_run_session(session_id)
+        connector_filter = self.effective_connectors(session_id, agent_name)
+        connector_tool_kinds = None
+        if owning_task is not None and owning_task.sources is not None:
+            connector_filter &= set(owning_task.sources)
+            connector_tool_kinds = {"read"}
         engine = build_engine(
             agent=ag,
             workspace=ws,
@@ -729,7 +779,8 @@ class SessionManager:
             channel_buffer=self.channel_buffer,
             routing_targets=self._routing_targets(session_id, agent),
             # Per-session connection hierarchy: expose only effective-enabled connectors' tools.
-            connector_filter=self.effective_connectors(session_id, agent_name),
+            connector_filter=connector_filter,
+            connector_tool_kinds=connector_tool_kinds,
             # Per-session skill menu, LIVE (SKILLS-SPEC §3): a callable so load_skill sees
             # disables/new skills immediately; the catalog snapshot is taken at build.
             skill_filter=lambda sid=session_id, w=ws, a=agent_name: (
@@ -747,7 +798,6 @@ class SessionManager:
         )
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
-        owning_task = self.task_store.task_for_run_session(session_id)
         if owning_task is not None:
             self._seed_task_permissions(engine, owning_task)
         # A mention-spawned session (§31) keeps its in-thread reply pre-approved across
@@ -4476,6 +4526,11 @@ class SessionManager:
     def _build_task_engine(self, task, *, session_id: str) -> TurnEngine:
         ag = get_agent(task.agent)
         Path(task.workspace).mkdir(parents=True, exist_ok=True)
+        connector_filter = self.effective_connectors(session_id, task.agent)
+        connector_tool_kinds = None
+        if task.sources is not None:
+            connector_filter &= set(task.sources)
+            connector_tool_kinds = {"read"}
         engine = build_engine(
             agent=ag,
             workspace=task.workspace,
@@ -4500,7 +4555,8 @@ class SessionManager:
             audit_sink=self.audit_store.append,
             # Scheduled runs respect the same per-session connection hierarchy as live sessions:
             # expose only the persona's effective-enabled connectors' tools (§4.3).
-            connector_filter=self.effective_connectors(session_id, task.agent),
+            connector_filter=connector_filter,
+            connector_tool_kinds=connector_tool_kinds,
             skill_filter=lambda sid=session_id, w=task.workspace, a=task.agent: (
                 self.effective_skill_names(sid, w, agent=a)
             ),
@@ -4735,7 +4791,11 @@ class SessionManager:
         await self.deliver_to_session(wake.session_id, message)
 
     async def deliver_to_session(
-        self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None
+        self,
+        session_id: str,
+        message: str | list[dict[str, Any]],
+        *,
+        source: Optional[dict[str, Any]] = None,
     ) -> None:
         """Deliver an out-of-band message to a (durable) session — the agent stays resumable
         forever, so this works with no live socket. Busy (mid tool-loop): steer it into the live
@@ -4773,7 +4833,9 @@ class SessionManager:
                     logger.warning(
                         "background turn failed for %s: %s", session_id, reason
                     )
-                    self.unrouted.record(session_id, "-", message, reason=reason)
+                    self.unrouted.record(
+                        session_id, "-", content_to_text(message), reason=reason
+                    )
             self.save(session_id, engine)
         except (
             Exception
@@ -4781,7 +4843,9 @@ class SessionManager:
             logger.warning("background turn crashed for %s: %s", session_id, exc)
             if reporter is not None:
                 await self._notify_feishu_progress_exception(reporter, exc)
-            self.unrouted.record(session_id, "-", message, reason=str(exc))
+            self.unrouted.record(
+                session_id, "-", content_to_text(message), reason=str(exc)
+            )
             await self.broadcast_session(
                 session_id, {"type": "error", "data": {"error": str(exc)}}
             )
@@ -4819,8 +4883,8 @@ class SessionManager:
         event,
         source_payload: dict[str, Any],
         base_text: Optional[str] = None,
-    ) -> tuple[str, dict[str, Any]]:
-        """Download inbound platform attachments into the session record directory."""
+    ) -> tuple[str | list[dict[str, Any]], dict[str, Any]]:
+        """Download inbound attachments and preserve Feishu images as model-visible parts."""
         attachments = list(getattr(event, "attachments", None) or [])
         rendered_text = base_text if base_text is not None else event.tagged_text()
         if not attachments:
@@ -4830,6 +4894,7 @@ class SessionManager:
         payload["attachments"] = []
         record_dir = self.session_record_files_dir(session_id)
         rendered_lines = []
+        image_parts: list[dict[str, Any]] = []
         for item in attachments:
             if not isinstance(item, dict):
                 continue
@@ -4857,13 +4922,27 @@ class SessionManager:
                 )
                 continue
             try:
-                data, downloaded_name = await asyncio.to_thread(
-                    _download_feishu_resource,
-                    token,
-                    message_id,
-                    key,
-                    resource_type,
-                )
+                try:
+                    data, downloaded_name = await asyncio.to_thread(
+                        _download_feishu_resource,
+                        token,
+                        message_id,
+                        key,
+                        resource_type,
+                    )
+                except Exception:
+                    # Feishu uses ``file`` for some audio/media post elements even when the
+                    # event advertises a specialised resource type.  Retry the documented
+                    # generic endpoint before reporting the attachment as unavailable.
+                    if resource_type not in {"audio", "video", "media"}:
+                        raise
+                    data, downloaded_name = await asyncio.to_thread(
+                        _download_feishu_resource,
+                        token,
+                        message_id,
+                        key,
+                        "file",
+                    )
                 safe_name = re.sub(r"[\\\/]+", "_", downloaded_name or filename)
                 safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", safe_name).strip("._ ")
                 if not safe_name:
@@ -4880,20 +4959,30 @@ class SessionManager:
                 attachment["saved_name"] = out.name
                 attachment["saved_dir"] = str(record_dir)
                 payload["attachments"].append(attachment)
-                rendered_lines.append(f"- {out.name}: {out}")
+                if attachment.get("type") == "image":
+                    image_part = _image_attachment_part(data, out.name)
+                    if image_part is not None:
+                        image_parts.append(image_part)
+                    else:
+                        # A malformed or unsupported image still needs a usable fallback.
+                        rendered_lines.append(f"- {out.name}: {out}")
+                else:
+                    rendered_lines.append(f"- {out.name}: {out}")
+                text_preview = _attachment_text_preview(data, out.name)
+                if text_preview:
+                    rendered_lines.append(f"  Contents:\n{text_preview}")
             except Exception as exc:
                 attachment["saved_path"] = ""
                 attachment["error"] = str(exc)
                 payload["attachments"].append(attachment)
                 rendered_lines.append(f"- {filename}: failed to download ({exc})")
-        if payload.get("attachments") and rendered_lines:
-            self._grant_session_record_files_root(session_id, record_dir)
-            return (
-                rendered_text
-                + "\n\nDownloaded files:\n"
-                + "\n".join(rendered_lines),
-                payload,
-            )
+        if payload.get("attachments"):
+            if any(item.get("saved_path") for item in payload["attachments"]):
+                self._grant_session_record_files_root(session_id, record_dir)
+            model_text = rendered_text
+            if rendered_lines:
+                model_text += "\n\nDownloaded files:\n" + "\n".join(rendered_lines)
+            return build_user_content(model_text, image_parts), payload
         return rendered_text, payload
 
     # -- channel subscriptions (inbound messaging) ------------------------------
@@ -5004,8 +5093,8 @@ class SessionManager:
         from ..connectors.base import format_target
 
         src = event.source
-        # Slack semantics: replying to a top-level message threads on THAT message's ts, so a
-        # top-level tag (no thread_ts) keys — and is answered — on its own ts.
+        # Reply-capable platforms key a top-level mention to its own message.  Thread replies
+        # retain the platform-provided root/thread id, so follow-ups stay in one conversation.
         thread_key = src.thread_id or getattr(event, "message_id", None)
         thread_target = format_target(src.platform, src.chat_id, thread_key)
         who = src.user_name or src.user_id or "?"
@@ -5035,7 +5124,7 @@ class SessionManager:
         if sid and self.session_store.load(sid) is not None:
             # Follow-up tag in a thread we already own → steer the same session.
             msg = (
-                f"💬 Follow-up in your Slack thread ({chan}) from {who}: {event.text}\n"
+                f"💬 Follow-up in your {src.platform.title()} thread ({chan}) from {who}: {event.text}\n"
                 f'(Reply in the thread with the send_message tool, target "{thread_target}" '
                 f"— replies there are pre-approved.)"
             )
@@ -5051,7 +5140,7 @@ class SessionManager:
     ) -> None:
         """First tag in a thread: a NEW visible coworker session that owns the thread. Its
         in-thread replies carry a standing grant (§25 shape, exact-target match) so the
-        conversation never stalls on an approval nobody in Slack can see; everything else
+        conversation never stalls on an approval nobody in the source chat can see; everything else
         asks as usual (approvals park to the Inbox)."""
         import uuid
 
@@ -5086,12 +5175,12 @@ class SessionManager:
         recent = self.channel_buffer.recent(f"{src.platform}:{src.chat_id}", 7)[:-1]
         context = "\n".join(f"- {m['from']}: {m['text']}" for m in recent)
         opening = (
-            f"🔔 You were mentioned on Slack in {chan} by {who}: {event.text}\n\n"
-            f"You own this Slack thread. Reply in the thread using the send_message tool "
+            f"🔔 You were mentioned on {src.platform.title()} in {chan} by {who}: {event.text}\n\n"
+            f"You own this {src.platform.title()} thread. Reply in the thread using the send_message tool "
             f'with target "{thread_target}" — replies to this thread are pre-approved and '
             f"never prompt the user. Anything else (other channels, files, external "
             f"actions) asks for approval as usual. Keep replies concise and "
-            f"Slack-appropriate."
+            f"appropriate for {src.platform.title()}."
             + (f"\n\nRecent channel context:\n{context}" if context else "")
         )
         try:
@@ -5153,7 +5242,9 @@ class SessionManager:
         opening = (
             f"⏰ Scheduled run — {task.title}\n\n"
             "This automation is due now: carry out the task below immediately and produce the "
-            "result. The schedule already exists — do not create or modify any scheduled tasks.\n\n"
+            "result. The schedule already exists — do not create or modify any scheduled tasks.\n"
+            + self._automation_context(task)
+            + "\n"
             f"{task.instructions}"
         )
         try:
@@ -5162,6 +5253,7 @@ class SessionManager:
             run.result_text = _last_assistant_text(engine.messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
             run.status = "ok"
+            await asyncio.to_thread(self._deliver_automation_result, task, run)
             if task.notify_on_completion:
                 await self._notify_task_done(task, run)
         except Exception as exc:
@@ -5177,6 +5269,58 @@ class SessionManager:
                 pass
             self.task_store.add_run(run)
         return run
+
+    @staticmethod
+    def _automation_context(task: ScheduledTask) -> str:
+        if task.sources is None:
+            sources = "Data sources: legacy task — use the connected tools needed for the task."
+        elif task.sources:
+            sources = "Data sources you may query: " + ", ".join(task.sources) + "."
+        else:
+            sources = "Data sources: none configured. Use built-in tools or web research as needed."
+        delivery = task.delivery or {"kind": "app"}
+        if delivery.get("kind") == "channel":
+            destination = str(delivery.get("target") or "configured channel")
+            delivery_note = (
+                f"Final delivery: OpenWorker will send your completed result to {destination}. "
+                "Do not send the final result yourself."
+            )
+        else:
+            delivery_note = "Final delivery: leave the completed result in this run's conversation."
+        return f"\n{sources}\n{delivery_note}\n"
+
+    def _deliver_automation_result(self, task: ScheduledTask, run: TaskRun) -> None:
+        """Send a completed result to its configured destination without giving the model
+        control over the target. Delivery failures remain distinct from task execution."""
+        delivery = task.delivery or {"kind": "app"}
+        if delivery.get("kind") != "channel":
+            run.delivery_status = "skipped"
+            return
+        target = str(delivery.get("target") or "").strip()
+        try:
+            from ..connectors.base import parse_target
+            from ..connectors.senders import DEFAULT_SENDERS
+
+            platform, chat_id, thread = parse_target(target)
+            configured = str(delivery.get("connector") or platform)
+            if configured != platform:
+                raise ValueError("delivery connector does not match its target")
+            sender = DEFAULT_SENDERS.get(platform)
+            token = _resolve_token(self.secrets, platform, chat_id)
+            if sender is None or not token:
+                raise RuntimeError(f"{platform} is not connected")
+            result = sender(
+                token,
+                chat_id,
+                f"✓ {task.title}\n\n{(run.result_text or '').strip()}",
+                thread,
+            )
+            if not result.ok:
+                raise RuntimeError(result.error or "delivery failed")
+            run.delivery_status = "sent"
+        except Exception as exc:
+            run.delivery_status = "failed"
+            run.delivery_error = str(exc)
 
     async def _notify_task_done(self, task, run: TaskRun) -> None:
         summary = (run.result_text or "").strip()[:280]
@@ -5247,6 +5391,64 @@ class SessionManager:
             "runs": [r.to_dict() for r in self.task_store.runs(task_id)],
         }
 
+    def _automation_sources(self, raw: Any) -> tuple[Optional[list[str]], Optional[str]]:
+        """Validate a task-owned integration source allow-list.
+
+        ``None`` is reserved for records created before source configuration existed;
+        new GUI/API tasks pass a list, including [] for web/local-only work.
+        """
+        if raw is None:
+            return None, None
+        if not isinstance(raw, list) or any(not isinstance(v, str) for v in raw):
+            return None, "sources must be a list of connector names"
+        sources = list(dict.fromkeys(v.strip() for v in raw if v.strip()))
+        known = {str(c["name"]): c for c in connector_list(self.secrets)}
+        unknown = [name for name in sources if name not in known]
+        if unknown:
+            return None, f"unknown source connector: {', '.join(unknown)}"
+        unavailable = [name for name in sources if not known[name].get("connected")]
+        if unavailable:
+            return None, f"connect source first: {', '.join(unavailable)}"
+        from ..connectors.tool_defs import TOOLS_BY_CONNECTOR
+
+        unreadable = [
+            name
+            for name in sources
+            if not any(tool.kind == "read" for tool in TOOLS_BY_CONNECTOR.get(name, []))
+        ]
+        if unreadable:
+            return None, f"connector has no readable source tools: {', '.join(unreadable)}"
+        return sources, None
+
+    def _automation_delivery(self, raw: Any) -> tuple[Optional[dict[str, str]], Optional[str]]:
+        if raw is None:
+            return {"kind": "app"}, None
+        if not isinstance(raw, dict):
+            return None, "delivery must be an object"
+        kind = str(raw.get("kind") or "app")
+        if kind == "app":
+            return {"kind": "app"}, None
+        if kind != "channel":
+            return None, "delivery kind must be 'app' or 'channel'"
+        target = str(raw.get("target") or "").strip()
+        connector = str(raw.get("connector") or "").strip()
+        try:
+            from ..connectors.base import parse_target
+
+            platform, _chat_id, _thread = parse_target(target)
+        except ValueError:
+            return None, "delivery target must be a platform channel address"
+        if connector and connector != platform:
+            return None, "delivery connector does not match its target"
+        known = {str(c["name"]): c for c in connector_list(self.secrets)}
+        if platform not in known or not known[platform].get("connected"):
+            return None, f"connect delivery connector first: {platform}"
+        from ..connectors.senders import DEFAULT_SENDERS
+
+        if platform not in DEFAULT_SENDERS:
+            return None, f"connector cannot deliver messages: {platform}"
+        return {"kind": "channel", "connector": platform, "target": target}, None
+
     def create_automation(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Create an automation directly from the GUI (the "New automation" / template flow).
         Mirrors the agent-facing `create_scheduled_task` validation, but binds the task to a
@@ -5271,6 +5473,15 @@ class SessionManager:
         if cron and not croniter.is_valid(cron):
             return {"ok": False, "error": f"invalid cron expression: {cron}"}
 
+        # New GUI/API tasks always own their source set. ``sources`` omitted here
+        # intentionally means an empty set, not the broad legacy fallback.
+        sources, source_error = self._automation_sources(payload.get("sources", []))
+        if source_error:
+            return {"ok": False, "error": source_error}
+        delivery, delivery_error = self._automation_delivery(payload.get("delivery"))
+        if delivery_error:
+            return {"ok": False, "error": delivery_error}
+
         schedule = Schedule(
             kind="once" if (fire_at and not cron) else "cron",
             cron=cron,
@@ -5286,6 +5497,8 @@ class SessionManager:
             workspace="",
             origin_surface="cowork",
             agent="cowork",
+            sources=sources,
+            delivery=delivery or {"kind": "app"},
             # Human-driven path (GUI form / onboarding recipes): the creating surface
             # rendered the grants, the submit IS the consent. Same validation as the
             # agent tool — only target-bound write grants survive.
@@ -5303,6 +5516,16 @@ class SessionManager:
             return {"ok": False, "error": "not found"}
         if "enabled" in changes:
             task.enabled = bool(changes["enabled"])
+        if "sources" in changes:
+            sources, source_error = self._automation_sources(changes["sources"])
+            if source_error:
+                return {"ok": False, "error": source_error}
+            task.sources = sources
+        if "delivery" in changes:
+            delivery, delivery_error = self._automation_delivery(changes["delivery"])
+            if delivery_error:
+                return {"ok": False, "error": delivery_error}
+            task.delivery = delivery or {"kind": "app"}
         if changes.get("instructions") is not None:
             task.instructions = changes["instructions"]
         if changes.get("title") is not None:
@@ -5352,7 +5575,7 @@ class SessionManager:
             "prompt": (
                 f"⏰ Running automation '{task.title}' now. Carry out these instructions "
                 "immediately and produce the result. The schedule already exists — do not create "
-                f"or modify any scheduled tasks.\n\n{task.instructions}"
+                f"or modify any scheduled tasks.\n{self._automation_context(task)}\n{task.instructions}"
             ),
         }
 
@@ -5372,6 +5595,7 @@ class SessionManager:
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
             run.status = "ok"
             run.finished_at = _epoch()
+            self._deliver_automation_result(task, run)
             self.task_store.add_run(run)
             task.last_run, task.last_status = run.finished_at, "ok"
             task.run_count += 1

@@ -22,7 +22,7 @@ from ..secrets import SecretStore
 from ..web.guard import get_checked
 from .browser_automation import make_browser_automation_tools
 from .email_tools import make_email_tools
-from .tool_defs import approval_for_tool, connector_for_tool
+from .tool_defs import approval_for_tool, connector_for_tool, kind_for_tool
 
 
 def _meta(
@@ -548,6 +548,7 @@ def make_integration_tools(
     *,
     enabled_connectors: Optional[set[str]] = None,
     enabled_tools: Optional[set[str]] = None,
+    allowed_kinds: Optional[set[str]] = None,
     roots: Optional[list[Any]] = None,
 ) -> list[Callable[..., Any]]:
     # Browser upload/screenshot touch local files but classify EXTERNAL, so the engine's
@@ -4891,4 +4892,8 @@ def make_integration_tools(
         ]
     if enabled_tools is not None:
         tools = [t for t in tools if t.__name__ in enabled_tools]
+    if allowed_kinds is not None:
+        # Source-bound automations are input-only. Uncatalogued tools are excluded
+        # conservatively rather than accidentally turning a new integration into a writer.
+        tools = [t for t in tools if kind_for_tool(t.__name__) in allowed_kinds]
     return tools

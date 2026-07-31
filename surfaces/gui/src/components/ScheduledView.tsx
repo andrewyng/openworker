@@ -2,17 +2,23 @@ import { useEffect, useState } from "react";
 import {
   createAutomation,
   deleteAutomation,
+  getConnectors,
+  getRecentChannels,
   getAutomation,
   getAutomations,
   markAutomationSeen,
   announceAutomationsChanged,
   updateAutomation,
   type Automation,
+  type AutomationDelivery,
   type AutomationRun,
+  type Connector,
+  type RecentChannel,
 } from "../api";
 import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { AutomationQuickstart } from "./AutomationQuickstart";
+import { ChannelPicker } from "./SubscriptionsChip";
 
 // Shared utility strings (the §28 page shell — mirrors IntegrationsView's constants).
 const CARD = "rounded-xl2 border border-line bg-panel";
@@ -88,7 +94,8 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
     title: string;
     instructions: string;
     cron?: string;
-    permissions?: { tool: string; target: string; access: "read" | "write" }[];
+    sources: string[];
+    delivery: AutomationDelivery;
   }) => {
     setBusy(payload.title);
     try {
@@ -203,14 +210,42 @@ function NewAutomationForm({
 }: {
   busy: boolean;
   onCancel: () => void;
-  onCreate: (p: { title: string; instructions: string; cron?: string }) => void;
+  onCreate: (p: {
+    title: string;
+    instructions: string;
+    cron?: string;
+    sources: string[];
+    delivery: AutomationDelivery;
+  }) => void;
 }) {
   const [title, setTitle] = useState("");
   const [instructions, setInstructions] = useState("");
   const [time, setTime] = useState("09:00");
   const [freq, setFreq] = useState("daily");
+  const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [recent, setRecent] = useState<RecentChannel[]>([]);
+  const [sources, setSources] = useState<string[]>([]);
+  const [deliveryConnector, setDeliveryConnector] = useState("app");
+  const [channel, setChannel] = useState("");
 
-  const valid = title.trim() && instructions.trim();
+  useEffect(() => {
+    getConnectors().then(setConnectors).catch(() => setConnectors([]));
+    getRecentChannels().then(setRecent).catch(() => setRecent([]));
+  }, []);
+
+  const sourceCandidates = connectors.filter((c) => c.source_capable);
+  const deliveryCandidates = connectors.filter(
+    (c) => c.connected && c.delivery_capable,
+  );
+  const toggleSource = (name: string) =>
+    setSources((current) =>
+      current.includes(name) ? current.filter((source) => source !== name) : [...current, name],
+    );
+
+  const target = channel.trim().includes(":")
+    ? channel.trim()
+    : `${deliveryConnector}:${channel.trim()}`;
+  const valid = title.trim() && instructions.trim() && (deliveryConnector === "app" || channel.trim());
 
   return (
     <div className={CARD + " tmpl-form p-4 mb-4"}>
@@ -229,6 +264,61 @@ function NewAutomationForm({
         value={instructions}
         onChange={(e) => setInstructions(e.target.value)}
       />
+      <label className="tmpl-field mt-3">
+        <span>Sources</span>
+        <span className="text-[11px] text-faint">
+          The agent can query only the selected integrations; built-in tools and web search stay available.
+        </span>
+      </label>
+      <div className="flex flex-wrap gap-x-4 gap-y-2 mt-1">
+        {sourceCandidates.length ? sourceCandidates.map((connector) => (
+          <label
+            key={connector.name}
+            className={"inline-flex items-center gap-1.5 text-[12.5px] " + (connector.connected ? "text-muted" : "text-faint")}
+            title={connector.connected ? undefined : "Connect this source in Integrations first"}
+          >
+            <input
+              type="checkbox"
+              checked={sources.includes(connector.name)}
+              disabled={!connector.connected}
+              onChange={() => toggleSource(connector.name)}
+            />
+            {connector.title}
+            {!connector.connected && <span className="text-[11px]">Connect first</span>}
+          </label>
+        )) : <span className="text-[12px] text-faint">No connected data integrations are available.</span>}
+      </div>
+      <label className="tmpl-field mt-3">
+        <span>Deliver to</span>
+        <select
+          className="tmpl-input tmpl-select"
+          value={deliveryConnector}
+          onChange={(e) => {
+            setDeliveryConnector(e.target.value);
+            setChannel("");
+          }}
+        >
+          <option value="app">This run in OpenWorker</option>
+          {deliveryCandidates.map((connector) => (
+            <option key={connector.name} value={connector.name}>
+              {connector.title}
+            </option>
+          ))}
+        </select>
+      </label>
+      {deliveryConnector === "slack" && (
+        <div className="mt-1">
+          <ChannelPicker value={channel} onChange={setChannel} recent={recent} />
+        </div>
+      )}
+      {deliveryConnector !== "app" && deliveryConnector !== "slack" && (
+        <input
+          className="tmpl-input mt-1"
+          placeholder={`${deliveryConnector}:<chat_id>`}
+          value={channel}
+          onChange={(e) => setChannel(e.target.value)}
+        />
+      )}
       <div className="tmpl-sched">
         <label className="tmpl-field">
           <span>At</span>
@@ -261,6 +351,11 @@ function NewAutomationForm({
               title: title.trim(),
               instructions: instructions.trim(),
               cron: toCron(time, freq),
+              sources,
+              delivery:
+                deliveryConnector !== "app"
+                  ? { kind: "channel", connector: deliveryConnector, target }
+                  : { kind: "app" },
             })
           }
         >
@@ -439,6 +534,22 @@ function TaskDetail({
           <div className="sched-instructions">{task.instructions}</div>
         )}
 
+        <div className="sa-sub">Sources</div>
+        <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
+          {task.sources === null
+            ? "Legacy task: uses the persona's effective connected integrations."
+            : task.sources.length
+              ? task.sources.join(", ")
+              : "No integration sources selected. The agent can still use built-in tools and web search."}
+        </div>
+
+        <div className="sa-sub">Delivery</div>
+        <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
+          {task.delivery?.kind === "channel"
+            ? `${task.delivery.connector} → ${task.delivery.target}`
+            : "This run in OpenWorker"}
+        </div>
+
         {(task.always_allowed || []).length > 0 && (
           <>
             <div className="sa-sub">Allowed without asking</div>
@@ -493,6 +604,8 @@ function TaskDetail({
                 )}
                 {fmt(r.started_at)} · <span className={"run-" + r.status}>{r.status}</span> · {r.trigger}
                 {r.artifacts.length > 0 && <span className="dim"> · {r.artifacts.length} file(s)</span>}
+                {r.delivery_status === "sent" && <span className="dim"> · delivered</span>}
+                {r.delivery_status === "failed" && <span className="mcp-error"> · delivery failed</span>}
               </span>
               <span className="sched-run-go" aria-hidden>
                 Open ›

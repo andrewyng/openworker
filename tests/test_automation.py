@@ -331,6 +331,68 @@ def test_task_engine_has_no_scheduling_tools(tmp_path, monkeypatch):
     assert "write_file" in names  # the deliverable tools are still there
 
 
+def test_source_bound_task_only_gets_read_tools_for_its_sources(tmp_path, monkeypatch):
+    """Automation sources narrow integration tools without changing Cowork's own tools."""
+    from coworker.connectors.tool_defs import TOOL_DEFS
+    from coworker.providers import AssistantTurn as _AT, ModelCapabilities, ProviderClient
+    from coworker.server import SessionManager
+
+    class _Provider(ProviderClient):
+        def complete(self, *, model, messages, tools=None, **settings):
+            return _AT(text="ok", finish_reason="stop")
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        "coworker.agent._enabled_connector_tools",
+        lambda _secrets: ({"github", "gmail"}, {tool.name for tool in TOOL_DEFS}),
+    )
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    manager = SessionManager(data_dir=tmp_path / "data", provider=_Provider())
+    monkeypatch.setattr(
+        manager,
+        "effective_connectors",
+        lambda _session_id, _persona=None: {"github", "gmail"},
+    )
+    task = _task(workspace=str(ws), agent="cowork", sources=["github"])
+
+    engine = manager._build_task_engine(task, session_id="__run__source-test")
+    names = set(engine.registry.names())
+    assert "github_search" in names
+    assert "github_create_issue" not in names
+    assert "gmail_search_messages" not in names
+    assert "write_file" in names
+    assert "web_search" in names
+
+
+def test_task_delivery_is_server_owned(tmp_path, monkeypatch):
+    from coworker.connectors.base import SendResult
+    from coworker.connectors.senders import DEFAULT_SENDERS
+    from coworker.server import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    task = _task(
+        delivery={"kind": "channel", "connector": "slack", "target": "slack:C0123"}
+    )
+    run = TaskRun(task_id=task.id, result_text="Everything is green.")
+    sent: list[tuple[str, str, str]] = []
+
+    def sender(token, chat_id, text, thread):
+        sent.append((token, chat_id, text))
+        return SendResult(True, message_id="1")
+
+    monkeypatch.setattr("coworker.server.manager._resolve_token", lambda *_: "token")
+    monkeypatch.setitem(DEFAULT_SENDERS, "slack", sender)
+    manager._deliver_automation_result(task, run)
+
+    assert run.delivery_status == "sent"
+    assert sent == [("token", "C0123", "✓ Daily brief\n\nEverything is green.")]
+
+
 async def test_manual_run_prepare_and_finalize(tmp_path, monkeypatch):
     from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
     from coworker.server.manager import SessionManager

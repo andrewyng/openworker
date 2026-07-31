@@ -8,12 +8,17 @@ mappers are pure functions (testable with plain objects/dicts, no SDK).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import re
 import threading
-from typing import Any, Optional
+import time
+from collections import OrderedDict, deque
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Optional
 from urllib.parse import quote
 
 from .base import (
@@ -35,6 +40,7 @@ from .senders import (
     _send_telegram,
 )
 from .feishu_cards import prompt_card, resolved_card, submitted_card
+from ..secrets import state_dir, write_private_text
 
 logger = logging.getLogger("coworker.connectors")
 
@@ -139,7 +145,7 @@ def _feishu_text_from_content(content: Any) -> str:
         text = data.get("text")
         if isinstance(text, str):
             return text
-        post_text = _feishu_text_from_post(data)
+        post_text, _image_keys = _feishu_post_content(data)
         if post_text:
             return post_text
         # Post/rich text messages arrive as nested title/content blocks. Keep a compact text view.
@@ -157,34 +163,178 @@ def _feishu_content_data(content: Any) -> Any:
     return content
 
 
-def _feishu_text_from_post(data: dict) -> str:
-    locale = data.get("zh_cn") or data.get("en_us") or data
-    if not isinstance(locale, dict):
-        return ""
-    blocks = locale.get("content")
-    if not isinstance(blocks, list):
-        return ""
+@dataclass(frozen=True)
+class _FeishuPostResource:
+    key: str
+    resource_type: str
+    filename: str = ""
+
+
+def _feishu_post_content(data: dict) -> tuple[str, list[_FeishuPostResource]]:
+    """Render a Feishu ``post`` AST and retain all downloadable resources.
+
+    Rich post messages are locale-wrapped.  Rendering the element tree to compact Markdown
+    keeps links, formatting and attachment markers useful to the model while resource keys
+    remain structured for the downloader.
+    """
+    root = data.get("post") if isinstance(data.get("post"), dict) else data
+    if not isinstance(root, dict):
+        return "", []
+    block = root if isinstance(root.get("content"), list) else None
+    if block is None:
+        for locale in ("zh_cn", "en_us", "ja_jp"):
+            candidate = root.get(locale)
+            if isinstance(candidate, dict) and isinstance(candidate.get("content"), list):
+                block = candidate
+                break
+    if block is None:
+        for candidate in root.values():
+            if isinstance(candidate, dict) and isinstance(candidate.get("content"), list):
+                block = candidate
+                break
+    if block is None:
+        return "", []
+
     lines: list[str] = []
-    for block in blocks:
-        if not isinstance(block, list):
+    resources: list[_FeishuPostResource] = []
+    title = str(block.get("title") or "").strip()
+    if title:
+        lines.append(title)
+    for row in block.get("content") or []:
+        if not isinstance(row, list):
             continue
         parts: list[str] = []
-        for item in block:
+        for item in row:
             if not isinstance(item, dict):
                 continue
-            tag = str(item.get("tag") or "")
+            tag = str(item.get("tag") or "").lower()
             if tag in {"text", "md"}:
-                parts.append(str(item.get("text") or ""))
+                value = str(item.get("text") or "")
+                style = item.get("style") if isinstance(item.get("style"), dict) else {}
+                if style.get("code"):
+                    value = f"`{value}`"
+                elif value:
+                    if style.get("bold"):
+                        value = f"**{value}**"
+                    if style.get("italic"):
+                        value = f"*{value}*"
+                    if style.get("strikethrough"):
+                        value = f"~~{value}~~"
+                    if style.get("underline"):
+                        value = f"<u>{value}</u>"
+                parts.append(value)
+            elif tag in {"code_block", "pre"}:
+                language = str(item.get("language") or item.get("lang") or "")
+                code = str(item.get("text") or item.get("content") or "")
+                parts.append(f"```{language}\n{code}\n```")
             elif tag == "a":
                 label = str(item.get("text") or item.get("href") or "")
                 href = str(item.get("href") or "")
                 parts.append(f"{label} ({href})" if href and href != label else label)
             elif tag == "at":
-                parts.append(str(item.get("user_name") or item.get("user_id") or ""))
+                mention = str(item.get("user_name") or item.get("user_id") or "")
+                parts.append("@all" if mention == "@_all" else (f"@{mention}" if mention else "@user"))
+            elif tag in {"img", "image"} and item.get("image_key"):
+                resources.append(_FeishuPostResource(str(item["image_key"]), "image"))
+                alt = str(item.get("text") or item.get("alt") or "")
+                parts.append(f"[Image: {alt}]" if alt else "[Image]")
+            elif tag in {"file", "media", "audio", "video"} and item.get("file_key"):
+                filename = str(item.get("file_name") or item.get("title") or item.get("text") or "")
+                resource_type = tag if tag in {"audio", "video"} else "file"
+                resources.append(_FeishuPostResource(str(item["file_key"]), resource_type, filename))
+                parts.append(f"[Attachment: {filename}]" if filename else "[Attachment]")
+            elif tag in {"emotion", "emoji"}:
+                emoji = str(item.get("text") or item.get("emoji_type") or "")
+                parts.append(f":{emoji}:" if emoji else "[Emoji]")
+            elif tag == "br":
+                parts.append("\n")
+            elif tag in {"hr", "divider"}:
+                parts.append("\n---\n")
         line = "".join(parts).strip()
         if line:
             lines.append(line)
-    return "\n".join(lines)
+    unique: list[_FeishuPostResource] = []
+    seen: set[tuple[str, str]] = set()
+    for resource in resources:
+        key = (resource.key, resource.resource_type)
+        if key not in seen:
+            seen.add(key)
+            unique.append(resource)
+    return "\n".join(lines), unique
+
+
+def _feishu_share_text(data: dict, message_type: str) -> str:
+    if message_type == "share_chat":
+        return _feishu_summary("shared chat", data, ("chat_name", "name", "chat_id", "summary"))
+    if message_type == "share_user":
+        return _feishu_summary("shared user", data, ("name", "user_name", "user_id", "title"))
+    if message_type == "interactive":
+        return _feishu_summary("interactive message", data, ("title", "text", "content", "summary", "value", "elements"))
+    if message_type == "share_calendar_event":
+        return _feishu_summary("shared calendar event", data, ("summary", "title", "event_key", "start_time"))
+    if message_type == "merge_forward":
+        return _feishu_summary("merged forward messages", data, ("title", "summary", "content", "message_list"))
+    if message_type == "system":
+        return _feishu_summary("system message", data, ("text", "content", "title"))
+    return f"[{message_type}]"
+
+
+def _feishu_summary(label: str, data: dict, preferred_keys: tuple[str, ...]) -> str:
+    """Extract a bounded human-readable view from Feishu card/share payloads."""
+    values: list[str] = []
+
+    def visit(value: Any, *, depth: int = 0) -> None:
+        if depth > 4 or len(values) >= 12:
+            return
+        if isinstance(value, str):
+            text = " ".join(value.split())
+            if text.startswith(("{", "[")):
+                try:
+                    decoded = json.loads(text)
+                except json.JSONDecodeError:
+                    decoded = None
+                if decoded is not None:
+                    visit(decoded, depth=depth + 1)
+                    return
+            if text and text not in values:
+                values.append(text[:500])
+            return
+        if isinstance(value, list):
+            for item in value:
+                visit(item, depth=depth + 1)
+            return
+        if isinstance(value, dict):
+            for key in preferred_keys:
+                if key in value:
+                    visit(value[key], depth=depth + 1)
+
+    for key in preferred_keys:
+        if key in data:
+            visit(data[key])
+    return f"[{label}: {' | '.join(values)}]" if values else f"[{label}]"
+
+
+def _feishu_mentions_bot(message: dict, bot_open_id: Optional[str]) -> bool:
+    raw_content = str(message.get("content") or "")
+    if "@_all" in raw_content:
+        return True
+    mentions = message.get("mentions") or []
+    if not isinstance(mentions, list):
+        return False
+    for mention in mentions:
+        if not isinstance(mention, dict):
+            continue
+        identity = mention.get("id") or {}
+        if not isinstance(identity, dict):
+            continue
+        open_id = str(identity.get("open_id") or "")
+        if bot_open_id and open_id == bot_open_id:
+            return True
+        # Feishu bot mentions carry an open_id but no user_id. This mirrors the SDK-level
+        # fallback used by FlowAgent until the bot id can be resolved from the platform.
+        if not bot_open_id and open_id and not identity.get("user_id"):
+            return True
+    return False
 
 
 def _feishu_attachments_from_message(message: dict) -> list[dict[str, Any]]:
@@ -193,6 +343,21 @@ def _feishu_attachments_from_message(message: dict) -> list[dict[str, Any]]:
     if not isinstance(data, dict):
         return []
     message_id = str(message.get("message_id") or "")
+    if message_type == "post":
+        _text, resources = _feishu_post_content(data)
+        return [
+            {
+                "platform": "feishu",
+                "type": "image" if resource.resource_type == "image" else resource.resource_type,
+                "resource_type": resource.resource_type,
+                "key": resource.key,
+                "filename": resource.filename or (
+                    f"{resource.key}.png" if resource.resource_type == "image" else resource.key
+                ),
+                "message_id": message_id,
+            }
+            for resource in resources
+        ]
     if message_type == "image":
         key = str(data.get("image_key") or "")
         if not key:
@@ -217,7 +382,7 @@ def _feishu_attachments_from_message(message: dict) -> list[dict[str, Any]]:
             {
                 "platform": "feishu",
                 "type": message_type,
-                "resource_type": "file",
+                "resource_type": message_type if message_type in {"audio", "video"} else "file",
                 "key": key,
                 "filename": str(data.get("file_name") or data.get("name") or key),
                 "message_id": message_id,
@@ -235,7 +400,14 @@ def _feishu_attachment_text(attachments: list[dict[str, Any]]) -> str:
     return "User sent attachment: " + ", ".join(names)
 
 
-def feishu_event_to_event(event: Any) -> Optional[MessageEvent]:
+def feishu_event_to_event(
+    event: Any,
+    *,
+    bot_open_id: Optional[str] = None,
+    bot_user_id: Optional[str] = None,
+    bot_name: Optional[str] = None,
+    allow_bots: str = "none",
+) -> Optional[MessageEvent]:
     data = _as_dict(event)
     if isinstance(data, dict) and "event" in data:
         data = data.get("event") or {}
@@ -245,26 +417,38 @@ def feishu_event_to_event(event: Any) -> Optional[MessageEvent]:
     if not isinstance(message, dict):
         return None
     message_type = str(message.get("message_type") or "text")
-    if message_type not in (
-        "text",
-        "post",
-        "file",
-        "image",
-        "audio",
-        "media",
-        "video",
-    ):
+    sender = data.get("sender") or {}
+    if not isinstance(sender, dict):
         return None
-    text = _feishu_text_from_content(message.get("content"))
+    sender_id = sender.get("sender_id")
+    sender_id = sender_id if isinstance(sender_id, dict) else {}
+    user_id = _first_sender_id(sender_id)
+    sender_is_bot = sender.get("sender_type") == "bot"
+    own_ids = {value for value in (bot_open_id, bot_user_id) if value}
+    if user_id and user_id in own_ids:
+        return None
+    if sender_is_bot and allow_bots == "none":
+        return None
+    content = _feishu_content_data(message.get("content"))
+    content = content if isinstance(content, dict) else {}
+    if message_type in {
+        "share_chat",
+        "share_user",
+        "interactive",
+        "share_calendar_event",
+        "merge_forward",
+        "system",
+    }:
+        text = _feishu_share_text(content, message_type)
+    elif message_type in {"text", "post", "file", "image", "audio", "media", "video"}:
+        text = _feishu_text_from_content(message.get("content"))
+    else:
+        text = f"[{message_type}]"
     attachments = _feishu_attachments_from_message(message)
     if not text and attachments:
         text = _feishu_attachment_text(attachments)
     if not text:
         return None
-    sender = data.get("sender") or {}
-    sender_id = sender.get("sender_id") if isinstance(sender, dict) else {}
-    sender_id = sender_id if isinstance(sender_id, dict) else {}
-    user_id = _first_sender_id(sender_id)
     chat_id = str(message.get("chat_id") or "")
     if not chat_id:
         return None
@@ -277,15 +461,23 @@ def feishu_event_to_event(event: Any) -> Optional[MessageEvent]:
         user_name=user_id,
         chat_name=message.get("chat_name") or chat_id,
         chat_type=chat_type,
-        thread_id=message.get("thread_id") or None,
+        thread_id=message.get("thread_id") or message.get("root_id") or None,
     )
     return MessageEvent(
         text=text,
         source=source,
         message_id=message.get("message_id"),
         message_type=MessageType.MEDIA if attachments else MessageType.TEXT,
+        reply_to_message_id=(
+            message.get("parent_id")
+            or message.get("upper_message_id")
+            or message.get("root_id")
+            or None
+        ),
         raw=event,
         attachments=attachments,
+        mentions_me=_feishu_mentions_bot(message, bot_open_id)
+        or bool(bot_name and f"@{bot_name}" in text),
     )
 
 
@@ -323,6 +515,98 @@ def feishu_card_action_to_interaction(event: Any) -> Optional[InteractionEvent]:
         user_id=user_id,
         user_name=user_id,
     )
+
+
+def _feishu_bool(value: Any, *, default: bool) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _feishu_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _feishu_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _feishu_group_rules(value: Any) -> dict[str, dict[str, Any]]:
+    """Accept persisted dicts and the advanced setup field's JSON form."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            logger.warning("ignoring invalid Feishu group_rules JSON")
+            return {}
+    if isinstance(value, list):
+        value = {
+            str(item.get("chat_id") or ""): item
+            for item in value
+            if isinstance(item, dict) and item.get("chat_id")
+        }
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(chat_id): dict(rule)
+        for chat_id, rule in value.items()
+        if chat_id and isinstance(rule, dict)
+    }
+
+
+def _feishu_id_set(value: Any) -> set[str]:
+    if isinstance(value, str):
+        return {part.strip() for part in value.split(",") if part.strip()}
+    if isinstance(value, (list, tuple, set)):
+        return {str(part) for part in value if part}
+    return set()
+
+
+def _feishu_seen_state_path(app_id: str) -> Path:
+    digest = hashlib.sha256(app_id.encode("utf-8")).hexdigest()[:16]
+    return state_dir() / "feishu" / f"seen-{digest}.json"
+
+
+def _merge_feishu_text(current: str, incoming: str) -> str:
+    if not current:
+        return incoming
+    if not incoming:
+        return current
+    return f"{current}\n{incoming}"
+
+
+def _feishu_batch_count(text: str) -> int:
+    return text.count("\n") + 1 if text else 0
+
+
+def _register_feishu_callback(builder: Any, method: str, callback: Callable[[Any], Any]) -> Any:
+    register = getattr(builder, method, None)
+    if not callable(register):
+        return builder
+    try:
+        return register(callback) or builder
+    except Exception:
+        logger.debug("Feishu SDK does not support %s", method, exc_info=True)
+        return builder
+
+
+def _register_feishu_custom_event(builder: Any, event_name: str, callback: Callable[[Any], Any]) -> Any:
+    register = getattr(builder, "register_p2_customized_event", None)
+    if not callable(register):
+        return builder
+    try:
+        return register(event_name, callback) or builder
+    except Exception:
+        logger.debug("Feishu SDK does not support %s", event_name, exc_info=True)
+        return builder
 
 
 # -- adapters ------------------------------------------------------------------
@@ -643,6 +927,8 @@ class FeishuAdapter(BasePlatformAdapter):
         self.app_id = str(profile.get("app_id") or "")
         self.app_secret = str(profile.get("app_secret") or "")
         self.base_url = str(profile.get("base_url") or "")
+        self._encrypt_key = str(profile.get("encrypt_key") or "")
+        self._verification_token = str(profile.get("verification_token") or "")
         self._client = None
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -650,6 +936,38 @@ class FeishuAdapter(BasePlatformAdapter):
         self._user_cache: dict[str, str] = {}
         self._chat_cache: dict[str, str] = {}
         self._identity_lock = threading.Lock()
+        self._processed_message_ids: OrderedDict[str, float] = OrderedDict()
+        self._processed_messages_lock = threading.Lock()
+        self._bot_open_id = str(profile.get("bot_open_id") or "") or None
+        self._bot_user_id = str(profile.get("bot_user_id") or "") or None
+        self._bot_name = str(profile.get("bot_name") or "") or None
+        self._allow_bots = str(profile.get("allow_bots") or "none").lower()
+        if self._allow_bots not in {"none", "mentions", "all"}:
+            self._allow_bots = "none"
+        self._require_mention = _feishu_bool(profile.get("require_mention"), default=False)
+        self._group_policy = str(profile.get("group_policy") or "open").lower()
+        self._allowed_group_users = _feishu_id_set(profile.get("allowed_group_users"))
+        self._admins = _feishu_id_set(profile.get("admins"))
+        self._group_rules = _feishu_group_rules(profile.get("group_rules"))
+        self._dedup_ttl_seconds = max(60, _feishu_int(profile.get("dedup_ttl_seconds"), 86400))
+        self._dedup_cache_size = max(100, _feishu_int(profile.get("dedup_cache_size"), 5000))
+        self._seen_state_path = _feishu_seen_state_path(self.app_id)
+        self._load_seen_message_ids()
+        self._pending_inbound: deque[Any] = deque(maxlen=1000)
+        self._pending_inbound_lock = threading.Lock()
+        self._pending_drain_task: Optional[asyncio.Task] = None
+        self._bot_identity_task: Optional[asyncio.Task] = None
+        self._chat_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
+        self._chat_locks_lock = threading.Lock()
+        self._message_text_cache: OrderedDict[str, str] = OrderedDict()
+        self._text_batches: dict[str, MessageEvent] = {}
+        self._text_batch_tasks: dict[str, asyncio.Task] = {}
+        self._media_batches: dict[str, MessageEvent] = {}
+        self._media_batch_tasks: dict[str, asyncio.Task] = {}
+        self._text_batch_delay = max(0.0, _feishu_float(profile.get("text_batch_delay_seconds"), 0.6))
+        self._media_batch_delay = max(0.0, _feishu_float(profile.get("media_batch_delay_seconds"), 0.8))
+        self._text_batch_max_messages = max(1, _feishu_int(profile.get("text_batch_max_messages"), 8))
+        self._text_batch_max_chars = max(1, _feishu_int(profile.get("text_batch_max_chars"), 4000))
 
     async def connect(self) -> bool:
         try:
@@ -659,14 +977,18 @@ class FeishuAdapter(BasePlatformAdapter):
             return False
 
         self._loop = asyncio.get_running_loop()
+        self._bot_identity_task = asyncio.create_task(
+            asyncio.to_thread(self._resolve_bot_identity)
+        )
 
         def _on_message(data: Any) -> None:
-            event = feishu_event_to_event(data)
-            if event is None or self._loop is None or self._closing:
+            if self._closing:
                 return
-            asyncio.run_coroutine_threadsafe(
-                self._handle_feishu_message(event), self._loop
-            )
+            loop = self._loop
+            if loop is None or loop.is_closed():
+                self._queue_pending_inbound(data)
+                return
+            self._schedule_feishu_message(data)
 
         def _on_card_action(data: Any):
             event = feishu_card_action_to_interaction(data)
@@ -692,7 +1014,7 @@ class FeishuAdapter(BasePlatformAdapter):
                 return {}
 
         builder = lark.EventDispatcherHandler.builder(
-            "", ""
+            self._encrypt_key, self._verification_token
         ).register_p2_im_message_receive_v1(_on_message)
         register_card_action = getattr(builder, "register_p2_card_action_trigger", None)
         if callable(register_card_action):
@@ -702,6 +1024,21 @@ class FeishuAdapter(BasePlatformAdapter):
                 "lark-oapi does not support card action events; Feishu approval "
                 "buttons will require the UI fallback"
             )
+        # Feishu sends every event the application subscribes to.  Register the platform
+        # lifecycle/read/reaction events even when OpenWorker has no action for them so the
+        # SDK does not emit misleading `processor not found` errors.
+        for method in (
+            "register_p2_im_message_message_read_v1",
+            "register_p2_im_message_reaction_created_v1",
+            "register_p2_im_message_reaction_deleted_v1",
+            "register_p2_im_chat_member_bot_added_v1",
+            "register_p2_im_chat_member_bot_deleted_v1",
+            "register_p2_im_chat_access_event_bot_p2p_chat_entered_v1",
+            "register_p2_im_message_recalled_v1",
+        ):
+            builder = _register_feishu_callback(builder, method, self._on_ignored_feishu_event)
+        for event_name in ("drive.notice.comment_add_v1", "vc.bot.meeting_invited_v1"):
+            builder = _register_feishu_custom_event(builder, event_name, self._on_ignored_feishu_event)
         handler = builder.build()
         self._client = lark.ws.Client(self.app_id, self.app_secret, event_handler=handler)
 
@@ -725,15 +1062,204 @@ class FeishuAdapter(BasePlatformAdapter):
         self._closing = False
         self._thread = threading.Thread(target=_run, name="feishu-ws", daemon=True)
         self._thread.start()
+        self._pending_drain_task = asyncio.create_task(self._drain_pending_inbound())
         logger.info("feishu adapter websocket started")
         return True
+
+    def _is_duplicate_message(self, message_id: Optional[str]) -> bool:
+        if not message_id:
+            return False
+        now = time.time()
+        with self._processed_messages_lock:
+            self._prune_seen_message_ids(now)
+            if message_id in self._processed_message_ids:
+                return True
+            self._processed_message_ids[message_id] = now
+            while len(self._processed_message_ids) > self._dedup_cache_size:
+                self._processed_message_ids.popitem(last=False)
+            self._persist_seen_message_ids()
+        return False
+
+    def _prune_seen_message_ids(self, now: Optional[float] = None) -> None:
+        cutoff = (now if now is not None else time.time()) - self._dedup_ttl_seconds
+        while self._processed_message_ids:
+            _message_id, seen_at = next(iter(self._processed_message_ids.items()))
+            if seen_at >= cutoff:
+                break
+            self._processed_message_ids.popitem(last=False)
+
+    def _load_seen_message_ids(self) -> None:
+        try:
+            raw = json.loads(self._seen_state_path.read_text(encoding="utf-8"))
+            items = raw.get("items") if isinstance(raw, dict) else []
+            if not isinstance(items, list):
+                return
+            for item in items:
+                if not isinstance(item, list) or len(item) != 2:
+                    continue
+                message_id, seen_at = item
+                if isinstance(message_id, str) and isinstance(seen_at, (int, float)):
+                    self._processed_message_ids[message_id] = float(seen_at)
+            self._prune_seen_message_ids()
+        except (OSError, ValueError, TypeError):
+            return
+
+    def _persist_seen_message_ids(self) -> None:
+        try:
+            payload = {"items": list(self._processed_message_ids.items())}
+            write_private_text(self._seen_state_path, json.dumps(payload, separators=(",", ":")))
+        except OSError:
+            logger.debug("could not persist Feishu dedup state", exc_info=True)
+
+    def _queue_pending_inbound(self, raw_event: Any) -> None:
+        with self._pending_inbound_lock:
+            self._pending_inbound.append(raw_event)
+
+    async def _drain_pending_inbound(self) -> None:
+        while not self._closing:
+            with self._pending_inbound_lock:
+                raw_event = self._pending_inbound.popleft() if self._pending_inbound else None
+            if raw_event is None:
+                return
+            self._schedule_feishu_message(raw_event)
+            await asyncio.sleep(0)
+
+    def _schedule_feishu_message(self, raw_event: Any) -> None:
+        event = feishu_event_to_event(
+            raw_event,
+            bot_open_id=self._bot_open_id,
+            bot_user_id=self._bot_user_id,
+            bot_name=self._bot_name,
+            allow_bots=self._allow_bots,
+        )
+        if event is None or not self._admit_feishu_event(event):
+            return
+        if self._is_duplicate_message(event.message_id):
+            return
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            self._queue_pending_inbound(raw_event)
+            return
+        asyncio.run_coroutine_threadsafe(self._handle_feishu_message(event), loop)
+
+    def _admit_feishu_event(self, event: MessageEvent) -> bool:
+        """Apply Feishu-specific bot, group and mention policy before Gateway auth.
+
+        Gateway remains the source of truth for the global sender allow-list.  These rules
+        only decide whether this particular group delivery is worth forwarding.
+        """
+        source = event.source
+        raw = _as_dict(event.raw)
+        raw_event = raw.get("event", raw) if isinstance(raw, dict) else {}
+        sender = raw_event.get("sender") if isinstance(raw_event, dict) else {}
+        if isinstance(sender, dict) and sender.get("sender_type") == "bot":
+            if self._allow_bots == "none":
+                return False
+            if self._allow_bots == "mentions" and not event.mentions_me:
+                return False
+        if source.chat_type == "dm":
+            return True
+        user_id = str(source.user_id or "")
+        rule = self._group_rules.get(source.chat_id, {})
+        policy = str(rule.get("policy") or self._group_policy).lower()
+        require_mention = _feishu_bool(rule.get("require_mention"), default=self._require_mention)
+        allowed = {str(v) for v in rule.get("allowed_users", self._allowed_group_users) if v}
+        admins = {str(v) for v in rule.get("admins", self._admins) if v}
+        if policy == "disabled":
+            return False
+        if policy == "allowlist" and user_id not in allowed:
+            return False
+        if policy == "blacklist" and user_id in allowed:
+            return False
+        if policy == "admin_only" and user_id not in admins:
+            return False
+        if require_mention and not event.mentions_me:
+            return False
+        return True
+
+    @staticmethod
+    def _on_ignored_feishu_event(_data: Any) -> dict:
+        return {}
 
     async def _handle_feishu_message(self, event: MessageEvent) -> None:
         try:
             await asyncio.to_thread(self._enrich_event, event)
         except Exception:
             logger.debug("feishu identity enrichment failed", exc_info=True)
-        await self.handle_message(event)
+        if event.reply_to_message_id:
+            event.reply_to_text = await asyncio.to_thread(
+                self._fetch_message_text, str(event.reply_to_message_id)
+            )
+        await self._dispatch_feishu_event(event)
+
+    async def _dispatch_feishu_event(self, event: MessageEvent) -> None:
+        """Coalesce short Feishu bursts before entering OpenWorker's session router."""
+        if event.message_type == MessageType.TEXT and not event.text.lstrip().startswith("/"):
+            await self._enqueue_feishu_batch(event, media=False)
+            return
+        if event.attachments:
+            await self._enqueue_feishu_batch(event, media=True)
+            return
+        await self._handle_message_serially(event)
+
+    def _batch_key(self, event: MessageEvent, *, media: bool) -> str:
+        source = event.source
+        return ":".join(
+            (source.chat_id, source.thread_id or "", source.user_id or "", "media" if media else "text")
+        )
+
+    async def _enqueue_feishu_batch(self, event: MessageEvent, *, media: bool) -> None:
+        key = self._batch_key(event, media=media)
+        batches = self._media_batches if media else self._text_batches
+        tasks = self._media_batch_tasks if media else self._text_batch_tasks
+        existing = batches.get(key)
+        if existing is None:
+            batches[key] = event
+        elif media:
+            existing.attachments.extend(event.attachments)
+            existing.text = _merge_feishu_text(existing.text, event.text)
+            existing.message_id = event.message_id or existing.message_id
+        elif (
+            len(existing.text) + len(event.text) + 1 > self._text_batch_max_chars
+            or _feishu_batch_count(existing.text) >= self._text_batch_max_messages
+        ):
+            await self._flush_feishu_batch(key, media=media)
+            batches[key] = event
+        else:
+            existing.text = _merge_feishu_text(existing.text, event.text)
+            existing.message_id = event.message_id or existing.message_id
+        task = tasks.get(key)
+        if task is not None:
+            task.cancel()
+        delay = self._media_batch_delay if media else self._text_batch_delay
+        tasks[key] = asyncio.create_task(self._flush_feishu_batch_later(key, media, delay))
+
+    async def _flush_feishu_batch_later(self, key: str, media: bool, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+            await self._flush_feishu_batch(key, media=media)
+        except asyncio.CancelledError:
+            raise
+
+    async def _flush_feishu_batch(self, key: str, *, media: bool) -> None:
+        batches = self._media_batches if media else self._text_batches
+        tasks = self._media_batch_tasks if media else self._text_batch_tasks
+        event = batches.pop(key, None)
+        task = tasks.pop(key, None)
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+        if event is not None:
+            await self._handle_message_serially(event)
+
+    async def _handle_message_serially(self, event: MessageEvent) -> None:
+        key = event.source.target
+        with self._chat_locks_lock:
+            lock = self._chat_locks.pop(key, None) or asyncio.Lock()
+            self._chat_locks[key] = lock
+            while len(self._chat_locks) > 1000:
+                self._chat_locks.popitem(last=False)
+        async with lock:
+            await self.handle_message(event)
 
     async def _handle_feishu_interaction(self, event: InteractionEvent) -> None:
         user_id = str(event.user_id or "")
@@ -759,6 +1285,17 @@ class FeishuAdapter(BasePlatformAdapter):
             name = self._resolve_chat_name(chat_id)
             if name:
                 source.chat_name = name
+
+    def _resolve_bot_identity(self) -> None:
+        if self._bot_open_id and self._bot_user_id and self._bot_name:
+            return
+        data = self._feishu_get("/open-apis/bot/v3/info")
+        bot = (data.get("data") or {}).get("bot") if isinstance(data, dict) else None
+        if not isinstance(bot, dict):
+            return
+        self._bot_open_id = self._bot_open_id or str(bot.get("open_id") or "") or None
+        self._bot_user_id = self._bot_user_id or str(bot.get("user_id") or "") or None
+        self._bot_name = self._bot_name or str(bot.get("app_name") or bot.get("name") or "") or None
 
     def _resolve_user_name(self, user_id: str) -> Optional[str]:
         with self._identity_lock:
@@ -802,6 +1339,30 @@ class FeishuAdapter(BasePlatformAdapter):
             self._chat_cache[chat_id] = name
         return name
 
+    def _fetch_message_text(self, message_id: str) -> Optional[str]:
+        with self._identity_lock:
+            cached = self._message_text_cache.get(message_id)
+            if cached is not None:
+                self._message_text_cache.move_to_end(message_id)
+                return cached
+        data = self._feishu_get(f"/open-apis/im/v1/messages/{quote(message_id, safe='')}")
+        message = (data.get("data") or {}).get("items") if isinstance(data, dict) else None
+        if isinstance(message, list):
+            message = message[0] if message else None
+        if not isinstance(message, dict):
+            message = (data.get("data") or {}).get("message") if isinstance(data, dict) else None
+        if not isinstance(message, dict):
+            return None
+        text = _feishu_text_from_content(message.get("content"))
+        if not text:
+            return None
+        with self._identity_lock:
+            self._message_text_cache[message_id] = text
+            self._message_text_cache.move_to_end(message_id)
+            while len(self._message_text_cache) > 1000:
+                self._message_text_cache.popitem(last=False)
+        return text
+
     def _feishu_get(self, path: str, *, params: Optional[dict[str, str]] = None) -> dict:
         import httpx
 
@@ -832,6 +1393,36 @@ class FeishuAdapter(BasePlatformAdapter):
 
     async def disconnect(self) -> None:
         self._closing = True
+        for task in [
+            self._pending_drain_task,
+            self._bot_identity_task,
+            *self._text_batch_tasks.values(),
+            *self._media_batch_tasks.values(),
+        ]:
+            if task is not None:
+                task.cancel()
+        await asyncio.gather(
+            *[
+                task
+                for task in [
+                    self._pending_drain_task,
+                    self._bot_identity_task,
+                    *self._text_batch_tasks.values(),
+                    *self._media_batch_tasks.values(),
+                ]
+                if task is not None
+            ],
+            return_exceptions=True,
+        )
+        self._pending_drain_task = None
+        self._bot_identity_task = None
+        self._text_batch_tasks.clear()
+        self._media_batch_tasks.clear()
+        self._text_batches.clear()
+        self._media_batches.clear()
+        with self._processed_messages_lock:
+            self._prune_seen_message_ids()
+            self._persist_seen_message_ids()
         client = self._client
         self._client = None
         if client is not None:
@@ -848,9 +1439,16 @@ class FeishuAdapter(BasePlatformAdapter):
     async def send(
         self, chat_id: str, text: str, *, thread_id: Optional[str] = None
     ) -> SendResult:
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             _send_feishu, self._token_bundle(), chat_id, text, thread_id
         )
+        if result.ok and result.message_id:
+            with self._identity_lock:
+                self._message_text_cache[str(result.message_id)] = text
+                self._message_text_cache.move_to_end(str(result.message_id))
+                while len(self._message_text_cache) > 1000:
+                    self._message_text_cache.popitem(last=False)
+        return result
 
     async def send_interactive(
         self, chat_id: str, text: str, buttons, *, thread_id: Optional[str] = None

@@ -643,6 +643,10 @@ export interface Connector {
   recent?: RecentSender[]; // recently-seen senders on a connected two-way connector
   unauthorized?: ParkedMessage[]; // parked messages from unallowed senders (§19)
   tools: ConnectorTool[];
+  // Automation configuration capabilities are declared by the server so the UI
+  // does not infer a data source from a generic messaging connector.
+  source_capable: boolean;
+  delivery_capable: boolean;
   managed: boolean; // one-click managed OAuth available (needs cloud sign-in)
   managed_paused?: boolean; // one-click temporarily off (e.g. Google CASA pending) — badge "Coming soon"
   managed_profile: boolean; // current profile came from managed OAuth (vs manual paste)
@@ -1928,6 +1932,12 @@ export async function setDmRoute(sessionId: string): Promise<{ ok: boolean; dm_s
 }
 
 // -- automations (scheduled tasks) --------------------------------------------
+export interface AutomationDelivery {
+  kind: "app" | "channel";
+  connector?: string;
+  target?: string;
+}
+
 export interface Automation {
   id: string;
   title: string;
@@ -1942,6 +1952,10 @@ export interface Automation {
   last_status: string | null;
   run_count: number;
   notify_on_completion: boolean;
+  // null = a task created before source restrictions existed. [] is intentionally
+  // source-free (web/local work still keeps the normal Cowork tools).
+  sources: string[] | null;
+  delivery: AutomationDelivery;
   // UX-023 sidebar badges: runs started since the user last opened this automation's
   // detail; `unseen_failed` = the newest unseen run errored (danger tint).
   unseen_runs?: number;
@@ -1963,6 +1977,8 @@ export interface AutomationRun {
   result_text: string | null;
   artifacts: string[];
   error: string | null;
+  delivery_status?: "sent" | "failed" | "skipped" | null;
+  delivery_error?: string | null;
   trigger: string;
 }
 
@@ -2021,6 +2037,8 @@ export async function createAutomation(payload: {
   cron?: string;
   fire_at?: string;
   timezone?: string;
+  sources?: string[];
+  delivery?: AutomationDelivery;
   // §25 standing grants (the creating surface rendered them; submit IS the consent).
   // Only target-bound write entries survive server-side validation.
   permissions?: { tool: string; target: string; access: "read" | "write" }[];
