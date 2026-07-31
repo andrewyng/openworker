@@ -2,6 +2,19 @@
 
 本项目基于 [andrewyng/openworker](https://github.com/andrewyng/openworker) 二次开发，感谢原作者 Andrew Ng 及 OpenWorker 团队的开源贡献。
 
+## [0.4.0] - 2026-07-31
+
+### 新增
+- **`/地形生成` Skill**：完整的纯 Python PCG 地形生成流水线，无需 Houdini
+  - 地形噪声生成：山脉/丘陵/平原/峡谷/群岛 5 种风格
+  - 水力侵蚀模拟：粒子水流模型，携带沉积物，陡坡侵蚀、低洼沉积
+  - 热力侵蚀：陡坡物质崩落至休止角
+  - 材质分布：按高度/坡度/沉积物/流量自动分配地表材质（雪/岩石/碎石/沙/土壤/草地等）
+  - 植被散布：Poisson disk 采样 + 生态规则（坡度/高度/材质决定植被类型和密度）
+  - Three.js 3D 预览：自包含 HTML，鼠标旋转/缩放/平移，在 Gamer Worker 右侧面板直接查看
+  - 包含 5 个 Python 脚本（terrain_gen / erosion / material_map / vegetation / preview）
+- 测试通过：256x256 分辨率完整流水线验证成功
+
 ## [0.3.1] - 2026-07-31
 
 ### 修复
