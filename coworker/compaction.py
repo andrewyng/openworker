@@ -40,21 +40,80 @@ _SPAN_BUDGET_CHARS = 400_000
 _USER_MESSAGE_CLIP = 600
 _USER_MESSAGES_MAX = 40
 _TRIM_FRACTION = 0.10
+_IMAGE_TOKEN_COST = 1500
+_IMAGE_PART_TYPES = {"image", "image_url", "input_image"}
 
 
 # -- token math ---------------------------------------------------------------
 
 
+def _image_part_count(content: Any) -> int:
+    count = 0
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") in _IMAGE_PART_TYPES:
+                count += 1
+    elif isinstance(content, dict) and content.get("_multimodal"):
+        inner = content.get("content")
+        if isinstance(inner, list):
+            for part in inner:
+                if isinstance(part, dict) and part.get("type") in _IMAGE_PART_TYPES:
+                    count += 1
+    return count
+
+
+def _sanitize_content_for_estimate(content: Any) -> Any:
+    if isinstance(content, list):
+        parts: list[Any] = []
+        for part in content:
+            if not isinstance(part, dict):
+                parts.append(part)
+                continue
+            ptype = part.get("type")
+            if ptype == "image_url":
+                image_url = part.get("image_url")
+                image_part = {"type": "image_url", "image_url": {"url": "[stripped]"}}
+                if isinstance(image_url, dict) and image_url.get("detail") is not None:
+                    image_part["image_url"]["detail"] = image_url.get("detail")
+                parts.append(image_part)
+            elif ptype in {"image", "input_image"}:
+                parts.append({"type": ptype, "image": "[stripped]"})
+            else:
+                parts.append(part)
+        return parts
+    if isinstance(content, dict) and content.get("_multimodal"):
+        return content.get("text_summary", "")
+    return content
+
+
+def _estimate_message_json(msg: Any) -> Any:
+    if not isinstance(msg, dict):
+        return msg
+    shadow: dict[str, Any] = {}
+    for key, value in msg.items():
+        if key == "content":
+            shadow[key] = _sanitize_content_for_estimate(value)
+        else:
+            shadow[key] = value
+    return shadow
+
+
 def estimate_tokens(messages: list[dict[str, Any]]) -> int:
-    """chars/4 over the serialized messages — the fallback signal for providers that
-    never report usage (documented in the metering code)."""
+    """Rough token estimate for fallback compaction signals.
+
+    Message text is estimated from the serialized payload, but image parts are
+    counted separately at a flat per-image cost so base64 image data does not
+    inflate the threshold signal.
+    """
     total = 0
     for msg in messages:
+        shadow = _estimate_message_json(msg)
         try:
-            total += len(json.dumps(msg, default=str))
+            total += len(json.dumps(shadow, default=str)) // 4
         except (TypeError, ValueError):
-            total += len(str(msg))
-    return total // 4
+            total += len(str(shadow)) // 4
+        total += _image_part_count(msg.get("content") if isinstance(msg, dict) else None) * _IMAGE_TOKEN_COST
+    return total
 
 
 def trigger_tokens(
