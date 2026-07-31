@@ -88,6 +88,21 @@ def _restrict_to_user(path: Path, *, is_dir: bool) -> None:
     os.chmod(path, 0o700 if is_dir else 0o600)
 
 
+def _write_text_born_private(tmp: Path, content: str) -> None:
+    """Write `content` to a file that is user-only from its first byte.
+
+    `Path.write_text` creates the file umask-wide (typically 0644) and the chmod that
+    follows leaves a window where the content is world-readable — and no protection at
+    all on the paths where that step is best-effort. Passing 0600 at open covers the
+    content for its whole lifetime instead. O_EXCL refuses to write through anything
+    pre-planted at the predictable `.tmp` name (write_text would follow a symlink and
+    pour the secret into its target); a stale tmp left by a crash is removed first."""
+    tmp.unlink(missing_ok=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(content)
+
+
 def write_private_text(path: str | Path, content: str) -> Path:
     """Atomically write a user-only text file using the SecretStore's OS protections."""
     target = Path(path).expanduser()
@@ -97,8 +112,8 @@ def write_private_text(path: str | Path, content: str) -> Path:
     except OSError:
         pass
     tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    _restrict_to_user(tmp, is_dir=False)
+    _write_text_born_private(tmp, content)
+    _restrict_to_user(tmp, is_dir=False)  # still needed on Windows: ACL, not mode bits
     os.replace(tmp, target)
     return target
 
@@ -188,6 +203,6 @@ class SecretStore:
         except OSError:
             pass
         tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(store, indent=2), encoding="utf-8")
-        _restrict_to_user(tmp, is_dir=False)
+        _write_text_born_private(tmp, json.dumps(store, indent=2))
+        _restrict_to_user(tmp, is_dir=False)  # still needed on Windows: ACL, not mode bits
         os.replace(tmp, self.path)
