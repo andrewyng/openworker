@@ -350,6 +350,232 @@ def test_feishu_post_event_to_event():
     assert mapped.text == "## 标题\n\n- A"
 
 
+def test_feishu_post_images_map_to_downloadable_attachments():
+    mapped = feishu_event_to_event(
+        {
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou_123"}},
+                "message": {
+                    "message_id": "om_post",
+                    "chat_id": "oc_123",
+                    "chat_type": "group",
+                    "message_type": "post",
+                    "content": json.dumps(
+                        {
+                            "post": {
+                                "zh_cn": {
+                                    "title": "版本记录",
+                                    "content": [
+                                        [
+                                            {"tag": "text", "text": "请分析图片："},
+                                            {"tag": "img", "image_key": "img_v3_a"},
+                                        ],
+                                        [
+                                            {"tag": "img", "image_key": "img_v3_b"},
+                                            {"tag": "a", "text": "文档", "href": "https://example.com"},
+                                        ],
+                                    ],
+                                }
+                            }
+                        }
+                    ),
+                },
+            }
+        }
+    )
+    assert mapped is not None
+    assert mapped.text == "版本记录\n请分析图片：[Image]\n[Image]文档 (https://example.com)"
+    assert [item["key"] for item in mapped.attachments] == ["img_v3_a", "img_v3_b"]
+    assert all(item["resource_type"] == "image" for item in mapped.attachments)
+
+
+def test_feishu_post_preserves_formatting_mentions_and_non_image_resources():
+    mapped = feishu_event_to_event(
+        {
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou_123"}},
+                "message": {
+                    "message_id": "om_post_rich",
+                    "chat_id": "oc_123",
+                    "chat_type": "group",
+                    "message_type": "post",
+                    "content": json.dumps(
+                        {
+                            "zh_cn": {
+                                "content": [
+                                    [
+                                        {"tag": "text", "text": "重点", "style": {"bold": True}},
+                                        {"tag": "at", "user_name": "Ada"},
+                                        {"tag": "a", "text": "设计", "href": "https://example.com/doc"},
+                                    ],
+                                    [
+                                        {"tag": "img", "image_key": "img_v3_1", "alt": "架构图"},
+                                        {"tag": "file", "file_key": "file_v3_1", "file_name": "design.md"},
+                                        {"tag": "audio", "file_key": "file_v3_2", "file_name": "memo.ogg"},
+                                    ],
+                                ]
+                            }
+                        }
+                    ),
+                },
+            }
+        }
+    )
+    assert mapped is not None
+    assert "**重点**@Ada设计 (https://example.com/doc)" in mapped.text
+    assert "[Image: 架构图]" in mapped.text
+    assert "[Attachment: design.md]" in mapped.text
+    assert [(a["key"], a["resource_type"]) for a in mapped.attachments] == [
+        ("img_v3_1", "image"),
+        ("file_v3_1", "file"),
+        ("file_v3_2", "audio"),
+    ]
+
+
+def test_feishu_event_preserves_reply_context_and_bot_policy():
+    raw = {
+        "event": {
+            "sender": {"sender_type": "bot", "sender_id": {"open_id": "ou_other_bot"}},
+            "message": {
+                "message_id": "om_reply",
+                "chat_id": "oc_123",
+                "chat_type": "group",
+                "message_type": "text",
+                "parent_id": "om_parent",
+                "root_id": "om_root",
+                "content": '{"text":"@OpenWorker 看一下"}',
+                "mentions": [{"id": {"open_id": "ou_openworker"}}],
+            },
+        }
+    }
+    assert feishu_event_to_event(raw, bot_open_id="ou_openworker") is None
+    mapped = feishu_event_to_event(
+        raw, bot_open_id="ou_openworker", allow_bots="mentions"
+    )
+    assert mapped is not None
+    assert mapped.source.thread_id == "om_root"
+    assert mapped.reply_to_message_id == "om_parent"
+    assert mapped.mentions_me is True
+    assert feishu_event_to_event(raw, bot_open_id="ou_other_bot", allow_bots="all") is None
+
+
+def test_feishu_share_unknown_bot_and_mention_messages_are_handled():
+    base = {
+        "event": {
+            "sender": {"sender_id": {"open_id": "ou_123"}},
+            "message": {
+                "message_id": "om_1",
+                "chat_id": "oc_123",
+                "chat_type": "group",
+                "message_type": "share_chat",
+                "content": '{"chat_id":"oc_shared"}',
+            },
+        }
+    }
+    assert feishu_event_to_event(base).text == "[shared chat: oc_shared]"
+
+    unknown = json.loads(json.dumps(base))
+    unknown["event"]["message"]["message_type"] = "calendar"
+    assert feishu_event_to_event(unknown).text == "[calendar]"
+
+    mentioned = json.loads(json.dumps(base))
+    mentioned["event"]["message"]["message_type"] = "text"
+    mentioned["event"]["message"]["content"] = '{"text":"hello"}'
+    mentioned["event"]["message"]["mentions"] = [{"id": {"open_id": "ou_bot"}}]
+    assert feishu_event_to_event(mentioned, bot_open_id="ou_bot").mentions_me
+
+    bot = json.loads(json.dumps(base))
+    bot["event"]["sender"]["sender_type"] = "bot"
+    assert feishu_event_to_event(bot) is None
+
+
+def test_feishu_interactive_and_merged_messages_have_readable_summaries():
+    interactive = feishu_event_to_event(
+        {
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou_123"}},
+                "message": {
+                    "message_id": "om_card",
+                    "chat_id": "oc_123",
+                    "chat_type": "group",
+                    "message_type": "interactive",
+                    "content": json.dumps(
+                        {"title": "发布审批", "elements": [{"text": "请确认发布 v1.2"}]}
+                    ),
+                },
+            }
+        }
+    )
+    assert interactive is not None
+    assert interactive.text == "[interactive message: 发布审批 | 请确认发布 v1.2]"
+
+
+def test_feishu_adapter_deduplicates_inbound_message_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        adapters_mod, "_feishu_seen_state_path", lambda _app_id: tmp_path / "seen.json"
+    )
+    adapter = FeishuAdapter({"app_id": "cli_test", "app_secret": "sec"})
+    assert not adapter._is_duplicate_message("om_1")
+    assert adapter._is_duplicate_message("om_1")
+    assert not adapter._is_duplicate_message("om_2")
+
+
+def test_feishu_adapter_persists_dedup_and_applies_group_rules(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        adapters_mod, "_feishu_seen_state_path", lambda _app_id: tmp_path / "seen.json"
+    )
+    profile = {
+        "app_id": "cli_test",
+        "app_secret": "sec",
+        "group_policy": "allowlist",
+        "allowed_group_users": ["ou_allowed"],
+        "require_mention": True,
+    }
+    first = FeishuAdapter(profile)
+    assert not first._is_duplicate_message("om_persisted")
+    second = FeishuAdapter(profile)
+    assert second._is_duplicate_message("om_persisted")
+    allowed = feishu_event_to_event(
+        {
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou_allowed"}},
+                "message": {
+                    "message_id": "om_allowed",
+                    "chat_id": "oc_group",
+                    "chat_type": "group",
+                    "message_type": "text",
+                    "content": '{"text":"hello"}',
+                    "mentions": [{"id": {"open_id": "ou_bot"}}],
+                },
+            }
+        },
+        bot_open_id="ou_bot",
+    )
+    assert allowed is not None and second._admit_feishu_event(allowed)
+    allowed.mentions_me = False
+    assert not second._admit_feishu_event(allowed)
+
+
+async def test_feishu_adapter_batches_short_text_bursts(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        adapters_mod, "_feishu_seen_state_path", lambda _app_id: tmp_path / "seen.json"
+    )
+    adapter = FeishuAdapter(
+        {"app_id": "cli_test", "app_secret": "sec", "text_batch_delay_seconds": "0.01"}
+    )
+    received: list[str] = []
+
+    async def receive(event):
+        received.append(event.text)
+
+    adapter.set_message_handler(receive)
+    source = SessionSource(platform="feishu", chat_id="oc_1", user_id="ou_1")
+    await adapter._dispatch_feishu_event(MessageEvent("第一句", source, message_id="om_1"))
+    await adapter._dispatch_feishu_event(MessageEvent("第二句", source, message_id="om_2"))
+    await asyncio.sleep(0.05)
+    assert received == ["第一句\n第二句"]
+
+
 async def test_feishu_adapter_starts_sdk_on_thread_local_loop(monkeypatch):
     ready = threading.Event()
     release = threading.Event()
@@ -357,9 +583,18 @@ async def test_feishu_adapter_starts_sdk_on_thread_local_loop(monkeypatch):
     main_loop = asyncio.get_running_loop()
     client_module = types.SimpleNamespace(loop=main_loop)
 
+    registrations: list[str] = []
+
     class _HandlerBuilder:
-        def register_p2_im_message_receive_v1(self, _callback):
-            return self
+        def __getattr__(self, name):
+            if not name.startswith("register_p2_"):
+                raise AttributeError(name)
+
+            def register(*_args):
+                registrations.append(name)
+                return self
+
+            return register
 
         def build(self):
             return object()
@@ -391,12 +626,24 @@ async def test_feishu_adapter_starts_sdk_on_thread_local_loop(monkeypatch):
     monkeypatch.setitem(sys.modules, "lark_oapi", fake_lark)
 
     adapter = FeishuAdapter({"app_id": "cli_test", "app_secret": "sec"})
+    monkeypatch.setattr(adapter, "_resolve_bot_identity", lambda: None)
     assert await adapter.connect() is True
     assert ready.wait(timeout=1)
 
     assert seen["thread"] == "feishu-ws"
     assert seen["loop"] is not main_loop
     assert seen["running"] is False
+    assert {
+        "register_p2_im_message_receive_v1",
+        "register_p2_im_message_message_read_v1",
+        "register_p2_im_message_reaction_created_v1",
+        "register_p2_im_message_reaction_deleted_v1",
+        "register_p2_im_chat_member_bot_added_v1",
+        "register_p2_im_chat_member_bot_deleted_v1",
+        "register_p2_im_chat_access_event_bot_p2p_chat_entered_v1",
+        "register_p2_im_message_recalled_v1",
+        "register_p2_customized_event",
+    }.issubset(registrations)
 
     await adapter.disconnect()
     release.set()

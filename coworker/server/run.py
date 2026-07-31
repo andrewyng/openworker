@@ -163,7 +163,7 @@ def main(argv=None) -> None:
         _exit_when_orphaned()
         app = build_app(args.cwd, args.model, args.mode)
         uvicorn.run(
-            app, host=args.host, port=args.port, ws_max_size=_WS_MAX_FRAME_BYTES
+            app, host=args.host, port=args.port, ws_max_size=_WS_MAX_FRAME_BYTES, access_log=False
         )
     finally:
         if generated_token_path is not None:
