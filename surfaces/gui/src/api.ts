@@ -1263,6 +1263,11 @@ export async function getSkills(): Promise<SkillInfo[]> {
   return data.skills ?? [];
 }
 
+export function artifactServeUrl(sessionId: string, path: string): string {
+  const token = apiToken();
+  return `${httpBase()}/v1/sessions/${sessionId}/artifacts/serve?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`;
+}
+
 export async function setModelKey(
   apiKey: string,
 ): Promise<{ ok: boolean; error?: string; has_key?: boolean; source?: string }> {

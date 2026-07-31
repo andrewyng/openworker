@@ -83,12 +83,21 @@ def load_vegetation(csv_path, heightmap, max_points=5000):
 
 
 def generate_html(vertices, colors, indices, vegetation, species_colors):
-    """生成自包含 Three.js HTML"""
+    """生成自包含 Three.js HTML（内嵌 Three.js，不依赖 CDN）"""
     veg_json = json.dumps(vegetation)
     species_json = json.dumps(species_colors)
     verts_json = json.dumps(vertices)
     colors_json = json.dumps(colors)
     indices_json = json.dumps(indices)
+
+    # 内嵌 Three.js - 从同目录加载，避免 CDN 在 sandbox iframe 中被拦
+    three_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "three.min.js")
+    try:
+        with open(three_path, "r") as f:
+            three_js = f.read()
+    except (OSError, FileNotFoundError):
+        three_js = ""  # fallback: CDN
+    three_tag = f"<script>{three_js}</script>" if three_js else '<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>'
 
     return f'''<!DOCTYPE html>
 <html lang="zh">
@@ -127,7 +136,7 @@ def generate_html(vertices, colors, indices, vegetation, species_colors):
 <div id="legend"></div>
 <div class="hint">Powered by Gamer Worker</div>
 <canvas id="canvas"></canvas>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+{three_tag}
 <script>
 const vertices = {verts_json};
 const colors = {colors_json};

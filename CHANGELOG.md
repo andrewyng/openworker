@@ -2,6 +2,16 @@
 
 本项目基于 [andrewyng/openworker](https://github.com/andrewyng/openworker) 二次开发，感谢原作者 Andrew Ng 及 OpenWorker 团队的开源贡献。
 
+## [0.4.1] - 2026-07-31
+
+### 修复
+- **HTML artifact 预览修复**：大型 HTML 文件在右侧面板无法正常显示
+  - 后端新增 `GET /v1/sessions/{id}/artifacts/serve` 流式文件服务接口（不截断）
+  - 认证支持 query 参数 `token=`（iframe src 无法设置 header）
+  - 前端 HTML artifact 从 `srcDoc`（500KB 截断）改为 `src`（流式加载，无大小限制）
+  - 修复 sandbox iframe 中 CDN 脚本无法加载的问题
+- preview.py 支持内嵌 Three.js（不依赖 CDN）
+
 ## [0.4.0] - 2026-07-31
 
 ### 新增
