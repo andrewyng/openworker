@@ -72,11 +72,12 @@ def test_interleaved_user_between_call_and_result():
 
 
 def test_dangling_call_gets_placeholder():
-    """A tool call with no matching result gets a synthesised placeholder."""
+    """A tool call with no matching result gets a synthesised placeholder — but
+    only when the thread has moved past the call (not a trailing pending call)."""
     messages = [
         _user("go"),
         _assistant_with_calls("c1"),
-        _user("next"),
+        _user("next"),  # thread moved past → call is corrupt, not pending
     ]
     repaired = ConversationStore._repair_tool_pairing(messages)
     assert repaired[0]["role"] == "user"
@@ -85,6 +86,17 @@ def test_dangling_call_gets_placeholder():
     assert repaired[2]["tool_call_id"] == "c1"
     assert "error" in repaired[2]["content"]
     assert repaired[3]["role"] == "user"
+
+
+def test_trailing_pending_call_not_repaired():
+    """A tool call as the last message is a pending/interrupted call — the
+    engine will resume it, so we must not inject a placeholder."""
+    messages = [
+        _user("go"),
+        _assistant_with_calls("c1"),
+    ]
+    repaired = ConversationStore._repair_tool_pairing(messages)
+    assert repaired == messages  # unchanged — no placeholder injected
 
 
 def test_multi_call_block():

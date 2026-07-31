@@ -133,7 +133,11 @@ class ConversationStore:
         * Moves a real ``tool`` result found later in the thread to sit right
           after its call.
         * Synthesises a placeholder result for a call with no matching tool
-          message, so the replay is well-formed.
+          message — but **only** when the thread has moved past the call
+          (i.e. there are messages after the assistant block).  A trailing
+          assistant ``tool_calls`` with no result is a pending/interrupted
+          call that the engine will resume; injecting a placeholder there
+          would break durable resume.
         * Is idempotent — a well-formed thread passes through unchanged.
         """
         if not messages:
@@ -162,11 +166,23 @@ class ConversationStore:
                     if call_id not in found_results:
                         found_results[call_id] = i
 
+        # Determine which calls are "trailing" — the assistant block is the
+        # last message in the thread (nothing after it).  These are pending
+        # calls that the engine will resume; we must not inject placeholders.
+        last_msg_idx = len(messages) - 1
+        trailing_calls: set[str] = set()
+        for call_id, call_idx in pending_calls.items():
+            if call_idx == last_msg_idx:
+                trailing_calls.add(call_id)
+
         # Calls that have a result already immediately following the assistant
         # message are fine — no work needed.  We only need to act when a result
-        # is missing or out-of-order.
+        # is missing or out-of-order.  Trailing calls without results are
+        # skipped (they're pending, not corrupt).
         needs_repair = False
         for call_id, call_idx in pending_calls.items():
+            if call_id in trailing_calls and call_id not in found_results:
+                continue  # pending call — engine will resume
             if call_id in found_results:
                 result_idx = found_results[call_id]
                 if result_idx != call_idx + 1:
@@ -174,7 +190,7 @@ class ConversationStore:
             else:
                 needs_repair = True  # no result at all
         if not needs_repair:
-            return messages  # already well-formed
+            return messages  # already well-formed (or only pending calls)
 
         # Build the repaired list.  We iterate through the original messages,
         # and after each assistant message we emit its tool results (moved from
@@ -195,8 +211,9 @@ class ConversationStore:
                         if result_idx not in consumed_result_indices:
                             repaired.append(messages[result_idx])
                             consumed_result_indices.add(result_idx)
-                    else:
+                    elif call_id not in trailing_calls:
                         # Synthesise a placeholder so the thread is well-formed.
+                        # Skip trailing calls — they're pending, not corrupt.
                         repaired.append({
                             "role": "tool",
                             "tool_call_id": call_id,
