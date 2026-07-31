@@ -57,3 +57,37 @@ test("approval: Deny skips the tool and the agent says so", async ({ page }) => 
   await page.getByRole("button", { name: "Deny" }).last().click();
   await expect(page.getByText("Understood — skipped the command.")).toBeVisible();
 });
+
+test("long user pastes clamp with a more…/less… toggle", async ({ page }) => {
+  await page.goto("/");
+  const box = page.getByPlaceholder(/Ask the coworker/);
+  await expect(box).toBeVisible();
+
+  const tail = "END-OF-PASTE-MARKER";
+  const paste =
+    "reply OK. " + "lorem ipsum dolor sit amet consectetur ".repeat(60) + tail; // ~2.4k chars
+  await box.fill(paste);
+  await page.getByRole("button", { name: "Send" }).click();
+
+  // Clamped: the bubble shows the head but not the tail, plus the toggle.
+  const more = page.getByRole("button", { name: "more…" });
+  await expect(more).toBeVisible();
+  const bubble = page.locator(".bubble-user").last();
+  await expect(bubble).toContainText("reply OK.");
+  await expect(bubble).not.toContainText(tail);
+
+  // Expand → full text + "less…"; collapse → clamped again.
+  await more.click();
+  await expect(bubble).toContainText(tail);
+  const less = page.getByRole("button", { name: "less…" });
+  await expect(less).toBeVisible();
+  await less.click();
+  await expect(bubble).not.toContainText(tail);
+
+  // Short messages never show the control.
+  await expect(page.getByText("Echo:").first()).toBeVisible();
+  await box.fill("short follow-up");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("short follow-up", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "more…" })).toHaveCount(1); // still only the paste's
+});

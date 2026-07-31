@@ -18,6 +18,7 @@ from typing import Any, Callable, Optional
 import aisuite as ai
 
 from ..roots import RootDir
+from ..web.guard import check_url
 
 
 def _resolve_in_roots(
@@ -370,6 +371,12 @@ def make_browser_automation_tools(
     ) -> dict[str, Any]:
         if not url.lower().startswith(("http://", "https://")):
             return {"error": "url must start with http:// or https://"}
+        # Same address guard as web_fetch. This is approval gated, so it is defense in
+        # depth, not the primary control. It checks the initial model supplied URL only;
+        # redirects that the browser follows internally are not hop checked here.
+        blocked = check_url(url)
+        if blocked:
+            return {"error": blocked}
         return _BROWSER.call(
             "open_url",
             lambda page: (
