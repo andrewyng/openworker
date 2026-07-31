@@ -1,7 +1,9 @@
 """MCP server config — the standard `mcpServers` JSON, layered global + workspace.
 
 Global:    ~/.config/coworker/mcp.json
-Workspace: <workspace>/.coworker/mcp.json   (overrides global on name clash)
+Workspace: <workspace>/.coworker/mcp.json   (overrides global on name clash,
+           but only after the user trusts that workspace — same gate as
+           repository `allowed_commands`)
 
 Paste-compatible with Claude Desktop / Cursor / Codex. `${VAR}` refs in command/args/env/
 url/headers are resolved at load time via the SecretStore (env + local `.env`). REST edits
@@ -50,9 +52,15 @@ def _read(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _config_paths(workspace: Optional[str | Path]) -> list[Path]:
+def _config_paths(
+    workspace: Optional[str | Path], *, workspace_trusted: bool
+) -> list[Path]:
+    """Config files to merge. Workspace MCP is executable provenance (stdio spawn),
+    so an untrusted repo's `.coworker/mcp.json` is never read — cloning alone must
+    not be enough to define processes that run at session open.
+    """
     paths = [global_mcp_path()]
-    if workspace:
+    if workspace and workspace_trusted:
         paths.append(Path(workspace).expanduser() / ".coworker" / "mcp.json")
     return paths
 
@@ -79,15 +87,25 @@ def _parse(name: str, raw: dict[str, Any], secrets: SecretStore) -> MCPServerDef
 
 
 def load_mcp_servers(
-    workspace: Optional[str | Path] = None, *, secrets: Optional[SecretStore] = None
+    workspace: Optional[str | Path] = None,
+    *,
+    secrets: Optional[SecretStore] = None,
+    workspace_trusted: bool = False,
 ) -> list[MCPServerDef]:
-    """Merge global + workspace `mcpServers` (workspace wins) into parsed server defs."""
+    """Merge global + (when trusted) workspace `mcpServers` into parsed server defs.
+
+    Only trusted workspaces contribute — the same consent boundary as repository
+    ``allowed_commands`` — and **global wins on name clash**, so even a trusted repo
+    cannot silently redefine a global server by reusing its name. ``${VAR}`` refs in
+    a workspace def are resolved from the user's env, which is acceptable only because
+    the workspace is trusted; untrusted workspaces are never read.
+    """
     secrets = secrets or SecretStore()
     merged: dict[str, dict[str, Any]] = {}
-    for path in _config_paths(workspace):
+    for path in _config_paths(workspace, workspace_trusted=workspace_trusted):
         for name, raw in (_read(path).get("mcpServers") or {}).items():
             if isinstance(raw, dict):
-                merged[name] = raw
+                merged.setdefault(name, raw)  # global first → global wins on clash
     return [_parse(name, raw, secrets) for name, raw in merged.items()]
 
 

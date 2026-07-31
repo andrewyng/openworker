@@ -10,6 +10,7 @@ Looks for the updater artifacts by their STABLE names (the same names release.ym
 uploads):
 
     OpenWorker-macos-arm64.app.tar.gz(.sig)   -> platforms["darwin-aarch64"]
+    OpenWorker-macos-x64.app.tar.gz(.sig)     -> platforms["darwin-x86_64"]
     OpenWorker-windows-setup.exe(.sig)        -> platforms["windows-x86_64"]
 
 URLs point at the TAG-pinned GitHub download path (releases/download/<tag>/<asset>),
@@ -34,6 +35,7 @@ import sys
 # stable asset name -> Tauri platform key
 ARTIFACTS = {
     "OpenWorker-macos-arm64.app.tar.gz": "darwin-aarch64",
+    "OpenWorker-macos-x64.app.tar.gz": "darwin-x86_64",
     "OpenWorker-windows-setup.exe": "windows-x86_64",
 }
 
