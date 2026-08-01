@@ -36,7 +36,7 @@ user. Make it self-contained: answer the task directly, reference code as path:l
 key snippets, and note anything surprising you found along the way. If you couldn't find \
 something, say what you searched so the caller doesn't repeat the same searches."""
 
-_CHILD_MAX_ITERATIONS = 10
+_CHILD_MAX_ITERATIONS = 30
 
 
 def build_explorer_engine(
@@ -77,6 +77,23 @@ def build_explorer_engine(
         instructions += " You cannot write files or run commands."
     if report_format:
         instructions += f"\n\nFormat your final report as follows:\n{report_format}"
+        
+    kp_dir = Path(ws) / "knowledge_packs"
+    if kp_dir.exists():
+        # Get paths relative to workspace root to help the agent read them properly
+        packs = [
+            str(f.relative_to(Path(ws)))
+            for f in kp_dir.rglob("*.md")
+            if not f.is_relative_to(kp_dir / "admin")
+        ]
+        if packs:
+            instructions += "\n\nKNOWLEDGE BASE (EXPERT PACKS):\n"
+            instructions += "You have access to the following expert knowledge packs in your workspace:\n"
+            for p in packs[:20]:
+                instructions += f"- {p}\n"
+            if len(packs) > 20:
+                instructions += f"...and {len(packs) - 20} more packs. Use the `search_files` tool in the `knowledge_packs/` directory to query them.\n"
+            instructions += "\nCRITICAL: If your task relates to any of these topics, you MUST read the relevant expert pack using your file read tools before attempting to solve the task. These packs contain the exact code patterns and anti-patterns you must follow."
         
     return TurnEngine(
         provider=provider,
@@ -121,12 +138,12 @@ def explorer_tools(
         # Standardize local model aliases for 3-tier subagent delegation
         MODEL_ALIASES = {
             "heavy": user_aliases.get("heavy", "local_llm:Qwen3.6-35B-A3B-6bit"),
-            "balanced": user_aliases.get("balanced", "local_llm:gemma-4-12b-it-4bit"),
-            "fast": user_aliases.get("fast", "local_llm:Qwen3.5-9B-MLX-4bit"),
+            "balanced": user_aliases.get("balanced", "local_llm:Qwen3.6-35B-A3B-6bit"),
+            "fast": user_aliases.get("fast", "local_llm:Qwen3.6-35B-A3B-6bit"),
             # Legacy aliases
             "opus": user_aliases.get("heavy", "local_llm:Qwen3.6-35B-A3B-6bit"),
-            "sonnet": user_aliases.get("balanced", "local_llm:gemma-4-12b-it-4bit"),
-            "haiku": user_aliases.get("fast", "local_llm:Qwen3.5-9B-MLX-4bit"),
+            "sonnet": user_aliases.get("balanced", "local_llm:Qwen3.6-35B-A3B-6bit"),
+            "haiku": user_aliases.get("fast", "local_llm:Qwen3.6-35B-A3B-6bit"),
         }
         actual_target = target_model if target_model else model
         actual_target = MODEL_ALIASES.get(actual_target.lower(), actual_target)
@@ -141,26 +158,64 @@ def explorer_tools(
             report_format=report_format if report_format else None,
         )
 
-        async def _run() -> tuple[str, str]:
-            report, status = "", "unknown"
+        async def _run() -> tuple[str, str, list[str], str, list[dict]]:
+            report, status, kp_reads = "", "unknown", []
+            reasoning_parts = []
+            tool_calls_log = []
             async for event in engine.run(task):
-                if event.type == EventType.ASSISTANT_MESSAGE and event.data.get("text"):
+                if event.type == EventType.REASONING_DELTA:
+                    text = event.data.get("text", "")
+                    if text:
+                        reasoning_parts.append(text)
+                # Capture read_file calls on knowledge_packs/ so the main session
+                # can surface them in the right rail (UX: "did it use the packs?")
+                elif event.type == EventType.TOOL_PROPOSED:
+                    tc_args = event.data.get("arguments", {}) or {}
+                    name = event.data.get("name", "")
+                    if name == "read_file":
+                        path = tc_args.get("path", "")
+                        if isinstance(path, str) and path.startswith("knowledge_packs/"):
+                            kp_reads.append(path)
+                    tool_calls_log.append({
+                        "name": name,
+                        "args": tc_args,
+                        "status": "started"
+                    })
+                elif event.type == EventType.TOOL_FINISHED:
+                    name = event.data.get("name", "")
+                    status_str = event.data.get("status", "")
+                    preview = event.data.get("result_preview", "")
+                    for tc in reversed(tool_calls_log):
+                        if tc["name"] == name and tc["status"] == "started":
+                            tc["status"] = status_str
+                            tc["preview"] = preview
+                            break
+                elif event.type == EventType.ASSISTANT_MESSAGE and event.data.get("text"):
                     report = event.data["text"]
                 elif event.type == EventType.TURN_END:
                     status = event.data.get("status", "unknown")
                 elif event.type == EventType.ERROR:
-                    return report, f"error: {event.data.get('error', '')}"
-            return report, status
+                    reasoning = "".join(reasoning_parts)
+                    return report, f"error: {event.data.get('error', '')}", kp_reads, reasoning, tool_calls_log
+            reasoning = "".join(reasoning_parts)
+            return report, status, kp_reads, reasoning, tool_calls_log
 
         # Tools execute in a worker thread (no running loop), so asyncio.run is safe.
-        report, status = asyncio.run(_run())
+        report, status, kp_reads, reasoning, tool_calls_log = asyncio.run(_run())
         if not report:
             return {"error": f"subagent produced no report (status: {status})"}
         result: dict[str, Any] = {"report": report}
+        if reasoning:
+            result["reasoning"] = reasoning
+        if tool_calls_log:
+            result["tool_log"] = tool_calls_log
         if status != "completed":
             result["note"] = (
                 f"subagent stopped early ({status}); the report may be partial"
             )
+        # Expose which knowledge packs were read so the main session can surface them in the right rail
+        if kp_reads:
+            result["_kp_reads"] = kp_reads
         return result
 
     def explore(task: str) -> dict:

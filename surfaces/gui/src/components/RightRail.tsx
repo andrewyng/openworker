@@ -8,7 +8,7 @@ import {
   type ArtifactContent,
   type ArtifactInfo,
 } from "../api";
-import type { TodoItem, SessionUsage } from "../types";
+import type { TodoItem, SessionUsage, Item } from "../types";
 import { AccessSection } from "./AccessSection";
 import { Icon } from "./Icon";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
@@ -43,6 +43,7 @@ interface Props {
   refreshKey: number;
   tools: string[];
   skills: string[];
+  kpReads?: string[];
   todo: TodoItem[];
   running: boolean;
   usage?: SessionUsage;
@@ -62,6 +63,7 @@ interface Props {
   scratchPrimary?: boolean;
   openAccessKey?: number;
   onOpenIntegrations?: () => void;
+  items?: Item[];
 }
 
 export function RightRail({
@@ -70,6 +72,7 @@ export function RightRail({
   refreshKey,
   tools,
   skills,
+  kpReads,
   todo,
   running,
   usage,
@@ -84,6 +87,7 @@ export function RightRail({
   scratchPrimary,
   openAccessKey = 0,
   onOpenIntegrations,
+  items,
 }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>("telemetry");
   const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
@@ -157,42 +161,10 @@ export function RightRail({
   if (!active) return null;
 
   return (
-    <aside className={"right-rail flex flex-col h-full bg-panel border-l border-line z-20" + (selected ? " artifact-mode" : "")}>
-      
-      {/* Tabs Header */}
-      {!selected && (
-        <header className="px-2 h-14 flex items-end border-b border-line shrink-0">
-          <div className="flex w-full px-1">
-            <button 
-              className={`flex-1 pb-2 text-[12.5px] font-medium border-b-2 ${activeTab === 'artifacts' ? 'text-ink border-accent' : 'text-faint border-transparent hover:text-ink'}`}
-              onClick={() => setActiveTab('artifacts')}
-            >
-              Artifacts {artifacts.length ? `(${artifacts.length})` : ''}
-            </button>
-            <button 
-              className={`flex-1 pb-2 text-[12.5px] font-medium border-b-2 ${activeTab === 'telemetry' ? 'text-ink border-accent' : 'text-faint border-transparent hover:text-ink'}`}
-              onClick={() => setActiveTab('telemetry')}
-            >
-              Telemetry
-            </button>
-            <button 
-              className={`flex-1 pb-2 text-[12.5px] font-medium border-b-2 ${activeTab === 'tools' ? 'text-ink border-accent' : 'text-faint border-transparent hover:text-ink'}`}
-              onClick={() => setActiveTab('tools')}
-            >
-              Tools
-            </button>
-            <button 
-              className={`flex-1 pb-2 text-[12.5px] font-medium border-b-2 ${activeTab === 'access' ? 'text-ink border-accent' : 'text-faint border-transparent hover:text-ink'}`}
-              onClick={() => setActiveTab('access')}
-            >
-              Access
-            </button>
-          </div>
-        </header>
-      )}
-
-      <div className="flex-1 overflow-y-auto hairline-scroll relative">
-        {selected ? (
+    <>
+      {/* PANE: ARTIFACT VIEWER (Hidden if no artifact selected) */}
+      <aside className="pane-artifact" style={{ display: selected ? 'flex' : 'none' }}>
+        {selected && (
           <ArtifactViewer
             sessionId={sessionId}
             artifact={selected}
@@ -200,33 +172,68 @@ export function RightRail({
             onReload={reloadSelected}
             onBack={() => setSelected(null)}
           />
-        ) : (
-          <div className="tab-content h-full">
+        )}
+      </aside>
+
+      {/* PANE: TELEMETRY BAR (Always visible) */}
+      <aside className="telemetry-bar">
+        {/* Tabs Header */}
+        <header className="trace-header" style={{ padding: '0 12px', height: '56px' }}>
+          <div style={{ display: 'flex', width: '100%', gap: '8px' }}>
+            <button 
+              style={{ flex: 1, background: 'none', border: 'none', borderBottom: activeTab === 'artifacts' ? '2px solid var(--accent)' : '2px solid transparent', color: activeTab === 'artifacts' ? 'var(--text-main)' : 'var(--text-faint)', fontSize: '12px', fontWeight: 500, paddingBottom: '8px', cursor: 'pointer' }}
+              onClick={() => setActiveTab('artifacts')}
+            >
+              Artifacts {artifacts.length ? `(${artifacts.length})` : ''}
+            </button>
+            <button 
+              style={{ flex: 1, background: 'none', border: 'none', borderBottom: activeTab === 'telemetry' ? '2px solid var(--accent)' : '2px solid transparent', color: activeTab === 'telemetry' ? 'var(--text-main)' : 'var(--text-faint)', fontSize: '12px', fontWeight: 500, paddingBottom: '8px', cursor: 'pointer' }}
+              onClick={() => setActiveTab('telemetry')}
+            >
+              Telemetry
+            </button>
+            <button 
+              style={{ flex: 1, background: 'none', border: 'none', borderBottom: activeTab === 'tools' ? '2px solid var(--accent)' : '2px solid transparent', color: activeTab === 'tools' ? 'var(--text-main)' : 'var(--text-faint)', fontSize: '12px', fontWeight: 500, paddingBottom: '8px', cursor: 'pointer' }}
+              onClick={() => setActiveTab('tools')}
+            >
+              Tools
+            </button>
+            <button 
+              style={{ flex: 1, background: 'none', border: 'none', borderBottom: activeTab === 'access' ? '2px solid var(--accent)' : '2px solid transparent', color: activeTab === 'access' ? 'var(--text-main)' : 'var(--text-faint)', fontSize: '12px', fontWeight: 500, paddingBottom: '8px', cursor: 'pointer' }}
+              onClick={() => setActiveTab('access')}
+            >
+              Access
+            </button>
+          </div>
+        </header>
+
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          <div style={{ height: '100%' }}>
             {/* ARTIFACTS TAB */}
             {activeTab === 'artifacts' && (
-              <div className="p-4">
-                <div className="flex gap-2 mb-4">
+              <div style={{ padding: '16px' }}>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
                   {artifacts.length > 0 && (
-                    <button className="rail-mini-btn" onClick={(e) => { e.stopPropagation(); revealArtifact(sessionId, artifacts[0].path, "reveal"); }}>
+                    <button style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-light)', borderRadius: '4px', padding: '4px', cursor: 'pointer', color: 'var(--text-main)' }} onClick={(e) => { e.stopPropagation(); revealArtifact(sessionId, artifacts[0].path, "reveal"); }}>
                       <Icon name="folder" size={13} />
                     </button>
                   )}
-                  <button className="rail-mini-btn" onClick={(e) => { e.stopPropagation(); refreshArtifacts(); }} title="Refresh artifacts"><Icon name="refresh" size={13} /></button>
+                  <button style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-light)', borderRadius: '4px', padding: '4px', cursor: 'pointer', color: 'var(--text-main)' }} onClick={(e) => { e.stopPropagation(); refreshArtifacts(); }} title="Refresh artifacts"><Icon name="refresh" size={13} /></button>
                 </div>
                 {artifacts.length === 0 ? (
-                  <div className="rail-muted">No previewable files yet.</div>
+                  <div style={{ color: 'var(--text-faint)', fontSize: '13px' }}>No previewable files yet.</div>
                 ) : (
-                  <div className="artifact-list">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     {artifacts.map((a) => (
-                      <button className="artifact-row" key={a.path} onClick={() => setSelected(a)}>
-                        <span className="artifact-ico" title={a.kind}>
+                      <button style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-surface)', border: '1px solid var(--border-light)', padding: '8px', borderRadius: '6px', cursor: 'pointer', color: 'var(--text-main)', textAlign: 'left' }} key={a.path} onClick={() => setSelected(a)}>
+                        <span style={{ color: 'var(--text-muted)' }} title={a.kind}>
                           <Icon name={kindIcon(a.kind)} size={17} />
                         </span>
-                        <span className="artifact-name">
+                        <span style={{ flex: 1, fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {a.name}
-                          <span className="artifact-row-meta">{formatBytes(a.size)} · {formatTime(a.modified_at)}</span>
+                          <div style={{ fontSize: '11px', color: 'var(--text-faint)' }}>{formatBytes(a.size)} · {formatTime(a.modified_at)}</div>
                         </span>
-                        <span className="artifact-open">Open</span>
+                        <span style={{ fontSize: '11px', color: 'var(--accent)', fontWeight: 500 }}>Open</span>
                       </button>
                     ))}
                   </div>
@@ -236,26 +243,53 @@ export function RightRail({
 
             {/* TELEMETRY TAB */}
             {activeTab === 'telemetry' && (
-              <TelemetryTab running={running} todo={todo} usage={usage} model={model} contextWindow={contextWindow} />
+              <TelemetryTab
+                usage={usage}
+                running={running}
+                todo={todo}
+                artifacts={artifacts}
+                model={model}
+                contextWindow={contextWindow}
+                onSelectArtifact={(a) => {
+                  setSelected(a);
+                  setActiveTab('artifacts');
+                }}
+                items={items}
+              />
             )}
 
             {/* TOOLS TAB */}
             {activeTab === 'tools' && (
-              <div className="p-4 space-y-6">
+              <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
                 <div>
-                  <h3 className="text-[13px] font-semibold mb-3">Tools ({new Set(tools).size})</h3>
+                  <h3 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '12px' }}>Tools ({new Set(tools).size})</h3>
                   <LoadedToolsSection tools={tools} />
                 </div>
                 <div>
-                  <h3 className="text-[13px] font-semibold mb-3">Skills ({new Set(skills).size})</h3>
+                  <h3 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '12px' }}>Skills ({new Set(skills).size})</h3>
                   <LoadedSkillsSection skills={skills} />
                 </div>
+                {kpReads && kpReads.length > 0 && (
+                  <div>
+                    <h3 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '12px' }}>Knowledge Packs ({kpReads.length})</h3>
+                    <div className="kp-read-list">
+                      {kpReads.map((path, i) => (
+                        <div className="kp-read-item" key={i}>
+                          <span className="kp-read-dot" style={{ color: 'var(--accent)', marginTop: '2px' }}>
+                            <Icon name="file" size={14} />
+                          </span>
+                          <span className="kp-read-name">{path}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
             {/* ACCESS TAB */}
             {activeTab === 'access' && (
-              <div className="p-4">
+              <div style={{ padding: '16px' }}>
                 <AccessSection
                   key={sessionId}
                   sessionId={sessionId}
@@ -270,9 +304,9 @@ export function RightRail({
               </div>
             )}
           </div>
-        )}
-      </div>
-    </aside>
+        </div>
+      </aside>
+    </>
   );
 }
 

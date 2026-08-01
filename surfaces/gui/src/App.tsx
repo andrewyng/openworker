@@ -102,6 +102,7 @@ const needsWorkspaceFallback = (a: string) => a === "code" || a === "cowork";
 const gatesWorkspaceFallback = (a: string) => a === "code";
 const LAST_SESSION_KEY = "coworker:last-session-by-agent:v1";
 const NAV_COLLAPSED_KEY = "coworker:nav-collapsed:v1";
+const RAIL_HIDDEN_KEY = "coworker:rail-hidden:v1";
 
 type LastSession = { sessionId: string; workspace: string; updatedAt: number };
 
@@ -240,7 +241,17 @@ export function App() {
     setSurface("persona");
   };
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
-  const [railHidden, setRailHidden] = useState(false);
+  // Right-rail hidden state: persisted per-device, like nav-collapsed.
+  const [railHidden, setRailHiddenState] = useState<boolean>(() => {
+    try { return localStorage.getItem(RAIL_HIDDEN_KEY) === "1"; } catch { return false; }
+  });
+  const setRailHidden = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
+    setRailHiddenState((prev) => {
+      const next = typeof v === "function" ? (v as (prev: boolean) => boolean)(prev) : v;
+      try { localStorage.setItem(RAIL_HIDDEN_KEY, next ? "1" : "0"); } catch { /* best effort */ }
+      return next;
+    });
+  }, []);
   // Left-nav collapse (⌘B): when collapsed the sidebar leaves the grid so content reclaims the
   // width; hovering the left edge peeks it back as a floating overlay. Persisted per-device.
   const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
@@ -303,6 +314,7 @@ export function App() {
     window.addEventListener("ocw-open-artifact", show);
     return () => window.removeEventListener("ocw-open-artifact", show);
   }, []);
+  const [latestKpReads, setLatestKpReads] = useState<string[]>([]);
   // The command-palette search, openable from the collapsed-sidebar topbar cluster (§22). The
   // expanded sidebar owns its own instance; this one exists so search never disappears with it.
   const [searchOpen, setSearchOpen] = useState(false);
@@ -697,6 +709,10 @@ export function App() {
               d.standing_rule,
             ),
           );
+          // Capture knowledge pack reads from subagents so the right rail can surface them
+          if (d.kp_reads?.length) {
+            setLatestKpReads(d.kp_reads);
+          }
           // Refresh the right rail when something it shows may have changed: browser state, or a
           // file write that should appear under Artifacts immediately (not only after the turn).
           if (String(d.name || "").startsWith("browser_") || FILE_WRITE_TOOLS.has(d.name)) {
@@ -1461,7 +1477,7 @@ export function App() {
           </div>
         </div>
         <div className={"main-workspace" + (railHidden ? " rail-hidden" : "")}>
-          <div className="main-chat">
+          <div className="pane-chat">
             {/* Automation-run context (owner ask 2026-07-04): a __run__ session looked like any
                 other chat with no way back to the runs list. Lives INSIDE the chat column (which
                 is padded to clear the absolute glass topbar — rendering above .main-workspace put
@@ -1648,6 +1664,7 @@ export function App() {
             model={model}
             contextWindow={modelContextWindows[model] || 128000}
             tools={[...new Set(items.filter((i) => i.kind === "tool").map((i: any) => i.name))]}
+            kpReads={latestKpReads}
             skills={[
               ...new Set(
                 items
@@ -1669,6 +1686,7 @@ export function App() {
             scratchPrimary={agent === "cowork"}
             openAccessKey={accessKey}
             onOpenIntegrations={() => setSurface("integrations")}
+            items={items}
           />
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import type { ApprovalDecision, Item } from "../types";
+import type { ApprovalDecision, Item, ToolItem } from "../types";
 import { shortArgs } from "./ApprovalCard";
 import { humanizeAsk, humanizeTool, type HumanLine } from "../humanize";
 import { Markdown } from "./Markdown";
@@ -168,7 +168,7 @@ export function ThinkingBlock({ text, live }: { text: string; live?: boolean }) 
   );
 }
 
-type ToolItem = Extract<Item, { kind: "tool" }>;
+
 type ApprovalItem = Extract<Item, { kind: "approval" }>;
 type AssistantItem = Extract<Item, { kind: "assistant" }>;
 type TurnItem = ToolItem | ApprovalItem | AssistantItem;
@@ -252,9 +252,7 @@ function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }
   const running = tool.status === "…";
   const failed = tool.status !== "ok" && !running;
   
-  if (tool.name === "delegate") {
-    return <SwarmGraph />;
-  }
+
   
   return (
     <div>
@@ -313,8 +311,6 @@ function TurnGroup({
   // the header as the live line; expanded → the small quiet line under the steps.
   streamingText?: string;
 }) {
-  // Turns start COLLAPSED, running or not (owner call 2026-07-14) — the header's live
-  // line is the pulse; expanding is opt-in.
   const rows = buildRows(items);
   const tools = items.filter((it): it is ToolItem => it.kind === "tool");
   const running = live || tools.some((t) => t.status === "…");
@@ -323,17 +319,21 @@ function TurnGroup({
   const lastNarr = [...items].reverse().find((it): it is AssistantItem => it.kind === "assistant");
   const liveLine = streamingText || lastNarr?.text || "";
 
+  const delegateCalls = tools.filter(t => t.name === "delegate" || t.name === "explore");
+  const filteredRows = rows.filter(r => !(r.type === "step" && (r.tool.name === "delegate" || r.tool.name === "explore")));
+
   const nSteps = rows.filter((r) => r.type !== "narr").length;
   const declined = items.filter((it) => it.kind === "approval" && it.resolved === "deny").length;
   const hiddenTotal = tools.reduce((n, t) => n + (t.hidden || 0), 0);
   const stepsLabel = `${nSteps} step${nSteps === 1 ? "" : "s"}`;
 
   return (
+    <>
     <details className="stepgroup" open={open}>
       <summary
         className="stepgroup-head flex items-center gap-2 py-0.5 cursor-pointer select-none text-[12.5px] text-faint hover:text-muted"
         onClick={(e) => {
-          e.preventDefault(); // drive open/closed from state, not the native toggle
+          e.preventDefault();
           setUserToggle(!open);
         }}
       >
@@ -365,7 +365,7 @@ function TurnGroup({
       </summary>
       {open && (
         <div className="ml-1.5 mt-1 pl-2 border-l-2 border-line flex flex-col gap-0.5">
-          {rows.map((row, i) =>
+          {filteredRows.map((row, i) =>
             row.type === "narr" ? (
               <div className="turn-narr px-2 py-1 text-[13px] text-muted max-w-[60ch]" key={i} data-testid="turn-narration">
                 <Markdown text={row.text} />
@@ -392,27 +392,19 @@ function TurnGroup({
         </div>
       )}
     </details>
+    {delegateCalls.length > 0 && <SwarmGraph calls={delegateCalls} />}
+    </>
   );
 }
 
 interface Props {
   items: Item[];
   onApprove: (decision: ApprovalDecision) => void;
-  // The session's live flag. While true, the FINAL run's trailing assistant text is still
-  // narration (status), not the answer — promoting it early made each line flash as a full
-  // ASSISTANT bubble and then vanish into the group when the next tool call arrived
-  // (owner report 2026-07-13). The answer bubble appears once, when the turn ends.
   running?: boolean;
-  // Sub-threshold streamed text (streamGate mode "quiet") — handed to the live turn group.
   streamingText?: string;
-  // Re-run the failed turn (no new user message). Offered only on a retriable notice that
-  // is the transcript tail of an idle session — anywhere else the error is history.
   onRetry?: () => void;
 }
 
-// The transcript index whose notice gets the Retry button: the tail error notice, looking
-// through info notices after it (model switches must not consume the retry — switching
-// models and THEN retrying is the intended recovery path). -1 when the tail is anything else.
 export function retryAnchor(items: Item[]): number {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
@@ -424,10 +416,6 @@ export function retryAnchor(items: Item[]): number {
 }
 
 export function Transcript({ items, running, streamingText, onRetry }: Props) {
-  // §33 grouping: a turn = the maximal run of assistant/tool/resolved-approval items between
-  // breakers (user, connector, notices, plan/dir requests…). Trailing assistant texts are the
-  // ANSWER and render as bubbles after the group; interior assistant texts are narration and
-  // stay inside. A run with no activity at all is just bubbles (unchanged chat behavior).
   const blocks: Array<{ turn: TurnItem[]; live?: boolean } | { item: Item; i: number }> = [];
   let run: TurnItem[] = [];
   const flush = (live = false) => {
@@ -435,8 +423,6 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
     const turn = [...run];
     run = [];
     const answers: AssistantItem[] = [];
-    // A live run with tool activity keeps its trailing text inside as the status line;
-    // a live run with NO activity is a plain streaming reply — bubbles, as ever.
     const keepTrailing = live && turn.some((it) => it.kind !== "assistant");
     if (!keepTrailing)
       while (turn.length && turn[turn.length - 1].kind === "assistant")
@@ -449,9 +435,6 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
     if (item.kind === "tool" || item.kind === "assistant" || (item.kind === "approval" && item.resolved))
       run.push(item);
     else if (
-      // PENDING interactive items render elsewhere (approval/question → composer head) and
-      // nothing here — if they broke the run, the trailing narration would flash into an
-      // answer bubble exactly while the user is being asked to decide.
       (item.kind === "approval" || item.kind === "dirreq" || item.kind === "planreq" || item.kind === "question") &&
       !item.resolved
     ) {
@@ -501,7 +484,6 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
               </div>
             );
           case "assistant":
-            // Thinking-only item (stopped mid-reasoning): just the disclosure, no bubble.
             if (!item.text && item.reasoning)
               return (
                 <div key={bi}>

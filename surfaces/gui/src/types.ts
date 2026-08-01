@@ -136,4 +136,7 @@ export type Item =
       multi?: boolean;
       resolved?: string;
     }
-  | { kind: "notice"; tone: "info" | "warn"; text: string; retriable?: boolean };
+  | { kind: "system"; text: string; ts?: number }
+  | { kind: "notice"; tone: "info" | "warn" | "error"; text: string; id?: string; retriable?: boolean; ts?: number };
+
+export type ToolItem = Extract<Item, { kind: "tool" }>;

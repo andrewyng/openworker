@@ -35,6 +35,7 @@ dependencies = [
     # IANA tz database for zoneinfo. Windows ships no system tz db, so without this every
     # named schedule timezone (UTC, Asia/Kolkata, …) silently falls back to local time.
     "tzdata; sys_platform == 'win32'",
+    "duckduckgo-search>=8.1.1",
 ]
 
 [project.optional-dependencies]

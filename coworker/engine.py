@@ -663,6 +663,13 @@ class TurnEngine:
         if isinstance(result, dict) and "_display" in result:
             display = result.get("_display") or None
             result = {k: v for k, v in result.items() if k != "_display"}
+        # A `_kp_reads` key carries file reads the subagent performed on knowledge packs
+        # — stripped from history, but passed through the event so the right rail can
+        # show which expert packs were consulted (UX transparency).
+        kp_reads: list[str] = []
+        if isinstance(result, dict):
+            kp_reads = result.get("_kp_reads", []) or []
+            result = {k: v for k, v in result.items() if k != "_kp_reads"}
         message = _tool_result_message(tool_call, result)
         if display:
             message["_display"] = display
@@ -690,16 +697,16 @@ class TurnEngine:
             result_preview=_preview(result),
         )
         rule = self._standing_notes.pop(tool_call.id, "")
-        return Event(
-            EventType.TOOL_FINISHED,
-            {
-                "name": tool_call.name,
-                "status": status,
-                "result_preview": _preview(result),
-                **({"display": display} if display else {}),
-                **({"standing_rule": rule} if rule else {}),
-            },
-        )
+        event_data: dict[str, Any] = {
+            "name": tool_call.name,
+            "status": status,
+            "result_preview": _preview(result),
+            **({"display": display} if display else {}),
+            **({"standing_rule": rule} if rule else {}),
+        }
+        if kp_reads:
+            event_data["kp_reads"] = kp_reads
+        return Event(EventType.TOOL_FINISHED, event_data)
 
     def _audit(self, tool_call: ToolCall, **event: Any) -> None:
         if self.audit_sink is None:
