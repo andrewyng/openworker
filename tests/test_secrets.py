@@ -8,7 +8,9 @@ import subprocess
 import sys
 import time
 
-from coworker.secrets import SecretStore
+import pytest
+
+from coworker.secrets import SecretStore, SecretStoreCorrupt
 
 
 def test_put_get_round_trip(tmp_path):
@@ -85,3 +87,53 @@ def test_delete(tmp_path):
     assert store.delete("x") is True
     assert store.delete("x") is False
     assert store.get("x") is None
+
+
+def test_temp_file_is_never_world_readable_mid_write(tmp_path, monkeypatch):
+    """The plaintext must never touch disk at the process umask. write_text created the temp
+    at 0644 and narrowed it only afterwards, leaving a readable window."""
+    if sys.platform == "win32":
+        return  # mode bits are meaningless here; the ACL is asserted above
+    seen: list[int] = []
+    real_fdopen = os.fdopen
+
+    def spy(fd, *args, **kwargs):
+        seen.append(stat.S_IMODE(os.fstat(fd).st_mode))
+        return real_fdopen(fd, *args, **kwargs)
+
+    monkeypatch.setattr(os, "fdopen", spy)
+    monkeypatch.setattr(os, "umask", lambda mask: 0o000, raising=False)
+    SecretStore(tmp_path / "secrets.json").put("slack:default", {"bot_token": "xoxb-1"})
+    assert seen and all(mode == 0o600 for mode in seen)
+
+
+def test_no_stray_temp_files_left_behind(tmp_path):
+    store = SecretStore(tmp_path / "secrets.json")
+    store.put("a", {"v": 1})
+    store.put("b", {"v": 2})
+    assert [p.name for p in tmp_path.iterdir()] == ["secrets.json"]
+
+
+def test_corrupt_store_is_not_silently_overwritten(tmp_path):
+    """A truncated secrets.json used to parse as {}, so the next put() wrote a one-key store
+    and discarded every other connector credential."""
+    path = tmp_path / "secrets.json"
+    store = SecretStore(path)
+    store.put("slack:default", {"bot_token": "xoxb-1"})
+    store.put("github:default", {"token": "ghp-1"})
+
+    path.write_text('{"slack:default": {"bot_to', encoding="utf-8")  # truncated write
+
+    with pytest.raises(SecretStoreCorrupt):
+        store.put("notion:default", {"token": "secret-1"})
+    with pytest.raises(SecretStoreCorrupt):
+        store.delete("slack:default")
+    assert path.read_text(encoding="utf-8") == '{"slack:default": {"bot_to'
+
+
+def test_reads_still_degrade_gracefully_on_a_corrupt_store(tmp_path):
+    path = tmp_path / "secrets.json"
+    path.write_text("{not json", encoding="utf-8")
+    store = SecretStore(path)
+    assert store.get("anything") is None
+    assert store.status() == []

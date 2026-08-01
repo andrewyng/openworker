@@ -2,6 +2,7 @@
 extraction, summarizer seam, trim fallback, outbound view. No engine involved."""
 
 import json
+import time
 
 import pytest
 
@@ -344,3 +345,75 @@ def test_user_messages_capped_across_repeated_compactions():
     assert restored is not None
     assert restored.user_messages_dropped == state.user_messages_dropped
     assert restored.user_messages == state.user_messages
+
+
+# -- attachments --------------------------------------------------------------
+
+
+def _image_turn(chars: int = 1_500_000) -> dict:
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "what's in this screenshot?"},
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64," + "A" * chars},
+            },
+        ],
+    }
+
+
+def test_image_part_is_not_charged_its_base64_length():
+    """A data-URL image must not dominate the signal: chars/4 read a 1.5 MB screenshot as
+    ~375k tokens, so a single attachment sat permanently above cap_tokens and re-triggered
+    compaction on every iteration of the turn loop."""
+    msgs = [{"role": "system", "content": "s"}, _image_turn()]
+    est = estimate_tokens(msgs)
+    assert est < 5_000
+    assert not should_compact(est, 200_000)
+
+
+def test_pdf_part_is_not_charged_its_base64_length():
+    msgs = [
+        {"role": "system", "content": "s"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "summarize this"},
+                {
+                    "type": "file",
+                    "file": {
+                        "filename": "report.pdf",
+                        "file_data": "data:application/pdf;base64," + "B" * 2_000_000,
+                    },
+                },
+            ],
+        },
+    ]
+    assert estimate_tokens(msgs) < 10_000
+
+
+def test_text_only_estimate_is_unchanged_by_part_handling():
+    """Text-only histories must measure exactly as before — the whole trigger threshold is
+    calibrated against that number."""
+    msgs = convo(turns=6)
+    assert estimate_tokens(msgs) == sum(len(json.dumps(m, default=str)) for m in msgs) // 4
+
+
+def test_boundary_search_is_linear_in_history_length():
+    """Measuring each candidate with estimate_tokens(messages[i:]) re-serialized the whole
+    tail per candidate — ~1 s of blocking CPU on a 1 200-message session, on the turn loop."""
+    msgs = [{"role": "system", "content": "s"}]
+    for i in range(300):
+        a = assistant("done " + "z" * 300, tool_calls=[("read_file", {"path": "a.py"})])
+        msgs += [
+            user(f"task {i} " + "x" * 400),
+            a,
+            tool(a["tool_calls"][0]["id"], {"exit_code": 0, "out": "y" * 4000}),
+        ]
+    started = time.perf_counter()
+    boundary = pick_boundary(msgs, keep_tokens=40_000)
+    elapsed = time.perf_counter() - started
+    assert boundary is not None
+    assert estimate_tokens(msgs[boundary:]) <= 40_000
+    assert elapsed < 0.25  # linear lands ~7 ms here; the quadratic version took ~950 ms
