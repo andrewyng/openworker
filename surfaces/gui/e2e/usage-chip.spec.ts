@@ -20,7 +20,8 @@ test("usage chip appears after a turn and opens the breakdown popover", async ({
     timeout: 10_000,
   });
 
-  // Chip shows the session total (1k + 200 + 8k + 800 = 10k).
+  // Default: no bar (owner ask 2026-07-30) — the chip states the session total
+  // (1k + 200 + 8k + 800 = 10k). The bar is opt-in via Settings.
   const chip = page.getByTestId("usage-chip");
   await expect(chip).toContainText("10k");
 
@@ -58,9 +59,41 @@ test("usage resets on a new session", async ({ page }) => {
   const box = page.getByPlaceholder(/Ask the coworker/);
   await box.fill("hello");
   await box.press("Enter");
-  await expect(page.getByTestId("usage-chip")).toContainText("10k", { timeout: 10_000 });
+  await expect(page.getByTestId("usage-chip")).toBeVisible({ timeout: 10_000 });
 
   // "＋ New session" wipes the transcript — and the usage accumulation with it.
   await page.getByRole("button", { name: /New session/ }).first().click();
   await expect(page.getByTestId("usage-chip")).toHaveCount(0);
+});
+
+test("Settings toggle turns the context bar on; default is the session total", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Draft the launch note").first().click();
+  const box = page.getByPlaceholder(/Ask the coworker/);
+  await box.fill("hello");
+  await box.press("Enter");
+  const chip = page.getByTestId("usage-chip");
+  await expect(chip).toContainText("10k", { timeout: 10_000 }); // default: total, no bar
+
+  // Turn the bar ON in Settings -> General.
+  await page.getByTestId("account-row").click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByTestId("context-bar-toggle")).not.toBeChecked();
+  const [req] = await Promise.all([
+    page.waitForRequest(
+      (r) => r.url().endsWith("/v1/settings/context-bar") && r.method() === "POST",
+    ),
+    page.getByTestId("context-bar-toggle").check(),
+  ]);
+  expect(req.postDataJSON()).toEqual({ context_bar: true });
+
+  // Reload so the app re-reads settings: the chip is now the fill bar, not a number.
+  await page.goto("/");
+  await page.getByText("Draft the launch note").first().click();
+  await page.getByPlaceholder(/Ask the coworker/).fill("hello");
+  await page.getByPlaceholder(/Ask the coworker/).press("Enter");
+  const bar = page.getByTestId("usage-chip");
+  await expect(bar).toBeVisible({ timeout: 10_000 });
+  await expect(bar).not.toContainText("10k");
+  await expect(bar).toHaveAttribute("title", /Context window 5% full/);
 });

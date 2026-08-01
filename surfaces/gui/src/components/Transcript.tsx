@@ -6,6 +6,28 @@ import { Markdown } from "./Markdown";
 import { ConnectorMessageCard } from "./ConnectorMessageCard";
 import { Icon } from "./Icon";
 
+// Long user pastes swallow the transcript (owner ask 2026-07-30): clamp past a generous
+// threshold with a more…/less… toggle. Normal typed messages never see the control; the
+// full text still drives copy (BubbleMeta) and is what the model received.
+const USER_CLAMP_CHARS = 1200;
+
+function ClampedUserText({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  if (text.length <= USER_CLAMP_CHARS) return <>{text}</>;
+  return (
+    <>
+      {open ? text : text.slice(0, USER_CLAMP_CHARS).trimEnd() + "…"}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="block ml-auto mt-1.5 text-[12.5px] font-medium opacity-75 hover:opacity-100"
+      >
+        {open ? "less…" : "more…"}
+      </button>
+    </>
+  );
+}
+
 // Hover affordances for a message bubble (FB-005): copy the raw text + the message's time.
 // Lives in a ZERO-HEIGHT strip under the bubble (absolute, inside the transcript's 20px gap)
 // so revealing it on group-hover never shifts the layout. `ts` is unix seconds — canonical
@@ -406,7 +428,7 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
                       )}
                     </div>
                   )}
-                  {item.text}
+                  <ClampedUserText text={item.text} />
                 </div>
                 <BubbleMeta text={item.text} ts={item.ts} align="right" />
               </div>

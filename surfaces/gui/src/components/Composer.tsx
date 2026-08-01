@@ -87,6 +87,8 @@ interface Props {
   // Context-window size (tokens) of the ACTIVE model, from the curated matrix;
   // undefined hides the fill meter (unverified/custom models) but keeps the counts.
   contextWindow?: number;
+  // Settings toggle (default off): true shows the fill bar instead of the session total.
+  contextBar?: boolean;
 }
 
 export function Composer(props: Props) {
@@ -583,13 +585,14 @@ export function Composer(props: Props) {
 
           <span className="ml-auto" />
 
-          {/* token usage (OPE-42) — a quiet meter+count chip; hidden until the server
-              reports usage. Fill = context-window occupancy (bounded), count = session
-              consumption (unbounded, so never a fill). */}
+          {/* token usage (OPE-42) — a quiet chip; hidden until the server reports usage.
+              Shows the context-window fill bar alone (the session total lives in the
+              popover), or the session total when there's no window / the bar is off. */}
           {!dictation?.recording && props.usage && totalTokens(props.usage) > 0 && (
             <UsageChip
               usage={props.usage}
               contextWindow={props.contextWindow}
+              contextBar={props.contextBar}
               model={props.model}
               modelLabels={props.modelLabels}
             />
@@ -686,11 +689,13 @@ export function Composer(props: Props) {
 function UsageChip({
   usage,
   contextWindow,
+  contextBar,
   model,
   modelLabels,
 }: {
   usage: SessionUsage;
   contextWindow?: number;
+  contextBar?: boolean;
   model: string;
   modelLabels?: Record<string, string>;
 }) {
@@ -699,6 +704,8 @@ function UsageChip({
   const pct = contextWindow
     ? Math.min(100, Math.round((usage.context / contextWindow) * 100))
     : null;
+  // Settings can hide the bar; without a known window there is nothing to fill either.
+  const showBar = pct !== null && contextBar === true;
   const labelFor = (id: string) =>
     id === "unknown" ? "Unknown model" : modelLabels?.[id] || shortModel(id);
   // One field per line, session-summed (owner ask 2026-07-28). Values are cumulative
@@ -719,21 +726,25 @@ function UsageChip({
         aria-expanded={open}
         aria-label="Token usage"
         title={
-          pct !== null
-            ? `Token usage — ${pct}% of the context window used`
-            : "Token usage this session"
+          showBar
+            ? `Context window ${pct}% full · ${formatTokens(total)} tokens this session`
+            : `Token usage this session: ${formatTokens(total)}`
         }
         data-testid="usage-chip"
       >
-        {pct !== null && (
-          <span className="w-7 h-1 rounded-full bg-line overflow-hidden" aria-hidden="true">
+        {/* The bar is the context-window fill; pairing it with the session TOTAL read as
+            "total is N% of the window", which it never was. Bar alone when we have a
+            window, the session total only when we don't (so the chip is never empty). */}
+        {showBar ? (
+          <span className="w-12 h-1.5 rounded-full bg-line overflow-hidden" aria-hidden="true">
             <span
               className="block h-full bg-accent transition-all"
-              style={{ width: `${Math.max(pct, 4)}%` }}
+              style={{ width: `${Math.max(pct as number, 4)}%` }}
             />
           </span>
+        ) : (
+          <span className="tabular-nums">{formatTokens(total)}</span>
         )}
-        <span className="tabular-nums">{formatTokens(total)}</span>
       </button>
       {open && (
         <>

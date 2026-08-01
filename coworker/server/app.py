@@ -1429,6 +1429,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         # Sidebar: sessions shown per group before "Show more" (owner ask, 2026-07-03).
         return manager.set_sessions_peek((body or {}).get("sessions_peek", 5))
 
+    @app.post("/v1/settings/context-bar")
+    def settings_set_context_bar(body: dict) -> dict[str, Any]:
+        # Composer: show the context-window fill bar, or just the popover (owner ask).
+        return manager.set_context_bar((body or {}).get("context_bar", True))
+
     @app.post("/v1/settings/pdf")
     def settings_set_pdf(body: dict) -> dict[str, Any]:
         # Token savings (owner ask, 2026-07-17): fallback mode for models without native
@@ -1438,6 +1443,17 @@ def create_app(manager: SessionManager) -> FastAPI:
             fallback=b.get("pdf_fallback"),
             max_pages=b.get("pdf_max_pages"),
             max_mb=b.get("pdf_max_mb"),
+        )
+
+    @app.post("/v1/settings/compaction")
+    def settings_set_compaction(body: dict) -> dict[str, Any]:
+        # Auto-compaction overrides (OPE-27): threshold % of the context window, the
+        # absolute token cap, and the summarizer-model pin ("" → session's own model).
+        b = body or {}
+        return manager.set_compaction_settings(
+            threshold_pct=b.get("compaction_threshold_pct"),
+            cap_tokens=b.get("compaction_cap_tokens"),
+            model=b.get("compaction_model"),
         )
 
     @app.post("/v1/attachments/inspect-pdf")
@@ -1739,6 +1755,9 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             await ws.close()
             return
+        # Auto-compaction failure prompt (OPE-27): only an ATTENDED session may be asked
+        # Retry/Trim — unattended runs auto-trim (the policy in engine._compact_now).
+        engine.is_attended = lambda: _visibility() == VIS_INLINE
         await ws.send_json(
             {
                 "type": "ready",

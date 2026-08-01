@@ -16,6 +16,18 @@ from typing import Any, Optional
 
 import aisuite as ai
 
+# Per-OS application data directories. These are not build noise: on macOS 14+ merely
+# *descending* into ~/Library/Application Support (other apps' containers) trips the App
+# Data TCC protection and macOS shows "would like to access data from other apps" — an
+# alarming prompt the user never asked for, reachable whenever the workspace is a home
+# directory. Never traversed; a workspace under one of these is still searched normally,
+# because the guard matches directory NAMES encountered during a walk.
+OS_DATA_DIRS = {
+    "Library",  # macOS
+    "AppData",  # Windows
+    "Application Data",  # Windows (legacy junction)
+}
+
 _IGNORE_DIRS = {
     ".git",
     "node_modules",
@@ -30,7 +42,7 @@ _IGNORE_DIRS = {
     ".pytest_cache",
     ".ruff_cache",
     ".idea",
-}
+} | OS_DATA_DIRS
 
 _SCHEMA = {
     "type": "function",
