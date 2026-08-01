@@ -364,7 +364,7 @@ def test_converse_client_publishes_api_key_as_bearer_env(monkeypatch):
 
 
 def test_bedrock_capabilities_from_matrix_and_fallback():
-    curated = capabilities_for("bedrock:claude/anthropic.claude-sonnet-4-6-v1:0")
+    curated = capabilities_for("bedrock:claude/anthropic.claude-sonnet-4-6")
     assert curated.vision and curated.pdf and curated.parallel_tool_calls
     assert capabilities_for("bedrock:other/amazon.nova-2-pro-v1:0").tools
     # Custom ids fall back on the family segment: Claude keeps native caps,
@@ -396,9 +396,9 @@ def test_router_prefix_survives_bedrock_version_colons():
     from coworker.providers.router import ProviderRouter
 
     router = ProviderRouter.__new__(ProviderRouter)
-    model = "bedrock:claude/anthropic.claude-sonnet-4-6-v1:0"
+    model = "bedrock:claude/anthropic.claude-sonnet-4-6"
     assert router._provider_name(model) == "bedrock"
-    assert ProviderRouter._bare(model) == "claude/anthropic.claude-sonnet-4-6-v1:0"
+    assert ProviderRouter._bare(model) == "claude/anthropic.claude-sonnet-4-6"
 
 
 # -- registry / manager glue -----------------------------------------------------------

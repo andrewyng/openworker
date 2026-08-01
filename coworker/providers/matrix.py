@@ -171,10 +171,10 @@ MATRIX: dict[str, ModelEntry] = {
     "bedrock:claude/anthropic.claude-sonnet-5": ModelEntry(
         "Claude Sonnet 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
     ),
-    "bedrock:claude/anthropic.claude-sonnet-4-6-v1:0": ModelEntry(
+    "bedrock:claude/anthropic.claude-sonnet-4-6": ModelEntry(
         "Claude Sonnet 4.6 · AWS Bedrock", _AGENTIC_VISION, 200_000
     ),
-    "bedrock:claude/anthropic.claude-haiku-4-5-v1:0": ModelEntry(
+    "bedrock:claude/anthropic.claude-haiku-4-5-20251001-v1:0": ModelEntry(
         "Claude Haiku 4.5 · AWS Bedrock", _AGENTIC_VISION, 200_000
     ),
     "bedrock:other/amazon.nova-2-pro-v1:0": ModelEntry(
