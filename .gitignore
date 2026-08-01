@@ -8,3 +8,16 @@ dist/
 .coverage
 .claude/
 .env
+
+# macOS
+.DS_Store
+
+# Editor / tool caches and scratch output
+.aider.tags.cache.v4/
+proxy_trace.log
+
+# Harvester output. Reproducible from the OneDrive source via the kp pipeline
+# (queue -> harvest -> index -> plan -> apply -> stamp -> triage -> validate),
+# and most of it is quarantine rather than curated knowledge. The migration
+# manifests under build/ are what make the tree reconstructible, not git.
+knowledge_packs/
