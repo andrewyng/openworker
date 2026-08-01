@@ -381,7 +381,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
             ),
         ],
         build=_build_bedrock,
-        recommended_model="claude/anthropic.claude-sonnet-4-6-v1:0",
+        recommended_model="claude/anthropic.claude-sonnet-5",
         blurb="Runs models inside your own AWS account. Claude uses Anthropic's native "
         "Bedrock path; every other model goes through the Converse API.",
     ),

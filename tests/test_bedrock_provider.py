@@ -375,6 +375,23 @@ def test_bedrock_capabilities_from_matrix_and_fallback():
     assert custom_other.tools and not custom_other.parallel_tool_calls
 
 
+def test_bedrock_claude_5_family_in_matrix():
+    """Claude 5 generation models (Fable, Opus, Sonnet) are curated with 1M context."""
+    from coworker.providers.matrix import MATRIX
+
+    for mid, label, ctx in [
+        ("bedrock:claude/anthropic.claude-fable-5", "Claude Fable 5 · AWS Bedrock", 1_000_000),
+        ("bedrock:claude/anthropic.claude-opus-5", "Claude Opus 5 · AWS Bedrock", 1_000_000),
+        ("bedrock:claude/anthropic.claude-sonnet-5", "Claude Sonnet 5 · AWS Bedrock", 1_000_000),
+    ]:
+        assert mid in MATRIX, f"{mid} missing from matrix"
+        entry = MATRIX[mid]
+        assert entry.label == label
+        assert entry.context_window == ctx
+        caps = capabilities_for(mid)
+        assert caps.tools and caps.vision and caps.parallel_tool_calls
+
+
 def test_router_prefix_survives_bedrock_version_colons():
     from coworker.providers.router import ProviderRouter
 
