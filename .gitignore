@@ -22,3 +22,7 @@ proxy_trace.log
 # manifests under build/ are what make the tree reconstructible, not git.
 knowledge_packs/
 __pycache__
+openworker/node_modules/
+surfaces/gui/node_modules/
+scripts/
+ui-mocks/
