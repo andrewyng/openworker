@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import subprocess
 import sys
 import time
 
-from coworker.secrets import SecretStore
+import pytest
+
+from coworker import secrets as secrets_module
+from coworker.secrets import SecretStore, SecretStoreError
 
 
 def test_put_get_round_trip(tmp_path):
@@ -85,3 +89,72 @@ def test_delete(tmp_path):
     assert store.delete("x") is True
     assert store.delete("x") is False
     assert store.get("x") is None
+
+
+def test_store_is_encrypted_on_disk(tmp_path):
+    """The whole point of C0-encryption: the raw file must not contain the secret in the
+    clear, and must be wrapped in the versioned envelope, not a bare profile map."""
+    path = tmp_path / "secrets.json"
+    SecretStore(path).put("slack:default", {"type": "token", "bot_token": "xoxb-super-secret"})
+    raw_text = path.read_text(encoding="utf-8")
+    assert "xoxb-super-secret" not in raw_text
+    payload = json.loads(raw_text)
+    assert payload["__version__"] == 2
+    assert "data" in payload and "slack:default" not in payload
+
+
+def test_legacy_plaintext_store_migrates_in_place(tmp_path):
+    """A pre-encryption secrets.json (bare `{profile: data}` JSON, no envelope) must still be
+    readable, and must be transparently upgraded to the encrypted format — with the original
+    bytes preserved in a `.bak` file in case the migration needs to be rolled back."""
+    path = tmp_path / "secrets.json"
+    legacy = {"slack:default": {"type": "token", "bot_token": "xoxb-legacy"}}
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    store = SecretStore(path)
+    assert store.get("slack:default") == {"type": "token", "bot_token": "xoxb-legacy"}
+
+    # Migrated in place: the file on disk is now the encrypted envelope, not the legacy shape.
+    migrated = json.loads(path.read_text(encoding="utf-8"))
+    assert migrated["__version__"] == 2
+    assert "xoxb-legacy" not in path.read_text(encoding="utf-8")
+
+    # Original plaintext preserved for rollback.
+    backup = path.with_name(path.name + ".bak")
+    assert json.loads(backup.read_text(encoding="utf-8")) == legacy
+
+
+def test_decrypt_failure_raises_instead_of_silently_wiping(tmp_path):
+    """If the wrapping key is lost/rotated and the store can't be decrypted, this must raise —
+    not silently return an empty store, which would make a subsequent put() overwrite (and
+    permanently lose) every existing credential."""
+    path = tmp_path / "secrets.json"
+    SecretStore(path).put("x", {"a": 1})
+
+    # Simulate a lost wrapping key: forget the fake keyring entry for this store's identity.
+    username = secrets_module._wrap_key_identity(path)
+    if secrets_module.keyring is not None:
+        secrets_module.keyring.set_password(secrets_module._KEYRING_SERVICE, username, "")
+
+    fresh_store = SecretStore(path)  # new instance -> no cached Fernet key
+    with pytest.raises(SecretStoreError):
+        fresh_store.get("x")
+
+
+def test_keyring_unavailable_falls_back_to_local_key_file(tmp_path, monkeypatch):
+    """Headless environments with no OS keychain backend (e.g. Linux CI with no Secret Service)
+    must still encrypt at rest, via a local 0600 key file instead of the keychain."""
+    monkeypatch.setattr(secrets_module, "keyring", None)
+    path = tmp_path / "secrets.json"
+
+    with pytest.warns(RuntimeWarning, match="no OS keychain backend available"):
+        SecretStore(path).put("slack:default", {"bot_token": "xoxb-fallback"})
+
+    assert "xoxb-fallback" not in path.read_text(encoding="utf-8")
+    key_path = path.parent / ".secrets.key"
+    assert key_path.is_file()
+    if sys.platform != "win32":
+        assert stat.S_IMODE(os.stat(key_path).st_mode) == 0o600
+
+    # A second store instance reusing the same file-backed key can still decrypt.
+    assert SecretStore(path).get("slack:default") == {"bot_token": "xoxb-fallback"}

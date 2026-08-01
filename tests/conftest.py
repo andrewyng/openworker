@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
+from coworker import secrets as secrets_module
 from coworker.testing.fake_slack import FakeSlack
 
 
@@ -22,6 +23,27 @@ def _isolated_state_dir(tmp_path, monkeypatch):
     as burst noise in the ocw-connect-telemetry-events table)."""
     monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "coworker-state"))
     monkeypatch.delenv("COWORKER_API_TOKEN", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _fake_keyring(monkeypatch):
+    """EVERY test gets an in-memory fake OS keychain for SecretStore's wrapping key. Without
+    this, SecretStore falls through to the developer's real OS keychain (Keychain-unlock
+    prompts on macOS) or, on CI runners with no Secret Service, to the file-key fallback path —
+    either way tests would be non-hermetic and could leave stray entries in a real keychain.
+    Tests that specifically want to exercise the fallback path monkeypatch
+    `secrets_module.keyring = None` themselves."""
+    store: dict[tuple[str, str], str] = {}
+
+    def _get_password(service: str, username: str) -> str | None:
+        return store.get((service, username))
+
+    def _set_password(service: str, username: str, password: str) -> None:
+        store[(service, username)] = password
+
+    if secrets_module.keyring is not None:
+        monkeypatch.setattr(secrets_module.keyring, "get_password", _get_password)
+        monkeypatch.setattr(secrets_module.keyring, "set_password", _set_password)
 
 
 @pytest_asyncio.fixture

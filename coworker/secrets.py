@@ -3,13 +3,21 @@
 Design (from OpenClaw): secrets **never enter the model's context, prompts, or traces**.
 The store holds profiles keyed by `connector[:account]`; values may be literals OR
 `${ENV_VAR}` references resolved at read time from the process env / `~/.config/coworker/.env`.
+(`.env` itself stays plaintext by design — it's a hand-edited file following the universal
+dotenv convention, not something this store manages.)
 
-v1 is a `0600` JSON file behind this interface; the interface is what callers depend on, so
-a Keychain / age-encrypted backend can swap in later without touching them.
+v2: `secrets.json` is Fernet-encrypted at rest. The wrapping key is stored in the OS keychain
+(macOS Keychain / Windows Credential Manager / Linux Secret Service, via `keyring`), scoped per
+state directory. If no keychain backend is available (e.g. headless Linux without a Secret
+Service), the wrapping key falls back to a local `0600` file next to the store — secrets stay
+encrypted either way, just without the extra OS-level protection layer on the fallback path.
+v1 plaintext stores are detected on read, backed up to `<path>.bak`, and migrated in place.
+The public interface (`get`/`put`/`delete`/`status`) is unchanged, so callers never see this.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -17,11 +25,30 @@ import subprocess
 import sys
 import threading
 import time
+import warnings
 from pathlib import Path
 from typing import Any, Optional
 
+from cryptography.fernet import Fernet, InvalidToken
+
+try:
+    import keyring
+    from keyring.errors import KeyringError
+except Exception:  # pragma: no cover - keyring is a hard dep; defend against odd platforms anyway
+    keyring = None  # type: ignore[assignment]
+    KeyringError = Exception  # type: ignore[assignment,misc]
+
 _REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _IS_WINDOWS = sys.platform == "win32"
+_KEYRING_SERVICE = "coworker-secrets"
+_STORE_VERSION = 2
+
+
+class SecretStoreError(RuntimeError):
+    """The on-disk secret store can't be decrypted — wrong/missing wrapping key, or corruption.
+
+    Raised rather than silently discarding the store, because silently returning an empty store
+    here would make `put()` overwrite (and permanently lose) every existing credential."""
 
 
 def state_dir() -> Path:
@@ -103,13 +130,61 @@ def write_private_text(path: str | Path, content: str) -> Path:
     return target
 
 
+def _wrap_key_identity(store_path: Path) -> str:
+    """Keyring username scoped to the store's directory, so distinct state dirs (tests, or a
+    `COWORKER_STATE_DIR` override) never share — or collide with — another store's key."""
+    digest = hashlib.sha256(str(store_path.parent.resolve()).encode("utf-8")).hexdigest()[:16]
+    return f"wrapkey:{digest}"
+
+
+def _get_or_create_wrap_key(store_path: Path) -> bytes:
+    """Fernet key for encrypting the store at `store_path`. Prefers the OS keychain; falls back
+    to a local `0600` key file if no keychain backend is available."""
+    username = _wrap_key_identity(store_path)
+
+    if keyring is not None:
+        try:
+            existing = keyring.get_password(_KEYRING_SERVICE, username)
+            if existing:
+                return existing.encode("ascii")
+            new_key = Fernet.generate_key()
+            keyring.set_password(_KEYRING_SERVICE, username, new_key.decode("ascii"))
+            return new_key
+        except Exception:
+            # Backend absence/failure is an expected condition on some platforms (headless
+            # Linux with no Secret Service, sandboxed CI, ...) — fall through to the file key
+            # rather than treating it as a fatal error.
+            pass
+
+    key_path = store_path.parent / ".secrets.key"
+    if key_path.is_file():
+        return key_path.read_text(encoding="ascii").strip().encode("ascii")
+    warnings.warn(
+        f"coworker: no OS keychain backend available; the secrets-at-rest wrapping key for "
+        f"{store_path} is stored in {key_path} instead of the OS keychain. Secrets remain "
+        "encrypted, just without the extra keychain protection layer.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    new_key = Fernet.generate_key()
+    write_private_text(key_path, new_key.decode("ascii"))
+    return new_key
+
+
 class SecretStore:
-    """File-backed secret store. Reads resolve `${VAR}` refs; status never leaks values."""
+    """File-backed, encrypted-at-rest secret store. Reads resolve `${VAR}` refs; status never
+    leaks values."""
 
     def __init__(self, path: Optional[str | Path] = None) -> None:
         self.path = Path(path).expanduser() if path else state_dir() / "secrets.json"
         self._dotenv_path = self.path.parent / ".env"
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._fernet: Optional[Fernet] = None
+
+    def _cipher(self) -> Fernet:
+        if self._fernet is None:
+            self._fernet = Fernet(_get_or_create_wrap_key(self.path))
+        return self._fernet
 
     # -- reads ------------------------------------------------------------------
     def get(self, profile: str) -> Optional[dict[str, Any]]:
@@ -174,20 +249,52 @@ class SecretStore:
 
     # -- internals --------------------------------------------------------------
     def _read(self) -> dict[str, Any]:
-        if not self.path.is_file():
-            return {}
-        try:
-            return json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
+        with self._lock:
+            if not self.path.is_file():
+                return {}
+            try:
+                raw = json.loads(self.path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return {}
+            if not isinstance(raw, dict):
+                return {}
+
+            if raw.get("__version__") == _STORE_VERSION and "data" in raw:
+                try:
+                    plaintext = self._cipher().decrypt(raw["data"].encode("ascii"))
+                except (InvalidToken, ValueError) as exc:
+                    raise SecretStoreError(
+                        f"Failed to decrypt {self.path}: the wrapping key is missing/changed, "
+                        "or the file is corrupted. Existing secrets are inaccessible until this "
+                        "is resolved — check the OS keychain entry (service "
+                        f"'{_KEYRING_SERVICE}') or the {self.path.parent / '.secrets.key'} "
+                        "fallback file before deleting anything."
+                    ) from exc
+                try:
+                    store = json.loads(plaintext)
+                except json.JSONDecodeError as exc:
+                    raise SecretStoreError(f"Decrypted {self.path} is not valid JSON") from exc
+                return store if isinstance(store, dict) else {}
+
+            # Legacy (pre-encryption) plaintext store. Back it up once, then migrate in place —
+            # every subsequent read/write goes through the encrypted format from here on.
+            backup = self.path.with_name(self.path.name + ".bak")
+            if not backup.is_file():
+                backup.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+                _restrict_to_user(backup, is_dir=False)
+            self._write(raw)
+            return raw
 
     def _write(self, store: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            _restrict_to_user(self.path.parent, is_dir=True)
-        except OSError:
-            pass
-        tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(store, indent=2), encoding="utf-8")
-        _restrict_to_user(tmp, is_dir=False)
-        os.replace(tmp, self.path)
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                _restrict_to_user(self.path.parent, is_dir=True)
+            except OSError:
+                pass
+            token = self._cipher().encrypt(json.dumps(store).encode("utf-8"))
+            payload = {"__version__": _STORE_VERSION, "data": token.decode("ascii")}
+            tmp = self.path.with_name(self.path.name + ".tmp")
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            _restrict_to_user(tmp, is_dir=False)
+            os.replace(tmp, self.path)

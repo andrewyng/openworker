@@ -73,7 +73,7 @@ class AuditStore:
                     event.get("status") or "",
                     event.get("approval") or "",
                     json.dumps(args, default=str),
-                    _truncate(str(event.get("result_preview") or "")),
+                    _result_preview(tool, event),
                     _truncate(str(event.get("reason") or "")),
                     _truncate(str(resource or "")),
                 ),
@@ -135,6 +135,23 @@ def _sanitize_args(tool: str, args: dict[str, Any]) -> dict[str, Any]:
         else:
             out[key] = _summarize(value)
     return out
+
+
+def _result_preview(tool: str, event: dict[str, Any]) -> str:
+    """Redact known-secret keys out of a raw tool result the same way `_sanitize_args` redacts
+    call arguments, before it's stringified into the audit trail. Callers pass the raw `result`
+    dict (not just a pre-stringified preview) precisely so this can happen — engine.py already
+    includes `result=...` alongside `result_preview=...` in the audit event. Stage events with
+    no raw `result` (e.g. "proposed"/"started") fall back to the caller's plain preview string,
+    which never carries a secret in the first place (it's built before any tool executes)."""
+    if "result" in event:
+        result = event.get("result")
+        if isinstance(result, dict):
+            result = _sanitize_args(tool, result)
+        text = result if isinstance(result, str) else json.dumps(result, default=str)
+    else:
+        text = str(event.get("result_preview") or "")
+    return _truncate(text)
 
 
 def _summarize(value: Any) -> Any:
