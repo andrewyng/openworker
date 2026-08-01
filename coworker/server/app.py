@@ -20,9 +20,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+from ..browser_external import PROTOCOL_VERSION
+
+_OPENWORKER_CHROME_EXTENSION_ID = "djnbhkmnbmjobnphflaopcpfkifbgekl"
 
 # Origins allowed to talk to the local sidecar. It binds to 127.0.0.1, but a page in the
 # user's own browser can still reach loopback — so without an origin gate, any website they
@@ -50,6 +54,8 @@ def _origin_allowed(origin: str | None) -> bool:
 _WS_MAX_FRAME_BYTES = 16 * 1024 * 1024
 _WS_RATE_LIMIT_COUNT = 30
 _WS_RATE_LIMIT_WINDOW_SECONDS = 10.0
+_BROWSER_WS_INPUT_LIMIT_COUNT = 900
+_BROWSER_WS_COMMAND_LIMIT_COUNT = 120
 _MAX_MESSAGE_TEXT_CHARS = 200_000
 _MAX_ATTACHMENTS_BYTES = 15_000_000  # leaves JSON overhead below the 16 MiB frame cap
 
@@ -187,6 +193,15 @@ def create_app(manager: SessionManager) -> FastAPI:
         "/auth/callback",
         "/mcp/oauth/callback",
         "/oauth/callback",
+        # The companion browser extension cannot know the desktop sidecar
+        # token.  These exact transport routes have their own narrower trust
+        # boundary: /pair consumes an expiring one-time code, and every other
+        # route requires the opaque bearer token issued by that exchange.
+        "/v1/browser-extension/pair",
+        "/v1/browser-extension/poll",
+        "/v1/browser-extension/results",
+        "/v1/browser-extension/events",
+        "/v1/browser-extension/disconnect",
     }
 
     def _request_authenticated(request: Request) -> bool:
@@ -232,6 +247,65 @@ def create_app(manager: SessionManager) -> FastAPI:
         allow_headers=["*"],
     )
     app.state.manager = manager
+
+    def _extension_bearer(request: Request) -> str | None:
+        """Return a well-formed extension session token, never the app token."""
+
+        authorization = request.headers.get("authorization", "")
+        scheme, separator, value = authorization.partition(" ")
+        token = value.strip()
+        if (
+            separator != " "
+            or scheme.lower() != "bearer"
+            or not token
+            or len(token) > 512
+            or any(character.isspace() for character in token)
+        ):
+            return None
+        return token
+
+    def _extension_failure(
+        code: str,
+        message: str,
+        *,
+        status_code: int | None = None,
+    ) -> JSONResponse:
+        normalized = str(code or "BROWSER_EXTENSION_ERROR")
+        if status_code is None:
+            if normalized in {"UNAUTHENTICATED", "SESSION_EXPIRED"}:
+                status_code = 401
+            elif normalized in {"SESSION_NOT_FOUND", "REQUEST_NOT_FOUND"}:
+                status_code = 404
+            elif normalized == "RESULT_CONFLICT":
+                status_code = 409
+            elif normalized == "QUEUE_FULL":
+                status_code = 429
+            else:
+                status_code = 400
+        return JSONResponse(
+            {"code": normalized, "message": str(message or normalized)},
+            status_code=status_code,
+        )
+
+    def _extension_response(value: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+        """Map manager bridge failures to stable HTTP errors for the extension."""
+
+        if not value.get("ok", False):
+            return _extension_failure(
+                str(value.get("error") or "BROWSER_EXTENSION_ERROR"),
+                str(value.get("message") or "The browser extension request failed"),
+            )
+        return value
+
+    def _require_extension_bearer(request: Request) -> str | JSONResponse:
+        token = _extension_bearer(request)
+        if token is None:
+            return _extension_failure(
+                "UNAUTHENTICATED",
+                "A valid browser extension bearer token is required",
+                status_code=401,
+            )
+        return token
 
     @app.get("/v1/health")
     def health(request: Request) -> dict[str, Any]:
@@ -428,6 +502,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         connector = str(body.get("connector", "")).strip()
         if not connector:
             return {"ok": False, "error": "connector required"}
+        if connector == "browser":
+            return {
+                "ok": False,
+                "error": "Browser Use is not a source connector",
+            }
         if body.get("clear"):
             manager.session_connections.clear(session_id, connector)
         else:
@@ -1335,16 +1414,258 @@ def create_app(manager: SessionManager) -> FastAPI:
         }
 
     @app.get("/v1/browser/state")
-    def browser_state_get() -> dict[str, Any]:
-        return manager.browser_state()
+    def browser_state_get(session_id: str = "") -> dict[str, Any]:
+        return manager.browser_state(session_id)
 
-    @app.post("/v1/browser/screenshot")
-    def browser_screenshot_post() -> dict[str, Any]:
-        return manager.browser_screenshot()
+    @app.post("/v1/browser/open")
+    def browser_open_post(body: dict) -> dict[str, Any]:
+        return manager.browser_open(str((body or {}).get("session_id", "")))
+
+    @app.post("/v1/browser/control", deprecated=True)
+    def browser_control_post(body: dict, response: Response) -> dict[str, Any]:
+        # Compatibility endpoint for older desktop bundles. Input is now always
+        # shared, so this request is deliberately a no-op.
+        response.headers["Deprecation"] = "true"
+        b = body or {}
+        return manager.browser_set_takeover(
+            str(b.get("session_id", "")), bool(b.get("takeover"))
+        )
+
+    @app.post("/v1/browser/history")
+    def browser_history_post(body: dict) -> dict[str, Any]:
+        b = body or {}
+        return manager.browser_history(
+            str(b.get("session_id", "")), str(b.get("action", ""))
+        )
+
+    @app.post("/v1/browser/dialog")
+    def browser_dialog_post(body: dict) -> dict[str, Any]:
+        b = body or {}
+        prompt_text = b.get("prompt_text")
+        return manager.browser_dialog(
+            str(b.get("session_id", "")),
+            str(b.get("action", "")),
+            str(prompt_text) if prompt_text is not None else None,
+        )
 
     @app.post("/v1/browser/close")
-    def browser_close_post() -> dict[str, Any]:
-        return manager.browser_close()
+    def browser_close_post(body: dict) -> dict[str, Any]:
+        return manager.browser_close(str((body or {}).get("session_id", "")))
+
+    # -- Chrome companion extension -------------------------------------------
+    # Native connect is protected by the desktop app token and is called only by
+    # the exact-origin Chrome Native Messaging host. The returned bearer is
+    # scoped to the constrained bridge routes and never enters the extension.
+
+    @app.post("/v1/browser-extension/native/connect")
+    def browser_extension_native_connect_post(body: dict) -> Any:
+        b = body or {}
+        if b.get("protocol_version") != PROTOCOL_VERSION:
+            return _extension_failure(
+                "PROTOCOL_VERSION_MISMATCH",
+                f"The extension must use browser protocol version {PROTOCOL_VERSION}",
+            )
+        if b.get("transport") != "native_messaging":
+            return _extension_failure(
+                "INVALID_NATIVE_TRANSPORT",
+                "Chrome must connect through OpenWorker Native Messaging",
+            )
+        if b.get("extension_id") != _OPENWORKER_CHROME_EXTENSION_ID:
+            return _extension_failure(
+                "INVALID_EXTENSION_ID",
+                "The Chrome extension identity is not trusted",
+                status_code=403,
+            )
+        client = b.get("client")
+        if not isinstance(client, dict):
+            return _extension_failure(
+                "INVALID_CLIENT_METADATA",
+                "client must be an object",
+            )
+        return _extension_response(
+            manager.browser_extension_native_connect(client=client)
+        )
+
+    # Compatibility pairing routes remain for older, already-installed local
+    # builds during rollout. New UI and extension builds never call them.
+
+    @app.post("/v1/browser-extension/pairing", deprecated=True)
+    def browser_extension_pairing_post(
+        body: dict,
+    ) -> Any:
+        value = manager.browser_extension_pairing(
+            str((body or {}).get("browser", "chrome"))
+        )
+        return _extension_response(value)
+
+    @app.get("/v1/browser-extension/status")
+    def browser_extension_status_get(
+        session_id: str = "",
+    ) -> dict[str, Any]:
+        return manager.browser_extension_status(session_id or None)
+
+    @app.post("/v1/browser-extension/select")
+    def browser_extension_select_post(body: dict) -> dict[str, Any]:
+        b = body or {}
+        return manager.select_browser_surface(
+            str(b.get("session_id") or ""),
+            str(b.get("surface") or ""),
+        )
+
+    @app.post("/v1/browser-extension/pair", deprecated=True)
+    def browser_extension_pair_post(
+        body: dict,
+    ) -> Any:
+        b = body or {}
+        if b.get("protocol_version") != PROTOCOL_VERSION:
+            return _extension_failure(
+                "PROTOCOL_VERSION_MISMATCH",
+                f"The extension must use browser protocol version {PROTOCOL_VERSION}",
+            )
+        client = b.get("client")
+        if not isinstance(client, dict):
+            return _extension_failure(
+                "INVALID_CLIENT_METADATA",
+                "client must be an object",
+            )
+        value = manager.browser_extension_exchange(
+            b.get("pairing_code"),
+            client=client,
+        )
+        return _extension_response(value)
+
+    @app.post("/v1/browser-extension/poll")
+    def browser_extension_poll_post(
+        request: Request,
+        body: dict,
+    ) -> Any:
+        token = _require_extension_bearer(request)
+        if isinstance(token, JSONResponse):
+            return token
+        b = body or {}
+        value = manager.browser_extension_poll(
+            token,
+            wait_seconds=b.get("wait_seconds", 25),
+            limit=b.get("limit", 1),
+        )
+        return _extension_response(value)
+
+    @app.post("/v1/browser-extension/results")
+    def browser_extension_results_post(
+        request: Request,
+        body: dict,
+    ) -> Any:
+        token = _require_extension_bearer(request)
+        if isinstance(token, JSONResponse):
+            return token
+        b = body or {}
+        value = manager.browser_extension_result(
+            token,
+            b.get("request_id"),
+            ok=b.get("ok"),
+            result=b.get("result"),
+            error=b.get("error"),
+        )
+        # BridgeResult.ok describes the command outcome, not the HTTP request.
+        # A correctly recorded failed browser action must therefore still be a
+        # 200 acknowledgement so an extension retry is idempotent.
+        if "request_id" in value and "completed_at" in value:
+            return value
+        return _extension_response(value)
+
+    @app.post("/v1/browser-extension/events")
+    def browser_extension_events_post(
+        request: Request,
+        body: dict,
+    ) -> Any:
+        token = _require_extension_bearer(request)
+        if isinstance(token, JSONResponse):
+            return token
+        value = manager.browser_extension_event(
+            token,
+            (body or {}).get("event"),
+        )
+        return _extension_response(value)
+
+    @app.post("/v1/browser-extension/disconnect")
+    def browser_extension_disconnect_post(
+        request: Request,
+        body: dict,
+    ) -> Any:
+        token = _require_extension_bearer(request)
+        if isinstance(token, JSONResponse):
+            return token
+        value = manager.browser_extension_disconnect(
+            token,
+            reason=str((body or {}).get("reason", "extension_disconnect")),
+        )
+        return _extension_response(value)
+
+    @app.get("/v1/browser/profile")
+    def browser_profile_get() -> dict[str, Any]:
+        return manager.browser_profile()
+
+    @app.post("/v1/browser/profile")
+    def browser_profile_post(body: dict) -> dict[str, Any]:
+        b = body or {}
+        remember = (
+            bool(b.get("remember_signins"))
+            if "remember_signins" in b
+            else None
+        )
+        return manager.update_browser_profile(
+            remember_signins=remember,
+            clear_browser_data=bool(b.get("clear_browser_data")),
+        )
+
+    @app.get("/v1/browser/settings")
+    def browser_settings_get() -> dict[str, Any]:
+        return manager.browser_settings()
+
+    @app.post("/v1/browser/settings")
+    def browser_settings_post(body: dict) -> dict[str, Any]:
+        b = body or {}
+        return manager.update_browser_settings(
+            site_access_mode=(
+                str(b.get("site_access_mode"))
+                if "site_access_mode" in b
+                else None
+            ),
+            allowed_hosts=(
+                b.get("allowed_hosts")
+                if "allowed_hosts" in b
+                else b.get("allowed_sites")
+                if "allowed_sites" in b
+                else None
+            ),
+            blocked_hosts=(
+                b.get("blocked_hosts")
+                if "blocked_hosts" in b
+                else b.get("blocked_sites")
+                if "blocked_sites" in b
+                else None
+            ),
+            remember_signins=(
+                bool(b.get("remember_signins"))
+                if "remember_signins" in b
+                else None
+            ),
+            download_directory=(
+                str(b.get("download_directory") or "")
+                if "download_directory" in b
+                else None
+            ),
+            ask_download_location=(
+                bool(b.get("ask_download_location"))
+                if "ask_download_location" in b
+                else None
+            ),
+            developer_mode=(
+                bool(b.get("developer_mode"))
+                if "developer_mode" in b
+                else None
+            ),
+        )
 
     # -- web search -------------------------------------------------------------
     @app.get("/v1/web-search")
@@ -1572,7 +1893,11 @@ def create_app(manager: SessionManager) -> FastAPI:
             # item so the answer can also come from the Inbox / a reconnect / after a restart.
             item = manager.inbox.add_approval(
                 session_id,
-                f"Run `{_request.tool_name}`?",
+                (
+                    "Allow Browser Use for this task?"
+                    if getattr(_request, "scope", "") == "browser_session"
+                    else f"Run `{_request.tool_name}`?"
+                ),
                 body="\n".join(
                     p
                     for p in (
@@ -1743,6 +2068,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             directory_requester=directory_requester,
             plan_approver=plan_approver,
             question_asker=question_asker,
+            enable_browser_tools=True,
         )
         if engine is None:
             await ws.send_json(
@@ -1757,7 +2083,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             return
         # Auto-compaction failure prompt (OPE-27): only an ATTENDED session may be asked
         # Retry/Trim — unattended runs auto-trim (the policy in engine._compact_now).
-        engine.is_attended = lambda: _visibility() == VIS_INLINE
+        engine.is_attended = lambda: manager.browser_session_attended(session_id)
         await ws.send_json(
             {
                 "type": "ready",
@@ -2018,6 +2344,228 @@ def create_app(manager: SessionManager) -> FastAPI:
             pass
         finally:
             manager.unregister_session_client(session_id, ws.send_json)
+
+    @app.websocket("/ws/browser/{session_id}")
+    async def ws_browser(ws: WebSocket, session_id: str) -> None:
+        """Binary shared-view transport for one attended conversation.
+
+        Runtime events are produced on Playwright's dedicated thread.  A bounded
+        queue moves them onto the FastAPI loop; frame metadata is sent as JSON and
+        the immediately following frame bytes as one binary WebSocket message.
+        """
+
+        if not _websocket_authenticated(ws):
+            await ws.close(code=1008)
+            return
+        if not _origin_allowed(ws.headers.get("origin")):
+            await ws.close(code=1008)
+            return
+        if not manager.browser_session_attended(session_id):
+            manager.browser_close(session_id, require_attended=False)
+            await ws.close(code=1008)
+            return
+
+        await ws.accept(subprotocol="openworker" if api_token else None)
+        loop = asyncio.get_running_loop()
+        viewport_source_id = "viewport_" + secrets.token_urlsafe(12)
+        outgoing: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=32)
+
+        def enqueue(event: dict[str, Any]) -> None:
+            def put() -> None:
+                if outgoing.full():
+                    if event.get("type") == "browser_frame":
+                        # Frames are replaceable; state and cursor phases are not.
+                        return
+                    queued: list[dict[str, Any]] = []
+                    while not outgoing.empty():
+                        try:
+                            queued.append(outgoing.get_nowait())
+                        except asyncio.QueueEmpty:
+                            break
+                    removed_frame = False
+                    for queued_event in queued:
+                        if (
+                            not removed_frame
+                            and queued_event.get("type") == "browser_frame"
+                        ):
+                            removed_frame = True
+                            continue
+                        if not outgoing.full():
+                            outgoing.put_nowait(queued_event)
+                    if outgoing.full():
+                        try:
+                            outgoing.get_nowait()
+                        except asyncio.QueueEmpty:
+                            pass
+                try:
+                    outgoing.put_nowait(dict(event))
+                except asyncio.QueueFull:
+                    pass
+
+            loop.call_soon_threadsafe(put)
+
+        token = manager.browser_subscribe(session_id, enqueue)
+
+        async def sender() -> None:
+            while True:
+                event = await outgoing.get()
+                frame = event.pop("data", None)
+                await ws.send_json(event)
+                if isinstance(frame, (bytes, bytearray, memoryview)):
+                    await ws.send_bytes(bytes(frame))
+
+        send_task = asyncio.create_task(sender())
+        try:
+            initial_state = manager.browser_state(session_id)
+            await ws.send_json(initial_state)
+            if initial_state.get("open"):
+                # A newly attached viewport needs a frame even if the page has
+                # been visually idle since before this subscriber connected.
+                await asyncio.to_thread(manager.browser_screenshot, session_id)
+
+            inbound_times: deque[float] = deque()
+            command_times: deque[float] = deque()
+            while True:
+                message = await ws.receive_json()
+                now = loop.time()
+                while (
+                    inbound_times
+                    and now - inbound_times[0] > _WS_RATE_LIMIT_WINDOW_SECONDS
+                ):
+                    inbound_times.popleft()
+                if len(inbound_times) >= _BROWSER_WS_INPUT_LIMIT_COUNT:
+                    await ws.send_json(
+                        {
+                            "type": "error",
+                            "error": "Too many browser input messages",
+                        }
+                    )
+                    await ws.close(code=1008)
+                    return
+                inbound_times.append(now)
+
+                if not isinstance(message, dict):
+                    await ws.send_json(
+                        {"type": "error", "error": "Expected a JSON object"}
+                    )
+                    continue
+                if _json_value_size(message) > 256_000:
+                    await ws.send_json(
+                        {"type": "error", "error": "Browser input is too large"}
+                    )
+                    continue
+                if not manager.browser_session_attended(session_id):
+                    manager.browser_close(session_id, require_attended=False)
+                    await ws.close(code=1008)
+                    return
+
+                kind = str(message.get("type", ""))
+                phase = str(message.get("phase", ""))
+                high_frequency_input = (
+                    (kind == "pointer" and phase == "move")
+                    or kind in {"key", "text", "wheel", "resize"}
+                )
+                if not high_frequency_input:
+                    while (
+                        command_times
+                        and now - command_times[0]
+                        > _WS_RATE_LIMIT_WINDOW_SECONDS
+                    ):
+                        command_times.popleft()
+                    if (
+                        len(command_times)
+                        >= _BROWSER_WS_COMMAND_LIMIT_COUNT
+                    ):
+                        await ws.send_json(
+                            {
+                                "type": "error",
+                                "error": "Too many browser commands",
+                            }
+                        )
+                        await ws.close(code=1008)
+                        return
+                    command_times.append(now)
+                if kind == "browser_cursor_arrived":
+                    result = await asyncio.to_thread(
+                        manager.browser_acknowledge_cursor,
+                        session_id,
+                        str(message.get("action_id", "")),
+                        str(message.get("frame_id", "")),
+                    )
+                    if not result.get("ok", False):
+                        await ws.send_json({"type": "error", **result})
+                    continue
+                if kind == "navigate":
+                    result = await asyncio.to_thread(
+                        manager.browser_navigate,
+                        session_id,
+                        str(message.get("url", "")),
+                    )
+                elif kind == "pointer":
+                    button_names = {0: "left", 1: "middle", 2: "right"}
+                    event = {
+                        "type": "pointer",
+                        "action": str(message.get("phase", "move")),
+                        "x": message.get("x", 0),
+                        "y": message.get("y", 0),
+                        "button": button_names.get(
+                            message.get("button"), "left"
+                        ),
+                        "click_count": message.get("click_count", 1),
+                        "_source_id": viewport_source_id,
+                    }
+                    result = await asyncio.to_thread(
+                        manager.browser_dispatch_input,
+                        session_id,
+                        event,
+                    )
+                elif kind == "key":
+                    event = {
+                        "type": "key",
+                        "action": str(message.get("phase", "down")),
+                        "key": str(message.get("key", "")),
+                        "_source_id": viewport_source_id,
+                    }
+                    result = await asyncio.to_thread(
+                        manager.browser_dispatch_input,
+                        session_id,
+                        event,
+                    )
+                elif kind in {"wheel", "text", "resize"}:
+                    event = {
+                        key: value
+                        for key, value in message.items()
+                        if key not in {"session_id", "_source_id"}
+                    }
+                    event["_source_id"] = viewport_source_id
+                    result = await asyncio.to_thread(
+                        manager.browser_dispatch_input,
+                        session_id,
+                        event,
+                    )
+                else:
+                    result = {
+                        "ok": False,
+                        "error": "INVALID_BROWSER_MESSAGE",
+                        "message": f"Unknown browser message type: {kind}",
+                    }
+                if not result.get("ok", False):
+                    await ws.send_json({"type": "error", **result})
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            try:
+                await asyncio.to_thread(
+                    manager.browser_runtime.release_direct_input,
+                    session_id,
+                    source_id=viewport_source_id,
+                )
+            except Exception:
+                # The attended session may have closed before its viewport.
+                pass
+            manager.browser_unsubscribe(token)
+            send_task.cancel()
+            await asyncio.gather(send_task, return_exceptions=True)
 
     @app.websocket("/ws/events")
     async def ws_events(ws: WebSocket) -> None:

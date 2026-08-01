@@ -61,6 +61,17 @@ class SkillLoader:
         ]
 
 
+def builtin_skill_dir() -> Path:
+    """Return the package-owned skill directory.
+
+    Loaders should put this directory first.  ``SkillLoader`` deliberately lets a
+    later directory replace an earlier skill with the same name, so a user's
+    global skill and then a workspace skill can customize a bundled default.
+    """
+
+    return Path(__file__).resolve().parent / "builtin"
+
+
 def _parse_skill(md: Path) -> Skill:
     text = md.read_text(encoding="utf-8")
     name, description, allowed, body = md.parent.name, "", [], text

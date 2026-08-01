@@ -30,7 +30,13 @@ from .roots import RootDir, normalize_roots, render_context
 from .providers import ProviderClient, ProviderRouter
 from .overrides import RiskOverrideStore
 from .secrets import SecretStore, state_dir
-from .skills import SkillLoader, save_skill_tool, skill_catalog_text, skill_tools
+from .skills import (
+    SkillLoader,
+    builtin_skill_dir,
+    save_skill_tool,
+    skill_catalog_text,
+    skill_tools,
+)
 from .tools import ToolRegistry
 from .tools.ask import ask_user_tool
 from .tools.directories import request_directory_tool
@@ -132,7 +138,9 @@ def _loaded_skill_names(messages: list[dict[str, Any]]) -> set[str]:
 
 
 def _skill_dirs(workspace: Optional[Path]) -> list[Path]:
-    dirs = [state_dir() / "skills"]
+    # SkillLoader uses last-one-wins semantics.  Package defaults are therefore
+    # customizable globally, and a workspace-specific skill is the final override.
+    dirs = [builtin_skill_dir(), state_dir() / "skills"]
     if workspace is not None:
         dirs.append(workspace / ".coworker" / "skills")
     return dirs
@@ -167,6 +175,7 @@ def build_engine(
     connector_filter: Optional[set[str]] = None,
     # A set (static snapshot) or a zero-arg callable (live, re-evaluated per load_skill).
     skill_filter: Optional[set[str] | Callable[[], set[str]]] = None,
+    browser_tools: Optional[list[Any]] = None,
 ) -> TurnEngine:
     ws = Path(workspace).expanduser().resolve() if workspace else None
     if agent.needs_workspace and ws is None:
@@ -234,6 +243,7 @@ def build_engine(
                 enabled_connectors=enabled_connectors,
                 enabled_tools=enabled_tools,
                 roots=root_list or None,
+                browser_tools=browser_tools,
             )
         )
     # Web search + fetch: research tools for every agent (keyless DuckDuckGo default).
@@ -294,13 +304,28 @@ def build_engine(
             instructions = f"{instructions}\n\n{block}"
 
     skill_loader = SkillLoader(_skill_dirs(ws))
+    # Package-owned skills are part of OpenWorker's runtime contract rather than the
+    # user-managed Skills catalog.  Keep them available even when the manager supplies
+    # a per-session filter for global/project skills.  A later user/workspace directory
+    # may still override a bundled skill with the same name (SkillLoader is last-wins).
+    builtin_skill_names = set(SkillLoader([builtin_skill_dir()]).names())
+
+    def _allowed_skills_now() -> Optional[set[str]]:
+        configured = skill_filter() if callable(skill_filter) else skill_filter
+        if configured is None:
+            return None
+        return set(configured) | builtin_skill_names
+
+    allowed_skills = (
+        _allowed_skills_now if callable(skill_filter) else _allowed_skills_now()
+    )
     # Per-session effective menu (SKILLS-SPEC §3). The manager passes a CALLABLE so
     # load_skill consults the LIVE state per call (a Settings disable applies to running
     # sessions; a skill created after this build is still loadable). The catalog itself
     # is injected per turn via context_provider (below), NOT here — so the menu the model
     # sees is also live: skill changes apply from the next message, no new session needed.
     # Default None preserves CLI / direct callers.
-    registry.register_all(skill_tools(skill_loader, allowed=skill_filter))
+    registry.register_all(skill_tools(skill_loader, allowed=allowed_skills))
     # The worker-authors door (SKILLS-SPEC §5.2): save_skill proposes installing a finished
     # skill; requires_approval routes it through the standard approval card, so the review-
     # before-save rule holds without any bespoke plumbing. Bundled files may only come from
@@ -358,7 +383,7 @@ def build_engine(
         # a skill installed/enabled/disabled mid-session applies from the NEXT MESSAGE —
         # no new session, no lost context.
         skill_loader.rescan()
-        allowed = skill_filter() if callable(skill_filter) else skill_filter
+        allowed = allowed_skills() if callable(allowed_skills) else allowed_skills
         skills_ctx = skill_catalog_text(skill_loader, allowed=allowed)
         if skills_ctx:
             parts.append(skills_ctx)

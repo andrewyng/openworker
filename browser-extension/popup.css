@@ -1,0 +1,101 @@
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  width: 320px;
+  color: #202124;
+  background: #ffffff;
+}
+
+main { padding: 18px; }
+
+header {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: white;
+  background: #18181b;
+  font-weight: 700;
+  font-size: 17px;
+}
+
+h1 { margin: 0; font-size: 15px; font-weight: 650; }
+header p { margin: 3px 0 0; color: #71717a; font-size: 12px; }
+.explanation { margin: 0 0 14px; color: #52525b; line-height: 1.45; }
+
+label {
+  display: block;
+  margin: 12px 0;
+  color: #3f3f46;
+  font-weight: 550;
+}
+
+input {
+  display: block;
+  width: 100%;
+  height: 38px;
+  margin-top: 6px;
+  padding: 0 10px;
+  border: 1px solid #d4d4d8;
+  border-radius: 9px;
+  color: inherit;
+  background: transparent;
+  outline: none;
+}
+
+input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px #2563eb22; }
+button { width: 100%; height: 38px; border-radius: 9px; font: inherit; cursor: pointer; }
+button:disabled { cursor: wait; opacity: 0.55; }
+.primary { border: 0; color: white; background: #2563eb; font-weight: 600; }
+.primary:hover { background: #1d4ed8; }
+.secondary { border: 1px solid #d4d4d8; color: #27272a; background: #fafafa; font-weight: 600; }
+
+.link-button {
+  height: auto;
+  margin-top: 14px;
+  border: 0;
+  color: #71717a;
+  background: transparent;
+  font-size: 12px;
+}
+
+.privacy-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px;
+  border-radius: 9px;
+  color: #52525b;
+  background: #f4f4f5;
+  line-height: 1.35;
+}
+
+.privacy-dot { flex: 0 0 auto; width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: #22c55e; }
+#error { margin: 12px 0 0; padding: 9px 10px; border-radius: 8px; color: #991b1b; background: #fef2f2; line-height: 1.35; }
+
+@media (prefers-color-scheme: dark) {
+  body { color: #f4f4f5; background: #18181b; }
+  .mark { color: #18181b; background: #f4f4f5; }
+  header p, .explanation, .link-button { color: #a1a1aa; }
+  label { color: #d4d4d8; }
+  input { border-color: #52525b; }
+  .secondary { border-color: #52525b; color: #f4f4f5; background: #27272a; }
+  .privacy-note { color: #d4d4d8; background: #27272a; }
+  #error { color: #fecaca; background: #450a0a; }
+}

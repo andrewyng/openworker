@@ -1,6 +1,10 @@
 """§36 gates: connector READS never gate (the tool registry's kind is law), and Slack
 channel NAMES resolve to addresses in send_message/send_file ("post Hi to #general" must
-just work when Slack is connected — owner repro 2026-07-14)."""
+just work when Slack is connected — owner repro 2026-07-14).
+
+Opening a live browser URL is intentionally an action: the attended Browser Use
+runtime applies its hostname policy before navigation.
+"""
 
 from coworker.connectors.base import SendResult
 from coworker.connectors.tool_defs import TOOL_DEFS, approval_for_tool
@@ -38,7 +42,7 @@ def test_integration_tools_reads_are_free_writes_gate(tmp_path):
     )
 
 
-def test_browser_automation_reads_are_free_interactions_gate():
+def test_browser_automation_reads_are_free_navigation_and_interactions_gate():
     from coworker.connectors.browser_automation import make_browser_automation_tools
 
     tools = {t.__name__: t for t in make_browser_automation_tools()}
@@ -46,7 +50,7 @@ def test_browser_automation_reads_are_free_interactions_gate():
         tools["browser_snapshot"].__aisuite_tool_metadata__.requires_approval is False
     )
     assert (
-        tools["browser_open_url"].__aisuite_tool_metadata__.requires_approval is False
+        tools["browser_open_url"].__aisuite_tool_metadata__.requires_approval is True
     )
     assert tools["browser_click"].__aisuite_tool_metadata__.requires_approval is True
     assert tools["browser_type"].__aisuite_tool_metadata__.requires_approval is True

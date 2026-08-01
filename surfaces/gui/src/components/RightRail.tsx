@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 // Emits the asset URL only; the worker itself loads lazily with the pdfjs chunk.
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
@@ -10,10 +10,38 @@ import {
 } from "../api";
 import type { TodoItem } from "../types";
 import { AccessSection } from "./AccessSection";
+import { BrowserViewport } from "./BrowserViewport";
 import { Icon } from "./Icon";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
 
 type Panel = "progress" | "artifacts";
+
+type WorkspaceTab =
+  | { id: "overview"; kind: "overview"; title: "Overview" }
+  | { id: "browser"; kind: "browser"; title: "Browser" }
+  | { id: "files"; kind: "files"; title: "Files" }
+  | { id: string; kind: "artifact"; title: string; artifact: ArtifactInfo };
+
+const OVERVIEW_TAB: WorkspaceTab = {
+  id: "overview",
+  kind: "overview",
+  title: "Overview",
+};
+const BROWSER_TAB: WorkspaceTab = {
+  id: "browser",
+  kind: "browser",
+  title: "Browser",
+};
+const FILES_TAB: WorkspaceTab = { id: "files", kind: "files", title: "Files" };
+
+function artifactTab(artifact: ArtifactInfo): WorkspaceTab {
+  return {
+    id: `artifact:${artifact.path}`,
+    kind: "artifact",
+    title: artifact.name,
+    artifact,
+  };
+}
 
 // Quiet file-type icons for the artifact list (the colored kind pills read as noisy).
 function kindIcon(kind: string): "file" | "fileCode" | "image" | "table" {
@@ -40,12 +68,15 @@ interface Props {
   active: boolean;
   sessionId: string;
   refreshKey: number;
+  openBrowserKey?: number;
+  browserActivityKey?: number;
   toolNames: string[];
   todo: TodoItem[];
   running: boolean;
   // Fires when a full artifact preview opens/closes, so the app can auto-collapse the left nav
   // to give the preview (PDF/webpage/sheet) more room (#3).
   onPreviewChange?: (open: boolean) => void;
+  onBrowserOpenChange?: (open: boolean) => void;
   // §32: the rail is the ONE session panel for every non-chat persona. Artifacts stays
   // cowork-only (deliverables; code-family gets "Files" later — slot reserved); the Access
   // section (the former Session-settings drawer) renders for all.
@@ -63,10 +94,13 @@ export function RightRail({
   active,
   sessionId,
   refreshKey,
+  openBrowserKey = 0,
+  browserActivityKey = 0,
   toolNames,
   todo,
   running,
   onPreviewChange,
+  onBrowserOpenChange,
   showArtifacts = true,
   personaId,
   projectScoped,
@@ -81,22 +115,114 @@ export function RightRail({
     artifacts: true,
   });
   const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
-  const [selected, setSelected] = useState<ArtifactInfo | null>(null);
+  const [tabs, setTabs] = useState<WorkspaceTab[]>([OVERVIEW_TAB, BROWSER_TAB]);
+  const [activeTabId, setActiveTabId] = useState("overview");
   const [content, setContent] = useState<ArtifactContent | null>(null);
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const [browserRequestKey, setBrowserRequestKey] = useState(0);
+  const [browserCloseKey, setBrowserCloseKey] = useState(0);
+  const [browserAttention, setBrowserAttention] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [addMenuView, setAddMenuView] = useState<"main" | "artifacts">("main");
+  const addMenuRef = useRef<HTMLDivElement | null>(null);
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? OVERVIEW_TAB;
+  const selected = activeTab.kind === "artifact" ? activeTab.artifact : null;
 
-  const refreshArtifacts = () => getArtifacts(sessionId).then(setArtifacts).catch(() => setArtifacts([]));
+  const ensureTab = useCallback((tab: WorkspaceTab) => {
+    setTabs((current) =>
+      current.some((candidate) => candidate.id === tab.id)
+        ? current
+        : [...current, tab],
+    );
+  }, []);
+
+  const activateTab = useCallback((tabId: string) => {
+    setActiveTabId(tabId);
+    if (tabId === "browser") setBrowserAttention(false);
+  }, []);
+
+  const openArtifact = useCallback((artifact: ArtifactInfo) => {
+    const tab = artifactTab(artifact);
+    ensureTab(tab);
+    activateTab(tab.id);
+  }, [activateTab, ensureTab]);
+
+  const openBrowserTab = useCallback(() => {
+    ensureTab(BROWSER_TAB);
+    activateTab(BROWSER_TAB.id);
+    setBrowserRequestKey((key) => key + 1);
+    setAddMenuOpen(false);
+    setAddMenuView("main");
+  }, [activateTab, ensureTab]);
+
+  const openFilesTab = useCallback(() => {
+    ensureTab(FILES_TAB);
+    activateTab(FILES_TAB.id);
+    setAddMenuOpen(false);
+    setAddMenuView("main");
+  }, [activateTab, ensureTab]);
+
+  const closeTab = useCallback((tabId: string) => {
+    if (tabId === "overview") return;
+    setTabs((current) => {
+      const index = current.findIndex((tab) => tab.id === tabId);
+      const next = current.filter((tab) => tab.id !== tabId);
+      setActiveTabId((active) => {
+        if (active !== tabId) return active;
+        return next[Math.max(0, Math.min(index - 1, next.length - 1))]?.id || "overview";
+      });
+      return next;
+    });
+    if (tabId === "browser") {
+      setBrowserAttention(false);
+      setBrowserCloseKey((key) => key + 1);
+    }
+  }, []);
+
+  const handleBrowserOpenChange = useCallback((open: boolean) => {
+    setBrowserOpen(open);
+    onBrowserOpenChange?.(open);
+    // Agent-created browser sessions become a background tab. They never steal the
+    // artifact or Overview tab the human is currently reading.
+    if (open) ensureTab(BROWSER_TAB);
+  }, [ensureTab, onBrowserOpenChange]);
+
+  const refreshArtifacts = useCallback(
+    () => getArtifacts(sessionId).then(setArtifacts).catch(() => setArtifacts([])),
+    [sessionId],
+  );
 
   useEffect(() => {
     if (!active) return;
     if (showArtifacts) refreshArtifacts();
   }, [active, sessionId, refreshKey, showArtifacts]);
 
-  // Switching conversations closes any open artifact — it belongs to the previous session's
-  // workspace, which the new session can't (and shouldn't) read.
+  // Tabs are deliberately conversation-scoped: never let a file path or live browser surface
+  // bleed into another task when the user switches sessions.
   useEffect(() => {
-    setSelected(null);
+    setTabs([OVERVIEW_TAB, BROWSER_TAB]);
+    setActiveTabId("overview");
     setContent(null);
+    setBrowserOpen(false);
+    setBrowserAttention(false);
+    setAddMenuOpen(false);
+    setAddMenuView("main");
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!openBrowserKey) return;
+    openBrowserTab();
+  }, [openBrowserKey, openBrowserTab]);
+
+  // A browser tool may open or modify the shared browser while the human is looking at an
+  // artifact. Materialize/update its tab, but leave activeTabId alone and show a quiet dot.
+  const lastBrowserActivity = useRef(0);
+  useEffect(() => {
+    if (!browserActivityKey || browserActivityKey === lastBrowserActivity.current) return;
+    lastBrowserActivity.current = browserActivityKey;
+    ensureTab(BROWSER_TAB);
+    if (activeTabId !== "browser") setBrowserAttention(true);
+  }, [activeTabId, browserActivityKey, ensureTab]);
 
   useEffect(() => {
     setContent(null);
@@ -106,8 +232,8 @@ export function RightRail({
 
   // Notify the app when a preview opens/closes (drives the left-nav auto-collapse).
   useEffect(() => {
-    onPreviewChange?.(!!selected);
-  }, [!!selected, onPreviewChange]);
+    onPreviewChange?.(activeTab.kind !== "overview");
+  }, [activeTab.kind, onPreviewChange]);
 
   const reloadSelected = () => {
     if (!selected) return Promise.resolve();
@@ -134,33 +260,203 @@ export function RightRail({
       if (!path) return;
       const found = match(artifacts, path);
       if (found) {
-        setSelected(found);
+        openArtifact(found);
         return;
       }
       getArtifacts(sessionId)
         .then((list) => {
           setArtifacts(list);
-          setSelected(match(list, path) ?? minimal(path));
+          openArtifact(match(list, path) ?? minimal(path));
         })
-        .catch(() => setSelected(minimal(path)));
+        .catch(() => openArtifact(minimal(path)));
     };
     window.addEventListener(OPEN_ARTIFACT_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_ARTIFACT_EVENT, onOpen);
-  }, [active, sessionId, artifacts]);
+  }, [active, sessionId, artifacts, openArtifact]);
+
+  useEffect(() => {
+    if (!addMenuOpen) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!addMenuRef.current?.contains(event.target as Node)) {
+        setAddMenuOpen(false);
+        setAddMenuView("main");
+      }
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setAddMenuOpen(false);
+        setAddMenuView("main");
+      }
+    };
+    window.addEventListener("pointerdown", dismiss);
+    window.addEventListener("keydown", escape);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("keydown", escape);
+    };
+  }, [addMenuOpen]);
 
   if (!active) return null;
 
   return (
-    <aside className={"right-rail" + (selected ? " artifact-mode" : "")}>
-      {selected ? (
-        <ArtifactViewer
-          sessionId={sessionId}
-          artifact={selected}
+    <aside
+      className={
+        "right-rail" +
+        (activeTab.kind === "browser"
+          ? " browser-mode"
+          : activeTab.kind === "artifact" || activeTab.kind === "files"
+            ? " artifact-mode"
+            : "")
+      }
+    >
+      <div className="workspace-tab-strip">
+        <div className="workspace-tabs" role="tablist" aria-label="Workspace tabs">
+          {tabs.map((tab) => (
+            <div
+              key={tab.id}
+              className={"workspace-tab-item" + (activeTab.id === tab.id ? " is-active" : "")}
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab.id === tab.id}
+                className="workspace-tab"
+                title={tab.title}
+                onClick={() => {
+                  activateTab(tab.id);
+                  if (tab.kind === "browser" && !browserOpen) {
+                    setBrowserRequestKey((key) => key + 1);
+                  }
+                }}
+              >
+                <Icon
+                  name={
+                    tab.kind === "browser"
+                      ? "globe"
+                      : tab.kind === "overview"
+                        ? "sliders"
+                        : tab.kind === "files"
+                          ? "folder"
+                          : kindIcon(tab.artifact.kind)
+                  }
+                  size={13}
+                />
+                <span>{tab.title}</span>
+                {tab.kind === "browser" && browserAttention && (
+                  <span className="workspace-tab-attention" aria-label="Browser updated" />
+                )}
+              </button>
+              {tab.kind !== "overview" && (
+                <button
+                  type="button"
+                  className="workspace-tab-close"
+                  aria-label={`Close ${tab.title}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closeTab(tab.id);
+                  }}
+                >
+                  <Icon name="x" size={11} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="workspace-add" ref={addMenuRef}>
+            <button
+              type="button"
+              className={"workspace-add-button" + (addMenuOpen ? " is-active" : "")}
+              aria-label="Add workspace tab"
+              aria-expanded={addMenuOpen}
+              onClick={() => {
+                setAddMenuOpen((value) => !value);
+                setAddMenuView("main");
+              }}
+            >
+              <Icon name="plus" size={14} />
+            </button>
+            {addMenuOpen && (
+              <div className="workspace-add-menu" role="menu">
+                {addMenuView === "main" ? (
+                  <>
+                    <button type="button" role="menuitem" onClick={openBrowserTab}>
+                      <Icon name="globe" size={15} />
+                      <span>Browser</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => setAddMenuView("artifacts")}
+                    >
+                      <Icon name="file" size={15} />
+                      <span>Open artifact…</span>
+                      <Icon name="chevronRight" size={13} />
+                    </button>
+                    <button type="button" role="menuitem" onClick={openFilesTab}>
+                      <Icon name="folder" size={15} />
+                      <span>Files</span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="workspace-add-menu-back"
+                      onClick={() => setAddMenuView("main")}
+                    >
+                      <Icon name="arrowLeft" size={14} />
+                      <span>Artifacts</span>
+                    </button>
+                    <div className="workspace-add-menu-list">
+                      {artifacts.length ? artifacts.slice(0, 12).map((artifact) => (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          key={artifact.path}
+                          title={artifact.path}
+                          onClick={() => {
+                            openArtifact(artifact);
+                            setAddMenuOpen(false);
+                            setAddMenuView("main");
+                          }}
+                        >
+                          <Icon name={kindIcon(artifact.kind)} size={14} />
+                          <span>{artifact.name}</span>
+                        </button>
+                      )) : (
+                        <div className="workspace-add-empty">No artifacts yet.</div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+        </div>
+      </div>
+
+      <div className="workspace-tab-content">
+        <div className={"workspace-browser-panel" + (activeTab.kind === "browser" ? "" : " is-background")}>
+          <BrowserViewport
+            sessionId={sessionId}
+            refreshKey={refreshKey}
+            openRequestKey={browserRequestKey}
+            closeRequestKey={browserCloseKey}
+            workspaceActive={activeTab.kind === "browser"}
+            embedded
+            onOpenChange={handleBrowserOpenChange}
+          />
+        </div>
+
+        {activeTab.kind === "artifact" && selected ? (
+          <ArtifactViewer
+            sessionId={sessionId}
+            artifact={selected}
           content={content}
           onReload={reloadSelected}
-          onBack={() => setSelected(null)}
+          onBack={() => activateTab("overview")}
           onOpenEntry={(path) =>
-            setSelected({
+            openArtifact({
               path,
               name: path.split("/").pop() || path,
               kind: kindFromPath(path),
@@ -169,8 +465,14 @@ export function RightRail({
             })
           }
         />
-      ) : (
-        <>
+        ) : activeTab.kind === "files" ? (
+          <FilesPanel
+            artifacts={artifacts}
+            onOpen={openArtifact}
+            onRefresh={refreshArtifacts}
+          />
+        ) : activeTab.kind === "overview" ? (
+          <div className="workspace-overview">
           <RailSection title="Progress" open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
             <ProgressSummary running={running} toolNames={toolNames} todo={todo} />
           </RailSection>
@@ -200,7 +502,7 @@ export function RightRail({
             ) : (
               <div className="artifact-list">
                 {artifacts.slice(0, 16).map((a) => (
-                  <button className="artifact-row" key={a.path} onClick={() => setSelected(a)}>
+                  <button className="artifact-row" key={a.path} onClick={() => openArtifact(a)}>
                     <span className="artifact-ico" title={a.kind}>
                       <Icon name={kindIcon(a.kind)} size={17} />
                     </span>
@@ -229,8 +531,9 @@ export function RightRail({
             openKey={openAccessKey}
             onOpenIntegrations={onOpenIntegrations}
           />
-        </>
-      )}
+          </div>
+        ) : null}
+      </div>
     </aside>
   );
 }
@@ -291,6 +594,80 @@ function RailSection({
       </div>
       {open && <div className="rail-section-body">{children}</div>}
     </section>
+  );
+}
+
+function FilesPanel({
+  artifacts,
+  onOpen,
+  onRefresh,
+}: {
+  artifacts: ArtifactInfo[];
+  onOpen: (artifact: ArtifactInfo) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
+  const filtered = artifacts.filter((artifact) =>
+    `${artifact.name} ${artifact.path}`.toLowerCase().includes(normalizedQuery),
+  );
+
+  return (
+    <div className="workspace-files">
+      <div className="workspace-files-head">
+        <div>
+          <strong>Files</strong>
+          <span>{artifacts.length} artifact{artifacts.length === 1 ? "" : "s"}</span>
+        </div>
+        <button
+          type="button"
+          className="artifact-icon-btn"
+          onClick={() => void onRefresh()}
+          aria-label="Refresh files"
+          title="Refresh"
+        >
+          <Icon name="refresh" size={15} />
+        </button>
+      </div>
+      <label className="workspace-file-search">
+        <Icon name="search" size={15} />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Filter files…"
+          aria-label="Filter files"
+        />
+      </label>
+      <div className="workspace-file-list">
+        {filtered.length ? filtered.map((artifact) => (
+          <button
+            type="button"
+            className="workspace-file-row"
+            key={artifact.path}
+            onClick={() => onOpen(artifact)}
+          >
+            <span className="workspace-file-icon">
+              <Icon name={kindIcon(artifact.kind)} size={17} />
+            </span>
+            <span>
+              <strong>{artifact.name}</strong>
+              <small>{artifact.path}</small>
+            </span>
+            <small>{formatBytes(artifact.size)}</small>
+          </button>
+        )) : (
+          <div className="workspace-files-empty">
+            <Icon name="file" size={24} />
+            <strong>{artifacts.length ? "No matching files" : "No artifacts yet"}</strong>
+            <span>
+              {artifacts.length
+                ? "Try a different file name."
+                : "Files created in this conversation will appear here."}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

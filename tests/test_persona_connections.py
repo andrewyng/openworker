@@ -2,8 +2,8 @@
 
 The §5 persona detail / default-connection / enable endpoints and the §6 per-session connections
 endpoints, exercised through ``TestClient(create_app(mgr))`` per the verification plan. Connectors
-are "connected" by writing their secret profile directly (no network); ``browser`` is always
-connected (auth="none"), so effective-set assertions use subsets, not exact equality.
+are "connected" by writing their secret profile directly (no network). Browser Use is a built-in
+capability and is deliberately absent from these source-connection surfaces.
 """
 
 from fastapi.testclient import TestClient
@@ -167,6 +167,7 @@ def test_session_connections_endpoint(tmp_path, monkeypatch):
 
     view = client.get("/v1/sessions/incident/connections").json()
     conn = {c["connector"]: c for c in view["connected"]}
+    assert "browser" not in conn
     # github + slack connected and on by the ops core defaults → effective-enabled
     assert {"github", "slack"} <= set(conn)
     assert conn["github"]["enabled"] is True
@@ -180,6 +181,16 @@ def test_session_connections_endpoint(tmp_path, monkeypatch):
     assert rec["datadog"]["tier"] == "core" and rec["pagerduty"]["tier"] == "optional"
     # attention = count of not-yet-connected recommends
     assert view["attention"] == 2
+
+    rejected = client.post(
+        "/v1/sessions/incident/connections",
+        json={"connector": "browser", "enabled": False},
+    ).json()
+    assert rejected == {
+        "ok": False,
+        "error": "Browser Use is not a source connector",
+    }
+    assert "browser" not in mgr.session_connections.get("incident")
 
 
 def test_fresh_session_view_uses_persona_hint(tmp_path, monkeypatch):

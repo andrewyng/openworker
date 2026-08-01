@@ -23,7 +23,11 @@ hides the window while keeping stdio intact.
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import (
+    collect_all,
+    collect_data_files,
+    collect_submodules,
+)
 
 # SPECPATH is injected by PyInstaller and points at this file's directory
 # (<repo>/packaging). Derive everything else from it — no hardcoded paths.
@@ -38,8 +42,24 @@ IS_WINDOWS = sys.platform == "win32"
 INCLUDE_EXPERIMENTAL = os.environ.get("COWORKER_EXPERIMENTAL") == "1"
 
 hiddenimports = []
-datas = []
+datas = collect_data_files("coworker", includes=["skills/builtin/*/SKILL.md"])
 binaries = []
+
+def without_playwright_browsers(entries):
+    """Keep Playwright's Python/Node driver, but not its nested browser app.
+
+    PyInstaller reclassifies and re-signs collected Mach-O files one by one,
+    which breaks Chromium's framework bundle and symlinks. Platform build
+    scripts inject the untouched `.local-browsers` tree after PyInstaller.
+    """
+    return [
+        entry
+        for entry in entries
+        if not any(
+            ".local-browsers" in str(value).replace("\\", "/")
+            for value in entry[:2]
+        )
+    ]
 
 for pkg in ("coworker", "aisuite", "mcp", "ddgs", "croniter", "docstring_parser"):
     hiddenimports += collect_submodules(pkg)
@@ -54,8 +74,20 @@ if not INCLUDE_EXPERIMENTAL:
 # collect it explicitly or the packaged relay adapter fails to open its socket.
 # `pypdf`/`pypdfium2` are lazy-imported the same way (pdf_support.py) — and pypdfium2
 # carries the libpdfium binary, which collect_all is what actually stages.
-for pkg in ("uvicorn", "certifi", "anyio", "websockets", "pypdf", "pypdfium2"):
+for pkg in (
+    "uvicorn",
+    "certifi",
+    "anyio",
+    "websockets",
+    "pypdf",
+    "pypdfium2",
+    # The Node driver is frozen here; the paired browser is copied intact later.
+    "playwright",
+):
     d, b, h = collect_all(pkg)
+    if pkg == "playwright":
+        d = without_playwright_browsers(d)
+        b = without_playwright_browsers(b)
     datas += d
     binaries += b
     hiddenimports += h
@@ -93,12 +125,16 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=[],
+    hookspath=[os.path.join(PACKAGING, "pyinstaller_hooks")],
     runtime_hooks=[],
     excludes=["tkinter", "matplotlib", "PIL", "PyQt5", "PySide6"]
     + ([] if INCLUDE_EXPERIMENTAL else ["coworker.connectors.experimental"]),
     noarchive=False,
 )
+# Defense in depth for Playwright package-hook changes: never let a nested
+# browser binary reach PyInstaller's per-file binary rewriter.
+a.datas = without_playwright_browsers(a.datas)
+a.binaries = without_playwright_browsers(a.binaries)
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz,

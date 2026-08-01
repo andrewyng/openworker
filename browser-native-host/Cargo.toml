@@ -1,0 +1,10 @@
+[package]
+name = "openworker-browser-native-host"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "Chrome Native Messaging bridge for OpenWorker"
+license = "MIT"
+
+[dependencies]
+serde_json = "1"

@@ -86,8 +86,10 @@ ACCESS: dict[str, list[str]] = {
     ],
     "browser": [
         "Opens and reads web pages in its own browser session.",
-        "Clicks, types, and uploads files only inside that session.",
-        "Never touches your personal browser or its logins.",
+        "Clicks referenced controls, fills fields, selects options, and scrolls "
+        "only inside that session.",
+        "Never exposes file uploads, arbitrary scripts, raw coordinates, or your "
+        "personal browser to agents.",
     ],
     "github": [
         "Reads code, issues, pull requests, and CI on repositories you grant.",

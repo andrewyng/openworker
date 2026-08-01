@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "OpenWorker Browser Control",
+  "description": "Share individual Chrome tabs with your local OpenWorker agent.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "102",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoqflhTzpoJjbMgHTAFwaSyX7fyBz4aOAwMgZh0QKOBosT/YxoFbipDEaoFXv908nuTzybiU+WvLrBKNAcga2VKePq6uVShHGmAgF7KVfA/vqaaGIOB+YfwdnTFC0i0CkYMJuEmR+nDHZAgH4AyA7eVcj0MxRx8sezY5M96kTdYLDG0tBwZrDWsA2ksU3XJpektu6aWMDsB1u9DNi/OArkTimsr7e2TZCQpRVFxPTof9C8CWWLjjBMRt4Y7nKkODBjlOFgG+Tr0T5lfYBRSFtVBjxB7CmRVSa0y9hh4zPFSNgJn4gx8VRMadWQgUmGYvhew067UiBGSPZqNZeMRXQPQIDAQAB",
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "debugger",
+    "nativeMessaging",
+    "storage",
+    "tabs"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "Share this tab with OpenWorker",
+    "default_popup": "popup.html"
+  }
+}

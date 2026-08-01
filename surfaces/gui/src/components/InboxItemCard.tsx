@@ -78,7 +78,13 @@ export function InboxItemCard({
           older rows fall back to the raw kind/title/body treatment below. */}
       {item.kind === "approval" && item.data?.tool ? (
         <div className="flex items-center justify-between gap-3">
-          <TitleText line={humanizeApprovalTitle(item.data.tool, item.data.arguments)} />
+          <TitleText
+            line={
+              item.data.scope === "browser_session"
+                ? { pre: "Allow Browser Use for this task" }
+                : humanizeApprovalTitle(item.data.tool, item.data.arguments)
+            }
+          />
           {(() => {
             const s = scopeNote(item.data.tool, item.data.arguments);
             return (
@@ -111,7 +117,11 @@ export function InboxItemCard({
             className={item.data?.tool ? BTN_ACCENT : BTN_PRIMARY}
             onClick={() => onResolve(item.id, "allow")}
           >
-            {item.data?.tool ? approvalActionLabels(item.data.tool).allow : "Approve"}
+            {item.data?.scope === "browser_session"
+              ? "Allow"
+              : item.data?.tool
+                ? approvalActionLabels(item.data.tool).allow
+                : "Approve"}
           </button>
           {/* Task-persistent standing grant (§25) — present only when the approval was
               raised inside an automation run AND the call can carry a tool+target rule.

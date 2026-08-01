@@ -14,12 +14,24 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
+from functools import wraps
 from pathlib import Path
 from typing import Any, Optional
 
 from ..agent import build_engine
 from ..agents import get_agent
+from ..browser import BrowserRuntime, BrowserRuntimeError, make_browser_tools
+from ..browser_external import (
+    ExternalBrowserBridge,
+    ExternalBrowserBridgeError,
+    SessionNotFound as ExternalBrowserSessionNotFound,
+)
+from ..browser_security.proxy_host import BrowserProxyHost
+from ..browser_security.actions import BrowserActionPolicy, BrowserActionRequest
+from ..browser_security.site_permissions import BrowserSitePermissionStore
+from ..browser_security.vault import EncryptedBrowserProfileVault
 from ..connections import (
     PersonaConnectionStore,
     SessionConnectionStore,
@@ -54,11 +66,6 @@ from ..connectors import (
     slack_split,
     update_connector_tools,
 )
-from ..connectors.browser_automation import (
-    browser_close_session,
-    browser_state,
-    browser_take_screenshot,
-)
 from ..connectors.parked import ParkedStore
 from ..mcp import (
     MCPManager,
@@ -91,6 +98,17 @@ from ..skills import (
 
 _SCOPES = {s.value for s in Scope}
 
+# Built-in capabilities can have connector-shaped tool metadata without being
+# user-managed data sources. They must not appear in Sources/Access or inherit
+# connector mute semantics. Browser Use is authorized contextually per attended
+# conversation instead (PermissionEngine.browser_session_allowed).
+_NON_SOURCE_CONNECTORS = frozenset({"browser"})
+
+
+def _is_source_connector(name: str) -> bool:
+    return name not in _NON_SOURCE_CONNECTORS
+
+
 logger = logging.getLogger("coworker.manager")
 
 
@@ -98,7 +116,22 @@ def _grants_of(engine) -> dict[str, Any]:
     """The engine's session-scoped "Always allow" approvals, in persistable shape."""
     tools = sorted(getattr(engine.permissions, "session_allow_tools", None) or ())
     commands = sorted(getattr(engine.permissions, "session_allow_commands", None) or ())
-    return {"tools": tools, "commands": commands} if (tools or commands) else {}
+    browser = bool(
+        getattr(engine.permissions, "browser_session_allowed", False)
+    )
+    return (
+        {"tools": tools, "commands": commands, "browser": browser}
+        if (tools or commands or browser)
+        else {}
+    )
+
+
+def _approval_title(request) -> str:
+    if getattr(request, "scope", "") == "browser_site":
+        return "Allow this website?"
+    if getattr(request, "scope", "") == "browser_session":
+        return "Allow Browser Use for this task?"
+    return f"Run `{request.tool_name}`?"
 
 
 def _approval_body(request) -> str:
@@ -119,6 +152,10 @@ class SessionManager:
         model: str = "gpt-5.6-sol",
         mode: Mode = Mode.INTERACTIVE,
         provider: Optional[ProviderClient] = None,
+        browser_runtime: Optional[Any] = None,
+        browser_profile_vault: Optional[Any] = None,
+        browser_proxy_host: Optional[Any] = None,
+        external_browser_bridge: Optional[Any] = None,
     ) -> None:
         self.default_workspace = (
             str(Path(workspace).expanduser().resolve()) if workspace else None
@@ -165,6 +202,47 @@ class SessionManager:
         self._mcp_errors: dict[str, str] = {}
         self.gateway: Optional[Gateway] = None
         self._data_base = base
+        # One process-local Playwright driver owns isolated BrowserContexts keyed by
+        # conversation id.  Construction is cheap/lazy: Chromium is launched only on
+        # the first attended Browser Use action.
+        self.browser_runtime = browser_runtime or BrowserRuntime(headless=True)
+        self.external_browser_bridge = (
+            external_browser_bridge or ExternalBrowserBridge()
+        )
+        self._external_browser_sessions: dict[str, str] = {}
+        self._browser_surface_by_session: dict[str, str] = {}
+        self._external_browser_tab_by_session: dict[str, int] = {}
+        self._external_browser_snapshots: dict[
+            str, dict[str, dict[str, Any]]
+        ] = {}
+        self._external_browser_action_policy = BrowserActionPolicy()
+        # Chromium has no direct-network fallback: every context receives a
+        # per-conversation authenticated loopback proxy.  The proxy resolves and
+        # pins public destinations and admits an exact local origin only after an
+        # approved browser_open_url or direct user toolbar navigation.
+        self.browser_proxy_host = browser_proxy_host or BrowserProxyHost()
+        self.browser_site_permissions = BrowserSitePermissionStore(
+            base / "browser_settings.json"
+        )
+        self._browser_sessions: set[str] = set()
+        self._browser_profile_leases: dict[str, Any] = {}
+        self._browser_lock = threading.RLock()
+        self._browser_detach_timers: dict[str, threading.Timer] = {}
+        self._browser_profile_timers: dict[str, threading.Timer] = {}
+        self._browser_profile_error = ""
+        if browser_profile_vault is not None:
+            self.browser_profile_vault = browser_profile_vault
+        else:
+            try:
+                self.browser_profile_vault = EncryptedBrowserProfileVault(
+                    base / "browser_profiles"
+                )
+            except Exception as exc:
+                # Browser Use remains available with an ephemeral context when the
+                # platform has no supported credential vault.  Remember sign-ins
+                # fails closed and the profile endpoint explains why.
+                self.browser_profile_vault = None
+                self._browser_profile_error = str(exc)
         # Desktop/UI prefs (default model, onboarding state) — not secrets; a plain JSON file.
         self._prefs = self._load_prefs()
         if self._prefs.get("default_model"):
@@ -388,9 +466,11 @@ class SessionManager:
         directory_requester: Optional[Any] = None,
         plan_approver: Optional[Any] = None,
         question_asker: Optional[Any] = None,
+        enable_browser_tools: bool = False,
     ) -> Optional[TurnEngine]:
         engine = self._engines.get(session_id)
         if engine is not None:
+            engine.permissions.browser_site_policy = self.browser_site_permissions
             if approver is not None:
                 engine.approver = approver
             if directory_requester is not None:
@@ -399,6 +479,15 @@ class SessionManager:
                 engine.plan_approver = plan_approver
             if question_asker is not None:
                 engine.question_asker = question_asker
+            browser_enabled = (
+                enable_browser_tools
+                and self.task_store.task_for_run_session(session_id) is None
+                and get_agent(getattr(engine, "agent_name", "code")).connectors
+            )
+            if browser_enabled:
+                self._register_browser_tools(engine, session_id)
+            elif enable_browser_tools:
+                self._unregister_browser_tools(engine, session_id)
             return engine
 
         record = self.session_store.load(session_id)
@@ -434,6 +523,13 @@ class SessionManager:
                 if Path(str(r.get("path", ""))).is_dir()
             ]
             roots = [{"path": ws, "writable": True, "label": "scratch"}, *extra]
+        browser_tools = None
+        if (
+            enable_browser_tools
+            and self.task_store.task_for_run_session(session_id) is None
+            and ag.connectors
+        ):
+            browser_tools = self._browser_tools(session_id)
         engine = build_engine(
             agent=ag,
             workspace=ws,
@@ -467,7 +563,9 @@ class SessionManager:
             # Per-session skill menu, LIVE (SKILLS-SPEC §3): a callable so load_skill sees
             # disables/new skills immediately; the catalog snapshot is taken at build.
             skill_filter=lambda sid=session_id, w=ws: self.effective_skill_names(sid, w),
+            browser_tools=browser_tools,
         )
+        engine.permissions.browser_site_policy = self.browser_site_permissions
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
         owning_task = self.task_store.task_for_run_session(session_id)
@@ -545,7 +643,11 @@ class SessionManager:
         persona defaults from the manifest on first read using the full connected set.
         """
         persona = self._persona_of(session_id, persona_id)
-        connected = {c["name"] for c in connector_list(self.secrets) if c["connected"]}
+        connected = {
+            c["name"]
+            for c in connector_list(self.secrets)
+            if c["connected"] and _is_source_connector(c["name"])
+        }
         entry = self.personas.get(persona)
         manifest = entry.manifest if entry else None
         persona_defaults = self.persona_connections.defaults_for(
@@ -584,7 +686,11 @@ class SessionManager:
 
     def _connected_connectors(self) -> set[str]:
         """The account-connected connector names (the first layer of the §4 hierarchy)."""
-        return {c["name"] for c in connector_list(self.secrets) if c["connected"]}
+        return {
+            c["name"]
+            for c in connector_list(self.secrets)
+            if c["connected"] and _is_source_connector(c["name"])
+        }
 
     def _persona_default_connections(
         self, persona_id: str, manifest, connected: set[str]
@@ -618,6 +724,7 @@ class SessionManager:
                 "connected": rec.ref in connected,
             }
             for rec in (manifest.recommends if manifest else [])
+            if _is_source_connector(rec.ref)
         ]
         return {
             "id": entry.id,
@@ -714,7 +821,11 @@ class SessionManager:
         persona = self._persona_of(session_id, persona_id)
         entry = self.personas.get(persona)
         manifest = entry.manifest if entry else None
-        connectors = connector_list(self.secrets)
+        connectors = [
+            c
+            for c in connector_list(self.secrets)
+            if _is_source_connector(c["name"])
+        ]
         by_name = {c["name"]: c for c in connectors}
         connected_names = {c["name"] for c in connectors if c["connected"]}
         effective = self.effective_connectors(session_id, persona)
@@ -734,7 +845,9 @@ class SessionManager:
                 "connected": False,
             }
             for rec in (manifest.recommends if manifest else [])
-            if rec.kind == "connector" and rec.ref not in connected_names
+            if rec.kind == "connector"
+            and _is_source_connector(rec.ref)
+            and rec.ref not in connected_names
         ]
         return {
             "connected": connected,
@@ -783,7 +896,7 @@ class SessionManager:
         async def approve(request):
             item = self.inbox.add_approval(
                 session_id,
-                f"Run `{request.tool_name}`?",
+                _approval_title(request),
                 body=_approval_body(request),
                 inbox=self.inbox_routing.route_for(session_id, agent),
                 tool_call_id=getattr(request, "tool_call_id", None),
@@ -1140,7 +1253,11 @@ class SessionManager:
     def list_connectors(self) -> list[dict[str, Any]]:
         # Enrich two-way connectors with the live gateway's recently-seen senders, so the Connectors
         # tab can manage the allow-list inline (each recent sender flagged authorized or not).
-        connectors = connector_list(self.secrets)
+        connectors = [
+            c
+            for c in connector_list(self.secrets)
+            if _is_source_connector(c["name"])
+        ]
         for c in connectors:
             if not (c.get("two_way") and c.get("connected")):
                 continue
@@ -1216,14 +1333,1438 @@ class SessionManager:
             limit=limit, session_id=session_id, connector=connector, tool=tool
         )
 
-    def browser_state(self) -> dict[str, Any]:
-        return browser_state()
+    # -- attended, conversation-scoped Browser Use ----------------------------
+    _BROWSER_PROFILE_ID = "default"
 
-    def browser_screenshot(self) -> dict[str, Any]:
-        return browser_take_screenshot()
+    @staticmethod
+    def _browser_error(exc: Exception) -> dict[str, Any]:
+        if isinstance(exc, BrowserRuntimeError):
+            return {"ok": False, **exc.to_dict()}
+        return {
+            "ok": False,
+            "error": type(exc).__name__,
+            "message": str(exc),
+        }
 
-    def browser_close(self) -> dict[str, Any]:
-        return browser_close_session()
+    def browser_session_attended(self, session_id: str) -> bool:
+        """Browser Use is available only while the local conversation has a live
+        session socket and the user has not put it in Unattended mode."""
+
+        return bool(self._session_clients.get(session_id)) and not (
+            self.unattended.is_unattended(session_id)
+        )
+
+    def _closed_browser_state(
+        self, session_id: str, *, error: str = ""
+    ) -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "ok": not bool(error),
+            "session_id": session_id,
+            "open": False,
+            "status": "closed",
+            "active_tab_id": None,
+            "tabs": [],
+            "capabilities": {"shared_input": True},
+        }
+        if error:
+            state.update(
+                {
+                    "error": "ATTENDED_SESSION_REQUIRED",
+                    "message": error,
+                }
+            )
+        return state
+
+    def _ensure_browser_session(
+        self, session_id: str, *, initial_url: Optional[str] = None
+    ) -> dict[str, Any]:
+        if not self.browser_session_attended(session_id):
+            self._close_browser_session(session_id, save_profile=True)
+            raise RuntimeError(
+                "Browser Use requires this conversation to be open and attended"
+            )
+        with self._browser_lock:
+            if session_id in self._browser_sessions:
+                if initial_url:
+                    self.browser_proxy_host.grant_local_origin(
+                        session_id, initial_url
+                    )
+                # Do not read runtime state here: state is serialized behind the
+                # agent-operation lock, while direct browser input must be able
+                # to arrive during an agent action.
+                return {
+                    "ok": True,
+                    "session_id": session_id,
+                    "status": "open",
+                    "capabilities": {"shared_input": True},
+                }
+
+            storage_state = None
+            profile_id = None
+            lease = None
+            if self._prefs.get("browser_remember_signins"):
+                if self.browser_profile_vault is None:
+                    raise RuntimeError(
+                        self._browser_profile_error
+                        or "Remembered browser sign-ins are unavailable"
+                    )
+                lease = self.browser_profile_vault.lease(self._BROWSER_PROFILE_ID)
+                try:
+                    storage_state = lease.load()
+                except Exception:
+                    lease.release()
+                    raise
+                profile_id = self._BROWSER_PROFILE_ID
+
+            proxy = None
+            try:
+                browser_settings = self.browser_site_permissions.settings()
+                proxy = self.browser_proxy_host.create_session(
+                    session_id,
+                    local_origin_grants=([initial_url] if initial_url else ()),
+                )
+                state = self.browser_runtime.create_session(
+                    session_id,
+                    storage_state=storage_state,
+                    profile_id=profile_id,
+                    proxy=proxy,
+                    developer_mode=bool(browser_settings["developer_mode"]),
+                    allowed_file_roots=self._browser_file_roots(
+                        session_id,
+                        download_directory=browser_settings[
+                            "download_directory"
+                        ],
+                    ),
+                    navigation_guard=(
+                        self.browser_site_permissions.navigation_allowed
+                    ),
+                )
+            except Exception:
+                if proxy is not None:
+                    try:
+                        self.browser_proxy_host.close_session(session_id)
+                    except Exception:
+                        pass
+                if lease is not None:
+                    lease.release()
+                raise
+            self._browser_sessions.add(session_id)
+            if lease is not None:
+                self._browser_profile_leases[session_id] = lease
+            # Keep the shared in-app viewport current. A CDP screencast emits
+            # binary frames through /ws/browser.
+            try:
+                self.browser_runtime.start_screencast(session_id)
+            except Exception:
+                # A browser action still works if streaming is unavailable; the UI
+                # can request point-in-time screenshots as a fallback.
+                pass
+            return state
+
+    def _browser_file_roots(
+        self, session_id: str, *, download_directory: str
+    ) -> list[str]:
+        """The only local roots Browser upload/download may access.
+
+        The configured download directory is first so an unspecified download
+        destination lands there. Session roots are added for explicit uploads;
+        read-only roots are intentionally included because uploading reads but
+        does not modify the source file.
+        """
+
+        values: list[str] = []
+        if str(download_directory).strip():
+            values.append(str(Path(download_directory).expanduser().resolve()))
+        engine = self._engines.get(session_id)
+        if engine is not None:
+            try:
+                values.extend(
+                    str(path)
+                    for path, _writable in engine.permissions._resolved_roots()
+                )
+            except Exception:
+                pass
+        else:
+            record = self.session_store.load(session_id)
+            if record is not None:
+                if record.workspace:
+                    values.append(str(Path(record.workspace).resolve()))
+                values.extend(
+                    str(Path(item["path"]).expanduser().resolve())
+                    for item in (record.extra_roots or [])
+                    if str(item.get("path") or "").strip()
+                )
+        return list(dict.fromkeys(values))
+
+    def _persist_browser_profile(self, session_id: str) -> None:
+        if not self._prefs.get("browser_remember_signins"):
+            return
+        with self._browser_lock:
+            if session_id not in self._browser_sessions:
+                return
+            if self.browser_profile_vault is None:
+                return
+            lease = self._browser_profile_leases.get(session_id)
+            if lease is None:
+                lease = self.browser_profile_vault.lease(self._BROWSER_PROFILE_ID)
+                self._browser_profile_leases[session_id] = lease
+            lease.save(self.browser_runtime.storage_state(session_id))
+
+    def _schedule_browser_profile_persist(self, session_id: str) -> None:
+        """Debounce direct-user-input auth persistence.
+
+        Pointer motion can arrive at display refresh rate; serializing IndexedDB
+        after every input would stall interaction. Meaningful completion events
+        schedule one quiet-period snapshot, while close/navigation still save
+        synchronously.
+        """
+
+        if not self._prefs.get("browser_remember_signins"):
+            return
+        old = self._browser_profile_timers.pop(session_id, None)
+        if old is not None:
+            old.cancel()
+
+        def persist() -> None:
+            self._browser_profile_timers.pop(session_id, None)
+            try:
+                self._persist_browser_profile(session_id)
+            except Exception as exc:
+                logger.warning(
+                    "could not persist Browser Use profile for %s: %s",
+                    session_id,
+                    exc,
+                )
+
+        timer = threading.Timer(1.5, persist)
+        timer.daemon = True
+        self._browser_profile_timers[session_id] = timer
+        timer.start()
+
+    def _close_browser_session(
+        self, session_id: str, *, save_profile: bool
+    ) -> dict[str, Any]:
+        with self._browser_lock:
+            active = session_id in self._browser_sessions
+            profile_timer = self._browser_profile_timers.pop(
+                session_id, None
+            )
+            if profile_timer is not None:
+                profile_timer.cancel()
+            if not active:
+                try:
+                    self.browser_proxy_host.close_session(session_id)
+                except Exception:
+                    pass
+                lease = self._browser_profile_leases.pop(session_id, None)
+                if lease is not None:
+                    try:
+                        lease.release()
+                    except Exception:
+                        pass
+                return {
+                    "ok": True,
+                    "session_id": session_id,
+                    "closed": True,
+                }
+            if active and save_profile:
+                try:
+                    self._persist_browser_profile(session_id)
+                except Exception as exc:
+                    logger.warning(
+                        "could not persist Browser Use profile for %s: %s",
+                        session_id,
+                        exc,
+                    )
+            try:
+                result = self.browser_runtime.close_session(session_id)
+            except BrowserRuntimeError as exc:
+                if exc.code != "SESSION_NOT_FOUND":
+                    result = self._browser_error(exc)
+                else:
+                    result = {
+                        "ok": True,
+                        "session_id": session_id,
+                        "closed": True,
+                    }
+            except Exception as exc:
+                result = self._browser_error(exc)
+            try:
+                self.browser_proxy_host.close_session(session_id)
+            except Exception as exc:
+                logger.warning(
+                    "could not close Browser Use proxy for %s: %s",
+                    session_id,
+                    exc,
+                )
+            self._browser_sessions.discard(session_id)
+            lease = self._browser_profile_leases.pop(session_id, None)
+            if lease is not None:
+                try:
+                    lease.release()
+                except Exception:
+                    pass
+            timer = self._browser_detach_timers.pop(session_id, None)
+            if timer is not None and timer is not threading.current_thread():
+                timer.cancel()
+            return result
+
+    def _browser_tools(self, session_id: str) -> list[Any]:
+        """Wrap runtime tools with the attended-session and profile lifecycle
+        invariants.  The model never receives a session or profile identifier."""
+
+        guarded: list[Any] = []
+        for tool in make_browser_tools(
+            self.browser_runtime,
+            session_id,
+            surface_available=self.external_browser_available,
+        ):
+            original_confirmation = getattr(
+                tool, "__coworker_browser_confirmation__", None
+            )
+            non_launching = bool(
+                getattr(tool, "__coworker_browser_non_launching__", False)
+            )
+
+            @wraps(tool)
+            def invoke(
+                _tool=tool,
+                _non_launching=non_launching,
+                **arguments,
+            ):
+                internal_confirmation = arguments.pop(
+                    "__coworker_browser_confirmation__", None
+                )
+                if not self.browser_session_attended(session_id):
+                    self._close_browser_session(session_id, save_profile=True)
+                    return {
+                        "ok": False,
+                        "error": "ATTENDED_SESSION_REQUIRED",
+                        "message": (
+                            "Browser Use stopped because this conversation is "
+                            "not open and attended"
+                        ),
+                    }
+                if _tool.__name__ == "browser_select_surface":
+                    return self.select_browser_surface(
+                        session_id, str(arguments.get("surface") or "")
+                    )
+                if _non_launching:
+                    try:
+                        return _tool(**arguments)
+                    except Exception as exc:
+                        return self._browser_error(exc)
+                selected_surface = self.browser_surface(session_id)
+                if selected_surface == "chrome":
+                    return self._invoke_external_browser_tool(
+                        session_id,
+                        selected_surface,
+                        _tool.__name__,
+                        dict(arguments),
+                        confirmation=(
+                            dict(internal_confirmation)
+                            if isinstance(internal_confirmation, dict)
+                            else None
+                        ),
+                    )
+                if _tool.__name__ == "browser_close":
+                    return self._close_browser_session(
+                        session_id, save_profile=True
+                    )
+                try:
+                    initial_url = (
+                        arguments.get("url")
+                        if _tool.__name__ == "browser_open_url"
+                        else None
+                    )
+                    self._ensure_browser_session(
+                        session_id, initial_url=initial_url
+                    )
+                    result = _tool(**arguments)
+                    if isinstance(result, dict) and result.get("ok"):
+                        try:
+                            self._persist_browser_profile(session_id)
+                        except Exception as exc:
+                            logger.warning(
+                                "could not persist Browser Use profile: %s", exc
+                            )
+                    return result
+                except Exception as exc:
+                    return self._browser_error(exc)
+
+            # functools.wraps copies the runtime factory's explicit schema and
+            # ToolMetadata through __dict__; assigning the exact name makes the
+            # invariant obvious to alternate registry implementations.
+            invoke.__name__ = tool.__name__
+
+            def browser_confirmation(
+                arguments,
+                *,
+                _tool=tool,
+                _callback=original_confirmation,
+            ):
+                selected_surface = self.browser_surface(session_id)
+                if (
+                    selected_surface == "chrome"
+                    and _tool.__name__
+                    not in {
+                        "browser_select_surface",
+                        "browser_surfaces",
+                        "browser_documentation",
+                    }
+                ):
+                    return self._external_browser_confirmation(
+                        session_id,
+                        _tool.__name__,
+                        dict(arguments or {}),
+                    )
+                value = (
+                    _callback(dict(arguments or {}))
+                    if callable(_callback)
+                    else {
+                        "requires_confirmation": True,
+                        "reasons": ["unverified_browser_action"],
+                    }
+                )
+                if not isinstance(value, dict) or value.get("destination_url"):
+                    return value
+                if _tool.__name__ in {
+                    "browser_open_url",
+                    "browser_close",
+                    "browser_close_tab",
+                    "browser_surfaces",
+                    "browser_documentation",
+                }:
+                    return value
+                # A user may have changed the shared page between agent actions.
+                # Enrich preflight with the current/selected top-level URL so an
+                # agent cannot silently act on an unapproved site.
+                try:
+                    if session_id not in self._browser_sessions:
+                        return value
+                    state = self.browser_runtime.state(session_id)
+                    tabs = list(state.get("tabs") or [])
+                    requested_tab = (
+                        str((arguments or {}).get("tab_id") or "")
+                        if _tool.__name__ == "browser_select_tab"
+                        else str(state.get("active_tab_id") or "")
+                    )
+                    tab = next(
+                        (
+                            item
+                            for item in tabs
+                            if str(item.get("tab_id") or "") == requested_tab
+                        ),
+                        None,
+                    )
+                    url = str((tab or {}).get("url") or "")
+                    if url.startswith(("http://", "https://", "ws://", "wss://")):
+                        value = {**value, "current_url": url}
+                except Exception:
+                    pass
+                return value
+
+            invoke.__coworker_browser_confirmation__ = browser_confirmation
+            invoke.__coworker_browser_accepts_confirmation__ = True
+            guarded.append(invoke)
+        return guarded
+
+    def _register_browser_tools(
+        self, engine: TurnEngine, session_id: str
+    ) -> None:
+        existing = set(engine.registry.names())
+        tools = [
+            tool
+            for tool in self._browser_tools(session_id)
+            if tool.__name__ not in existing
+        ]
+        if tools:
+            engine.registry.register_all(tools)
+
+    def _unregister_browser_tools(
+        self, engine: TurnEngine, session_id: str
+    ) -> None:
+        runtime_tool_names = {
+            tool.__name__
+            for tool in make_browser_tools(
+                self.browser_runtime,
+                session_id,
+                surface_available=self.external_browser_available,
+            )
+        }
+        for name in runtime_tool_names:
+            engine.registry.unregister(name)
+
+    def browser_state(self, session_id: str) -> dict[str, Any]:
+        if not session_id:
+            return {
+                "ok": False,
+                "error": "SESSION_ID_REQUIRED",
+                "message": "session_id is required",
+                "open": False,
+                "status": "closed",
+                "active_tab_id": None,
+                "tabs": [],
+                "capabilities": {"shared_input": True},
+            }
+        if not self.browser_session_attended(session_id):
+            if session_id in self._browser_sessions:
+                self._close_browser_session(session_id, save_profile=True)
+            return self._closed_browser_state(session_id)
+        with self._browser_lock:
+            if session_id not in self._browser_sessions:
+                return self._closed_browser_state(session_id)
+            try:
+                return {
+                    **self.browser_runtime.state(session_id),
+                    "open": True,
+                }
+            except Exception as exc:
+                self._browser_sessions.discard(session_id)
+                return self._browser_error(exc)
+
+    def browser_open(self, session_id: str) -> dict[str, Any]:
+        """Open the in-app browser from the attended conversation UI.
+
+        This is deliberately separate from the model's ``browser_open_url`` tool:
+        a human can reveal a blank browser without granting the agent Browser Use.
+        """
+
+        try:
+            self._ensure_browser_session(session_id)
+            return {
+                **self.browser_runtime.state(session_id),
+                "open": True,
+            }
+        except Exception as exc:
+            return self._browser_error(exc)
+
+    def browser_history(self, session_id: str, action: str) -> dict[str, Any]:
+        try:
+            self._ensure_browser_session(session_id)
+            result = self.browser_runtime.user_history(session_id, action)
+            self._schedule_browser_profile_persist(session_id)
+            return {**result, "open": True}
+        except Exception as exc:
+            return self._browser_error(exc)
+
+    def browser_screenshot(self, session_id: str) -> dict[str, Any]:
+        if not self.browser_session_attended(session_id):
+            self._close_browser_session(session_id, save_profile=True)
+            return self._closed_browser_state(
+                session_id,
+                error=(
+                    "Browser Use requires this conversation to be open and attended"
+                ),
+            )
+        if session_id not in self._browser_sessions:
+            return self._closed_browser_state(session_id)
+        try:
+            return self.browser_runtime.screenshot(session_id)
+        except Exception as exc:
+            return self._browser_error(exc)
+
+    def browser_set_takeover(
+        self, session_id: str, takeover: bool
+    ) -> dict[str, Any]:
+        """Legacy no-op retained while older desktop clients roll forward."""
+
+        try:
+            self._ensure_browser_session(session_id)
+            result = self.browser_runtime.set_takeover(
+                session_id, bool(takeover)
+            )
+            return {**result, "open": True}
+        except Exception as exc:
+            return self._browser_error(exc)
+
+    def browser_navigate(self, session_id: str, url: str) -> dict[str, Any]:
+        try:
+            self._ensure_browser_session(session_id, initial_url=url)
+            result = self.browser_runtime.user_navigate(session_id, url)
+            self._schedule_browser_profile_persist(session_id)
+            return {**result, "open": True}
+        except Exception as exc:
+            return self._browser_error(exc)
+
+    def browser_acknowledge_cursor(
+        self, session_id: str, action_id: str, frame_id: str = ""
+    ) -> dict[str, Any]:
+        if not self.browser_session_attended(session_id):
+            self._close_browser_session(session_id, save_profile=True)
+            return {
+                "ok": False,
+                "error": "ATTENDED_SESSION_REQUIRED",
+            }
+        try:
+            return self.browser_runtime.acknowledge_cursor(
+                session_id, action_id, frame_id=frame_id or None
+            )
+        except Exception as exc:
+            return self._browser_error(exc)
+
+    def browser_dialog(
+        self,
+        session_id: str,
+        action: str,
+        prompt_text: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Resolve the active page dialog for one attended conversation."""
+
+        if not self.browser_session_attended(session_id):
+            self._close_browser_session(session_id, save_profile=True)
+            return {
+                "ok": False,
+                "error": "ATTENDED_SESSION_REQUIRED",
+                "message": (
+                    "Browser dialogs require this conversation to be open "
+                    "and attended"
+                ),
+            }
+        if session_id not in self._browser_sessions:
+            return {
+                "ok": False,
+                "error": "SESSION_NOT_FOUND",
+                "message": "Browser session does not exist",
+            }
+        try:
+            result = self.browser_runtime.dialog(
+                session_id, action, prompt_text=prompt_text
+            )
+            self._schedule_browser_profile_persist(session_id)
+            return {**result, "open": True}
+        except Exception as exc:
+            return self._browser_error(exc)
+
+    def browser_dispatch_input(
+        self, session_id: str, event: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            self._ensure_browser_session(session_id)
+            result = self.browser_runtime.dispatch_input(session_id, event)
+            meaningful_input = (
+                event.get("type") == "text"
+                or (
+                    event.get("type") == "pointer"
+                    and event.get("phase", event.get("action")) == "up"
+                )
+                or (
+                    event.get("type") == "key"
+                    and event.get("phase", event.get("action")) == "up"
+                    and event.get("key") in {"Enter", "Return"}
+                )
+            )
+            if meaningful_input:
+                self._schedule_browser_profile_persist(session_id)
+            return result
+        except Exception as exc:
+            return self._browser_error(exc)
+
+    def browser_release_input(self, session_id: str) -> dict[str, Any]:
+        """Clean up local keys/buttons when a browser viewport disconnects."""
+
+        if session_id not in self._browser_sessions:
+            return {"ok": True, "released_buttons": 0, "released_keys": 0}
+        try:
+            return self.browser_runtime.release_direct_input(session_id)
+        except Exception as exc:
+            return self._browser_error(exc)
+
+    def browser_close(
+        self, session_id: str, *, require_attended: bool = True
+    ) -> dict[str, Any]:
+        if require_attended and not self.browser_session_attended(session_id):
+            self._close_browser_session(session_id, save_profile=True)
+            return {
+                "ok": False,
+                "error": "ATTENDED_SESSION_REQUIRED",
+                "message": (
+                    "Browser Use requires this conversation to be open and attended"
+                ),
+            }
+        return self._close_browser_session(session_id, save_profile=True)
+
+    def browser_subscribe(self, session_id: str, callback: Any) -> str:
+        return self.browser_runtime.subscribe(callback, session_id=session_id)
+
+    def browser_unsubscribe(self, token: str) -> None:
+        self.browser_runtime.unsubscribe(token)
+
+    def browser_profile(self) -> dict[str, Any]:
+        has_saved_data = False
+        if self.browser_profile_vault is not None:
+            try:
+                has_saved_data = self.browser_profile_vault.exists(
+                    self._BROWSER_PROFILE_ID
+                )
+            except Exception:
+                has_saved_data = False
+        return {
+            "ok": True,
+            "remember_signins": bool(
+                self._prefs.get("browser_remember_signins")
+            ),
+            "has_saved_data": has_saved_data,
+            "available": self.browser_profile_vault is not None,
+            "unavailable_reason": self._browser_profile_error,
+        }
+
+    # -- existing Chrome extension bridge --------------------------------------
+
+    @staticmethod
+    def _external_browser_error(exc: Exception) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "error": getattr(exc, "code", type(exc).__name__),
+            "message": str(exc),
+        }
+
+    def browser_extension_pairing(self, browser: str) -> dict[str, Any]:
+        try:
+            challenge = self.external_browser_bridge.create_pairing_code(
+                browser=str(browser or "chrome")
+            )
+            return {
+                "ok": True,
+                **challenge.to_public_dict(),
+                "pair_path": "/v1/browser-extension/pair",
+            }
+        except Exception as exc:
+            return self._external_browser_error(exc)
+
+    def browser_extension_exchange(
+        self, pairing_code: str, *, client: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        try:
+            paired = self.external_browser_bridge.exchange_pairing_code(
+                pairing_code, client=client or {}
+            )
+            self._external_browser_sessions[paired.browser] = paired.session_id
+            return {
+                "ok": True,
+                **paired.to_exchange_dict(
+                    poll_timeout_seconds=(
+                        self.external_browser_bridge
+                        .recommended_poll_timeout_seconds
+                    )
+                ),
+            }
+        except Exception as exc:
+            return self._external_browser_error(exc)
+
+    def browser_extension_native_connect(
+        self, *, client: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        """Create a scoped bridge session for the authenticated Chrome host.
+
+        The HTTP adapter admits this call only with the desktop's per-launch
+        app token. Chrome separately restricts host launch to OpenWorker's
+        stable extension ID, so no human pairing secret is involved.
+        """
+
+        try:
+            previous = self._external_browser_sessions.get("chrome")
+            if previous:
+                self.external_browser_bridge.revoke_session(
+                    previous, reason="native_host_reconnected"
+                )
+            connected = self.external_browser_bridge.connect_native_client(
+                client=client or {}
+            )
+            self._external_browser_sessions["chrome"] = connected.session_id
+            return {
+                "ok": True,
+                **connected.to_exchange_dict(
+                    poll_timeout_seconds=(
+                        self.external_browser_bridge
+                        .recommended_poll_timeout_seconds
+                    )
+                ),
+                "transport": "native_messaging",
+            }
+        except Exception as exc:
+            return self._external_browser_error(exc)
+
+    def browser_extension_status(
+        self, session_id: Optional[str] = None
+    ) -> dict[str, Any]:
+        surfaces: list[dict[str, Any]] = [
+            {
+                "surface": "iab",
+                "label": "OpenWorker isolated browser",
+                "connected": True,
+                "available": True,
+                "claimed_tabs": 0,
+            }
+        ]
+        for browser, label in (("chrome", "Google Chrome"),):
+            external_session_id = self._external_browser_sessions.get(browser)
+            if not external_session_id:
+                surfaces.append(
+                    {
+                        "surface": browser,
+                        "label": label,
+                        "connected": False,
+                        "available": False,
+                        "claimed_tabs": 0,
+                    }
+                )
+                continue
+            try:
+                state = self.external_browser_bridge.session_state(
+                    external_session_id
+                )
+            except Exception:
+                self._external_browser_sessions.pop(browser, None)
+                surfaces.append(
+                    {
+                        "surface": browser,
+                        "label": label,
+                        "connected": False,
+                        "available": False,
+                        "claimed_tabs": 0,
+                    }
+                )
+                continue
+            surfaces.append(
+                {
+                    "surface": browser,
+                    "label": label,
+                    "connected": bool(state.get("connected")),
+                    "available": bool(state.get("connected")),
+                    "claimed_tabs": len(state.get("claimed_tab_ids") or ()),
+                    "client": state.get("client") or {},
+                    "disconnect_reason": state.get("disconnect_reason"),
+                }
+            )
+        return {
+            "ok": True,
+            "surfaces": surfaces,
+            "selected_surface": (
+                self.browser_surface(session_id) if session_id else "iab"
+            ),
+        }
+
+    def browser_extension_poll(
+        self, token: str, *, wait_seconds: float = 25, limit: int = 1
+    ) -> dict[str, Any]:
+        try:
+            return {
+                "ok": True,
+                "commands": self.external_browser_bridge.poll_commands(
+                    token,
+                    wait_seconds=wait_seconds,
+                    limit=limit,
+                ),
+            }
+        except Exception as exc:
+            return self._external_browser_error(exc)
+
+    def browser_extension_result(
+        self,
+        token: str,
+        request_id: str,
+        *,
+        ok: bool,
+        result: Optional[dict[str, Any]] = None,
+        error: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        try:
+            value = self.external_browser_bridge.submit_result(
+                token,
+                request_id,
+                ok=ok,
+                result=result,
+                error=error,
+            )
+            return {"ok": True, **value.to_dict()}
+        except Exception as exc:
+            return self._external_browser_error(exc)
+
+    def browser_extension_event(
+        self, token: str, event: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            accepted = self.external_browser_bridge.publish_event(token, event)
+            if accepted.get("type") in {
+                "tab_navigated",
+                "tab_released",
+                "debugger_detached",
+            }:
+                tab_id = self._external_tab_id(accepted.get("tab_id"))
+                if tab_id is not None:
+                    for snapshots in self._external_browser_snapshots.values():
+                        for snapshot_id, snapshot in tuple(snapshots.items()):
+                            if self._external_tab_id(snapshot.get("tab_id")) == tab_id:
+                                snapshots.pop(snapshot_id, None)
+            return {"ok": True, "accepted": True, "event": accepted}
+        except Exception as exc:
+            return self._external_browser_error(exc)
+
+    def browser_extension_disconnect(
+        self, token: str, *, reason: str = "extension_disconnect"
+    ) -> dict[str, Any]:
+        try:
+            self.external_browser_bridge.disconnect(token, reason=reason)
+            return {"ok": True, "disconnected": True}
+        except Exception as exc:
+            return self._external_browser_error(exc)
+
+    def select_browser_surface(
+        self, session_id: str, surface: str
+    ) -> dict[str, Any]:
+        if not str(session_id or "").strip():
+            return {
+                "ok": False,
+                "error": "SESSION_ID_REQUIRED",
+                "message": "session_id is required",
+            }
+        selected = str(surface or "iab").strip().lower()
+        if selected == "iab":
+            self._browser_surface_by_session[session_id] = "iab"
+            return {"ok": True, "surface": "iab", "available": True}
+        if selected != "chrome":
+            return {
+                "ok": False,
+                "error": "UNKNOWN_BROWSER_SURFACE",
+                "message": "surface must be iab or chrome",
+            }
+        external_session_id = self._external_browser_sessions.get(selected)
+        if not external_session_id:
+            return {
+                "ok": False,
+                "error": "BROWSER_EXTENSION_NOT_CONNECTED",
+                "message": f"The {selected} extension is not connected",
+            }
+        try:
+            state = self.external_browser_bridge.session_state(
+                external_session_id
+            )
+        except Exception as exc:
+            return self._external_browser_error(exc)
+        if not state.get("connected"):
+            return {
+                "ok": False,
+                "error": "BROWSER_EXTENSION_NOT_CONNECTED",
+                "message": f"The {selected} extension is not connected",
+            }
+        self._browser_surface_by_session[session_id] = selected
+        return {
+            "ok": True,
+            "surface": selected,
+            "available": True,
+            "claimed_tab_ids": state.get("claimed_tab_ids") or [],
+        }
+
+    def browser_surface(self, session_id: str) -> str:
+        return self._browser_surface_by_session.get(session_id, "iab")
+
+    def external_browser_available(self, browser: str) -> bool:
+        external_session_id = self._external_browser_sessions.get(browser)
+        if not external_session_id:
+            return False
+        try:
+            return bool(
+                self.external_browser_bridge.session_state(
+                    external_session_id
+                ).get("connected")
+            )
+        except Exception:
+            self._external_browser_sessions.pop(browser, None)
+            return False
+
+    @staticmethod
+    def _external_tab_id(value: Any) -> Optional[int]:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int) and value >= 0:
+            return value
+        if isinstance(value, str) and value.strip().isdigit():
+            return int(value.strip())
+        return None
+
+    def _resolve_external_tab_id(
+        self,
+        session_id: str,
+        browser: str,
+        requested: Any = None,
+    ) -> tuple[Optional[int], Optional[dict[str, Any]]]:
+        tab_id = self._external_tab_id(requested)
+        if tab_id is not None:
+            self._external_browser_tab_by_session[session_id] = tab_id
+            return tab_id, None
+        remembered = self._external_browser_tab_by_session.get(session_id)
+        if remembered is not None:
+            return remembered, None
+        tabs_result = self.external_browser_command(browser, "tabs", {})
+        if not tabs_result.get("ok"):
+            return None, tabs_result
+        tabs = list(tabs_result.get("tabs") or [])
+        selected = next(
+            (item for item in tabs if item.get("active")),
+            tabs[0] if tabs else None,
+        )
+        if selected is None:
+            return None, {
+                "ok": False,
+                "error": "NO_SHARED_BROWSER_TAB",
+                "message": (
+                    "Open the extension on a web page and choose Share this "
+                    "tab before asking the agent to use it"
+                ),
+            }
+        tab_id = self._external_tab_id(selected.get("tab_id"))
+        if tab_id is None:
+            return None, {
+                "ok": False,
+                "error": "INVALID_EXTERNAL_TAB",
+                "message": "The browser extension returned an invalid tab id",
+            }
+        self._external_browser_tab_by_session[session_id] = tab_id
+        return tab_id, None
+
+    def _invoke_external_browser_tool(
+        self,
+        session_id: str,
+        browser: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        confirmation: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        if tool_name == "browser_tabs":
+            result = self.external_browser_command(browser, "tabs", {})
+            if result.get("ok"):
+                result["surface"] = browser
+                result["tabs"] = [
+                    {
+                        **item,
+                        "tab_id": str(item.get("tab_id")),
+                    }
+                    for item in list(result.get("tabs") or [])
+                ]
+            return result
+
+        if tool_name == "browser_select_tab":
+            tab_id, error = self._resolve_external_tab_id(
+                session_id, browser, arguments.get("tab_id")
+            )
+            if error is not None:
+                return error
+            tabs = self.external_browser_command(browser, "tabs", {})
+            if not tabs.get("ok"):
+                return tabs
+            if not any(
+                self._external_tab_id(item.get("tab_id")) == tab_id
+                for item in list(tabs.get("tabs") or [])
+            ):
+                return {
+                    "ok": False,
+                    "error": "TAB_NOT_CLAIMED",
+                    "message": (
+                        "That tab is not currently shared with OpenWorker"
+                    ),
+                }
+            self._external_browser_tab_by_session[session_id] = int(tab_id)
+            return {
+                "ok": True,
+                "surface": browser,
+                "active_tab_id": str(tab_id),
+            }
+
+        if tool_name == "browser_close":
+            # Closing the agent's use of a user-browser surface must not
+            # silently revoke the extension or detach tabs the user chose to
+            # keep shared. The extension popup remains the authority for that.
+            self._browser_surface_by_session[session_id] = "iab"
+            self._external_browser_tab_by_session.pop(session_id, None)
+            self._external_browser_snapshots.pop(session_id, None)
+            return {
+                "ok": True,
+                "closed": True,
+                "surface": browser,
+                "connection_preserved": True,
+            }
+
+        command_by_tool = {
+            "browser_snapshot": "snapshot",
+            "browser_screenshot": "screenshot",
+            "browser_click": "click",
+            "browser_fill": "fill",
+            "browser_press": "keypress",
+            "browser_scroll": "scroll",
+        }
+        command = command_by_tool.get(tool_name)
+        if command is None:
+            return {
+                "ok": False,
+                "error": "BROWSER_SURFACE_CAPABILITY_UNAVAILABLE",
+                "message": (
+                    f"{tool_name} is not available on the connected {browser} "
+                    "surface. Use browser_documentation for the exact tools or "
+                    "switch to the isolated in-app browser."
+                ),
+            }
+
+        tab_id, error = self._resolve_external_tab_id(
+            session_id, browser, arguments.get("tab_id")
+        )
+        if error is not None:
+            return error
+        params: dict[str, Any] = {"tab_id": int(tab_id)}
+        if command in {"click", "fill"}:
+            params.update(
+                {
+                    "snapshot_id": str(
+                        arguments.get("snapshot_id") or ""
+                    ),
+                    "ref": str(arguments.get("ref") or ""),
+                }
+            )
+            if command == "fill":
+                params["text"] = str(arguments.get("value") or "")
+        elif command == "keypress":
+            params.update(
+                {
+                    "snapshot_id": str(
+                        arguments.get("snapshot_id") or ""
+                    ),
+                    "ref": str(arguments.get("ref") or ""),
+                    "key": str(arguments.get("key") or ""),
+                }
+            )
+        elif command == "scroll":
+            params["delta_x"] = float(arguments.get("delta_x") or 0)
+            params["delta_y"] = float(arguments.get("delta_y") or 0)
+            if arguments.get("snapshot_id") and arguments.get("ref"):
+                params["snapshot_id"] = str(arguments["snapshot_id"])
+                params["ref"] = str(arguments["ref"])
+        elif command == "screenshot":
+            params.update(
+                {
+                    "format": str(
+                        arguments.get("image_format") or "jpeg"
+                    ),
+                    "quality": int(arguments.get("quality") or 75),
+                    "full_page": False,
+                }
+            )
+
+        if command in {"click", "fill", "keypress"}:
+            confirmation_token = str(
+                (confirmation or {}).get("binding") or ""
+            ).strip()
+            if confirmation_token:
+                params["confirmation_token"] = confirmation_token
+
+        result = self.external_browser_command(browser, command, params)
+        if not result.get("ok"):
+            return result
+        result["surface"] = browser
+        if command == "snapshot":
+            result["tab_id"] = str(result.get("tab_id", tab_id))
+            snapshot_id = str(result.get("snapshot_id") or "")
+            nodes = list(result.pop("nodes", []) or [])
+            if snapshot_id:
+                snapshots = self._external_browser_snapshots.setdefault(
+                    session_id, {}
+                )
+                snapshots[snapshot_id] = {
+                    "tab_id": int(tab_id),
+                    "nodes": nodes,
+                    "url": str(result.get("url") or ""),
+                    "document_id": str(result.get("document_id") or ""),
+                    "url_token": str(result.get("url_token") or ""),
+                }
+                while len(snapshots) > 12:
+                    snapshots.pop(next(iter(snapshots)))
+            max_chars = max(
+                256,
+                min(int(arguments.get("max_chars") or 32768), 32768),
+            )
+            snapshot_text = str(result.get("snapshot") or "")
+            if len(snapshot_text) > max_chars:
+                result["snapshot"] = snapshot_text[:max_chars]
+                result["truncated"] = True
+        elif command == "screenshot":
+            if "data_base64" in result:
+                result["image_base64"] = result.pop("data_base64")
+        return result
+
+    def _external_browser_confirmation(
+        self,
+        session_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        if tool_name not in {
+            "browser_click",
+            "browser_fill",
+            "browser_press",
+        }:
+            return {"requires_confirmation": False, "reasons": []}
+
+        snapshot_id = str(arguments.get("snapshot_id") or "")
+        ref = str(arguments.get("ref") or "")
+        snapshot = self._external_browser_snapshots.get(session_id, {}).get(
+            snapshot_id, {}
+        )
+        tab_id = self._external_tab_id(arguments.get("tab_id"))
+        if tab_id is None:
+            tab_id = self._external_tab_id(snapshot.get("tab_id"))
+        if (
+            tab_id is None
+            or not snapshot_id
+            or not ref
+            or not snapshot
+            or self._external_tab_id(snapshot.get("tab_id")) != tab_id
+        ):
+            return {
+                "requires_confirmation": True,
+                "reasons": ["unverified_browser_target"],
+            }
+
+        inspect_params: dict[str, Any] = {
+            "tab_id": tab_id,
+            "snapshot_id": snapshot_id,
+            "ref": ref,
+            "action": tool_name,
+        }
+        if tool_name == "browser_press":
+            inspect_params["key"] = str(arguments.get("key") or "")
+        inspected = self.external_browser_command(
+            "chrome", "inspect", inspect_params
+        )
+        if not inspected.get("ok"):
+            return {
+                "requires_confirmation": True,
+                "reasons": ["unverified_browser_target"],
+            }
+
+        target = dict(inspected.get("target") or {})
+        url = str(inspected.get("url") or snapshot.get("url") or "")
+        try:
+            request = BrowserActionRequest.build(
+                session_id=session_id,
+                tab_id=str(tab_id),
+                snapshot_id=snapshot_id,
+                ref=ref,
+                origin=url,
+                action=tool_name,
+                arguments=(
+                    {"key": str(arguments.get("key") or "")}
+                    if tool_name == "browser_press"
+                    else {}
+                ),
+                target=target,
+                data_classification=list(
+                    target.get("data_classification") or []
+                ),
+            )
+            policy = self._external_browser_action_policy.classify(request)
+        except Exception:
+            return {
+                "requires_confirmation": True,
+                "reasons": ["unverified_browser_target"],
+            }
+
+        reasons = list(
+            dict.fromkeys(
+                [
+                    *policy.reasons,
+                    *[
+                        str(reason)
+                        for reason in list(inspected.get("reasons") or [])
+                        if str(reason)
+                    ],
+                ]
+            )
+        )
+        requires_confirmation = bool(
+            policy.requires_confirmation
+            or inspected.get("requires_confirmation")
+        )
+        confirmation_token = str(
+            inspected.get("confirmation_token") or ""
+        )
+        if requires_confirmation and not confirmation_token:
+            reasons.append("unverified_browser_confirmation_binding")
+        return {
+            "requires_confirmation": (
+                requires_confirmation or not confirmation_token
+            ),
+            "reasons": list(dict.fromkeys(reasons)),
+            "binding": confirmation_token,
+            "current_url": url,
+            **(
+                {"destination_url": str(inspected["destination_url"])}
+                if inspected.get("destination_url")
+                else {}
+            ),
+        }
+
+    def external_browser_command(
+        self,
+        browser: str,
+        command: str,
+        params: dict[str, Any],
+        *,
+        timeout_seconds: float = 35,
+    ) -> dict[str, Any]:
+        external_session_id = self._external_browser_sessions.get(browser)
+        if not external_session_id:
+            return {
+                "ok": False,
+                "error": "BROWSER_EXTENSION_NOT_CONNECTED",
+                "message": f"The {browser} extension is not connected",
+            }
+        try:
+            ticket = self.external_browser_bridge.enqueue_command(
+                external_session_id, command, params
+            )
+            result = self.external_browser_bridge.wait_for_result(
+                external_session_id,
+                ticket.request_id,
+                timeout_seconds=timeout_seconds,
+            )
+            timed_out = result is None
+            if result is None:
+                result = self.external_browser_bridge.cancel_command(
+                    external_session_id,
+                    ticket.request_id,
+                    reason="manager_timeout",
+                )
+            payload = result.to_dict()
+            if not result.ok:
+                external_error = payload.get("error") or {}
+                external_code = external_error.get(
+                    "code", "EXTENSION_COMMAND_FAILED"
+                )
+                if timed_out and external_code == "BROWSER_COMMAND_CANCELLED":
+                    external_code = "BROWSER_EXTENSION_TIMEOUT"
+                return {
+                    "ok": False,
+                    "error": external_code,
+                    "message": external_error.get(
+                        "message", "The browser extension command failed"
+                    ),
+                }
+            return {"ok": True, **(payload.get("result") or {})}
+        except Exception as exc:
+            return self._external_browser_error(exc)
+
+    def browser_settings(self) -> dict[str, Any]:
+        """Codex-style Browser settings with profile compatibility.
+
+        Host decisions and UI/runtime preferences live in a local 0600 JSON
+        settings file. Sign-in state itself remains encrypted by the existing
+        browser profile vault and is represented here only by its opt-in flag.
+        """
+
+        profile = self.browser_profile()
+        return {
+            "ok": True,
+            **self.browser_site_permissions.settings(),
+            "remember_signins": profile["remember_signins"],
+            "has_saved_data": profile["has_saved_data"],
+            "profile_available": profile["available"],
+            "profile_unavailable_reason": profile["unavailable_reason"],
+        }
+
+    def update_browser_settings(
+        self,
+        *,
+        site_access_mode: Optional[str] = None,
+        allowed_hosts: Optional[list[str]] = None,
+        blocked_hosts: Optional[list[str]] = None,
+        remember_signins: Optional[bool] = None,
+        download_directory: Optional[str] = None,
+        ask_download_location: Optional[bool] = None,
+        developer_mode: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        if remember_signins and self.browser_profile_vault is None:
+            return {
+                "ok": False,
+                "error": "PROFILE_VAULT_UNAVAILABLE",
+                "message": self._browser_profile_error
+                or "Remembered browser sign-ins are unavailable",
+            }
+        before = self.browser_site_permissions.settings()
+        try:
+            updated = self.browser_site_permissions.update(
+                site_access_mode=site_access_mode,
+                allowed_hosts=allowed_hosts,
+                blocked_hosts=blocked_hosts,
+                download_directory=download_directory,
+                ask_download_location=ask_download_location,
+                developer_mode=developer_mode,
+            )
+        except (TypeError, ValueError) as exc:
+            return {
+                "ok": False,
+                "error": "INVALID_BROWSER_SETTINGS",
+                "message": str(exc),
+            }
+        if updated["developer_mode"] != before["developer_mode"]:
+            # Developer mode changes the capabilities of the BrowserContext and
+            # therefore applies by recreating active contexts, never by mutating
+            # a partially configured live one.
+            for session_id in list(self._browser_sessions):
+                self._close_browser_session(session_id, save_profile=True)
+        if remember_signins is not None:
+            profile = self.update_browser_profile(
+                remember_signins=remember_signins
+            )
+            if not profile.get("ok"):
+                return profile
+        return self.browser_settings()
+
+    def update_browser_profile(
+        self,
+        *,
+        remember_signins: Optional[bool] = None,
+        clear_browser_data: bool = False,
+    ) -> dict[str, Any]:
+        if (
+            remember_signins
+            and self.browser_profile_vault is None
+        ):
+            return {
+                "ok": False,
+                "error": "PROFILE_VAULT_UNAVAILABLE",
+                "message": self._browser_profile_error
+                or "Remembered browser sign-ins are unavailable",
+            }
+        if remember_signins is not None:
+            remember = bool(remember_signins)
+            current = bool(self._prefs.get("browser_remember_signins"))
+            if current and not remember:
+                # Save once under the still-enabled policy, then release every
+                # profile lease/context so later browsing is truly ephemeral.
+                for session_id in list(self._browser_sessions):
+                    self._close_browser_session(
+                        session_id, save_profile=True
+                    )
+            self._prefs["browser_remember_signins"] = remember
+            self._save_prefs()
+            if remember and not current:
+                for session_id in list(self._browser_sessions):
+                    # Recreate with an encrypted profile on the next interaction
+                    # instead of leaving an ephemeral context half-converted.
+                    self._close_browser_session(
+                        session_id, save_profile=True
+                    )
+        if clear_browser_data:
+            # Closing first prevents a still-live context from writing cleared
+            # cookies back into the vault on its next action.
+            for session_id in list(self._browser_sessions):
+                self._close_browser_session(session_id, save_profile=False)
+            if self.browser_profile_vault is not None:
+                try:
+                    self.browser_profile_vault.clear(self._BROWSER_PROFILE_ID)
+                except Exception as exc:
+                    return self._browser_error(exc)
+        return self.browser_profile()
 
     def list_artifacts(self, session_id: str) -> list[dict[str, Any]]:
         record = self.session_store.load(session_id)
@@ -2566,6 +4107,9 @@ class SessionManager:
                 self.unregister_event_client(cb)
 
     def register_session_client(self, session_id: str, send_cb: Any) -> None:
+        timer = self._browser_detach_timers.pop(session_id, None)
+        if timer is not None:
+            timer.cancel()
         self._session_clients.setdefault(session_id, set()).add(send_cb)
 
     def unregister_session_client(self, session_id: str, send_cb: Any) -> None:
@@ -2574,6 +4118,23 @@ class SessionManager:
             clients.discard(send_cb)
             if not clients:
                 self._session_clients.pop(session_id, None)
+                # A brief grace period avoids tearing down a browser during a
+                # normal WebSocket reconnect, while still making an unattended
+                # browser context short-lived and unusable by a background turn.
+                timer = threading.Timer(
+                    0.5, self._close_browser_if_detached, args=(session_id,)
+                )
+                timer.daemon = True
+                old = self._browser_detach_timers.pop(session_id, None)
+                if old is not None:
+                    old.cancel()
+                self._browser_detach_timers[session_id] = timer
+                timer.start()
+
+    def _close_browser_if_detached(self, session_id: str) -> None:
+        if self.browser_session_attended(session_id):
+            return
+        self._close_browser_session(session_id, save_profile=True)
 
     async def broadcast_session(self, session_id: str, message: dict) -> None:
         """Fan a turn event out to every socket viewing this session. Best-effort: a dead socket
@@ -2588,7 +4149,26 @@ class SessionManager:
         await self.scheduler.stop()
         await self.stop_gateway()
         await self.mcp.aclose()
+        for timer in list(self._browser_detach_timers.values()):
+            timer.cancel()
+        self._browser_detach_timers.clear()
+        for timer in list(self._browser_profile_timers.values()):
+            timer.cancel()
+        self._browser_profile_timers.clear()
+        await asyncio.to_thread(self._close_all_browser_sessions)
         self.audit_store.close()
+
+    def _close_all_browser_sessions(self) -> None:
+        for session_id in list(self._browser_sessions):
+            self._close_browser_session(session_id, save_profile=True)
+        try:
+            self.browser_runtime.close()
+        except Exception:
+            pass
+        try:
+            self.browser_proxy_host.close()
+        except Exception:
+            pass
 
     # -- automation (scheduled tasks) -------------------------------------------
     def approval_prompt_data(self, session_id: str, request) -> dict[str, Any]:
@@ -2603,6 +4183,7 @@ class SessionManager:
         data: dict[str, Any] = {
             "tool": request.tool_name,
             "arguments": getattr(request, "arguments", None) or {},
+            "scope": getattr(request, "scope", "") or "",
         }
         task = self.task_store.task_for_run_session(session_id)
         if task is None:
@@ -2694,7 +4275,7 @@ class SessionManager:
             # the Slack mirror renders only Approve/Deny buttons.
             item = self.inbox.add_approval(
                 session_id,
-                f"Run `{request.tool_name}`?",
+                _approval_title(request),
                 body=_approval_body(request),
                 inbox=self.inbox_routing.route_for(session_id, task.agent),
                 tool_call_id=getattr(request, "tool_call_id", None),
@@ -3382,6 +4963,11 @@ class SessionManager:
         return {"ok": True, "run": run.to_dict()}
 
     def save(self, session_id: str, engine: TurnEngine) -> None:
+        # Browser snapshots, screenshots, form values, and page content are live-turn
+        # observations, not conversation history. Keep the in-memory copy intact while
+        # the agent is reasoning, but persist a structurally valid redacted transcript.
+        from ..browser_security.privacy import scrub_browser_messages_for_storage
+
         executor = getattr(engine, "executor", None)
         workspace = os.path.realpath(str(executor.cwd)) if executor else ""
         self.session_store.save(
@@ -3390,7 +4976,7 @@ class SessionManager:
                 workspace=workspace,
                 model=engine.model,
                 mode=engine.permissions.mode.value,
-                messages=engine.messages,
+                messages=scrub_browser_messages_for_storage(engine.messages),
                 title=title_from(engine.messages),
                 agent=getattr(engine, "agent_name", "code"),
                 extra_roots=self._extra_roots_of(engine),
@@ -3411,6 +4997,8 @@ class SessionManager:
             engine.permissions.allow_tool_for_session(str(tool))
         for command in grants.get("commands") or []:
             engine.permissions.allow_command_for_session(str(command))
+        if grants.get("browser") is True:
+            engine.permissions.allow_browser_for_session()
 
     @staticmethod
     def _extra_roots_of(engine: TurnEngine) -> list[dict[str, Any]]:
@@ -3707,6 +5295,10 @@ class SessionManager:
     def delete_session(self, session_id: str) -> dict[str, Any]:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal sessions cannot be deleted here"}
+        # Browser contexts are conversation-scoped capabilities.  Tear the
+        # context down (and persist an opted-in auth profile) before deleting
+        # the conversation that owns it.
+        self._close_browser_session(session_id, save_profile=True)
         engine = self._engines.pop(session_id, None)
         if engine is not None:
             try:

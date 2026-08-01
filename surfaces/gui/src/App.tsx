@@ -57,7 +57,7 @@ import { UpdateBanner } from "./components/UpdateBanner";
 import { ScheduledView } from "./components/ScheduledView";
 import { RightRail } from "./components/RightRail";
 import { IntegrationsView } from "./components/IntegrationsView";
-import { SettingsView } from "./components/SettingsView";
+import { SettingsView, type SettingsTab } from "./components/SettingsView";
 import { PersonaView } from "./components/PersonaView";
 import { AuditView } from "./components/AuditView";
 import { InboxView } from "./components/InboxView";
@@ -77,6 +77,18 @@ const SUGGESTIONS = [
 
 // Tools whose success means a new/changed file should show up under Artifacts right away.
 const FILE_WRITE_TOOLS = new Set(["write_file", "apply_patch", "apply_unified_diff", "replace_in_file"]);
+const BROWSER_NONVISUAL_TOOLS = new Set([
+  "browser_surfaces",
+  "browser_documentation",
+  "browser_set_visibility",
+]);
+const browserToolOpensViewport = (name: unknown, args?: Record<string, unknown>) => {
+  const value = String(name || "");
+  if (!value.startsWith("browser_") || BROWSER_NONVISUAL_TOOLS.has(value)) {
+    return value === "browser_set_visibility" && args?.visible === true;
+  }
+  return true;
+};
 
 // Models sometimes pass todo items as bare strings instead of {content, status} objects (the
 // backend tool normalizes them the same way; the GUI reads the raw proposal args, so mirror it).
@@ -211,12 +223,10 @@ export function App() {
   const [scheduledOpenId, setScheduledOpenId] = useState<string | null>(null);
   const [gateCreate, setGateCreate] = useState(false);
   // Which Settings section the full-page Settings surface opens on (§ Settings-as-page).
-  const [settingsTab, setSettingsTab] = useState<
-    "appearance" | "models" | "skills" | "voice" | "personas"
-  >("appearance");
-  const openSettings = (
-    tab: "appearance" | "models" | "skills" | "voice" | "personas" = "appearance",
-  ) => {
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>(
+    "appearance",
+  );
+  const openSettings = (tab: SettingsTab = "appearance") => {
     setSettingsTab(tab);
     setSurface("settings");
   };
@@ -245,7 +255,33 @@ export function App() {
     setSurface("persona");
   };
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
+  const [browserActivityKey, setBrowserActivityKey] = useState(0);
   const [railHidden, setRailHidden] = useState(false);
+  const [visibleBrowserSession, setVisibleBrowserSession] = useState<string | null>(null);
+  const [chatWorkspaceSession, setChatWorkspaceSession] = useState<string | null>(null);
+  const browserVisible = visibleBrowserSession === sessionId;
+  const chatWorkspaceOpen = chatWorkspaceSession === sessionId;
+  const workspaceRailOpen =
+    !railHidden && (agent !== "chat" || chatWorkspaceOpen || browserVisible);
+  const handleBrowserOpenChange = useCallback((open: boolean) => {
+    setVisibleBrowserSession(open ? sessionId : null);
+    if (open && agent === "chat") {
+      setRailHidden(false);
+      setChatWorkspaceSession(sessionId);
+    }
+  }, [agent, sessionId]);
+  const toggleWorkspaceRail = useCallback(() => {
+    if (workspaceRailOpen) {
+      setRailHidden(true);
+      return;
+    }
+    setRailHidden(false);
+    if (agent === "chat") setChatWorkspaceSession(sessionId);
+  }, [agent, sessionId, workspaceRailOpen]);
+  useEffect(() => {
+    setVisibleBrowserSession(null);
+    setChatWorkspaceSession(null);
+  }, [sessionId]);
   // Left-nav collapse (⌘B): when collapsed the sidebar leaves the grid so content reclaims the
   // width; hovering the left edge peeks it back as a floating overlay. Persisted per-device.
   const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
@@ -299,15 +335,19 @@ export function App() {
   const [accessKey, setAccessKey] = useState(0);
   const openAccess = () => {
     setRailHidden(false);
+    if (agent === "chat") setChatWorkspaceSession(sessionId);
     setAccessKey((k) => k + 1);
   };
   // §34 (UX-016): clicking an artifact chip in the transcript must land somewhere visible —
   // RightRail opens the viewer; this just makes sure the rail isn't hidden.
   useEffect(() => {
-    const show = () => setRailHidden(false);
+    const show = () => {
+      setRailHidden(false);
+      if (agent === "chat") setChatWorkspaceSession(sessionId);
+    };
     window.addEventListener("ocw-open-artifact", show);
     return () => window.removeEventListener("ocw-open-artifact", show);
-  }, []);
+  }, [agent, sessionId]);
   // The command-palette search, openable from the collapsed-sidebar topbar cluster (§22). The
   // expanded sidebar owns its own instance; this one exists so search never disappears with it.
   const [searchOpen, setSearchOpen] = useState(false);
@@ -654,6 +694,14 @@ export function App() {
         case "tool_proposed":
           if (d.name === "todo_write" && (d.arguments?.todos || d.arguments?.items))
             setTodo(normalizeTodos(d.arguments.todos ?? d.arguments.items));
+          // Browser actions are attended in the MVP: reveal the shared viewport as soon as an
+          // action is proposed, rather than waiting until the tool finishes and hiding the work.
+          if (browserToolOpensViewport(d.name, d.arguments)) {
+            setRailHidden(false);
+            if (agent === "chat") setChatWorkspaceSession(sessionId);
+            setBrowserRefreshKey((k) => k + 1);
+            setBrowserActivityKey((k) => k + 1);
+          }
           setItems((p) => [
             ...p,
             { kind: "tool", id: newId(), name: d.name, args: d.arguments, status: "…" },
@@ -670,6 +718,7 @@ export function App() {
               args: d.arguments,
               reason: d.reason,
               category: d.category,
+              scope: d.scope || undefined,
               standingTarget: d.standing_target || undefined,
             },
           ]);
@@ -713,6 +762,16 @@ export function App() {
           // file write that should appear under Artifacts immediately (not only after the turn).
           if (String(d.name || "").startsWith("browser_") || FILE_WRITE_TOOLS.has(d.name)) {
             setBrowserRefreshKey((k) => k + 1);
+          }
+          if (String(d.name || "").startsWith("browser_")) {
+            setBrowserActivityKey((k) => k + 1);
+          }
+          if (
+            String(d.name || "").startsWith("browser_") &&
+            !BROWSER_NONVISUAL_TOOLS.has(String(d.name || ""))
+          ) {
+            setRailHidden(false);
+            if (agent === "chat") setChatWorkspaceSession(sessionId);
           }
           break;
         case "turn_end":
@@ -1382,7 +1441,7 @@ export function App() {
           onOpenIntegrations={() => setSurface("integrations")}
         />
       ) : (
-      <div className={"main" + (surface === "session" && agent !== "chat" && !railHidden ? " rail-open" : "")}>
+      <div className={"main" + (surface === "session" && workspaceRailOpen ? " rail-open" : "")}>
         <div className="main-topbar">
           {/* Left: the contextual cluster — [sidebar] [+ new session] [search] — rendered ONLY
               while the sidebar is collapsed (§22; the expanded sidebar already owns those
@@ -1457,22 +1516,20 @@ export function App() {
                 <span className="topbar-artifacts-count">{artifactCount}</span>
               </button>
             )}
-            {/* §32: the panel toggle is the ONE session-panel entry, for every non-chat persona
-                (the rail now carries Access, so code-family gets it too). */}
-            {agent !== "chat" && (
-              <button
-                className="topbar-icon-btn"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setRailHidden((h) => !h)}
-                aria-label={railHidden ? "Show side panel" : "Hide side panel"}
-                title={railHidden ? "Show side panel" : "Hide side panel"}
-              >
-                <Icon name="sidebarRight" size={16} />
-              </button>
-            )}
+            {/* One workspace toggle for every persona. Browser and artifact entry points now
+                live inside that workspace's trailing + menu. */}
+            <button
+              className="topbar-icon-btn"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={toggleWorkspaceRail}
+              aria-label={workspaceRailOpen ? "Hide side panel" : "Show side panel"}
+              title={workspaceRailOpen ? "Hide side panel" : "Show side panel"}
+            >
+              <Icon name="sidebarRight" size={16} />
+            </button>
           </div>
         </div>
-        <div className={"main-workspace" + (railHidden ? " rail-hidden" : "")}>
+        <div className={"main-workspace" + (!workspaceRailOpen ? " rail-hidden" : "")}>
           <div className="main-chat">
             {/* Automation-run context (owner ask 2026-07-04): a __run__ session looked like any
                 other chat with no way back to the runs list. Lives INSIDE the chat column (which
@@ -1657,13 +1714,15 @@ export function App() {
             />
                   </div>
           <RightRail
-            active={surface === "session" && agent !== "chat" && !railHidden}
+            active={surface === "session" && workspaceRailOpen}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}
+            browserActivityKey={browserActivityKey}
             toolNames={items.filter((i) => i.kind === "tool").map((i: any) => i.name)}
             todo={todo}
             running={running}
             onPreviewChange={onArtifactPreview}
+            onBrowserOpenChange={handleBrowserOpenChange}
             showArtifacts={agent === "cowork"}
             personaId={agent}
             projectScoped={isProjectScoped(personaOf(agent))}

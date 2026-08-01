@@ -19,6 +19,7 @@ use std::process::{Child, Command, Stdio};
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::{fs::OpenOptions, io::Write};
 
 use ocw_stt::{Dictation, DownloadProgress};
 use serde::Serialize;
@@ -90,6 +91,64 @@ fn server_bin() -> PathBuf {
     p
 }
 
+/// Bundled Chrome Native Messaging host. It registers its exact-origin
+/// manifest in the current user's Chrome profile with `--install`.
+fn browser_native_host_bin() -> PathBuf {
+    let exe_name = if cfg!(windows) {
+        "openworker-browser-native-host.exe"
+    } else {
+        "openworker-browser-native-host"
+    };
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let mut candidates = vec![dir.join("native-host").join(exe_name)];
+            if let Some(contents) = dir.parent() {
+                candidates.push(
+                    contents
+                        .join("Resources")
+                        .join("native-host")
+                        .join(exe_name),
+                );
+            }
+            for candidate in candidates {
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../browser-native-host/target/debug")
+        .join(exe_name)
+}
+
+fn install_browser_native_host() -> Result<(), String> {
+    let path = browser_native_host_bin();
+    if !path.is_file() {
+        return Err(format!(
+            "Chrome native-host executable is missing: {}",
+            path.display()
+        ));
+    }
+    let mut command = Command::new(&path);
+    command
+        .arg("--install")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let status = command.status().map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Chrome native-host installer exited with {status}"))
+    }
+}
+
 /// Mirror of `coworker.secrets.state_dir()` so the shell and server agree on `desktop.json`.
 /// Windows: `%APPDATA%\coworker`; POSIX: `~/.config/coworker`. `COWORKER_STATE_DIR` overrides.
 fn state_dir() -> PathBuf {
@@ -108,6 +167,85 @@ fn state_dir() -> PathBuf {
 
 fn desktop_prefs_path() -> PathBuf {
     state_dir().join("desktop.json")
+}
+
+fn browser_native_host_descriptor_path() -> PathBuf {
+    state_dir().join("browser-native-host.json")
+}
+
+#[derive(Serialize)]
+struct BrowserNativeHostDescriptor<'a> {
+    version: u8,
+    server_url: &'a str,
+    api_token: &'a str,
+    pid: u32,
+    /// Zero means process-lifetime. The native host also verifies that `pid`
+    /// is alive before trusting this per-launch descriptor.
+    expires_at: u64,
+}
+
+/// Publish the running sidecar coordinates for OpenWorker's Chrome native
+/// messaging host. The file is user-only and replaced atomically so Chrome can
+/// never observe a half-written token or port.
+fn write_browser_native_host_descriptor(server_url: &str, api_token: &str) -> Result<(), String> {
+    let path = browser_native_host_descriptor_path();
+    let parent = path
+        .parent()
+        .ok_or_else(|| "browser native-host state path has no parent".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let temp = parent.join(format!(
+        "browser-native-host.{}.tmp",
+        Uuid::new_v4().simple()
+    ));
+    let descriptor = BrowserNativeHostDescriptor {
+        version: 1,
+        server_url,
+        api_token,
+        pid: std::process::id(),
+        expires_at: 0,
+    };
+    let payload = serde_json::to_vec(&descriptor).map_err(|error| error.to_string())?;
+
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let write_result = (|| -> Result<(), String> {
+        let mut file = options.open(&temp).map_err(|error| error.to_string())?;
+        file.write_all(&payload)
+            .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        // Windows does not replace an existing destination with rename(2).
+        // Remove only the exact descriptor file first, matching the native
+        // host manifest writer, so a stale descriptor cannot block startup.
+        #[cfg(target_os = "windows")]
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|error| error.to_string())?;
+        }
+        std::fs::rename(&temp, &path).map_err(|error| error.to_string())?;
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    write_result
+}
+
+/// Remove only our own descriptor. This avoids a short-lived second-instance
+/// process deleting the primary instance's live Chrome connection metadata.
+fn remove_browser_native_host_descriptor_if_owned() {
+    let path = browser_native_host_descriptor_path();
+    let owned = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+        .and_then(|value| value.get("pid").and_then(|pid| pid.as_u64()))
+        == Some(u64::from(std::process::id()));
+    if owned {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// The sidecar's log file: `<state_dir>/logs/openworker-server.log`, fresh per
@@ -525,7 +663,11 @@ async fn download_update(
     // (Guard scope stays sync: a std MutexGuard must not live across an await.)
     {
         let slot = pending.0.lock().unwrap();
-        if slot.as_ref().map(|(v, _)| v == &update.version).unwrap_or(false) {
+        if slot
+            .as_ref()
+            .map(|(v, _)| v == &update.version)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
     }
@@ -637,6 +779,11 @@ pub fn run() {
                 .env("COWORKER_EXIT_WITH_PARENT", "1")
                 .env("COWORKER_PARENT_PID", std::process::id().to_string())
                 .env("COWORKER_API_TOKEN", &api_token)
+                // Browser Use ships the Playwright browser revision inside the frozen
+                // Python package. `0` tells Playwright to resolve `.local-browsers`
+                // beside its bundled driver instead of looking in the user's cache or
+                // downloading Chromium on first use.
+                .env("PLAYWRIGHT_BROWSERS_PATH", "0")
                 // This GUI app has no console, so a console-subsystem child would inherit
                 // invalid std handles and crash a few seconds in when uvicorn writes its logs
                 // (the "Starting coworker…" freeze on Windows). Hand it real handles: the
@@ -672,7 +819,21 @@ pub fn run() {
                     None
                 }
             };
+            let server_started = child.is_some();
             app.manage(ServerProcess(Mutex::new(child)));
+            if server_started {
+                if let Err(error) = write_browser_native_host_descriptor(&http, &api_token) {
+                    eprintln!(
+                        "[coworker] failed to publish browser native-host descriptor: {error}"
+                    );
+                }
+            }
+            if let Err(error) = install_browser_native_host() {
+                // Development runs may not have built the optional helper yet.
+                // The Browser settings page reports Chrome as unavailable; the
+                // desktop app and isolated browser continue to work normally.
+                eprintln!("[coworker] failed to register Chrome native host: {error}");
+            }
 
             // Restore keep-awake from the last session.
             let ka = if read_keep_awake_pref() {
@@ -758,6 +919,7 @@ pub fn run() {
             // Also on Exit: belt-and-suspenders in case a quit path reaches teardown without
             // a preceding ExitRequested (observed with macOS Cmd+Q under the tray setup).
             if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+                remove_browser_native_host_descriptor_if_owned();
                 if let Some(state) = app.try_state::<ServerProcess>() {
                     if let Some(mut child) = state.0.lock().unwrap().take() {
                         let _ = child.kill();

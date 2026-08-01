@@ -185,8 +185,11 @@ export function AccessSection({
     loadSubs();
   };
 
-  const connected = conns?.connected ?? [];
-  const recommended = conns?.recommended ?? [];
+  // Browser Use is a built-in, contextually approved capability—not a source.
+  // Keep this client-side guard for compatibility with an older sidecar that
+  // may still return its legacy connector-shaped row.
+  const connected = (conns?.connected ?? []).filter((c) => c.connector !== "browser");
+  const recommended = (conns?.recommended ?? []).filter((c) => c.connector !== "browser");
   const live = connected.filter((c) => c.enabled);
 
   // Catalog list: available, not already in the Connected list (those have toggles above).
@@ -200,6 +203,7 @@ export function AccessSection({
     .filter(
       (c) =>
         c.available &&
+        c.name !== "browser" &&
         !connectedSet.has(c.name) &&
         (!q ||
           c.title.toLowerCase().includes(q) ||

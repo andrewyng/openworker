@@ -112,6 +112,7 @@ export type Item =
       args: any;
       reason: string;
       category?: string;
+      scope?: string;
       // The exact target a standing rule could pin (server-computed) — with a run
       // context, the card offers "Allow every time" (§25).
       standingTarget?: string;

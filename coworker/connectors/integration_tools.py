@@ -20,7 +20,6 @@ import aisuite as ai
 
 from ..secrets import SecretStore
 from ..web.guard import get_checked
-from .browser_automation import make_browser_automation_tools
 from .email_tools import make_email_tools
 from .tool_defs import approval_for_tool, connector_for_tool
 
@@ -549,8 +548,15 @@ def make_integration_tools(
     enabled_connectors: Optional[set[str]] = None,
     enabled_tools: Optional[set[str]] = None,
     roots: Optional[list[Any]] = None,
+    browser_tools: Optional[list[Callable[..., Any]]] = None,
 ) -> list[Callable[..., Any]]:
-    tools: list[Callable[..., Any]] = make_browser_automation_tools()
+    # Interactive Browser Use tools are constructed by SessionManager and bound to
+    # one trusted conversation id.  Never fall back to the legacy process-global
+    # Playwright singleton: it leaked state across sessions and was usable by
+    # unattended engines.
+    session_browser_tools = list(browser_tools or [])
+    browser_tool_names = {tool.__name__ for tool in session_browser_tools}
+    tools: list[Callable[..., Any]] = session_browser_tools
     # Email needs the session roots: attachment downloads land in the primary scratch
     # and outgoing attachments must resolve inside a granted directory.
     tools.extend(make_email_tools(secrets, roots=roots))
@@ -4916,8 +4922,21 @@ def make_integration_tools(
 
     if enabled_connectors is not None:
         tools = [
-            t for t in tools if connector_for_tool(t.__name__) in enabled_connectors
+            t
+            for t in tools
+            if connector_for_tool(t.__name__) in enabled_connectors
+            # SessionManager injects these only into an attended live engine.
+            # Browser Use is a built-in capability with its own contextual
+            # permission boundary, not a user-managed source connector.
+            or t.__name__ in browser_tool_names
         ]
     if enabled_tools is not None:
-        tools = [t for t in tools if t.__name__ in enabled_tools]
+        # Connector tool settings do not govern the built-in Browser Use
+        # capability. Consequential browser actions remain subject to their
+        # call-scoped approval policy.
+        tools = [
+            t
+            for t in tools
+            if t.__name__ in enabled_tools or t.__name__ in browser_tool_names
+        ]
     return tools

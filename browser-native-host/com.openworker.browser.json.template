@@ -1,0 +1,9 @@
+{
+  "name": "com.openworker.browser",
+  "description": "OpenWorker Chrome bridge",
+  "path": "__OPENWORKER_NATIVE_HOST_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://djnbhkmnbmjobnphflaopcpfkifbgekl/"
+  ]
+}
