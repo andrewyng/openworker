@@ -58,6 +58,44 @@ def args_preview(arguments: Optional[dict], *, limit: int = 240) -> str:
     return out[: limit - 1] + "…" if len(out) > limit else out
 
 
+# ask_user's declared signature is ``options: list[str] | None``, but a model is free to emit
+# whatever it likes — several (MiniMax-M2/M3, and anything imitating Claude Code's
+# AskUserQuestion) return objects: ``[{"content": "…"}]`` or ``[{"label": …, "description": …}]``.
+# Those objects used to reach the GUI verbatim, where each option is rendered as a React child;
+# React throws "Objects are not valid as a React child", and with no error boundary the whole tree
+# unmounts — a blank window on every launch that restores the session. Normalise at the store, the
+# one chokepoint every producer (live socket, unattended mirror) and the persisted file share.
+def coerce_options(options: Any) -> list[str]:
+    if not options:
+        return []
+    if isinstance(options, (str, bytes)) or not isinstance(options, (list, tuple)):
+        options = [options]
+    out: list[str] = []
+    for opt in options:
+        if isinstance(opt, str):
+            out.append(opt)
+        elif isinstance(opt, dict):
+            # Take the first human-readable field; fall back to a compact dump so the choice is
+            # still answerable rather than silently dropped.
+            label = next(
+                (
+                    opt[k]
+                    for k in ("content", "label", "text", "title", "value", "name")
+                    if isinstance(opt.get(k), str) and opt[k].strip()
+                ),
+                None,
+            )
+            if label is None:
+                label = json.dumps(opt, ensure_ascii=False, default=str)
+            desc = opt.get("description")
+            if isinstance(desc, str) and desc.strip() and desc.strip() != label.strip():
+                label = f"{label} — {desc}"
+            out.append(label)
+        else:
+            out.append(str(opt))
+    return out
+
+
 @dataclass
 class InboxItem:
     id: str
@@ -100,6 +138,9 @@ class InboxStore:
         if self.path and self.path.is_file():
             data = json.loads(self.path.read_text(encoding="utf-8"))
             for raw in data.get("items", []):
+                # An inbox.json written before options were coerced can still hold objects;
+                # repair on load so upgrading is enough to un-break an already-poisoned file.
+                raw["options"] = coerce_options(raw.get("options"))
                 item = InboxItem(**raw)
                 self._items[item.id] = item
 
@@ -143,7 +184,7 @@ class InboxStore:
             inbox=inbox,
             visibility=visibility,
             data=dict(data or {}),
-            options=list(options or []),
+            options=coerce_options(options),
             allow_text=bool(allow_text),
             multi=bool(multi),
             tool_call_id=tool_call_id,

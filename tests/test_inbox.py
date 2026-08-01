@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from coworker.inbox import (
     KIND_APPROVAL,
@@ -127,3 +128,40 @@ def test_approval_body_includes_tool_args():
 
     req2 = PermissionRequest("rm", {"path": "/x"}, None, "destructive")
     assert _approval_body(req2).startswith("destructive")  # reason leads when present
+
+
+def test_coerce_options_normalizes_model_shapes():
+    from coworker.inbox import coerce_options
+
+    # The declared shape passes through untouched.
+    assert coerce_options(["EU", "US"]) == ["EU", "US"]
+    # MiniMax-M3's shape — the one that blanked the desktop window.
+    assert coerce_options([{"content": "Ship it"}, {"content": "Wait"}]) == [
+        "Ship it",
+        "Wait",
+    ]
+    # Claude Code's AskUserQuestion shape: the description enriches the label, never replaces it.
+    assert coerce_options([{"label": "EU", "description": "Europe"}]) == ["EU — Europe"]
+    # A description that merely repeats the label doesn't get appended twice.
+    assert coerce_options([{"label": "EU", "description": "EU"}]) == ["EU"]
+    # Junk still yields an answerable string rather than an object reaching the GUI.
+    junk = coerce_options([{"weird": 1}])
+    assert len(junk) == 1 and isinstance(junk[0], str) and "weird" in junk[0]
+    # Non-lists, empties and Nones all collapse to "no quick replies".
+    assert coerce_options(None) == [] and coerce_options([]) == []
+    assert coerce_options("EU") == ["EU"]
+    assert coerce_options([1, True]) == ["1", "True"]
+
+
+def test_add_question_and_reload_coerce_options(tmp_path):
+    path = tmp_path / "inbox.json"
+    store = InboxStore(path)
+    item = store.add_question("s1", "Ship it?", options=[{"content": "Yes"}, "No"])
+    assert item.options == ["Yes", "No"]  # coerced at the store, before anything persists
+
+    # An inbox.json written by an older build still holds objects; loading repairs it, so an
+    # upgrade alone un-breaks a file that would otherwise crash the GUI on every launch.
+    poisoned = json.loads(path.read_text(encoding="utf-8"))
+    poisoned["items"][0]["options"] = [{"content": "Yes"}, {"label": "No", "description": "stop"}]
+    path.write_text(json.dumps(poisoned), encoding="utf-8")
+    assert InboxStore(path).get(item.id).options == ["Yes", "No — stop"]
