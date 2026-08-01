@@ -380,9 +380,9 @@ def test_bedrock_claude_5_family_in_matrix():
     from coworker.providers.matrix import MATRIX
 
     for mid, label, ctx in [
-        ("bedrock:claude/anthropic.claude-fable-5", "Claude Fable 5 · AWS Bedrock", 1_000_000),
-        ("bedrock:claude/anthropic.claude-opus-5", "Claude Opus 5 · AWS Bedrock", 1_000_000),
-        ("bedrock:claude/anthropic.claude-sonnet-5", "Claude Sonnet 5 · AWS Bedrock", 1_000_000),
+        ("bedrock:claude/us.anthropic.claude-fable-5", "Claude Fable 5 · AWS Bedrock", 1_000_000),
+        ("bedrock:claude/us.anthropic.claude-opus-5", "Claude Opus 5 · AWS Bedrock", 1_000_000),
+        ("bedrock:claude/us.anthropic.claude-sonnet-5", "Claude Sonnet 5 · AWS Bedrock", 1_000_000),
     ]:
         assert mid in MATRIX, f"{mid} missing from matrix"
         entry = MATRIX[mid]

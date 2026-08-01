@@ -162,13 +162,13 @@ MATRIX: dict[str, ModelEntry] = {
     # Converse) plus AWS's own `-v<n>:<m>` version suffix. Some regions require the
     # `us.`/`eu.` cross-region inference-profile prefix — custom add-model accepts those.
     # Claude 5 generation (GA on Bedrock; ids from vendor catalog 2026-08-01):
-    "bedrock:claude/anthropic.claude-fable-5": ModelEntry(
+    "bedrock:claude/us.anthropic.claude-fable-5": ModelEntry(
         "Claude Fable 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
     ),
-    "bedrock:claude/anthropic.claude-opus-5": ModelEntry(
+    "bedrock:claude/us.anthropic.claude-opus-5": ModelEntry(
         "Claude Opus 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
     ),
-    "bedrock:claude/anthropic.claude-sonnet-5": ModelEntry(
+    "bedrock:claude/us.anthropic.claude-sonnet-5": ModelEntry(
         "Claude Sonnet 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
     ),
     "bedrock:claude/us.anthropic.claude-sonnet-4-6": ModelEntry(
