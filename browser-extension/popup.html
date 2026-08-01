@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenWorker Browser Control</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="mark" aria-hidden="true">O</div>
+        <div>
+          <h1>OpenWorker</h1>
+          <p id="status-line">Checking connection…</p>
+        </div>
+      </header>
+
+      <section id="unavailable" hidden>
+        <p class="explanation">
+          Open the OpenWorker desktop app. This extension reconnects automatically.
+        </p>
+        <button id="retry" class="secondary">Try again</button>
+      </section>
+
+      <section id="sharing" hidden>
+        <div class="privacy-note">
+          <span class="privacy-dot"></span>
+          Only tabs you explicitly share can be controlled.
+        </div>
+        <button id="claim" class="primary">Share this tab</button>
+        <button id="release" class="secondary" hidden>Stop sharing this tab</button>
+      </section>
+
+      <p id="error" role="alert" hidden></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

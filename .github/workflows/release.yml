@@ -81,8 +81,8 @@ jobs:
           python -m venv .venv
           if [ "$RUNNER_OS" = "Windows" ]; then VPY=.venv/Scripts/python; else VPY=.venv/bin/python; fi
           "$VPY" -m pip install --upgrade pip
-          "$VPY" -m pip install -e ".[bedrock]" pyinstaller typer tzdata
-          "$VPY" -c "import aisuite, coworker"  # fail fast if either import breaks
+          "$VPY" -m pip install -e ".[bedrock,browser]" pyinstaller typer tzdata
+          "$VPY" -c "import aisuite, coworker, playwright"  # fail fast if imports break
 
       - name: npm ci
         working-directory: surfaces/gui
@@ -139,9 +139,22 @@ jobs:
             cp "$BUNDLE"/dmg/*.dmg out/
             cp "$BUNDLE"/dmg/*.dmg out/OpenWorker-${{ matrix.slug }}.dmg
             # macOS updater artifact: the signed .app tarball the installed app swaps in.
-            if [ -f "$BUNDLE"/macos/OpenWorker.app.tar.gz ]; then
-              cp "$BUNDLE"/macos/OpenWorker.app.tar.gz out/OpenWorker-${{ matrix.slug }}.app.tar.gz
-              cp "$BUNDLE"/macos/OpenWorker.app.tar.gz.sig out/OpenWorker-${{ matrix.slug }}.app.tar.gz.sig
+            # build_dmg.sh writes the checksum receipt only after Chromium injection,
+            # archive validation, and signing. Any partial/stale set fails closed.
+            MAC_UPDATE="$BUNDLE/macos/OpenWorker.app.tar.gz"
+            MAC_UPDATE_SIG="$MAC_UPDATE.sig"
+            MAC_UPDATE_RECEIPT="$MAC_UPDATE.final.sha256"
+            if [ -e "$MAC_UPDATE" ] || [ -e "$MAC_UPDATE_SIG" ] || [ -e "$MAC_UPDATE_RECEIPT" ]; then
+              if [ ! -s "$MAC_UPDATE" ] || [ ! -s "$MAC_UPDATE_SIG" ] || [ ! -s "$MAC_UPDATE_RECEIPT" ]; then
+                echo "::error::incomplete macOS updater artifact set"
+                exit 1
+              fi
+              if ! (cd "$BUNDLE/macos" && shasum -a 256 -c OpenWorker.app.tar.gz.final.sha256); then
+                echo "::error::macOS updater artifacts do not match the post-injection receipt"
+                exit 1
+              fi
+              cp "$MAC_UPDATE" out/OpenWorker-${{ matrix.slug }}.app.tar.gz
+              cp "$MAC_UPDATE_SIG" out/OpenWorker-${{ matrix.slug }}.app.tar.gz.sig
             fi
           fi
           ls -la out

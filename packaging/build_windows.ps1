@@ -15,7 +15,7 @@
     - A Python venv at platform\.venv with this package installed editable, plus pyinstaller.
       `typer` is needed only at build time: PyInstaller walks the `mcp` package and `mcp.cli`
       calls sys.exit() at import if typer is absent, which aborts the freeze.
-        py -m venv .venv ; .\.venv\Scripts\pip install -e ".[bedrock]" pyinstaller tzdata typer
+        py -m venv .venv ; .\.venv\Scripts\pip install -e ".[bedrock,browser]" pyinstaller tzdata typer
 
   The result is UNSIGNED — first launch shows a SmartScreen warning ("More info" -> "Run anyway").
   Authenticode signing is a later step.
@@ -36,6 +36,7 @@ $Platform = Split-Path -Parent $Here
 $Gui      = Join-Path $Platform "surfaces\gui"
 $Venv     = Join-Path $Platform ".venv"
 $PyInst   = Join-Path $Venv "Scripts\pyinstaller.exe"
+$VenvPy   = Join-Path $Venv "Scripts\python.exe"
 
 function Require-Cmd($name) {
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
@@ -62,13 +63,32 @@ if ($running) {
     Start-Sleep -Seconds 1
 }
 
-Write-Host "==> [1/3] PyInstaller: bundling openworker-server ($Triple)" -ForegroundColor Cyan
+$env:PLAYWRIGHT_BROWSERS_PATH = "0"
+Write-Host "==> [1/4] Playwright: staging bundled Chromium" -ForegroundColor Cyan
+& $VenvPy -m playwright install chromium --no-shell
+if ($LASTEXITCODE -ne 0) { throw "Playwright browser install failed (exit $LASTEXITCODE)" }
+
+Write-Host "==> [2/4] PyInstaller: bundling openworker-server ($Triple)" -ForegroundColor Cyan
 & $PyInst --noconfirm --clean `
     --distpath (Join-Path $Here "dist") --workpath (Join-Path $Here "build") `
     (Join-Path $Here "openworker-server.spec")
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (exit $LASTEXITCODE)" }
 
-Write-Host "==> [2/3] staging sidecar resources" -ForegroundColor Cyan
+# Preserve the browser as an intact application tree. PyInstaller deliberately
+# excludes `.local-browsers`: processing its binaries individually corrupts the
+# nested Chromium bundle on macOS and needlessly rewrites it on Windows.
+$BrowserSource = (& $VenvPy -c `
+    "from pathlib import Path; import playwright; print(Path(playwright.__file__).resolve().parent / 'driver/package/.local-browsers')").Trim()
+$BrowserParent = Join-Path $Here "dist\openworker-server\_internal\playwright\driver\package"
+$BrowserDest = Join-Path $BrowserParent ".local-browsers"
+if (-not (Test-Path $BrowserSource)) {
+    throw "Unable to locate the installed Playwright browser tree: $BrowserSource"
+}
+New-Item -ItemType Directory -Force -Path $BrowserParent | Out-Null
+if (Test-Path $BrowserDest) { Remove-Item -Recurse -Force $BrowserDest }
+Copy-Item -Recurse -Force $BrowserSource $BrowserDest
+
+Write-Host "==> [3/4] staging sidecar + Chrome native-host resources" -ForegroundColor Cyan
 # Onedir bundle (exe + _internal\) ships via Tauri `resources`, landing at <install>\sidecar\
 # next to the app exe — onefile's per-launch self-extraction cost seconds of boot splash.
 $BinDir = Join-Path $Gui "src-tauri\binaries"
@@ -81,7 +101,24 @@ Remove-Item -Force (Join-Path $BinDir "openworker-server-$Triple.exe") -ErrorAct
 Copy-Item -Recurse -Force $Src $Dst
 Write-Host "    -> $Dst"
 
-Write-Host "==> [3/3] tauri build (--bundles $Bundles)" -ForegroundColor Cyan
+# The extension talks only to this exact-origin Native Messaging executable. The
+# executable discovers and authenticates to the random-port desktop sidecar without
+# exposing its launch token or bridge bearer to Chrome.
+$NativeManifest = Join-Path $Platform "browser-native-host\Cargo.toml"
+& cargo build --release --locked --manifest-path $NativeManifest
+if ($LASTEXITCODE -ne 0) { throw "Chrome native-host build failed (exit $LASTEXITCODE)" }
+$NativeHostDir = Join-Path $BinDir "native-host"
+if (Test-Path $NativeHostDir) { Remove-Item -Recurse -Force $NativeHostDir }
+New-Item -ItemType Directory -Force -Path $NativeHostDir | Out-Null
+Copy-Item -Force `
+    (Join-Path $Platform "browser-native-host\target\release\openworker-browser-native-host.exe") `
+    (Join-Path $NativeHostDir "openworker-browser-native-host.exe")
+Copy-Item -Force `
+    (Join-Path $Platform "browser-native-host\com.openworker.browser.json.template") `
+    $NativeHostDir
+Write-Host "    -> $NativeHostDir"
+
+Write-Host "==> [4/4] tauri build (--bundles $Bundles)" -ForegroundColor Cyan
 # Auto-update artifacts (NSIS setup .exe + minisign .sig): produced only when the updater
 # signing key env is present (CI secret TAURI_SIGNING_PRIVATE_KEY). Keyless builds skip
 # the overlay so dev builds keep working; keyless RELEASES strand installs without

@@ -124,17 +124,18 @@ def test_connector_tool_settings_and_audit_rest(tmp_path):
     connectors = {
         c["name"]: c for c in client.get("/v1/connectors").json()["connectors"]
     }
-    assert any(t["name"] == "browser_open_url" for t in connectors["browser"]["tools"])
+    assert "browser" not in connectors
+    assert any(t["name"] == "github_search" for t in connectors["github"]["tools"])
 
     res = client.patch(
-        "/v1/connectors/browser/tools", json={"enabled": {"browser_open_url": False}}
+        "/v1/connectors/github/tools", json={"enabled": {"github_search": False}}
     ).json()
     assert res["ok"] is True
     connectors = {
         c["name"]: c for c in client.get("/v1/connectors").json()["connectors"]
     }
-    browser_tools = {t["name"]: t for t in connectors["browser"]["tools"]}
-    assert browser_tools["browser_open_url"]["enabled"] is False
+    github_tools = {t["name"]: t for t in connectors["github"]["tools"]}
+    assert github_tools["github_search"]["enabled"] is False
 
     assert client.get("/v1/audit", params={"session_id": "none"}).json()["events"] == []
     assert client.get("/v1/browser/state").json()["status"] in {
@@ -679,14 +680,16 @@ def test_ws_browser_tool_audit_round_trip(tmp_path):
         assert ws.receive_json()["type"] == "ready"
         ws.send_json({"type": "user_message", "text": "close browser"})
         types = _drain(ws, on_permission="once")
-        assert "permission_required" in types
+        # Safe cleanup never needs to create (or renew) a Browser Use grant.
+        assert "permission_required" not in types
         assert "tool_finished" in types
 
     rows = client.get(
         "/v1/audit", params={"session_id": "browser-audit", "connector": "browser"}
     ).json()["events"]
-    assert any(
-        r["tool"] == "browser_close" and r["stage"] == "approval_resolved" for r in rows
+    assert not any(
+        r["tool"] == "browser_close" and r["stage"] == "approval_resolved"
+        for r in rows
     )
     assert any(r["tool"] == "browser_close" and r["stage"] == "finished" for r in rows)
 

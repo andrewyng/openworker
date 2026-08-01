@@ -7,9 +7,13 @@ import threading
 import time
 
 import aisuite as ai
+from coworker.browser_security.destination import DestinationPolicy
+from coworker.browser_security.site_permissions import (
+    BrowserSitePermissionStore,
+)
 from coworker.engine import ApprovalOutcome, PermissionRequest, TurnEngine
 from coworker.events import EventType
-from coworker.permissions import PermissionEngine
+from coworker.permissions import Mode, PermissionEngine
 from coworker.providers import (
     AssistantTurn,
     ModelCapabilities,
@@ -129,6 +133,671 @@ def test_write_requires_approval_then_approved(tmp_path):
     events = _collect(engine, "create new.py")
     assert EventType.PERMISSION_REQUIRED in _types(events)
     assert (tmp_path / "new.py").read_text() == "print(1)\n"
+
+
+def test_browser_consequential_action_still_confirms_in_full_access(tmp_path):
+    requests: list[PermissionRequest] = []
+
+    async def approve_once(request: PermissionRequest):
+        requests.append(request)
+        return ApprovalOutcome.ONCE
+
+    provider = ScriptedProvider(
+        [_tool_turn("browser_click", {"tab_id": "t", "snapshot_id": "s", "ref": "r"}), _text_turn("done")]
+    )
+    registry = ToolRegistry()
+
+    def browser_click(tab_id: str, snapshot_id: str, ref: str):
+        return {"ok": True, "tab_id": tab_id, "snapshot_id": snapshot_id, "ref": ref}
+
+    browser_click.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="browser_click",
+        category="connector",
+        risk_level="medium",
+        capabilities=["browser"],
+        requires_approval=True,
+    )
+    registry.register(browser_click)
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(workspace_root=tmp_path, mode=Mode.AUTO),
+        model="gpt-5.5",
+        approver=approve_once,
+    )
+
+    events = _collect(engine, "click it")
+    assert EventType.PERMISSION_REQUIRED in _types(events)
+    assert [request.tool_name for request in requests] == ["browser_click"]
+
+
+def test_browser_approval_never_persists_typed_values(tmp_path):
+    requests: list[PermissionRequest] = []
+    executed: list[dict[str, str]] = []
+
+    async def approve_once(request: PermissionRequest):
+        requests.append(request)
+        return ApprovalOutcome.ONCE
+
+    raw_arguments = {
+        "tab_id": "tab_1",
+        "snapshot_id": "snap_1",
+        "ref": "field_1",
+        "value": "super-secret-password",
+    }
+    provider = ScriptedProvider(
+        [_tool_turn("browser_fill", raw_arguments), _text_turn("done")]
+    )
+    registry = ToolRegistry()
+
+    def browser_fill(
+        tab_id: str, snapshot_id: str, ref: str, value: str
+    ):
+        executed.append(
+            {
+                "tab_id": tab_id,
+                "snapshot_id": snapshot_id,
+                "ref": ref,
+                "value": value,
+            }
+        )
+        return {"ok": True}
+
+    browser_fill.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="browser_fill",
+        category="connector",
+        risk_level="medium",
+        capabilities=["browser"],
+        requires_approval=True,
+    )
+    registry.register(browser_fill)
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(
+            workspace_root=tmp_path, mode=Mode.AUTO
+        ),
+        model="gpt-5.5",
+        approver=approve_once,
+    )
+
+    events = _collect(engine, "fill the password")
+    permission = next(
+        event
+        for event in events
+        if event.type == EventType.PERMISSION_REQUIRED
+    )
+    assert permission.data["arguments"]["value"] == (
+        "[redacted browser input]"
+    )
+    assert requests[0].arguments["value"] == "[redacted browser input]"
+    assert executed == [raw_arguments]
+
+
+def test_browser_dialog_always_confirms_and_redacts_prompt_text(tmp_path):
+    requests: list[PermissionRequest] = []
+    executed: list[dict[str, str]] = []
+
+    async def approve_once(request: PermissionRequest):
+        requests.append(request)
+        return ApprovalOutcome.ONCE
+
+    raw_arguments = {
+        "action": "accept",
+        "prompt_text": "dialog-secret-value",
+    }
+    provider = ScriptedProvider(
+        [_tool_turn("browser_dialog", raw_arguments), _text_turn("done")]
+    )
+    registry = ToolRegistry()
+
+    def browser_dialog(action: str, prompt_text: str = ""):
+        executed.append({"action": action, "prompt_text": prompt_text})
+        return {"ok": True}
+
+    # Even an incorrectly low-risk declaration must not bypass the Browser Use
+    # point-of-action confirmation boundary.
+    browser_dialog.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="browser_dialog",
+        category="connector",
+        risk_level="low",
+        capabilities=["browser"],
+        requires_approval=False,
+    )
+    registry.register(browser_dialog)
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(
+            workspace_root=tmp_path, mode=Mode.AUTO
+        ),
+        model="gpt-5.5",
+        approver=approve_once,
+    )
+
+    events = _collect(engine, "accept the dialog")
+    assert EventType.PERMISSION_REQUIRED in _types(events)
+    assert requests[0].arguments == {
+        "action": "accept",
+        "prompt_text": "[redacted browser input]",
+    }
+    assert executed == [raw_arguments]
+
+
+def test_browser_routine_actions_do_not_need_redundant_session_grant(tmp_path):
+    requests: list[PermissionRequest] = []
+    executed: list[str] = []
+
+    async def approve(request: PermissionRequest):
+        requests.append(request)
+        return ApprovalOutcome.ONCE
+
+    provider = ScriptedProvider(
+        [
+            _tool_turn(
+                "browser_open_url",
+                {"url": "https://example.com"},
+                call_id="browser-open",
+            ),
+            _tool_turn(
+                "browser_click",
+                {"tab_id": "t", "snapshot_id": "s", "ref": "ordinary"},
+                call_id="browser-click",
+            ),
+            _text_turn("done"),
+        ]
+    )
+    registry = ToolRegistry()
+
+    def browser_open_url(url: str):
+        executed.append("open")
+        return {"ok": True, "url": url}
+
+    def browser_click(tab_id: str, snapshot_id: str, ref: str):
+        executed.append("click")
+        return {"ok": True}
+
+    for fn in (browser_open_url, browser_click):
+        fn.__aisuite_tool_metadata__ = ai.ToolMetadata(
+            name=fn.__name__,
+            category="connector",
+            risk_level="medium",
+            capabilities=["browser"],
+            requires_approval=True,
+        )
+        fn.__coworker_browser_confirmation__ = lambda _arguments: {
+            "requires_confirmation": False,
+            "reasons": [],
+        }
+        registry.register(fn)
+
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(workspace_root=tmp_path, mode=Mode.AUTO),
+        model="gpt-5.5",
+        approver=approve,
+    )
+    events = _collect(engine, "browse")
+
+    assert not [
+        event for event in events if event.type == EventType.PERMISSION_REQUIRED
+    ]
+    assert requests == []
+    assert executed == ["open", "click"]
+
+
+def test_browser_hostname_approval_persists_across_tasks(tmp_path):
+    requests: list[PermissionRequest] = []
+    executed: list[str] = []
+    policy = BrowserSitePermissionStore(
+        tmp_path / "browser-settings.json",
+        destination_policy=DestinationPolicy(
+            resolver=lambda _host, _port: ["8.8.8.8"]
+        ),
+    )
+
+    async def approve(request: PermissionRequest):
+        requests.append(request)
+        return ApprovalOutcome.ONCE
+
+    def make_engine(call_id: str) -> TurnEngine:
+        provider = ScriptedProvider(
+            [
+                _tool_turn(
+                    "browser_open_url",
+                    {"url": "https://example.com/private?token=secret"},
+                    call_id=call_id,
+                ),
+                _text_turn("done"),
+            ]
+        )
+        registry = ToolRegistry()
+
+        def browser_open_url(url: str):
+            executed.append(url)
+            return {"ok": True, "url": url}
+
+        browser_open_url.__aisuite_tool_metadata__ = ai.ToolMetadata(
+            name="browser_open_url",
+            category="connector",
+            risk_level="medium",
+            capabilities=["browser"],
+            requires_approval=True,
+        )
+        browser_open_url.__coworker_browser_confirmation__ = (
+            lambda _arguments: {
+                "requires_confirmation": False,
+                "reasons": [],
+            }
+        )
+        registry.register(browser_open_url)
+        permissions = PermissionEngine(workspace_root=tmp_path)
+        permissions.browser_site_policy = policy
+        return TurnEngine(
+            provider=provider,
+            registry=registry,
+            permissions=permissions,
+            model="gpt-5.5",
+            approver=approve,
+        )
+
+    first_events = _collect(make_engine("site-1"), "open it")
+    second_events = _collect(make_engine("site-2"), "open it again")
+
+    prompts = [
+        event
+        for event in [*first_events, *second_events]
+        if event.type == EventType.PERMISSION_REQUIRED
+    ]
+    assert len(prompts) == 1
+    assert prompts[0].data["scope"] == "browser_site"
+    assert prompts[0].data["arguments"]["url"] == "https://example.com"
+    assert prompts[0].data["arguments"]["origin"] == "https://example.com"
+    assert [request.scope for request in requests] == ["browser_site"]
+    assert policy.settings()["allowed_hosts"] == ["example.com"]
+    assert len(executed) == 2
+
+
+def test_blocked_browser_hostname_is_denied_without_prompt_or_execution(
+    tmp_path,
+):
+    requests: list[PermissionRequest] = []
+    executed: list[str] = []
+    policy = BrowserSitePermissionStore(
+        tmp_path / "browser-settings.json",
+        destination_policy=DestinationPolicy(
+            resolver=lambda _host, _port: ["8.8.8.8"]
+        ),
+    )
+    policy.update(blocked_hosts=["example.com"])
+
+    async def approve(request: PermissionRequest):
+        requests.append(request)
+        return ApprovalOutcome.ONCE
+
+    provider = ScriptedProvider(
+        [
+            _tool_turn(
+                "browser_open_url",
+                {"url": "https://example.com/private"},
+            ),
+            _text_turn("blocked"),
+        ]
+    )
+    registry = ToolRegistry()
+
+    def browser_open_url(url: str):
+        executed.append(url)
+        return {"ok": True}
+
+    browser_open_url.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="browser_open_url",
+        category="connector",
+        risk_level="medium",
+        capabilities=["browser"],
+        requires_approval=True,
+    )
+    browser_open_url.__coworker_browser_confirmation__ = lambda _arguments: {
+        "requires_confirmation": False,
+        "reasons": [],
+    }
+    registry.register(browser_open_url)
+    permissions = PermissionEngine(workspace_root=tmp_path)
+    permissions.browser_site_policy = policy
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=permissions,
+        model="gpt-5.5",
+        approver=approve,
+    )
+
+    events = _collect(engine, "open it")
+    assert EventType.PERMISSION_REQUIRED not in _types(events)
+    assert requests == []
+    assert executed == []
+    finished = next(
+        event for event in events if event.type == EventType.TOOL_FINISHED
+    )
+    assert finished.data["status"] == "denied"
+    assert "example.com" in finished.data["reason"]
+
+
+def test_cross_site_consequential_click_asks_site_then_action(tmp_path):
+    requests: list[PermissionRequest] = []
+    executed: list[str] = []
+    policy = BrowserSitePermissionStore(
+        tmp_path / "browser-settings.json",
+        destination_policy=DestinationPolicy(
+            resolver=lambda _host, _port: ["8.8.8.8"]
+        ),
+    )
+
+    async def approve(request: PermissionRequest):
+        requests.append(request)
+        return ApprovalOutcome.ONCE
+
+    provider = ScriptedProvider(
+        [
+            _tool_turn(
+                "browser_click",
+                {"tab_id": "t", "snapshot_id": "s", "ref": "checkout"},
+            ),
+            _text_turn("done"),
+        ]
+    )
+    registry = ToolRegistry()
+
+    def browser_click(tab_id: str, snapshot_id: str, ref: str):
+        executed.append(ref)
+        return {"ok": True}
+
+    browser_click.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="browser_click",
+        category="connector",
+        risk_level="medium",
+        capabilities=["browser"],
+        requires_approval=True,
+    )
+    browser_click.__coworker_browser_confirmation__ = lambda _arguments: {
+        "requires_confirmation": True,
+        "reasons": ["consequential_control"],
+        "destination_url": "https://checkout.example/pay?secret=1",
+    }
+    registry.register(browser_click)
+    permissions = PermissionEngine(workspace_root=tmp_path)
+    permissions.browser_site_policy = policy
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=permissions,
+        model="gpt-5.5",
+        approver=approve,
+    )
+
+    events = _collect(engine, "click checkout")
+    assert [
+        event.data["scope"]
+        for event in events
+        if event.type == EventType.PERMISSION_REQUIRED
+    ] == ["browser_site", "browser_action"]
+    assert [request.scope for request in requests] == [
+        "browser_site",
+        "browser_action",
+    ]
+    assert policy.settings()["allowed_hosts"] == ["checkout.example"]
+    assert executed == ["checkout"]
+
+
+def test_user_navigated_site_is_gated_before_agent_read(tmp_path):
+    requests: list[PermissionRequest] = []
+    executed: list[str] = []
+    policy = BrowserSitePermissionStore(
+        tmp_path / "browser-settings.json",
+        destination_policy=DestinationPolicy(
+            resolver=lambda _host, _port: ["8.8.8.8"]
+        ),
+    )
+
+    async def approve(request: PermissionRequest):
+        requests.append(request)
+        return ApprovalOutcome.ONCE
+
+    provider = ScriptedProvider(
+        [_tool_turn("browser_snapshot", {}), _text_turn("done")]
+    )
+    registry = ToolRegistry()
+
+    def browser_snapshot():
+        executed.append("snapshot")
+        return {"ok": True}
+
+    browser_snapshot.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="browser_snapshot",
+        category="connector",
+        risk_level="medium",
+        capabilities=["browser"],
+        requires_approval=False,
+    )
+    browser_snapshot.__coworker_browser_confirmation__ = lambda _arguments: {
+        "requires_confirmation": False,
+        "reasons": [],
+        "current_url": "https://manual.example/account?private=1",
+    }
+    registry.register(browser_snapshot)
+    permissions = PermissionEngine(workspace_root=tmp_path)
+    permissions.browser_site_policy = policy
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=permissions,
+        model="gpt-5.5",
+        approver=approve,
+    )
+
+    events = _collect(engine, "read this page")
+    assert [
+        event.data["scope"]
+        for event in events
+        if event.type == EventType.PERMISSION_REQUIRED
+    ] == ["browser_site"]
+    assert requests[0].arguments["origin"] == "https://manual.example"
+    assert executed == ["snapshot"]
+
+
+def test_browser_consequential_actions_confirm_each_time_after_session_grant(
+    tmp_path,
+):
+    requests: list[PermissionRequest] = []
+    executed: list[str] = []
+
+    async def approve(request: PermissionRequest):
+        requests.append(request)
+        return ApprovalOutcome.ONCE
+
+    provider = ScriptedProvider(
+        [
+            _tool_turn(
+                "browser_click",
+                {"tab_id": "t", "snapshot_id": "s1", "ref": "submit"},
+                call_id="submit-1",
+            ),
+            _tool_turn(
+                "browser_click",
+                {"tab_id": "t", "snapshot_id": "s2", "ref": "submit"},
+                call_id="submit-2",
+            ),
+            _text_turn("done"),
+        ]
+    )
+    registry = ToolRegistry()
+
+    def browser_click(tab_id: str, snapshot_id: str, ref: str):
+        executed.append(snapshot_id)
+        return {"ok": True}
+
+    browser_click.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="browser_click",
+        category="connector",
+        risk_level="medium",
+        capabilities=["browser"],
+        requires_approval=True,
+    )
+    browser_click.__coworker_browser_confirmation__ = lambda _arguments: {
+        "requires_confirmation": True,
+        "reasons": ["form_submission"],
+    }
+    registry.register(browser_click)
+    permissions = PermissionEngine(workspace_root=tmp_path, mode=Mode.AUTO)
+    permissions.allow_browser_for_session()
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=permissions,
+        model="gpt-5.5",
+        approver=approve,
+    )
+
+    events = _collect(engine, "submit twice")
+    prompts = [
+        event for event in events if event.type == EventType.PERMISSION_REQUIRED
+    ]
+    assert len(prompts) == 2
+    assert [event.data["scope"] for event in prompts] == [
+        "browser_action",
+        "browser_action",
+    ]
+    assert [request.scope for request in requests] == [
+        "browser_action",
+        "browser_action",
+    ]
+    assert executed == ["s1", "s2"]
+
+
+def test_browser_execution_rechecks_target_before_using_session_grant(tmp_path):
+    executed: list[str] = []
+    decisions = iter(
+        [
+            {"requires_confirmation": False, "reasons": []},
+            {
+                "requires_confirmation": True,
+                "reasons": ["consequential_control"],
+            },
+        ]
+    )
+
+    async def approve(_request: PermissionRequest):
+        return ApprovalOutcome.ONCE
+
+    provider = ScriptedProvider(
+        [
+            _tool_turn(
+                "browser_click",
+                {"tab_id": "t", "snapshot_id": "s", "ref": "changed"},
+                call_id="changed-target",
+            ),
+            _text_turn("stopped"),
+        ]
+    )
+    registry = ToolRegistry()
+
+    def browser_click(tab_id: str, snapshot_id: str, ref: str):
+        executed.append(ref)
+        return {"ok": True}
+
+    browser_click.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="browser_click",
+        category="connector",
+        risk_level="medium",
+        capabilities=["browser"],
+        requires_approval=True,
+    )
+    browser_click.__coworker_browser_confirmation__ = (
+        lambda _arguments: next(decisions)
+    )
+    registry.register(browser_click)
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(workspace_root=tmp_path, mode=Mode.AUTO),
+        model="gpt-5.5",
+        approver=approve,
+    )
+
+    events = _collect(engine, "click it")
+    finished = [
+        event
+        for event in events
+        if event.type == EventType.TOOL_FINISHED
+    ][0]
+    assert finished.data["status"] == "error"
+    assert "BROWSER_CONFIRMATION_REQUIRED" in finished.data["result_preview"]
+    assert executed == []
+
+
+def test_browser_confirmation_is_bound_to_same_live_target_at_execution(tmp_path):
+    executed: list[str] = []
+    decisions = iter(
+        [
+            {
+                "requires_confirmation": True,
+                "reasons": ["consequential_control"],
+                "binding": "document-a:target-a",
+            },
+            {
+                "requires_confirmation": True,
+                "reasons": ["consequential_control"],
+                "binding": "document-a:target-b",
+            },
+        ]
+    )
+
+    async def approve(_request: PermissionRequest):
+        return ApprovalOutcome.ONCE
+
+    provider = ScriptedProvider(
+        [
+            _tool_turn(
+                "browser_click",
+                {"tab_id": "t", "snapshot_id": "s", "ref": "target"},
+                call_id="bound-target",
+            ),
+            _text_turn("stopped"),
+        ]
+    )
+    registry = ToolRegistry()
+
+    def browser_click(tab_id: str, snapshot_id: str, ref: str):
+        executed.append(ref)
+        return {"ok": True}
+
+    browser_click.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="browser_click",
+        category="connector",
+        risk_level="medium",
+        capabilities=["browser"],
+        requires_approval=True,
+    )
+    browser_click.__coworker_browser_confirmation__ = (
+        lambda _arguments: next(decisions)
+    )
+    registry.register(browser_click)
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(workspace_root=tmp_path, mode=Mode.AUTO),
+        model="gpt-5.5",
+        approver=approve,
+    )
+
+    events = _collect(engine, "click it")
+    finished = next(
+        event for event in events if event.type == EventType.TOOL_FINISHED
+    )
+    assert finished.data["status"] == "error"
+    assert "BROWSER_CONFIRMATION_STALE" in finished.data["result_preview"]
+    assert executed == []
 
 
 def test_denied_tool_yields_error_and_continues(tmp_path):

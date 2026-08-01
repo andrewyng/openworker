@@ -249,26 +249,16 @@ def test_engine_connector_tools_are_cowork_scoped(tmp_path):
 
     assert "send_message" in cowork.registry.names()
     assert "browser_read_url" in cowork.registry.names()
-    assert "browser_open_url" in cowork.registry.names()
-    assert "browser_click" in cowork.registry.names()
-    assert "browser_type" in cowork.registry.names()
+    # Interactive Browser Use is injected only by SessionManager for a live,
+    # attended conversation. Direct/background engines must never receive the
+    # old process-global Playwright controller.
+    assert "browser_open_url" not in cowork.registry.names()
+    assert "browser_click" not in cowork.registry.names()
+    assert "browser_type" not in cowork.registry.names()
     assert "github_search" not in cowork.registry.names()
     assert "send_message" in helper.registry.names()
     assert "browser_read_url" not in helper.registry.names()
     assert "browser_open_url" not in helper.registry.names()
-
-    # §36: browser READS (registry kind) are free; interactions still gate.
-    assert cowork.registry.get("browser_open_url").metadata.requires_approval is False
-    assert cowork.registry.get("browser_snapshot").metadata.requires_approval is False
-    assert cowork.registry.get("browser_click").metadata.requires_approval is True
-    assert cowork.registry.get("browser_type").metadata.requires_approval is True
-    cowork.permissions.allow_tool_for_session("browser_click")
-    decision = cowork.permissions.evaluate(
-        "browser_click",
-        {"target": "button"},
-        cowork.registry.get("browser_click").metadata,
-    )
-    assert decision.needs_user is True
 
     secrets.put("github:default", {"token": "ghp_test", "enabled": True})
     cowork_with_github = build_engine(
@@ -324,6 +314,48 @@ def test_connector_list_descriptors(tmp_path):
         t["name"] == "browser_open_url" and t["requires_approval"]
         for t in by_name["browser"]["tools"]
     )
+    assert {tool["name"] for tool in by_name["browser"]["tools"]} == {
+        "browser_read_url",
+        "browser_open_url",
+        "browser_history",
+        "browser_snapshot",
+        "browser_snapshot_more",
+        "browser_screenshot",
+        "browser_click",
+        "browser_fill",
+        "browser_press",
+        "browser_select",
+        "browser_hover",
+        "browser_scroll",
+        "browser_tabs",
+        "browser_select_tab",
+        "browser_close_tab",
+        "browser_dialog",
+        "browser_select_surface",
+        "browser_set_visibility",
+        "browser_set_viewport",
+        "browser_finalize_tabs",
+        "browser_coordinate_move",
+        "browser_coordinate_click",
+        "browser_coordinate_drag",
+        "browser_type_text",
+        "browser_keypress",
+        "browser_clipboard",
+        "browser_console_logs",
+        "browser_download",
+        "browser_upload",
+        "browser_cdp",
+        "browser_dom_evaluate",
+        "browser_surfaces",
+        "browser_documentation",
+        "browser_close",
+    }
+    assert {
+        "browser_get_text",
+        "browser_type",
+        "browser_upload_file",
+        "browser_wait",
+    }.isdisjoint(tool["name"] for tool in by_name["browser"]["tools"])
     # telegram exposes a bot_token field + setup instructions
     keys = {f["key"] for f in by_name["telegram"]["fields"]}
     assert "bot_token" in keys and by_name["telegram"]["instructions"]
@@ -350,6 +382,9 @@ def test_connector_list_pre_connect_copy(tmp_path):
         if d.available and not d.experimental and d.name not in ACCESS
     ]
     assert not missing, f"connectors missing curated access copy: {missing}"
+    browser_access = " ".join(ACCESS["browser"]).lower()
+    assert "uploads files" not in browser_access
+    assert "raw coordinates" in browser_access
 
 
 def test_connector_list_connected_for_required_profiles(tmp_path):

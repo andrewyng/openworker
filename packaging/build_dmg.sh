@@ -12,7 +12,7 @@
 #   - A Python venv at .venv (repo root) with this package installed editable, plus the
 #     build-only deps:
 #       python3 -m venv .venv
-#       .venv/bin/pip install -e '.[bedrock]' pyinstaller tzdata typer
+#       .venv/bin/pip install -e '.[bedrock,browser]' pyinstaller tzdata typer
 #     `typer` is needed only at BUILD time: PyInstaller walks the `mcp` package and
 #     `mcp.cli` calls sys.exit() at import if typer is absent, which aborts the freeze.
 #     (aisuite installs like any other dependency — git-pinned in pyproject.toml.)
@@ -69,11 +69,18 @@ if [ -n "${APPLE_CERTIFICATE:-}" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   security list-keychains -d user -s "$KC" login.keychain-db
 fi
 
-echo "==> [1/5] PyInstaller: bundling openworker-server ($TRIPLE)"
+# Install Chromium inside the Playwright package before freezing. This is Playwright's
+# supported PyInstaller layout: collect_all("playwright") below carries exactly the browser
+# revision paired with the pinned Python package, so an installed OpenWorker never downloads
+# an executable on first use.
+echo "==> [1/6] Playwright: staging bundled Chromium"
+PLAYWRIGHT_BROWSERS_PATH=0 "$PLATFORM/.venv/bin/python" -m playwright install chromium --no-shell
+
+echo "==> [2/6] PyInstaller: bundling openworker-server ($TRIPLE)"
 "$PLATFORM/.venv/bin/pyinstaller" --noconfirm --clean \
   --distpath "$HERE/dist" --workpath "$HERE/build" "$HERE/openworker-server.spec"
 
-echo "==> [2/5] staging sidecar resources"
+echo "==> [3/6] staging sidecar + Chrome native-host resources"
 # Onedir bundle (exe + _internal/) ships via Tauri `resources` as Contents/Resources/sidecar/
 # — onefile's per-launch self-extraction cost 6-7s of boot splash. rm -rf first: cp WRITES
 # THROUGH a symlink at the destination (a dev-convenience symlink in the old externalBin slot
@@ -81,15 +88,12 @@ echo "==> [2/5] staging sidecar resources"
 # stale onefile binary from pre-onedir builds.
 mkdir -p "$GUI/src-tauri/binaries"
 rm -rf "$GUI/src-tauri/binaries/sidecar" "$GUI/src-tauri/binaries/openworker-server-$TRIPLE"
-# -L (dereference): Tauri's resource bundler flattens symlinks into duplicate REAL files.
-# Python.framework's symlinks (Python -> Versions/Current/Python, …) therefore arrive in
-# the .app as standalone copies whose framework-context signatures don't validate outside
-# the bundle — notarization rejected them twice (submissions f73463f3, ca30027a,
-# 2026-07-16). Dereferencing at staging makes what we SIGN byte-identical to what tauri
-# COPIES, and every Mach-O below gets a plain file signature that stands alone.
+# Chromium is excluded from PyInstaller and injected intact after Tauri copies
+# resources. Dereference the ordinary onedir symlinks here (notably Python.framework)
+# so Tauri receives a self-contained, symlink-free sidecar tree.
 cp -RL "$HERE/dist/openworker-server" "$GUI/src-tauri/binaries/sidecar"
 if [ -n "$(find "$GUI/src-tauri/binaries/sidecar" -type l | head -1)" ]; then
-  echo "ERROR: symlinks survived sidecar staging — tauri would flatten them into unsigned copies" >&2
+  echo "ERROR: a symlink survived sidecar staging" >&2
   exit 1
 fi
 # Drop the pseudo-framework: after dereferencing, Python.framework is just a duplicate of
@@ -99,11 +103,24 @@ fi
 # layout — three Invalid notarization verdicts (f73463f3, ca30027a, + one more) before
 # this removal. No .framework may ever ship inside the sidecar resources.
 rm -rf "$GUI/src-tauri/binaries/sidecar/_internal/Python.framework"
-if [ -n "$(find "$GUI/src-tauri/binaries/sidecar" -type d -name "*.framework" | head -1)" ]; then
-  echo "ERROR: a .framework appeared in the sidecar — it cannot pass notarization in this layout" >&2
+if [ -n "$(find "$GUI/src-tauri/binaries/sidecar" -type d -name "*.framework" \
+  ! -path "*/playwright/driver/package/.local-browsers/*" | head -1)" ]; then
+  echo "ERROR: a non-browser .framework appeared in the sidecar" >&2
   exit 1
 fi
 chmod +x "$GUI/src-tauri/binaries/sidecar/openworker-server"
+
+# Chrome launches this small exact-origin process through Native Messaging. It is
+# deliberately separate from the Python sidecar: neither the random localhost port
+# nor either authentication token is exposed to the extension.
+cargo build --release --locked --manifest-path "$PLATFORM/browser-native-host/Cargo.toml"
+NATIVE_HOST_DIR="$GUI/src-tauri/binaries/native-host"
+rm -rf "$NATIVE_HOST_DIR"
+mkdir -p "$NATIVE_HOST_DIR"
+cp "$PLATFORM/browser-native-host/target/release/openworker-browser-native-host" \
+  "$NATIVE_HOST_DIR/openworker-browser-native-host"
+chmod +x "$NATIVE_HOST_DIR/openworker-browser-native-host"
+cp "$PLATFORM/browser-native-host/com.openworker.browser.json.template" "$NATIVE_HOST_DIR/"
 
 # Sign the sidecar's Mach-O files BEFORE tauri build: `tauri build` signs the .app (sealing
 # resources into its signature) but does NOT sign nested binaries inside resources — unsigned
@@ -113,11 +130,14 @@ chmod +x "$GUI/src-tauri/binaries/sidecar/openworker-server"
 if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   echo "    signing sidecar binaries"
   SIDECAR="$GUI/src-tauri/binaries/sidecar"
+  BROWSER_REL="playwright/driver/package/.local-browsers"
   # Every Mach-O gets a plain FILE signature (no framework-bundle signing: the staged
   # tree is fully dereferenced, so each file must validate standalone — that is exactly
-  # what the notary service checks). Entitlements only on the entrypoint
+  # what the notary service checks). Chromium is excluded here and signed as nested
+  # bundles after Tauri build, once its symlinks have been restored. Entitlements only on the entrypoint
   # (disable-library-validation: the bundled python.org dylibs carry another Team ID).
   find "$SIDECAR" -type f ! -name "openworker-server" \
+    ! -path "*/$BROWSER_REL/*" \
     ! -name "*.py" ! -name "*.pyc" ! -name "*.txt" ! -name "*.pem" ! -name "*.json" \
     -print0 | while IFS= read -r -d '' f; do
     file -b "$f" | grep -q "Mach-O" || continue
@@ -125,31 +145,144 @@ if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   done
   codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp --options runtime \
     --entitlements "$GUI/src-tauri/entitlements.plist" "$SIDECAR/openworker-server"
+  codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp --options runtime \
+    "$NATIVE_HOST_DIR/openworker-browser-native-host"
 fi
 
-echo "==> [3/5] tauri build (.app)"
-# Auto-update artifacts (.app.tar.gz + minisign .sig): produced only when the updater
+echo "==> [4/6] tauri build (.app)"
+# Auto-update artifacts (.app.tar.gz + minisign .sig) are produced only when the updater
 # signing key is available — from the env (CI secret TAURI_SIGNING_PRIVATE_KEY), or from
 # `.ocw-updater.env` one directory above the repo (same convention as the notary env).
-# Keyless builds skip the overlay entirely so dev/fork builds keep working; keyless
-# RELEASES would strand every install without auto-update, hence the loud warning.
+# They must be created AFTER Chromium is injected below: asking Tauri to create them during
+# this build would sign a pre-injection app that is not the app shipped in the DMG.
 UPDATER_ENV="${OCW_UPDATER_ENV:-$PLATFORM/../.ocw-updater.env}"
 if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ] && [ -f "$UPDATER_ENV" ]; then
   # shellcheck disable=SC1090
   source "$UPDATER_ENV"
 fi
-UPDATER_OVERLAY=()
-if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-  UPDATER_OVERLAY=(--config '{"bundle":{"createUpdaterArtifacts":true}}')
-else
+if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
   echo "    WARNING: no updater signing key — building WITHOUT auto-update artifacts (not releasable)."
 fi
-# ${arr[@]+…} guard: plain "${arr[@]}" on an EMPTY array is an "unbound variable"
-# under set -u on macOS's stock bash 3.2 — hit by keyless (fresh-clone) builds.
-( cd "$GUI" && npm run tauri build -- --bundles app ${UPDATER_OVERLAY[@]+"${UPDATER_OVERLAY[@]}"} )
 
-echo "==> [4/5] hdiutil: wrapping into .dmg"
 BUNDLE="$GUI/src-tauri/target/release/bundle"
+UPDATER_NAME="$APP.app.tar.gz"
+UPDATER_ARCHIVE="$BUNDLE/macos/$UPDATER_NAME"
+UPDATER_SIGNATURE="$UPDATER_ARCHIVE.sig"
+UPDATER_PROVENANCE="$UPDATER_ARCHIVE.final.sha256"
+cleanup_updater_artifacts() {
+  rm -f "$UPDATER_ARCHIVE" "$UPDATER_SIGNATURE" "$UPDATER_PROVENANCE"
+}
+# A keyless build must not inherit updater output from an earlier signed local build.
+cleanup_updater_artifacts
+( cd "$GUI" && npm run tauri build -- --bundles app )
+
+# PyInstaller correctly discovers Playwright's browser, but Tauri's resource copier
+# dereferences macOS framework symlinks. Restore the exact installed browser tree in the
+# finished app before its final signature and the DMG are produced.
+BROWSER_SOURCE="$("$PLATFORM/.venv/bin/python" -c \
+  'from pathlib import Path; import playwright; print(Path(playwright.__file__).resolve().parent / "driver/package/.local-browsers")')"
+BROWSER_DEST="$BUNDLE/macos/$APP.app/Contents/Resources/sidecar/_internal/playwright/driver/package/.local-browsers"
+case "$BROWSER_SOURCE" in
+  "$PLATFORM"/.venv/*/playwright/driver/package/.local-browsers) ;;
+  *)
+    echo "ERROR: refusing unexpected Playwright browser source: $BROWSER_SOURCE" >&2
+    exit 1
+    ;;
+esac
+if [ ! -d "$BROWSER_SOURCE" ] || [ ! -d "$(dirname "$BROWSER_DEST")" ]; then
+  echo "ERROR: unable to locate the staged Playwright browser tree" >&2
+  exit 1
+fi
+rm -rf "$BROWSER_DEST"
+/usr/bin/ditto "$BROWSER_SOURCE" "$BROWSER_DEST"
+if [ -z "$(find "$BROWSER_DEST" -type l | head -1)" ]; then
+  echo "ERROR: Chromium framework symlinks were not preserved" >&2
+  exit 1
+fi
+
+if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+  echo "    signing nested Chromium bundles"
+  # Sign raw Mach-O code first, then bundle directories depth-first (helper apps,
+  # framework, outer Chrome app), and finally reseal OpenWorker after replacing the
+  # resource subtree.
+  find "$BROWSER_DEST" -type f -print0 | while IFS= read -r -d '' f; do
+    file -b "$f" | grep -q "Mach-O" || continue
+    codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp --options runtime "$f"
+  done
+  find "$BROWSER_DEST" -depth -type d \
+    \( -name "*.xpc" -o -name "*.app" -o -name "*.framework" \) -print0 \
+    | while IFS= read -r -d '' bundle; do
+        case "$(basename "$bundle")" in
+          *"Helper (Renderer).app"|*"Helper (GPU).app")
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp \
+              --options runtime \
+              --entitlements "$HERE/chromium-helper-entitlements.plist" \
+              "$bundle"
+            ;;
+          *)
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp \
+              --options runtime "$bundle"
+            ;;
+        esac
+      done
+  codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp --options runtime \
+    --entitlements "$GUI/src-tauri/entitlements.plist" \
+    "$BUNDLE/macos/$APP.app"
+  codesign --verify --deep --strict --verbose=2 "$BUNDLE/macos/$APP.app"
+fi
+
+# Tauri's macOS updater is a gzip-compressed tar with the .app as its single root.
+# Recreate that format from the final, Chromium-bearing app, validate the archive shape
+# (including a preserved Chromium framework symlink), then sign those exact bytes.
+if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+  echo "    creating updater artifacts from the final app"
+  COPYFILE_DISABLE=1 /usr/bin/tar -czf "$UPDATER_ARCHIVE" \
+    -C "$BUNDLE/macos" "$APP.app" \
+    || { cleanup_updater_artifacts; exit 1; }
+  "$PLATFORM/.venv/bin/python" - "$UPDATER_ARCHIVE" "$APP.app" <<'PY' \
+    || { cleanup_updater_artifacts; exit 1; }
+import sys
+import tarfile
+
+archive_path, app_name = sys.argv[1:]
+root = f"{app_name}/"
+browser_segment = "/playwright/driver/package/.local-browsers/"
+with tarfile.open(archive_path, "r:gz") as archive:
+    members = archive.getmembers()
+
+unexpected = [
+    member.name
+    for member in members
+    if member.name != app_name and not member.name.startswith(root)
+]
+if not members or unexpected:
+    raise SystemExit(
+        f"invalid updater archive root (unexpected entries: {unexpected[:3]})"
+    )
+if not any(browser_segment in f"/{member.name}/" for member in members):
+    raise SystemExit("updater archive is missing the bundled Chromium tree")
+if not any(
+    member.issym() and browser_segment in f"/{member.name}/"
+    for member in members
+):
+    raise SystemExit("updater archive flattened Chromium framework symlinks")
+PY
+  ( cd "$GUI" && npm run tauri -- signer sign "$UPDATER_ARCHIVE" ) \
+    || { cleanup_updater_artifacts; exit 1; }
+  if [ ! -s "$UPDATER_ARCHIVE" ] || [ ! -s "$UPDATER_SIGNATURE" ]; then
+    echo "ERROR: updater archive/signature pair is incomplete" >&2
+    cleanup_updater_artifacts
+    exit 1
+  fi
+  # release.yml requires this checksum receipt before staging either file. Tauri does
+  # not create it, so a pre-injection or half-regenerated artifact fails closed.
+  ( cd "$BUNDLE/macos" \
+    && shasum -a 256 "$UPDATER_NAME" "$UPDATER_NAME.sig" \
+      > "$UPDATER_NAME.final.sha256" ) \
+    || { cleanup_updater_artifacts; exit 1; }
+fi
+
+echo "==> [5/6] hdiutil: wrapping into .dmg"
 STAGING="$(mktemp -d)"
 cp -R "$BUNDLE/macos/$APP.app" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
@@ -228,10 +361,10 @@ if [ "${OCW_SKIP_NOTARIZE:-}" = "1" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; t
   # Local-iteration escape hatch: sign (seconds) but skip the notary round-trip
   # (minutes). Locally built DMGs carry no quarantine flag, so Gatekeeper never
   # prompts on this machine anyway. NEVER distribute a build made this way.
-  echo "==> [5/5] OCW_SKIP_NOTARIZE=1 — signing container, SKIPPING notarize/staple (do not distribute)"
+  echo "==> [6/6] OCW_SKIP_NOTARIZE=1 — signing container, SKIPPING notarize/staple (do not distribute)"
   codesign --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$DMG"
 elif [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
-  echo "==> [5/5] release finishing: sign container → notarize → staple"
+  echo "==> [6/6] release finishing: sign container → notarize → staple"
   codesign --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$DMG"
 
   # CI provides the App Store Connect key under tauri's APPLE_API_* names (release.yml)

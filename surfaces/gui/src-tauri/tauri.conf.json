@@ -28,7 +28,9 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "binaries/sidecar": "sidecar"
+      "binaries/sidecar": "sidecar",
+      "binaries/native-host": "native-host",
+      "../../../browser-extension": "browser-extension"
     },
     "macOS": {
       "entitlements": "entitlements.plist",

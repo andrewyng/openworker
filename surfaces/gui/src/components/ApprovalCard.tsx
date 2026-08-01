@@ -105,6 +105,9 @@ export function scopeNote(
   // save_skill's corner answers WHERE (SKILLS-SPEC §5.2): the exact place to find, edit,
   // or turn off the skill afterwards.
   if (name === "save_skill") return { text: "saves to Settings ▸ Skills", external: false };
+  if (name.startsWith("browser_")) {
+    return { text: "controls websites in this task", external: true };
+  }
   if (category === "connector") return { text: "acts on a connected service", external: true };
   if (EXTERNAL.has(name)) {
     const platform = String(args?.target ?? "").split(":")[0];
@@ -232,7 +235,10 @@ export function ApprovalCard({
   compact?: boolean;
 }) {
   const [peek, setPeek] = useState(false);
-  const title = humanizeApprovalTitle(item.name, item.args);
+  const browserSession = item.scope === "browser_session";
+  const title = browserSession
+    ? { pre: "Allow Browser Use for this task" }
+    : humanizeApprovalTitle(item.name, item.args);
   const scope = scopeNote(item.name, item.args, item.category);
   const grants = item.name === "create_scheduled_task" ? permissionLines(item.args) : [];
   // "requires approval" is the engine's default boilerplate — only surface a real reason.
@@ -330,7 +336,7 @@ export function ApprovalCard({
           item={item}
           onApprove={onApprove}
           runTask={runTask}
-          primaryLabel={approvalActionLabels(item.name).allow}
+          primaryLabel={browserSession ? "Allow" : approvalActionLabels(item.name).allow}
           denyLabel={approvalActionLabels(item.name).deny}
         />
       )}

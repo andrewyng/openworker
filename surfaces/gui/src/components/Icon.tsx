@@ -15,6 +15,7 @@ export type IconName =
   | "folderPlus"
   | "plus"
   | "clock"
+  | "globe"
   | "sliders"
   | "gear"
   | "inbox"
@@ -201,6 +202,13 @@ export function Icon({
         <svg {...s}>
           <circle cx="12" cy="12" r="8.3" />
           <path d="M12 7.8V12l2.8 1.7" />
+        </svg>
+      );
+    case "globe":
+      return (
+        <svg {...s}>
+          <circle cx="12" cy="12" r="8.5" />
+          <path d="M3.8 12h16.4M12 3.5c2.3 2.4 3.5 5.2 3.5 8.5s-1.2 6.1-3.5 8.5C9.7 18.1 8.5 15.3 8.5 12S9.7 5.9 12 3.5Z" />
         </svg>
       );
     case "sliders":

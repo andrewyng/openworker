@@ -21,7 +21,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from . import compaction as _compaction
 from .events import Event, EventType
-from .permissions import Mode, PermissionEngine
+from .permissions import Decision, Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
 from .providers.errors import friendly_model_error
 from .tools import ToolRegistry
@@ -41,9 +41,21 @@ class PermissionRequest:
     metadata: Any
     reason: str
     tool_call_id: Optional[str] = None  # for durable resume (idempotent inbox item)
+    # ``browser_site`` grants one hostname persistently; ``browser_action`` is a
+    # point-of-action consequential confirmation. ``browser_session`` remains
+    # accepted for backwards-compatible persisted conversations.
+    scope: str = ""
 
 
 Approver = Callable[[PermissionRequest], Awaitable[ApprovalOutcome]]
+
+@dataclass(frozen=True)
+class _BrowserConfirmation:
+    required: bool
+    reasons: tuple[str, ...] = ()
+    destination_url: str = ""
+    current_url: str = ""
+    binding: str = ""
 
 
 async def _deny_all(_request: PermissionRequest) -> ApprovalOutcome:
@@ -123,6 +135,10 @@ class TurnEngine:
         # tool_call.id → the standing rule that auto-allowed it ("tool → target"), so the
         # TOOL_FINISHED event can carry the note to the tool card (§25).
         self._standing_notes: dict[str, str] = {}
+        # Consequential Browser Use confirmations are call-scoped.  Execution
+        # re-runs the trusted preflight and only proceeds when this exact call id
+        # received point-of-action consent.
+        self._browser_confirmed_calls: dict[str, str] = {}
         self._interrupt_hooks: list[Callable[[], None]] = list(interrupt_hooks or [])
 
     # -- external controls ------------------------------------------------------
@@ -670,6 +686,82 @@ class TurnEngine:
             metadata, "requires_approval", False
         )
 
+    @staticmethod
+    def _browser_confirmation(spec: Any, tool_call: ToolCall) -> _BrowserConfirmation:
+        """Run a trusted browser-tool preflight; malformed/missing hooks fail closed."""
+
+        if tool_call.name == "browser_close":
+            return _BrowserConfirmation(False)
+        callback = getattr(
+            getattr(spec, "func", None),
+            "__coworker_browser_confirmation__",
+            None,
+        )
+        if not callable(callback):
+            return _BrowserConfirmation(True, ("unverified_browser_action",))
+        try:
+            value = callback(dict(tool_call.arguments or {}))
+            if not isinstance(value, dict):
+                raise TypeError("browser confirmation preflight returned invalid data")
+            required = value.get("requires_confirmation")
+            if not isinstance(required, bool):
+                raise TypeError("browser confirmation preflight omitted its decision")
+            reasons_value = value.get("reasons") or ()
+            if isinstance(reasons_value, str):
+                reasons_value = (reasons_value,)
+            reasons = tuple(
+                str(reason).strip()
+                for reason in reasons_value
+                if str(reason).strip()
+            )
+            destination_url = str(value.get("destination_url") or "").strip()
+            current_url = str(value.get("current_url") or "").strip()
+            binding = str(value.get("binding") or "").strip()
+            return _BrowserConfirmation(
+                required, reasons, destination_url, current_url, binding
+            )
+        except Exception:
+            return _BrowserConfirmation(True, ("unverified_browser_action",))
+
+    def _browser_site_access(
+        self,
+        tool_call: ToolCall,
+        confirmation: _BrowserConfirmation,
+    ) -> Any:
+        """Return a persistent-host decision for a trusted top-level URL.
+
+        Explicit ``browser_open_url`` calls supply their URL directly. Ref-scoped
+        actions may supply a live-DOM-resolved anchor or form destination through
+        the trusted confirmation hook. No URL means the action stays on the
+        current top-level site and needs no new hostname decision here.
+        """
+
+        policy = getattr(self.permissions, "browser_site_policy", None)
+        if policy is None:
+            return None
+        url = (
+            str((tool_call.arguments or {}).get("url") or "").strip()
+            if tool_call.name == "browser_open_url"
+            else confirmation.destination_url or confirmation.current_url
+        )
+        if not url:
+            return None
+        try:
+            return policy.evaluate_url(url)
+        except Exception as exc:
+            # Invalid URLs, DNS failures, and future policy errors fail closed
+            # without reflecting page content or query strings into the prompt.
+            from types import SimpleNamespace
+
+            return SimpleNamespace(
+                allowed=False,
+                needs_user=False,
+                blocked=True,
+                host="",
+                origin="",
+                reason=f"Browser site access could not be verified ({type(exc).__name__})",
+            )
+
     async def _authorize(self, tool_call: ToolCall) -> "AsyncIterator[Event | bool]":
         """Permission flow for one call (TOOL_PROPOSED is emitted by the caller). Yields
         its events, then True/False (allowed) last. Denied/unknown calls get their
@@ -682,6 +774,123 @@ class TurnEngine:
         decision = self.permissions.evaluate(
             tool_call.name, tool_call.arguments, metadata
         )
+        approval_scope = ""
+        browser_confirmation = _BrowserConfirmation(False)
+        if tool_call.name.startswith("browser_") and spec is not None:
+            # A hard mode denial (for example Plan mode's read-only boundary)
+            # still wins.  Otherwise Browser Use has one explicit task/session
+            # grant, with trusted DOM semantics deciding which later calls must
+            # return to the user at their point of consequence.
+            if decision.allowed or decision.needs_user:
+                browser_confirmation = await asyncio.to_thread(
+                    self._browser_confirmation, spec, tool_call
+                )
+                site_access = await asyncio.to_thread(
+                    self._browser_site_access,
+                    tool_call,
+                    browser_confirmation,
+                )
+                if site_access is not None and site_access.needs_user:
+                    from .browser_security.privacy import scrub_browser_tool_arguments
+
+                    site_arguments = scrub_browser_tool_arguments(
+                        tool_call.name, tool_call.arguments
+                    )
+                    if site_access.origin:
+                        site_arguments["origin"] = site_access.origin
+                    site_reason = site_access.reason
+                    yield Event(
+                        EventType.PERMISSION_REQUIRED,
+                        {
+                            "name": tool_call.name,
+                            "arguments": site_arguments,
+                            "reason": site_reason,
+                            "category": getattr(metadata, "category", ""),
+                            "scope": "browser_site",
+                            "standing_target": None,
+                        },
+                    )
+                    self._audit(
+                        tool_call,
+                        stage="approval_requested",
+                        reason=site_reason,
+                    )
+                    outcome = await self._interruptible(
+                        self.approver(
+                            PermissionRequest(
+                                tool_name=tool_call.name,
+                                arguments=site_arguments,
+                                metadata=metadata,
+                                reason=site_reason,
+                                tool_call_id=tool_call.id,
+                                scope="browser_site",
+                            )
+                        ),
+                        interrupted=ApprovalOutcome.DENY,
+                    )
+                    if outcome is ApprovalOutcome.DENY:
+                        denied_reason = (
+                            "interrupted by user"
+                            if self._cancel.is_set()
+                            else "site access denied by user"
+                        )
+                        decision = Decision(False, denied_reason)
+                        self._audit(
+                            tool_call,
+                            stage="approval_resolved",
+                            status="denied",
+                            approval=outcome.value,
+                            reason=denied_reason,
+                        )
+                    else:
+                        try:
+                            self.permissions.browser_site_policy.allow_host(
+                                site_access.host
+                            )
+                            self.permissions.allow_browser_for_session()
+                            self._audit(
+                                tool_call,
+                                stage="approval_resolved",
+                                status="approved",
+                                approval=outcome.value,
+                                reason=f"site access approved for {site_access.host}",
+                            )
+                            site_access = await asyncio.to_thread(
+                                self._browser_site_access,
+                                tool_call,
+                                browser_confirmation,
+                            )
+                        except Exception:
+                            decision = Decision(
+                                False,
+                                "approved Browser hostname could not be saved",
+                            )
+                if site_access is not None and not site_access.allowed:
+                    if decision.reason not in {
+                        "interrupted by user",
+                        "site access denied by user",
+                        "approved Browser hostname could not be saved",
+                    }:
+                        decision = Decision(False, site_access.reason)
+                elif browser_confirmation.required:
+                    approval_scope = "browser_action"
+                    suffix = (
+                        ": " + ", ".join(browser_confirmation.reasons)
+                        if browser_confirmation.reasons
+                        else ""
+                    )
+                    decision = Decision(
+                        False,
+                        "Consequential browser action requires confirmation" + suffix,
+                        needs_user=True,
+                    )
+                elif tool_call.name == "browser_close":
+                    decision = Decision(True, "safe browser cleanup")
+                else:
+                    # Routine browser operations are governed by the connector
+                    # enablement and the hostname policy, not a redundant
+                    # per-task capability prompt.
+                    decision = Decision(True, "routine Browser Use action")
         allowed = decision.allowed
         reason = decision.reason
 
@@ -695,13 +904,24 @@ class TurnEngine:
             )
 
         if not allowed and decision.needs_user:
+            approval_arguments = tool_call.arguments
+            if tool_call.name.startswith("browser_"):
+                # Approval cards and durable Inbox items never need typed values,
+                # query strings, screenshots, or page content. Keep the raw
+                # ToolCall only in memory for execution after consent.
+                from .browser_security.privacy import scrub_browser_tool_arguments
+
+                approval_arguments = scrub_browser_tool_arguments(
+                    tool_call.name, tool_call.arguments
+                )
             yield Event(
                 EventType.PERMISSION_REQUIRED,
                 {
                     "name": tool_call.name,
-                    "arguments": tool_call.arguments,
+                    "arguments": approval_arguments,
                     "reason": decision.reason,
                     "category": getattr(metadata, "category", ""),
+                    "scope": approval_scope,
                     # The exact target a standing rule could pin, or None when the call
                     # isn't eligible (no declared target arg / exec risk). Surfaces use it
                     # to offer "Allow every time" on automation-run approval cards only.
@@ -718,10 +938,11 @@ class TurnEngine:
                 self.approver(
                     PermissionRequest(
                         tool_name=tool_call.name,
-                        arguments=tool_call.arguments,
+                        arguments=approval_arguments,
                         metadata=metadata,
                         reason=decision.reason,
                         tool_call_id=tool_call.id,
+                        scope=approval_scope,
                     )
                 ),
                 interrupted=ApprovalOutcome.DENY,
@@ -739,6 +960,14 @@ class TurnEngine:
                     reason=reason,
                 )
             else:
+                if tool_call.name.startswith("browser_"):
+                    # Keep the old persisted flag for backwards compatibility;
+                    # hostname decisions now carry routine access across tasks.
+                    self.permissions.allow_browser_for_session()
+                    if approval_scope == "browser_action":
+                        self._browser_confirmed_calls[
+                            tool_call.id
+                        ] = browser_confirmation.binding
                 if outcome is ApprovalOutcome.ALWAYS_TOOL:
                     self.permissions.allow_tool_for_session(tool_call.name)
                 elif outcome is ApprovalOutcome.ALWAYS_COMMAND:
@@ -781,10 +1010,81 @@ class TurnEngine:
 
     def _execute_sync(self, tool_call: ToolCall) -> tuple[Any, str]:
         """Execute one authorized call (runs in a worker thread)."""
+        execution_arguments = dict(tool_call.arguments or {})
+        # Reserved transport metadata is trusted only when this engine creates
+        # it after an explicit confirmation. A model-supplied lookalike is
+        # always discarded before the tool wrapper sees it.
+        execution_arguments.pop("__coworker_browser_confirmation__", None)
+        if tool_call.name.startswith("browser_"):
+            spec = self.registry.get(tool_call.name)
+            confirmation = self._browser_confirmation(spec, tool_call)
+            site_access = self._browser_site_access(tool_call, confirmation)
+            if site_access is not None and not site_access.allowed:
+                self._browser_confirmed_calls.pop(tool_call.id, None)
+                return (
+                    {
+                        "ok": False,
+                        "error": (
+                            "BROWSER_SITE_BLOCKED"
+                            if getattr(site_access, "blocked", False)
+                            else "BROWSER_SITE_ACCESS_REQUIRED"
+                        ),
+                        "message": site_access.reason,
+                        "origin": getattr(site_access, "origin", ""),
+                    },
+                    "error",
+                )
+            approved_binding = self._browser_confirmed_calls.get(tool_call.id)
+            if confirmation.required and tool_call.id not in self._browser_confirmed_calls:
+                self._browser_confirmed_calls.pop(tool_call.id, None)
+                return (
+                    {
+                        "ok": False,
+                        "error": "BROWSER_CONFIRMATION_REQUIRED",
+                        "message": (
+                            "The browser target became consequential after "
+                            "authorization; reissue the action for confirmation."
+                        ),
+                    },
+                    "error",
+                )
+            if (
+                confirmation.required
+                and (confirmation.binding or approved_binding)
+                and approved_binding != confirmation.binding
+            ):
+                self._browser_confirmed_calls.pop(tool_call.id, None)
+                return (
+                    {
+                        "ok": False,
+                        "error": "BROWSER_CONFIRMATION_STALE",
+                        "message": (
+                            "The live browser target changed after confirmation; "
+                            "take a new snapshot and confirm the action again."
+                        ),
+                    },
+                    "error",
+                )
+            if (
+                confirmation.required
+                and getattr(
+                    getattr(spec, "func", None),
+                    "__coworker_browser_accepts_confirmation__",
+                    False,
+                )
+            ):
+                execution_arguments["__coworker_browser_confirmation__"] = {
+                    "binding": confirmation.binding,
+                }
         try:
-            return self.registry.execute(tool_call.name, tool_call.arguments), "ok"
+            spec = self.registry.get(tool_call.name)
+            if spec is None:
+                raise KeyError(f"Tool not registered: {tool_call.name}")
+            return spec.func(**execution_arguments), "ok"
         except Exception as exc:
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"
+        finally:
+            self._browser_confirmed_calls.pop(tool_call.id, None)
 
     def _record_result(self, tool_call: ToolCall, result: Any, status: str) -> Event:
         # A `_display` key on a tool result is user-facing metadata the AGENT must
@@ -843,6 +1143,13 @@ class TurnEngine:
             "arguments": tool_call.arguments,
             **event,
         }
+        # Browser observations can contain page text, typed values, URLs with query
+        # strings, screenshots, and credentials. They remain available to the active
+        # model loop, but the durable audit boundary is allowlist-only.
+        if tool_call.name.startswith("browser_"):
+            from .browser_security.privacy import scrub_browser_audit_event
+
+            payload = scrub_browser_audit_event(payload)
         try:
             self.audit_sink(payload)
         except Exception:

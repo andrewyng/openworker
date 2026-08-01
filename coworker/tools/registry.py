@@ -56,6 +56,11 @@ class ToolRegistry:
     def get(self, name: str) -> Optional[ToolSpec]:
         return self._tools.get(name)
 
+    def unregister(self, name: str) -> Optional[ToolSpec]:
+        """Remove one tool from the model and execution surfaces."""
+
+        return self._tools.pop(name, None)
+
     def schemas(self) -> list[dict[str, Any]]:
         return [spec.schema for spec in self._tools.values()]
 

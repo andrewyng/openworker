@@ -88,6 +88,16 @@ class PermissionEngine:
     auto_allow_tools: set[str] = field(default_factory=set)
     session_allow_tools: set[str] = field(default_factory=set)
     session_allow_commands: set[str] = field(default_factory=set)
+    # Browser Use has one explicit consent boundary per conversation.  This is
+    # intentionally separate from ``session_allow_tools``: a browser grant covers
+    # the capability's routine navigation/inspection actions, while consequential
+    # DOM actions are still classified and confirmed at their point of use.
+    browser_session_allowed: bool = False
+    # Optional process-persistent hostname policy supplied by SessionManager.
+    # Kept as ``Any`` to avoid coupling the general permission engine to the
+    # Playwright/browser package. TurnEngine calls its evaluate_url/allow_host
+    # methods only for trusted Browser Use preflights.
+    browser_site_policy: Any = None
     # Task-scoped standing rules (§25): {tool: {allowed targets}}, seeded from the owning
     # ScheduledTask's target-shaped entries. Kept by reference and re-read every check, so a
     # rule minted mid-run ("Allow every time") applies to the run's next call too.
@@ -184,6 +194,9 @@ class PermissionEngine:
     def allow_command_for_session(self, command: str) -> None:
         if command:
             self.session_allow_commands.add(command)
+
+    def allow_browser_for_session(self) -> None:
+        self.browser_session_allowed = True
 
     # -- helpers ----------------------------------------------------------------
     def _candidate(self, path: str) -> Path:

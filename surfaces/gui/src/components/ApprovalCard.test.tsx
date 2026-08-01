@@ -83,6 +83,29 @@ describe("ApprovalCard — standing scoped approvals (§25)", () => {
 });
 
 describe("ApprovalCard — §35 shapes", () => {
+  it("presents the first routine browser prompt as one task-scoped grant", () => {
+    const onApprove = vi.fn();
+    render(
+      <ApprovalCard
+        item={sendApproval({
+          name: "browser_open_url",
+          args: { url: "https://example.com" },
+          reason:
+            "Allow Browser Use for this task. Routine browser actions will not ask again; consequential actions still require confirmation.",
+          category: "connector",
+          scope: "browser_session",
+        })}
+        onApprove={onApprove}
+      />,
+    );
+
+    expect(screen.getByText("Allow Browser Use for this task")).toBeTruthy();
+    expect(screen.getByText("Allow")).toBeTruthy();
+    expect(screen.queryByText("Allow once")).toBeNull();
+    fireEvent.click(screen.getByText("Allow"));
+    expect(onApprove).toHaveBeenCalledWith("once");
+  });
+
   it("routine file writes render as a compact row: humanized title, inline preview, Allow → once", () => {
     const onApprove = vi.fn();
     render(
