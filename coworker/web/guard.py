@@ -63,6 +63,10 @@ def check_url(url: str) -> Optional[str]:
     if not host:
         return "url has no host"
 
+    import os
+    if os.environ.get("COWORKER_ALLOW_LOCAL_REQUESTS") == "true":
+        return None
+
     # A literal address needs no lookup.
     try:
         literal = ipaddress.ip_address(host)

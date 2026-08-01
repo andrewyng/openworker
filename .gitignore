@@ -21,3 +21,4 @@ proxy_trace.log
 # and most of it is quarantine rather than curated knowledge. The migration
 # manifests under build/ are what make the tree reconstructible, not git.
 knowledge_packs/
+__pycache__

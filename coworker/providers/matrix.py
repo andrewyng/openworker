@@ -112,7 +112,15 @@ MATRIX: dict[str, ModelEntry] = {
     # -- resellers (their model namespaces, verbatim) -----------------------------
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
     "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together", _AGENTIC, 128_000),
-    # Kimi K3 (2026-07-16) is not on Together yet — weights land ~07-27; revisit then.
+    # Kimi K3 on Together (landed late July 2026): 1M window, native vision; PDFs
+    # unverified over the compat surface (falls back via pdf_support.py, like Muse Spark).
+    "together:moonshotai/Kimi-K3": ModelEntry(
+        "Kimi K3 · via Together",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_000_000,
+    ),
     "together:moonshotai/Kimi-K2.7-Code": ModelEntry(
         "Kimi K2.7 Code · via Together", _AGENTIC, 256_000
     ),

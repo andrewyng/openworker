@@ -6,6 +6,7 @@ import {
   setPdfSettings,
   setScratchBase,
   setSessionsPeek,
+  setContextBar,
   setWorkspaceTrusted,
   type ModelSettings,
   type PdfSettings,
@@ -680,6 +681,8 @@ function AppearanceSection() {
 
       <SidebarCard />
 
+      <ContextBarCard />
+
       <FilesCard />
 
       <TrustedWorkspacesCard />
@@ -960,6 +963,48 @@ function SidebarCard() {
       <div className={FIELD_HELP}>
         Longer lists collapse behind &ldquo;Show more&rdquo;. Applies per coworker and per project.
       </div>
+    </div>
+  );
+}
+
+// -- Composer: context-window bar (owner ask 2026-07-30) ------------------------
+// The chip's bar is context-window occupancy; the session total (unbounded) lives in
+// the popover. Some people would rather not watch a meter at all, hence the toggle.
+function ContextBarCard() {
+  const [shown, setShown] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => setShown(s.context_bar === true))
+      .catch(() => setShown(false));
+  }, []);
+
+  const save = async (next: boolean) => {
+    setShown(next);
+    await setContextBar(next);
+  };
+
+  if (shown === null) return null;
+  return (
+    <div className={CARD + " p-4 mb-4"} data-testid="context-bar-card">
+      <div className={FIELD_LABEL}>Composer</div>
+      <label className="flex items-start gap-3 py-2">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          data-testid="context-bar-toggle"
+          checked={shown}
+          onChange={(e) => save(e.target.checked)}
+        />
+        <span>
+          <span className="block text-[13px] text-ink">Show the context window bar</span>
+          <span className="block text-[12px] text-muted">
+            A small meter showing how full the model&rsquo;s context window is. Turn it off
+            to show this session&rsquo;s token total instead; either way the full breakdown
+            is one click away.
+          </span>
+        </span>
+      </label>
     </div>
   );
 }

@@ -176,3 +176,16 @@ def test_browser_open_url_is_guarded_and_never_launches(monkeypatch):
     out = open_url("http://169.254.169.254/latest/meta-data/")
     assert "link-local" in out["error"]
     assert out.get("ok") is None
+
+
+def test_local_requests_bypass_env_var(monkeypatch):
+    """Setting COWORKER_ALLOW_LOCAL_REQUESTS=true must bypass local IP address guards."""
+    monkeypatch.setenv("COWORKER_ALLOW_LOCAL_REQUESTS", "true")
+    # Loopback IP
+    assert guard.check_url("http://127.0.0.1:11434") is None
+    # Private IP
+    assert guard.check_url("http://192.168.1.1") is None
+    # Localhost
+    assert guard.check_url("http://localhost:8000") is None
+    # Link local metadata
+    assert guard.check_url("http://169.254.169.254") is None

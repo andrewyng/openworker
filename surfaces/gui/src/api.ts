@@ -692,6 +692,9 @@ export interface ModelSettings {
   nav_layout?: "flat" | "grouped";
   // Sidebar: sessions shown per group before "Show more" (default 5, 1–50).
   sessions_peek?: number;
+  // Composer: show the context-window fill bar (default FALSE; absent → the chip shows
+  // the session total). The usage popover keeps both numbers regardless.
+  context_bar?: boolean;
   // Curated-matrix display names ({full id → "GLM-5.2 · via Together"}); custom models absent.
   model_labels?: Record<string, string>;
   // {full id → context window in tokens}, verified matrix entries only — drives the
@@ -755,6 +758,18 @@ export async function setSessionsPeek(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessions_peek: n }),
+  });
+  return res.json();
+}
+
+/** Persist whether the composer shows the context-window fill bar. */
+export async function setContextBar(
+  shown: boolean,
+): Promise<{ ok: boolean; context_bar?: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/context-bar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ context_bar: shown }),
   });
   return res.json();
 }

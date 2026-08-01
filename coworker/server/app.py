@@ -1367,6 +1367,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         # Sidebar: sessions shown per group before "Show more" (owner ask, 2026-07-03).
         return manager.set_sessions_peek((body or {}).get("sessions_peek", 5))
 
+    @app.post("/v1/settings/context-bar")
+    def settings_set_context_bar(body: dict) -> dict[str, Any]:
+        # Composer: show the context-window fill bar, or just the popover (owner ask).
+        return manager.set_context_bar((body or {}).get("context_bar", True))
+
     @app.post("/v1/settings/pdf")
     def settings_set_pdf(body: dict) -> dict[str, Any]:
         # Token savings (owner ask, 2026-07-17): fallback mode for models without native
