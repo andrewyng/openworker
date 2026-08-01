@@ -1,0 +1,220 @@
+# Knowledge-pack taxonomy.
+#
+# Maps source-tree module folders onto the ExpertPack layout. The source module
+# list IS the taxonomy: every module carries a stable slug prefix, a domain tag,
+# a semester (which becomes a `term:` tag rather than a directory), and where
+# known the MTU course code.
+#
+# `match` entries are matched case-insensitively against any path segment of the
+# harvested file's origin path, longest-pattern-first. Edit this file rather
+# than the code when a module is renamed or a new one appears.
+
+packs:
+  ai-foundations:
+    type: product
+    description: Taught-module knowledge across the MSc in Artificial Intelligence.
+  msc-final-project:
+    type: product
+    description: Architecture and reference for the MSc final-project codebase.
+  coursework-archive:
+    type: process
+    description: Administrative and submission records. Indexed, excluded from RAG.
+
+modules:
+  # Intelligent Agents / the vacuum world are week-1 material of this module;
+  # W1_COMP9016_2023.md identifies the course code.
+  - match: ["1_1_Knowledge_Representation", "COMP9016", "Intelligent_Agents",
+            "Intelligent_Agent_Vacuum_World"]
+    prefix: kr
+    domain: knowledge-representation
+    term: "1-1"
+    course: COMP9016
+    pack: ai-foundations
+
+  - match: ["1_1_Metaheuristics-", "1_1_Metaheuristics", "COMP9058", "Metaheuristic Optimisation"]
+    prefix: meta
+    domain: metaheuristics
+    term: "1-1"
+    course: COMP9058
+    pack: ai-foundations
+
+  - match: ["1_1_Practical_ML", "COMP9061", "Practical Machine Learning"]
+    prefix: pml
+    domain: practical-ml
+    term: "1-1"
+    course: COMP9061
+    pack: ai-foundations
+
+  - match: ["1_2_Deep_Learning"]
+    prefix: dl
+    domain: deep-learning
+    term: "1-2"
+    pack: ai-foundations
+
+  - match: ["1_2_Machine_Vision"]
+    prefix: mv
+    domain: machine-vision
+    term: "1-2"
+    pack: ai-foundations
+
+  - match: ["1_2_NLP"]
+    prefix: nlp
+    domain: nlp
+    term: "1-2"
+    pack: ai-foundations
+
+  # Largest untouched module (103 PDFs) and mostly papers, so it lands in
+  # reference/ rather than concepts/ by default.
+  - match: ["1_2_Research_Practice"]
+    prefix: rp
+    domain: research-practice
+    term: "1-2"
+    pack: ai-foundations
+    default_type: reference
+
+  - match: ["1_2_Source_code_Optional"]
+    prefix: src
+    domain: source-code
+    term: "1-2"
+    pack: ai-foundations
+
+  - match: ["2_1_COMP8062_Cloud Automation&Orchestration", "COMP8062"]
+    prefix: cloud
+    domain: cloud-automation
+    term: "2-1"
+    course: COMP8062
+    pack: ai-foundations
+
+  - match: ["2_1_COMP9053_Scripting for Cybersecurity", "COMP9053"]
+    prefix: cysec
+    domain: scripting-cybersecurity
+    term: "2-1"
+    course: COMP9053
+    pack: ai-foundations
+
+  - match: ["2_1_COMP9057_Decision Analytics", "COMP9057", "Decision_Analytics"]
+    prefix: da
+    domain: decision-analytics
+    term: "2-1"
+    course: COMP9057
+    pack: ai-foundations
+
+  - match: ["2_1_COMP9062_Big Data Processing", "COMP9062", "Big Data Processing"]
+    prefix: bigdata
+    domain: big-data
+    term: "2-1"
+    course: COMP9062
+    pack: ai-foundations
+
+  - match: ["2_1_COMP9069_Robotics & Autonomous Systems", "COMP9069",
+            "Robotics and auonomous systems", "Robotics and autonomous systems"]
+    prefix: robotics
+    domain: robotics
+    term: "2-1"
+    course: COMP9069
+    pack: ai-foundations
+
+  - match: ["2_1_COMP9072_Distributed Ledger Technology", "COMP9072"]
+    prefix: dlt
+    domain: distributed-ledger
+    term: "2-1"
+    course: COMP9072
+    pack: ai-foundations
+
+  - match: ["2_1_COMP9097_TinyML Engineering", "COMP9097"]
+    prefix: tinyml
+    domain: tinyml
+    term: "2-1"
+    course: COMP9097
+    pack: ai-foundations
+
+  - match: ["2_1_SOFT9022_Programming Language Design", "SOFT9022"]
+    prefix: pld
+    domain: programming-language-design
+    term: "2-1"
+    course: SOFT9022
+    pack: ai-foundations
+
+  - match: ["Standards_ISO"]
+    prefix: std
+    domain: standards
+    term: null
+    pack: ai-foundations
+    default_type: reference
+
+
+  # --- final project -------------------------------------------------------
+  # Decision 2a: keep the Release_A snapshot as reference, quarantine the
+  # Draft / PythonProject / archive snapshots of the same codebase, and
+  # re-harvest at subsystem granularity.
+  - match: ["2_2_AI_Msc_Final_Project", "2_2_AI_Project"]
+    prefix: proj
+    domain: final-project
+    term: "2-2"
+    pack: msc-final-project
+
+# Path segments whose presence forces a file into the quarantine set. Matched
+# against origin path segments, case-insensitively.
+quarantine_segments:
+  - Draft
+  - PythonProject
+  - archive
+  - dev_ResearchAssistants
+  - Project2          # PML per-source-file code summaries, same pattern as Draft
+
+# Snapshot that survives the collapse.
+keep_snapshot: Release_A
+
+# Everything here is administrative: kept in the vault, marked
+# retrieval_strategy: navigation, and excluded from the RAG index.
+navigation_segments:
+  - 0_Grades
+  - MTU_admin
+  - Qualifications
+  - Submissions
+  - admin
+  - Cork School of Music
+
+# Source folders explicitly out of scope (institutional course catalogues for
+# other programmes). Listed so `kp queue` never walks them.
+out_of_scope:
+  - Computing
+  - Electronic Engineering
+  - Management & Enterprise
+  - Cork School of Music
+  - GoogleDrive
+
+# Quality gates for `kp triage` and `kp validate`.
+quality:
+  # Below this a body is a stub: the harvester emitted a heading and a sentence
+  # rather than a document. The real corpus bottoms out around 1376 bytes.
+  min_body_bytes: 1200
+
+  # Two harvests of the SAME source document are redundant by definition and
+  # `triage --quarantine-redundant` collapses them without consulting this.
+  # This threshold governs the softer case - similar bodies from *different*
+  # sources - which is reported, never auto-quarantined. Tuned on the real
+  # corpus: distinct lecture handouts covering one topic sit at 0.60-0.71,
+  # so 0.72 reports genuine overlap without flagging every DA lecture pair.
+  near_duplicate_ratio: 0.72
+
+  # Tags marking content as non-technical. Never auto-quarantined: a supply
+  # chain project legitimately cites supply chain material, so pack fit is a
+  # human call. Reported so that call actually gets made.
+  off_topic_tags:
+    - dei
+    - diversity
+    - inclusion
+    - hr-strategy
+    - leadership
+    - marketing
+
+# Directory -> content type, mirroring ep-validate's DIR_TYPE_MAP.
+dir_types:
+  concepts: concept
+  workflows: workflow
+  troubleshooting: troubleshooting
+  faq: faq
+  reference: reference
+  decisions: decision
+  meta: meta
