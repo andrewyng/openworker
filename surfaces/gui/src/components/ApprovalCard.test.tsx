@@ -304,3 +304,52 @@ describe("InboxItemCard — parked save_skill proposals (SKILLS-SPEC §5.2)", ()
     expect(onResolve).toHaveBeenCalledWith("i9", "deny");
   });
 });
+
+describe("InboxItemCard — ask_user options that aren't strings", () => {
+  const question = (options: unknown[]): InboxItem =>
+    ({
+      id: "q1",
+      session_id: "s1",
+      kind: "question",
+      title: "Ship it?",
+      body: "",
+      state: "pending",
+      resolution: null,
+      inbox: "default",
+      created_at: "",
+      resolved_at: null,
+      options,
+      allow_text: true,
+    }) as unknown as InboxItem;
+
+  it("renders object-shaped options instead of taking the app down", () => {
+    const onResolve = vi.fn();
+    // The MiniMax-M3 shape that blanked the window, and Claude Code's, in one card. Rendering an
+    // object as a React child throws; with no boundary above this, that unmounted everything.
+    render(
+      <InboxItemCard
+        item={question([{ content: "Ship it" }, { label: "Wait", description: "hold a day" }])}
+        onResolve={onResolve}
+      />,
+    );
+    expect(screen.getByText("Ship it")).toBeTruthy();
+    expect(screen.getByText("Wait — hold a day")).toBeTruthy();
+    // The resolution is the normalized string, so the answer the agent receives is answerable text.
+    fireEvent.click(screen.getByText("Ship it"));
+    expect(onResolve).toHaveBeenCalledWith("q1", "Ship it");
+  });
+
+  it("multi-select joins the normalized labels", () => {
+    const onResolve = vi.fn();
+    render(
+      <InboxItemCard
+        item={{ ...question([{ content: "EU" }, { content: "US" }]), multi: true }}
+        onResolve={onResolve}
+      />,
+    );
+    fireEvent.click(screen.getByText("EU"));
+    fireEvent.click(screen.getByText("US"));
+    fireEvent.click(screen.getByText("Send (2)"));
+    expect(onResolve).toHaveBeenCalledWith("q1", "EU, US");
+  });
+});

@@ -31,6 +31,28 @@ const OPT_ON = "border-accent bg-accentSoft text-accent font-medium";
 const INPUT =
   "flex-1 min-w-0 rounded-lg bg-paper border border-line px-3 py-2 text-[13px] text-ink placeholder:text-faint outline-none focus:border-lineStrong";
 
+// `options` is typed `string[]`, but the type is a promise the wire can't keep: models routinely
+// answer ask_user with objects ([{content}] from MiniMax-M3, [{label, description}] from anything
+// imitating Claude Code) and only the LOCAL server coerces them (inbox.py). The live
+// question_requested frame and any older/third-party server still deliver the raw shape, and an
+// object rendered as a React child throws — which used to take the whole app down. Mirror the
+// server's field order so both surfaces name a choice the same way.
+function optionLabel(opt: unknown): string {
+  if (typeof opt === "string") return opt;
+  if (opt && typeof opt === "object") {
+    const o = opt as Record<string, unknown>;
+    const key = ["content", "label", "text", "title", "value", "name"].find(
+      (k) => typeof o[k] === "string" && (o[k] as string).trim(),
+    );
+    const label = key ? (o[key] as string) : JSON.stringify(opt);
+    const desc = o.description;
+    return typeof desc === "string" && desc.trim() && desc.trim() !== label.trim()
+      ? `${label} — ${desc}`
+      : label;
+  }
+  return String(opt);
+}
+
 export function InboxItemCard({
   item,
   onResolve,
@@ -44,7 +66,8 @@ export function InboxItemCard({
 }) {
   const [answer, setAnswer] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
-  const options = item.options || [];
+  // Normalized up front so selection, the multi-select join and the resolution all speak strings.
+  const options = ((item.options as unknown[]) || []).map(optionLabel);
   const multi = !!item.multi;
   const allowText = item.allow_text !== false;
 
