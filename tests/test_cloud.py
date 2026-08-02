@@ -410,6 +410,15 @@ def test_emit_sends_nothing_when_opted_out(secrets, config, monkeypatch):
     )
 
 
+def test_gallery_install_sends_nothing_when_opted_out(secrets, config, monkeypatch):
+    _signed_in(secrets)
+    cloud.set_telemetry_enabled(secrets, False)
+    monkeypatch.setattr(
+        cloud.httpx, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError())
+    )
+    cloud.gallery_install_event(secrets, config, "sales")
+
+
 def test_emit_is_content_free_and_hashes_session_id(secrets, config, monkeypatch):
     _signed_in(secrets)
     sent = {}

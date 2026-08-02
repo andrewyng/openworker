@@ -645,6 +645,8 @@ def gallery_manifest(secrets: SecretStore, config: Config, slug: str) -> Optiona
 
 def gallery_install_event(secrets: SecretStore, config: Config, slug: str) -> None:
     """Best-effort product telemetry (slug/version only, no content)."""
+    if not telemetry_enabled(secrets):
+        return
     token = fresh_access_token(secrets, config)
     if not token:
         return
