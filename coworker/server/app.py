@@ -1021,7 +1021,7 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.post("/v1/cloud/telemetry")
     def cloud_telemetry(body: dict) -> dict[str, Any]:
-        """The Phase 5 opt-out toggle. Local preference only — signed-out users
+        """The Phase 5 telemetry preference. Local preference only — signed-out users
         send nothing regardless of this value."""
         from .. import cloud
 

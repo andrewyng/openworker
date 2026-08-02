@@ -266,7 +266,7 @@ def fetch_me(secrets: SecretStore, config: Config) -> Optional[dict]:
 
 # --- telemetry (Phase 5) ---------------------------------------------------------
 # One sentence: which coworker type was started and when — nothing else. Signed-in
-# users only, default-on with an opt-out; signed out (or opted out) sends NOTHING.
+# users only, disabled by default; signed out (or opted out) sends NOTHING.
 # Never sent: titles, prompts, outputs, tool args, file paths, connector content.
 
 TELEMETRY_PROFILE = "cloud:telemetry"
@@ -283,7 +283,7 @@ def install_id(secrets: SecretStore) -> str:
 
 def telemetry_enabled(secrets: SecretStore) -> bool:
     profile = secrets.get(TELEMETRY_PROFILE) or {}
-    return bool(profile.get("enabled", True))  # default-on (only matters signed in)
+    return bool(profile.get("enabled", False))  # only matters when signed in
 
 
 def set_telemetry_enabled(secrets: SecretStore, enabled: bool) -> dict[str, Any]:

@@ -376,10 +376,11 @@ def test_install_id_stable_across_calls(secrets):
     assert cloud.install_id(secrets) == first
 
 
-def test_emit_sends_nothing_signed_out(secrets, config, monkeypatch):
+def test_emit_sends_nothing_by_default(secrets, config, monkeypatch):
     def boom(*a, **k):  # any network call would violate the local-only promise
-        raise AssertionError("signed-out users must send no telemetry")
+        raise AssertionError("telemetry must be opt-in")
 
+    _signed_in(secrets)
     monkeypatch.setattr(cloud.httpx, "post", boom)
     assert (
         cloud.emit_session_created(
@@ -391,6 +392,22 @@ def test_emit_sends_nothing_signed_out(secrets, config, monkeypatch):
             workspace_kind="deliverable",
         )
         is False
+    )
+
+
+def test_emit_sends_nothing_signed_out(secrets, config, monkeypatch):
+    def boom(*a, **k):  # any network call would violate the local-only promise
+        raise AssertionError("signed-out users must send no telemetry")
+
+    cloud.set_telemetry_enabled(secrets, True)
+    monkeypatch.setattr(cloud.httpx, "post", boom)
+    assert not cloud.emit_session_created(
+        secrets,
+        config,
+        session_id="s1",
+        persona_id="sales",
+        persona_family="knowledge",
+        workspace_kind="deliverable",
     )
 
 
@@ -421,6 +438,7 @@ def test_gallery_install_sends_nothing_when_opted_out(secrets, config, monkeypat
 
 def test_emit_is_content_free_and_hashes_session_id(secrets, config, monkeypatch):
     _signed_in(secrets)
+    cloud.set_telemetry_enabled(secrets, True)
     sent = {}
 
     def fake_post(url, **kwargs):
