@@ -190,7 +190,7 @@ def create_app(manager: SessionManager) -> FastAPI:
     }
 
     def _request_authenticated(request: Request) -> bool:
-        provided = request.headers.get("x-openworker-token", "")
+        provided = request.headers.get("x-openworker-token", "") or request.query_params.get("token", "")
         return bool(
             api_token
             and provided
@@ -699,6 +699,22 @@ def create_app(manager: SessionManager) -> FastAPI:
         return manager.reveal_artifact(
             session_id, str(body.get("path", "")), str(body.get("mode", "reveal"))
         )
+
+    @app.get("/v1/sessions/{session_id}/artifacts/serve")
+    def session_artifact_serve(session_id: str, path: str):
+        from fastapi.responses import FileResponse
+        target, err = manager._artifact_target(session_id, path)
+        if target is None:
+            return JSONResponse({"error": err}, status_code=404)
+        mime_map = {
+            ".html": "text/html", ".htm": "text/html",
+            ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".webp": "image/webp", ".gif": "image/gif",
+            ".css": "text/css", ".js": "application/javascript",
+            ".json": "application/json", ".svg": "image/svg+xml",
+        }
+        media = mime_map.get(target.suffix.lower(), "application/octet-stream")
+        return FileResponse(str(target), media_type=media)
 
     @app.get("/v1/memory")
     def memory() -> dict[str, Any]:

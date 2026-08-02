@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 // Emits the asset URL only; the worker itself loads lazily with the pdfjs chunk.
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
+  artifactServeUrl,
   getArtifacts,
   readArtifact,
   revealArtifact,
@@ -379,7 +380,7 @@ function ArtifactViewer({
             key={`${artifact.path}-${reloadKey}`}
             sandbox="allow-scripts allow-same-origin"
             className="artifact-frame"
-            srcDoc={content.content || ""}
+            src={artifactServeUrl(sessionId, artifact.path)}
           />
         ) : content.kind === "markdown" ? (
           <div className="artifact-md">
