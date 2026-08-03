@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { getConnectors } from "../api";
 import { McpTab } from "./ManageTabs";
 import { ConnectorsSection } from "./connectors/ConnectorsSection";
@@ -13,12 +14,13 @@ type IntTab = "connectors" | "mcp";
 
 // Fixed sub-nav (UX-DECISIONS §21): connector detail lives as a SUBPAGE under
 // Connectors, never as a nav item — the nav must not grow per connector.
-const INT_TABS: { key: IntTab; label: string; icon: "plug" | "code" }[] = [
-  { key: "connectors", label: "Connectors", icon: "plug" },
-  { key: "mcp", label: "MCP servers", icon: "code" },
+const INT_TABS: { key: IntTab; labelKey: string; icon: "plug" | "code" }[] = [
+  { key: "connectors", labelKey: "integrations.connectors", icon: "plug" },
+  { key: "mcp", labelKey: "integrations.mcpServers", icon: "code" },
 ];
 
 export function IntegrationsView() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<IntTab>("connectors");
   // Sub-nav count: how many connectors exist. Polled so the badge stays live.
   const [connCount, setConnCount] = useState<number | null>(null);
@@ -28,33 +30,33 @@ export function IntegrationsView() {
       getConnectors().then((cs) => setConnCount(cs.length)).catch(() => {});
     };
     load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
+    const iv = setInterval(load, 5000);
+    return () => clearInterval(iv);
   }, []);
 
   return (
     <main className="flex-1 min-w-0 flex bg-paper">
       <nav className="page-subnav w-[208px] shrink-0 border-r border-line bg-panel/40 px-3 py-4">
         <div className="px-2 text-[13.5px] font-semibold mb-3 flex items-center gap-2">
-          <Icon name="plug" size={16} /> Connectors
+          <Icon name="plug" size={16} /> {t("integrations.connectors")}
         </div>
-        {INT_TABS.map((t) => {
-          const active = tab === t.key;
+        {INT_TABS.map((tabItem) => {
+          const active = tab === tabItem.key;
           return (
             <button
-              key={t.key}
+              key={tabItem.key}
               className={
                 "w-full text-left px-2.5 py-2 rounded-lg text-[13px] flex items-center justify-between " +
                 (active
                   ? "bg-paper text-accent font-medium"
                   : "text-muted hover:bg-paper hover:text-ink")
               }
-              onClick={() => setTab(t.key)}
+              onClick={() => setTab(tabItem.key)}
             >
               <span className="flex items-center gap-2 min-w-0">
-                <Icon name={t.icon} size={15} /> {t.label}
+                <Icon name={tabItem.icon} size={15} /> {t(tabItem.labelKey)}
               </span>
-              {t.key === "connectors" && connCount != null && (
+              {tabItem.key === "connectors" && connCount != null && (
                 <span className={"text-[11px] shrink-0 " + (active ? "text-accent" : "text-faint")}>
                   {connCount}
                 </span>
@@ -69,16 +71,16 @@ export function IntegrationsView() {
           {tab === "connectors" ? (
             <section>
               <PanelHead
-                title="Connectors"
-                sub="Apps and tools your coworkers can use. Connected ones come first."
+                title={t("integrations.connectors")}
+                sub={t("integrations.connectorsSub")}
               />
               <ConnectorsSection />
             </section>
           ) : (
             <section>
               <PanelHead
-                title="MCP servers"
-                sub="External tool servers (stdio or HTTP), shared across all agents."
+                title={t("integrations.mcpServers")}
+                sub={t("integrations.mcpSub")}
               />
               <McpTab />
             </section>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   announceCloudChanged,
   AUTOMATIONS_CHANGED,
@@ -27,6 +28,7 @@ import { PersonaGlyph, personaGlyph } from "./personaIcon";
 import { SearchModal } from "./SearchModal";
 import { baseName } from "../paths";
 import { showPersonas } from "../flags";
+import i18n from "../i18n";
 
 // Session surfaces shown as accordions, in display order. The surfaced personas drive this list
 // (so third-party / Ops personas appear); the hardcoded set is the fallback before personas load.
@@ -46,11 +48,12 @@ const surfaceFromPersona = (p: Persona) => ({
 // Attention = Inbox items awaiting a session (an accent count that bubbles session → persona →
 // footer Inbox — all views of the one Inbox queue, never a second list).
 function AttnBadge({ n }: { n: number }) {
+  const { t } = useTranslation();
   if (!n) return null;
   return (
     <span
       className="text-[10px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
-      title={`${n} awaiting your attention`}
+      title={t("sidebar.attentionBadge", { count: n })}
     >
       {n > 99 ? "99+" : n}
     </span>
@@ -61,11 +64,16 @@ function AttnBadge({ n }: { n: number }) {
 // treatment as the attention badge; failure only colors the tooltip's words, not the
 // sidebar (owner call 2026-07-20: no color, and the entry alone carries the count).
 function UnseenBadge({ n, failed }: { n: number; failed?: boolean }) {
+  const { t } = useTranslation();
   if (!n) return null;
   return (
     <span
       className="text-[10px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
-      title={failed ? `${n} new run${n > 1 ? "s" : ""} — the latest failed` : `${n} new run${n > 1 ? "s" : ""}`}
+      title={
+        failed
+          ? t("automations.unseenRunsFailed", { count: n })
+          : t("automations.unseenRuns", { count: n })
+      }
     >
       {n > 99 ? "99+" : n}
     </span>
@@ -75,13 +83,14 @@ function UnseenBadge({ n, failed }: { n: number; failed?: boolean }) {
 // Liveness = working (in-flight turn) / sleeping (a self-wake is pending). A count-less dot that
 // never bubbles — it says "this is alive", not "this needs you".
 function LiveDot({ state }: { state?: "working" | "sleeping" | "idle" }) {
+  const { t } = useTranslation();
   if (state !== "working" && state !== "sleeping") return null;
   return state === "working" ? (
-    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" title="Working now" />
+    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" title={t("sidebar.liveWorking")} />
   ) : (
     <span
       className="w-1.5 h-1.5 rounded-full bg-faint/60 shrink-0"
-      title="Sleeping (will wake itself)"
+      title={t("sidebar.liveSleeping")}
     />
   );
 }
@@ -89,12 +98,13 @@ function LiveDot({ state }: { state?: "working" | "sleeping" | "idle" }) {
 // §31: a session spawned by a platform mention wears its platform's logo, right-aligned beside
 // the title cluster (owner call 2026-07-13). Slack today; the origin key is the platform id.
 function OriginIcon({ s }: { s: SessionInfo }) {
+  const { t } = useTranslation();
   if (s.origin !== "slack") return null;
   return (
     <ConnectorIcon
       connector={{ logo: "slack", brand_color: "#611f69" }}
       size={12}
-      title={s.origin_label || "From Slack"}
+      title={s.origin_label || t("sidebar.originSlack")}
     />
   );
 }
@@ -154,7 +164,7 @@ const compactAge = (iso?: string | null): string => {
   const then = Date.parse(iso);
   if (Number.isNaN(then)) return "";
   const secs = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (secs < 60) return "now";
+  if (secs < 60) return i18n.t("time.now");
   const mins = Math.floor(secs / 60);
   if (mins < 60) return `${mins}m`;
   const hrs = Math.floor(mins / 60);
@@ -171,6 +181,7 @@ const compactAge = (iso?: string | null): string => {
 // Sessions shown per group before "Show more" comes from Settings (sessions_peek, default 5).
 
 export function Sidebar(props: Props) {
+  const { t } = useTranslation();
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
   // The account row (§26): cloud sign-in status drives the avatar/name/dot; refreshed on
@@ -453,8 +464,8 @@ export function Sidebar(props: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <button
-          title="Session actions"
-          aria-label="Session actions"
+          title={t("sidebar.sessionActions")}
+          aria-label={t("sidebar.sessionActions")}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           data-testid="row-menu"
@@ -475,20 +486,20 @@ export function Sidebar(props: Props) {
               style={{ top: rowMenu!.top, left: rowMenu!.left }}
               role="menu"
             >
-              {item("row-menu-rename", "pencil", "Rename", () => {
+              {item("row-menu-rename", "pencil", t("session.rename"), () => {
                 setEditingId(s.session_id);
                 setEditValue(title);
               })}
-              {item("row-menu-pin", "pin", s.pinned ? "Unpin" : "Pin", () =>
+              {item("row-menu-pin", "pin", s.pinned ? t("session.unpin") : t("session.pin"), () =>
                 props.onTogglePin(s.session_id, !s.pinned),
               )}
-              {item("row-menu-archive", "archive", s.archived ? "Unarchive" : "Archive", () =>
+              {item("row-menu-archive", "archive", s.archived ? t("session.unarchive") : t("session.archive"), () =>
                 props.onArchiveSession(s.session_id, !s.archived),
               )}
               <div className="h-px bg-line my-1 mx-2" />
               {confirmDelId === s.session_id ? (
                 <button
-                  title="Click again to permanently delete"
+                  title={t("sidebar.clickAgainDelete")}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] text-left font-medium text-danger hover:bg-paper"
                   data-testid="row-menu-delete"
                   role="menuitem"
@@ -498,7 +509,7 @@ export function Sidebar(props: Props) {
                   }}
                 >
                   <Icon name="trash" size={13} className="shrink-0" />
-                  <span className="flex-1">Delete?</span>
+                  <span className="flex-1">{t("session.deleteConfirm")}</span>
                 </button>
               ) : (
                 <button
@@ -508,7 +519,7 @@ export function Sidebar(props: Props) {
                   onClick={() => setConfirmDelId(s.session_id)}
                 >
                   <Icon name="trash" size={13} className="shrink-0" />
-                  <span className="flex-1">Delete</span>
+                  <span className="flex-1">{t("session.delete")}</span>
                 </button>
               )}
             </div>
@@ -660,7 +671,7 @@ export function Sidebar(props: Props) {
     pinnedSessions.length > 0 ? (
       <div>
         <div className="px-1.5 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">
-          Pinned
+          {t("sidebar.pinned")}
         </div>
         <div className="space-y-0.5">
           {pinnedSessions.map((s) => cardRow(s))}
@@ -675,7 +686,7 @@ export function Sidebar(props: Props) {
     automations.length > 0 ? (
       <div data-testid="scheduled-band">
         <div className="px-1.5 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">
-          Scheduled
+          {t("sidebar.scheduled")}
         </div>
         <div className="space-y-0.5">
           {automations.map((a) => (
@@ -707,12 +718,12 @@ export function Sidebar(props: Props) {
     return (
     <div className="relative flex items-center justify-between px-1.5 mb-1" data-testid="recent-header">
       <span className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">
-        Recent
+        {t("sidebar.recent")}
       </span>
       <button
         className="w-6 h-6 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper -mr-1"
-        title="Group & filter conversations"
-        aria-label="Group and filter conversations"
+        title={t("sidebar.groupFilter")}
+        aria-label={t("sidebar.groupFilter")}
         onClick={() => setGroupMenuOpen((v) => !v)}
       >
         <Icon name="sliders" size={14} />
@@ -726,9 +737,9 @@ export function Sidebar(props: Props) {
             data-testid="group-filter-menu"
           >
             <div className="px-2 pt-1 pb-1 text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-              Group by
+              {t("sidebar.groupBy")}
             </div>
-            {([["grouped", "Persona"], ["flat", "Chronological"]] as ["flat" | "grouped", string][]).map(
+            {([["grouped", t("sidebar.groupByPersona")], ["flat", t("sidebar.groupByChronological")]] as ["flat" | "grouped", string][]).map(
               ([key, label]) => (
                 <button
                   key={key}
@@ -745,11 +756,11 @@ export function Sidebar(props: Props) {
                 <div className="my-1 border-t border-line" />
                 <div className="px-2 pt-1 pb-1 flex items-center justify-between">
                   <span className="text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-                    Filter by coworker
+                    {t("sidebar.filterByCoworker")}
                   </span>
                   {filterPersonas.size > 0 && (
                     <button className="text-[11px] text-accent" onClick={() => setFilterPersonas(new Set())}>
-                      Clear
+                      {t("sidebar.clearFilter")}
                     </button>
                   )}
                 </div>
@@ -776,7 +787,7 @@ export function Sidebar(props: Props) {
                   })}
                 </div>
                 <div className="px-2 pt-1 pb-0.5 text-[11px] text-faint leading-snug">
-                  None checked shows all.
+                  {t("sidebar.noneCheckedShowsAll")}
                 </div>
               </>
             )}
@@ -860,12 +871,12 @@ export function Sidebar(props: Props) {
                 rows carry a right-aligned compact age and truncate to PROJECT_PEEK + "Show more". */}
             <div className="flex items-center justify-between px-1.5 pt-1">
               <span className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">
-                Projects
+                {t("sidebar.projects")}
               </span>
               <button
                 className="w-5 h-5 grid place-items-center rounded text-faint hover:text-ink hover:bg-panel"
-                title="New project"
-                aria-label="New project"
+                title={t("sidebar.newProject")}
+                aria-label={t("sidebar.newProject")}
                 onClick={() => props.onNewProject(browseKey)}
               >
                 <Icon name="folderPlus" size={14} />
@@ -874,7 +885,7 @@ export function Sidebar(props: Props) {
             <div className="space-y-0.5">
               {projectOrder.length === 0 && (
                 <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                  No projects yet — start one with the + above.
+                  {t("sidebar.noProjects")}
                 </div>
               )}
               {projectOrder.map((proj) => {
@@ -924,13 +935,13 @@ export function Sidebar(props: Props) {
                               className="px-2 py-1 text-[12px] text-faint hover:text-muted"
                               onClick={() => setProjShowAll((s) => toggleSet(s, proj))}
                             >
-                              Show more ({list.length - peek})
+                              {t("sidebar.showMore", { count: list.length - peek })}
                             </button>
                           )}
                         </div>
                       ) : (
                         <div className="px-2 py-1.5 pl-[19px] text-[12px] text-faint leading-snug">
-                          No conversations in this project yet.
+                          {t("sidebar.noConversationsInProject")}
                         </div>
                       ))}
                   </div>
@@ -942,7 +953,7 @@ export function Sidebar(props: Props) {
           <div className="space-y-0.5">
             {mine.filter(matches).length === 0 ? (
               <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                {normalizedQuery ? "No matching conversations." : "No conversations yet."}
+                {normalizedQuery ? t("sidebar.noMatching") : t("sidebar.noConversations")}
               </div>
             ) : (
               <>
@@ -955,7 +966,7 @@ export function Sidebar(props: Props) {
                     className="px-2 py-1 text-[12px] text-faint hover:text-muted"
                     onClick={() => setPersonaShowAll((s) => toggleSet(s, browseKey))}
                   >
-                    Show more ({mine.filter(matches).length - peek})
+                    {t("sidebar.showMore", { count: mine.filter(matches).length - peek })}
                   </button>
                 )}
               </>
@@ -970,7 +981,7 @@ export function Sidebar(props: Props) {
               onClick={() => setShowArchived((v) => !v)}
             >
               <Icon name={showArchived ? "chevronDown" : "chevronRight"} size={13} className="shrink-0" />
-              Archived ({archived.length})
+              {t("sidebar.archived", { count: archived.length })}
             </button>
             {showArchived && (
               <div className="space-y-0.5 mt-0.5">{archived.filter(matches).map((s) => sessionRow(s))}</div>
@@ -995,14 +1006,14 @@ export function Sidebar(props: Props) {
         {props.onCollapse && (
           <button
             className="nav-pin-btn w-7 h-7 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper shrink-0"
-            title={props.collapsed ? "Dock sidebar (⌘B)" : "Collapse sidebar (⌘B)"}
-            aria-label={props.collapsed ? "Dock sidebar" : "Collapse sidebar"}
+            title={props.collapsed ? t("sidebar.dockShortcut") : t("sidebar.collapseShortcut")}
+            aria-label={props.collapsed ? t("sidebar.dock") : t("sidebar.collapse")}
             onClick={props.onCollapse}
           >
             <Icon name="sidebar" size={16} />
           </button>
         )}
-        <div className="brand-wordmark text-[15px]">OpenWorker<span className="beta-tag">BETA</span></div>
+        <div className="brand-wordmark text-[15px]">OpenWorker<span className="beta-tag">{t("app.beta")}</span></div>
       </div>
 
       {/* New session: split button — primary starts the last-used persona; ▾ picks a specific one. */}
@@ -1020,7 +1031,7 @@ export function Sidebar(props: Props) {
           className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left text-muted hover:bg-paper hover:text-ink"
           onClick={() => setSearchModalOpen(true)}
         >
-          <Icon name="search" size={15} className="shrink-0" /> Search
+          <Icon name="search" size={15} className="shrink-0" /> {t("sidebar.search")}
         </button>
       </div>
 
@@ -1036,7 +1047,7 @@ export function Sidebar(props: Props) {
           onClick={props.onOpenScheduled}
         >
           <Icon name="clock" size={15} className="shrink-0" />
-          <span className="flex-1">Automations</span>
+          <span className="flex-1">{t("sidebar.automations")}</span>
         </button>
       </div>
 
@@ -1097,7 +1108,7 @@ export function Sidebar(props: Props) {
             <div className="space-y-0.5">
               {recentSessions.length === 0 ? (
                 <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                  {normalizedQuery ? "No matching conversations." : "No conversations yet."}
+                  {normalizedQuery ? t("sidebar.noMatching") : t("sidebar.noConversations")}
                 </div>
               ) : (
                 <>
@@ -1111,8 +1122,8 @@ export function Sidebar(props: Props) {
                       onClick={() => setRecentExpanded((v) => !v)}
                     >
                       {recentExpanded
-                        ? "Show less"
-                        : `Show ${recentSessions.length - RECENT_PEEK} more`}
+                        ? t("sidebar.showLess")
+                        : t("sidebar.showMore", { count: recentSessions.length - RECENT_PEEK })}
                     </button>
                   )}
                 </>
@@ -1139,14 +1150,14 @@ export function Sidebar(props: Props) {
                 {cloud?.signed_in ? (
                   <div
                     className="px-3 py-1.5 mb-1 text-[11px] text-faint truncate border-b border-line"
-                    title={`${accountEmail} · OpenWorker Cloud`}
+                    title={t("sidebar.accountMenuSignedInAs", { email: accountEmail })}
                   >
-                    {accountEmail} · OpenWorker Cloud
+                    {t("sidebar.accountMenuSignedInAs", { email: accountEmail })}
                   </div>
                 ) : (
                   <>
                     <div className="px-3 py-1.5 text-[11px] text-faint border-b border-line">
-                      Not signed in — one-click connections need OpenWorker Cloud
+                      {t("sidebar.accountMenuNotSignedIn")}
                     </div>
                     <button
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 mb-1 text-[13px] text-left text-accent hover:bg-paper"
@@ -1164,33 +1175,32 @@ export function Sidebar(props: Props) {
                         });
                       }}
                     >
-                      <Icon name="plug" size={15} className="shrink-0" /> Sign in to OpenWorker
-                      Cloud
+                      <Icon name="plug" size={15} className="shrink-0" /> {t("sidebar.signInCloud")}
                     </button>
                   </>
                 )}
                 {appMenuItem(
                   "inbox",
-                  "Inbox",
+                  t("sidebar.accountMenuInbox"),
                   props.onOpenInbox,
                   props.inboxActive,
                   <AttnBadge n={totalAttention} />,
                 )}
-                {appMenuItem("plug", "Connectors", props.onOpenIntegrations, props.integrationsActive)}
+                {appMenuItem("plug", t("sidebar.accountMenuConnectors"), props.onOpenIntegrations, props.integrationsActive)}
                 <div className="h-px bg-line my-1 mx-2" />
                 {appMenuItem(
                   "gear",
-                  "Settings",
+                  t("sidebar.accountMenuSettings"),
                   props.onManage,
                   false,
                   <span className="text-[11px] text-faint">⌘ ,</span>,
                 )}
-                {appMenuItem("clock", "Automations", props.onOpenScheduled, props.scheduledActive)}
-                {appMenuItem("audit", "Activity", props.onOpenAudit, props.auditActive)}
+                {appMenuItem("clock", t("sidebar.automations"), props.onOpenScheduled, props.scheduledActive)}
+                {appMenuItem("audit", t("sidebar.activity"), props.onOpenAudit, props.auditActive)}
                 {cloud?.signed_in && (
                   <>
                     <div className="h-px bg-line my-1 mx-2" />
-                    {appMenuItem("signOut", "Sign out", async () => {
+                    {appMenuItem("signOut", t("sidebar.signOut"), async () => {
                       await cloudLogout().catch(() => {});
                       announceCloudChanged();
                     })}
@@ -1212,7 +1222,7 @@ export function Sidebar(props: Props) {
             }}
             aria-haspopup="menu"
             aria-expanded={appMenuOpen}
-            aria-label={cloud?.signed_in ? `Account: ${accountEmail}` : "Account: not signed in"}
+            aria-label={cloud?.signed_in ? t("sidebar.accountLabel", { email: accountEmail }) : t("sidebar.accountNotSignedIn")}
           >
             <span
               className={
@@ -1226,12 +1236,12 @@ export function Sidebar(props: Props) {
               {cloud?.signed_in ? accountName.slice(0, 1).toUpperCase() : "?"}
             </span>
             <span className={"truncate " + (cloud?.signed_in ? "" : "text-muted")}>
-              {cloud?.signed_in ? accountName : "Not signed in"}
+              {cloud?.signed_in ? accountName : t("sidebar.notSignedIn")}
             </span>
             {cloud?.signed_in && (
               <span
                 className="w-[7px] h-[7px] rounded-full bg-ok shrink-0"
-                title="Signed in to OpenWorker Cloud"
+                title={t("sidebar.signedInCloud")}
                 aria-hidden
               />
             )}
@@ -1247,9 +1257,9 @@ export function Sidebar(props: Props) {
                 data-testid="inbox-chip"
                 role="button"
                 aria-label={
-                  totalAttention > 0 ? `Inbox — ${totalAttention} items need you` : "Inbox"
+                  totalAttention > 0 ? t("sidebar.inboxItemsNeedYou", { count: totalAttention }) : t("sidebar.inbox")
                 }
-                title={totalAttention > 0 ? `Inbox — ${totalAttention} items need you` : "Inbox"}
+                title={totalAttention > 0 ? t("sidebar.inboxItemsNeedYou", { count: totalAttention }) : t("sidebar.inbox")}
                 onClick={(e) => {
                   // The chip goes STRAIGHT to Inbox — the menu is the row's target, not the chip's.
                   e.stopPropagation();
@@ -1299,6 +1309,7 @@ function NewSessionSplit({
   onNew: (agent: string) => void;
   onManage: () => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const enabled = (personas || []).filter((p) => p.enabled);
   // With a single enabled persona there is nothing to pick — the split collapses to a plain
@@ -1315,13 +1326,13 @@ function NewSessionSplit({
           }
           onClick={() => onNew(solo && enabled.length === 1 ? enabled[0].id : current)}
         >
-          <Icon name="plus" size={15} className="shrink-0" /> New session
+          <Icon name="plus" size={15} className="shrink-0" /> {t("sidebar.newSession")}
         </button>
         {!solo && (
           <button
             className="px-2.5 rounded-r-lg bg-accent text-white border-l border-white/25 hover:opacity-95 flex items-center"
-            title="Start with a specific persona"
-            aria-label="Choose a persona"
+            title={t("sidebar.startWithPersona")}
+            aria-label={t("sidebar.choosePersona")}
             onClick={() => setOpen((v) => !v)}
           >
             <Icon name="chevronDown" size={13} />
@@ -1333,7 +1344,7 @@ function NewSessionSplit({
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
           <div className="newsplit-menu absolute left-3 right-3 mt-1 z-30 bg-panel border border-line rounded-xl2 shadow-xl p-1">
             <div className="px-2 py-1 text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-              Start a session as
+              {t("sidebar.startAs")}
             </div>
             {enabled.map((p) => (
               <button
@@ -1366,7 +1377,7 @@ function NewSessionSplit({
                     onManage();
                   }}
                 >
-                  Manage personas…
+                  {t("sidebar.managePersonas")}
                 </button>
               </div>
             )}

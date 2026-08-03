@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   createAutomation,
   deleteAutomation,
@@ -64,6 +65,7 @@ interface Props {
 }
 
 export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
+  const { t } = useTranslation();
   const [tasks, setTasks] = useState<Automation[]>([]);
   const [openId, setOpenId] = useState<string | null>(initialOpenId ?? null);
   const [showForm, setShowForm] = useState(false);
@@ -123,22 +125,19 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
     <Shell>
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <PanelHead title="Automations" sub="Recurring tasks OpenWorker runs on a schedule." />
+          <PanelHead title={t("scheduled.title")} sub={t("scheduled.subtitleDetail")} />
         </div>
         <button
           className="text-[12.5px] px-3 py-1.5 rounded-lg border border-lineStrong bg-panel hover:border-accent hover:text-accent shrink-0"
           onClick={() => setShowForm((v) => !v)}
         >
-          + New automation
+          + {t("scheduled.newAutomation")}
         </button>
       </div>
 
       <div className="text-[12px] text-faint flex gap-1.5 mb-4">
         <span aria-hidden>ⓘ</span>
-        <span>
-          Runs only while openworker-server is up — a missed schedule catches up once when it next
-          starts.
-        </span>
+        <span>{t("scheduled.runsOnlyWhenUp")}</span>
       </div>
 
       {showForm && (
@@ -156,27 +155,28 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
       {empty ? (
         !showForm && (
           <div className={CARD + " p-4 text-[12.5px] text-muted"}>
-            No scheduled tasks yet — use a template above, click <strong>+ New automation</strong>,
-            or just ask OpenWorker in a session.
+            {t("scheduled.noTasksBefore")}
+            <strong>+ {t("scheduled.newAutomation")}</strong>
+            {t("scheduled.noTasksAfter")}
           </div>
         )
       ) : (
         <div className="flex flex-col gap-2.5">
-          {tasks.map((t) => (
+          {tasks.map((task) => (
             <div
               className={CARD + " sched-card px-4 py-3 cursor-pointer hover:border-lineStrong transition-colors"}
-              key={t.id}
-              onClick={() => setOpenId(t.id)}
+              key={task.id}
+              onClick={() => setOpenId(task.id)}
             >
               <div className="flex items-center justify-between gap-2.5 mb-1">
-                <span className="text-[13.5px] font-semibold truncate">{t.title}</span>
+                <span className="text-[13.5px] font-semibold truncate">{task.title}</span>
                 <button
                   className="sched-card-del"
-                  title="Delete automation"
-                  aria-label={`Delete ${t.title}`}
+                  title={t("scheduled.deleteTitle")}
+                  aria-label={t("scheduled.deleteLabel", { title: task.title })}
                   onClick={async (e) => {
                     e.stopPropagation();
-                    await deleteAutomation(t.id);
+                    await deleteAutomation(task.id);
                     refresh();
                   }}
                 >
@@ -185,8 +185,10 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
               </div>
               <div className="flex items-center gap-1.5 text-[12px] text-muted">
                 <Icon name="clock" size={13} className="text-faint shrink-0" />
-                {t.enabled ? t.schedule : "Paused"} · next {fmt(t.next_run)} · {t.run_count} run{t.run_count === 1 ? "" : "s"}
-                {t.last_status ? ` · last ${t.last_status}` : ""}
+                {task.enabled ? task.schedule : t("scheduled.paused")} ·{" "}
+                {t("scheduled.nextLabel")} {fmt(task.next_run)} ·{" "}
+                {t("scheduled.runCount", { count: task.run_count })}
+                {task.last_status ? ` · ${t("scheduled.lastLabel")} ${task.last_status}` : ""}
               </div>
             </div>
           ))}
@@ -209,29 +211,30 @@ function NewAutomationForm({
   const [instructions, setInstructions] = useState("");
   const [time, setTime] = useState("09:00");
   const [freq, setFreq] = useState("daily");
+  const { t } = useTranslation();
 
   const valid = title.trim() && instructions.trim();
 
   return (
     <div className={CARD + " tmpl-form p-4 mb-4"}>
       <div className="text-[11px] uppercase tracking-[0.05em] text-faint mb-2.5">
-        New automation
+        {t("scheduled.newAutomation")}
       </div>
       <input
         className="tmpl-input"
-        placeholder="Title (e.g. Daily standup notes)"
+        placeholder={t("scheduled.titleExample")}
         value={title}
         onChange={(e) => setTitle(e.target.value)}
       />
       <textarea
         className="tmpl-input tmpl-textarea"
-        placeholder="What should it do each run? (e.g. Summarize today's calendar and open tasks.)"
+        placeholder={t("scheduled.instructionsExample")}
         value={instructions}
         onChange={(e) => setInstructions(e.target.value)}
       />
       <div className="tmpl-sched">
         <label className="tmpl-field">
-          <span>At</span>
+          <span>{t("scheduled.at")}</span>
           <input
             type="time"
             className="tmpl-input tmpl-time"
@@ -240,15 +243,15 @@ function NewAutomationForm({
           />
         </label>
         <label className="tmpl-field">
-          <span>Repeat</span>
+          <span>{t("scheduled.repeat")}</span>
           <select
             className="tmpl-input tmpl-select"
             value={freq}
             onChange={(e) => setFreq(e.target.value)}
           >
-            <option value="daily">Every day</option>
-            <option value="weekdays">Weekdays</option>
-            <option value="weekends">Weekends</option>
+            <option value="daily">{t("scheduled.everyDay")}</option>
+            <option value="weekdays">{t("scheduled.weekdays")}</option>
+            <option value="weekends">{t("scheduled.weekends")}</option>
           </select>
         </label>
       </div>
@@ -264,9 +267,9 @@ function NewAutomationForm({
             })
           }
         >
-          {busy ? "Creating…" : "Create automation"}
+          {busy ? t("scheduled.creating") : t("scheduled.createAutomation")}
         </button>
-        <button className="link" onClick={onCancel}>cancel</button>
+        <button className="link" onClick={onCancel}>{t("common.cancel")}</button>
       </div>
     </div>
   );
@@ -296,6 +299,7 @@ function TaskDetail({
   const [time, setTime] = useState("09:00");
   const [freq, setFreq] = useState("daily");
   const [saving, setSaving] = useState(false);
+  const { t } = useTranslation();
 
   // The seen mark AS OF opening — the "new" pills compare against this frozen value
   // while mark-seen advances the stored one (badge clears; highlights survive).
@@ -328,7 +332,7 @@ function TaskDetail({
   if (!task)
     return (
       <Shell>
-        <div className="text-[13px] text-muted">Loading…</div>
+        <div className="text-[13px] text-muted">{t("common.loading")}</div>
       </Shell>
     );
 
@@ -367,7 +371,7 @@ function TaskDetail({
   return (
     <Shell>
       <button className="text-[13px] text-muted hover:text-ink mb-3" onClick={onBack}>
-        ← Automations
+        {t("scheduled.backToAutomations")}
       </button>
       <div className="sched-detail">
         <div className="sched-detail-head">
@@ -376,7 +380,7 @@ function TaskDetail({
               className="tmpl-input sched-edit-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Title"
+              placeholder={t("scheduled.titleLabel")}
             />
           ) : (
             <h2 className="text-[18px] font-semibold tracking-tight">{task.title}</h2>
@@ -385,18 +389,18 @@ function TaskDetail({
             {editing ? (
               <>
                 <button className="btn-primary sm" disabled={saving || !title.trim() || !instructions.trim()} onClick={saveEdit}>
-                  {saving ? "Saving…" : "Save"}
+                  {saving ? t("scheduled.saving") : t("scheduled.save")}
                 </button>
-                <button className="link" onClick={() => setEditing(false)}>cancel</button>
+                <button className="link" onClick={() => setEditing(false)}>{t("common.cancel")}</button>
               </>
             ) : (
               <>
                 <button className="btn-primary sm" onClick={() => onRunNow(id, task.title)}>
-                  ▶ Run now
+                  ▶ {t("scheduled.runNow")}
                 </button>
-                <button className="btn sm" onClick={startEdit}>Edit</button>
+                <button className="btn sm" onClick={startEdit}>{t("scheduled.edit")}</button>
                 <button className="btn sm danger-btn" onClick={remove}>
-                  <Icon name="trash" size={14} /> Delete
+                  <Icon name="trash" size={14} /> {t("scheduled.delete")}
                 </button>
               </>
             )}
@@ -406,15 +410,15 @@ function TaskDetail({
         {editing ? (
           <div className="tmpl-sched sched-edit-sched">
             <label className="tmpl-field">
-              <span>At</span>
+              <span>{t("scheduled.at")}</span>
               <input type="time" className="tmpl-input tmpl-time" value={time} onChange={(e) => setTime(e.target.value)} />
             </label>
             <label className="tmpl-field">
-              <span>Repeat</span>
+              <span>{t("scheduled.repeat")}</span>
               <select className="tmpl-input tmpl-select" value={freq} onChange={(e) => setFreq(e.target.value)}>
-                <option value="daily">Every day</option>
-                <option value="weekdays">Weekdays</option>
-                <option value="weekends">Weekends</option>
+                <option value="daily">{t("scheduled.everyDay")}</option>
+                <option value="weekdays">{t("scheduled.weekdays")}</option>
+                <option value="weekends">{t("scheduled.weekends")}</option>
               </select>
             </label>
           </div>
@@ -424,11 +428,13 @@ function TaskDetail({
               <input type="checkbox" checked={task.enabled} onChange={toggle} />
               <span className="slider" />
             </label>{" "}
-            {task.enabled ? `Active · next ${fmt(task.next_run)}` : "Paused"} · {task.schedule}
+            {task.enabled
+              ? `${t("scheduled.active")} · ${t("scheduled.nextLabel")} ${fmt(task.next_run)}`
+              : t("scheduled.paused")} · {task.schedule}
           </div>
         )}
 
-        <div className="sa-sub">Instructions</div>
+        <div className="sa-sub">{t("scheduled.instructions")}</div>
         {editing ? (
           <textarea
             className="tmpl-input tmpl-textarea sched-edit-instr"
@@ -441,9 +447,9 @@ function TaskDetail({
 
         {(task.always_allowed || []).length > 0 && (
           <>
-            <div className="sa-sub">Allowed without asking</div>
+            <div className="sa-sub">{t("scheduled.allowedWithoutAsking")}</div>
             <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
-              Standing approvals this automation may use — everything else still asks first.
+              {t("scheduled.allowedDescDetail")}
             </div>
             <div className="sched-grants" data-testid="task-grants">
               {(task.always_allowed || []).map((rule) => (
@@ -454,13 +460,13 @@ function TaskDetail({
                   </span>
                   <button
                     className="link"
-                    title="This automation will ask for approval again"
+                    title={t("scheduled.revokeTooltipDetail")}
                     onClick={async () => {
                       await updateAutomation(id, { revoke: rule.entry });
                       refresh();
                     }}
                   >
-                    Revoke
+                    {t("scheduled.revoke")}
                   </button>
                 </div>
               ))}
@@ -468,11 +474,11 @@ function TaskDetail({
           </>
         )}
 
-        <div className="sa-sub">Runs</div>
+        <div className="sa-sub">{t("scheduled.runs")}</div>
         <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
-          Each run is a live conversation — open one to see what the agent did and ask a follow-up.
+          {t("scheduled.runsDescDetail")}
         </div>
-        {runs.length === 0 && <div className="dim">No runs yet.</div>}
+        {runs.length === 0 && <div className="dim">{t("scheduled.noRuns")}</div>}
         {runs.map((r) => (
           <div
             className="sched-run open"
@@ -484,18 +490,20 @@ function TaskDetail({
                 title: task.title,
               })
             }
-            title="Open this run's conversation"
+            title={t("scheduled.openRunTooltipDetail")}
           >
             <div className="sched-run-row">
               <span>
                 {seenMark !== null && r.started_at > seenMark && (
-                  <span className="run-new-pill" data-testid="run-new">new</span>
+                  <span className="run-new-pill" data-testid="run-new">{t("scheduled.new")}</span>
                 )}
                 {fmt(r.started_at)} · <span className={"run-" + r.status}>{r.status}</span> · {r.trigger}
-                {r.artifacts.length > 0 && <span className="dim"> · {r.artifacts.length} file(s)</span>}
+                {r.artifacts.length > 0 && (
+                  <span className="dim"> · {t("scheduled.fileCount", { count: r.artifacts.length })}</span>
+                )}
               </span>
               <span className="sched-run-go" aria-hidden>
-                Open ›
+                {t("scheduled.open")} ›
               </span>
             </div>
             {r.result_text && <div className="sched-run-peek">{r.result_text}</div>}

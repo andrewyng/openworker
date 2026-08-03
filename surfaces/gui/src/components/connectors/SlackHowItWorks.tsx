@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { SlackWorkspace } from "../../api";
 
 // UX-027: the post-connect "how mentions reach you" card. A tabbed carousel of
@@ -12,11 +13,11 @@ import type { SlackWorkspace } from "../../api";
 
 const KEY = "ocw.slack.howitworks.collapsed";
 const DUR = 8000; // per-scene loop, ms
-const TABS = ["Mention → session", "Threads stay connected", "Allow teammates"];
+const TABS = ["conn.hiwTabMention", "conn.hiwTabThreads", "conn.hiwTabTeammates"];
 const CAPTIONS = [
-  "Mention @OpenWorker in any channel it's invited to — a session opens here, and the answer lands back in Slack as a thread.",
-  "Mention it again inside the thread — the conversation continues in the same session, context intact. The thread is the session.",
-  "Teammates aren't auto-trusted: their first mention waits for your OK, then they're on the People list.",
+  "conn.hiwCaptionMention",
+  "conn.hiwCaptionThreads",
+  "conn.hiwCaptionTeammates",
 ];
 
 function readCollapsed(): boolean {
@@ -24,6 +25,7 @@ function readCollapsed(): boolean {
 }
 
 export function SlackHowItWorks({ workspaces }: { workspaces: SlackWorkspace[] }) {
+  const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [tab, setTab] = useState(0);
   const [cycle, setCycle] = useState(0); // bump = remount the scene = restart its animations
@@ -64,7 +66,7 @@ export function SlackHowItWorks({ workspaces }: { workspaces: SlackWorkspace[] }
     (mine &&
       (mine.installer_name ||
         mine.allowed_user_names?.[mine.installer_user_id ?? ""])) ||
-    "You";
+    t("conn.you");
   const meFirst = meName.split(/\s+/)[0];
   const meInitial = (meName[0] || "Y").toUpperCase();
 
@@ -74,15 +76,15 @@ export function SlackHowItWorks({ workspaces }: { workspaces: SlackWorkspace[] }
     <div className="mb-5" data-testid="slack-howitworks">
       <div className="flex items-baseline gap-2.5">
         <h3 className="text-[13.5px] font-semibold tracking-tight">
-          Getting started with Slack &amp; OpenWorker
+          {t("conn.hiwTitle")}
         </h3>
         <button
           className="ml-auto shrink-0 inline-flex items-center gap-1.5 text-[12px] text-muted hover:text-ink"
           data-testid="hiw-collapse"
-          title={collapsed ? "Show how mentions work" : "Collapse — reopen anytime"}
+          title={collapsed ? t("conn.hiwShowTitle") : t("conn.hiwCollapseTitle")}
           onClick={toggle}
         >
-          {collapsed ? "How it works" : "Hide"}
+          {collapsed ? t("conn.hiwHowItWorks") : t("common.hide")}
           <span
             className="text-[9px] transition-transform"
             style={collapsed ? { transform: "rotate(-90deg)" } : undefined}
@@ -93,24 +95,24 @@ export function SlackHowItWorks({ workspaces }: { workspaces: SlackWorkspace[] }
       </div>
       <div className="text-[12px] text-muted mt-0.5">
         <span className="text-ok font-bold">✓ </span>
-        {ws?.account || "Workspace"} connected
+        {ws?.account || t("conn.hiwWorkspace")} {t("conn.hiwConnected")}
         {mine
-          ? " — you're on the People list, so your mentions get through."
-          : " — here's how mentions reach you."}
+          ? t("conn.hiwOnPeople")
+          : t("conn.hiwMentionsReach")}
       </div>
 
       {!collapsed && (
         <div className="mt-3">
           <div className="flex gap-1 border-b border-line mb-3">
-            {TABS.map((t, i) => (
+            {TABS.map((tabKey, i) => (
               <button
-                key={t}
+                key={tabKey}
                 className={"hiw-tab" + (i === tab ? " on" : "")}
                 data-testid={`hiw-tab-${i}`}
                 style={{ "--hiw-dur": `${DUR}ms` } as React.CSSProperties}
                 onClick={() => jump(i)}
               >
-                {t}
+                {t(tabKey)}
                 <span className="hiw-prog"><i /></span>
               </button>
             ))}
@@ -122,7 +124,7 @@ export function SlackHowItWorks({ workspaces }: { workspaces: SlackWorkspace[] }
             {tab === 2 && <SceneTeammates />}
           </div>
           <div className="mt-2.5 text-[12px] text-muted" data-testid="hiw-caption">
-            {CAPTIONS[tab]}
+            {t(CAPTIONS[tab])}
           </div>
         </div>
       )}
@@ -170,29 +172,31 @@ const SendIcon = () => (
 );
 
 function SlackRail({ active }: { active: string }) {
+  const { t } = useTranslation();
   return (
     <div className="hiw-slrail">
       <div className="hiw-ws">{WS_NAME} ▾</div>
-      <div className="hiw-slnav"><ThreadsIcon /> Threads</div>
-      <div className="hiw-slnav"><SendIcon /> Drafts &amp; sent</div>
-      <div className="hiw-sect">Channels</div>
+      <div className="hiw-slnav"><ThreadsIcon /> {t("conn.hiwThreads")}</div>
+      <div className="hiw-slnav"><SendIcon /> {t("conn.hiwDraftsSent")}</div>
+      <div className="hiw-sect">{t("conn.hiwChannels")}</div>
       <div className={"hiw-ch" + (active === "general" ? " on" : "")}># general</div>
       <div className={"hiw-ch" + (active === "launch-room" ? " on" : "")}># launch-room</div>
-      <div className="hiw-sect">Direct messages</div>
+      <div className="hiw-sect">{t("conn.hiwDirectMessages")}</div>
       <div className="hiw-slnav"><span className="hiw-pres" />Priya N</div>
       <div className="hiw-slnav"><span className="hiw-pres" />Emma W</div>
-      <div className="hiw-sect">Agents &amp; apps</div>
+      <div className="hiw-sect">{t("conn.hiwAgentsApps")}</div>
       <div className="hiw-slnav"><span className="hiw-appav">OW</span>OpenWorker</div>
     </div>
   );
 }
 
 function SlackWin({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation();
   return (
     <div className="hiw-win hiw-sl">
       <div className="hiw-sltop">
         <span className="hiw-dots"><i /><i /><i /></span>
-        <span className="hiw-slsearch">⌕ Describe what you are looking for</span>
+        <span className="hiw-slsearch">{t("conn.hiwSlackSearch")}</span>
       </div>
       <div className="hiw-slbody">{children}</div>
     </div>
@@ -234,13 +238,14 @@ function OwWin({ children }: { children: React.ReactNode }) {
 }
 
 function OwRail({ hot, hotSub, glow }: { hot?: string; hotSub?: string; glow?: boolean }) {
+  const { t } = useTranslation();
   return (
     <div className="hiw-owrail">
       <div className="hiw-brand">OpenWorker</div>
-      <div className="hiw-newbtn">＋ New session</div>
-      <div className="hiw-ownav">⌕ Search</div>
-      <div className="hiw-ownav">◷ Automations</div>
-      <div className="hiw-sect">RECENT</div>
+      <div className="hiw-newbtn">{t("conn.hiwNewSession")}</div>
+      <div className="hiw-ownav">{t("conn.hiwSearch")}</div>
+      <div className="hiw-ownav">{t("conn.hiwAutomations")}</div>
+      <div className="hiw-sect">{t("conn.hiwRecent")}</div>
       {hot && (
         <div
           className={"hiw-sess hot" + (glow ? " hiw-glow hiw-k" : " hiw-stay")}
@@ -280,61 +285,62 @@ function Msg({
 
 /* ---- scene 1: mention in a channel → new session, reply via thread panel ---- */
 function SceneMention({ meFirst, meInitial }: { meFirst: string; meInitial: string }) {
+  const { t } = useTranslation();
   return (
     <>
       <span className="hiw-spark" style={d("1.9s")} />
-      <Sticky d="3.1s" pos={{ left: "51%", top: "8%" }}>a @mention starts a NEW session →</Sticky>
-      <Sticky d="5.8s" r pos={{ left: "27%", bottom: "5%" }}>the answer comes back as a thread ↑</Sticky>
+      <Sticky d="3.1s" pos={{ left: "51%", top: "8%" }}>{t("conn.hiwStickyMention")}</Sticky>
+      <Sticky d="5.8s" r pos={{ left: "27%", bottom: "5%" }}>{t("conn.hiwStickyThread")}</Sticky>
       <SlackWin>
         <SlackRail active="launch-room" />
         <div className="hiw-slmain">
-          <div className="hiw-slhead"># launch-room <span className="hiw-sub">· 24 members</span></div>
+          <div className="hiw-slhead"># launch-room <span className="hiw-sub">{t("conn.hiwMembers", { count: 24 })}</span></div>
           <div className="hiw-slmsgs">
-            <SlackDate label="Today" />
+            <SlackDate label={t("conn.hiwToday")} />
             <Msg av="P" avBg="#7c6cd0" name="Priya N" ts="6:31 PM">
-              signups are spiking since the post 📈
+              {t("conn.hiwSignups")}
             </Msg>
             <Msg
               av={meInitial} avBg="#3b82c4" name={meFirst} ts="6:33 PM" delay=".8s"
               extra={
                 <span className="hiw-replybar hiw-k" style={d("4.6s")}>
-                  <span className="hiw-sav2">OW</span> 1 reply
-                  <span className="hiw-later">Today at 6:34 PM</span>
+                  <span className="hiw-sav2">OW</span> {t("conn.hiwReplies", { count: 1 })}
+                  <span className="hiw-later">{t("conn.hiwTodayAt", { time: "6:34 PM" })}</span>
                 </span>
               }
             >
-              <span className="hiw-men">@OpenWorker</span> summarize this thread
+              <span className="hiw-men">@OpenWorker</span> {t("conn.hiwSummarizeThread")}
             </Msg>
           </div>
-          <SlackComposer placeholder="Message #launch-room" />
+          <SlackComposer placeholder={t("conn.hiwMessageChannel", { channel: "launch-room" })} />
           <div className="hiw-slthread hiw-k" style={d("5.1s")}>
-            <div className="hiw-th">Thread <span className="hiw-sub"># launch-room</span><span className="hiw-x">✕</span></div>
+            <div className="hiw-th">{t("conn.hiwThread")} <span className="hiw-sub"># launch-room</span><span className="hiw-x">✕</span></div>
             <div className="hiw-tmsgs">
               <Msg av={meInitial} avBg="#3b82c4" name={meFirst} ts="6:33 PM">
-                <span className="hiw-men">@OpenWorker</span> summarize this thread
+                <span className="hiw-men">@OpenWorker</span> {t("conn.hiwSummarizeThread")}
               </Msg>
-              <div className="hiw-cnt">1 reply</div>
+              <div className="hiw-cnt">{t("conn.hiwReplies", { count: 1 })}</div>
               <Msg av="OW" avBg="#4a154b" name="OpenWorker" app ts="6:34 PM">
-                Launch traction: signups up 3.4× since the post…
+                {t("conn.hiwLaunchTraction")}
               </Msg>
             </div>
-            <div className="hiw-treply">Reply…</div>
+            <div className="hiw-treply">{t("conn.hiwReply")}</div>
           </div>
         </div>
       </SlackWin>
       <OwWin>
-        <OwRail hot="Summarize #launch-room" hotSub="via Slack · now" glow />
+        <OwRail hot={t("conn.hiwSummarizeChannel", { channel: "launch-room" })} hotSub={t("conn.hiwViaSlackNow")} glow />
         <div className="hiw-owmain">
           <div className="hiw-owtitle hiw-k" style={d("2.6s")}>
-            Summarize #launch-room <span className="hiw-via">via Slack</span>
+            {t("conn.hiwSummarizeChannel", { channel: "launch-room" })} <span className="hiw-via">{t("conn.hiwViaSlack")}</span>
           </div>
           <div className="hiw-owchat">
-            <div className="hiw-bub user hiw-k" style={d("2.8s")}>@OpenWorker summarize this thread</div>
+            <div className="hiw-bub user hiw-k" style={d("2.8s")}>{t("conn.hiwMentionSummarize")}</div>
             <div className="hiw-bub agent hiw-k" style={d("3.6s")}>
-              Reading the thread… signups up 3.4×, top referrer is the press page. <i>(replying in the Slack thread)</i>
+              {t("conn.hiwReadingThread")} <i>{t("conn.hiwReplyingInThread")}</i>
             </div>
           </div>
-          <div className="hiw-owcomposer">Message OpenWorker…</div>
+          <div className="hiw-owcomposer">{t("conn.hiwMessageOpenWorker")}</div>
         </div>
       </OwWin>
     </>
@@ -343,78 +349,79 @@ function SceneMention({ meFirst, meInitial }: { meFirst: string; meInitial: stri
 
 /* ---- scene 2: mention INSIDE the open thread panel → the same session ---- */
 function SceneThread({ meFirst, meInitial }: { meFirst: string; meInitial: string }) {
+  const { t } = useTranslation();
   return (
     <>
       <span className="hiw-spark" style={d("1.9s")} />
-      <Sticky d="3.2s" r pos={{ left: "52%", top: "10%" }}>chatting in the thread continues the SAME conversation →</Sticky>
+      <Sticky d="3.2s" r pos={{ left: "52%", top: "10%" }}>{t("conn.hiwStickySameConv")}</Sticky>
       <SlackWin>
         <SlackRail active="launch-room" />
         <div className="hiw-slmain">
-          <div className="hiw-slhead"># launch-room <span className="hiw-sub">· 24 members</span></div>
+          <div className="hiw-slhead"># launch-room <span className="hiw-sub">{t("conn.hiwMembers", { count: 24 })}</span></div>
           <div className="hiw-slmsgs">
-            <SlackDate label="Today" />
+            <SlackDate label={t("conn.hiwToday")} />
             <Msg av="P" avBg="#7c6cd0" name="Priya N" ts="6:31 PM">
-              signups are spiking since the post 📈
+              {t("conn.hiwSignups")}
             </Msg>
             <Msg
               av={meInitial} avBg="#3b82c4" name={meFirst} ts="6:33 PM"
               extra={
                 <span className="hiw-replybar">
-                  <span className="hiw-sav2">OW</span> 2 replies
-                  <span className="hiw-later">Today at 6:36 PM</span>
+                  <span className="hiw-sav2">OW</span> {t("conn.hiwReplies", { count: 2 })}
+                  <span className="hiw-later">{t("conn.hiwTodayAt", { time: "6:36 PM" })}</span>
                 </span>
               }
             >
-              <span className="hiw-men">@OpenWorker</span> summarize this thread
+              <span className="hiw-men">@OpenWorker</span> {t("conn.hiwSummarizeThread")}
             </Msg>
           </div>
-          <SlackComposer placeholder="Message #launch-room" />
+          <SlackComposer placeholder={t("conn.hiwMessageChannel", { channel: "launch-room" })} />
           {/* thread panel open from the start — the new mentions play INSIDE it */}
           <div className="hiw-slthread">
-            <div className="hiw-th">Thread <span className="hiw-sub"># launch-room</span><span className="hiw-x">✕</span></div>
+            <div className="hiw-th">{t("conn.hiwThread")} <span className="hiw-sub"># launch-room</span><span className="hiw-x">✕</span></div>
             <div className="hiw-tmsgs">
               <Msg av={meInitial} avBg="#3b82c4" name={meFirst} ts="6:33 PM">
-                <span className="hiw-men">@OpenWorker</span> summarize this thread
+                <span className="hiw-men">@OpenWorker</span> {t("conn.hiwSummarizeThread")}
               </Msg>
-              <div className="hiw-cnt">2 replies</div>
+              <div className="hiw-cnt">{t("conn.hiwReplies", { count: 2 })}</div>
               <Msg av="OW" avBg="#4a154b" name="OpenWorker" app ts="6:34 PM">
-                Launch traction: signups up 3.4×…
+                {t("conn.hiwLaunchTractionShort")}
               </Msg>
               <Msg av="P" avBg="#7c6cd0" name="Priya N" ts="6:36 PM" delay=".8s">
-                <span className="hiw-men">@OpenWorker</span> break it down by country?
+                <span className="hiw-men">@OpenWorker</span> {t("conn.hiwBreakDown")}
               </Msg>
               <Msg av="OW" avBg="#4a154b" name="OpenWorker" app ts="6:36 PM" delay="4.8s">
-                Top: US 41% · India 22% · Germany 9%…
+                {t("conn.hiwTopCountries")}
               </Msg>
             </div>
-            <div className="hiw-treply">Reply…</div>
+            <div className="hiw-treply">{t("conn.hiwReply")}</div>
           </div>
         </div>
       </SlackWin>
       <OwWin>
         <div className="hiw-owrail">
           <div className="hiw-brand">OpenWorker</div>
-          <div className="hiw-newbtn">＋ New session</div>
-          <div className="hiw-ownav">⌕ Search</div>
-          <div className="hiw-ownav">◷ Automations</div>
-          <div className="hiw-sect">RECENT</div>
+          <div className="hiw-newbtn">{t("conn.hiwNewSession")}</div>
+          <div className="hiw-ownav">{t("conn.hiwSearch")}</div>
+          <div className="hiw-ownav">{t("conn.hiwAutomations")}</div>
+          <div className="hiw-sect">{t("conn.hiwRecent")}</div>
           <div className="hiw-sess hot hiw-stay hiw-glow" style={{ "--g": "2.4s" } as React.CSSProperties}>
-            <b>Summarize #launch-room</b>via Slack
+            <b>{t("conn.hiwSummarizeChannel", { channel: "launch-room" })}</b>{t("conn.hiwViaSlack")}
           </div>
           <div className="hiw-sess"><b>Jira vs Linear</b>Coworker</div>
         </div>
         <div className="hiw-owmain">
           <div className="hiw-owtitle">
-            Summarize #launch-room <span className="hiw-via">via Slack — same session</span>
+            {t("conn.hiwSummarizeChannel", { channel: "launch-room" })} <span className="hiw-via">{t("conn.hiwViaSlackSameSession")}</span>
           </div>
           <div className="hiw-owchat">
-            <div className="hiw-bub agent hiw-stay">…signups up 3.4×, top referrer is the press page.</div>
-            <div className="hiw-bub user hiw-k" style={d("2.6s")}>break it down by country?</div>
+            <div className="hiw-bub agent hiw-stay">{t("conn.hiwSignupsShort")}</div>
+            <div className="hiw-bub user hiw-k" style={d("2.6s")}>{t("conn.hiwBreakDown")}</div>
             <div className="hiw-bub agent hiw-k" style={d("3.8s")}>
-              Top countries: US 41%, India 22%, Germany 9% — context kept from the whole thread.
+              {t("conn.hiwTopCountriesFull")}
             </div>
           </div>
-          <div className="hiw-owcomposer">Message OpenWorker…</div>
+          <div className="hiw-owcomposer">{t("conn.hiwMessageOpenWorker")}</div>
         </div>
       </OwWin>
     </>
@@ -423,41 +430,42 @@ function SceneThread({ meFirst, meInitial }: { meFirst: string; meInitial: strin
 
 /* ---- scene 3: a teammate's first mention waits for your OK ---- */
 function SceneTeammates() {
+  const { t } = useTranslation();
   return (
     <>
       <span className="hiw-spark" style={d("1.9s")} />
-      <Sticky d="3.4s" pos={{ left: "53%", bottom: "10%" }}>first-time senders wait for your OK</Sticky>
+      <Sticky d="3.4s" pos={{ left: "53%", bottom: "10%" }}>{t("conn.hiwStickyFirstTime")}</Sticky>
       <SlackWin>
         <SlackRail active="launch-room" />
         <div className="hiw-slmain">
-          <div className="hiw-slhead"># launch-room <span className="hiw-sub">· 24 members</span></div>
+          <div className="hiw-slhead"># launch-room <span className="hiw-sub">{t("conn.hiwMembers", { count: 24 })}</span></div>
           <div className="hiw-slmsgs">
-            <SlackDate label="Today" />
+            <SlackDate label={t("conn.hiwToday")} />
             <Msg
               av="P" avBg="#7c6cd0" name="Priya N" ts="6:41 PM" delay=".7s"
               extra={
                 <span className="hiw-replybar hiw-k" style={d("5.6s")}>
-                  <span className="hiw-sav2">OW</span> 1 reply
-                  <span className="hiw-later">after you allow</span>
+                  <span className="hiw-sav2">OW</span> {t("conn.hiwReplies", { count: 1 })}
+                  <span className="hiw-later">{t("conn.hiwAfterYouAllow")}</span>
                 </span>
               }
             >
-              <span className="hiw-men">@OpenWorker</span> pull the signup numbers?
+              <span className="hiw-men">@OpenWorker</span> {t("conn.hiwPullSignups")}
             </Msg>
           </div>
-          <SlackComposer placeholder="Message #launch-room" />
+          <SlackComposer placeholder={t("conn.hiwMessageChannel", { channel: "launch-room" })} />
         </div>
       </SlackWin>
       <OwWin>
-        <OwRail hot="Summarize #launch-room" hotSub="via Slack" />
+        <OwRail hot={t("conn.hiwSummarizeChannel", { channel: "launch-room" })} hotSub={t("conn.hiwViaSlack")} />
         <div className="hiw-owmain">
-          <div className="hiw-owtitle">Slack — {WS_NAME}</div>
+          <div className="hiw-owtitle">{t("conn.hiwSlackWorkspace", { name: WS_NAME })}</div>
           <div className="hiw-waitrow hiw-k hiw-glow" style={d("2s", { "--g": "2.5s" })}>
-            <span className="min-w-0"><b>Priya N</b> is waiting</span>
-            <span className="hiw-allowbtn ml-auto">Allow &amp; deliver</span>
+            <span className="min-w-0"><b>Priya N</b> {t("conn.hiwIsWaitingSuffix")}</span>
+            <span className="hiw-allowbtn ml-auto">{t("manageTabs.allowAndDeliver")}</span>
           </div>
           <div className="hiw-waitcap hiw-k" style={d("3.4s")}>
-            Each teammate&apos;s <b>first</b> mention waits for your OK — then they&apos;re on the People list and it flows.
+            {t("conn.hiwWaitCaption")}
           </div>
         </div>
       </OwWin>

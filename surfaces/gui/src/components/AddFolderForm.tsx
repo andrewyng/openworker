@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { chooseFolder } from "../tauri";
 import { Icon } from "./Icon";
 
@@ -20,6 +21,7 @@ export function AddFolderForm({
   startOpen?: boolean;
   onDismiss?: () => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(!!startOpen);
   const [path, setPath] = useState("");
   const [writable, setWritable] = useState(false);
@@ -45,7 +47,7 @@ export function AddFolderForm({
   if (!open) {
     return (
       <button className={"addfolder-trigger" + (compact ? " compact" : "")} onClick={() => setOpen(true)}>
-        <Icon name="folderPlus" size={15} /> Give access to a folder
+        <Icon name="folderPlus" size={15} /> {t("addFolder.giveAccess")}
       </button>
     );
   }
@@ -56,7 +58,7 @@ export function AddFolderForm({
         <input
           className="addfolder-path"
           autoFocus
-          placeholder="Choose or paste a folder path…"
+          placeholder={t("dirReq.chooseOrPaste")}
           value={path}
           spellCheck={false}
           onChange={(e) => setPath(e.target.value)}
@@ -65,21 +67,21 @@ export function AddFolderForm({
             else if (e.key === "Escape") reset();
           }}
         />
-        <button className="btn icon-only" onClick={browse} title="Choose location" aria-label="Choose location">
+        <button className="btn icon-only" onClick={browse} title={t("dirReq.chooseLocation")} aria-label={t("dirReq.chooseLocation")}>
           <Icon name="folder" size={15} />
         </button>
       </div>
       <div className="addfolder-actions">
-        <label className="addfolder-write" title="Off = read-only. Tick to let the agent write here.">
+        <label className="addfolder-write" title={t("addFolder.writeHelp")}>
           <input type="checkbox" checked={writable} onChange={(e) => setWritable(e.target.checked)} />
-          Allow writes
+          {t("addFolder.allowWrites")}
         </label>
         <span className="spacer" />
         <button className="btn" onClick={reset}>
-          Cancel
+          {t("common.cancel")}
         </button>
         <button className="btn primary" disabled={busy || !path.trim()} onClick={submit}>
-          Add
+          {t("addFolder.add")}
         </button>
       </div>
     </div>

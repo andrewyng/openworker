@@ -9,6 +9,7 @@
 // Enabling/disabling POSTs /v1/personas/{id}/enable.
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   getConnectors,
   getPersonaDetail,
@@ -41,6 +42,7 @@ export function PersonaView({
   onBack?: () => void;
   onOpenIntegrations?: () => void;
 }) {
+  const { t } = useTranslation();
   const [detail, setDetail] = useState<PersonaDetail | null>(null);
   const [byName, setByName] = useState<ConnectorMap>({});
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +53,7 @@ export function PersonaView({
     setError(null);
     getPersonaDetail(personaId)
       .then((d) => live && setDetail(d))
-      .catch(() => live && setError("Could not load this persona."));
+      .catch(() => live && setError(t("personaView.couldNotLoad")));
     getConnectors()
       .then((list) => live && setByName(indexConnectors(list)))
       .catch(() => {});
@@ -83,12 +85,12 @@ export function PersonaView({
             className="inline-flex items-center gap-1 text-[12.5px] text-muted hover:text-ink"
             onClick={onBack}
           >
-            <Icon name="arrowLeft" size={15} /> Back
+            <Icon name="arrowLeft" size={15} /> {t("common.back")}
           </button>
           <span className="text-faint">·</span>
         </>
       )}
-      <span className="text-[13px] font-semibold">Persona</span>
+      <span className="text-[13px] font-semibold">{t("personaView.title")}</span>
     </div>
   );
 
@@ -96,7 +98,7 @@ export function PersonaView({
     return (
       <main className="flex-1 min-w-0 flex flex-col bg-paper">
         {header}
-        <div className="p-12 text-center text-faint text-[13px]">{error || "Loading…"}</div>
+        <div className="p-12 text-center text-faint text-[13px]">{error || t("common.loading")}</div>
       </main>
     );
   }
@@ -118,15 +120,15 @@ export function PersonaView({
               <p className="text-[13px] text-muted mt-0.5">{detail.tagline}</p>
             </div>
             <div className="ml-auto flex items-center gap-2">
-              <span className="text-[12px] text-muted">{detail.enabled ? "Enabled" : "Disabled"}</span>
-              <Toggle checked={detail.enabled} onChange={toggleEnabled} title="Enable this persona" />
+              <span className="text-[12px] text-muted">{detail.enabled ? t("common.enabled") : t("common.disabled")}</span>
+              <Toggle checked={detail.enabled} onChange={toggleEnabled} title={t("personaView.enablePersona")} />
             </div>
           </header>
 
           {/* about */}
           {detail.description && (
             <section>
-              <div className={`${SEC_H} mb-1.5`}>About</div>
+              <div className={`${SEC_H} mb-1.5`}>{t("personaView.about")}</div>
               <p className="text-[14px] leading-relaxed text-ink/90">{detail.description}</p>
             </section>
           )}
@@ -134,7 +136,7 @@ export function PersonaView({
           {/* tools */}
           {detail.tools.length > 0 && (
             <section>
-              <div className={`${SEC_H} mb-2`}>Built-in capabilities</div>
+              <div className={`${SEC_H} mb-2`}>{t("personaView.builtInCapabilities")}</div>
               <div className="flex flex-wrap gap-1.5">
                 {detail.tools.map((t) => (
                   <span
@@ -151,10 +153,9 @@ export function PersonaView({
           {/* connections for full benefit (manifest recommends) */}
           {detail.recommends.length > 0 && (
             <section>
-              <div className={`${SEC_H} mb-1`}>Connections for full benefit</div>
+              <div className={`${SEC_H} mb-1`}>{t("personaView.connectionsForFullBenefit")}</div>
               <p className="text-[12.5px] text-muted mb-2.5">
-                Declared by the persona — wire {shortPersonaName(detail.name, personaId)} into these
-                to unlock its full workflow.
+                {t("personaView.connectionsHelp", { name: shortPersonaName(detail.name, personaId) })}
               </p>
               <div className="rounded-xl2 border border-line overflow-hidden">
                 {detail.recommends.map((r, i) => {
@@ -173,7 +174,7 @@ export function PersonaView({
                           {isMcp ? (
                             <span className={TAG_MCP}>MCP</span>
                           ) : r.tier === "core" ? (
-                            <span className={TAG_CORE}>core</span>
+                            <span className={TAG_CORE}>{t("access.core")}</span>
                           ) : null}
                         </div>
                         <div className="text-[12px] text-muted">{r.reason}</div>
@@ -181,14 +182,14 @@ export function PersonaView({
                       {r.connected ? (
                         <span className="inline-flex items-center gap-1 text-[11.5px] text-ok shrink-0">
                           <span className="w-1.5 h-1.5 rounded-full bg-ok" />
-                          connected
+                          {t("quickstart.connectedState")}
                         </span>
                       ) : (
                         <button
                           className={r.tier === "core" && !isMcp ? BTN_ACCENT : BTN_BORDERED}
                           onClick={onOpenIntegrations}
                         >
-                          {isMcp ? "Add" : "Connect"}
+                          {isMcp ? t("addFolder.add") : t("access.connect")}
                         </button>
                       )}
                     </div>
@@ -201,10 +202,9 @@ export function PersonaView({
           {/* persona-default connections (persona → session default) */}
           {detail.default_connections.length > 0 && (
             <section>
-              <div className={`${SEC_H} mb-1`}>New sessions get by default</div>
+              <div className={`${SEC_H} mb-1`}>{t("personaView.newSessionsDefault")}</div>
               <p className="text-[12.5px] text-muted mb-2.5">
-                When you start a {shortPersonaName(detail.name, personaId)} session these are enabled
-                automatically. You can still mute any of them per session.
+                {t("personaView.defaultConnectionsHelp", { name: shortPersonaName(detail.name, personaId) })}
               </p>
               <div className="space-y-1.5">
                 {detail.default_connections.map((c) => (
@@ -219,14 +219,14 @@ export function PersonaView({
                     <div className="flex-1 text-[13px] font-medium">
                       {labelFor(c.connector, byName)}
                       {!c.connected && (
-                        <span className="text-[11px] text-faint font-normal"> · connect to enable</span>
+                        <span className="text-[11px] text-faint font-normal">{t("personaView.connectToEnable")}</span>
                       )}
                     </div>
                     <Toggle
                       checked={c.enabled}
                       disabled={!c.connected}
                       onChange={(next) => toggleDefault(c.connector, next)}
-                      title={c.connected ? "On by default for new sessions" : "Connect this first"}
+                      title={c.connected ? t("personaView.onByDefault") : t("personaView.connectFirst")}
                     />
                   </div>
                 ))}
@@ -238,7 +238,7 @@ export function PersonaView({
           <section className="flex flex-wrap gap-x-8 gap-y-2 text-[12.5px]">
             {detail.recommended_models.length > 0 && (
               <div>
-                <span className="text-faint">Models</span> ·{" "}
+                <span className="text-faint">{t("models.title")}</span> ·{" "}
                 {detail.recommended_models.map((m, i) => (
                   <span key={m}>
                     <span className="font-mono">{m}</span>
@@ -249,12 +249,12 @@ export function PersonaView({
             )}
             {detail.default_permission_mode && (
               <div>
-                <span className="text-faint">Default mode</span> · {detail.default_permission_mode}
+                <span className="text-faint">{t("personaView.defaultMode")}</span> · {detail.default_permission_mode}
               </div>
             )}
             {detail.workspace && (
               <div>
-                <span className="text-faint">Workspace</span> · {detail.workspace}
+                <span className="text-faint">{t("personaView.workspace")}</span> · {detail.workspace}
               </div>
             )}
           </section>
