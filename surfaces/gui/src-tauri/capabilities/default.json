@@ -11,6 +11,7 @@
     "core:window:allow-unminimize",
     "dialog:default",
     "autostart:default",
+    "opener:allow-open-url",
     "opener:allow-default-urls"
   ]
 }

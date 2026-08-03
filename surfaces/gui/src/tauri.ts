@@ -126,14 +126,20 @@ export const clearPendingUpdate = () => invokeStrict<void>("clear_pending_update
 export const installUpdate = () => invokeStrict<void>("install_update");
 
 /** Best-effort open a URL in the user's browser. Uses the Tauri opener plugin (wired up in the
- * desktop shell with the `opener:allow-default-urls` capability, scoped to mailto:/tel:/http(s):),
- * else falls back to `window.open` for the browser build. The caller should also render the raw
- * URL so it stays copyable in case both paths no-op for some reason. */
+ * desktop shell with the `opener:allow-open-url` + `opener:allow-default-urls` capabilities,
+ * the latter scoped to mailto:/tel:/http(s):), else falls back to `window.open` for the
+ * browser build. The caller should also render the raw URL so it stays copyable in case both
+ * paths no-op for some reason. */
 export function openExternal(url: string): void {
   const opener = (globalThis as any).__TAURI__?.opener;
   if (opener?.openUrl) {
-    opener.openUrl(url).catch(() => window.open(url, "_blank", "noopener,noreferrer"));
+    console.log("[openworker] openExternal -> opener.openUrl", url);
+    opener.openUrl(url).catch((err: unknown) => {
+      console.error("[openworker] opener.openUrl failed, falling back to window.open:", err);
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
     return;
   }
+  console.warn("[openworker] __TAURI__.opener missing, window.open fallback:", url);
   window.open(url, "_blank", "noopener,noreferrer");
 }
