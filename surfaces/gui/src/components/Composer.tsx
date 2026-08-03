@@ -275,7 +275,11 @@ export function Composer(props: Props) {
   };
 
   const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // isComposing: true while a CJK IME (Hangul, Kana, Pinyin, …) is still resolving the
+    // current syllable — the Enter that CONFIRMS that composition must not also SEND the
+    // message, or a Korean/Japanese/Chinese typist can end up submitting the same text twice
+    // (owner catch 2026-07-30: the confirming Enter and the "real" Enter both reached here).
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       submit();
     }
