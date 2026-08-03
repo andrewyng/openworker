@@ -149,10 +149,12 @@ interface Props {
   onOpenIntegrations: () => void;
   onOpenAudit: () => void;
   onOpenInbox: () => void;
+  onOpenSkills: () => void;
   scheduledActive: boolean;
   integrationsActive: boolean;
   auditActive: boolean;
   inboxActive: boolean;
+  skillsActive: boolean;
   // Collapse controls (⌘B / hover-peek). `onCollapse` docks/undocks; `onPeekLeave` hides the
   // floating peek when the pointer leaves the panel.
   collapsed?: boolean;
@@ -1036,6 +1038,22 @@ export function Sidebar(props: Props) {
 
 
 
+      {/* Skills: a first-class nav row (owner ask 2026-08-03) — the skills list in one
+          click, right between New session and Search. The account menu keeps its entry. */}
+      <div className="px-2.5 mt-1">
+        <button
+          className={
+            "w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left hover:bg-paper hover:text-ink " +
+            (props.skillsActive ? "text-ink bg-paper" : "text-muted")
+          }
+          data-testid="nav-skills"
+          onClick={props.onOpenSkills}
+        >
+          <Icon name="book" size={15} className="shrink-0" />
+          <span className="flex-1">{t("Skills")}</span>
+        </button>
+      </div>
+
       {/* Search: a borderless nav-style entry (not a boxed input) that opens the command-palette
           SearchModal over the whole app. Matches the bottom-nav rows to reduce the boxy look. */}
       <div className="px-2.5 mt-1">
@@ -1218,6 +1236,7 @@ export function Sidebar(props: Props) {
                   <span className="text-[11px] text-faint">⌘ ,</span>,
                 )}
                 {appMenuItem("clock", t("Automations"), props.onOpenScheduled, props.scheduledActive)}
+                {appMenuItem("book", t("Skills"), props.onOpenSkills, props.skillsActive)}
                 {appMenuItem("audit", t("Activity"), props.onOpenAudit, props.auditActive)}
                 {cloud?.signed_in && (
                   <>

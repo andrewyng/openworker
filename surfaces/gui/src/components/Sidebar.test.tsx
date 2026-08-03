@@ -59,10 +59,12 @@ const baseProps = {
   onOpenIntegrations: vi.fn(),
   onOpenAudit: vi.fn(),
   onOpenInbox: vi.fn(),
+  onOpenSkills: vi.fn(),
   scheduledActive: false,
   integrationsActive: false,
   auditActive: false,
   inboxActive: false,
+  skillsActive: false,
 };
 
 afterEach(() => {
@@ -333,5 +335,51 @@ describe("Session list splits into Regular and Project sections", () => {
     );
     await screen.findByText("Lumen Scripts");
     expect(screen.getByText("No regular sessions yet.")).toBeTruthy();
+  });
+});
+
+describe("Skills nav row", () => {
+  it("sits between New session and Search and opens the skills surface on click", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+    ]);
+    const { container } = render(<Sidebar {...baseProps} />);
+    await screen.findByLabelText("Group and filter conversations");
+
+    // The row is present, labeled, and wears the book icon (Skills' glyph in Settings too).
+    const row = screen.getByTestId("nav-skills");
+    expect(row.textContent).toContain("Skills");
+    expect(row.querySelector("svg")).toBeTruthy();
+
+    // Position: after the new-session split, before the Search entry.
+    const newBtn = container.querySelector(".newsplit-primary")!;
+    const searchBtn = screen.getByText("Search");
+    expect(newBtn.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(row.compareDocumentPosition(searchBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // Clicking opens the skills surface.
+    fireEvent.click(row);
+    expect(baseProps.onOpenSkills).toHaveBeenCalled();
+  });
+
+  it("highlights while the skills surface is active and appears in the account menu", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+    ]);
+    render(<Sidebar {...baseProps} skillsActive />);
+    await screen.findByLabelText("Group and filter conversations");
+
+    // Active row carries the filled (text-ink bg-paper) treatment.
+    expect(screen.getByTestId("nav-skills").className).toContain("text-ink");
+
+    // Account menu keeps a Skills entry that routes to the same surface.
+    fireEvent.click(screen.getByTestId("account-row"));
+    const menu = await screen.findByTestId("account-menu");
+    const entry = [...menu.querySelectorAll("button")].find((b) => b.textContent === "Skills");
+    expect(entry).toBeTruthy();
+    fireEvent.click(entry!);
+    expect(baseProps.onOpenSkills).toHaveBeenCalled();
   });
 });

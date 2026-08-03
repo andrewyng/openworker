@@ -109,6 +109,27 @@ MATRIX: dict[str, ModelEntry] = {
     "mistral:mistral-large-latest": ModelEntry(
         "Mistral Large · Mistral", _AGENTIC, 128_000
     ),
+    # Volcengine Ark — Agent Plan (one subscription key; OpenAI-compatible /api/plan/v3).
+    # `ark-code-latest` auto-routes to the console-selected best model (no fixed window).
+    # Windows for the named models are the models' native specs (same models as the direct
+    # vendors above); kimi-k2.7-code / minimax-m3 not yet re-checked against Ark — None.
+    "volcengine:ark-code-latest": ModelEntry(
+        "Ark Code Latest · Agent Plan", _AGENTIC
+    ),
+    "volcengine:glm-5.2": ModelEntry("GLM-5.2 · Agent Plan", _AGENTIC, 128_000),
+    "volcengine:deepseek-v4-flash": ModelEntry(
+        "DeepSeek V4 Flash · Agent Plan", _AGENTIC, 128_000
+    ),
+    "volcengine:deepseek-v4-pro": ModelEntry(
+        "DeepSeek V4 Pro · Agent Plan", _AGENTIC, 128_000
+    ),
+    "volcengine:kimi-k2.6": ModelEntry(
+        "Kimi K2.6 · Agent Plan", _AGENTIC, 256_000
+    ),
+    "volcengine:kimi-k2.7-code": ModelEntry(
+        "Kimi K2.7 Code · Agent Plan", _AGENTIC
+    ),
+    "volcengine:minimax-m3": ModelEntry("MiniMax M3 · Agent Plan", _AGENTIC),
     # -- resellers (their model namespaces, verbatim) -----------------------------
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
     "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together", _AGENTIC, 128_000),

@@ -1609,6 +1609,15 @@ class SessionManager:
         "qwen": ["qwen3-max", "qwen3-coder-plus", "qwen-plus"],
         "xai": ["grok-4.3", "grok-4"],
         "mistral": ["mistral-large-latest", "mistral-small-latest"],
+        "volcengine": [
+            "ark-code-latest",
+            "glm-5.2",
+            "deepseek-v4-flash",
+            "deepseek-v4-pro",
+            "kimi-k2.6",
+            "kimi-k2.7-code",
+            "minimax-m3",
+        ],
     }
 
     def _suggested_models(self, name: str) -> list[str]:

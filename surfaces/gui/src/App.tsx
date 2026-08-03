@@ -65,6 +65,7 @@ import { SettingsView } from "./components/SettingsView";
 import { PersonaView } from "./components/PersonaView";
 import { AuditView } from "./components/AuditView";
 import { InboxView } from "./components/InboxView";
+import { SkillsView } from "./components/SkillsView";
 import { ApprovalCard } from "./components/ApprovalCard";
 import { DirectoryRequestCard } from "./components/DirectoryRequestCard";
 import { PlanCard } from "./components/PlanCard";
@@ -226,12 +227,24 @@ export function App() {
     setSettingsTab(tab);
     setSurface("settings");
   };
+  // The Skills doorway (SKILLS-SPEC §5.2): creation is a conversation. Fresh session,
+  // description in the composer — the user reads and hits send. With no description,
+  // the prefill invites them to finish the sentence there. Shared by Settings ▸ Skills
+  // and the sidebar's Skills surface.
+  const startSkillConversation = (description: string) => {
+    startNewSession();
+    prefillComposer(
+      description
+        ? t("Build a new skill for me: {{description}}", { description })
+        : t("Build a new skill for me: (describe what the skill should do)"),
+    );
+  };
   // Whether the default model's provider is actually configured (any provider). Drives the
   // composer's "No model connected" chip. Default true so we don't flash the chip before settings
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
   const [surface, setSurface] = useState<
-    "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings"
+    "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings" | "skills"
   >("session");
   // A remembered Scheduled-detail target must not outlive the surface (see the
   // scheduledOpenId comment above): nav re-entry lands on the list, never a
@@ -1333,10 +1346,12 @@ export function App() {
         onOpenIntegrations={() => setSurface("integrations")}
         onOpenAudit={() => setSurface("audit")}
         onOpenInbox={() => setSurface("inbox")}
+        onOpenSkills={() => setSurface("skills")}
         scheduledActive={surface === "scheduled"}
         integrationsActive={surface === "integrations"}
         auditActive={surface === "audit"}
         inboxActive={surface === "inbox"}
+        skillsActive={surface === "skills"}
         collapsed={navCollapsed}
         onCollapse={toggleNav}
         onPeekLeave={() => setNavPeek(false)}
@@ -1349,22 +1364,14 @@ export function App() {
         />
       ) : surface === "integrations" ? (
         <IntegrationsView />
+      ) : surface === "skills" ? (
+        <SkillsView onCreateSkill={startSkillConversation} />
       ) : surface === "settings" ? (
         <SettingsView
           key={settingsTab}
           initialTab={settingsTab}
           onOpenPersona={(id) => openPersona(id, "settings")}
-          onCreateSkill={(description) => {
-            // The Skills doorway (SKILLS-SPEC §5.2): creation is a conversation. Fresh
-            // session, description in the composer — the user reads and hits send. With
-            // no description, the prefill invites them to finish the sentence there.
-            startNewSession();
-            prefillComposer(
-              description
-                ? t("Build a new skill for me: {{description}}", { description })
-                : t("Build a new skill for me: (describe what the skill should do)"),
-            );
-          }}
+          onCreateSkill={startSkillConversation}
         />
       ) : surface === "audit" ? (
         <AuditView />
