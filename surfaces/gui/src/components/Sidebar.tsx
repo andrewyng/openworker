@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { imeComposing } from "../ime";
 import {
   announceCloudChanged,
   AUTOMATIONS_CHANGED,
@@ -563,6 +564,7 @@ export function Sidebar(props: Props) {
             onBlur={commitRename}
             onKeyDown={(e) => {
               e.stopPropagation();
+              if (imeComposing(e)) return;
               if (e.key === "Enter") commitRename();
               else if (e.key === "Escape") setEditingId(null);
             }}
@@ -637,6 +639,7 @@ export function Sidebar(props: Props) {
             onBlur={commitRename}
             onKeyDown={(e) => {
               e.stopPropagation();
+              if (imeComposing(e)) return;
               if (e.key === "Enter") commitRename();
               else if (e.key === "Escape") setEditingId(null);
             }}

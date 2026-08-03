@@ -5,6 +5,7 @@ import { isProjectScoped, shortPersonaName } from "../personaScope";
 import { Icon } from "./Icon";
 import { baseName } from "../paths";
 import { useI18n } from "../i18n";
+import { imeComposing } from "../ime";
 
 // Command-palette search (Codex-style): clicking Search opens this overlay over the whole app
 // rather than filtering the sidebar in place (which made the grouped list collapse). It searches
@@ -65,6 +66,7 @@ export function SearchModal({
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    if (imeComposing(e)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       onClose();

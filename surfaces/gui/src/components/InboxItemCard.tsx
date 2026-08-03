@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { imeComposing } from "../ime";
 import type { InboxItem } from "../api";
 import { humanizeApprovalTitle } from "../humanize";
 import {
@@ -58,7 +59,7 @@ export function InboxItemCard({
         value={answer}
         onChange={(e) => setAnswer(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && answer.trim()) onResolve(item.id, answer);
+          if (e.key === "Enter" && !imeComposing(e) && answer.trim()) onResolve(item.id, answer);
         }}
       />
       <button className={BTN_PRIMARY} disabled={!answer.trim()} onClick={() => onResolve(item.id, answer)}>

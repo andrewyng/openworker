@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { imeComposing } from "../ime";
 import { addModel, getSettings, removeModel, setDefaultModel } from "../api";
 import { useI18n } from "../i18n";
 
@@ -134,7 +135,7 @@ export function ModelChecklist({
           spellCheck={false}
           autoComplete="off"
           onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && add()}
+          onKeyDown={(e) => !imeComposing(e) && e.key === "Enter" && add()}
         />
         <button className="btn-primary sm" onClick={add} disabled={!draft.trim()}>
           {t("Add")}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { imeComposing } from "../ime";
 import {
   deletePersona,
   getPersonas,
@@ -225,7 +226,7 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
           placeholder={mode === "git" ? "https://github.com/acme/ops-persona" : "/path/to/personas"}
           value={src}
           onChange={(e) => setSrc(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && install()}
+          onKeyDown={(e) => !imeComposing(e) && e.key === "Enter" && install()}
         />
         <button className={BTN_ACCENT} disabled={busy || !src.trim()} onClick={install}>
           {busy ? t("Installing…") : t("Install")}
