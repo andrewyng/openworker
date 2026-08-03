@@ -4,9 +4,6 @@ Modes: Plan (read-only) · Interactive (auto reads, ask on writes/commands) · A
 (allow, still path-scoped). Refined by argument patterns (path-under-root, command
 prefixes) and a session allowlist. The engine only *decides*; the turn engine routes
 `needs_user` decisions to a surface for approval and records the outcome.
-
-Write-path scoping is re-checked immediately before execution (`revalidate_write`) so a
-symlink planted between evaluate/approval and the actual write cannot widen the grant.
 """
 
 from __future__ import annotations
@@ -35,48 +32,6 @@ from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOO
     classify,
     is_consequential,
 )
-
-
-def _codex_patch_paths(patch: str) -> list[str]:
-    """Best-effort file paths named by a Codex-style apply_patch envelope."""
-    paths: list[str] = []
-    for line in patch.splitlines():
-        for prefix in ("*** Add File: ", "*** Delete File: ", "*** Update File: "):
-            if line.startswith(prefix):
-                value = line[len(prefix) :].strip()
-                if value:
-                    paths.append(value)
-                break
-    return paths
-
-
-def _unified_diff_paths(diff: str) -> list[str]:
-    """Best-effort file paths named by a unified diff (`---` / `+++` headers)."""
-    paths: list[str] = []
-    for line in diff.splitlines():
-        if not (line.startswith("--- ") or line.startswith("+++ ")):
-            continue
-        value = line[4:].strip().split("\t", 1)[0]
-        if value == "/dev/null":
-            continue
-        if value.startswith("a/") or value.startswith("b/"):
-            value = value[2:]
-        if value:
-            paths.append(value)
-    return paths
-
-
-def write_paths(tool_name: str, arguments: Optional[dict[str, Any]]) -> list[str]:
-    """Paths a WRITE_LOCAL call intends to touch — used for evaluate + write-time rechecks."""
-    arguments = arguments or {}
-    path = arguments.get("path")
-    if path is not None:
-        return [str(path)]
-    if tool_name == "apply_patch":
-        return _codex_patch_paths(str(arguments.get("patch") or ""))
-    if tool_name == "apply_unified_diff":
-        return _unified_diff_paths(str(arguments.get("diff") or ""))
-    return []
 
 
 class Mode(str, Enum):
@@ -178,11 +133,11 @@ class PermissionEngine:
                 False, f"{self.mode.value} mode is read-only", needs_user=False
             )
 
-        # Path scoping for writes (all modes): every named target must land in a writable root.
+        # Path scoping for writes that name a path (all modes): must land in a writable root.
         if is_write:
-            for path in write_paths(tool_name, arguments):
-                if not self._under_writable_root(path):
-                    return Decision(False, f"path is not in a writable directory: {path}")
+            path = arguments.get("path")
+            if path is not None and not self._under_writable_root(path):
+                return Decision(False, f"path is not in a writable directory: {path}")
 
         # Non-consequential tools always run.
         if not consequential:
@@ -237,24 +192,16 @@ class PermissionEngine:
         arguments: dict[str, Any],
         metadata: Any = None,
     ) -> Optional[str]:
-        """Re-check writable-root scoping immediately before a write executes.
-
-        Returns an error reason when the call must be blocked, else None. Closes the
-        TOCTOU window between evaluate()/approval and the toolkit write: a path
-        component swapped for an outbound symlink after approval is caught here.
-        """
-        risk = classify(tool_name, metadata, self.risk_overrides)
-        if risk is not RiskClass.WRITE_LOCAL:
+        """Re-check path scoping immediately before a write (closes evaluate→execute TOCTOU)."""
+        if classify(tool_name, metadata, self.risk_overrides) is not RiskClass.WRITE_LOCAL:
             return None
-        for path in write_paths(tool_name, arguments or {}):
-            if not self._under_writable_root(path):
-                return f"path is not in a writable directory: {path}"
+        path = (arguments or {}).get("path")
+        if path is not None and not self._under_writable_root(path):
+            return f"path is not in a writable directory: {path}"
         return None
 
     def _candidate(self, path: str) -> Path:
         # Relative paths resolve against the primary (workspace_root); absolute/`~` taken as-is.
-        # `.resolve()` follows symlinks, so a link inside a root that points outward is rejected
-        # by the subsequent relative_to check against each root.
         p = Path(path).expanduser()
         return p.resolve() if p.is_absolute() else (self.workspace_root / p).resolve()
 

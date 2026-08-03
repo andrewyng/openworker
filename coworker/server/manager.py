@@ -826,10 +826,7 @@ class SessionManager:
                     "granted": False,
                     "error": res.get("error", "could not grant access"),
                 }
-            out = {"granted": True, "path": path, "writable": writable}
-            if res.get("warning"):
-                out["warning"] = res["warning"]
-            return out
+            return {"granted": True, "path": path, "writable": writable}
 
         return request
 
@@ -3632,11 +3629,9 @@ class SessionManager:
                 ],
             )
         self.session_store.touch_workspace(str(resolved))
-        warning = overbroad_root_warning(resolved)
-        if warning:
-            logger.warning("session %s: %s", session_id, warning)
         result: dict[str, Any] = {"ok": True, "roots": self.get_roots(session_id)}
-        if warning:
+        if warning := overbroad_root_warning(resolved):
+            logger.warning("session %s: %s", session_id, warning)
             result["warning"] = warning
         return result
 

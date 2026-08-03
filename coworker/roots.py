@@ -16,28 +16,14 @@ from typing import Any, Iterable, Optional
 
 
 def overbroad_root_warning(resolved: Path | str) -> Optional[str]:
-    """Warn when a granted root resolves to ``$HOME`` or an ancestor of ``$HOME``.
-
-    Granting such a root silently turns "scoped to the project" into "anywhere under
-    home" (or the whole filesystem when the root is ``/`` / a drive root). Callers
-    should surface the warning; the grant itself is still honored (user intent).
-    """
+    """Warn when a granted root resolves to ``$HOME`` or an ancestor of it."""
     root = Path(resolved).expanduser().resolve()
     home = Path.home().resolve()
-    if root == home:
-        return (
-            f"granted root resolves to the home directory ({root}); "
-            "file tools would be scoped to the entire home tree"
-        )
     try:
         home.relative_to(root)
     except ValueError:
         return None
-    # `root` is a strict ancestor of $HOME (e.g. `/`, `/Users`, `C:\\`).
-    return (
-        f"granted root resolves above $HOME ({root}); "
-        "file tools would be scoped far beyond a typical project folder"
-    )
+    return f"granted root resolves to or above $HOME ({root})"
 
 
 @dataclass
