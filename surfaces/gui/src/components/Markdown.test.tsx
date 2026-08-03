@@ -30,6 +30,18 @@ describe("Markdown artifact links", () => {
     expect(a.getAttribute("href")).toBe("https://example.com");
   });
 
+  // Issue #270: the desktop webview silently drops target="_blank", so clicks must be routed
+  // through openExternal (window.open here — no __TAURI__ in jsdom) instead of default nav.
+  it("clicking an ordinary link opens it via openExternal, not default navigation", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const { container } = render(<Markdown text="see [the docs](https://example.com/x)" />);
+    const a = container.querySelector("a")!;
+    const prevented = !fireEvent.click(a); // fireEvent returns false when defaultPrevented
+    expect(prevented).toBe(true);
+    expect(open).toHaveBeenCalledWith("https://example.com/x", "_blank", "noopener,noreferrer");
+    open.mockRestore();
+  });
+
   it("chip title falls back to the filename when the link text is empty", () => {
     vi.spyOn(window, "dispatchEvent");
     render(<Markdown text="[](artifact:out/report.pdf)" />);

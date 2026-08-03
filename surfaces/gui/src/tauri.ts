@@ -125,9 +125,10 @@ export const clearPendingUpdate = () => invokeStrict<void>("clear_pending_update
  * Windows hands off to the installer). */
 export const installUpdate = () => invokeStrict<void>("install_update");
 
-/** Best-effort open a URL in the user's browser. Uses the Tauri opener plugin if present, else
- * `window.open`. The caller should also render the raw URL so it stays copyable if both no-op
- * (the desktop webview has no opener plugin wired yet). */
+/** Best-effort open a URL in the user's browser. Uses the Tauri opener plugin (wired up in the
+ * desktop shell with the `opener:allow-default-urls` capability, scoped to mailto:/tel:/http(s):),
+ * else falls back to `window.open` for the browser build. The caller should also render the raw
+ * URL so it stays copyable in case both paths no-op for some reason. */
 export function openExternal(url: string): void {
   const opener = (globalThis as any).__TAURI__?.opener;
   if (opener?.openUrl) {
