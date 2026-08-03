@@ -1312,6 +1312,10 @@ def create_app(manager: SessionManager) -> FastAPI:
     def providers_remove(name: str) -> dict[str, Any]:
         return manager.remove_provider(name)
 
+    @app.post("/v1/providers/{name}/enabled")
+    def providers_set_enabled(name: str, body: dict) -> dict[str, Any]:
+        return manager.set_provider_enabled(name, bool((body or {}).get("enabled", True)))
+
     @app.post("/v1/providers/verify")
     async def providers_verify(body: dict) -> dict[str, Any]:
         # Live read-only credential check (sync httpx) — run off the event loop.

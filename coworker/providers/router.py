@@ -20,6 +20,13 @@ from .capabilities import capabilities_for
 from .registry import build_provider_client, get_descriptor
 
 
+class ProviderDisabledError(RuntimeError):
+    """Raised when a completion targets a provider whose on/off toggle is off. The composer
+    already filters disabled providers out of the model list (`get_settings`/`_selectable`
+    in `SessionManager`); this is the backstop for paths that don't go through it — e.g.
+    resuming a session that still references a model from a since-disabled provider."""
+
+
 class ProviderRouter(ProviderClient):
     def __init__(
         self,
@@ -57,12 +64,17 @@ class ProviderRouter(ProviderClient):
 
     def _client_for(self, model: str) -> ProviderClient:
         name = self._provider_name(model)
+        profile = {}
+        if self._secrets is not None:
+            profile = self._secrets.get(f"provider:{name}") or {}
+        # Checked ahead of the cache (not just on build) so a provider disabled after its
+        # client was already built and cached still refuses new calls, independent of
+        # whether the toggle also called `invalidate()`.
+        if not profile.get("enabled", True):
+            raise ProviderDisabledError(f"provider '{name}' is disabled")
         with self._lock:
             client = self._clients.get(name)
             if client is None:
-                profile = {}
-                if self._secrets is not None:
-                    profile = self._secrets.get(f"provider:{name}") or {}
                 client = build_provider_client(name, profile, self._secrets)
                 self._clients[name] = client
             return client

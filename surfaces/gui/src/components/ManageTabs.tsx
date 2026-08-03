@@ -135,7 +135,7 @@ export function ModelsTab() {
             provider={ps.sel}
             knownProviders={knownNames}
             suggested={info?.suggested_models || []}
-            curated={settings.models}
+            curated={settings.curated_models || settings.models}
             defaultModel={settings.model}
             labels={settings.model_labels}
             onChanged={(next) => setSettings((s) => (s ? { ...s, models: next.models, model: next.model } : s))}

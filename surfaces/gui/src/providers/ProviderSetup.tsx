@@ -3,6 +3,7 @@ import {
   getProviders,
   removeProvider,
   setProvider,
+  setProviderEnabled,
   verifyProvider,
   type ProviderField as ProviderFieldT,
   type ProviderInfo,
@@ -85,6 +86,7 @@ export interface ProviderSetupState {
   backToGallery: () => void;
   runTestAndSave: () => Promise<boolean>;
   removeKey: () => Promise<void>;
+  toggleEnabled: () => Promise<void>;
   cancelBackTimer: () => void;
   statusFor: (p: ProviderInfo, opts?: { lastUsed?: boolean }) => ReactNode;
   // Blur-save for non-secret fields on an already-configured provider (the Test button is
@@ -214,7 +216,19 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     setVerify({ state: "idle" });
   };
 
+  // Settings-only: flip a configured provider's on/off toggle without touching its
+  // stored credentials. Off drops it (and its models) out of the composer picker.
+  const toggleEnabled = async () => {
+    if (!sel || !info) return;
+    await setProviderEnabled(sel, !info.enabled).catch(() => {});
+    await refreshProviders();
+    opts?.onSaved?.();
+  };
+
   const statusFor = (p: ProviderInfo, o?: { lastUsed?: boolean }) => {
+    if (p.configured && !p.enabled) {
+      return <span className="block text-[11.5px] text-faint truncate">Disabled</span>;
+    }
     if (p.configured && p.needs_key) {
       const used = o?.lastUsed ? relTime(p.last_used_at) : null;
       return (
@@ -262,6 +276,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     backToGallery,
     runTestAndSave,
     removeKey,
+    toggleEnabled,
     saveField,
     fieldSaved,
     cancelBackTimer: () => {
@@ -290,7 +305,7 @@ export function ProviderCards({
       {ps.ordered.map((p) => (
         <button
           key={p.name}
-          className={card}
+          className={card + (p.configured && !p.enabled ? " opacity-50" : "")}
           data-testid={`${tp}-provider-${p.name}`}
           onClick={() => ps.openProvider(p.name)}
         >
@@ -396,10 +411,38 @@ export function ProviderForm({
       </button>
       <div className="flex items-center gap-3 mt-3 mb-1">
         <ProviderMark name={info?.name || ""} title={info?.title || ""} size={36} />
-        <span className="min-w-0">
+        <span className="min-w-0 flex-1">
           <span className="block text-[15px] font-semibold leading-tight">{info?.title}</span>
           {info ? ps.statusFor(info) : null}
         </span>
+        {/* On/off toggle: only once there's something to turn off — an unconfigured
+            provider has no credentials and nothing to disable yet. */}
+        {info?.configured && (
+          <button
+            role="switch"
+            aria-checked={info.enabled}
+            aria-label={info.enabled ? "Disable provider" : "Enable provider"}
+            className={
+              "shrink-0 w-9 h-5 rounded-full transition-colors relative " +
+              (info.enabled ? "bg-accent" : "bg-line")
+            }
+            data-testid={`${tp}-toggle-enabled`}
+            onClick={() => void ps.toggleEnabled()}
+          >
+            <span
+              className={
+                // `left-0.5` is required, not cosmetic: a bare `<button>` defaults to
+                // `text-align: center` in the browser's UA stylesheet, so an absolutely
+                // positioned child with no explicit `left` resolves its static position to
+                // the button's horizontal center (not its left edge) — the translate below
+                // would then start from mid-track and push the knob outside the pill on
+                // (owner catch 2026-07-30: knob rendered floating past the track when on).
+                "absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform " +
+                (info.enabled ? "translate-x-4" : "translate-x-0")
+              }
+            />
+          </button>
+        )}
       </div>
       {info?.blurb && <p className="text-[11.5px] text-faint mt-1">{info.blurb}</p>}
 

@@ -14,6 +14,7 @@ const BEDROCK: ProviderInfo = {
   title: "AWS Bedrock",
   needs_key: true,
   configured: false,
+  enabled: true,
   values: {},
   suggested_models: [],
   recommended_model: null,
@@ -60,12 +61,64 @@ function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): Provid
     backToGallery: () => {},
     runTestAndSave: async () => true,
     removeKey: async () => {},
+    toggleEnabled: async () => {},
     cancelBackTimer: () => {},
     statusFor: () => null,
     saveField: async () => {},
     fieldSaved: null,
   };
 }
+
+const OPENAI: ProviderInfo = {
+  name: "openai",
+  title: "OpenAI",
+  needs_key: true,
+  configured: true,
+  enabled: true,
+  values: {},
+  suggested_models: [],
+  recommended_model: null,
+  key_set_at: "2026-07-01",
+  fields: [{ key: "api_key", label: "OpenAI API key", secret: true, required: true, help: "", placeholder: "sk-…" }],
+};
+
+function makeOpenAiPs(enabled: boolean): ProviderSetupState {
+  const info = { ...OPENAI, enabled };
+  return { ...makePs({}), providers: [info], ordered: [info], sel: "openai", info };
+}
+
+describe("ProviderForm on/off toggle", () => {
+  it("only renders once the provider is configured", () => {
+    render(<ProviderForm ps={makePs({})} tp="t" />); // BEDROCK: configured=false
+    expect(screen.queryByTestId("t-toggle-enabled")).toBeNull();
+  });
+
+  it("positions the knob with an explicit left, not the browser's centered static position", () => {
+    // Regression (owner catch 2026-07-30): the knob had no explicit `left`, so a bare
+    // `<button>`'s default `text-align: center` UA style put its static position at the
+    // track's midpoint; `translate-x` was then added on top of that, pushing the knob
+    // outside the track instead of sliding it within it. jsdom doesn't lay out real
+    // pixels, so this pins the fix at the class level — surfaces/gui/e2e/provider-keys.spec.ts
+    // pins the real geometry in an actual browser.
+    const { container } = render(<ProviderForm ps={makeOpenAiPs(true)} tp="t" />);
+    const knob = container.querySelector('[data-testid="t-toggle-enabled"] span')!;
+    expect(knob.className).toContain("left-0.5");
+    expect(knob.className).not.toMatch(/translate-x-\[18px\]/);
+  });
+
+  it("flips aria-checked and the translate class with the enabled prop", () => {
+    const { container: onC } = render(<ProviderForm ps={makeOpenAiPs(true)} tp="t" />);
+    const onToggle = screen.getByTestId("t-toggle-enabled");
+    expect(onToggle.getAttribute("aria-checked")).toBe("true");
+    expect(onC.querySelector('[data-testid="t-toggle-enabled"] span')!.className).toContain("translate-x-4");
+    cleanup();
+
+    const { container: offC } = render(<ProviderForm ps={makeOpenAiPs(false)} tp="t" />);
+    const offToggle = screen.getByTestId("t-toggle-enabled");
+    expect(offToggle.getAttribute("aria-checked")).toBe("false");
+    expect(offC.querySelector('[data-testid="t-toggle-enabled"] span')!.className).toContain("translate-x-0");
+  });
+});
 
 describe("ProviderForm auth-method choice", () => {
   it("renders only the selected method's fields", () => {

@@ -1414,6 +1414,7 @@ class SessionManager:
                     "last_used_at": (self._prefs.get("provider_last_used") or {}).get(
                         d.name
                     ),
+                    "enabled": self._provider_enabled(d.name),
                 }
             )
         return out
@@ -1556,6 +1557,20 @@ class SessionManager:
         self._refresh_provider(name)
         return {"ok": True, "provider": name}
 
+    def set_provider_enabled(self, name: str, enabled: bool) -> dict[str, Any]:
+        """Turn a configured provider on/off without touching its stored credentials
+        (Settings ▸ Models toggle). A disabled provider drops out of the composer's model
+        list (`get_settings`/`_selectable`) and refuses new completions (`ProviderRouter`),
+        but its `provider:<name>` profile — key, endpoint, key_set_at — is left untouched."""
+        d = get_descriptor(name)
+        if d is None:
+            return {"ok": False, "error": f"unknown provider: {name}"}
+        profile = dict(self.secrets.get(f"provider:{name}") or {})
+        profile["enabled"] = bool(enabled)
+        self.secrets.put(f"provider:{name}", profile)
+        self._refresh_provider(name)
+        return {"ok": True, "provider": name, "enabled": bool(enabled)}
+
     def verify_provider(
         self, name: str, fields: Optional[dict[str, Any]]
     ) -> dict[str, Any]:
@@ -1605,6 +1620,11 @@ class SessionManager:
         if d is None:
             return False
         return descriptor_configured(d, self.secrets.get(f"provider:{name}") or {})
+
+    def _provider_enabled(self, name: str) -> bool:
+        """Whether a provider's on/off toggle is on. Absent flag = on, so every
+        already-configured install stays working with no migration."""
+        return bool((self.secrets.get(f"provider:{name}") or {}).get("enabled", True))
 
     # -- settings / prefs (model API key, default model, onboarding) -------------
     def _prefs_path(self) -> Path:
@@ -1748,6 +1768,8 @@ class SessionManager:
         # while a local Ollama answers (cached liveness probe).
         def _selectable(m: str) -> bool:
             provider = self._model_provider(m)
+            if not self._provider_enabled(provider):
+                return False
             if provider == "ollama":
                 return self._ollama_alive()
             return self._provider_configured(provider)
@@ -1761,6 +1783,11 @@ class SessionManager:
             "provider": "openai",
             "model": self.model,
             "models": selectable,
+            # The full curated list (every provider, unfiltered by configured/enabled) — what
+            # Settings ▸ Models' per-provider checklist manages. `models` above is deliberately
+            # narrower (only what's currently usable); a disabled-but-still-configured provider
+            # must not look like its models were silently unchecked from the curated list.
+            "curated_models": self._curated_models(),
             # Curated-matrix display names ({full id → "GLM-5.2 · via Together"}) so every
             # picker shows human labels; custom models absent here render their raw id.
             "model_labels": model_labels(),
@@ -1769,9 +1796,12 @@ class SessionManager:
             "model_context_windows": model_context_windows(),
             "has_key": env_key or stored,
             # Provider-agnostic "can this default model actually run?" — true when the default
-            # model's provider is configured (any provider, not just OpenAI). Drives the GUI's
-            # "No model connected" composer chip and the onboarding Skip warning.
-            "model_ready": self._provider_configured(self._model_provider(self.model)),
+            # model's provider is configured AND enabled (any provider, not just OpenAI).
+            # Drives the GUI's "No model connected" composer chip and the onboarding Skip
+            # warning — also what a disabled default provider falls back to, since disabling
+            # deliberately never auto-switches the default model.
+            "model_ready": self._provider_enabled(self._model_provider(self.model))
+            and self._provider_configured(self._model_provider(self.model)),
             "source": "env" if env_key else ("store" if stored else None),
             "onboarded": bool(self._prefs.get("onboarded")),
             "experimental_connectors": experimental_enabled(self.secrets),

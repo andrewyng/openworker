@@ -71,3 +71,47 @@ test("non-secret fields blur-save on a configured provider (ollama endpoint)", a
   await page.getByTestId("set-provider-ollama").click();
   await expect(page.getByTestId("set-field-base_url")).toHaveValue("http://127.0.0.1:9999");
 });
+
+test("the on/off toggle disables a configured provider without touching its key", async ({
+  page,
+}) => {
+  await openModels(page);
+  await page.getByTestId("set-provider-anthropic").click();
+  await expect(page.getByTestId("set-toggle-enabled")).toHaveAttribute("aria-checked", "true");
+
+  await page.getByTestId("set-toggle-enabled").click();
+  await expect(page.getByTestId("set-toggle-enabled")).toHaveAttribute("aria-checked", "false");
+  // Card reflects the toggle without a re-test — the stored key is untouched.
+  await page.getByTestId("set-back").click();
+  await expect(page.getByTestId("set-provider-anthropic")).toContainText("Disabled");
+
+  // Re-enabling restores the connected state, no key re-entry required.
+  await page.getByTestId("set-provider-anthropic").click();
+  await page.getByTestId("set-toggle-enabled").click();
+  await expect(page.getByTestId("set-toggle-enabled")).toHaveAttribute("aria-checked", "true");
+  await page.getByTestId("set-back").click();
+  await expect(page.getByTestId("set-provider-anthropic")).toContainText("✓ Connected");
+});
+
+test("the toggle's knob stays inset inside its track in both states", async ({ page }) => {
+  // Regression (owner catch 2026-07-30): the knob had no explicit `left`, so a bare
+  // `<button>`'s default `text-align: center` UA style set its static position to the
+  // track's midpoint; the `translate-x` meant to slide it from edge-to-edge was added on
+  // top of that instead, pushing the knob outside the track when on. jsdom (the unit-test
+  // layer) can't reproduce this — it doesn't lay out real pixels — so this geometric check
+  // only means something in a real browser, which is what this e2e suite runs against.
+  await openModels(page);
+  await page.getByTestId("set-provider-anthropic").click();
+  const track = page.getByTestId("set-toggle-enabled");
+  const knob = track.locator("span");
+
+  for (const expectChecked of ["true", "false"] as const) {
+    await expect(track).toHaveAttribute("aria-checked", expectChecked);
+    const trackBox = await track.boundingBox();
+    const knobBox = await knob.boundingBox();
+    if (!trackBox || !knobBox) throw new Error("toggle not rendered");
+    expect(knobBox.x).toBeGreaterThanOrEqual(trackBox.x);
+    expect(knobBox.x + knobBox.width).toBeLessThanOrEqual(trackBox.x + trackBox.width);
+    if (expectChecked === "true") await track.click();
+  }
+});

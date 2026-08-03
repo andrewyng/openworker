@@ -21,7 +21,7 @@ from .registry import (
     provider_names,
     verify_provider_key,
 )
-from .router import ProviderRouter
+from .router import ProviderDisabledError, ProviderRouter
 from .vertex_provider import VertexProvider
 
 __all__ = [
@@ -37,6 +37,7 @@ __all__ = [
     "VertexProvider",
     "resolve_api_key",
     "capabilities_for",
+    "ProviderDisabledError",
     "ProviderRouter",
     "ProviderDescriptor",
     "ProviderField",

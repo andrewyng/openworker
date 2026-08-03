@@ -679,6 +679,10 @@ export interface ModelSettings {
   provider: string;
   model: string;
   models: string[];
+  // The full curated list (every provider, unfiltered by configured/enabled) — what Settings
+  // ▸ Models' per-provider checklist manages; `models` above is narrower (only what's
+  // currently selectable in the composer). Optional for older backends.
+  curated_models?: string[];
   has_key: boolean;
   model_ready: boolean; // can the default model's provider actually run (any provider)?
   source: "env" | "store" | null;
@@ -1289,6 +1293,7 @@ export interface ProviderInfo {
   blurb?: string; // one-line note under the title ("Uses X's OpenAI-compatible API…")
   key_set_at?: string | null; // ISO date the key was last (re)saved — absent for env-only config
   last_used_at?: number | null; // epoch secs the provider last served a completion
+  enabled: boolean; // on/off toggle — off drops the provider's models from the composer picker
 }
 
 export async function getProviders(): Promise<ProviderInfo[]> {
@@ -1312,6 +1317,20 @@ export async function setProvider(
 export async function removeProvider(name: string): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`${httpBase()}/v1/providers/${encodeURIComponent(name)}`, {
     method: "DELETE",
+  });
+  return res.json();
+}
+
+/** Toggle a configured provider on/off (Settings ▸ Models). Credentials are left untouched —
+ * only whether the provider is currently usable for new completions. */
+export async function setProviderEnabled(
+  name: string,
+  enabled: boolean,
+): Promise<{ ok: boolean; error?: string; provider?: string; enabled?: boolean }> {
+  const res = await fetch(`${httpBase()}/v1/providers/${encodeURIComponent(name)}/enabled`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
   });
   return res.json();
 }
