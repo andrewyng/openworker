@@ -689,6 +689,7 @@ export function App() {
       switch (ev.type) {
         case "ready":
           setConnected(true);
+          setRunning(!!d.running);
           if (d.model) setModel(d.model);
           if (d.mode) setMode(d.mode);
           if (d.command_trust?.required) setWorkspaceTrustRequest(d.command_trust);
