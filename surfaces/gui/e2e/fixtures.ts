@@ -569,6 +569,8 @@ export async function mockApi(page: import("@playwright/test").Page) {
   //     assistant_deltas → assistant_message "Echo: <text>" → turn_done
   //   · a message containing "run a tool": tool_proposed + permission_required, then the turn
   //     SUSPENDS until the client's approval decision arrives (deny → skipped; else → ran)
+  //   · a message containing "trigger-interleave-race": a connector turn_start fires BEFORE
+  //     this turn's own echo, exercising the dedupe's resilience to an interleaved event
   // App-wide event stream: register the socket so sendAppEvent can push into it.
   await page.routeWebSocket(/\/ws\/events$/, (ws) => {
     eventSockets.set(page, ws);
@@ -585,6 +587,23 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const msg = JSON.parse(String(raw));
       if (msg.type === "user_message") {
         hadTurn = true;
+        // Regression harness (owner catch 2026-08-03): a background/connector turn_start
+        // racing in BEFORE this turn's own echo — exercises the turn_start dedupe's
+        // resilience to interleaving, not just the simple immediate-echo case.
+        if (/trigger-interleave-race/i.test(msg.text)) {
+          send("turn_start", {
+            source: {
+              connector: "slack",
+              kind: "channel",
+              channel_id: "C0RACE1",
+              channel_name: "#race-test",
+              sender_id: "U0RACE1",
+              sender_name: "Someone Else",
+              ts: Date.now() / 1000,
+              text: "an unrelated background message",
+            },
+          });
+        }
         send("turn_start", { input: msg.text });
         if (/run a tool/i.test(msg.text)) {
           pendingTool = "run_shell";

@@ -29,6 +29,27 @@ test("send → user bubble → streamed echo reply renders", async ({ page }) =>
   await expect(box).toHaveValue("");
 });
 
+test("a background turn racing in before this turn's own echo doesn't duplicate the bubble", async ({
+  page,
+}) => {
+  // Regression (owner catch 2026-08-03): the turn_start dedupe used to only check
+  // `items[items.length - 1]`, so a connector/background turn_start landing between send()'s
+  // optimistic append and THIS turn's own echo could slip a genuine duplicate user bubble in.
+  // fixtures.ts's fake agent fires exactly that interleaving for this trigger phrase.
+  await page.goto("/");
+  const box = page.getByPlaceholder(/Ask the coworker/);
+  await expect(box).toBeVisible();
+
+  await box.fill("trigger-interleave-race please");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  // The racing background message renders once (as its own connector card)…
+  await expect(page.getByText("an unrelated background message")).toBeVisible();
+  // …and the foreground send renders exactly once, not twice.
+  await expect(page.getByText("trigger-interleave-race please", { exact: true })).toHaveCount(1);
+  await expect(page.getByText(/Echo: trigger-interleave-race please/)).toBeVisible();
+});
+
 test("approval: tool request suspends the turn; Allow once resumes it", async ({ page }) => {
   await page.goto("/");
   const box = page.getByPlaceholder(/Ask the coworker/);

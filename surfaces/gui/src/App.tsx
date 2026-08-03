@@ -368,6 +368,10 @@ export function App() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // A prompt to auto-send once the next session connects (used by "Run now").
   const pendingPromptRef = useRef<string | null>(null);
+  // Foreground sends awaiting their own turn_start echo, so the dedupe below doesn't have to
+  // assume nothing else lands in `items` first (owner catch 2026-08-03: a connector/background
+  // turn_start racing in between could make a real duplicate user bubble slip through).
+  const pendingSendsRef = useRef<string[]>([]);
   // The in-flight manual run to finalize after its first turn ({taskId, runId, sessionId}).
   const activeRunRef = useRef<{ taskId: string; runId: string; sessionId: string } | null>(null);
 
@@ -602,12 +606,12 @@ export function App() {
                 : [...p, { kind: "connector", source: src }];
             });
           } else if (typeof d.input === "string" && d.input) {
-            setItems((p) => {
-              const last = p[p.length - 1];
-              return last && last.kind === "user" && last.text === d.input
-                ? p
-                : [...p, { kind: "user", text: d.input as string, ts: Date.now() / 1000 }];
-            });
+            const i = pendingSendsRef.current.indexOf(d.input);
+            if (i !== -1) {
+              pendingSendsRef.current.splice(i, 1); // our own echo — already rendered by send()
+            } else {
+              setItems((p) => [...p, { kind: "user", text: d.input as string, ts: Date.now() / 1000 }]);
+            }
           }
           break;
         case "assistant_delta":
@@ -815,6 +819,11 @@ export function App() {
     atBottomRef.current = true;
     setFollowing(true);
   }, [sessionId]);
+  // A different session's foreground sends are irrelevant here — never let a message that
+  // never got echoed in the OLD session accidentally swallow an identical-text echo later.
+  useEffect(() => {
+    pendingSendsRef.current = [];
+  }, [sessionId]);
   useEffect(() => {
     if (atBottomRef.current) scrollToBottom();
   }, [items, streaming]);
@@ -844,6 +853,7 @@ export function App() {
 
   const send = (text: string, attachments?: Attachment[]) => {
     setItems((p) => [...p, { kind: "user", text, attachments, ts: Date.now() / 1000 }]);
+    pendingSendsRef.current.push(text);
     // The visible model rides along with the message (single source of truth per turn).
     sessionRef.current?.userMessage(text, attachments, model);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
