@@ -516,6 +516,7 @@ export const zhCN: Record<string, string> = {
   "Could not create the project": "无法创建项目",
   "Could not assign this session to the project": "无法将此会话归属到项目",
   "Regular session (no project)": "普通会话（不归属项目）",
+  "Regular session": "普通会话",
   "Belongs to an existing project": "归属已有项目",
   "Select a project…": "选择一个项目…",
   "Regular sessions": "普通会话",

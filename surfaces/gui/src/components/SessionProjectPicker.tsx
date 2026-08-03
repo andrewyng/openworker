@@ -123,6 +123,9 @@ export function SessionProjectPicker({
               }
               onClick={() => {
                 setOpen(false);
+                // If we were in the "new project" inline form, cancel out of it first so the
+                // chip label snaps back to "Regular session" even if the unbind fails.
+                if (assign === NEW_PROJECT) setAssign("");
                 if (assign !== "") bindProject(null);
               }}
             >
