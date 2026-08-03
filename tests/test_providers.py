@@ -118,6 +118,30 @@ def test_capabilities_via_provider():
     assert caps.tools is True
 
 
+def test_ccswitch_routes_through_the_compat_client_with_conservative_capabilities():
+    from coworker.providers.registry import (
+        build_provider_client,
+        descriptor_configured,
+        get_descriptor,
+    )
+
+    descriptor = get_descriptor("ccswitch")
+    assert descriptor is not None
+    assert descriptor_configured(descriptor, {}) is False
+    assert descriptor_configured(descriptor, {"base_url": "http://127.0.0.1:8317/v1"})
+
+    client = build_provider_client(
+        "ccswitch", {"base_url": "http://127.0.0.1:8317/v1"}, None
+    )
+    assert isinstance(client, OpenAIProvider)
+
+    # The active CC Switch upstream can change after configuration. Do not infer native
+    # vision/PDF/parallel-tool support from the routed model name.
+    caps = capabilities_for("ccswitch:gpt-5.6-sol")
+    assert caps.tools and caps.streaming
+    assert not caps.vision and not caps.pdf and not caps.parallel_tool_calls
+
+
 # -- GPT-5.6 tools + reasoning_effort on chat/completions (owner repro 2026-07-14) ----
 # The API defaults these models to effort "medium" and then rejects function tools:
 # "Function tools with reasoning_effort are not supported for gpt-5.6-sol in

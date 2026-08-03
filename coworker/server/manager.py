@@ -1580,6 +1580,13 @@ class SessionManager:
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
         fields = fields or {}
+        # CC Switch's proxy endpoint is its required identity. An explicit blank must not
+        # silently retain (or verify against) a previous endpoint, because that makes a
+        # settings edit appear to succeed while model traffic still goes to the old proxy.
+        if name == "ccswitch" and "base_url" in fields and not str(
+            fields["base_url"] or ""
+        ).strip():
+            return {"ok": False, "error": "missing: CC Switch proxy URL"}
         profile = dict(self.secrets.get(f"provider:{name}") or {})
         for f in d.fields:
             if f.key not in fields:
@@ -1640,6 +1647,12 @@ class SessionManager:
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
         fields = fields or {}
+        # Unlike an intentionally blank optional token, an explicitly cleared CC Switch
+        # endpoint must not fall back to a stored value during Test.
+        if name == "ccswitch" and "base_url" in fields and not str(
+            fields["base_url"] or ""
+        ).strip():
+            return {"ok": False, "error": "missing: CC Switch proxy URL"}
         profile = self.secrets.get(f"provider:{name}") or {}
         merged = {}
         for f in d.fields:
@@ -1651,10 +1664,10 @@ class SessionManager:
         api_key = merged.get("api_key", "")
         if not api_key and d.env_key:
             api_key = os.environ.get(d.env_key, "").strip()
-        has_key_field = any(f.key == "api_key" for f in d.fields)
-        if d.needs_key and has_key_field and not api_key:
+        api_key_field = next((f for f in d.fields if f.key == "api_key"), None)
+        if d.needs_key and api_key_field is not None and api_key_field.required and not api_key:
             return {"ok": False, "error": "Enter an API key to test."}
-        if d.needs_key and not has_key_field:
+        if d.needs_key and api_key_field is None:
             # Multi-field cloud providers (Bedrock): required fields must be present;
             # actual credentials may be ambient (~/.aws, env) and are checked by the call.
             missing = [f.label for f in d.fields if f.required and not merged.get(f.key)]

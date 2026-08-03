@@ -408,7 +408,9 @@ export function ProviderForm({
           (f) =>
             !f.show_when &&
             !(f.choices && f.choices.length) &&
-            !(f.key === "base_url" && keyed),
+            // A required endpoint (CC Switch) is core configuration, not an advanced
+            // override. Optional endpoints remain behind the quiet disclosure below.
+            !(f.key === "base_url" && keyed && !f.required),
         )
         .map((f) => fieldRow(f, !choice && f.key === testKey))}
 
@@ -515,7 +517,7 @@ export function ProviderForm({
       {(() => {
         const keyed = (info?.fields || []).some((x) => x.secret);
         const ep = keyed ? (info?.fields || []).find((f) => f.key === "base_url") : undefined;
-        if (!ep) return null;
+        if (!ep || ep.required) return null;
         if (!ps.showEndpoint)
           return (
             <button

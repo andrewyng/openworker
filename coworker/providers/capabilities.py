@@ -29,6 +29,14 @@ def capabilities_for(model: str) -> ModelCapabilities:
             tools=True, vision=False, parallel_tool_calls=False, streaming=True
         )
 
+    # CC Switch can hot-switch or fail over to a different upstream after OpenWorker has
+    # selected a model. Do not infer native capabilities from the routed model name: use the
+    # safe OpenAI-compatible subset until the proxy publishes a stable capability contract.
+    if provider == "ccswitch":
+        return ModelCapabilities(
+            tools=True, vision=False, parallel_tool_calls=False, streaming=True
+        )
+
     # Cloud-account providers (custom-added ids; curated ones answered from the matrix).
     # The family segment decides: Claude keeps its native capabilities; everything else
     # stays conservative until probed (Converse tool calling works across families, but
