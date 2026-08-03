@@ -1,11 +1,12 @@
 """OpenAI Chat Completions provider — the compat workhorse.
 
-Uses the OpenAI Python SDK `chat.completions` API only, which is what the entire
+Uses the OpenAI Python SDK `chat.completions` API, which is what the entire
 OpenAI-compatible world implements: the compat vendors (DeepSeek, Z AI, Kimi, …),
 resellers, Ollama, custom endpoints (Azure OpenAI, vLLM), and the Bedrock/Vertex MaaS
 paths. Native OpenAI models (the `openai` provider with no custom endpoint) route to
-`openai_responses.OpenAIResponsesProvider` instead — Chat Completions rejects function
-tools combined with reasoning on GPT-5.6+, so reasoning + tools needs `/v1/responses`.
+`openai_responses.OpenAIResponsesProvider` instead. A custom endpoint stays on Chat
+Completions unless it explicitly rejects a tool-enabled request and directs us to
+`/v1/responses`; that model then uses the Responses API for subsequent turns.
 """
 
 from __future__ import annotations
@@ -51,6 +52,20 @@ def resolve_api_key(secrets: Any = None) -> Optional[str]:
 # generation, an alias we didn't list), retry once at effort none so the user gets a
 # working turn instead of a 400.
 _EFFORT_ERROR = "function tools with reasoning_effort are not supported"
+
+
+def _requires_responses_api(exc: Exception) -> bool:
+    """Whether a Chat Completions error explicitly directs this request to Responses.
+
+    OpenAI-compatible servers vary widely, so a custom endpoint must remain on the
+    Chat Completions path unless it advertises this exact compatibility requirement.
+    """
+    message = str(exc).lower()
+    return (
+        _EFFORT_ERROR in message
+        and "/v1/chat/completions" in message
+        and "/v1/responses" in message
+    )
 
 
 def _pin_reasoning_effort(kwargs: dict[str, Any]) -> None:
@@ -146,6 +161,8 @@ class OpenAIProvider(ProviderClient):
         self._base_url = base_url
         self._secrets = secrets
         self.default_model = default_model
+        self._responses_models: set[str] = set()
+        self._responses_fallback: Any = None
 
     def _ensure_client(self) -> Any:
         if self._client is None:
@@ -164,6 +181,34 @@ class OpenAIProvider(ProviderClient):
             self._client = OpenAI(**kwargs)
         return self._client
 
+    def _responses_provider(self) -> Any:
+        """Build the lazy Responses fallback around this provider's existing SDK client."""
+        if self._responses_fallback is None:
+            # Imported lazily to avoid the response provider's resolve_api_key import
+            # forming a module cycle during provider registry initialization.
+            from .openai_responses import OpenAIResponsesProvider
+
+            self._responses_fallback = OpenAIResponsesProvider(
+                client=self._ensure_client()
+            )
+        return self._responses_fallback
+
+    def _complete_with_responses(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]],
+        settings: dict[str, Any],
+    ) -> AssistantTurn:
+        turn = self._responses_provider().complete(
+            model=model, messages=messages, tools=tools, **settings
+        )
+        # Cache only after a complete Responses request succeeds. A gateway that
+        # advertises the route but does not implement it should keep its old behavior.
+        self._responses_models.add(model)
+        return turn
+
     def complete(
         self,
         *,
@@ -171,6 +216,29 @@ class OpenAIProvider(ProviderClient):
         messages: list[dict[str, Any]],
         tools: Optional[list[dict[str, Any]]] = None,
         **settings: Any,
+    ) -> AssistantTurn:
+        if model in self._responses_models:
+            return self._complete_with_responses(
+                model=model, messages=messages, tools=tools, settings=settings
+            )
+        try:
+            return self._complete_with_chat(
+                model=model, messages=messages, tools=tools, settings=settings
+            )
+        except Exception as exc:
+            if not tools or not _requires_responses_api(exc):
+                raise
+            return self._complete_with_responses(
+                model=model, messages=messages, tools=tools, settings=settings
+            )
+
+    def _complete_with_chat(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]],
+        settings: dict[str, Any],
     ) -> AssistantTurn:
         kwargs: dict[str, Any] = {
             "model": model,
@@ -215,6 +283,51 @@ class OpenAIProvider(ProviderClient):
         messages: list[dict[str, Any]],
         tools: Optional[list[dict[str, Any]]] = None,
         **settings: Any,
+    ):
+        if model in self._responses_models:
+            yield from self._stream_with_responses(
+                model=model, messages=messages, tools=tools, settings=settings
+            )
+            return
+
+        yielded = False
+        try:
+            for chunk in self._stream_with_chat(
+                model=model, messages=messages, tools=tools, settings=settings
+            ):
+                yielded = True
+                yield chunk
+        except Exception as exc:
+            # Falling back after emitting a Chat Completions delta would duplicate
+            # visible output. The route negotiation error is returned before any
+            # stream event, so only retry when nothing reached the caller.
+            if yielded or not tools or not _requires_responses_api(exc):
+                raise
+            yield from self._stream_with_responses(
+                model=model, messages=messages, tools=tools, settings=settings
+            )
+
+    def _stream_with_responses(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]],
+        settings: dict[str, Any],
+    ):
+        for chunk in self._responses_provider().stream(
+            model=model, messages=messages, tools=tools, **settings
+        ):
+            yield chunk
+        self._responses_models.add(model)
+
+    def _stream_with_chat(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]],
+        settings: dict[str, Any],
     ):
         kwargs: dict[str, Any] = {
             "model": model,
