@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   getConnectors,
   getDmRoute,
@@ -30,6 +31,7 @@ const SELECT = "px-2.5 py-1.5 rounded-lg border border-line bg-paper text-[13px]
 const BTN_ACCENT_SM = "text-[12px] px-2.5 py-1 rounded-md bg-accent text-white disabled:opacity-50";
 
 export function InboxConfigure() {
+  const { t } = useTranslation();
   return (
     <div data-testid="inbox-configure">
       <div className="grid grid-cols-2 gap-4 mb-4">
@@ -40,11 +42,8 @@ export function InboxConfigure() {
       {/* Unrouted = delivery FAILURES ("messages that never reached you"), so it lives with
           the Inbox now (§28; previously with routing under Connectors, §26). */}
       <div className="mt-6" data-testid="unrouted-section">
-        <h3 className="text-[14px] font-semibold mb-1">Unrouted</h3>
-        <p className="text-[12.5px] text-muted mb-3">
-          Inbound messages and background-turn failures nothing claimed — nothing vanishes
-          silently.
-        </p>
+        <h3 className="text-[14px] font-semibold mb-1">{t("inboxConfig.unrouted")}</h3>
+        <p className="text-[12.5px] text-muted mb-3">{t("inboxConfig.unroutedDesc")}</p>
         <UnroutedTable />
       </div>
     </div>
@@ -54,6 +53,7 @@ export function InboxConfigure() {
 // Where an Unattended session's approvals/questions get mirrored as interactive buttons. Targets
 // the "default" route (sessions fall back to it); pick a channel separate from any you subscribe to.
 function InboxRoutingCard() {
+  const { t } = useTranslation();
   const [recent, setRecent] = useState<RecentChannel[]>([]);
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [target, setTarget] = useState(""); // current default-binding address, e.g. "slack:C0123"
@@ -72,8 +72,8 @@ function InboxRoutingCard() {
   };
   useEffect(() => {
     load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
+    const iv = setInterval(load, 5000);
+    return () => clearInterval(iv);
   }, []);
 
   const save = async () => {
@@ -83,7 +83,7 @@ function InboxRoutingCard() {
     const [platform, id] = addr.includes(":") ? addr.split(":", 2) : ["slack", addr];
     const result = await setInboxBinding("default", platform, id);
     if (!result.ok) {
-      setError(result.error || "Could not update Inbox routing.");
+      setError(result.error || t("inboxConfig.couldNotUpdate"));
       return;
     }
     setError(null);
@@ -93,7 +93,7 @@ function InboxRoutingCard() {
   const clear = async () => {
     const result = await setInboxBinding("default", null, "");
     if (!result.ok) {
-      setError(result.error || "Could not clear Inbox routing.");
+      setError(result.error || t("inboxConfig.couldNotClear"));
       return;
     }
     setError(null);
@@ -123,13 +123,13 @@ function InboxRoutingCard() {
 
   return (
     <div className={CARD + " p-4"} data-testid="inbox-mirror-card">
-      <div className="font-semibold text-[13.5px] mb-1">Unattended approvals</div>
+      <div className="font-semibold text-[13.5px] mb-1">{t("inboxConfig.unattendedApprovals")}</div>
       <p className="text-[12px] text-muted mb-3">
-        Channel where an Unattended session posts Approve/Deny buttons. Currently mirroring to{" "}
+        {t("inboxConfig.mirrorDesc")}{" "}
         <strong className="text-ink font-medium" title={target || undefined}>
-          {known ? `#${known}` : target || "in-app Inbox only"}
+          {known ? `#${known}` : target || t("inboxConfig.inAppInboxOnly")}
         </strong>
-        .
+        {t("inboxConfig.mirrorDescSuffix")}
       </p>
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-muted shrink-0">
@@ -141,18 +141,16 @@ function InboxRoutingCard() {
           disabled={!draft.trim() || missingSlackOwner}
           onClick={save}
         >
-          Set
+          {t("inboxConfig.set")}
         </button>
         {target && (
           <button className="text-[12px] text-danger/80 hover:text-danger" onClick={clear}>
-            clear
+            {t("inboxConfig.clear")}
           </button>
         )}
       </div>
       {missingSlackOwner && (
-        <p className="text-[11.5px] text-warnInk mt-2">
-          Choose an approval owner under Integrations → Slack before routing approvals here.
-        </p>
+        <p className="text-[11.5px] text-warnInk mt-2">{t("inboxConfig.chooseApprovalOwner")}</p>
       )}
       {error && <p className="text-[11.5px] text-warnInk mt-2">{error}</p>}
     </div>
@@ -161,6 +159,7 @@ function InboxRoutingCard() {
 
 // Which session handles incoming DMs to the bot. None → DMs park in the Unrouted section below.
 function DmRouteCard() {
+  const { t } = useTranslation();
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [dm, setDm] = useState<string>("");
 
@@ -170,8 +169,8 @@ function DmRouteCard() {
   };
   useEffect(() => {
     load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
+    const iv = setInterval(load, 5000);
+    return () => clearInterval(iv);
   }, []);
 
   const real = sessions.filter((s) => !s.session_id.startsWith("__"));
@@ -183,16 +182,14 @@ function DmRouteCard() {
 
   return (
     <div className={CARD + " p-4"}>
-      <div className="font-semibold text-[13.5px] mb-1">Direct messages</div>
-      <p className="text-[12px] text-muted mb-3">
-        Session that handles DMs to the bot. With none, DMs park under Unrouted below.
-      </p>
+      <div className="font-semibold text-[13.5px] mb-1">{t("inboxConfig.directMessages")}</div>
+      <p className="text-[12px] text-muted mb-3">{t("inboxConfig.dmDesc")}</p>
       <div className="flex items-center gap-2">
         <span className="text-muted shrink-0">
           <Icon name="chat" size={16} />
         </span>
         <select className={"flex-1 " + SELECT} value={dm} onChange={(e) => choose(e.target.value)}>
-          <option value="">No session — park DMs</option>
+          <option value="">{t("inboxConfig.noSessionParkDms")}</option>
           {real.map((s) => (
             <option key={s.session_id} value={s.session_id}>
               {s.title || s.session_id}
@@ -207,6 +204,7 @@ function DmRouteCard() {
 // Which sessions listen to which channels (inbound), and where each routes its Inbox (outbound).
 // Subscriptions can be created by the agent (it asks you via ask_user) or added here directly.
 function SubscriptionsCard() {
+  const { t } = useTranslation();
   const [subs, setSubs] = useState<Subscription[] | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [recent, setRecent] = useState<RecentChannel[]>([]);
@@ -220,8 +218,8 @@ function SubscriptionsCard() {
   };
   useEffect(() => {
     load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
+    const iv = setInterval(load, 5000);
+    return () => clearInterval(iv);
   }, []);
 
   const real = sessions.filter((s) => !s.session_id.startsWith("__"));
@@ -242,17 +240,17 @@ function SubscriptionsCard() {
         <span className="text-muted shrink-0">
           <Icon name="plug" size={15} />
         </span>
-        <span className="font-semibold text-[13.5px]">Channel subscriptions</span>
-        <span className="text-[12px] text-muted">— sessions that listen to a channel (inbound)</span>
+        <span className="font-semibold text-[13.5px]">{t("inboxConfig.channelSubscriptions")}</span>
+        <span className="text-[12px] text-muted">{t("inboxConfig.sessionsListen")}</span>
       </div>
 
       {subs && subs.length > 0 ? (
         <table className="w-full text-[13px]">
           <thead className="text-[11px] uppercase tracking-[0.04em] text-faint">
             <tr className="text-left">
-              <th className="font-medium px-4 py-2">Session</th>
-              <th className="font-medium px-4 py-2">Listens to</th>
-              <th className="font-medium px-4 py-2">Inbox routes to</th>
+              <th className="font-medium px-4 py-2">{t("inboxConfig.sessionColumn")}</th>
+              <th className="font-medium px-4 py-2">{t("inboxConfig.listensTo")}</th>
+              <th className="font-medium px-4 py-2">{t("inboxConfig.inboxRoutesTo")}</th>
               <th className="px-4 py-2" />
             </tr>
           </thead>
@@ -275,9 +273,9 @@ function SubscriptionsCard() {
                   {s.collision && (
                     <span
                       className="ml-1.5 text-[11px] text-warnInk bg-warnSoft/70 border border-warnInk/15 rounded px-1.5 py-0.5"
-                      title="This channel is also your Inbox-routing target — inbound and outbound on one channel conflate broadcast with request/reply."
+                      title={t("inboxConfig.collisionTitle")}
                     >
-                      ⚠ collides
+                      {t("inboxConfig.collides")}
                     </span>
                   )}
                 </td>
@@ -285,7 +283,7 @@ function SubscriptionsCard() {
                 <td className="px-4 py-2.5 text-right">
                   <button
                     className="text-faint hover:text-danger"
-                    title="Unsubscribe"
+                    title={t("subscriptions.unsubscribe")}
                     onClick={() => remove(s.session_id, s.channel)}
                   >
                     ×
@@ -296,9 +294,7 @@ function SubscriptionsCard() {
           </tbody>
         </table>
       ) : (
-        <div className="px-4 py-3 text-[12.5px] text-muted">
-          No channel subscriptions yet — add one below or ask a coworker to watch a channel.
-        </div>
+        <div className="px-4 py-3 text-[12.5px] text-muted">{t("inboxConfig.noSubscriptions")}</div>
       )}
 
       <div className="border-t border-line px-4 py-3 flex items-center gap-2 flex-wrap">
@@ -307,7 +303,7 @@ function SubscriptionsCard() {
           value={addSession}
           onChange={(e) => setAddSession(e.target.value)}
         >
-          <option value="">Choose a session…</option>
+          <option value="">{t("inboxConfig.chooseSession")}</option>
           {real.map((s) => (
             <option key={s.session_id} value={s.session_id}>
               {s.title || s.session_id}
@@ -316,7 +312,7 @@ function SubscriptionsCard() {
         </select>
         <ChannelPicker value={addChannel} onChange={setAddChannel} recent={recent} onSubmit={add} />
         <button className={BTN_ACCENT_SM} disabled={!addSession || !addChannel.trim()} onClick={add}>
-          + Subscribe
+          {t("inboxConfig.subscribe")}
         </button>
       </div>
     </div>
@@ -326,20 +322,19 @@ function SubscriptionsCard() {
 // Dead-letter view: inbound messages that had no destination (e.g. a DM with no session designated)
 // and background turns that failed (e.g. a dead model). Read-only — for visibility/debugging.
 function UnroutedTable() {
+  const { t } = useTranslation();
   const [items, setItems] = useState<UnroutedItem[] | null>(null);
 
   useEffect(() => {
     const load = () => getUnrouted().then(setItems).catch(() => setItems([]));
     load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
+    const iv = setInterval(load, 5000);
+    return () => clearInterval(iv);
   }, []);
 
   if (items && items.length === 0)
     return (
-      <div className={CARD + " p-4 text-[13px] text-muted"}>
-        Nothing here — no dropped messages or failed turns.
-      </div>
+      <div className={CARD + " p-4 text-[13px] text-muted"}>{t("inboxConfig.nothingHere")}</div>
     );
 
   return (
@@ -347,10 +342,10 @@ function UnroutedTable() {
       <table className="w-full text-[13px]">
         <thead className="text-[11px] uppercase tracking-[0.04em] text-faint">
           <tr className="text-left">
-            <th className="font-medium px-4 py-2">When</th>
-            <th className="font-medium px-4 py-2">Source</th>
-            <th className="font-medium px-4 py-2">Reason</th>
-            <th className="font-medium px-4 py-2">Message</th>
+            <th className="font-medium px-4 py-2">{t("inboxConfig.when")}</th>
+            <th className="font-medium px-4 py-2">{t("inboxConfig.source")}</th>
+            <th className="font-medium px-4 py-2">{t("inboxConfig.reason")}</th>
+            <th className="font-medium px-4 py-2">{t("inboxConfig.message")}</th>
           </tr>
         </thead>
         <tbody>

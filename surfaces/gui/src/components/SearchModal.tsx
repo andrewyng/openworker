@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { Persona } from "../api";
 import type { SessionInfo } from "../types";
 import { isProjectScoped, shortPersonaName } from "../personaScope";
@@ -26,6 +27,7 @@ export function SearchModal({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { t } = useTranslation();
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -119,22 +121,22 @@ export function SearchModal({
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search chats"
+            placeholder={t("search.searchChats")}
             className="flex-1 bg-transparent outline-none text-[15px] text-ink placeholder:text-faint"
           />
           <kbd className="text-[10.5px] text-faint bg-paper border border-line rounded px-1.5 py-0.5 font-sans">
-            Esc
+            {t("search.esc")}
           </kbd>
         </div>
         <div className="max-h-[52vh] overflow-y-auto hairline-scroll py-2">
           {ordered.length === 0 ? (
-            <div className="px-4 py-8 text-center text-[13px] text-faint">No chats found.</div>
+            <div className="px-4 py-8 text-center text-[13px] text-faint">{t("search.noChatsFound")}</div>
           ) : (
             <>
               {pinned.length > 0 && (
                 <div className="px-2">
                   <div className="px-2 py-1 text-[11px] uppercase tracking-[0.05em] text-faint font-semibold">
-                    Pinned chats
+                    {t("search.pinnedChats")}
                   </div>
                   {pinned.map((s, i) => row(s, i))}
                 </div>
@@ -142,7 +144,7 @@ export function SearchModal({
               {recent.length > 0 && (
                 <div className="px-2 mt-1">
                   <div className="px-2 py-1 text-[11px] uppercase tracking-[0.05em] text-faint font-semibold">
-                    Recent chats
+                    {t("search.recentChats")}
                   </div>
                   {recent.map((s, i) => row(s, pinned.length + i))}
                 </div>

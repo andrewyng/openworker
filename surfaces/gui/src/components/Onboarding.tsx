@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   cloudLogin,
   connectManaged,
@@ -28,16 +29,17 @@ import { Spinner } from "./AutomationQuickstart";
 // combined grayed "Coming soon" row — both ride the same Google app, gated on
 // Google verification/CASA; give them rows when it lands.
 const TOOL_ROWS = [
-  { name: "outlook", benefit: "Stay on top of email", detail: "Outlook — triage mail, draft replies, run your calendar." },
-  { name: "slack", benefit: "Keep up with Slack", detail: "Slack — catch up, answer mentions, post updates." },
-  { name: "github", benefit: "Ship code", detail: "GitHub — review PRs, watch issues, reply to @mentions." },
-  { name: "notion", benefit: "Keep your notes in reach", detail: "Notion — search pages, query databases, draft docs." },
-  { name: "hubspot", benefit: "Keep the CRM current", detail: "HubSpot — update deals, log notes, prep calls." },
-  { name: "attio", benefit: "Track every relationship", detail: "Attio — search records, read timelines, log notes." },
+  { name: "outlook", benefit: "toolRows.outlook", detail: "toolRows.outlookDetail" },
+  { name: "slack", benefit: "toolRows.slack", detail: "toolRows.slackDetail" },
+  { name: "github", benefit: "toolRows.github", detail: "toolRows.githubDetail" },
+  { name: "notion", benefit: "toolRows.notion", detail: "toolRows.notionDetail" },
+  { name: "hubspot", benefit: "toolRows.hubspot", detail: "toolRows.hubspotDetail" },
+  { name: "attio", benefit: "toolRows.attio", detail: "toolRows.attioDetail" },
 ];
 const TOOLS_SOON = ["gmail", "google_calendar"];
 
 export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "automations") => void }) {
+  const { t } = useTranslation();
   const [step, setStep] = useState(0);
 
   // -- step 1: model (provider gallery ⇄ key form, shared machinery) ---------------
@@ -119,10 +121,9 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
         {step === 0 && (
           <section data-testid="ob-step-model" className="flex-1 min-h-0 flex flex-col">
             {/* Persistent header — stays put while the region below swaps (§39). */}
-            <h1 className="text-[19px] font-semibold">Welcome to OpenWorker<span className="beta-tag">BETA</span></h1>
+            <h1 className="text-[19px] font-semibold">{t("welcome.title")}<span className="beta-tag">{t("app.beta")}</span></h1>
             <p className="text-[13px] text-muted mt-0.5 mb-4">
-              Pick a model provider to get started — OpenWorker runs on your own key, and your
-              key and your data stay on this computer.
+              {t("welcome.subtitle")}
             </p>
 
             {!ps.sel ? (
@@ -141,13 +142,13 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
             <div className="flex items-center gap-3 pt-5">
               {!skipConfirm ? (
                 <button className="text-[12.5px] text-faint hover:text-muted" onClick={() => setSkipConfirm(true)}>
-                  Skip setup
+                  {t("setup.skip")}
                 </button>
               ) : (
                 <span className="text-[12.5px] text-muted">
-                  Nothing works without a model —{" "}
+                  {t("setup.skipConfirm")}{" "}
                   <button className="text-accent" onClick={() => finish()}>
-                    skip anyway
+                    {t("setup.skipAnyway")}
                   </button>
                 </span>
               )}
@@ -157,11 +158,11 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                 onClick={advance}
                 data-testid="ob-continue"
               >
-                {ps.verify.state === "testing" ? "Checking…" : "Next"}
+                {ps.verify.state === "testing" ? t("setup.checking") : t("setup.next")}
               </button>
             </div>
             <p className="text-[11px] text-faint mt-3">
-              Models can be enabled or hidden anytime in Settings ▸ Models.
+              {t("welcome.modelsCanBeEnabled")}
             </p>
           </section>
         )}
@@ -173,9 +174,9 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
              slot keeps its place but flips to a green congrats, and every row grows a quiet
              Connect pill. The gated Google pair is ONE combined grayed row. */
           <section data-testid="ob-step-tools" className="flex-1 min-h-0 flex flex-col">
-            <h1 className="text-[19px] font-semibold">Connect your everyday tools</h1>
+            <h1 className="text-[19px] font-semibold">{t("onboarding.connectTools")}</h1>
             <p className="text-[13px] text-muted mt-0.5 mb-3">
-              Chat can only advise. Connected, your coworker does the actual work:
+              {t("onboarding.toolsSub")}
             </p>
 
             <div className="flex-1 min-h-0 overflow-y-auto pr-1" data-testid="ob-tool-gallery">
@@ -190,20 +191,20 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                   >
                     <ConnectorBadge connector={c} size={34} title={c.title} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[13.5px] font-semibold leading-tight">{benefit}</span>
-                      <span className="block text-[12px] text-muted truncate">{detail}</span>
+                      <span className="block text-[13.5px] font-semibold leading-tight">{t(benefit)}</span>
+                      <span className="block text-[12px] text-muted truncate">{t(detail)}</span>
                     </span>
                     {cloud?.signed_in &&
                       (c.connected ? (
-                        <span className="text-[12px] text-ok font-medium shrink-0">✓ Connected</span>
+                        <span className="text-[12px] text-ok font-medium shrink-0">✓ {t("setup.connected")}</span>
                       ) : pendingTool === name ? (
-                        <span className="text-[12px] text-muted shrink-0">Check your browser…</span>
+                        <span className="text-[12px] text-muted shrink-0">{t("cloud.checkBrowser")}</span>
                       ) : (
                         <button
                           className="shrink-0 rounded-full border border-line px-4 py-1.5 text-[12.5px] font-medium hover:border-lineStrong"
                           onClick={() => startTool(name)}
                         >
-                          Connect
+                          {t("setup.connect")}
                         </button>
                       ))}
                   </div>
@@ -219,13 +220,13 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[13.5px] font-semibold leading-tight text-faint">
-                    Gmail &amp; Google Calendar
+                    {t("toolRows.gmailCalendar")}
                   </span>
                   <span className="block text-[12px] text-faint truncate">
-                    Coming soon — pending Google&rsquo;s app verification.
+                    {t("toolRows.gmailCalendarDetail")}
                   </span>
                 </span>
-                {cloud?.signed_in && <span className="text-[11.5px] text-faint shrink-0">Coming soon</span>}
+                {cloud?.signed_in && <span className="text-[11.5px] text-faint shrink-0">{t("toolRows.comingSoon")}</span>}
               </div>
             </div>
 
@@ -236,25 +237,24 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
               <div className="mt-3.5 rounded-xl border border-line bg-paper px-4 py-3 flex items-center gap-3.5 shrink-0">
                 <span className="flex-1 text-[12.5px] text-muted leading-snug">
                   <span className="block text-[13px] font-semibold text-ink mb-0.5">
-                    Sign in for one-click connections
+                    {t("setup.signInForConnections")}
                   </span>
-                  OpenWorker handles the OAuth for 20+ tools — no dev consoles, no pasted keys.
-                  Tokens stay on this computer.
+                  {t("setup.signInDesc")}
                 </span>
                 {signinPhase ? (
                   <span className="inline-flex items-center gap-2 text-[12.5px] text-muted shrink-0">
                     <Spinner />
                     {signinPhase === "opening" ? (
-                      "Opening browser…"
+                      t("setup.openingBrowser")
                     ) : (
                       <>
-                        Waiting…{" "}
+                        {t("setup.waiting")}{" "}
                         <button
                           className="underline hover:text-ink"
                           onClick={() => setSigninPhase(null)}
                           data-testid="ob-signin-cancel"
                         >
-                          Cancel
+                          {t("setup.cancel")}
                         </button>
                       </>
                     )}
@@ -269,7 +269,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                     }}
                     data-testid="ob-cloud-signin"
                   >
-                    Sign in
+                    {t("setup.signIn")}
                   </button>
                 )}
               </div>
@@ -279,11 +279,10 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                 data-testid="ob-tools-signedin"
               >
                 <span className="block text-[13px] font-semibold text-ok mb-0.5">
-                  🎉 You&rsquo;re signed in{cloud.account ? ` as ${cloud.account}` : ""}
+                  🎉 {cloud.account ? t("setup.youAreSignedInAs", { account: cloud.account }) : t("setup.youAreSignedIn")}
                 </span>
                 <span className="block text-[12.5px] text-muted">
-                  Connect a tool above with one click — or add them anytime later from the
-                  Connectors page.
+                  {t("setup.toolsConnected")}
                 </span>
               </div>
             )}
@@ -296,7 +295,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                   onClick={() => setStep(2)}
                   data-testid="ob-continue-tools"
                 >
-                  Next
+                  {t("setup.next")}
                 </button>
               ) : (
                 <button
@@ -304,13 +303,12 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                   onClick={() => setStep(2)}
                   data-testid="ob-tools-skip"
                 >
-                  Continue without sign-in
+                  {t("setup.continueWithoutSignin")}
                 </button>
               )}
             </div>
             <p className="text-[11px] text-faint mt-3">
-              30+ more tools on the Connectors page — add or remove anytime. Tokens stay on
-              this computer.
+              {t("setup.toolsNotSignedIn")}
             </p>
           </section>
         )}
@@ -321,8 +319,8 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
               <div className="w-12 h-12 rounded-full bg-okSoft text-ok grid place-items-center mx-auto mb-3 text-[22px]">
                 ✓
               </div>
-              <h1 className="text-[19px] font-semibold mb-1">You're set up</h1>
-              <p className="text-[13px] text-muted mb-5">Two good ways to start:</p>
+              <h1 className="text-[19px] font-semibold mb-1">{t("setup.doneTitle")}</h1>
+              <p className="text-[13px] text-muted mb-5">{t("setup.doneSubtitle")}</p>
             </div>
 
             <button
@@ -334,9 +332,9 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                 ◷
               </span>
               <span className="flex-1 min-w-0 text-left">
-                <b className="block text-[13.5px]">Create your first automation</b>
+                <b className="block text-[13.5px]">{t("setup.createAutomation")}</b>
                 <span className="text-[12px] text-muted">
-                  A weekly digest, a morning brief — pick a template, running in two minutes.
+                  {t("setup.createAutomationDesc")}
                 </span>
               </span>
               <span className="text-faint self-center">›</span>
@@ -350,9 +348,9 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                 ✦
               </span>
               <span className="flex-1 min-w-0 text-left">
-                <b className="block text-[13.5px]">Start working with Coworker</b>
+                <b className="block text-[13.5px]">{t("setup.startWorking")}</b>
                 <span className="text-[12px] text-muted">
-                  Open a session and just ask — analyze files, draft, research, build.
+                  {t("setup.startWorkingDesc")}
                 </span>
               </span>
               <span className="text-faint self-center">›</span>
@@ -362,7 +360,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                 (owner call 2026-07-12); the finish("gallery") plumbing remains for their return. */}
 
             <p className="text-[11px] text-faint text-center mt-auto pt-5">
-              Replay this setup anytime: Settings ▸ Appearance ▸ Run setup again.
+              {t("setup.replaySetup")}
             </p>
           </section>
         )}

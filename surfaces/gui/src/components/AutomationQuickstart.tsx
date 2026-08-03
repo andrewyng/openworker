@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   cloudLogin,
   connectManaged,
@@ -22,16 +23,16 @@ import { SelectMenu } from "./SelectMenu";
 // The `ob-*` testids moved here with the machinery.
 
 // "When" = day choice × free time (owner call 2026-07-11); the cron assembles from the two.
-const DAYS: Record<string, { label: string; dow: string }> = {
-  mon: { label: "Mondays", dow: "1" },
-  tue: { label: "Tuesdays", dow: "2" },
-  wed: { label: "Wednesdays", dow: "3" },
-  thu: { label: "Thursdays", dow: "4" },
-  fri: { label: "Fridays", dow: "5" },
-  sat: { label: "Saturdays", dow: "6" },
-  sun: { label: "Sundays", dow: "0" },
-  weekdays: { label: "Weekdays", dow: "1-5" },
-  daily: { label: "Every day", dow: "*" },
+const DAYS: Record<string, { labelKey: string; dow: string }> = {
+  mon: { labelKey: "scheduled.monday", dow: "1" },
+  tue: { labelKey: "scheduled.tuesday", dow: "2" },
+  wed: { labelKey: "scheduled.wednesday", dow: "3" },
+  thu: { labelKey: "scheduled.thursday", dow: "4" },
+  fri: { labelKey: "scheduled.friday", dow: "5" },
+  sat: { labelKey: "scheduled.saturday", dow: "6" },
+  sun: { labelKey: "scheduled.sunday", dow: "0" },
+  weekdays: { labelKey: "scheduled.weekdays", dow: "1-5" },
+  daily: { labelKey: "scheduled.everyDay", dow: "*" },
 };
 // §30 connect-state spinner (the app has no other spinner — waits elsewhere are label swaps).
 // Exported for Onboarding page 2's sign-in button (same states, same look).
@@ -46,10 +47,10 @@ const cronFor = (dayKey: string, hhmm: string) => {
 
 interface QuickTemplate {
   key: string;
-  title: string;
-  blurb: string;
-  cadence: string; // the card's footer label
-  conns: { name: string; why: string }[]; // [] = no connections needed
+  titleKey: string;
+  blurbKey: string;
+  cadenceKey: string; // the card's footer label
+  conns: { name: string; whyKey: string }[]; // [] = no connections needed
   needsRepo?: boolean;
   needsChannel?: boolean;
   consent?: boolean; // write recipes carry the §25 consent line; reads carry disclosure
@@ -62,12 +63,12 @@ interface QuickTemplate {
 const TEMPLATES: QuickTemplate[] = [
   {
     key: "github",
-    title: "GitHub digest",
-    blurb: "Merged PRs and commits, posted to your team's Slack.",
-    cadence: "Weekly",
+    titleKey: "quickstart.github.title",
+    blurbKey: "quickstart.github.blurb",
+    cadenceKey: "quickstart.github.cadence",
     conns: [
-      { name: "slack", why: "Where the digest posts" },
-      { name: "github", why: "What the digest summarizes" },
+      { name: "slack", whyKey: "quickstart.why.slack.digest" },
+      { name: "github", whyKey: "quickstart.why.github.digest" },
     ],
     needsRepo: true,
     needsChannel: true,
@@ -81,12 +82,12 @@ const TEMPLATES: QuickTemplate[] = [
   },
   {
     key: "pipeline",
-    title: "Pipeline digest",
-    blurb: "Deals that moved — and deals going quiet — posted to Slack.",
-    cadence: "Weekly",
+    titleKey: "quickstart.pipeline.title",
+    blurbKey: "quickstart.pipeline.blurb",
+    cadenceKey: "quickstart.pipeline.cadence",
     conns: [
-      { name: "slack", why: "Where the digest posts" },
-      { name: "hubspot", why: "Pipeline and deal activity" },
+      { name: "slack", whyKey: "quickstart.why.slack.pipeline" },
+      { name: "hubspot", whyKey: "quickstart.why.hubspot.pipeline" },
     ],
     needsChannel: true,
     consent: true,
@@ -99,12 +100,12 @@ const TEMPLATES: QuickTemplate[] = [
   },
   {
     key: "brief",
-    title: "Morning brief",
-    blurb: "Calendar and unread email, summarized before your day starts.",
-    cadence: "Daily",
+    titleKey: "quickstart.brief.title",
+    blurbKey: "quickstart.brief.blurb",
+    cadenceKey: "quickstart.brief.cadence",
     conns: [
-      { name: "google_calendar", why: "Today's meetings and gaps" },
-      { name: "gmail", why: "What arrived overnight" },
+      { name: "google_calendar", whyKey: "quickstart.why.google_calendar" },
+      { name: "gmail", whyKey: "quickstart.why.gmail.brief" },
     ],
     deliver: true,
     day: "daily",
@@ -116,9 +117,9 @@ const TEMPLATES: QuickTemplate[] = [
   },
   {
     key: "news",
-    title: "Morning news briefing",
-    blurb: "A 5-bullet tech & world news digest, saved as markdown.",
-    cadence: "Daily",
+    titleKey: "quickstart.news.title",
+    blurbKey: "quickstart.news.blurb",
+    cadenceKey: "quickstart.news.cadence",
     conns: [],
     day: "daily",
     time: "08:00",
@@ -128,19 +129,19 @@ const TEMPLATES: QuickTemplate[] = [
   },
   {
     key: "inboxdigest",
-    title: "Inbox digest",
-    blurb: "One short digest of your unread email.",
-    cadence: "Weekdays",
-    conns: [{ name: "gmail", why: "Your unread email" }],
+    titleKey: "quickstart.inboxdigest.title",
+    blurbKey: "quickstart.inboxdigest.blurb",
+    cadenceKey: "quickstart.inboxdigest.cadence",
+    conns: [{ name: "gmail", whyKey: "quickstart.why.gmail.inbox" }],
     day: "weekdays",
     time: "09:00",
     instructions: () => "Summarize my unread email into one short digest note.",
   },
   {
     key: "cleanup",
-    title: "Folder cleanup",
-    blurb: "Sort recent Downloads into tidy folders by type.",
-    cadence: "Weekly",
+    titleKey: "quickstart.cleanup.title",
+    blurbKey: "quickstart.cleanup.blurb",
+    cadenceKey: "quickstart.cleanup.cadence",
     conns: [],
     day: "fri",
     time: "17:30",
@@ -161,7 +162,8 @@ export function AutomationQuickstart({
   }) => void;
 }) {
   const [pickedKey, setPickedKey] = useState<string | null>(null);
-  const picked = TEMPLATES.find((t) => t.key === pickedKey) || null;
+  const picked = TEMPLATES.find((tpl) => tpl.key === pickedKey) || null;
+  const { t } = useTranslation();
 
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
@@ -280,7 +282,7 @@ export function AutomationQuickstart({
   const create = () => {
     if (!picked) return;
     onCreate({
-      title: picked.title,
+      title: t(picked.titleKey),
       instructions: picked.instructions({ repo, channel, deliver }),
       cron: cronFor(day, time),
       permissions:
@@ -291,12 +293,14 @@ export function AutomationQuickstart({
   };
 
   const gateHint = !allConnected
-    ? `Connect ${picked?.conns
-        .filter((c) => !connState(c.name)?.connected)
-        .map((c) => connState(c.name)?.title || c.name)
-        .join(" and ")} to continue`
+    ? t("quickstart.connectToContinue", {
+        names: picked?.conns
+          .filter((c) => !connState(c.name)?.connected)
+          .map((c) => connState(c.name)?.title || c.name)
+          .join(", "),
+      })
     : picked?.needsChannel && !channel
-      ? "Pick a channel to post to first"
+      ? t("quickstart.pickChannelFirst")
       : "";
 
   const label = "block text-[12px] text-muted mt-3 mb-1";
@@ -306,33 +310,33 @@ export function AutomationQuickstart({
   return (
     <div className="mb-4">
       <div className="text-[11px] uppercase tracking-[0.05em] text-faint mb-2.5">
-        Start from a template
+        {t("quickstart.startFromTemplate")}
       </div>
       {/* Equal-height cards (owner ask 2026-07-12): 1fr rows + h-full — <button> grid items
           don't stretch like divs. */}
       <div className="grid grid-cols-3 auto-rows-fr gap-3">
-        {TEMPLATES.map((t) => (
+        {TEMPLATES.map((tpl) => (
           <button
-            key={t.key}
-            data-testid={`qs-template-${t.key}`}
+            key={tpl.key}
+            data-testid={`qs-template-${tpl.key}`}
             className={
               "h-full text-left rounded-xl2 border bg-panel p-4 flex flex-col gap-1.5 " +
-              (pickedKey === t.key
+              (pickedKey === tpl.key
                 ? "border-accent ring-2 ring-accentSoft"
                 : "border-line hover:border-lineStrong")
             }
-            onClick={() => pick(t)}
+            onClick={() => pick(tpl)}
           >
-            <span className="text-[13.5px] font-semibold">{t.title}</span>
-            <span className="text-[12px] text-muted leading-relaxed flex-1">{t.blurb}</span>
+            <span className="text-[13.5px] font-semibold">{t(tpl.titleKey)}</span>
+            <span className="text-[12px] text-muted leading-relaxed flex-1">{t(tpl.blurbKey)}</span>
             <span className="flex items-center gap-1.5 mt-1">
-              {t.conns.map((c) => {
+              {tpl.conns.map((c) => {
                 const cs = connState(c.name);
                 const on = !!cs?.connected;
                 return (
                   <span
                     key={c.name}
-                    title={`${cs?.title || c.name} — ${on ? "connected" : "not connected yet"}`}
+                    title={`${cs?.title || c.name} — ${on ? t("quickstart.connectedState") : t("quickstart.notConnectedYet")}`}
                     style={on ? undefined : { filter: "grayscale(1)", opacity: 0.55 }}
                   >
                     {cs ? (
@@ -344,7 +348,9 @@ export function AutomationQuickstart({
                 );
               })}
               <span className="text-[11px] text-faint ml-0.5">
-                {t.conns.length === 0 ? `No connections needed · ${t.cadence}` : t.cadence}
+                {tpl.conns.length === 0
+                  ? `${t("quickstart.noConnectionsNeeded")} · ${t(tpl.cadenceKey)}`
+                  : t(tpl.cadenceKey)}
               </span>
             </span>
           </button>
@@ -360,15 +366,17 @@ export function AutomationQuickstart({
           {/* §30: the card names its template — without this it starts abruptly after the grid. */}
           <div className="flex items-baseline gap-2 pb-2.5 mb-1 border-b border-line">
             <span className="text-[11px] uppercase tracking-[0.05em] text-accent font-semibold">
-              Set up
+              {t("quickstart.setUp")}
             </span>
-            <span className="text-[14px] font-semibold">{picked.title}</span>
+            <span className="text-[14px] font-semibold">{t(picked.titleKey)}</span>
             <span className="ml-auto text-[12px] text-faint max-sm:hidden">
-              {picked.conns.length ? "Connections, delivery & schedule" : "Delivery & schedule"} ·{" "}
-              {picked.cadence}
+              {picked.conns.length
+                ? t("quickstart.connectionsDeliverySchedule")
+                : t("quickstart.deliverySchedule")} ·{" "}
+              {t(picked.cadenceKey)}
             </span>
           </div>
-          {picked.conns.map(({ name, why }) => {
+          {picked.conns.map(({ name, whyKey }) => {
             const c = connState(name);
             const flow = connFlow?.name === name ? connFlow : null;
             return (
@@ -377,16 +385,16 @@ export function AutomationQuickstart({
                   {c && <ConnectorBadge connector={c} size={26} title={c.title} />}
                   <span className="min-w-0 flex-1">
                     <span className="block text-[13.5px] font-medium">{c?.title || name}</span>
-                    <span className="block text-[11.5px] text-faint">{why}</span>
+                    <span className="block text-[11.5px] text-faint">{t(whyKey)}</span>
                   </span>
                   {c?.connected ? (
-                    <span className="text-[12.5px] text-ok">✓ Connected</span>
+                    <span className="text-[12.5px] text-ok">{t("quickstart.connected")}</span>
                   ) : flow ? (
                     <span className="inline-flex items-center gap-2 text-[12px] text-muted">
                       <Spinner />
                       {flow.phase === "opening"
-                        ? "Opening browser…"
-                        : `Waiting for ${c?.title || name}…`}
+                        ? t("quickstart.openingBrowser")
+                        : t("quickstart.waitingFor", { name: c?.title || name })}
                     </span>
                   ) : (
                     <button
@@ -394,7 +402,7 @@ export function AutomationQuickstart({
                       onClick={() => startConnect(name)}
                       data-testid={`ob-connect-${name}`}
                     >
-                      Connect
+                      {t("quickstart.connect")}
                     </button>
                   )}
                 </div>
@@ -408,16 +416,16 @@ export function AutomationQuickstart({
                     <span>↗</span>
                     <span className="flex-1 min-w-0">
                       <b className="text-ink font-medium">
-                        Finish connecting {c?.title || name} in your browser.
+                        {t("quickstart.finishConnecting", { name: c?.title || name })}
                       </b>{" "}
-                      Approve it there, then come back — this page updates by itself.
+                      {t("quickstart.approveAndComeBack")}
                     </span>
                     <button
                       className="text-faint underline hover:text-muted shrink-0"
                       onClick={() => setConnFlow(null)}
                       data-testid="ob-connect-cancel"
                     >
-                      Cancel
+                      {t("quickstart.cancel")}
                     </button>
                   </div>
                 )}
@@ -431,25 +439,27 @@ export function AutomationQuickstart({
               data-testid="ob-cloudpane"
             >
               <span className="block text-[13px] text-ink font-medium">
-                One sign-in unlocks every one-click connection
+                {t("quickstart.oneSigninUnlocksAll")}
               </span>
-              Connections are brokered by OpenWorker Cloud — your tokens stay on this computer.
+              {t("quickstart.brokeredByCloud")}
               <div className="flex items-center gap-3 mt-2">
                 {signinPhase ? (
                   <>
                     <span className="inline-flex items-center gap-2 text-[12px]">
                       <Spinner />
-                      {signinPhase === "opening" ? "Opening browser…" : "Waiting for sign-in…"}
+                      {signinPhase === "opening"
+                        ? t("quickstart.openingBrowser")
+                        : t("quickstart.waitingForSignin")}
                     </span>
                     {signinPhase === "waiting" && (
                       <span className="text-[11.5px] text-faint">
-                        Finish signing in in your browser — this page updates by itself.{" "}
+                        {t("quickstart.finishSigningIn")}{" "}
                         <button
                           className="underline hover:text-muted"
                           onClick={cancelSignin}
                           data-testid="ob-signin-cancel"
                         >
-                          Cancel
+                          {t("quickstart.cancel")}
                         </button>
                       </span>
                     )}
@@ -460,7 +470,7 @@ export function AutomationQuickstart({
                     onClick={signInThenConnect}
                     data-testid="ob-cloud-signin"
                   >
-                    Sign in to OpenWorker Cloud
+                    {t("cloud.signInCloud")}
                   </button>
                 )}
               </div>
@@ -471,10 +481,10 @@ export function AutomationQuickstart({
             <div className={picked.conns.length ? "bg-paper rounded-xl px-4 py-3.5 mt-3" : ""} data-testid="ob-recipe">
               {picked.needsRepo && (
                 <>
-                  <label className={label}>Repository</label>
+                  <label className={label}>{t("quickstart.repository")}</label>
                   <input
                     className={input}
-                    placeholder="owner/repo"
+                    placeholder={t("quickstart.repoPlaceholder")}
                     value={repo}
                     onChange={(e) => setRepo(e.target.value)}
                     data-testid="ob-repo"
@@ -483,7 +493,7 @@ export function AutomationQuickstart({
               )}
               {picked.needsChannel && (
                 <>
-                  <label className={label}>Post to channel</label>
+                  <label className={label}>{t("quickstart.postToChannel")}</label>
                   <div data-testid="ob-channel">
                     <ChannelPicker
                       value={channel}
@@ -494,38 +504,36 @@ export function AutomationQuickstart({
                       }
                     />
                   </div>
-                  <p className="text-[11px] text-warnInk mt-1">
-                    The bot must be a member of the channel — invite @OpenWorker in Slack if it isn't.
-                  </p>
+                  <p className="text-[11px] text-warnInk mt-1">{t("quickstart.botMustBeMember")}</p>
                 </>
               )}
-              <label className={label}>When</label>
+              <label className={label}>{t("quickstart.when")}</label>
               <div className="flex gap-2">
                 <div className="flex-1 min-w-0">
                   <SelectMenu
-                    ariaLabel="Day"
+                    ariaLabel={t("quickstart.day")}
                     value={day}
-                    options={Object.entries(DAYS).map(([k, v]) => ({ value: k, label: v.label }))}
+                    options={Object.entries(DAYS).map(([k, v]) => ({ value: k, label: t(v.labelKey) }))}
                     onChange={setDay}
                   />
                 </div>
                 <input
                   className="w-28 px-3 py-2 rounded-lg border border-line bg-panel text-[13.5px] outline-none focus:border-accent"
                   type="time"
-                  aria-label="Time"
+                  aria-label={t("quickstart.time")}
                   value={time}
                   onChange={(e) => setTime(e.target.value)}
                 />
               </div>
               {picked.deliver && (
                 <>
-                  <label className={label}>Deliver to</label>
+                  <label className={label}>{t("quickstart.deliverTo")}</label>
                   <SelectMenu
-                    ariaLabel="Deliver to"
+                    ariaLabel={t("quickstart.deliverTo")}
                     value={deliver}
                     options={[
-                      { value: "app", label: "In the app" },
-                      { value: "slack", label: "Slack DM (connect Slack later)" },
+                      { value: "app", label: t("quickstart.deliverApp") },
+                      { value: "slack", label: t("quickstart.deliverSlack") },
                     ]}
                     onChange={(v) => setDeliver(v as "app" | "slack")}
                   />
@@ -541,19 +549,16 @@ export function AutomationQuickstart({
                     data-testid="ob-consent"
                   />
                   <span>
-                    Allow this automation to post its digest to{" "}
+                    {t("quickstart.consentBefore")}
                     <b className="text-ink" title={channel || undefined}>
-                      {channelLabel || "the channel"}
+                      {channelLabel || t("quickstart.theChannel")}
                       {channelWorkspace ? ` (${channelWorkspace})` : ""}
-                    </b>{" "}
-                    without asking each time. Anything else still asks first.
+                    </b>
+                    {t("quickstart.consentAfter")}
                   </span>
                 </label>
               ) : picked.conns.length > 0 ? (
-                <p className="text-[12.5px] text-muted mt-3">
-                  This automation only <b className="text-ink">reads</b> on schedule — reading
-                  never needs approval.
-                </p>
+                <p className="text-[12.5px] text-muted mt-3">{t("quickstart.readsOnly")}</p>
               ) : null}
             </div>
           )}
@@ -563,7 +568,7 @@ export function AutomationQuickstart({
               className="text-[12.5px] text-faint hover:text-muted"
               onClick={() => setPickedKey(null)}
             >
-              Cancel
+              {t("quickstart.cancel")}
             </button>
             {/* A silently-disabled primary reads as a bug — always name the missing piece. */}
             {gateHint && (
@@ -580,7 +585,7 @@ export function AutomationQuickstart({
               onClick={create}
               data-testid="ob-create"
             >
-              {busy ? "Creating…" : "Create automation"}
+              {busy ? t("quickstart.creating") : t("quickstart.createAutomation")}
             </button>
           </div>
         </div>
