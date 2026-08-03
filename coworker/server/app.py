@@ -1772,6 +1772,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "agent": getattr(engine, "agent_name", "code"),
                     "model": engine.model,
                     "mode": engine.permissions.mode.value,
+                    "running": manager.is_running(session_id),
                     "workspace": (
                         str(getattr(engine, "executor").cwd)
                         if getattr(engine, "executor", None)
