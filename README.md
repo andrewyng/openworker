@@ -22,6 +22,16 @@ It runs on your machine and doesn't lock you into any model: bring your own API 
 
 Open the app, add a model key (or point it at Ollama), and ask for something real.
 
+## Community localization
+
+- **Chinese community build:** [zhanglunet/openworker-zh-localized](https://github.com/zhanglunet/openworker-zh-localized)
+- **Chinese guide site:** [oaosf.cn](https://oaosf.cn)
+- **Source analysis and architecture notes:** [docs/zh-localization.md](docs/zh-localization.md)
+
+This community-maintained build localizes the desktop UI and companion materials
+for Chinese-speaking users while preserving OpenWorker's local-first runtime
+model.
+
 ## How it works
 
 1. Tell OpenWorker the outcome you want - "prepare a customer brief," "untangle my calendar," "draft a report," "check where the release stands across Jira and GitHub."
