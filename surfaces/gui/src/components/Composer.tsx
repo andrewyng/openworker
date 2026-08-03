@@ -15,6 +15,7 @@ import {
   stopDictation,
   type DictationStatus,
 } from "../tauri";
+import { imeComposing } from "../ime";
 
 // Plan + Custom hidden for this release (owner ask 2026-07-22): Plan's approval flow isn't
 // polished enough to ship, and Custom (config.toml auto-allow rules) is a power-user mode
@@ -335,6 +336,7 @@ export function Composer(props: Props) {
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    if (imeComposing(e)) return; // IME candidate confirmations must not send/select.
     if (slashQuery !== null) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
