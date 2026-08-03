@@ -12,6 +12,7 @@ import {
   type SkillUploadPreview,
 } from "../api";
 import { Icon } from "./Icon";
+import { useI18n } from "../i18n";
 
 // Settings ▸ Skills (SKILLS-SPEC §5/§6) — the management home: the LIST is the page; every
 // add-surface appears only when summoned from the single "Add skill" menu (the three doors:
@@ -73,6 +74,7 @@ export function SkillsTab({
   // prefilled in the composer — the worker builds the skill and proposes it via save_skill.
   onCreateSkill?: (description: string) => void;
 }) {
+  const { t } = useI18n();
   const [rows, setRows] = useState<SkillRow[]>([]);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [upload, setUpload] = useState<SkillUploadPreview | null>(null);
@@ -105,7 +107,7 @@ export function SkillsTab({
   const fail = (res: { ok?: boolean; error?: string }) => {
     setNotice(null);
     if (res.ok === false) {
-      setError(res.error || "Something went wrong.");
+      setError(res.error || t("Something went wrong."));
       return true;
     }
     setError("");
@@ -164,10 +166,9 @@ export function SkillsTab({
     <section>
       <div className="flex items-start justify-between gap-3 mb-4">
         <div>
-          <h2 className="text-[16px] font-semibold">Skills</h2>
+          <h2 className="text-[16px] font-semibold">{t("Skills")}</h2>
           <p className="text-[12.5px] text-muted mt-1 leading-relaxed">
-            Reusable instructions the worker can follow in every conversation. Off here means
-            off everywhere.
+            {t("Reusable instructions the worker can follow in every conversation. Off here means off everywhere.")}
           </p>
         </div>
         {/* One add-action, three doors behind it (SKILLS-SPEC §5): the list is the page. */}
@@ -179,7 +180,7 @@ export function SkillsTab({
             onClick={() => setAddOpen((v) => !v)}
           >
             <span className="inline-flex items-center gap-1.5">
-              <Icon name="plus" size={13} /> Add skill
+              <Icon name="plus" size={13} /> {t("Add skill")}
             </span>
           </button>
           {addOpen ? (
@@ -198,9 +199,9 @@ export function SkillsTab({
                     setEditor(emptyEditor());
                   }}
                 >
-                  <div className="text-[13px] font-medium">Write it myself</div>
+                  <div className="text-[13px] font-medium">{t("Write it myself")}</div>
                   <div className="text-[11.5px] text-muted">
-                    A name, a description, and the instructions
+                    {t("A name, a description, and the instructions")}
                   </div>
                 </button>
                 <button
@@ -211,9 +212,9 @@ export function SkillsTab({
                     fileInput.current?.click();
                   }}
                 >
-                  <div className="text-[13px] font-medium">Import a file</div>
+                  <div className="text-[13px] font-medium">{t("Import a file")}</div>
                   <div className="text-[11.5px] text-muted">
-                    A .zip or SKILL.md someone shared — you review before it installs
+                    {t("A .zip or SKILL.md someone shared — you review before it installs")}
                   </div>
                 </button>
                 <button
@@ -225,10 +226,9 @@ export function SkillsTab({
                     onCreateSkill?.("");
                   }}
                 >
-                  <div className="text-[13px] font-medium">Create with OpenWorker</div>
+                  <div className="text-[13px] font-medium">{t("Create with OpenWorker")}</div>
                   <div className="text-[11.5px] text-muted">
-                    Starts a conversation — the worker builds it and asks before adding it to
-                    your skills
+                    {t("Starts a conversation — the worker builds it and asks before adding it to your skills")}
                   </div>
                 </button>
               </div>
@@ -241,7 +241,7 @@ export function SkillsTab({
         type="file"
         accept=".zip,.md"
         className="hidden"
-        aria-label="Upload a skill archive"
+        aria-label={t("Upload a skill archive")}
         onChange={(e) => {
           onPickFile(e.target.files?.[0]);
           e.target.value = "";
@@ -264,7 +264,7 @@ export function SkillsTab({
           }
         >
           <span className="min-w-0">
-            <b>{notice.name}</b> {notice.text}
+            <b>{notice.name}</b> {t(notice.text)}
           </span>
           <button
             className="ml-auto shrink-0 opacity-60 hover:opacity-100"
@@ -278,28 +278,28 @@ export function SkillsTab({
 
       {upload ? (
         <div className={`${CARD} p-4 mb-4`}>
-          <div className="text-[13px] font-medium mb-1">Review before installing</div>
+          <div className="text-[13px] font-medium mb-1">{t("Review before installing")}</div>
           <p className="text-[12.5px] text-muted mb-3">
-            Read the instructions — installing a skill means the worker will follow them.
+            {t("Read the instructions — installing a skill means the worker will follow them.")}
           </p>
           <div className="text-[13px] mb-1">
             <span className="font-medium">{upload.name}</span>
-            <span className="text-muted"> — {upload.description || "no description"}</span>
+            <span className="text-muted"> — {upload.description || t("no description")}</span>
           </div>
           <pre className="text-[12px] bg-paper border border-line rounded-lg p-3 whitespace-pre-wrap max-h-64 overflow-y-auto mb-2">
             {upload.instructions}
           </pre>
           {upload.files?.length ? (
             <div className="text-[12px] text-muted mb-2">
-              Bundled files: {upload.files.join(", ")}
+              {t("Bundled files: {{list}}", { list: upload.files.join(", ") })}
             </div>
           ) : null}
           <div className="flex gap-2 mt-3">
             <button className={BTN_ACCENT} onClick={confirmUpload}>
-              Install skill
+              {t("Install skill")}
             </button>
             <button className={BTN_BORDERED} onClick={() => setUpload(null)}>
-              Cancel
+              {t("Cancel")}
             </button>
           </div>
         </div>
@@ -308,37 +308,37 @@ export function SkillsTab({
       {editor ? (
         <div className={`${CARD} p-4 mb-4`}>
           <div className="text-[13px] font-medium mb-3">
-            {editor.mode === "new" ? "New skill" : `Edit ${editor.name}`}
+            {editor.mode === "new" ? t("New skill") : t("Edit {{name}}", { name: editor.name })}
           </div>
           <label className={FIELD_LABEL} htmlFor="skill-name">
-            Name
+            {t("Name")}
           </label>
           <input
             id="skill-name"
             className={`${INPUT} mt-1 mb-3`}
             value={editor.name}
             disabled={editor.mode === "edit"}
-            placeholder="weekly-report"
+            placeholder={t("weekly-report")}
             onChange={(e) => setEditor({ ...editor, name: e.target.value })}
           />
           <label className={FIELD_LABEL} htmlFor="skill-desc">
-            Description
+            {t("Description")}
           </label>
           <input
             id="skill-desc"
             className={`${INPUT} mt-1 mb-3`}
             value={editor.description}
-            placeholder="One line the worker uses to decide when this applies"
+            placeholder={t("One line the worker uses to decide when this applies")}
             onChange={(e) => setEditor({ ...editor, description: e.target.value })}
           />
           <label className={FIELD_LABEL} htmlFor="skill-instructions">
-            Instructions
+            {t("Instructions")}
           </label>
           <textarea
             id="skill-instructions"
             className={`${INPUT} mt-1 mb-3 min-h-[140px] font-mono`}
             value={editor.instructions}
-            placeholder={"1. Gather last week's updates\n2. Write the report, under 300 words"}
+            placeholder={t("1. Gather last week's updates\n2. Write the report, under 300 words")}
             onChange={(e) => setEditor({ ...editor, instructions: e.target.value })}
           />
           <div className="flex gap-2 mt-3">
@@ -347,10 +347,10 @@ export function SkillsTab({
               disabled={!editor.name.trim() || !editor.instructions.trim()}
               onClick={save}
             >
-              Save skill
+              {t("Save skill")}
             </button>
             <button className={BTN_BORDERED} onClick={() => setEditor(null)}>
-              Cancel
+              {t("Cancel")}
             </button>
           </div>
         </div>
@@ -359,8 +359,8 @@ export function SkillsTab({
       <div className={`${CARD} divide-y divide-line`}>
         {rows.length === 0 && !editor ? (
           <div className="p-5 text-[13px] text-muted">
-            No skills yet — <b>Add skill</b> teaches your worker its first one, like
-            “prepare my Monday status report”.
+            {t("No skills yet —")} <b>{t("Add skill")}</b>{" "}
+            {t("teaches your worker its first one, like “prepare my Monday status report”.")}
           </div>
         ) : null}
         {rows.map((row) => (
@@ -377,10 +377,10 @@ export function SkillsTab({
                 {row.files ? (
                   <button
                     className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md border border-line bg-paper text-muted hover:text-ink hover:border-lineStrong shrink-0"
-                    title="Show folder"
+                    title={t("Show folder")}
                     onClick={() => revealSkill(row.name)}
                   >
-                    <Icon name="folder" size={11} /> {row.files} file{row.files === 1 ? "" : "s"}
+                    <Icon name="folder" size={11} /> {row.files} {t(row.files === 1 ? "file" : "files")}
                   </button>
                 ) : null}
               </div>
@@ -390,7 +390,7 @@ export function SkillsTab({
             </div>
             <button
               className={BTN_BORDERED}
-              title="Edit"
+              title={t("Edit")}
               onClick={() =>
                 setEditor({
                   mode: "edit",
@@ -404,17 +404,17 @@ export function SkillsTab({
             </button>
             <button
               className={BTN_BORDERED}
-              aria-label={`Delete ${row.name}`}
+              aria-label={t("Delete {{name}}", { name: row.name })}
               onClick={() => remove(row)}
               onBlur={() => setArmedDelete(null)}
             >
-              {armedDelete === row.name ? "Confirm delete" : <Icon name="trash" size={13} />}
+              {armedDelete === row.name ? t("Confirm delete") : <Icon name="trash" size={13} />}
             </button>
             <label className="inline-flex items-center gap-1.5 text-[12px] text-muted">
               <input
                 type="checkbox"
                 role="switch"
-                aria-label={`${row.name} enabled`}
+                aria-label={t("{{name}} enabled", { name: row.name })}
                 checked={row.enabled}
                 onChange={(e) => {
                   const on = e.target.checked;
@@ -429,7 +429,7 @@ export function SkillsTab({
                   });
                 }}
               />
-              On
+              {t("On")}
             </label>
           </div>
         ))}

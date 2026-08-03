@@ -7,6 +7,7 @@ import {
 } from "../../api";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { ConnectSetup } from "../ManageTabs";
+import { useI18n } from "../../i18n";
 import type { DetailProps } from "./ConnectorsSection";
 import { ToolsDisclosure } from "./ToolsDisclosure";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_ACCENT, XBTN } from "./ui";
@@ -19,6 +20,7 @@ import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_ACCENT, XBTN } from "./ui";
 // always available underneath — signed out or in, local-only stays first-class.
 
 export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailProps) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [showManual, setShowManual] = useState(false);
   const accounts = (c.accounts ?? []) as AccountRow[];
@@ -43,11 +45,11 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
               <>
                 <span className="w-2 h-2 rounded-full bg-ok" />
                 <span data-testid="accounts-status">
-                  {accounts.length} account{accounts.length === 1 ? "" : "s"}
+                  {t("{{count}} accounts", { count: accounts.length })}
                 </span>
               </>
             ) : (
-              <span>Not connected</span>
+              <span>{t("Not connected")}</span>
             )}
           </div>
         </div>
@@ -58,17 +60,17 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
           disabled={busy}
           title={
             c.managed && !cloud?.signed_in
-              ? "Sign in to OpenWorker Cloud for one-click — or add a token below"
+              ? t("Sign in to OpenWorker Cloud for one-click — or add a token below")
               : ""
           }
         >
-          {busy ? "Check your browser…" : "＋ Add account"}
+          {busy ? t("Check your browser…") : t("＋ Add account")}
         </button>
       </div>
 
       {accounts.length > 0 && (
         <>
-          <div className={GRP_H + " !mt-0"}>Accounts</div>
+          <div className={GRP_H + " !mt-0"}>{t("Accounts")}</div>
           <div className={GRP} data-testid="accounts-group">
             {accounts.map((a) => (
               <Row key={a.account_id} connector={c.name} a={a} onChanged={onChanged} />
@@ -80,7 +82,7 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
       {(showManual || !c.connected) && (
         <>
           <div className={GRP_H + (accounts.length ? "" : " !mt-0")}>
-            {c.managed ? "Add manually" : "Add an account"}
+            {c.managed ? t("Add manually") : t("Add an account")}
           </div>
           <div className={GRP} data-testid="accounts-manual-add">
             <div className="px-1.5 py-1">
@@ -99,8 +101,7 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
 
       <ToolsDisclosure c={c} onChanged={onChanged} />
       <div className={FOOT + " mt-2"}>
-        Each account stays separate — tool results and approvals name the account
-        they used.
+        {t("Each account stays separate — tool results and approvals name the account they used.")}
       </div>
     </div>
   );
@@ -115,6 +116,7 @@ function Row({
   a: AccountRow;
   onChanged: () => void;
 }) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   return (
     <div className={ROW} data-testid={`account-${a.account_id}`}>
@@ -125,7 +127,7 @@ function Row({
             {a.account_id}
           </span>
         )}
-        {a.default && <span className={TAG_ACCENT}>Default</span>}
+        {a.default && <span className={TAG_ACCENT}>{t("Default")}</span>}
       </span>
       {!a.default && (
         <button
@@ -136,12 +138,12 @@ function Row({
             onChanged();
           }}
         >
-          Make default
+          {t("Make default")}
         </button>
       )}
       <button
         className={XBTN}
-        title="Disconnect this account"
+        title={t("Disconnect this account")}
         data-testid={`account-disconnect-${a.account_id}`}
         disabled={busy}
         onClick={async () => {

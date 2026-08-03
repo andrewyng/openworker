@@ -2,6 +2,7 @@ import { useState } from "react";
 import { type CloudStatus, type Connector, type SlackStatus } from "../../api";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
+import { useI18n } from "../../i18n";
 import { CHIP_OK, CHIP_OFF, CHIP_WARN, GRP, GRP_H, FOOT, PILL_QUIET, ROW } from "./ui";
 
 // The Connectors LIST (UX-DECISIONS §21): connected first in their own inset group —
@@ -23,6 +24,7 @@ export function ConnectorsList({
   onOpen: (name: string) => void;
   onChanged: () => void;
 }) {
+  const { t } = useI18n();
   const [filter, setFilter] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
@@ -38,7 +40,7 @@ export function ConnectorsList({
     <div>
       <div className="flex items-center justify-end mb-4">
         <input
-          placeholder="Search"
+          placeholder={t("Search")}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           className="w-44 px-3.5 py-1.5 rounded-full border border-line bg-panel text-[13px] outline-none focus:border-accent"
