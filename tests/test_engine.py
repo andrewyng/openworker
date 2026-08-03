@@ -439,3 +439,23 @@ def test_outbound_replaces_images_for_non_vision_models(tmp_path):
     assert all(p["type"] != "image_url" for p in parts)
     assert "not viewable" in parts[-1]["text"]
     assert engine.messages[-1]["content"][1]["type"] == "image_url"  # history untouched
+
+
+def test_context_trimmer_preserves_system_and_tail(tmp_path):
+    from coworker.engine import _trim_context_for_model
+
+    messages = [
+        {"role": "system", "content": "system instructions " * 50},
+        {"role": "user", "content": "turn 1 " * 100},
+        {"role": "assistant", "content": "reply 1 " * 100},
+        {"role": "user", "content": "turn 2 " * 100},
+        {"role": "assistant", "content": "reply 2 " * 100},
+        {"role": "user", "content": "latest user message"},
+    ]
+
+    # Trim to tight token budget
+    trimmed = _trim_context_for_model(messages, max_tokens=150)
+    assert trimmed[0]["role"] == "system"
+    assert "system instructions" in trimmed[0]["content"]
+    assert trimmed[-1]["content"] == "latest user message"
+    assert any("[Earlier conversation context trimmed" in str(m.get("content")) for m in trimmed)

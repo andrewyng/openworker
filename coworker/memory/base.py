@@ -60,11 +60,23 @@ class MemoryStore(ABC):
     @abstractmethod
     def delete(self, item_id: int) -> bool: ...
 
+    @abstractmethod
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        scope: Optional[Scope] = None,
+        workspace: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> list[MemoryItem]: ...
 
-def format_memories(items: list[MemoryItem]) -> str:
+
+def format_memories(items: list[MemoryItem], limit: Optional[int] = None) -> str:
     """Render memories for injection into the system prompt. Ids are shown so the agent
     can revise a memory (`memory_update`) or retire it (`memory_forget`)."""
     if not items:
         return ""
-    lines = [f"- [#{item.id}] {item.content}" for item in items]
+    selected = items[:limit] if limit and limit > 0 else items
+    lines = [f"- [#{item.id}] {item.content}" for item in selected]
     return "Known memories (from earlier sessions):\n" + "\n".join(lines)
