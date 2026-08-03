@@ -886,6 +886,19 @@ def verify_provider_key(
         }
 
     if resp.status_code < 300:
+        # Local servers: a 2xx alone can't tell a model server from whatever else answers
+        # on that port (a dev server's HTML page, a proxy) — require the OpenAI list shape
+        # both serve at /v1/models. An empty model list still passes.
+        if name in LOCAL_PROVIDERS:
+            try:
+                shaped = isinstance(resp.json().get("data"), list)
+            except Exception:
+                shaped = False
+            if not shaped:
+                return {
+                    "ok": False,
+                    "error": "Reached the server, but no OpenAI-compatible /v1 API there.",
+                }
         return {"ok": True}
     if resp.status_code in (401, 403):
         if name in LOCAL_PROVIDERS:

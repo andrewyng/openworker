@@ -198,6 +198,20 @@ def test_lmstudio_models_gated_on_liveness(tmp_path, monkeypatch):
     assert "ollama:llama3.3" not in models  # the other server is still down
 
 
+class _LocalResp:
+    """Minimal httpx.Response stand-in for the local-server probes (json() raises on a
+    None body — a 200 that isn't JSON, e.g. some other service's HTML page)."""
+
+    def __init__(self, status=200, body=None):
+        self.status_code = status
+        self._body = body
+
+    def json(self):
+        if self._body is None:
+            raise ValueError("not JSON")
+        return self._body
+
+
 def test_local_models_parses_both_server_shapes(tmp_path, monkeypatch):
     """Ollama's native /api/tags and LM Studio's OpenAI-shaped /v1/models both map to
     `<provider>:<id>` picker entries."""
@@ -215,15 +229,127 @@ def test_local_models_parses_both_server_shapes(tmp_path, monkeypatch):
         },
     }
 
-    class _Resp:
-        def __init__(self, data):
-            self._data = data
-
-        def json(self):
-            return self._data
-
     import httpx
 
-    monkeypatch.setattr(httpx, "get", lambda url, timeout=None: _Resp(payloads[url]))
+    monkeypatch.setattr(
+        httpx, "get", lambda url, timeout=None: _LocalResp(200, payloads[url])
+    )
     assert manager._local_models("ollama") == ["ollama:llama3.3"]
     assert manager._local_models("lmstudio") == ["lmstudio:qwen/qwen3-coder-30b"]
+
+
+def test_local_alive_requires_model_server_shape(tmp_path, monkeypatch):
+    """Liveness needs the provider's expected list container, not just a 200 — another
+    service answering on the port must not mark a local provider alive."""
+    import httpx
+
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+
+    seen: list[str] = []
+
+    def openai_shape(url, timeout=None):
+        seen.append(url)
+        return _LocalResp(200, {"data": []})
+
+    monkeypatch.setattr(httpx, "get", openai_shape)
+    assert manager._local_alive("lmstudio") is True  # empty list still counts
+    assert seen[-1] == "http://localhost:1234/v1/models"
+    assert manager._local_alive("ollama") is False  # /api/tags wants {"models": …}
+    assert seen[-1] == "http://localhost:11434/api/tags"
+
+    manager._refresh_provider()  # drop the liveness cache before re-probing
+    monkeypatch.setattr(httpx, "get", lambda url, timeout=None: _LocalResp(200, None))
+    assert manager._local_alive("lmstudio") is False  # 200 but not JSON
+
+
+def test_local_liveness_cache_invalidated_on_config_change(tmp_path, monkeypatch):
+    """Repointing a local server re-probes immediately instead of serving the previous
+    endpoint's liveness for up to 30s."""
+    import httpx
+
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+
+    monkeypatch.setattr(
+        httpx, "get", lambda url, timeout=None: _LocalResp(200, {"data": []})
+    )
+    assert manager._local_alive("lmstudio") is True
+
+    def down(url, timeout=None):
+        raise ConnectionError("down")
+
+    monkeypatch.setattr(httpx, "get", down)
+    assert manager._local_alive("lmstudio") is True  # cached — no re-probe yet
+    manager.set_provider("lmstudio", {"base_url": "http://localhost:4321"})
+    assert manager._local_alive("lmstudio") is False  # cache dropped → fresh probe
+
+
+def test_model_ready_gated_on_local_liveness(tmp_path, monkeypatch):
+    """A dead local server must not report the default model as ready — the composer's
+    "No model connected" chip relies on model_ready telling the truth."""
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    manager.set_default_model("lmstudio:qwen/qwen3-coder-30b")
+
+    monkeypatch.setattr(SessionManager, "_local_alive", lambda self, name: False)
+    assert manager.get_settings()["model_ready"] is False
+
+    monkeypatch.setattr(SessionManager, "_local_alive", lambda self, name: True)
+    assert manager.get_settings()["model_ready"] is True
+
+
+def test_first_keyless_detect_stores_profile_and_recommends(tmp_path, monkeypatch):
+    """The GUI persists keyless providers on every passing Detect, possibly with all-blank
+    fields. The stored EMPTY profile still counts as engaged: the live list probes the
+    default endpoint, so the recommended model auto-adds and wins the unset default."""
+    import httpx
+
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        lambda url, timeout=None: _LocalResp(
+            200, {"data": [{"id": "qwen/qwen3-coder-30b"}]}
+        ),
+    )
+    res = manager.set_provider("lmstudio", {"base_url": ""})  # Detect at the default URL
+    assert res["ok"] is True
+    assert manager.secrets.get("provider:lmstudio") == {}  # engaged, no overrides
+    assert "lmstudio:qwen/qwen3-coder-30b" in manager.get_settings()["models"]
+    assert manager.model == "lmstudio:qwen/qwen3-coder-30b"  # fresh install → wins default
+
+
+def test_verify_provider_explicit_blank_endpoint_means_default(tmp_path, monkeypatch):
+    """Clearing a stored endpoint in the form verifies the DEFAULT, not the old URL — a
+    passing Test must validate the config that would actually be saved."""
+    from coworker.server import manager as manager_mod
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    manager.set_provider("lmstudio", {"base_url": "http://old-box:1234"})
+
+    cap: dict = {}
+
+    def fake_verify(name, *, api_key=None, base_url=None, fields=None, timeout=10.0):
+        cap.update({"name": name, "base_url": base_url})
+        return {"ok": True}
+
+    monkeypatch.setattr(manager_mod, "verify_provider_key", fake_verify)
+    manager.verify_provider("lmstudio", {"base_url": ""})  # explicitly cleared
+    assert cap["base_url"] == ""  # NOT the stored http://old-box:1234
+    manager.verify_provider("lmstudio", {})  # field omitted → stored value stands
+    assert cap["base_url"] == "http://old-box:1234"
