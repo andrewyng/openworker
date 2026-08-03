@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Icon } from "./Icon";
+import { useI18n } from "../i18n";
 
 // A form-styled custom select (the native <select> can't carry status dots or sub-lines and
 // looks like a raw OS control next to the rest of the UI). Rows: label, an optional quiet
@@ -23,6 +24,7 @@ export function SelectMenu({
   onChange: (value: string) => void;
   ariaLabel: string;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (!open) return;
@@ -99,7 +101,7 @@ export function SelectMenu({
                     className={
                       "w-1.5 h-1.5 rounded-full shrink-0 " + (o.dot ? "bg-ok" : "bg-transparent")
                     }
-                    title={o.dot ? "Key set" : undefined}
+                    title={o.dot ? t("Key set") : undefined}
                   />
                   </button>
                 </div>
