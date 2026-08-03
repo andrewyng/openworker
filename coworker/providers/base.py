@@ -1,8 +1,9 @@
 """Provider-agnostic model access layer.
 
 The runtime never imports a provider SDK directly — it talks to a `ProviderClient`.
-v1 ships `OpenAIProvider` (OpenAI SDK, `chat.completions` only); an `AISuiteProvider`
-slots in later (P12) without touching the engine, since aisuite is OpenAI-API-shaped.
+Implementations: `OpenAIResponsesProvider` (native OpenAI via `/v1/responses`),
+`OpenAIProvider` (Chat Completions — the compat world), and the native
+Anthropic/Gemini/Bedrock/Vertex providers, all selected by the registry/router.
 """
 
 from __future__ import annotations
@@ -22,6 +23,35 @@ class ToolCall:
 
 
 @dataclass
+class TokenUsage:
+    """Normalized token counts for one model round-trip.
+
+    `input` counts only fresh (uncached) prompt tokens; cached prompt tokens are
+    split into `cache_read`/`cache_write`. Providers that don't report a cache
+    split (Ollama, most compat vendors) leave the cache fields at 0. `output`
+    includes thinking tokens where the vendor bills them as output (Gemini).
+    """
+
+    input: int = 0
+    output: int = 0
+    cache_read: int = 0
+    cache_write: int = 0
+
+    @property
+    def context_tokens(self) -> int:
+        """Prompt-side total — what actually occupied the context window."""
+        return self.input + self.cache_read + self.cache_write
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "input": self.input,
+            "output": self.output,
+            "cache_read": self.cache_read,
+            "cache_write": self.cache_write,
+        }
+
+
+@dataclass
 class AssistantTurn:
     """One assistant response: free text and/or a set of tool calls."""
 
@@ -38,6 +68,9 @@ class AssistantTurn:
     # owning provider consumes its own key when converting history; every other
     # provider must strip or ignore foreign underscore keys before its wire call.
     extras: dict[str, Any] = field(default_factory=dict)
+    # Token counts for this round-trip, normalized across providers. None when the
+    # backend didn't report usage (some compat servers) — never guessed.
+    usage: Optional[TokenUsage] = None
 
     @property
     def has_tool_calls(self) -> bool:
