@@ -1,5 +1,5 @@
 """FakeSlack acceptance tests — the real SlackAdapter / slack_bolt stack driven against the
-in-process fake (no network). Mirrors the acceptance list in `platform/docs/FAKE-SLACK-SPEC.md`.
+in-process fake (no network). Mirrors the acceptance list in `docs/FAKE-SLACK-SPEC.md`.
 
 These are hermetic (no real Slack) and run in CI — not marked `integration`. The `fake_slack`
 fixture (see conftest.py) starts the server and sets `SLACK_API_URL`.
