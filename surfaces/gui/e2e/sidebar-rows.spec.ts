@@ -1,8 +1,8 @@
 import { test, expect } from "./fixtures";
 
 // Session rows are SINGLE-LINE (UX-DECISIONS §7, 2026-07-21): title only — the
-// persona/workspace subtitle is gone (personas are launch-flagged off; when they return
-// the persona surfaces on hover, not as a second line).
+// persona/workspace subtitle is gone; persona context stays in the nav grouping/hover
+// affordances, not as a second line.
 test("recent session rows render the title only — no persona subtitle", async ({ page }) => {
   await page.goto("/");
   const row = page
