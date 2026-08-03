@@ -7,6 +7,7 @@ import {
   type RecentWorkspace,
 } from "../api";
 import { chooseFolder } from "../tauri";
+import { baseName } from "../paths";
 import { useI18n } from "../i18n";
 
 // The mandatory workspace picker for project-scoped personas. Deliberately no
@@ -39,6 +40,23 @@ export function FolderGate({ onChoose, onCancel, projectIndex }: Props) {
   useEffect(() => {
     getRecentWorkspaces().then(setRecents).catch(() => {});
   }, []);
+
+  // "New project" starts from a folder, not a form (Codex parity): picking the mode
+  // auto-opens the OS folder picker and backfills the path plus a name taken from the
+  // folder. Cancelling the picker leaves the form for manual entry (or the Browse
+  // button, which still opens the session immediately).
+  useEffect(() => {
+    if (mode !== "new") return;
+    let cancelled = false;
+    chooseFolder().then((picked) => {
+      if (cancelled || !picked) return;
+      setPath(picked);
+      setName((n) => (n.trim() ? n : baseName(picked)));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode]);
 
   const open = async (p: string, doCreate = false) => {
     setError("");

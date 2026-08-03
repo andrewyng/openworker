@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { createProject, setSessionProject, type ProjectInfo } from "../api";
 import { chooseFolder } from "../tauri";
+import { baseName } from "../paths";
 import { useI18n } from "../i18n";
 import { Icon } from "./Icon";
 
@@ -148,7 +149,18 @@ export function SessionProjectPicker({
             <button
               role="menuitem"
               className="w-full text-left px-2 py-1.5 rounded-lg text-[12.5px] text-accent hover:bg-paper"
-              onClick={() => setAssign(NEW_PROJECT)}
+              onClick={async () => {
+                // Codex parity: creating a project starts from a FOLDER, not a form.
+                // Auto-open the OS folder picker; the chosen folder backfills the path
+                // (and, unless already typed, the project name) so "Create & assign"
+                // is one click away. Cancelling keeps the form for manual entry.
+                setAssign(NEW_PROJECT);
+                const picked = await chooseFolder();
+                if (picked) {
+                  setNewPath(picked);
+                  setNewName((n) => (n.trim() ? n : baseName(picked)));
+                }
+              }}
             >
               {t("New project…")}
             </button>
