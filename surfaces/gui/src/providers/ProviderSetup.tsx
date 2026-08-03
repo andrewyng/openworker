@@ -169,8 +169,17 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     // Keyless providers save on every passing Detect: they report `configured` out of
     // the box, so the dirty/configured gate would skip the FIRST-time save — leaving no
     // stored profile, which means set_provider's recommended-model auto-add never runs.
-    if (dirty || !info?.configured || !info?.needs_key)
-      await setProvider(sel, fields).catch(() => {});
+    // A failed save must surface, not masquerade as "✓ Tested & saved".
+    if (dirty || !info?.configured || !info?.needs_key) {
+      const saved = await setProvider(sel, fields).catch(() => ({ ok: false as const }));
+      if (!saved?.ok) {
+        setVerify({
+          state: "error",
+          msg: ("error" in saved && saved.error) || "verified, but saving failed — try again",
+        });
+        return false;
+      }
+    }
     if (!info?.needs_key) setKeylessOk((s) => new Set(s).add(sel));
     setVerify({ state: "ok" });
     setDirty(false);

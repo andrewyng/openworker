@@ -139,4 +139,19 @@ describe("useProviderSetup keyless Detect", () => {
     });
     expect(api.setProvider).toHaveBeenCalledWith("lmstudio", { base_url: "" });
   });
+
+  it("a failed save surfaces as an error, not '✓ Tested & saved'", async () => {
+    vi.mocked(api.getProviders).mockResolvedValue([LMSTUDIO]);
+    vi.mocked(api.verifyProvider).mockResolvedValue({ ok: true });
+    vi.mocked(api.setProvider).mockResolvedValue({ ok: false, error: "disk full" });
+
+    let ps!: ProviderSetupState;
+    render(<HookHarness grab={(v) => (ps = v)} />);
+    await waitFor(() => expect(ps.providers.length).toBe(1));
+    act(() => ps.openProvider("lmstudio"));
+    await act(async () => {
+      expect(await ps.runTestAndSave()).toBe(false);
+    });
+    expect(ps.verify).toEqual({ state: "error", msg: "disk full" });
+  });
 });

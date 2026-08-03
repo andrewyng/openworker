@@ -306,6 +306,27 @@ def test_model_ready_gated_on_local_liveness(tmp_path, monkeypatch):
     assert manager.get_settings()["model_ready"] is True
 
 
+def test_dead_local_default_yields_to_configured_provider(tmp_path, monkeypatch):
+    """The first-working-provider handoff runs on AVAILABILITY, not configuredness: a
+    dead local default yields to a newly configured provider (keyless 'configured'
+    would wrongly protect it), while a live one is never stolen."""
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    manager.set_default_model("lmstudio:qwen/qwen3-coder-30b")
+
+    monkeypatch.setattr(SessionManager, "_local_alive", lambda self, name: False)
+    manager.set_provider("anthropic", {"api_key": "sk-ant-x"})
+    assert manager.model == "anthropic:claude-fable-5"  # dead local default yielded
+
+    manager.set_default_model("lmstudio:qwen/qwen3-coder-30b")
+    monkeypatch.setattr(SessionManager, "_local_alive", lambda self, name: True)
+    manager.set_provider("gemini", {"api_key": "AIza-x"})
+    assert manager.model == "lmstudio:qwen/qwen3-coder-30b"  # a live one is never stolen
+
+
 def test_first_keyless_detect_stores_profile_and_recommends(tmp_path, monkeypatch):
     """The GUI persists keyless providers on every passing Detect, possibly with all-blank
     fields. The stored EMPTY profile still counts as engaged: the live list probes the
@@ -335,11 +356,17 @@ def test_first_keyless_detect_stores_profile_and_recommends(tmp_path, monkeypatc
 def test_verify_provider_explicit_blank_endpoint_means_default(tmp_path, monkeypatch):
     """Clearing a stored endpoint in the form verifies the DEFAULT, not the old URL — a
     passing Test must validate the config that would actually be saved."""
+    import httpx
+
     from coworker.server import manager as manager_mod
     from coworker.server.manager import SessionManager
 
     monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
     manager = SessionManager(data_dir=tmp_path / "data")
+    # Stub the probe BEFORE set_provider — its suggested-models pass must not hit the net.
+    monkeypatch.setattr(
+        httpx, "get", lambda url, timeout=None: _LocalResp(200, {"data": []})
+    )
     manager.set_provider("lmstudio", {"base_url": "http://old-box:1234"})
 
     cap: dict = {}
