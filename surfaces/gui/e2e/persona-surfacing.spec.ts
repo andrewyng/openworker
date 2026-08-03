@@ -1,10 +1,5 @@
 import { test, expect } from "./fixtures";
 
-// Personas is launch-flagged off by default — this suite covers the flagged-on flows.
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem("ocw.flag.personas", "1"));
-});
-
 // Regression for the invisible-after-install bug (2026-07-03): enabling a persona in
 // Settings ▸ Personas must surface it EVERYWHERE without a reload — the New-Session picker and
 // the grouped sidebar — via the PERSONAS_CHANGED event (and backend enable-implies-surface).

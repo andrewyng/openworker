@@ -278,9 +278,8 @@ export function Sidebar(props: Props) {
 
   // Sidebar layout (§7): "grouped" = the per-persona accordion; "flat" = a single ungrouped list
   // (Pinned + Recent). Read the persisted preference on load; ABSENT falls back by the
-  // Personas flag — with personas hidden for launch, a per-persona accordion groups by
-  // a concept the user can't see, so the default is the flat chronological list
-  // (owner call 2026-07-20). An explicit stored choice always wins.
+  // Personas flag: visible personas default to the role accordion; if the flag is forced
+  // off, fall back to the flat chronological list. An explicit stored choice always wins.
   const defaultLayout: "flat" | "grouped" = showPersonas() ? "grouped" : "flat";
   const [layout, setLayout] = useState<"flat" | "grouped">(defaultLayout);
   // Sessions shown per group before "Show more" — Settings ▸ Appearance ▸ Sidebar.

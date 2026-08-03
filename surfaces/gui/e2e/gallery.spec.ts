@@ -6,8 +6,6 @@ import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
 async function openPersonas(page) {
-  // Personas is launch-flagged off by default — these suites cover the flagged-on flows.
-  await page.addInitScript(() => localStorage.setItem("ocw.flag.personas", "1"));
   await page.goto("/");
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();

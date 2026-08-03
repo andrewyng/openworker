@@ -20,26 +20,24 @@ def test_builtins_present(tmp_path):
     assert reg.get("code").manifest is None
 
 
-def test_sidebar_defaults_to_cowork_only(tmp_path):
+def test_sidebar_defaults_to_core_roles(tmp_path):
     reg = _reg(tmp_path)
     sidebar = reg.sidebar()
     ids = [e["name"] for e in sidebar]
-    # A fresh install offers ONLY the default persona (owner call 2026-07-09);
-    # everything else is opt-in from Settings ▸ Personas.
-    assert ids == ["cowork"]
+    # A fresh install exposes the core role picker: OpenWorker, Code, and Ops.
+    # Chat remains opt-in/hidden.
+    assert ids == ["cowork", "code", "ops"]
     assert sidebar[0]["default"] is True
-    # Enabling adds to the picker (enable implies surface).
-    reg.set_enabled("code", True)
-    reg.set_enabled("ops", True)
+    # Explicit user state still wins.
+    reg.set_enabled("ops", False)
     ids = [e["name"] for e in reg.sidebar()]
-    assert ids[0] == "cowork"
-    assert set(ids) == {"cowork", "code", "ops"}
+    assert ids == ["cowork", "code"]
 
 
 def test_chat_disabled_by_default_but_resolvable(tmp_path):
     reg = _reg(tmp_path)
     assert reg.is_surfaced("chat") is False  # default-hidden
-    assert reg.is_enabled("chat") is False  # opt-in like every non-default persona
+    assert reg.is_enabled("chat") is False  # chat remains opt-in
     assert reg.agent("chat").name == "chat"  # live sessions keep resolving
     # The user can enable it from the Personas tab (enable implies surface).
     reg.set_enabled("chat", True)
