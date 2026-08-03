@@ -34,6 +34,13 @@ export const KEY_HELP: Record<string, { url: string; label: string }> = {
   xai: { url: "https://console.x.ai", label: "console.x.ai" },
 };
 
+// Keyless local servers — the KEY_HELP counterpart: "install the app" instead of
+// "create a key".
+export const LOCAL_HELP: Record<string, { url: string; name: string }> = {
+  ollama: { url: "https://ollama.com/download", name: "Ollama" },
+  lmstudio: { url: "https://lmstudio.ai/download", name: "LM Studio" },
+};
+
 export type Verify = { state: "idle" | "testing" | "ok" | "error"; msg?: string };
 
 /** Brand chip: always a light plate so multicolor marks read on any theme. */
@@ -102,8 +109,8 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   const [dirty, setDirty] = useState(false);
   const [showEndpoint, setShowEndpoint] = useState(false);
   const [verify, setVerify] = useState<Verify>({ state: "idle" });
-  // Keyless providers (Ollama) report configured without proving anything runs —
-  // a passing Detect this session is what marks them live.
+  // Keyless providers (Ollama, LM Studio) report configured without proving anything
+  // runs — a passing Detect this session is what marks them live.
   const [keylessOk, setKeylessOk] = useState<Set<string>>(new Set());
   // Unsaved per-provider input survives switching cards (owner complaint 2026-07-16).
   const [drafts, setDrafts] = useState<Record<string, Record<string, string>>>({});
@@ -337,7 +344,7 @@ export function ProviderForm({
       )
     : [];
   // Without a choice control, Test lives next to the required secret (the API key), or
-  // the first field for keyless providers (Ollama's Detect).
+  // the first field for keyless providers (Ollama's / LM Studio's Detect).
   const requiredSecret = fieldsAll.find((x) => x.secret && x.required);
   const testKey = requiredSecret ? requiredSecret.key : fieldsAll[0]?.key;
   if (!sel) return null;
@@ -497,14 +504,14 @@ export function ProviderForm({
           — takes about a minute.
         </p>
       )}
-      {info && !info.needs_key && (
+      {info && !info.needs_key && LOCAL_HELP[sel] && (
         <p className="text-[11.5px] text-faint mt-2">
-          No API key needed — Ollama runs models on this computer.{" "}
+          No API key needed — {LOCAL_HELP[sel].name} runs models on this computer.{" "}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
-            onClick={() => openExternal("https://ollama.com/download")}
+            onClick={() => openExternal(LOCAL_HELP[sel].url)}
           >
-            Install Ollama ↗
+            Install {LOCAL_HELP[sel].name} ↗
           </button>
         </p>
       )}

@@ -91,6 +91,14 @@ def test_verify_ollama_uses_v1_models_no_key(monkeypatch):
     assert "headers" not in cap  # keyless
 
 
+def test_verify_lmstudio_uses_v1_models_no_key(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    verify_provider_key("lmstudio")  # no base_url → LM Studio's default port
+    assert cap["url"] == "http://localhost:1234/v1/models"
+    assert "headers" not in cap  # keyless
+
+
 def test_verify_network_error_is_clean(monkeypatch):
     _patch_get(monkeypatch, raise_exc=ConnectionError("boom"))
     res = verify_provider_key("openai", api_key="sk-x")

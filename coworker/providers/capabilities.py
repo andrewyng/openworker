@@ -22,9 +22,10 @@ def capabilities_for(model: str) -> ModelCapabilities:
     provider = model.split(":", 1)[0].lower() if ":" in model else ""
     name = model.split(":", 1)[-1].lower()  # strip a provider prefix if present
 
-    # Ollama (local) models vary widely and many fake/mishandle parallel tool calls — assume
-    # tools work (we only point at tool-capable models) but stay conservative otherwise.
-    if provider == "ollama":
+    # Local servers (Ollama, LM Studio) host models that vary widely and many fake/mishandle
+    # parallel tool calls — assume tools work (we only point at tool-capable models) but stay
+    # conservative otherwise.
+    if provider in ("ollama", "lmstudio"):
         return ModelCapabilities(
             tools=True, vision=False, parallel_tool_calls=False, streaming=True
         )

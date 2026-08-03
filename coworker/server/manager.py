@@ -80,6 +80,7 @@ from ..providers import (
     provider_descriptors,
     verify_provider_key,
 )
+from ..providers.registry import DEFAULT_LMSTUDIO_URL, DEFAULT_OLLAMA_URL
 from ..secrets import SecretStore, state_dir
 from ..sessions import SessionRecord
 from ..skills import (
@@ -1559,10 +1560,11 @@ class SessionManager:
 
     def _suggested_models(self, name: str) -> list[str]:
         """Bare model-name suggestions for the 'add model' form (datalist), per provider.
-        Ollama → live `/api/tags` (best-effort); everyone else → the curated matrix,
-        topped up with the compat-vendor extras the matrix doesn't vouch for."""
-        if name == "ollama":
-            return [m.split(":", 1)[-1] for m in self._ollama_models()]
+        Local servers (Ollama, LM Studio) → their live model list (best-effort); everyone
+        else → the curated matrix, topped up with the compat-vendor extras the matrix
+        doesn't vouch for."""
+        if name in self.LOCAL_MODEL_SERVERS:
+            return [m.split(":", 1)[-1] for m in self._local_models(name)]
         from ..providers.matrix import models_for_provider
 
         return list(
@@ -1709,48 +1711,69 @@ class SessionManager:
         self._save_prefs()
         return {"ok": True, "dm_session": self.dm_session()}
 
-    def _ollama_alive(self) -> bool:
-        """Best-effort local-Ollama liveness, cached 30s (get_settings runs on every GUI
-        fetch — no 2s probe inline). Keyless is not the same as PRESENT: `ollama:*` picker
-        entries render only when an Ollama actually answers, so a machine with no Ollama
-        never shows phantom local models (e.g. a stray pasted string saved as a model id,
-        caught 2026-07-21)."""
+    # Local model servers (Ollama, LM Studio): keyless, probed instead of key-checked.
+    # Ollama is listed via its native `/api/tags`; LM Studio via its OpenAI-compatible
+    # `/v1/models` (its native REST API is beta and can sit behind an auth token).
+    LOCAL_MODEL_SERVERS: dict[str, dict[str, str]] = {
+        "ollama": {"default_url": DEFAULT_OLLAMA_URL, "models_path": "/api/tags"},
+        "lmstudio": {"default_url": DEFAULT_LMSTUDIO_URL, "models_path": "/v1/models"},
+    }
+
+    def _local_server_root(self, name: str) -> str:
+        """A local server's root URL (stored base_url or the default), with any `/v1`
+        suffix stripped so native and OpenAI-compat paths can both be appended."""
+        profile = self.secrets.get(f"provider:{name}") or {}
+        base = (
+            (profile.get("base_url") or self.LOCAL_MODEL_SERVERS[name]["default_url"])
+            .strip()
+            .rstrip("/")
+        )
+        if base.endswith("/v1"):
+            base = base[: -len("/v1")]
+        return base
+
+    def _local_models_url(self, name: str) -> str:
+        return self._local_server_root(name) + self.LOCAL_MODEL_SERVERS[name]["models_path"]
+
+    def _local_alive(self, name: str) -> bool:
+        """Best-effort local-server liveness, cached 30s per provider (get_settings runs on
+        every GUI fetch — no 2s probe inline). Keyless is not the same as PRESENT:
+        `ollama:*` / `lmstudio:*` picker entries render only when the server actually
+        answers, so a machine without one never shows phantom local models (e.g. a stray
+        pasted string saved as a model id, caught 2026-07-21)."""
         import time
 
         now = time.monotonic()
-        cached = getattr(self, "_ollama_alive_cache", None)
+        cache = getattr(self, "_local_alive_cache", {})
+        cached = cache.get(name)
         if cached and now - cached[0] < 30:
             return cached[1]
-        profile = self.secrets.get("provider:ollama") or {}
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
         try:
             import httpx
 
-            alive = httpx.get(base + "/api/tags", timeout=0.8).status_code == 200
+            alive = httpx.get(self._local_models_url(name), timeout=0.8).status_code == 200
         except Exception:
             alive = False
-        self._ollama_alive_cache = (now, alive)
+        cache[name] = (now, alive)
+        self._local_alive_cache = cache
         return alive
 
-    def _ollama_models(self) -> list[str]:
-        """Live list of models pulled into the configured Ollama server (via its native
-        `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama isn't
-        configured or unreachable — best-effort, never raises."""
-        profile = self.secrets.get("provider:ollama")
-        if not profile:
+    def _local_models(self, name: str) -> list[str]:
+        """Live list of the models available on a configured local server, as
+        `<provider>:<id>` so they're directly selectable. Empty if the provider isn't
+        configured or unreachable — best-effort, never raises. Both servers list every
+        *downloaded* model; each loads one on demand when it's first requested."""
+        if not self.secrets.get(f"provider:{name}"):
             return []
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
         try:
             import httpx
 
-            data = httpx.get(base + "/api/tags", timeout=2.0).json()
-            return [
-                f"ollama:{m['name']}" for m in data.get("models", []) if m.get("name")
-            ]
+            data = httpx.get(self._local_models_url(name), timeout=2.0).json()
+            # Ollama's /api/tags: {"models": [{"name": …}]}; LM Studio's /v1/models
+            # (OpenAI list shape): {"data": [{"id": …}]}.
+            entries = data.get("models") or data.get("data") or []
+            ids = (m.get("name") or m.get("id") for m in entries)
+            return [f"{name}:{mid}" for mid in ids if mid]
         except Exception:
             return []
 
@@ -1816,12 +1839,12 @@ class SessionManager:
         # Only surface models whose provider is actually configured — the composer picker
         # reflects exactly what's connected. The active default is always kept selectable
         # (it's hidden behind the "No model" state until a provider is connected anyway).
-        # Ollama is keyless, so "configured" is meaningless there — its models show only
-        # while a local Ollama answers (cached liveness probe).
+        # Local servers (Ollama, LM Studio) are keyless, so "configured" is meaningless —
+        # their models show only while the server answers (cached liveness probe).
         def _selectable(m: str) -> bool:
             provider = self._model_provider(m)
-            if provider == "ollama":
-                return self._ollama_alive()
+            if provider in self.LOCAL_MODEL_SERVERS:
+                return self._local_alive(provider)
             return self._provider_configured(provider)
 
         selectable = [m for m in self._curated_models() if _selectable(m)]

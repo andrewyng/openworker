@@ -8,7 +8,7 @@
 
 **AI that gets your everyday tasks done.** OpenWorker is an open-source AI coworker that lives on your desktop and delivers **finished work**, not just chat: a polished document, a Slack reply with the numbers, an updated calendar, a triaged inbox.
 
-It runs on your machine and doesn't lock you into any model: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider, or run fully local with Ollama. Your data leaves your machine only through the model and integrations *you* choose.
+It runs on your machine and doesn't lock you into any model: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider, or run fully local with Ollama or LM Studio. Your data leaves your machine only through the model and integrations *you* choose.
 
 [![How OpenWorker works](docs/assets/how-it-works.png)](https://openworker.com)
 
@@ -20,7 +20,7 @@ It runs on your machine and doesn't lock you into any model: bring your own API 
 [**⬇ Windows 10/11 (x64)**](https://download.openworker.com/windows)
 <sub>builds are not yet code-signed, so SmartScreen will warn; signing is in progress</sub>
 
-Open the app, add a model key (or point it at Ollama), and ask for something real.
+Open the app, add a model key (or point it at Ollama or LM Studio), and ask for something real.
 
 ## How it works
 
@@ -54,7 +54,7 @@ Under the hood:
 
 Model access is yours: pick a provider, paste your key, switch anytime. Supported out of the box:
 
-**OpenAI · Anthropic · Google Gemini · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI)** - plus open-weight models via **Together** and **Fireworks**, and fully local models via **Ollama**.
+**OpenAI · Anthropic · Google Gemini · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI)** - plus open-weight models via **Together** and **Fireworks**, and fully local models via **Ollama** and **LM Studio**.
 
 A curated model list marks what we've verified for tool-calling work. Adding any model string works at your own risk.
 

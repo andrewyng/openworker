@@ -14,7 +14,7 @@ from coworker.providers import (
     StreamChunk,
     capabilities_for,
 )
-from coworker.providers.registry import _normalize_ollama_url, build_provider_client
+from coworker.providers.registry import _normalize_local_url, build_provider_client
 from coworker.providers.openai_provider import _salvage_tool_calls_from_text
 
 
@@ -45,14 +45,15 @@ def test_base_url_omitted_when_none(monkeypatch):
     assert "base_url" not in captured
 
 
-# -- ollama URL normalization ---------------------------------------------------
-def test_normalize_ollama_url():
-    assert _normalize_ollama_url(None) == "http://localhost:11434/v1"
+# -- local-server URL normalization (Ollama, LM Studio) ---------------------------
+def test_normalize_local_url():
+    assert _normalize_local_url(None, "http://localhost:11434") == "http://localhost:11434/v1"
     assert (
-        _normalize_ollama_url("http://localhost:11434") == "http://localhost:11434/v1"
+        _normalize_local_url("http://localhost:11434", "http://localhost:11434")
+        == "http://localhost:11434/v1"
     )
-    assert _normalize_ollama_url("http://h:1/v1/") == "http://h:1/v1"
-    assert _normalize_ollama_url("  ") == "http://localhost:11434/v1"
+    assert _normalize_local_url("http://h:1/v1/", "http://localhost:11434") == "http://h:1/v1"
+    assert _normalize_local_url("  ", "http://localhost:1234") == "http://localhost:1234/v1"
 
 
 def test_build_ollama_client_uses_base_url(monkeypatch):
@@ -69,6 +70,22 @@ def test_build_ollama_client_uses_base_url(monkeypatch):
     client._ensure_client()  # type: ignore[attr-defined]
     assert captured["base_url"] == "http://box:11434/v1"
     assert captured["api_key"] == "ollama"  # placeholder, Ollama ignores it
+
+
+def test_build_lmstudio_client_uses_base_url(monkeypatch):
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    client = build_provider_client(
+        "lmstudio", {"base_url": "http://box:1234"}, secrets=None
+    )
+    client._ensure_client()  # type: ignore[attr-defined]
+    assert captured["base_url"] == "http://box:1234/v1"
+    assert captured["api_key"] == "lm-studio"  # placeholder, LM Studio ignores it
 
 
 # -- router routing -------------------------------------------------------------
@@ -136,6 +153,9 @@ def test_router_bare_only_strips_known_provider():
     assert (
         r._bare("ollama:qwen2.5-coder:32b") == "qwen2.5-coder:32b"
     )  # strip provider, keep tag
+    assert (
+        r._bare("lmstudio:qwen/qwen3-coder-30b") == "qwen/qwen3-coder-30b"
+    )  # LM Studio ids carry slashes, never colons — the prefix split is unaffected
     assert r._bare("gpt-5.5") == "gpt-5.5"
     # a colon that isn't a provider (version tag) must NOT be split — else OpenAI gets "32b"
     assert r._bare("qwen2.5-coder:32b") == "qwen2.5-coder:32b"
@@ -151,6 +171,13 @@ def test_router_capabilities_prefix_aware():
 # -- capabilities ---------------------------------------------------------------
 def test_capabilities_ollama():
     caps = capabilities_for("ollama:qwen2.5-coder")
+    assert caps.tools is True
+    assert caps.parallel_tool_calls is False
+    assert caps.vision is False
+
+
+def test_capabilities_lmstudio():
+    caps = capabilities_for("lmstudio:qwen/qwen3-coder-30b")
     assert caps.tools is True
     assert caps.parallel_tool_calls is False
     assert caps.vision is False
@@ -326,7 +353,7 @@ def test_manager_curated_models(tmp_path, monkeypatch):
     # covers picker mechanics only (the probe itself is covered by
     # test_settings.py::test_ollama_models_gated_on_liveness). Unpinned, the ollama
     # assertions below pass only where Ollama happens to run — green on a dev box, red in CI.
-    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
+    monkeypatch.setattr(SessionManager, "_local_alive", lambda self, name: True)
 
     mgr = SessionManager(data_dir=tmp_path)
     # no provider keys → nothing but the always-selectable default

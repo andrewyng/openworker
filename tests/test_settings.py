@@ -169,8 +169,61 @@ def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):
     manager = SessionManager(data_dir=tmp_path / "data")
     manager.add_model("ollama:llama3.3")
 
-    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: False)
+    monkeypatch.setattr(SessionManager, "_local_alive", lambda self, name: False)
     assert "ollama:llama3.3" not in manager.get_settings()["models"]
 
-    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
+    monkeypatch.setattr(SessionManager, "_local_alive", lambda self, name: True)
     assert "ollama:llama3.3" in manager.get_settings()["models"]
+
+
+def test_lmstudio_models_gated_on_liveness(tmp_path, monkeypatch):
+    """Same gate for `lmstudio:*` — and per-provider: only the answering server's models
+    render (one local server being up must not surface the other's entries)."""
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    manager.add_model("lmstudio:qwen/qwen3-coder-30b")
+    manager.add_model("ollama:llama3.3")
+
+    monkeypatch.setattr(SessionManager, "_local_alive", lambda self, name: False)
+    assert "lmstudio:qwen/qwen3-coder-30b" not in manager.get_settings()["models"]
+
+    monkeypatch.setattr(
+        SessionManager, "_local_alive", lambda self, name: name == "lmstudio"
+    )
+    models = manager.get_settings()["models"]
+    assert "lmstudio:qwen/qwen3-coder-30b" in models
+    assert "ollama:llama3.3" not in models  # the other server is still down
+
+
+def test_local_models_parses_both_server_shapes(tmp_path, monkeypatch):
+    """Ollama's native /api/tags and LM Studio's OpenAI-shaped /v1/models both map to
+    `<provider>:<id>` picker entries."""
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    manager.set_provider("ollama", {"base_url": "http://localhost:11434"})
+    manager.set_provider("lmstudio", {"base_url": "http://localhost:1234"})
+
+    payloads = {
+        "http://localhost:11434/api/tags": {"models": [{"name": "llama3.3"}]},
+        "http://localhost:1234/v1/models": {
+            "data": [{"id": "qwen/qwen3-coder-30b", "object": "model"}]
+        },
+    }
+
+    class _Resp:
+        def __init__(self, data):
+            self._data = data
+
+        def json(self):
+            return self._data
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", lambda url, timeout=None: _Resp(payloads[url]))
+    assert manager._local_models("ollama") == ["ollama:llama3.3"]
+    assert manager._local_models("lmstudio") == ["lmstudio:qwen/qwen3-coder-30b"]
