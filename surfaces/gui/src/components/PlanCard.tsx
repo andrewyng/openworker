@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { imeComposing } from "../ime";
 import type { Item } from "../types";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
@@ -38,7 +39,7 @@ export function PlanCard({
             autoFocus
             onChange={(e) => setFeedback(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && feedback.trim()) onRespond(false, undefined, feedback.trim());
+              if (e.key === "Enter" && !imeComposing(e) && feedback.trim()) onRespond(false, undefined, feedback.trim());
             }}
           />
           <button className="btn" onClick={() => setRejecting(false)}>

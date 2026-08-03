@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { imeComposing } from "../ime";
 import {
   getSettings,
   getTrustedWorkspaces,
@@ -942,7 +943,7 @@ function FilesCard() {
             spellCheck={false}
             autoComplete="off"
             onChange={(e) => setScratchDraft(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && saveScratch()}
+            onKeyDown={(e) => !imeComposing(e) && e.key === "Enter" && saveScratch()}
           />
           {desktop && (
             <button className={BTN_BORDERED} onClick={browseScratch} title={t("Pick a folder")}>

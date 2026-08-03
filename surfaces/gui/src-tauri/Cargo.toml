@@ -1,6 +1,6 @@
 [package]
 name = "openworker-desktop"
-version = "0.1.8"
+version = "0.1.9"
 description = "OpenWorker desktop shell"
 edition = "2021"
 rust-version = "1.77"
