@@ -732,6 +732,21 @@ button.btn.danger { color: var(--accent); }
    state. Ready row: hover colors the title and reveals the action. Gated row: "Configure ›"
    stays visible at rest — the setup action IS the row's meaning. Staggered entrance. */
 .intro-tasks { margin-top: 30px; display: flex; flex-direction: column; }
+/* §38 project assignment — Codex-style chip + menu in the composer footer. The inline
+   create form lives INSIDE the picker menu (input-row widths), not in the intro. */
+.project-new-input {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  outline: none;
+  min-width: 0;
+}
+.project-new-input:focus { border-color: var(--accent); }
+.project-new-input:disabled { opacity: 0.6; }
 .task-card {
   display: flex; align-items: center; gap: 14px;
   width: 100%; text-align: left; cursor: pointer;
@@ -820,6 +835,12 @@ button.btn.danger { color: var(--accent); }
 .gate-input { display: flex; gap: 8px; }
 .gate-input input { flex: 1; font: inherit; font-size: 14px; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel); outline: none; }
 .gate-input input:focus { border-color: var(--accent); }
+.gate-select { flex: 1; font: inherit; font-size: 14px; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel); outline: none; color: var(--ink); }
+.gate-select:focus { border-color: var(--accent); }
+.gate-modes { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
+.gate-mode { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 13.5px; color: var(--ink); }
+.gate-mode:hover { background: var(--panel); }
+.gate-mode input[type="radio"] { accent-color: var(--accent); }
 .gate-error { color: var(--accent); font-size: 12.5px; margin-top: 8px; }
 .gate-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); margin: 18px 0 6px; }
 .gate-recents { display: flex; flex-direction: column; max-height: 200px; overflow-y: auto; }

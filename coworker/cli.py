@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -25,6 +26,11 @@ def main(argv: Optional[list[str]] = None) -> None:
     )
     parser.add_argument("--cwd", default=".", help="workspace directory")
     parser.add_argument(
+        "--project",
+        default=None,
+        help="project name or path to start in (overrides --cwd)",
+    )
+    parser.add_argument(
         "--model", default=cfg.model, help="model id, e.g. openai gpt-5.5"
     )
     parser.add_argument(
@@ -41,6 +47,12 @@ def main(argv: Optional[list[str]] = None) -> None:
     data_dir = state_dir()
     memory_store = SQLiteMemoryStore(data_dir / "coworker.db")
     session_store = ConversationStore(data_dir)
+    if args.project:
+        proj = _resolve_project(session_store, args.project)
+        if proj is None:
+            print(f"project not found: {args.project}", file=sys.stderr)
+            raise SystemExit(1)
+        workspace = Path(proj["path"]).resolve()
     session_store.touch_workspace(os.path.realpath(str(workspace)))
 
     resume_messages = None
@@ -64,6 +76,30 @@ def main(argv: Optional[list[str]] = None) -> None:
         resume_messages=resume_messages,
     )
     app.run()
+
+
+def _resolve_project(
+    session_store: "ConversationStore", ref: str
+) -> Optional[dict]:
+    """Resolve `--project` by project name or by filesystem path.
+
+    A bare path that exists is used directly as the workspace (it will auto-bind to a
+    registered project on first save); a name must match a registered project.
+    """
+    if ref.startswith(("~", "/")) or Path(ref).expanduser().exists():
+        p = Path(ref).expanduser().resolve()
+        if p.is_dir():
+            return session_store.project_by_path(str(p)) or {
+                "project_id": None,
+                "name": p.name,
+                "path": str(p),
+                "n_sessions": 0,
+            }
+        return None
+    for proj in session_store.list_projects():
+        if proj["name"] == ref:
+            return proj
+    return None
 
 
 if __name__ == "__main__":

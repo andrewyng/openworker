@@ -14,6 +14,7 @@ import json
 import os
 import sqlite3
 import threading
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -82,6 +83,13 @@ class ConversationStore:
             CREATE TABLE IF NOT EXISTS workspaces (
                 path TEXT PRIMARY KEY, last_used TEXT DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS projects (
+                project_id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                path TEXT NOT NULL UNIQUE, description TEXT DEFAULT '',
+                pinned INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
             """)
         for ddl in (
             "ALTER TABLE sessions ADD COLUMN title TEXT",
@@ -96,6 +104,7 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN renamed INTEGER DEFAULT 0",
             "ALTER TABLE sessions ADD COLUMN grants TEXT",
             "ALTER TABLE sessions ADD COLUMN compaction TEXT",
+            "ALTER TABLE sessions ADD COLUMN project_id TEXT",
         ):
             try:
                 self._conn.execute(ddl)
@@ -192,13 +201,14 @@ class ConversationStore:
             title = record.title or title_from(record.messages)
             self._conn.execute(
                 """
-                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, project_id, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace, model = excluded.model, mode = excluded.mode,
                     title = COALESCE(sessions.title, excluded.title), agent = excluded.agent,
                     n_msgs = excluded.n_msgs, messages = NULL, extra_roots = excluded.extra_roots,
                     grants = excluded.grants, compaction = excluded.compaction,
+                    project_id = COALESCE(sessions.project_id, excluded.project_id),
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -212,6 +222,7 @@ class ConversationStore:
                     json.dumps(record.extra_roots or []),
                     json.dumps(record.grants or {}),
                     json.dumps(record.compaction or {}),
+                    record.project_id,
                 ),
             )
             self._conn.commit()
@@ -235,6 +246,9 @@ class ConversationStore:
             workspace=row["workspace"],
             model=row["model"],
             mode=row["mode"],
+            project_id=(
+                row["project_id"] if "project_id" in row.keys() else None
+            ),
             messages=messages,
             title=_display_title(row),
             agent=row["agent"] or "code",
@@ -281,6 +295,9 @@ class ConversationStore:
                 workspace=r["workspace"],
                 model=r["model"],
                 mode=r["mode"],
+                project_id=(
+                    r["project_id"] if "project_id" in r.keys() else None
+                ),
                 messages=[],
                 title=_display_title(r),
                 agent=r["agent"] or "code",
@@ -421,6 +438,137 @@ class ConversationStore:
             cur = self._conn.execute(
                 "UPDATE sessions SET origin = ?, origin_label = ? WHERE session_id = ?",
                 (origin, origin_label or None, session_id),
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    # -- projects (Codex-style first-class entities) ----------------------------
+    def create_project(
+        self, name: str, path: str, description: str = ""
+    ) -> dict:
+        """Create a project record bound to a canonical workspace path.
+
+        Returns {"ok": True, "project": {...}} or {"ok": False, "error": ...}.
+        The path must be unique — a folder maps to at most one project.
+        """
+        name = " ".join(str(name or "").split())[:120]
+        path = os.path.realpath(os.path.expanduser(str(path or "").strip()))
+        if not name:
+            return {"ok": False, "error": "project name is required"}
+        if not path:
+            return {"ok": False, "error": "project path is required"}
+        project_id = uuid.uuid4().hex[:12]
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT project_id FROM projects WHERE path = ?", (path,)
+            ).fetchone()
+            if existing:
+                return {
+                    "ok": False,
+                    "error": "a project already exists at this path",
+                    "project_id": existing["project_id"],
+                }
+            self._conn.execute(
+                "INSERT INTO projects (project_id, name, path, description) "
+                "VALUES (?, ?, ?, ?)",
+                (project_id, name, path, str(description or "")[:500]),
+            )
+            self._conn.commit()
+        return {"ok": True, "project": self.get_project(project_id)}
+
+    def get_project(self, project_id: str) -> Optional[dict]:
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT p.*,
+                          (SELECT COUNT(*) FROM sessions s
+                            WHERE s.project_id = p.project_id) AS n_sessions,
+                          (SELECT MAX(updated_at) FROM sessions s
+                            WHERE s.project_id = p.project_id) AS last_used
+                   FROM projects p WHERE p.project_id = ?""",
+                (project_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_projects(self) -> list[dict]:
+        """All projects, most recently used first (pinned first)."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT p.*,
+                          (SELECT COUNT(*) FROM sessions s
+                            WHERE s.project_id = p.project_id) AS n_sessions,
+                          (SELECT MAX(updated_at) FROM sessions s
+                            WHERE s.project_id = p.project_id) AS last_used
+                   FROM projects p
+                   ORDER BY p.pinned DESC,
+                     COALESCE((SELECT MAX(updated_at) FROM sessions s
+                               WHERE s.project_id = p.project_id), p.updated_at) DESC"""
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def project_by_path(self, path: str) -> Optional[dict]:
+        """The project bound to this canonical workspace path, if any."""
+        canonical = os.path.realpath(os.path.expanduser(str(path)))
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM projects WHERE path = ?", (canonical,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def update_project(
+        self,
+        project_id: str,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        pinned: Optional[bool] = None,
+    ) -> bool:
+        sets, params = [], []
+        if name is not None:
+            clean = " ".join(str(name).split())[:120]
+            if clean:
+                sets.append("name = ?")
+                params.append(clean)
+        if description is not None:
+            sets.append("description = ?")
+            params.append(str(description)[:500])
+        if pinned is not None:
+            sets.append("pinned = ?")
+            params.append(1 if pinned else 0)
+        if not sets:
+            return False
+        sets.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(project_id)
+        with self._lock:
+            cur = self._conn.execute(
+                f"UPDATE projects SET {', '.join(sets)} WHERE project_id = ?",
+                tuple(params),
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def delete_project(self, project_id: str) -> bool:
+        """Remove the project record; its sessions keep their workspace and become
+        ungrouped (project_id → NULL), so no conversation is ever lost."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET project_id = NULL WHERE project_id = ?",
+                (project_id,),
+            )
+            cur = self._conn.execute(
+                "DELETE FROM projects WHERE project_id = ?", (project_id,)
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def set_session_project(
+        self, session_id: str, project_id: Optional[str]
+    ) -> bool:
+        """Bind a session to a project (or unbind with None)."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE sessions SET project_id = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE session_id = ?",
+                (project_id, session_id),
             )
             self._conn.commit()
         return cur.rowcount > 0

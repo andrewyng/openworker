@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { imeComposing } from "../ime";
 import {
   announceCloudChanged,
@@ -21,7 +21,7 @@ import {
   type SurfaceVisibility,
 } from "../api";
 import type { SessionInfo } from "../types";
-import { isProjectScoped, shortPersonaName } from "../personaScope";
+import { shortPersonaName } from "../personaScope";
 import { ConnectorIcon } from "../connectors/ConnectorIcon";
 import { Icon, type IconName } from "./Icon";
 import { PersonaGlyph, personaGlyph } from "./personaIcon";
@@ -29,6 +29,7 @@ import { SearchModal } from "./SearchModal";
 import { baseName } from "../paths";
 import { showPersonas } from "../flags";
 import { useI18n } from "../i18n";
+import type { ProjectInfo } from "../api";
 
 // Session surfaces shown as accordions, in display order. The surfaced personas drive this list
 // (so third-party / Ops personas appear); the hardcoded set is the fallback before personas load.
@@ -128,11 +129,12 @@ interface Props {
   surfaces: SurfaceVisibility;
   sessions: SessionInfo[];
   projects: RecentWorkspace[];
+  // Registered Codex-style projects (id → name/path) for grouping sessions by name.
+  projectIndex: ProjectInfo[];
   activeSession: string;
   onSwitchAgent: (agent: string) => void;
   onNewSession: (agent: string) => void;
   onSelectSession: (id: string, workspace: string, agent: string) => void;
-  onNewProject: (persona: string) => void;
   onRenameSession: (id: string, title: string) => void;
   onDeleteSession: (id: string) => void;
   onArchiveSession: (id: string, archived: boolean) => void;
@@ -285,7 +287,6 @@ export function Sidebar(props: Props) {
     window.addEventListener(PERSONAS_CHANGED, load);
     return () => window.removeEventListener(PERSONAS_CHANGED, load);
   }, []);
-  const personaOf = (id: string) => personas?.find((p) => p.id === id);
 
   // Sidebar layout (§7): "grouped" = the per-persona accordion; "flat" = a single ungrouped list
   // (Pinned + Recent). Read the persisted preference on load; ABSENT falls back by the
@@ -418,11 +419,6 @@ export function Sidebar(props: Props) {
   const all = props.sessions.filter((s) => s.agent === browseKey && !s.session_id.startsWith("__"));
   const mine = all.filter((s) => !s.archived && !s.pinned);
   const archived = all.filter((s) => s.archived);
-  // Only PROJECT-SCOPED personas group sessions by project (git-bound Code, project-bound Ops).
-  // Scratch/deliverable conversations are orphan (each has its own per-conversation scratch dir),
-  // so they list flat. Workspace-aware (not id-aware) — any git/project persona gets Projects.
-  const workspaceSurface = isProjectScoped(personaOf(browseKey));
-
   // Search now lives in the SearchModal (command-palette overlay), so the sidebar lists never filter
   // in place — these stay constant and the `.filter(matches)` / `normalizedQuery ? …` call sites
   // below are intentional no-ops kept to avoid churn.
@@ -436,6 +432,13 @@ export function Sidebar(props: Props) {
     .filter((s) => personaVisible(s.agent))
     .filter(matches)
     .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+
+  // Flat layout = the same TWO sections (owner ask 2026-08-03): 普通会话 (no project) and
+  // 项目会话 (project tree). The chronological cap applies to the whole list first, then the
+  // shown slice is split into the two sections.
+  const recentShown = recentExpanded ? recentSessions : recentSessions.slice(0, RECENT_PEEK);
+  const recentRegular = recentShown.filter((s) => !s.project_id);
+  const recentProject = recentShown.filter((s) => s.project_id);
 
   // Row actions live behind ONE ⋮ kebab per row (FB-011: four hover icons read as clutter) —
   // the menu offers Rename · Pin/Unpin · Archive/Unarchive · Delete, with the two-step delete
@@ -800,37 +803,120 @@ export function Sidebar(props: Props) {
     );
   };
 
-  // Code/Cowork group by project; Chat is a flat recents list.
-  const byProject = useMemo(() => {
-    const grouped = new Map<string, SessionInfo[]>();
-    for (const s of mine) {
-      if (!grouped.has(s.workspace)) grouped.set(s.workspace, []);
-      grouped.get(s.workspace)!.push(s);
-    }
-    return grouped;
-  }, [mine]);
+  // Sidebar session list = TWO flat sections (owner ask 2026-08-03): 普通会话 (sessions without a
+  // project) and 项目会话 (project sessions in a project tree). Sessions are bound to a project by
+  // project_id; the backend auto-binds any session whose workspace matches a registered project.
+  const sectionLabel = (label: string) => (
+    <div className="px-1.5 pt-1 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">
+      {t(label)}
+    </div>
+  );
 
-  const filteredByProject = useMemo(() => {
-    const grouped = new Map<string, SessionInfo[]>();
-    for (const [proj, list] of byProject) grouped.set(proj, list.filter(matches));
-    return grouped;
-  }, [byProject, normalizedQuery]);
-
-  // Projects are tracked PER SURFACE: a folder appears under Code only if it has Code sessions,
-  // under Cowork only if it has Cowork sessions (+ the currently-open folder). No cross-bleed.
-  const projectOrder: string[] = [];
-  const seen = new Set<string>();
-  // Pin the active folder at top only when browsing the active persona (else it belongs elsewhere).
-  if (props.workspace && browseKey === props.agent) {
-    projectOrder.push(props.workspace);
-    seen.add(props.workspace);
-  }
-  for (const s of mine) {
-    if (s.workspace && !seen.has(s.workspace)) {
-      seen.add(s.workspace);
-      projectOrder.push(s.workspace);
+  // The 项目会话 tree: project folders (collapsible; flush-open by default = 平铺), each holding
+  // its sessions. Works for any session list (a persona body or the flat Recent split).
+  const projectTree = (list: SessionInfo[], row: (s: SessionInfo) => ReactNode) => {
+    const byId = new Map(props.projectIndex.map((p) => [p.project_id, p]));
+    const groups = new Map<
+      string,
+      { key: string; label: string; path: string; sessions: SessionInfo[] }
+    >();
+    for (const s of list) {
+      if (!s.project_id) continue;
+      const proj = byId.get(s.project_id);
+      const key = proj ? proj.project_id : `ws:${s.workspace}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = {
+          key,
+          label: proj ? proj.name : baseName(s.workspace) || s.workspace,
+          path: proj ? proj.path : s.workspace,
+          sessions: [],
+        };
+        groups.set(key, g);
+      }
+      g.sessions.push(s);
     }
-  }
+    // Pinned projects first, then by name — a stable tree.
+    const order = [...groups.values()].sort((a, b) => {
+      const ap = a.key.startsWith("ws:") ? 0 : byId.get(a.key)?.pinned ? 1 : 0;
+      const bp = b.key.startsWith("ws:") ? 0 : byId.get(b.key)?.pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return a.label.localeCompare(b.label);
+    });
+    if (order.length === 0) {
+      return (
+        <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
+          {t("Sessions assigned to a project appear here.")}
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-0.5">
+        {order.map((g) => {
+          const list2 = g.sessions.filter(matches);
+          if (normalizedQuery && list2.length === 0) return null; // hide non-matching folders while searching
+          const isActive = g.path === props.workspace;
+          // Flush tree: folders are open until toggled (XOR on the key).
+          const open = !!normalizedQuery || !projToggled.has(g.key);
+          const showAll = !!normalizedQuery || projShowAll.has(g.key);
+          const shown = showAll ? list2 : list2.slice(0, peek);
+          return (
+            <div key={g.key}>
+              <div
+                className={
+                  "flex items-center gap-1.5 px-1.5 py-1 rounded-lg cursor-pointer select-none hover:bg-panel " +
+                  (isActive ? "text-ink" : "text-muted hover:text-ink")
+                }
+                onClick={() => setProjToggled((s) => toggleSet(s, g.key))}
+                title={g.path}
+              >
+                <Icon name="folder" size={15} className="shrink-0" />
+                <span
+                  className={
+                    "truncate min-w-0 text-[12.5px] " + (isActive ? "font-semibold" : "font-medium")
+                  }
+                >
+                  {g.label}
+                </span>
+                {/* Registered projects show a dim path breadcrumb after the name. */}
+                {g.label !== g.path && (
+                  <span className="truncate min-w-0 text-[10.5px] text-faint shrink-0 max-w-[45%]">
+                    {g.path}
+                  </span>
+                )}
+                {/* Disclosure chevron sits AFTER the name (Codex parity), not leading the row. */}
+                <Icon
+                  name={open ? "chevronDown" : "chevronRight"}
+                  size={12}
+                  className="text-faint shrink-0"
+                />
+              </div>
+              {open &&
+                (list2.length > 0 ? (
+                  // pl-[19px] aligns each session's name under the folder NAME (folder icon
+                  // 15 + gap 6 + row px 6 − session px 8 = 19).
+                  <div className="space-y-0.5 pl-[19px]">
+                    {shown.map((s) => row(s))}
+                    {!showAll && list2.length > peek && (
+                      <button
+                        className="px-2 py-1 text-[12px] text-faint hover:text-muted"
+                        onClick={() => setProjShowAll((s) => toggleSet(s, g.key))}
+                      >
+                        {t("Show more ({{count}})", { count: list2.length - peek })}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="px-2 py-1.5 pl-[19px] text-[12px] text-faint leading-snug">
+                    {t("No conversations in this project yet.")}
+                  </div>
+                ))}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   // Surfaced + enabled personas drive the surface list (default persona first); fall back to the
   // static set until loaded. A persona that has live sessions ALWAYS gets a section, surfaced or
@@ -858,123 +944,45 @@ export function Sidebar(props: Props) {
   // changes only when a session is selected or "New session" is clicked.
   const onHeaderClick = (key: string) => setOpenKey((k) => (k === key ? null : key));
 
-  // The expanded body for the active surface: a "New session" action, then the project-grouped
-  // (or flat) session list, then the archived disclosure.
+  // The expanded body for the active surface: TWO flat sections (owner ask 2026-08-03) — 普通会话
+  // (no project) and 项目会话 (project tree) — then the archived disclosure. Every persona gets the
+  // same layout: regular vs project sessions is a sidebar-wide concept, not per-persona.
   const surfaceBody = () => {
+    const regular = mine.filter((s) => !s.project_id);
+    const projectBound = mine.filter((s) => s.project_id);
     return (
       <div className="space-y-1 px-1.5 pb-2 pt-0.5">
-        {/* Body is flush inside the expanded group's fill (provided by the wrapper) so the header +
-            its sessions read as one connected block — clear where a group ends and the next begins. */}
-        {/* No per-persona "New session" here — the top split button's ▾ already starts a session
-            in any persona (it was redundant + the mock's grouped cards don't have it). */}
-        {workspaceSurface ? (
+        {regular.length > 0 || projectBound.length === 0 ? (
           <>
-            {/* Codex-style Projects: a "+" header affordance, then collapsible folders whose
-                rows carry a right-aligned compact age and truncate to PROJECT_PEEK + "Show more". */}
-            <div className="flex items-center justify-between px-1.5 pt-1">
-              <span className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">
-                {t("Projects")}
-              </span>
-              <button
-                className="w-5 h-5 grid place-items-center rounded text-faint hover:text-ink hover:bg-panel"
-                title={t("New project")}
-                aria-label={t("New project")}
-                onClick={() => props.onNewProject(browseKey)}
-              >
-                <Icon name="folderPlus" size={14} />
-              </button>
-            </div>
-            <div className="space-y-0.5">
-              {projectOrder.length === 0 && (
-                <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                  {t("No projects yet — start one with the + above.")}
-                </div>
-              )}
-              {projectOrder.map((proj) => {
-                const list = filteredByProject.get(proj) || [];
-                if (normalizedQuery && list.length === 0) return null; // hide non-matching folders while searching
-                const isActive = proj === props.workspace;
-                // Open the active project by default; if none is active (browsing from another
-                // persona), open the most-recent folder so the accordion isn't all-collapsed.
-                const activeInOrder = !!props.workspace && projectOrder.includes(props.workspace);
-                const defaultOpen = isActive || (!activeInOrder && proj === projectOrder[0]);
-                const open = !!normalizedQuery || defaultOpen !== projToggled.has(proj);
-                const showAll = !!normalizedQuery || projShowAll.has(proj);
-                const shown = showAll ? list : list.slice(0, peek);
-                return (
-                  <div key={proj}>
-                    <div
-                      className={
-                        "flex items-center gap-1.5 px-1.5 py-1 rounded-lg cursor-pointer select-none hover:bg-panel " +
-                        (isActive ? "text-ink" : "text-muted hover:text-ink")
-                      }
-                      onClick={() => setProjToggled((s) => toggleSet(s, proj))}
-                      title={proj}
-                    >
-                      <Icon name="folder" size={15} className="shrink-0" />
-                      <span
-                        className={
-                          "truncate min-w-0 text-[12.5px] " + (isActive ? "font-semibold" : "font-medium")
-                        }
-                      >
-                        {baseName(proj)}
-                      </span>
-                      {/* Disclosure chevron sits AFTER the name (Codex parity), not leading the row. */}
-                      <Icon
-                        name={open ? "chevronDown" : "chevronRight"}
-                        size={12}
-                        className="text-faint shrink-0"
-                      />
-                    </div>
-                    {open &&
-                      (list.length > 0 ? (
-                        // pl-[19px] aligns each session's name under the folder NAME (folder icon
-                        // 15 + gap 6 + row px 6 − session px 8 = 19), per Rohit's clean-column ask.
-                        <div className="space-y-0.5 pl-[19px]">
-                          {shown.map((s) => sessionRow(s, { showTime: true }))}
-                          {!showAll && list.length > peek && (
-                            <button
-                              className="px-2 py-1 text-[12px] text-faint hover:text-muted"
-                              onClick={() => setProjShowAll((s) => toggleSet(s, proj))}
-                            >
-                              {t("Show more ({{count}})", { count: list.length - peek })}
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="px-2 py-1.5 pl-[19px] text-[12px] text-faint leading-snug">
-                          {t("No conversations in this project yet.")}
-                        </div>
-                      ))}
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        ) : (
-          <div className="space-y-0.5">
-            {mine.filter(matches).length === 0 ? (
+            {sectionLabel("Regular sessions")}
+            {regular.length === 0 ? (
               <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                {normalizedQuery ? t("No matching conversations.") : t("No conversations yet.")}
+                {t("No regular sessions yet.")}
               </div>
             ) : (
-              <>
-                {(personaShowAll.has(browseKey)
-                  ? mine.filter(matches)
-                  : mine.filter(matches).slice(0, peek)
-                ).map((s) => sessionRow(s))}
-                {!personaShowAll.has(browseKey) && mine.filter(matches).length > peek && (
+              <div className="space-y-0.5">
+                {(personaShowAll.has(browseKey) ? regular : regular.slice(0, peek)).map((s) =>
+                  sessionRow(s),
+                )}
+                {!personaShowAll.has(browseKey) && regular.length > peek && (
                   <button
                     className="px-2 py-1 text-[12px] text-faint hover:text-muted"
                     onClick={() => setPersonaShowAll((s) => toggleSet(s, browseKey))}
                   >
-                    {t("Show more ({{count}})", { count: mine.filter(matches).length - peek })}
+                    {t("Show more ({{count}})", { count: regular.length - peek })}
                   </button>
                 )}
-              </>
+              </div>
             )}
-          </div>
-        )}
+          </>
+        ) : null}
+
+        {projectBound.length > 0 ? (
+          <>
+            {sectionLabel("Project sessions")}
+            {projectTree(projectBound, (s) => sessionRow(s, { showTime: true }))}
+          </>
+        ) : null}
 
         {archived.length > 0 && (
           <div className="mt-2 pt-1.5 border-t border-line">
@@ -1025,6 +1033,8 @@ export function Sidebar(props: Props) {
         onNew={props.onNewSession}
         onManage={props.onManagePersonas}
       />
+
+
 
       {/* Search: a borderless nav-style entry (not a boxed input) that opens the command-palette
           SearchModal over the whole app. Matches the bottom-nav rows to reduce the boxy look. */}
@@ -1114,10 +1124,20 @@ export function Sidebar(props: Props) {
                 </div>
               ) : (
                 <>
-                  {(recentExpanded
-                    ? recentSessions
-                    : recentSessions.slice(0, RECENT_PEEK)
-                  ).map((s) => cardRow(s))}
+                  {sectionLabel("Regular sessions")}
+                  {recentRegular.length === 0 ? (
+                    <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
+                      {t("No regular sessions yet.")}
+                    </div>
+                  ) : (
+                    <div className="space-y-0.5">{recentRegular.map((s) => cardRow(s))}</div>
+                  )}
+                  {recentProject.length > 0 && (
+                    <>
+                      {sectionLabel("Project sessions")}
+                      {projectTree(recentProject, cardRow)}
+                    </>
+                  )}
                   {recentSessions.length > RECENT_PEEK && (
                     <button
                       className="w-full text-left px-2 py-1.5 text-[12px] text-muted hover:text-ink"

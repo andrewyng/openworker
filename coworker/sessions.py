@@ -37,3 +37,6 @@ class SessionRecord:
     # Auto-compaction state (OPE-27): CompactionState.as_dict(), {} when never compacted.
     # Persisted so a reloaded session keeps its compacted outbound view.
     compaction: dict[str, Any] = field(default_factory=dict)
+    # Codex-style project this session belongs to (project_id from the projects table).
+    # Appended last so positional construction keeps its historical field order.
+    project_id: Optional[str] = None

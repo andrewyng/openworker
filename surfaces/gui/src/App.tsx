@@ -9,6 +9,8 @@ import {
   getSessions,
   announceAutomationsChanged,
   connectEvents,
+  createProject,
+  getProjects,
   getSettings,
   getPersonas,
   getInbox,
@@ -24,6 +26,7 @@ import {
   type InboxItem,
   type MessageSource,
   type Persona,
+  type ProjectInfo,
   type RecentWorkspace,
   type SurfaceVisibility,
   type WorkspaceCommandTrust,
@@ -201,6 +204,8 @@ export function App() {
   const [todo, setTodo] = useState<TodoItem[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
+  // Registered Codex-style projects (named folders sessions group under).
+  const [registeredProjects, setRegisteredProjects] = useState<ProjectInfo[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
   // to, driving the banner + "Back to runs". Best-effort — a run session without context still
@@ -211,7 +216,6 @@ export function App() {
   // id going stale (e.g. the automation was deleted) reopened a dead detail —
   // "Loading…" forever (owner-hit 2026-07-20). Nav re-entry should land on the list.
   const [scheduledOpenId, setScheduledOpenId] = useState<string | null>(null);
-  const [gateCreate, setGateCreate] = useState(false);
   // Which Settings section the full-page Settings surface opens on (§ Settings-as-page).
   const [settingsTab, setSettingsTab] = useState<
     "appearance" | "models" | "skills" | "voice" | "personas"
@@ -386,6 +390,7 @@ export function App() {
   const refreshSessions = useCallback(() => {
     getSessions().then(setSessions).catch(() => setSessions([]));
     getRecentWorkspaces().then(setProjects).catch(() => setProjects([]));
+    getProjects().then(setRegisteredProjects).catch(() => setRegisteredProjects([]));
   }, []);
 
   // initial: adopt the server's seed workspace if any, else force the gate.
@@ -1060,35 +1065,25 @@ export function App() {
     if (!gatesWorkspace(name)) setShowGate(false);
     else setShowGate(!fallback);
   };
-  const chooseWorkspace = (path: string, b?: string | null) => {
+  const chooseWorkspace = (path: string, b?: string | null, name?: string) => {
     setWorkspace(path);
     setBranch(b ?? null);
     setShowGate(false);
-    setGateCreate(false);
     setItems([]);
     setUsage(emptyUsage());
     setStreaming("");
     setTodo([]);
     setSessionId(newId());
     getRecentWorkspaces().then(setProjects).catch(() => {});
-  };
-  // "New project" lives under a project-scoped persona's accordion. Switch to that persona, start a
-  // fresh session with no folder yet, and open the gate in create mode — so the gate's
-  // surface==="session" && gatesWorkspace(agent) guard passes even if the active session was Chat/Cowork.
-  const newProject = (forAgent?: string) => {
-    const target = forAgent || agent;
-    setSurface("session");
-    setItems([]);
-    setUsage(emptyUsage());
-    setStreaming("");
-    setTodo([]);
-    setRunning(false);
-    if (target !== agent) setAgent(target);
-    setWorkspace(null);
-    setBranch(null);
-    setSessionId(newId());
-    setGateCreate(true);
-    setShowGate(true);
+    // The gate's "new project" mode: register a first-class project for this folder so its
+    // sessions group under a NAME in the sidebar, not just a path (Codex parity). A session
+    // created in that folder is auto-bound to it by the backend (project_by_path).
+    if (name) {
+      const projectName = name.trim() || baseName(path) || path;
+      createProject(projectName, path)
+        .then(() => getProjects().then(setRegisteredProjects).catch(() => {}))
+        .catch(() => {});
+    }
   };
   const renameConversation = async (id: string, title: string) => {
     const res = await renameSession(id, title);
@@ -1316,11 +1311,11 @@ export function App() {
         surfaces={surfaces}
         sessions={sessions}
         projects={projects}
+        projectIndex={registeredProjects}
         activeSession={sessionId}
         onSwitchAgent={switchAgent}
         onNewSession={startNewSession}
         onSelectSession={selectSession}
-        onNewProject={newProject}
         onRenameSession={renameConversation}
         onDeleteSession={deleteConversation}
         onArchiveSession={toggleArchived}
@@ -1606,6 +1601,10 @@ export function App() {
               onModeChange={changeMode}
               onModelChange={changeModel}
               sessionId={sessionId}
+              projects={agent !== "chat" ? registeredProjects : undefined}
+              onProjectsChanged={refreshSessions}
+              initialProjectId={sessions.find((s) => s.session_id === sessionId)?.project_id}
+              sessionMessages={sessions.find((s) => s.session_id === sessionId)?.messages}
               workspace={needsWorkspace(agent) ? workspace || "" : undefined}
               unattended={unattended}
               onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}
@@ -1695,13 +1694,12 @@ export function App() {
 
       {showGate && surface === "session" && gatesWorkspace(agent) && (
         <FolderGate
-          create={gateCreate}
+          projectIndex={registeredProjects}
           onChoose={chooseWorkspace}
           onCancel={
             workspace
               ? () => {
                   setShowGate(false);
-                  setGateCreate(false);
                 }
               : undefined
           }

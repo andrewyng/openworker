@@ -42,11 +42,11 @@ const baseProps = {
   surfaces: { cowork: true, chat: false, code: false },
   sessions: SESSIONS,
   projects: [],
+  projectIndex: [],
   activeSession: "s-cowork-1",
   onSwitchAgent: vi.fn(),
   onNewSession: vi.fn(),
   onSelectSession: vi.fn(),
-  onNewProject: vi.fn(),
   onRenameSession: vi.fn(),
   onDeleteSession: vi.fn(),
   onArchiveSession: vi.fn(),
@@ -261,5 +261,77 @@ describe("New-session split button", () => {
     const menu = (await screen.findByText("Start a session as")).closest(".newsplit-menu") as HTMLElement;
     expect(within(menu).getByText("Ops")).toBeTruthy();
     expect(within(menu).queryByText("Manage personas…")).toBeNull();
+  });
+
+});
+
+describe("Session list splits into Regular and Project sections", () => {
+  const PROJ_SESSIONS: SessionInfo[] = [
+    ...SESSIONS,
+    {
+      session_id: "s-lumen-1",
+      title: "fix the export pipeline",
+      workspace: "/Users/me/lumen",
+      agent: "code",
+      model: "m",
+      mode: "interactive",
+      updated_at: "2026-08-01",
+      messages: 5,
+      project_id: "p-lumen",
+    },
+    {
+      session_id: "s-core-1",
+      title: "core refactor",
+      workspace: "/Users/me/core",
+      agent: "cowork",
+      model: "m",
+      mode: "interactive",
+      updated_at: "2026-08-02",
+      messages: 3,
+      project_id: "p-core",
+    },
+  ];
+  const PROJECTS = [
+    { project_id: "p-lumen", name: "Lumen Scripts", path: "/Users/me/lumen", description: "", n_sessions: 1, last_used: null },
+    { project_id: "p-core", name: "Core", path: "/Users/me/core", description: "", n_sessions: 1, last_used: null },
+  ];
+
+  it("lists regular sessions flat and project sessions grouped under a project tree", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+    ]);
+    render(<Sidebar {...baseProps} sessions={PROJ_SESSIONS} projectIndex={PROJECTS} />);
+    await screen.findByText("incident watch");
+
+    // Two sections, Regular first.
+    const regLabel = screen.getByText("Regular sessions");
+    const projLabel = screen.getByText("Project sessions");
+    expect(regLabel.compareDocumentPosition(projLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // Sessions without a project_id list flat under Regular.
+    expect(screen.getByText("hi there")).toBeTruthy();
+
+    // Project sessions sit under a folder named after the registered project.
+    expect(screen.getByText("Lumen Scripts")).toBeTruthy();
+    expect(screen.getByText("fix the export pipeline")).toBeTruthy();
+    expect(screen.getByText("Core")).toBeTruthy();
+    expect(screen.getByText("core refactor")).toBeTruthy();
+  });
+
+  it("shows the empty hint when no regular sessions exist", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+    ]);
+    render(
+      <Sidebar
+        {...baseProps}
+        sessions={PROJ_SESSIONS.filter((s) => s.project_id)}
+        projectIndex={PROJECTS}
+      />,
+    );
+    await screen.findByText("Lumen Scripts");
+    expect(screen.getByText("No regular sessions yet.")).toBeTruthy();
   });
 });

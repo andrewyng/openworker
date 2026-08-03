@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Attachment, SessionUsage } from "../types";
 import { isPdfFile, readFile } from "../attach";
-import { getSettings, inspectPdf, sessionSkills, type SessionSkillRow } from "../api";
+import { getSettings, inspectPdf, sessionSkills, type ProjectInfo, type SessionSkillRow } from "../api";
 import { formatTokens, totalTokens } from "../usage";
 import { Dropdown, type Option } from "./Dropdown";
 import { Icon } from "./Icon";
+import { SessionProjectPicker } from "./SessionProjectPicker";
 import { Toggle } from "./Toggle";
 import { useI18n } from "../i18n";
 import {
@@ -65,6 +66,15 @@ interface Props {
   // Feeds the "/" force-run popup (SKILLS-SPEC §4.1 #3): the popup lists this session's
   // effective skill menu. Absent (e.g. tests without sessions) → the popup never opens.
   sessionId?: string;
+  // Codex-style project assignment chip in the composer footer (§38). Absent (no project
+  // registry, e.g. Chat) → the chip doesn't render; the picker binds the current session id.
+  projects?: ProjectInfo[];
+  onProjectsChanged?: () => void;
+  initialProjectId?: string | null;
+  // Message count of the CURRENT session. The assignment control is FRESH-ONLY (owner ask
+  // 2026-08-03): a session that already has history has its binding fixed — the chip would
+  // only invite churn. 0/undefined → fresh → show; >0 → hide.
+  sessionMessages?: number;
   onInterrupt: () => void;
   onModeChange: (mode: string) => void;
   onModelChange: (model: string) => void;
@@ -520,9 +530,29 @@ export function Composer(props: Props) {
             )}
           </div>
         )}
+        {/* Top toolbar — Codex-style (§38 rev 2026-08-03, owner feedback): the project
+            picker lives ABOVE the textarea, not in the bottom control row. The bottom row
+            was getting crowded and wrapping; Codex keeps assignment controls on a line of
+            their own over the input. FRESH-ONLY: once the session has messages the binding
+            is fixed, so the chip renders only while the session is still empty. */}
+        {props.sessionId && props.projects && props.onProjectsChanged && !props.sessionMessages && (
+          <div className="px-3 pt-2 flex items-center gap-1.5">
+            <SessionProjectPicker
+              key={props.sessionId}
+              sessionId={props.sessionId}
+              projects={props.projects}
+              onProjectsChanged={props.onProjectsChanged}
+              initialProjectId={props.initialProjectId}
+              menuBelow
+            />
+          </div>
+        )}
         <textarea
           ref={textareaRef}
-          className="w-full block px-3.5 pt-3.5 pb-1.5 text-[14.5px]"
+          className={
+            "w-full block px-3.5 pb-1.5 text-[14.5px] " +
+            (props.sessionId && props.projects && props.onProjectsChanged && !props.sessionMessages ? "pt-1" : "pt-3.5")
+          }
           placeholder={t(props.placeholder || "Ask the coworker…  (drop or paste files)")}
           value={text}
           onChange={(e) => setText(e.target.value)}
