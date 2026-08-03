@@ -226,12 +226,19 @@ fn start_keep_awake() -> Option<KeepAwakeGuard> {
 
 // -- native commands (invoked from the SPA via window.__TAURI__.core.invoke) -----------------
 
-/// Native macOS folder picker for the workspace gate.
+/// Native macOS folder picker for the workspace gate. `default_dir` (optional) pre-navigates
+/// the dialog to that folder — the "New project" flow opens at the configured default location.
 #[tauri::command]
-async fn pick_folder(app: tauri::AppHandle) -> Option<String> {
+async fn pick_folder(app: tauri::AppHandle, default_dir: Option<String>) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
     let (tx, rx) = std::sync::mpsc::channel();
-    app.dialog().file().pick_folder(move |p| {
+    let mut builder = app.dialog().file();
+    if let Some(dir) = default_dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+        if std::path::Path::new(dir).is_dir() {
+            builder = builder.set_directory(dir);
+        }
+    }
+    builder.pick_folder(move |p| {
         let _ = tx.send(p);
     });
     rx.recv().ok().flatten().map(|fp| fp.to_string())

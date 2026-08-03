@@ -753,6 +753,8 @@ export interface ModelSettings {
   onboarded: boolean;
   surfaces: SurfaceVisibility;
   scratch_base: string;
+  // Where "New project" folder pickers open by default (absent → OS default location).
+  default_dir?: string;
   secrets_path: string;  // OS-native on-disk location the server reports (not hardcoded)
   // Sidebar layout preference (§7): "flat" = the persona accordions / today's list; "grouped" =
   // bounded per-persona cards. Defaults to "flat" (absent → flat) so the GUI is robust to an older

@@ -50,9 +50,10 @@ const invokeStrict = async <T>(cmd: string, args?: Record<string, unknown>): Pro
   return (await tauri.core.invoke(cmd, args)) as T;
 };
 
-/** Open the native macOS folder picker (Tauri only). Returns the chosen path, or null. */
-export async function pickFolder(): Promise<string | null> {
-  const path = await invoke<string>("pick_folder");
+/** Open the native macOS folder picker (Tauri only). Returns the chosen path, or null.
+ * `defaultDir` (optional) pre-navigates the dialog to that folder. */
+export async function pickFolder(defaultDir?: string): Promise<string | null> {
+  const path = await invoke<string>("pick_folder", { defaultDir: defaultDir ?? null });
   return typeof path === "string" && path ? path : null;
 }
 
@@ -60,9 +61,21 @@ export async function pickFolder(): Promise<string | null> {
  * sidecar-opened OS dialog (the sidecar is local, so the browser GUI still gets a real picker —
  * owner report 2026-07-04: "Browse" was desktop-only and the browser had paste-a-path only). */
 export async function chooseFolder(): Promise<string | null> {
-  if (isTauri()) return pickFolder();
+  if (isTauri()) return pickFolder(await defaultFolderDir());
   const { pickFolderViaServer } = await import("./api");
   return pickFolderViaServer();
+}
+
+/** The "New project" default location — the backend's `default_dir` setting. Used only by the
+ * Tauri native picker (the sidecar applies it server-side for the browser flow). */
+async function defaultFolderDir(): Promise<string | undefined> {
+  try {
+    const { getSettings } = await import("./api");
+    const s = await getSettings();
+    return s.default_dir || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Open-at-login (macOS LaunchAgent). */

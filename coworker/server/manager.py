@@ -407,8 +407,12 @@ class SessionManager:
         return Path(base).expanduser()
 
     def _provision_scratch(self, session_id: str) -> str:
-        """Create (idempotently) and return this conversation's scratch directory."""
-        d = self.scratch_base() / session_id
+        """Create (idempotently) and return this conversation's scratch directory.
+
+        Named ``<YYYY>-<MMDD>-<session_id>`` (e.g. ``2026-0803-10f75855-0c7``) so scratch
+        dirs self-sort by creation date under the scratch base (owner request 2026-08-03).
+        """
+        d = self.scratch_base() / f"{time.strftime('%Y-%m%d')}-{session_id}"
         d.mkdir(parents=True, exist_ok=True)
         return str(d.resolve())
 
@@ -1553,12 +1557,20 @@ class SessionManager:
         import sys
 
         if sys.platform == "darwin":
+            # Pre-open the picker at the configured default dir ("New project" flow) when it
+            # exists; otherwise fall back to the OS's own default location.
+            default_loc = ""
+            dd = self.default_dir()
+            if dd and Path(dd).expanduser().is_dir():
+                default_loc = f" default location POSIX file {json.dumps(dd)}"
             cmd = [
                 "osascript",
                 "-e",
                 'tell application "System Events" to activate',
                 "-e",
-                'POSIX path of (choose folder with prompt "Give the coworker access to a folder")',
+                'POSIX path of (choose folder with prompt "Give the coworker access to a folder"'
+                + default_loc
+                + ")",
             ]
         elif sys.platform == "win32":
             # WinForms folder dialog via PowerShell — no extra deps. -STA is required
