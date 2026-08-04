@@ -1,6 +1,7 @@
 import type { RootInfo } from "../api";
 import { Icon } from "./Icon";
 import { baseName } from "../paths";
+import { useI18n } from "../i18n";
 
 // One directory row, shared by the composer popover and the session start panel. The primary is the
 // session's bound workspace — the repo/folder for Code/Ops (shown by name), or a throwaway scratch
@@ -21,9 +22,10 @@ export function RootRow({
   onToggle: (r: RootInfo) => void;
   onRemove: (path: string) => void;
 }) {
+  const { t } = useI18n();
   const label = root.primary
     ? scratchPrimary
-      ? "Temporary space"
+      ? t("Temporary space")
       : baseName(root.path)
     : root.label;
   return (
@@ -42,17 +44,17 @@ export function RootRow({
         </span>
         <span className="root-path">{root.path}</span>
       </span>
-      {!root.exists && <span className="root-tag warn">missing</span>}
+      {!root.exists && <span className="root-tag warn">{t("missing")}</span>}
       <button
         className={"root-access" + (root.writable ? " rw" : " ro")}
         onClick={() => onToggle(root)}
         disabled={busy || root.primary}
-        title={root.primary ? "The main workspace is always read-write" : "Toggle read-only / read-write"}
+        title={root.primary ? t("The main workspace is always read-write") : t("Toggle read-only / read-write")}
       >
-        {root.writable ? "Read-write" : "Read-only"}
+        {root.writable ? t("Read-write") : t("Read-only")}
       </button>
       {!root.primary && (
-        <button className="root-x" onClick={() => onRemove(root.path)} disabled={busy} title="Remove">
+        <button className="root-x" onClick={() => onRemove(root.path)} disabled={busy} title={t("Remove")}>
           ×
         </button>
       )}

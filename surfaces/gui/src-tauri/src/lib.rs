@@ -598,6 +598,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -699,6 +700,44 @@ pub fn run() {
                     // worked, DMGs didn't. main.tsx guards against drops outside the
                     // composer navigating the page.
                     .disable_drag_drop_handler()
+                    // External links must open in the system browser, never navigate the SPA
+                    // away. This catches full-page navigations the SPA can't intercept —
+                    // notably the webview's context-menu "Open Link" (issue #270), which was
+                    // silently dropped before. Left-clicks are handled in the SPA (openExternal),
+                    // so anything landing here that isn't the app itself goes to the OS.
+                    .on_navigation(|url| {
+                        eprintln!("[openworker] on_navigation: {url}");
+                        let scheme = url.scheme();
+                        let host = url.host_str().unwrap_or("");
+                        // The SPA itself: tauri:// (macOS/Linux prod), http://tauri.localhost
+                        // (Windows prod), the Vite devUrl in dev builds. Any other localhost
+                        // URL (e.g. a preview server the agent started) is still external.
+                        let is_dev_spa = cfg!(debug_assertions)
+                            && host == "localhost"
+                            && url.port() == Some(1420);
+                        if scheme == "tauri" || host == "tauri.localhost" || is_dev_spa {
+                            return true;
+                        }
+                        if matches!(scheme, "http" | "https" | "mailto") {
+                            let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
+                        }
+                        false
+                    })
+                    // target="_blank" links (and the webview's context-menu "Open Link" for
+                    // them) request a NEW webview window on macOS via WKWebView's
+                    // createWebViewWith — those never reach on_navigation. wry's default is
+                    // to silently drop the request (the "click does nothing" bug, issue
+                    // #227/#270). Open external URLs in the system browser instead and deny
+                    // the new window. SPA left-clicks are already intercepted in JS
+                    // (preventDefault + openExternal), so this is the native backstop for
+                    // anything that slips past, e.g. the right-click "Open Link" menu.
+                    .on_new_window(|url, _features| {
+                        eprintln!("[openworker] on_new_window: {url}");
+                        if matches!(url.scheme(), "http" | "https" | "mailto") {
+                            let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
+                        }
+                        tauri::webview::NewWindowResponse::Deny
+                    })
                     .initialization_script(&inject);
             #[cfg(target_os = "macos")]
             {
