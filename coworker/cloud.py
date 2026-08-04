@@ -25,6 +25,7 @@ import base64
 import hashlib
 import os
 import secrets as _secrets
+import threading
 import time
 import urllib.parse
 from typing import Any, Optional
@@ -58,6 +59,15 @@ _pending_logins: dict[str, dict[str, float | str]] = {}
 _PENDING_TTL = 600
 _pending_managed_states: dict[str, float] = {}
 _MANAGED_STATE_TTL = 600
+
+# One session refresh at a time, process-wide. fresh_access_token() has a dozen
+# call sites in this module plus the relay's token provider, several reached
+# through asyncio.to_thread — so two callers crossing expiry together is routine,
+# not a race you have to be unlucky to hit. Against an IdP that ROTATES refresh
+# tokens the loser of that race is left holding a dead token, and reuse detection
+# can void the entire session. Serialize instead: the second caller waits, re-reads
+# and finds the first one's result already stored.
+_refresh_lock = threading.Lock()
 
 
 def _b64url(raw: bytes) -> str:
@@ -207,7 +217,33 @@ def _store_cloud_tokens(secrets: SecretStore, token: dict) -> None:
     if token.get("refresh_token"):  # rotating refresh tokens: keep the newest
         profile["refresh_token"] = token["refresh_token"]
     profile["expires"] = _now() + int(token.get("expires_in") or 3600) - 60
+    profile.pop("stale", None)  # a stored token means we reached the cloud
     secrets.put(CLOUD_AUTH_PROFILE, profile)
+
+
+def _mark_stale(secrets: SecretStore) -> None:
+    """Record that the last renewal couldn't reach the cloud, so status() can say
+    "signed in, reconnecting" instead of lying in one direction or the other."""
+    profile = secrets.get(CLOUD_AUTH_PROFILE) or {}
+    if not profile or profile.get("stale"):
+        return
+    profile["stale"] = True
+    secrets.put(CLOUD_AUTH_PROFILE, profile)
+
+
+def _is_invalid_grant(resp: httpx.Response) -> bool:
+    """Did the IdP say this session is genuinely dead, or just "not right now"?
+
+    Only `invalid_grant` means revoked / expired / rotated-away. A 500, a 429 or a
+    502 means try later — treating those as a sign-out is exactly how a flaky
+    network ends up logging someone out of a local-first app.
+    """
+    if resp.status_code not in (400, 401):
+        return False
+    try:
+        return str((resp.json() or {}).get("error", "")) == "invalid_grant"
+    except ValueError:  # includes JSONDecodeError — a non-JSON body is not proof
+        return False
 
 
 def status(secrets: SecretStore) -> dict[str, Any]:
@@ -216,6 +252,10 @@ def status(secrets: SecretStore) -> dict[str, Any]:
         "signed_in": bool(profile.get("access_token")),
         "account": profile.get("account") or "",
         "user_id": profile.get("user_id") or "",
+        # True ⇒ still signed in, but the last renewal couldn't reach the cloud.
+        # The GUI shows "reconnecting"; it must NOT show "signed out", because an
+        # offline laptop is not a signed-out user.
+        "stale": bool(profile.get("stale")),
     }
 
 
@@ -224,29 +264,69 @@ def logout(secrets: SecretStore) -> dict[str, Any]:
     return {"ok": True, "signed_in": False}
 
 
-def fresh_access_token(secrets: SecretStore, config: Config) -> Optional[str]:
-    """Valid cloud session token, silently refreshed near expiry; None when
-    signed out or the session can't be renewed (GUI shows "sign in again")."""
+def fresh_access_token(
+    secrets: SecretStore, config: Config, *, force: bool = False
+) -> Optional[str]:
+    """Valid cloud session token, silently refreshed near expiry; None when signed
+    out or the session can't be renewed right now.
+
+    Two failure modes, deliberately kept apart (see status()):
+
+    - the IdP says the session is dead (`invalid_grant`) → tokens are cleared and
+      the user genuinely must sign in again;
+    - we simply couldn't reach the IdP → tokens are KEPT and the profile is marked
+      stale, because being offline is not being signed out.
+
+    Never raises. Every caller reads this token OUTSIDE its own try/except, so an
+    exception here escapes into paths documented as best-effort (telemetry) and
+    into the relay's token provider.
+
+    `force` renews even when the stored token still looks valid — the 401 retry
+    path, for a token the server rejected ahead of its local expiry.
+    """
     profile = secrets.get(CLOUD_AUTH_PROFILE) or {}
-    if not profile.get("access_token"):
+    held = profile.get("access_token")
+    if not held:
         return None
-    if float(profile.get("expires") or 0) > _now():
-        return profile["access_token"]
+    if not force and float(profile.get("expires") or 0) > _now():
+        return held
     if not profile.get("refresh_token"):
         return None
-    resp = httpx.post(
-        f"https://{config.cloud_auth_domain}/oauth/token",
-        data={
-            "grant_type": "refresh_token",
-            "client_id": config.cloud_client_id,
-            "refresh_token": profile["refresh_token"],
-        },
-        timeout=15,
-    )
-    if resp.status_code != 200:
-        return None
-    _store_cloud_tokens(secrets, resp.json())
-    return (secrets.get(CLOUD_AUTH_PROFILE) or {}).get("access_token")
+
+    with _refresh_lock:
+        # Re-read under the lock: whoever held it may have renewed on our behalf.
+        profile = secrets.get(CLOUD_AUTH_PROFILE) or {}
+        current = profile.get("access_token")
+        if not current:
+            return None  # signed out while we waited
+        if current != held:
+            return current  # someone refreshed for us — theirs is newer, use it
+        if not force and float(profile.get("expires") or 0) > _now():
+            return current
+        refresh_token = profile.get("refresh_token")
+        if not refresh_token:
+            return None
+        try:
+            resp = httpx.post(
+                f"https://{config.cloud_auth_domain}/oauth/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "client_id": config.cloud_client_id,
+                    "refresh_token": refresh_token,
+                },
+                timeout=15,
+            )
+        except httpx.HTTPError:
+            _mark_stale(secrets)
+            return None
+        if resp.status_code != 200:
+            if _is_invalid_grant(resp):
+                logout(secrets)  # really revoked: stop pretending we're signed in
+            else:
+                _mark_stale(secrets)
+            return None
+        _store_cloud_tokens(secrets, resp.json())
+        return (secrets.get(CLOUD_AUTH_PROFILE) or {}).get("access_token")
 
 
 def fetch_me(secrets: SecretStore, config: Config) -> Optional[dict]:
@@ -618,10 +698,25 @@ def slack_disconnect_workspace(
 # --- persona gallery -----------------------------------------------------------
 
 
-def _gallery_get(secrets: SecretStore, config: Config, path: str) -> Optional[dict]:
+# Why a gallery fetch came back empty. Collapsing these into one "sign in"
+# message tells a demonstrably signed-in user their session is the problem: a
+# cloud that serves no gallery route (404) is indistinguishable from a dead
+# session, and the resulting bug reports say "sign-in is broken" when it isn't.
+# Same conflation as the offline-vs-signed-out one status() had.
+GALLERY_SIGNED_OUT = "signed_out"
+GALLERY_UNREACHABLE = "unreachable"
+GALLERY_NOT_AVAILABLE = "not_available"
+GALLERY_ERROR = "error"
+
+
+def _gallery_fetch(
+    secrets: SecretStore, config: Config, path: str
+) -> tuple[Optional[dict], str]:
+    """Fetch a gallery path, returning (payload, reason). `reason` is "" on
+    success and one of the GALLERY_* constants otherwise."""
     token = fresh_access_token(secrets, config)
     if not token:
-        return None
+        return None, GALLERY_SIGNED_OUT
     try:
         resp = httpx.get(
             config.cloud_base_url.rstrip("/") + path,
@@ -629,14 +724,46 @@ def _gallery_get(secrets: SecretStore, config: Config, path: str) -> Optional[di
             timeout=15,
         )
     except httpx.HTTPError:
-        return None
-    return resp.json() if resp.status_code == 200 else None
+        return None, GALLERY_UNREACHABLE
+    if resp.status_code == 200:
+        try:
+            return resp.json(), ""
+        except ValueError:
+            # A 200 that isn't JSON is a broken server, not a broken session.
+            return None, GALLERY_ERROR
+    if resp.status_code in (401, 403):
+        return None, GALLERY_SIGNED_OUT
+    if resp.status_code == 404:
+        return None, GALLERY_NOT_AVAILABLE
+    return None, GALLERY_ERROR
+
+
+def _gallery_get(secrets: SecretStore, config: Config, path: str) -> Optional[dict]:
+    return _gallery_fetch(secrets, config, path)[0]
 
 
 def gallery_list(secrets: SecretStore, config: Config) -> Optional[dict]:
     """Curated persona cards visible to this user's tenant; None when signed
     out or the cloud is unreachable (gallery requires sign-in by design)."""
     return _gallery_get(secrets, config, "/v1/personas/gallery")
+
+
+def gallery_list_result(
+    secrets: SecretStore, config: Config
+) -> tuple[Optional[dict], str]:
+    """gallery_list, plus WHY it came back empty — so the caller can say
+    something truer than "sign in" to a user who already has."""
+    return _gallery_fetch(secrets, config, "/v1/personas/gallery")
+
+
+def gallery_detail_result(
+    secrets: SecretStore, config: Config, slug: str
+) -> tuple[Optional[dict], str]:
+    """gallery_detail, plus the reason its card could not be fetched."""
+    card, reason = _gallery_fetch(secrets, config, f"/v1/personas/gallery/{slug}")
+    if card is None:
+        return None, reason
+    return gallery_detail(secrets, config, slug), ""
 
 
 def gallery_manifest(secrets: SecretStore, config: Config, slug: str) -> Optional[dict]:

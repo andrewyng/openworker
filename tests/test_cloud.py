@@ -8,8 +8,10 @@ manual profiles are never touched by cloud refresh.
 
 from __future__ import annotations
 
+import threading
 import time
 import urllib.parse
+from typing import Optional
 
 import pytest
 
@@ -122,6 +124,133 @@ def _signed_in(secrets):
     )
 
 
+# --- session refresh -------------------------------------------------------------
+# Short-lived access tokens are normal and fine. What has to hold is that renewing
+# one is safe under concurrency, and that failing to REACH the cloud is never
+# mistaken for the cloud saying "you're signed out".
+
+
+def _expired(secrets, **extra):
+    secrets.put(
+        cloud.CLOUD_AUTH_PROFILE,
+        {
+            "type": "oauth",
+            "access_token": "old",
+            "refresh_token": "rt1",
+            "expires": time.time() - 1,
+            **extra,
+        },
+    )
+
+
+def test_concurrent_refresh_issues_exactly_one_request(secrets, config, monkeypatch):
+    """Two threads crossing expiry together must not both spend the refresh token.
+
+    fresh_access_token has a dozen callers, several via asyncio.to_thread, so this
+    is routine rather than unlucky. Against a rotating IdP the loser of the race
+    holds a dead token and reuse detection can void the entire session.
+    """
+    _expired(secrets)
+    calls: list[str] = []
+    barrier = threading.Barrier(2)
+
+    def fake_post(url, **kwargs):
+        calls.append(kwargs["data"]["refresh_token"])
+        time.sleep(0.05)  # widen the window the lock has to close
+        return FakeResponse(
+            200, {"access_token": "new", "refresh_token": "rt2", "expires_in": 3600}
+        )
+
+    monkeypatch.setattr(cloud.httpx, "post", fake_post)
+    results: list[Optional[str]] = []
+
+    def worker():
+        barrier.wait()
+        results.append(cloud.fresh_access_token(secrets, config))
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert calls == ["rt1"]  # exactly one exchange, with the original token
+    assert results == ["new", "new"]  # and the waiter got the winner's result
+
+
+def test_transport_failure_keeps_the_session_and_marks_it_stale(
+    secrets, config, monkeypatch
+):
+    """An offline laptop is not a signed-out user (and this must never raise —
+    every caller reads the token outside its own try/except)."""
+    _expired(secrets)
+
+    def boom(url, **kwargs):
+        raise cloud.httpx.ConnectError("no route to host")
+
+    monkeypatch.setattr(cloud.httpx, "post", boom)
+
+    assert cloud.fresh_access_token(secrets, config) is None
+    st = cloud.status(secrets)
+    assert st["signed_in"] is True
+    assert st["stale"] is True
+    # The refresh token survives, so reconnecting needs no re-consent.
+    assert (secrets.get(cloud.CLOUD_AUTH_PROFILE) or {}).get("refresh_token") == "rt1"
+
+
+def test_server_error_keeps_the_session(secrets, config, monkeypatch):
+    """A 503 is the IdP having a bad day, not a revocation."""
+    _expired(secrets)
+    monkeypatch.setattr(cloud.httpx, "post", lambda url, **k: FakeResponse(503, {}))
+    assert cloud.fresh_access_token(secrets, config) is None
+    assert cloud.status(secrets)["signed_in"] is True
+
+
+def test_invalid_grant_really_signs_out(secrets, config, monkeypatch):
+    """The single response that means the session is genuinely dead."""
+    _expired(secrets)
+    monkeypatch.setattr(
+        cloud.httpx,
+        "post",
+        lambda url, **k: FakeResponse(400, {"error": "invalid_grant"}),
+    )
+    assert cloud.fresh_access_token(secrets, config) is None
+    assert cloud.status(secrets)["signed_in"] is False
+
+
+def test_successful_refresh_clears_stale(secrets, config, monkeypatch):
+    _expired(secrets, stale=True)
+    monkeypatch.setattr(
+        cloud.httpx,
+        "post",
+        lambda url, **k: FakeResponse(200, {"access_token": "new", "expires_in": 3600}),
+    )
+    assert cloud.fresh_access_token(secrets, config) == "new"
+    assert cloud.status(secrets)["stale"] is False
+
+
+def test_force_renews_a_token_that_still_looks_valid(secrets, config, monkeypatch):
+    """The 401 retry path: the server rejected a token we still believe in."""
+    secrets.put(
+        cloud.CLOUD_AUTH_PROFILE,
+        {
+            "type": "oauth",
+            "access_token": "at1",
+            "refresh_token": "rt1",
+            "expires": time.time() + 3600,
+        },
+    )
+    monkeypatch.setattr(
+        cloud.httpx,
+        "post",
+        lambda url, **k: FakeResponse(
+            200, {"access_token": "forced", "expires_in": 3600}
+        ),
+    )
+    assert cloud.fresh_access_token(secrets, config) == "at1"  # unforced: cached
+    assert cloud.fresh_access_token(secrets, config, force=True) == "forced"
+
+
 def _github_connection_row(**meta_extra):
     return {
         "connection_id": "conn_7",
@@ -213,7 +342,12 @@ def test_sync_connections_requires_sign_in_and_survives_errors(
 def test_logout_clears_session(secrets, config):
     secrets.put(cloud.CLOUD_AUTH_PROFILE, {"access_token": "x"})
     cloud.logout(secrets)
-    assert cloud.status(secrets) == {"signed_in": False, "account": "", "user_id": ""}
+    assert cloud.status(secrets) == {
+        "signed_in": False,
+        "account": "",
+        "user_id": "",
+        "stale": False,
+    }
 
 
 # --- managed connect -------------------------------------------------------------
@@ -496,3 +630,74 @@ def test_gallery_detail_rejects_malformed_manifest(secrets, config, monkeypatch)
     out = cloud.gallery_detail(secrets, config, "bad")
     assert not out["ok"]
     assert "validation" in out["error"]
+
+
+# --- why the gallery is empty ------------------------------------------------
+# A cloud that serves no gallery route, an unreachable network and a dead session
+# all used to return the same None, so the GUI told signed-in users to sign in.
+# That is how a deployment without /v1/personas/gallery gets reported as an
+# authentication outage.
+
+
+def test_gallery_404_is_not_available_not_signed_out(secrets, config, monkeypatch):
+    _signed_in(secrets)
+    monkeypatch.setattr(cloud.httpx, "get", lambda url, **kw: FakeResponse(404, {}))
+
+    body, reason = cloud.gallery_list_result(secrets, config)
+    assert body is None
+    assert reason == cloud.GALLERY_NOT_AVAILABLE
+
+
+def test_gallery_401_is_signed_out(secrets, config, monkeypatch):
+    _signed_in(secrets)
+    monkeypatch.setattr(cloud.httpx, "get", lambda url, **kw: FakeResponse(401, {}))
+
+    assert cloud.gallery_list_result(secrets, config)[1] == cloud.GALLERY_SIGNED_OUT
+
+
+def test_gallery_transport_error_is_unreachable(secrets, config, monkeypatch):
+    _signed_in(secrets)
+
+    def boom(url, **kw):
+        raise cloud.httpx.ConnectError("no route to host")
+
+    monkeypatch.setattr(cloud.httpx, "get", boom)
+    assert cloud.gallery_list_result(secrets, config)[1] == cloud.GALLERY_UNREACHABLE
+
+
+def test_gallery_without_a_session_is_signed_out(secrets, config):
+    # No profile stored at all — the one case the old message was right about.
+    assert cloud.gallery_list_result(secrets, config)[1] == cloud.GALLERY_SIGNED_OUT
+
+
+def test_gallery_5xx_is_an_error_not_a_session_problem(secrets, config, monkeypatch):
+    _signed_in(secrets)
+    monkeypatch.setattr(cloud.httpx, "get", lambda url, **kw: FakeResponse(503, {}))
+
+    assert cloud.gallery_list_result(secrets, config)[1] == cloud.GALLERY_ERROR
+
+
+def test_gallery_success_carries_no_reason(secrets, config, monkeypatch):
+    _signed_in(secrets)
+    monkeypatch.setattr(
+        cloud.httpx,
+        "get",
+        lambda url, **kw: FakeResponse(200, {"personas": [{"slug": "sales"}]}),
+    )
+
+    body, reason = cloud.gallery_list_result(secrets, config)
+    assert reason == ""
+    assert body["personas"][0]["slug"] == "sales"
+    # The old entry point keeps its contract for every existing caller.
+    assert cloud.gallery_list(secrets, config)["personas"][0]["slug"] == "sales"
+
+
+def test_gallery_detail_result_reports_why_the_card_is_missing(
+    secrets, config, monkeypatch
+):
+    _signed_in(secrets)
+    monkeypatch.setattr(cloud.httpx, "get", lambda url, **kw: FakeResponse(404, {}))
+
+    body, reason = cloud.gallery_detail_result(secrets, config, "sales")
+    assert body is None
+    assert reason == cloud.GALLERY_NOT_AVAILABLE

@@ -31,6 +31,9 @@ def test_cloud_status_signed_out(client):
         "signed_in": False,
         "account": "",
         "user_id": "",
+        # Signed out is not the same as "signed in but out of touch" — see
+        # fresh_access_token. A signed-out session is never stale.
+        "stale": False,
         "telemetry_enabled": True,  # local default; nothing is sent while signed out
     }
 
@@ -161,6 +164,36 @@ def _stub_gallery(monkeypatch, markdown=SALES_MANIFEST, *, hash_ok=True):
         cloud, "gallery_install_event", lambda s, c, slug: events.append(slug)
     )
     return events
+
+
+def test_gallery_endpoint_does_not_blame_the_session_for_a_missing_route(
+    client, monkeypatch
+):
+    """A signed-in user on a cloud with no gallery route must not be told to
+    sign in — that is the message that turns a 404 into "auth is broken"."""
+    from coworker import cloud
+
+    monkeypatch.setattr(
+        cloud,
+        "gallery_list_result",
+        lambda s, c: (None, cloud.GALLERY_NOT_AVAILABLE),
+    )
+    body = client.get("/v1/cloud/gallery").json()
+    assert body["ok"] is False
+    assert body["reason"] == "not_available"
+    assert "sign in" not in body["error"].lower()
+    assert body["personas"] == []
+
+
+def test_gallery_endpoint_still_says_sign_in_when_signed_out(client, monkeypatch):
+    from coworker import cloud
+
+    monkeypatch.setattr(
+        cloud, "gallery_list_result", lambda s, c: (None, cloud.GALLERY_SIGNED_OUT)
+    )
+    body = client.get("/v1/cloud/gallery").json()
+    assert body["error"] == "gallery requires cloud sign-in"
+    assert body["reason"] == "signed_out"
 
 
 def test_gallery_install_runs_consent_flow(client, monkeypatch):

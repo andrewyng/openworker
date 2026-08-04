@@ -44,6 +44,22 @@ def _origin_allowed(origin: str | None) -> bool:
     return origin is None or bool(_ALLOWED_ORIGIN_RE.match(origin))
 
 
+# What the GUI shows when the gallery comes back empty. "Sign in" is only one of
+# four reasons, and saying it to a signed-in user reads as a broken session —
+# which is how a cloud that simply serves no gallery route gets reported as an
+# auth outage. cloud.GALLERY_* carries the distinction; this turns it into words.
+_GALLERY_MESSAGES = {
+    "signed_out": "gallery requires cloud sign-in",
+    "unreachable": "couldn't reach the cloud — check your connection",
+    "not_available": "this cloud doesn't offer a persona gallery",
+    "error": "the gallery is temporarily unavailable",
+}
+
+
+def _gallery_message(reason: str) -> str:
+    return _GALLERY_MESSAGES.get(reason, _GALLERY_MESSAGES["error"])
+
+
 # Caps on inbound WebSocket traffic. The loopback socket is unauthenticated (any local
 # process can reach it), so bound frames, messages, and per-connection request rate before
 # building model content or starting a turn.
@@ -496,9 +512,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         from .. import cloud
         from ..config import load_config
 
-        body = cloud.gallery_detail(manager.secrets, load_config(), slug)
+        body, reason = cloud.gallery_detail_result(
+            manager.secrets, load_config(), slug
+        )
         if body is None:
-            return {"ok": False, "error": "gallery requires cloud sign-in"}
+            return {"ok": False, "error": _gallery_message(reason), "reason": reason}
         return body
 
     @app.get("/v1/cloud/gallery")
@@ -508,11 +526,12 @@ def create_app(manager: SessionManager) -> FastAPI:
         from .. import cloud
         from ..config import load_config
 
-        body = cloud.gallery_list(manager.secrets, load_config())
+        body, reason = cloud.gallery_list_result(manager.secrets, load_config())
         if body is None:
             return {
                 "ok": False,
-                "error": "gallery requires cloud sign-in",
+                "error": _gallery_message(reason),
+                "reason": reason,
                 "personas": [],
             }
         return {"ok": True, "personas": body.get("personas", [])}
