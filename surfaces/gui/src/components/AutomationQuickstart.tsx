@@ -504,39 +504,7 @@ export function AutomationQuickstart({
                   onChange={(e) => setTime(e.target.value)}
                 />
               </div>
-              {picked.deliver && (
-                <>
-                  <label className={label}>Deliver to</label>
-                  <SelectMenu
-                    ariaLabel="Deliver to"
-                    value={deliver}
-                    options={[
-                      { value: "app", label: "In the app" },
-                      { value: "slack", label: "Slack DM (connect Slack later)" },
-                    ]}
-                    onChange={(v) => setDeliver(v as "app" | "slack")}
-                  />
-                </>
-              )}
-              {picked.consent ? (
-                <label className="flex items-start gap-2.5 mt-3.5 text-[13px] text-muted select-none">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5"
-                    checked={consent}
-                    onChange={(e) => setConsent(e.target.checked)}
-                    data-testid="ob-consent"
-                  />
-                  <span>
-                    Allow this automation to post its digest to{" "}
-                    <b className="text-ink" title={channel || undefined}>
-                      {channelLabel || "the channel"}
-                      {channelWorkspace ? ` (${channelWorkspace})` : ""}
-                    </b>{" "}
-                    without asking each time. Anything else still asks first.
-                  </span>
-                </label>
-              ) : picked.conns.length > 0 ? (
+              {picked.conns.length > 0 ? (
                 <p className="text-[13px] text-muted mt-3">
                   This automation only <b className="text-ink">reads</b> on schedule — reading
                   never needs approval.

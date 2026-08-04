@@ -195,11 +195,41 @@ def test_feishu_send_message_uses_markdown_post(monkeypatch):
     payload = calls[0][1]["json"]
     assert payload["receive_id"] == "oc_1"
     assert payload["msg_type"] == "post"
+    assert calls[0][1]["params"] == {"receive_id_type": "chat_id"}
     content = json.loads(payload["content"])
     assert content["zh_cn"]["content"][0][0] == {
         "tag": "md",
         "text": "## 更新\n\n- A\n- B",
     }
+
+
+def test_feishu_send_message_uses_open_id_for_personal_delivery(monkeypatch):
+    monkeypatch.setattr(
+        senders_mod,
+        "_feishu_tenant_token",
+        lambda _app_id, _app_secret, _base_url: ("tenant-token", None),
+    )
+    token = '{"app_id":"cli_test","app_secret":"sec","base_url":"https://open.feishu.cn"}'
+    calls = []
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"code": 0, "data": {"message_id": "om_personal"}}
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _Resp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    result = senders_mod._send_feishu(token, "ou_person", "Hello")
+
+    assert result.ok and result.message_id == "om_personal"
+    assert calls[0][1]["params"] == {"receive_id_type": "open_id"}
 
 
 def test_feishu_file_sender_uploads_then_sends_file(monkeypatch):

@@ -136,6 +136,15 @@ def _feishu_auth(token: str) -> tuple[Optional[str], Optional[str], Optional[str
     return base_url, tenant_token, None
 
 
+def _feishu_receive_id_type(receive_id: str) -> tuple[Optional[str], Optional[str]]:
+    """Map supported Feishu recipient IDs to the API's required type parameter."""
+    if receive_id.startswith("ou_"):
+        return "open_id", None
+    if receive_id.startswith("oc_"):
+        return "chat_id", None
+    return None, "invalid Feishu recipient ID: expected open_id (ou_...) or chat_id (oc_...)"
+
+
 def _send_feishu(
     token: str, chat_id: str, text: str, thread_id: Optional[str] = None
 ) -> SendResult:
@@ -150,6 +159,11 @@ def _send_feishu(
     base_url, tenant_token, err = _feishu_auth(token)
     if err or not base_url or not tenant_token:
         return SendResult(False, error=err or "feishu token failed")
+    receive_id_type, err = _feishu_receive_id_type(chat_id)
+    if err or not receive_id_type:
+        return SendResult(False, error=err or "invalid Feishu recipient ID")
+    if thread_id and receive_id_type != "chat_id":
+        return SendResult(False, error="Feishu thread replies require a chat_id (oc_...)")
     payload = {
         "receive_id": chat_id,
         "msg_type": "post",
@@ -160,7 +174,7 @@ def _send_feishu(
     try:
         resp = httpx.post(
             f"{base_url}/open-apis/im/v1/messages",
-            params={"receive_id_type": "chat_id"},
+            params={"receive_id_type": receive_id_type},
             headers={"Authorization": f"Bearer {tenant_token}"},
             json=payload,
             timeout=_TIMEOUT,
@@ -188,10 +202,13 @@ def _send_feishu_interactive(token: str, chat_id: str, card: dict) -> SendResult
     base_url, tenant_token, err = _feishu_auth(token)
     if err or not base_url or not tenant_token:
         return SendResult(False, error=err or "feishu token failed")
+    receive_id_type, err = _feishu_receive_id_type(chat_id)
+    if err or not receive_id_type:
+        return SendResult(False, error=err or "invalid Feishu recipient ID")
     try:
         resp = httpx.post(
             f"{base_url}/open-apis/im/v1/messages",
-            params={"receive_id_type": "chat_id"},
+            params={"receive_id_type": receive_id_type},
             headers={"Authorization": f"Bearer {tenant_token}"},
             json={
                 "receive_id": chat_id,
@@ -403,6 +420,11 @@ def _send_feishu_file(
     base_url, tenant_token, err = _feishu_auth(token)
     if err or not base_url or not tenant_token:
         return SendResult(False, error=err or "feishu token failed")
+    receive_id_type, err = _feishu_receive_id_type(chat_id)
+    if err or not receive_id_type:
+        return SendResult(False, error=err or "invalid Feishu recipient ID")
+    if thread_id and receive_id_type != "chat_id":
+        return SendResult(False, error="Feishu thread replies require a chat_id (oc_...)")
     headers = {"Authorization": f"Bearer {tenant_token}"}
     upload_name = (title or filename or "file").strip() or "file"
     try:
@@ -437,7 +459,7 @@ def _send_feishu_file(
             payload["reply_in_thread"] = True
         resp = httpx.post(
             f"{base_url}/open-apis/im/v1/messages",
-            params={"receive_id_type": "chat_id"},
+            params={"receive_id_type": receive_id_type},
             headers=headers,
             json=payload,
             timeout=_TIMEOUT,

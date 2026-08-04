@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import {
   createAutomation,
+  clearAutomationRuns,
   deleteAutomation,
   getConnectors,
+  getPersonas,
   getRecentChannels,
   getAutomation,
   getAutomations,
@@ -13,6 +15,7 @@ import {
   type AutomationDelivery,
   type AutomationRun,
   type Connector,
+  type Persona,
   type RecentChannel,
 } from "../api";
 import { Icon } from "./Icon";
@@ -22,6 +25,7 @@ import { ChannelPicker } from "./SubscriptionsChip";
 
 // Shared utility strings (the §28 page shell — mirrors IntegrationsView's constants).
 const CARD = "rounded-xl2 border border-line bg-panel";
+const RUN_PAGE_SIZE = 20;
 
 // Parse a simple "min hour * * dow" cron back into the time + frequency the editor uses.
 // Falls back to 09:00 / daily for anything it doesn't recognize (e.g. agent-written crons).
@@ -93,6 +97,7 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
   const create = async (payload: {
     title: string;
     instructions: string;
+    agent?: string;
     cron?: string;
     sources: string[];
     delivery: AutomationDelivery;
@@ -213,6 +218,7 @@ function NewAutomationForm({
   onCreate: (p: {
     title: string;
     instructions: string;
+    agent: string;
     cron?: string;
     sources: string[];
     delivery: AutomationDelivery;
@@ -223,6 +229,8 @@ function NewAutomationForm({
   const [time, setTime] = useState("09:00");
   const [freq, setFreq] = useState("daily");
   const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [personas, setPersonas] = useState<Persona[]>([]);
+  const [agent, setAgent] = useState("cowork");
   const [recent, setRecent] = useState<RecentChannel[]>([]);
   const [sources, setSources] = useState<string[]>([]);
   const [deliveryConnector, setDeliveryConnector] = useState("app");
@@ -231,8 +239,20 @@ function NewAutomationForm({
   useEffect(() => {
     getConnectors().then(setConnectors).catch(() => setConnectors([]));
     getRecentChannels().then(setRecent).catch(() => setRecent([]));
+    getPersonas()
+      .then((loaded) => {
+        const enabled = loaded.filter((persona) => persona.enabled);
+        setPersonas(loaded);
+        setAgent((current) =>
+          enabled.some((persona) => persona.id === current)
+            ? current
+            : enabled.find((persona) => persona.default)?.id || enabled[0]?.id || current,
+        );
+      })
+      .catch(() => setPersonas([]));
   }, []);
 
+  const enabledPersonas = personas.filter((persona) => persona.enabled);
   const sourceCandidates = connectors.filter((c) => c.source_capable);
   const deliveryCandidates = connectors.filter(
     (c) => c.connected && c.delivery_capable,
@@ -245,7 +265,10 @@ function NewAutomationForm({
   const target = channel.trim().includes(":")
     ? channel.trim()
     : `${deliveryConnector}:${channel.trim()}`;
-  const valid = title.trim() && instructions.trim() && (deliveryConnector === "app" || channel.trim());
+  const valid = title.trim()
+    && instructions.trim()
+    && enabledPersonas.some((persona) => persona.id === agent)
+    && (deliveryConnector === "app" || channel.trim());
 
   return (
     <div className={CARD + " tmpl-form p-4 mb-4"}>
@@ -264,6 +287,21 @@ function NewAutomationForm({
         value={instructions}
         onChange={(e) => setInstructions(e.target.value)}
       />
+      <label className="tmpl-field mt-3">
+        <span>Run as</span>
+        <select
+          aria-label="Run as"
+          className="tmpl-input tmpl-select"
+          value={agent}
+          onChange={(e) => setAgent(e.target.value)}
+        >
+          {enabledPersonas.map((persona) => (
+            <option key={persona.id} value={persona.id}>
+              {persona.name}
+            </option>
+          ))}
+        </select>
+      </label>
       <label className="tmpl-field mt-3">
         <span>Sources</span>
         <span className="text-[11px] text-faint">
@@ -314,7 +352,11 @@ function NewAutomationForm({
       {deliveryConnector !== "app" && deliveryConnector !== "slack" && (
         <input
           className="tmpl-input mt-1"
-          placeholder={`${deliveryConnector}:<chat_id>`}
+          placeholder={
+            deliveryConnector === "feishu"
+              ? "feishu:<open_id (ou_...) or chat_id (oc_...)>"
+              : `${deliveryConnector}:<chat_id>`
+          }
           value={channel}
           onChange={(e) => setChannel(e.target.value)}
         />
@@ -350,6 +392,7 @@ function NewAutomationForm({
             onCreate({
               title: title.trim(),
               instructions: instructions.trim(),
+              agent,
               cron: toCron(time, freq),
               sources,
               delivery:
@@ -385,19 +428,32 @@ function TaskDetail({
 }) {
   const [task, setTask] = useState<Automation | null>(null);
   const [runs, setRuns] = useState<AutomationRun[]>([]);
+  const [totalRuns, setTotalRuns] = useState(0);
+  const [nextRunsOffset, setNextRunsOffset] = useState<number | null>(null);
+  const [loadingMoreRuns, setLoadingMoreRuns] = useState(false);
+  const [managingRuns, setManagingRuns] = useState(false);
+  const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState("");
   const [instructions, setInstructions] = useState("");
   const [time, setTime] = useState("09:00");
   const [freq, setFreq] = useState("daily");
   const [saving, setSaving] = useState(false);
+  const [runRetentionDays, setRunRetentionDays] = useState<number | null>(null);
+  const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [personas, setPersonas] = useState<Persona[]>([]);
+  const [agent, setAgent] = useState("");
+  const [recent, setRecent] = useState<RecentChannel[]>([]);
+  const [sources, setSources] = useState<string[]>([]);
+  const [deliveryConnector, setDeliveryConnector] = useState("app");
+  const [channel, setChannel] = useState("");
 
   // The seen mark AS OF opening — the "new" pills compare against this frozen value
   // while mark-seen advances the stored one (badge clears; highlights survive).
   const [seenMark, setSeenMark] = useState<number | null>(null);
 
   const refresh = () =>
-    getAutomation(id)
+    getAutomation(id, { limit: RUN_PAGE_SIZE })
       .then((d) => {
         if (!d.task) {
           // Deleted (or a stale reopen target): "Loading…" forever is a trap —
@@ -407,6 +463,8 @@ function TaskDetail({
         }
         setTask(d.task);
         setRuns(d.runs || []);
+        setTotalRuns(d.total_runs ?? (d.runs || []).length);
+        setNextRunsOffset(d.has_more ? d.next_offset ?? null : null);
         setSeenMark((cur) => (cur === null ? d.task?.seen_runs_at ?? 0 : cur));
       })
       .catch(() => {});
@@ -419,6 +477,12 @@ function TaskDetail({
       .then(() => announceAutomationsChanged())
       .catch(() => {});
   }, [id]);
+
+  useEffect(() => {
+    getConnectors().then(setConnectors).catch(() => setConnectors([]));
+    getRecentChannels().then(setRecent).catch(() => setRecent([]));
+    getPersonas().then(setPersonas).catch(() => setPersonas([]));
+  }, []);
 
   if (!task)
     return (
@@ -433,16 +497,49 @@ function TaskDetail({
     const { time: t, freq: f } = fromCron(task.schedule_raw?.cron);
     setTime(t);
     setFreq(f);
+    setAgent(task.agent);
+    setRunRetentionDays(task.run_retention_days ?? null);
+    setSources(task.sources || []);
+    const delivery = task.delivery;
+    const connector = delivery?.kind === "channel" ? delivery.connector || "app" : "app";
+    const target = delivery?.kind === "channel" ? delivery.target || "" : "";
+    setDeliveryConnector(connector);
+    setChannel(target.startsWith(`${connector}:`) ? target.slice(connector.length + 1) : target);
     setEditing(true);
   };
+  const sourceCandidates = connectors.filter((c) => c.source_capable);
+  const enabledPersonas = personas.filter((persona) => persona.enabled);
+  const selectedPersona = personas.find((persona) => persona.id === agent);
+  const taskPersona = personas.find((persona) => persona.id === task.agent);
+  const deliveryCandidates = connectors.filter(
+    (c) => c.connected && c.delivery_capable,
+  );
+  const toggleSource = (name: string) =>
+    setSources((current) =>
+      current.includes(name) ? current.filter((source) => source !== name) : [...current, name],
+    );
+  const deliveryTarget = channel.trim().includes(":")
+    ? channel.trim()
+    : `${deliveryConnector}:${channel.trim()}`;
   const saveEdit = async () => {
     setSaving(true);
     try {
-      await updateAutomation(id, {
+      const res = await updateAutomation(id, {
         title: title.trim(),
         instructions: instructions.trim(),
+        agent,
+        run_retention_days: runRetentionDays,
         cron: toCron(time, freq),
+        sources,
+        delivery:
+          deliveryConnector === "app"
+            ? { kind: "app" }
+            : { kind: "channel", connector: deliveryConnector, target: deliveryTarget },
       });
+      if (!res.ok) {
+        alert(res.error || "Could not update automation");
+        return;
+      }
       await refresh();
       setEditing(false);
     } finally {
@@ -457,6 +554,55 @@ function TaskDetail({
     await deleteAutomation(id);
     announceAutomationsChanged(); // the sidebar band must not wait out its poll
     onBack();
+  };
+  const loadMoreRuns = async () => {
+    if (nextRunsOffset === null) return;
+    setLoadingMoreRuns(true);
+    try {
+      const page = await getAutomation(id, {
+        limit: RUN_PAGE_SIZE,
+        offset: nextRunsOffset,
+      });
+      setRuns((current) => [...current, ...(page.runs || [])]);
+      setTotalRuns(page.total_runs ?? totalRuns);
+      setNextRunsOffset(page.has_more ? page.next_offset ?? null : null);
+    } finally {
+      setLoadingMoreRuns(false);
+    }
+  };
+  const completedRuns = runs.filter((run) => run.finished_at !== null);
+  const allShownSelected = completedRuns.length > 0
+    && completedRuns.every((run) => selectedRunIds.has(run.run_id));
+  const toggleRunSelection = (runId: string) =>
+    setSelectedRunIds((current) => {
+      const next = new Set(current);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  const toggleAllShownRuns = () =>
+    setSelectedRunIds((current) => {
+      const next = new Set(current);
+      if (allShownSelected) completedRuns.forEach((run) => next.delete(run.run_id));
+      else completedRuns.forEach((run) => next.add(run.run_id));
+      return next;
+    });
+  const clearRuns = async (runIds?: string[]) => {
+    const selected = runIds !== undefined;
+    const prompt = selected
+      ? `Clear ${runIds.length} selected completed run${runIds.length === 1 ? "" : "s"}?`
+      : "Clear all completed run history? Running tasks will be kept.";
+    if (!window.confirm(prompt)) return;
+    const result = runIds === undefined
+      ? await clearAutomationRuns(id)
+      : await clearAutomationRuns(id, runIds);
+    if (!result.ok) {
+      alert(result.error || "Could not clear run history");
+      return;
+    }
+    setSelectedRunIds(new Set());
+    setManagingRuns(false);
+    await refresh();
   };
 
   return (
@@ -479,7 +625,17 @@ function TaskDetail({
           <div className="sched-actions">
             {editing ? (
               <>
-                <button className="btn-primary sm" disabled={saving || !title.trim() || !instructions.trim()} onClick={saveEdit}>
+                <button
+                  className="btn-primary sm"
+                  disabled={
+                    saving
+                    || !title.trim()
+                    || !instructions.trim()
+                    || !enabledPersonas.some((persona) => persona.id === agent)
+                    || (deliveryConnector !== "app" && !channel.trim())
+                  }
+                  onClick={saveEdit}
+                >
                   {saving ? "Saving…" : "Save"}
                 </button>
                 <button className="link" onClick={() => setEditing(false)}>cancel</button>
@@ -534,21 +690,135 @@ function TaskDetail({
           <div className="sched-instructions">{task.instructions}</div>
         )}
 
+        <div className="sa-sub">Agent</div>
+        {editing ? (
+          <select
+            aria-label="Run as"
+            className="tmpl-input tmpl-select"
+            value={agent}
+            onChange={(e) => setAgent(e.target.value)}
+          >
+            {selectedPersona && !selectedPersona.enabled && (
+              <option value={selectedPersona.id} disabled>
+                {selectedPersona.name} (disabled)
+              </option>
+            )}
+            {enabledPersonas.map((persona) => (
+              <option key={persona.id} value={persona.id}>
+                {persona.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
+            {taskPersona?.name || task.agent}
+          </div>
+        )}
+
         <div className="sa-sub">Sources</div>
-        <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
-          {task.sources === null
-            ? "Legacy task: uses the persona's effective connected integrations."
-            : task.sources.length
-              ? task.sources.join(", ")
-              : "No integration sources selected. The agent can still use built-in tools and web search."}
-        </div>
+        {editing ? (
+          <>
+            <div className="dim" style={{ marginBottom: 6, fontSize: 12.5 }}>
+              The agent can query only selected integrations; built-in tools and web search stay available.
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-2" style={{ marginBottom: 8 }}>
+              {sourceCandidates.length ? sourceCandidates.map((connector) => (
+                <label
+                  key={connector.name}
+                  className={"inline-flex items-center gap-1.5 text-[12.5px] " + (connector.connected ? "text-muted" : "text-faint")}
+                  title={connector.connected ? undefined : "Connect this source in Integrations first"}
+                >
+                  <input
+                    type="checkbox"
+                    checked={sources.includes(connector.name)}
+                    disabled={!connector.connected}
+                    onChange={() => toggleSource(connector.name)}
+                  />
+                  {connector.title}
+                  {!connector.connected && <span className="text-[11px]">Connect first</span>}
+                </label>
+              )) : <span className="text-[12px] text-faint">No connected data integrations are available.</span>}
+            </div>
+          </>
+        ) : (
+          <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
+            {task.sources === null
+              ? "Legacy task: uses the persona's effective connected integrations."
+              : task.sources.length
+                ? task.sources.join(", ")
+                : "No integration sources selected. The agent can still use built-in tools and web search."}
+          </div>
+        )}
 
         <div className="sa-sub">Delivery</div>
-        <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
-          {task.delivery?.kind === "channel"
-            ? `${task.delivery.connector} → ${task.delivery.target}`
-            : "This run in OpenWorker"}
-        </div>
+        {editing ? (
+          <div style={{ marginBottom: 8 }}>
+            <select
+              aria-label="Deliver to"
+              className="tmpl-input tmpl-select"
+              value={deliveryConnector}
+              onChange={(e) => {
+                setDeliveryConnector(e.target.value);
+                setChannel("");
+              }}
+            >
+              <option value="app">This run in OpenWorker</option>
+              {deliveryCandidates.map((connector) => (
+                <option key={connector.name} value={connector.name}>
+                  {connector.title}
+                </option>
+              ))}
+            </select>
+            {deliveryConnector === "slack" && (
+              <div className="mt-1">
+                <ChannelPicker value={channel} onChange={setChannel} recent={recent} />
+              </div>
+            )}
+            {deliveryConnector !== "app" && deliveryConnector !== "slack" && (
+              <input
+                className="tmpl-input mt-1"
+                placeholder={
+                  deliveryConnector === "feishu"
+                    ? "feishu:<open_id (ou_...) or chat_id (oc_...)>"
+                    : `${deliveryConnector}:<chat_id>`
+                }
+                value={channel}
+                onChange={(e) => setChannel(e.target.value)}
+              />
+            )}
+          </div>
+        ) : (
+          <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
+            {task.delivery?.kind === "channel"
+              ? `${task.delivery.connector} → ${task.delivery.target}`
+              : "This run in OpenWorker"}
+          </div>
+        )}
+
+        <div className="sa-sub">Run history</div>
+        {editing ? (
+          <label className="tmpl-field" style={{ marginBottom: 8 }}>
+            <span>Automatically clear completed runs</span>
+            <select
+              aria-label="Run history retention"
+              className="tmpl-input tmpl-select"
+              value={runRetentionDays ?? ""}
+              onChange={(e) => setRunRetentionDays(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">Never</option>
+              <option value="7">After 7 days</option>
+              <option value="30">After 30 days</option>
+              <option value="90">After 90 days</option>
+              <option value="365">After 1 year</option>
+            </select>
+          </label>
+        ) : (
+          <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
+            {task.run_retention_days
+              ? `Completed runs are cleared after ${task.run_retention_days} days.`
+              : "Completed runs are kept until you clear them."}
+          </div>
+        )}
 
         {(task.always_allowed || []).length > 0 && (
           <>
@@ -579,7 +849,49 @@ function TaskDetail({
           </>
         )}
 
-        <div className="sa-sub">Runs</div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="sa-sub mb-0">Runs{totalRuns ? ` (${totalRuns})` : ""}</div>
+          {runs.length > 0 && (
+            <div className="flex flex-wrap justify-end gap-x-3 gap-y-1">
+              {managingRuns ? (
+                <>
+                  <button className="link" onClick={toggleAllShownRuns} disabled={completedRuns.length === 0}>
+                    {allShownSelected ? "Deselect shown" : "Select all shown"}
+                  </button>
+                  <button
+                    className="link text-danger"
+                    disabled={selectedRunIds.size === 0}
+                    onClick={() => clearRuns([...selectedRunIds])}
+                  >
+                    Clear selected ({selectedRunIds.size})
+                  </button>
+                  <button className="link text-danger" onClick={() => clearRuns()}>
+                    Clear all
+                  </button>
+                  <button
+                    className="link"
+                    onClick={() => {
+                      setSelectedRunIds(new Set());
+                      setManagingRuns(false);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="link text-danger"
+                  onClick={() => {
+                    setSelectedRunIds(new Set());
+                    setManagingRuns(true);
+                  }}
+                >
+                  Manage history
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
           Each run is a live conversation — open one to see what the agent did and ask a follow-up.
         </div>
@@ -598,6 +910,17 @@ function TaskDetail({
             title="Open this run's conversation"
           >
             <div className="sched-run-row">
+              {managingRuns && (
+                <input
+                  type="checkbox"
+                  aria-label={`Select run ${r.run_id}`}
+                  checked={selectedRunIds.has(r.run_id)}
+                  disabled={r.finished_at === null}
+                  title={r.finished_at === null ? "Running tasks cannot be cleared" : undefined}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={() => toggleRunSelection(r.run_id)}
+                />
+              )}
               <span>
                 {seenMark !== null && r.started_at > seenMark && (
                   <span className="run-new-pill" data-testid="run-new">new</span>
@@ -613,8 +936,16 @@ function TaskDetail({
             </div>
             {r.result_text && <div className="sched-run-peek">{r.result_text}</div>}
             {r.error && <div className="mcp-error">{r.error}</div>}
+            {r.delivery_status === "failed" && r.delivery_error && (
+              <div className="mcp-error">Delivery error: {r.delivery_error}</div>
+            )}
           </div>
         ))}
+        {nextRunsOffset !== null && (
+          <button className="btn sm mt-2" disabled={loadingMoreRuns} onClick={loadMoreRuns}>
+            {loadingMoreRuns ? "Loading…" : `Load ${Math.min(RUN_PAGE_SIZE, totalRuns - runs.length)} more`}
+          </button>
+        )}
       </div>
     </Shell>
   );

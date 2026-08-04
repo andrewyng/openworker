@@ -659,6 +659,14 @@ export interface Connector {
   portals?: HubSpotPortal[]; // HubSpot only: connected portals (multi-portal)
   hidden_fields?: string[]; // HubSpot only: properties stripped from agent reads
   installations?: GithubInstallation[]; // GitHub only: App installations (managed relay)
+  inbound_agent_route?: ConnectorInboundAgentRoute; // new connector-created sessions only
+}
+
+export interface ConnectorInboundAgentRoute {
+  agent: string;
+  workspace: string;
+  explicit: boolean;
+  default_agent: string;
 }
 
 // --- OpenWorker Cloud (optional sign-in; manual token paste always works) ---
@@ -798,6 +806,28 @@ export async function updateConnectorTools(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ enabled }),
+  });
+  return res.json();
+}
+
+export async function setConnectorAgentRoute(
+  name: string,
+  agent: string,
+  workspace = "",
+): Promise<{ ok: boolean; error?: string; route?: ConnectorInboundAgentRoute }> {
+  const res = await fetch(`${httpBase()}/v1/connectors/${encodeURIComponent(name)}/agent-route`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agent, workspace }),
+  });
+  return res.json();
+}
+
+export async function clearConnectorAgentRoute(
+  name: string,
+): Promise<{ ok: boolean; error?: string; route?: ConnectorInboundAgentRoute }> {
+  const res = await fetch(`${httpBase()}/v1/connectors/${encodeURIComponent(name)}/agent-route`, {
+    method: "DELETE",
   });
   return res.json();
 }
@@ -1951,6 +1981,7 @@ export interface Automation {
   last_run: number | null;
   last_status: string | null;
   run_count: number;
+  run_retention_days?: number | null;
   notify_on_completion: boolean;
   // null = a task created before source restrictions existed. [] is intentionally
   // source-free (web/local work still keeps the normal Cowork tools).
@@ -2034,6 +2065,7 @@ export async function markAutomationSeen(id: string): Promise<{ ok: boolean }> {
 export async function createAutomation(payload: {
   title: string;
   instructions: string;
+  agent?: string;
   cron?: string;
   fire_at?: string;
   timezone?: string;
@@ -2051,8 +2083,41 @@ export async function createAutomation(payload: {
   return res.json();
 }
 
-export async function getAutomation(id: string): Promise<{ task: Automation; runs: AutomationRun[] }> {
-  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`);
+export interface AutomationHistoryPage {
+  task: Automation;
+  runs: AutomationRun[];
+  total_runs?: number;
+  has_more?: boolean;
+  next_offset?: number | null;
+}
+
+export async function getAutomation(
+  id: string,
+  options: { limit?: number; offset?: number } = {},
+): Promise<AutomationHistoryPage> {
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
+  const query = params.size ? `?${params}` : "";
+  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}${query}`);
+  return res.json();
+}
+
+export async function clearAutomationRuns(
+  id: string,
+  runIds?: string[],
+): Promise<{ ok: boolean; cleared?: number; error?: string }> {
+  const selected = runIds !== undefined;
+  const res = await fetch(
+    `${httpBase()}/v1/automations/${encodeURIComponent(id)}/runs${selected ? "/clear" : ""}`,
+    selected
+      ? {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ run_ids: runIds }),
+        }
+      : { method: "DELETE" },
+  );
   return res.json();
 }
 

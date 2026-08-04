@@ -173,13 +173,50 @@ class TaskStore:
         run = self.find_run(session_id[len("__run__") :])
         return self.get(run.task_id) if run else None
 
-    def runs(self, task_id: str, *, limit: int = 50) -> list[TaskRun]:
+    def runs(self, task_id: str, *, limit: int = 50, offset: int = 0) -> list[TaskRun]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT data FROM task_runs WHERE task_id=? ORDER BY started_at DESC LIMIT ?",
-                (task_id, limit),
+                "SELECT data FROM task_runs WHERE task_id=? ORDER BY started_at DESC LIMIT ? OFFSET ?",
+                (task_id, limit, offset),
             ).fetchall()
         return [TaskRun.from_dict(json.loads(r["data"])) for r in rows]
+
+    def run_count(self, task_id: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS count FROM task_runs WHERE task_id=?", (task_id,)
+            ).fetchone()
+        return int(row["count"])
+
+    def delete_completed_runs(
+        self,
+        task_id: str,
+        *,
+        older_than: Optional[float] = None,
+        run_ids: Optional[set[str]] = None,
+    ) -> list[TaskRun]:
+        """Remove completed history, preserving any run still in progress."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT run_id, data FROM task_runs WHERE task_id=?", (task_id,)
+            ).fetchall()
+            removed = []
+            for row in rows:
+                run = TaskRun.from_dict(json.loads(row["data"]))
+                if run_ids is not None and run.run_id not in run_ids:
+                    continue
+                if run.finished_at is None:
+                    continue
+                if older_than is not None and run.finished_at >= older_than:
+                    continue
+                removed.append(run)
+            if removed:
+                self._conn.executemany(
+                    "DELETE FROM task_runs WHERE run_id=?",
+                    [(run.run_id,) for run in removed],
+                )
+                self._conn.commit()
+        return removed
 
     def close(self) -> None:
         with self._lock:

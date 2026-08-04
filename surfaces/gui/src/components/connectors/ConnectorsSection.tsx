@@ -4,10 +4,13 @@ import {
   getCloudStatus,
   getConnectors,
   getMcpServers,
+  getPersonas,
   getSlackStatus,
+  PERSONAS_CHANGED,
   type CloudStatus,
   type Connector,
   type McpServer,
+  type Persona,
   type SlackStatus,
 } from "../../api";
 import { McpServerDetail } from "./CustomMcp";
@@ -20,6 +23,7 @@ import { ConnectorsList } from "./ConnectorsList";
 import { GithubDetail } from "./GithubDetail";
 import { GmailDetail } from "./GmailDetail";
 import { HubSpotDetail } from "./HubSpotDetail";
+import { IncomingAgentBlock } from "./IncomingAgentBlock";
 import { SlackDetail } from "./SlackDetail";
 import { GRP } from "./ui";
 
@@ -32,6 +36,7 @@ export interface DetailProps {
   c: Connector;
   cloud: CloudStatus | null;
   slack: SlackStatus | null; // live Slack health (relay/sign-in/tokens); null elsewhere
+  personas: Persona[];
   onChanged: () => void;
 }
 
@@ -58,6 +63,7 @@ export function ConnectorsSection() {
   const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
   const [slack, setSlack] = useState<SlackStatus | null>(null);
+  const [personas, setPersonas] = useState<Persona[]>([]);
 
   const refresh = () => {
     getConnectors().then(setConnectors).catch(() => setConnectors([]));
@@ -65,12 +71,18 @@ export function ConnectorsSection() {
     getCloudStatus().then(setCloud).catch(() => setCloud(null));
     getSlackStatus().then(setSlack).catch(() => setSlack(null));
   };
+  const loadPersonas = () => getPersonas().then(setPersonas).catch(() => setPersonas([]));
   useEffect(() => {
     refresh();
+    loadPersonas();
+    window.addEventListener(PERSONAS_CHANGED, loadPersonas);
     // Poll: recent senders/parked arrive over time; sign-in + managed connects finish
     // in the system browser and surface on the next tick.
     const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener(PERSONAS_CHANGED, loadPersonas);
+    };
   }, []);
 
   // While an MCP test/sign-in is in flight, poll fast so the chip flips to its
@@ -123,12 +135,13 @@ export function ConnectorsSection() {
              c.connected and this same route re-renders as the connected page. */
           <AvailableDetail c={c} cloud={cloud} onChanged={refresh} />
         ) : Page ? (
-          <Page c={c} cloud={cloud} slack={slack} onChanged={refresh} />
+          <Page c={c} cloud={cloud} slack={slack} personas={personas} onChanged={refresh} />
         ) : (
           <GenericDetail
             c={c}
             cloud={cloud}
             slack={slack}
+            personas={personas}
             onChanged={refresh}
             onGone={() => setDetail(null)}
           />
@@ -156,6 +169,7 @@ function GenericDetail({
   c,
   cloud: _cloud,
   slack: _slack,
+  personas,
   onChanged,
   onGone,
 }: DetailProps & { onGone: () => void }) {
@@ -190,6 +204,7 @@ function GenericDetail({
 
       {c.two_way && (
         <div className={GRP + " mt-4"}>
+          <IncomingAgentBlock c={c} personas={personas} onChanged={onChanged} />
           <AllowlistBlock c={c} onChanged={onChanged} />
           <UnauthorizedBlock c={c} onChanged={onChanged} />
           {/* Channel subscriptions are a chat-platform concept — GitHub is two_way via the
