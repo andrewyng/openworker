@@ -22,7 +22,7 @@ export function PlanCard({
     <div className="dirreq-card plan-card">
       <div className="dirreq-head">
         <Icon name="sparkle" size={16} className="ico" />
-        <span>The agent proposed a plan</span>
+        <span>agent 提出了一个方案</span>
       </div>
       <div className="plan-body">
         <Markdown text={item.plan} />
@@ -31,7 +31,7 @@ export function PlanCard({
         <div className="dirreq-actions">
           <input
             className="dirreq-path"
-            placeholder="What should change about the plan?"
+            placeholder="这个方案哪里需要调整？"
             value={feedback}
             autoFocus
             onChange={(e) => setFeedback(e.target.value)}
@@ -40,27 +40,27 @@ export function PlanCard({
             }}
           />
           <button className="btn" onClick={() => setRejecting(false)}>
-            Back
+            返回
           </button>
           <button
             className="btn primary"
             disabled={!feedback.trim()}
             onClick={() => onRespond(false, undefined, feedback.trim())}
           >
-            Send feedback
+            发送反馈
           </button>
         </div>
       ) : (
         <div className="dirreq-actions">
           <button className="btn" onClick={() => setRejecting(true)}>
-            Request changes
+            要求修改
           </button>
           <span className="spacer" />
           <button className="btn" onClick={() => onRespond(true, "interactive")}>
-            Approve — ask per step
+            批准——每步询问
           </button>
           <button className="btn primary" onClick={() => onRespond(true, "auto")}>
-            Approve & run
+            批准并执行
           </button>
         </div>
       )}

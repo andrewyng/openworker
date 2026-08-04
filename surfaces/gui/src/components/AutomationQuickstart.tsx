@@ -23,15 +23,15 @@ import { SelectMenu } from "./SelectMenu";
 
 // "When" = day choice × free time (owner call 2026-07-11); the cron assembles from the two.
 const DAYS: Record<string, { label: string; dow: string }> = {
-  mon: { label: "Mondays", dow: "1" },
-  tue: { label: "Tuesdays", dow: "2" },
-  wed: { label: "Wednesdays", dow: "3" },
-  thu: { label: "Thursdays", dow: "4" },
-  fri: { label: "Fridays", dow: "5" },
-  sat: { label: "Saturdays", dow: "6" },
-  sun: { label: "Sundays", dow: "0" },
-  weekdays: { label: "Weekdays", dow: "1-5" },
-  daily: { label: "Every day", dow: "*" },
+  mon: { label: "每周一", dow: "1" },
+  tue: { label: "每周二", dow: "2" },
+  wed: { label: "每周三", dow: "3" },
+  thu: { label: "每周四", dow: "4" },
+  fri: { label: "每周五", dow: "5" },
+  sat: { label: "每周六", dow: "6" },
+  sun: { label: "每周日", dow: "0" },
+  weekdays: { label: "工作日", dow: "1-5" },
+  daily: { label: "每天", dow: "*" },
 };
 // §30 connect-state spinner (the app has no other spinner — waits elsewhere are label swaps).
 // Exported for Onboarding page 2's sign-in button (same states, same look).
@@ -62,12 +62,12 @@ interface QuickTemplate {
 const TEMPLATES: QuickTemplate[] = [
   {
     key: "github",
-    title: "GitHub digest",
-    blurb: "Merged PRs and commits, posted to your team's Slack.",
-    cadence: "Weekly",
+    title: "GitHub 摘要",
+    blurb: "合并的 PR 与提交，推送到你团队的 Slack。",
+    cadence: "每周",
     conns: [
-      { name: "slack", why: "Where the digest posts" },
-      { name: "github", why: "What the digest summarizes" },
+      { name: "slack", why: "摘要发布的位置" },
+      { name: "github", why: "摘要汇总的内容" },
     ],
     needsRepo: true,
     needsChannel: true,
@@ -81,12 +81,12 @@ const TEMPLATES: QuickTemplate[] = [
   },
   {
     key: "pipeline",
-    title: "Pipeline digest",
-    blurb: "Deals that moved — and deals going quiet — posted to Slack.",
-    cadence: "Weekly",
+    title: "销售管道摘要",
+    blurb: "有进展的商机，以及陷入沉寂的商机，推送到 Slack。",
+    cadence: "每周",
     conns: [
-      { name: "slack", why: "Where the digest posts" },
-      { name: "hubspot", why: "Pipeline and deal activity" },
+      { name: "slack", why: "摘要发布的位置" },
+      { name: "hubspot", why: "销售管道与商机动态" },
     ],
     needsChannel: true,
     consent: true,
@@ -99,12 +99,12 @@ const TEMPLATES: QuickTemplate[] = [
   },
   {
     key: "brief",
-    title: "Morning brief",
-    blurb: "Calendar and unread email, summarized before your day starts.",
-    cadence: "Daily",
+    title: "晨间简报",
+    blurb: "日程与未读邮件，在你一天开始前汇总好。",
+    cadence: "每天",
     conns: [
-      { name: "google_calendar", why: "Today's meetings and gaps" },
-      { name: "gmail", why: "What arrived overnight" },
+      { name: "google_calendar", why: "今天的会议与空档" },
+      { name: "gmail", why: "夜间新到的邮件" },
     ],
     deliver: true,
     day: "daily",
@@ -116,9 +116,9 @@ const TEMPLATES: QuickTemplate[] = [
   },
   {
     key: "news",
-    title: "Morning news briefing",
-    blurb: "A 5-bullet tech & world news digest, saved as markdown.",
-    cadence: "Daily",
+    title: "晨间新闻简报",
+    blurb: "5 条要点的科技与国际新闻摘要，保存为 markdown。",
+    cadence: "每天",
     conns: [],
     day: "daily",
     time: "08:00",
@@ -128,19 +128,19 @@ const TEMPLATES: QuickTemplate[] = [
   },
   {
     key: "inboxdigest",
-    title: "Inbox digest",
-    blurb: "One short digest of your unread email.",
-    cadence: "Weekdays",
-    conns: [{ name: "gmail", why: "Your unread email" }],
+    title: "收件箱摘要",
+    blurb: "一份简短的未读邮件摘要。",
+    cadence: "工作日",
+    conns: [{ name: "gmail", why: "你的未读邮件" }],
     day: "weekdays",
     time: "09:00",
     instructions: () => "Summarize my unread email into one short digest note.",
   },
   {
     key: "cleanup",
-    title: "Folder cleanup",
-    blurb: "Sort recent Downloads into tidy folders by type.",
-    cadence: "Weekly",
+    title: "文件夹整理",
+    blurb: "把最近的下载文件按类型归入整齐的文件夹。",
+    cadence: "每周",
     conns: [],
     day: "fri",
     time: "17:30",
@@ -291,12 +291,12 @@ export function AutomationQuickstart({
   };
 
   const gateHint = !allConnected
-    ? `Connect ${picked?.conns
+    ? `请先连接 ${picked?.conns
         .filter((c) => !connState(c.name)?.connected)
         .map((c) => connState(c.name)?.title || c.name)
-        .join(" and ")} to continue`
+        .join("、")} 以继续`
     : picked?.needsChannel && !channel
-      ? "Pick a channel to post to first"
+      ? "请先选择要发布到的频道"
       : "";
 
   const label = "block text-[12px] text-muted mt-3 mb-1";
@@ -306,7 +306,7 @@ export function AutomationQuickstart({
   return (
     <div className="mb-4">
       <div className="text-[11px] uppercase tracking-[0.05em] text-faint mb-2.5">
-        Start from a template
+        从模板开始
       </div>
       {/* Equal-height cards (owner ask 2026-07-12): 1fr rows + h-full — <button> grid items
           don't stretch like divs. */}
@@ -332,7 +332,7 @@ export function AutomationQuickstart({
                 return (
                   <span
                     key={c.name}
-                    title={`${cs?.title || c.name} — ${on ? "connected" : "not connected yet"}`}
+                    title={`${cs?.title || c.name} — ${on ? "已连接" : "尚未连接"}`}
                     style={on ? undefined : { filter: "grayscale(1)", opacity: 0.55 }}
                   >
                     {cs ? (
@@ -344,7 +344,7 @@ export function AutomationQuickstart({
                 );
               })}
               <span className="text-[11px] text-faint ml-0.5">
-                {t.conns.length === 0 ? `No connections needed · ${t.cadence}` : t.cadence}
+                {t.conns.length === 0 ? `无需连接 · ${t.cadence}` : t.cadence}
               </span>
             </span>
           </button>
@@ -360,11 +360,11 @@ export function AutomationQuickstart({
           {/* §30: the card names its template — without this it starts abruptly after the grid. */}
           <div className="flex items-baseline gap-2 pb-2.5 mb-1 border-b border-line">
             <span className="text-[11px] uppercase tracking-[0.05em] text-accent font-semibold">
-              Set up
+              设置
             </span>
             <span className="text-[14px] font-semibold">{picked.title}</span>
             <span className="ml-auto text-[12px] text-faint max-sm:hidden">
-              {picked.conns.length ? "Connections, delivery & schedule" : "Delivery & schedule"} ·{" "}
+              {picked.conns.length ? "连接、发送与排程" : "发送与排程"} ·{" "}
               {picked.cadence}
             </span>
           </div>
@@ -380,13 +380,13 @@ export function AutomationQuickstart({
                     <span className="block text-[11.5px] text-faint">{why}</span>
                   </span>
                   {c?.connected ? (
-                    <span className="text-[12.5px] text-ok">✓ Connected</span>
+                    <span className="text-[12.5px] text-ok">✓ 已连接</span>
                   ) : flow ? (
                     <span className="inline-flex items-center gap-2 text-[12px] text-muted">
                       <Spinner />
                       {flow.phase === "opening"
-                        ? "Opening browser…"
-                        : `Waiting for ${c?.title || name}…`}
+                        ? "正在打开浏览器…"
+                        : `正在等待 ${c?.title || name}…`}
                     </span>
                   ) : (
                     <button
@@ -394,7 +394,7 @@ export function AutomationQuickstart({
                       onClick={() => startConnect(name)}
                       data-testid={`ob-connect-${name}`}
                     >
-                      Connect
+                      连接
                     </button>
                   )}
                 </div>
@@ -408,16 +408,16 @@ export function AutomationQuickstart({
                     <span>↗</span>
                     <span className="flex-1 min-w-0">
                       <b className="text-ink font-medium">
-                        Finish connecting {c?.title || name} in your browser.
+                        请在浏览器中完成 {c?.title || name} 的连接。
                       </b>{" "}
-                      Approve it there, then come back — this page updates by itself.
+                      在那里确认后返回 — 本页面会自动更新。
                     </span>
                     <button
                       className="text-faint underline hover:text-muted shrink-0"
                       onClick={() => setConnFlow(null)}
                       data-testid="ob-connect-cancel"
                     >
-                      Cancel
+                      取消
                     </button>
                   </div>
                 )}
@@ -431,25 +431,25 @@ export function AutomationQuickstart({
               data-testid="ob-cloudpane"
             >
               <span className="block text-[13px] text-ink font-medium">
-                One sign-in unlocks every one-click connection
+                一次登录，解锁所有一键连接
               </span>
-              Connections are brokered by OpenWorker Cloud — your tokens stay on this computer.
+              连接由 OpenWorker Cloud 代理 — 你的 Token 始终保留在这台电脑上。
               <div className="flex items-center gap-3 mt-2">
                 {signinPhase ? (
                   <>
                     <span className="inline-flex items-center gap-2 text-[12px]">
                       <Spinner />
-                      {signinPhase === "opening" ? "Opening browser…" : "Waiting for sign-in…"}
+                      {signinPhase === "opening" ? "正在打开浏览器…" : "正在等待登录…"}
                     </span>
                     {signinPhase === "waiting" && (
                       <span className="text-[11.5px] text-faint">
-                        Finish signing in in your browser — this page updates by itself.{" "}
+                        请在浏览器中完成登录 — 本页面会自动更新。{" "}
                         <button
                           className="underline hover:text-muted"
                           onClick={cancelSignin}
                           data-testid="ob-signin-cancel"
                         >
-                          Cancel
+                          取消
                         </button>
                       </span>
                     )}
@@ -460,7 +460,7 @@ export function AutomationQuickstart({
                     onClick={signInThenConnect}
                     data-testid="ob-cloud-signin"
                   >
-                    Sign in to OpenWorker Cloud
+                    登录 OpenWorker Cloud
                   </button>
                 )}
               </div>
@@ -471,7 +471,7 @@ export function AutomationQuickstart({
             <div className={picked.conns.length ? "bg-paper rounded-xl px-4 py-3.5 mt-3" : ""} data-testid="ob-recipe">
               {picked.needsRepo && (
                 <>
-                  <label className={label}>Repository</label>
+                  <label className={label}>代码仓库</label>
                   <input
                     className={input}
                     placeholder="owner/repo"
@@ -483,7 +483,7 @@ export function AutomationQuickstart({
               )}
               {picked.needsChannel && (
                 <>
-                  <label className={label}>Post to channel</label>
+                  <label className={label}>发布到频道</label>
                   <div data-testid="ob-channel">
                     <ChannelPicker
                       value={channel}
@@ -495,15 +495,15 @@ export function AutomationQuickstart({
                     />
                   </div>
                   <p className="text-[11px] text-warnInk mt-1">
-                    The bot must be a member of the channel — invite @OpenWorker in Slack if it isn't.
+                    机器人必须是该频道的成员 — 若未加入，请在 Slack 中邀请 @OpenWorker。
                   </p>
                 </>
               )}
-              <label className={label}>When</label>
+              <label className={label}>时间</label>
               <div className="flex gap-2">
                 <div className="flex-1 min-w-0">
                   <SelectMenu
-                    ariaLabel="Day"
+                    ariaLabel="日期"
                     value={day}
                     options={Object.entries(DAYS).map(([k, v]) => ({ value: k, label: v.label }))}
                     onChange={setDay}
@@ -512,20 +512,20 @@ export function AutomationQuickstart({
                 <input
                   className="w-28 px-3 py-2 rounded-lg border border-line bg-panel text-[13.5px] outline-none focus:border-accent"
                   type="time"
-                  aria-label="Time"
+                  aria-label="时间"
                   value={time}
                   onChange={(e) => setTime(e.target.value)}
                 />
               </div>
               {picked.deliver && (
                 <>
-                  <label className={label}>Deliver to</label>
+                  <label className={label}>发送至</label>
                   <SelectMenu
-                    ariaLabel="Deliver to"
+                    ariaLabel="发送至"
                     value={deliver}
                     options={[
-                      { value: "app", label: "In the app" },
-                      { value: "slack", label: "Slack DM (connect Slack later)" },
+                      { value: "app", label: "应用内" },
+                      { value: "slack", label: "Slack 私信（稍后连接 Slack）" },
                     ]}
                     onChange={(v) => setDeliver(v as "app" | "slack")}
                   />
@@ -541,18 +541,17 @@ export function AutomationQuickstart({
                     data-testid="ob-consent"
                   />
                   <span>
-                    Allow this automation to post its digest to{" "}
+                    允许该自动化任务将摘要发布到{" "}
                     <b className="text-ink" title={channel || undefined}>
-                      {channelLabel || "the channel"}
+                      {channelLabel || "该频道"}
                       {channelWorkspace ? ` (${channelWorkspace})` : ""}
                     </b>{" "}
-                    without asking each time. Anything else still asks first.
+                    而无需每次询问。其他操作仍会先询问。
                   </span>
                 </label>
               ) : picked.conns.length > 0 ? (
                 <p className="text-[12.5px] text-muted mt-3">
-                  This automation only <b className="text-ink">reads</b> on schedule — reading
-                  never needs approval.
+                  该自动化任务按计划仅<b className="text-ink">读取</b> — 读取操作无需审批。
                 </p>
               ) : null}
             </div>
@@ -563,7 +562,7 @@ export function AutomationQuickstart({
               className="text-[12.5px] text-faint hover:text-muted"
               onClick={() => setPickedKey(null)}
             >
-              Cancel
+              取消
             </button>
             {/* A silently-disabled primary reads as a bug — always name the missing piece. */}
             {gateHint && (
@@ -580,7 +579,7 @@ export function AutomationQuickstart({
               onClick={create}
               data-testid="ob-create"
             >
-              {busy ? "Creating…" : "Create automation"}
+              {busy ? "正在创建…" : "创建自动化任务"}
             </button>
           </div>
         </div>

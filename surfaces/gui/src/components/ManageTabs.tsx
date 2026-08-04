@@ -36,12 +36,12 @@ import { Toggle } from "./Toggle";
 const relTime = (epoch?: number | null): string | null => {
   if (!epoch) return null;
   const secs = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
-  if (secs < 90) return "just now";
+  if (secs < 90) return "刚刚";
   const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return `${mins} 分钟前`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 48) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
+  if (hrs < 48) return `${hrs} 小时前`;
+  return `${Math.floor(hrs / 24)} 天前`;
 };
 
 // Shared tab bodies for the Settings and Integrations pages (the old top-tab ManageModal was retired
@@ -83,7 +83,7 @@ export function ModelsTab() {
     refreshSettings();
   }, []);
 
-  if (!settings) return <div className="text-[13px] text-muted">Loading…</div>;
+  if (!settings) return <div className="text-[13px] text-muted">加载中…</div>;
 
   const info = ps.info;
   const knownNames = ps.providers.map((p) => p.name);
@@ -108,10 +108,10 @@ export function ModelsTab() {
               className="text-[12.5px] text-danger/80 hover:text-danger hover:underline underline-offset-2"
               data-testid="set-remove-key"
               onClick={() => {
-                if (window.confirm(`Remove the ${info?.title} key from this computer?`)) ps.removeKey();
+                if (window.confirm(`从这台电脑移除 ${info?.title} 密钥？`)) ps.removeKey();
               }}
             >
-              Remove key…
+              移除密钥…
             </button>
           ) : null
         }
@@ -119,17 +119,15 @@ export function ModelsTab() {
 
       {ps.sel === "openai" && settings.source === "env" && (
         <p className="text-[12px] text-muted mt-3 leading-relaxed">
-          A key is set via <code>OPENAI_API_KEY</code> in this server's environment. You can override
-          it above; the stored key is used only when the environment variable is absent.
+          该服务器的环境中已通过 <code>OPENAI_API_KEY</code> 设置了密钥。你可以在上方覆盖它；只有当该环境变量不存在时，才会使用保存的密钥。
         </p>
       )}
 
       {info?.configured ? (
         <div className="mt-6">
-          <div className={SEC_H + " mb-1.5"}>Models</div>
+          <div className={SEC_H + " mb-1.5"}>模型</div>
           <p className="text-[12px] text-muted mb-2.5 leading-relaxed">
-            Ticked models show in the composer's picker; the black badge marks the default for new
-            sessions.
+            勾选的模型会显示在输入框的选择器中；黑色标记表示新会话的默认模型。
           </p>
           <ModelChecklist
             provider={ps.sel}
@@ -146,9 +144,9 @@ export function ModelsTab() {
         // key unlocks is part of deciding to get one at all (owner ask, 2026-07-04).
         (info?.suggested_models?.length || 0) > 0 && (
           <div className="mt-6" data-testid="model-preview">
-            <div className={SEC_H + " mb-1.5"}>Included models</div>
+            <div className={SEC_H + " mb-1.5"}>包含的模型</div>
             <p className="text-[12px] text-muted mb-2.5 leading-relaxed">
-              Curated, agent-capable models this provider serves — add your key above to enable them.
+              该提供商提供的、精选的、可用于 agent 的模型——在上方添加你的密钥即可启用它们。
             </p>
             <div className="space-y-1">
               {(info?.suggested_models || []).map((m) => {
@@ -194,10 +192,9 @@ function ComposerPickerCard({
   };
   return (
     <div className="mt-6" data-testid="composer-picker">
-      <div className={SEC_H + " mb-1.5"}>In the composer's picker</div>
+      <div className={SEC_H + " mb-1.5"}>输入框选择器中的模型</div>
       <p className="text-[12px] text-muted mb-2.5 leading-relaxed">
-        The models offered when starting a session; the black badge marks the default. Add more
-        from a provider's card above.
+        开始会话时可供选择的模型；黑色标记表示默认。可在上方某个提供商的卡片里添加更多。
       </p>
       <div className="mlist">
         {settings.models.map((id) => {
@@ -209,7 +206,7 @@ function ComposerPickerCard({
                   type="checkbox"
                   checked
                   disabled={isDefault}
-                  title={isDefault ? "The default model is always shown — make another model default first" : "Remove from the picker"}
+                  title={isDefault ? "默认模型始终显示——请先将其他模型设为默认" : "从选择器中移除"}
                   onChange={() => removeModel(id).then((r) => r.ok && onChanged())}
                 />
                 <span className="mlist-name" title={id}>
@@ -218,10 +215,10 @@ function ComposerPickerCard({
               </label>
               <span className="text-[11px] text-faint mr-2 shrink-0">{tag(id)}</span>
               {isDefault ? (
-                <span className="mlist-default">default</span>
+                <span className="mlist-default">默认</span>
               ) : (
                 <button className="mlist-make" onClick={() => setDefaultModel(id).then(() => onChanged())}>
-                  Make default
+                  设为默认
                 </button>
               )}
             </div>
@@ -238,7 +235,7 @@ const MCP_PRESETS: { name: string; label: string; blurb: string; config: Record<
   {
     name: "granola",
     label: "Granola",
-    blurb: "Meeting notes & transcripts — sign in with your Granola account.",
+    blurb: "会议记录与转写——用你的 Granola 账号登录。",
     config: { type: "http", url: "https://mcp.granola.ai/mcp", auth: "oauth" },
   },
 ];
@@ -274,22 +271,21 @@ export function McpTab() {
   return (
     <div className="space-y-3">
       <p className="text-[12.5px] text-muted leading-relaxed">
-        External tool servers (stdio or HTTP), shared across all agents. Enabled servers' tools are
-        permission-gated. Changes apply to new sessions —{" "}
+        外部工具服务器（stdio 或 HTTP），在所有 agent 间共享。已启用服务器的工具都需经过权限确认。改动对新会话生效——{" "}
         <button
           className="text-accent font-medium hover:underline"
           onClick={() => reloadMcp().then(refresh)}
         >
-          reload now
+          立即重新加载
         </button>
-        .
+        。
       </p>
 
       {servers.length === 0 && !adding ? (
         <div className={CARD + " p-4 text-[13px] text-muted"}>
-          No MCP servers configured.{" "}
+          尚未配置任何 MCP 服务器。{" "}
           <button className="text-accent font-medium" onClick={() => setAdding(true)}>
-            Add a server
+            添加服务器
           </button>
         </div>
       ) : (
@@ -321,7 +317,7 @@ export function McpTab() {
               refresh();
             }}
           >
-            Connect
+            连接
           </button>
         </div>
       ))}
@@ -341,7 +337,7 @@ export function McpTab() {
         />
       ) : servers.length > 0 ? (
         <button className={BTN_ACCENT} onClick={() => setAdding(true)}>
-          + Add server
+          + 添加服务器
         </button>
       ) : null}
       {error && <div className="text-[12.5px] text-danger">{error}</div>}
@@ -385,36 +381,36 @@ function McpRow({
     const res = await getMcpTools(server.name);
     setBusy(false);
     if (res.ok) setTools(res.tools);
-    else setToolErr(res.error || "failed to connect");
+    else setToolErr(res.error || "连接失败");
   };
 
   return (
     <div className={CARD + " p-3.5"}>
       <div className="flex items-center gap-3">
-        <Toggle checked={server.enabled} onChange={onToggle} title="Enable this server" />
+        <Toggle checked={server.enabled} onChange={onToggle} title="启用该服务器" />
         <div className="flex-1 min-w-0">
           <div className="text-[14px] font-medium">{server.name}</div>
           <div className="text-[11.5px] text-faint">
-            {server.transport} · {authorizing ? "signing in…" : server.status.replace("_", " ")}
-            {server.tool_count != null ? ` · ${server.tool_count} tools` : ""}
-            {server.requires_approval ? " · asks" : ""}
+            {server.transport} · {authorizing ? "登录中…" : server.status.replace("_", " ")}
+            {server.tool_count != null ? ` · ${server.tool_count} 个工具` : ""}
+            {server.requires_approval ? " · 需确认" : ""}
             {isOauth ? " · oauth" : ""}
           </div>
         </div>
         {isOauth &&
           (server.status === "needs_auth" ? (
             <button className={BTN_ACCENT} onClick={signIn} data-testid={`mcp-signin-${server.name}`}>
-              Sign in
+              登录
             </button>
           ) : authorizing ? (
-            <span className="text-[12px] text-muted shrink-0">waiting for browser…</span>
+            <span className="text-[12px] text-muted shrink-0">等待浏览器…</span>
           ) : server.status === "connected" ? (
             <button
               className="text-[12px] text-muted hover:text-ink shrink-0"
               onClick={signOut}
               data-testid={`mcp-signout-${server.name}`}
             >
-              sign out
+              退出登录
             </button>
           ) : null)}
         <button
@@ -422,10 +418,10 @@ function McpRow({
           onClick={loadTools}
           disabled={busy}
         >
-          {busy ? "…" : tools ? "hide tools" : "tools"}
+          {busy ? "…" : tools ? "隐藏工具" : "工具"}
         </button>
         <button className={BTN_DANGER} onClick={onRemove}>
-          remove
+          移除
         </button>
       </div>
       {server.last_error && server.status !== "connected" && (
@@ -434,7 +430,7 @@ function McpRow({
       {toolErr && <div className="text-[12.5px] text-danger mt-1.5">{toolErr}</div>}
       {tools && (
         <div className="mt-2.5 pt-2.5 border-t border-line flex flex-wrap gap-1.5">
-          {tools.length === 0 && <div className="text-[12px] text-faint">No tools.</div>}
+          {tools.length === 0 && <div className="text-[12px] text-faint">没有工具。</div>}
           {tools.map((t) => (
             <span
               key={t.name}
@@ -467,7 +463,7 @@ function AddForm({
     try {
       parsed = JSON.parse(text);
     } catch (e: any) {
-      onError("Invalid JSON: " + e.message);
+      onError("JSON 无效：" + e.message);
       return;
     }
     // Accept either {mcpServers:{...}}, {name:{...}}, or a single bare config.
@@ -477,7 +473,7 @@ function AddForm({
         ? Object.entries(map)
         : null;
     if (!entries || entries.length === 0) {
-      onError('Paste a `{ "<name>": { … } }` object (or a full mcpServers block).');
+      onError('请粘贴一个 `{ "<name>": { … } }` 对象（或完整的 mcpServers 配置块）。');
       return;
     }
     for (const [name, config] of entries) {
@@ -488,7 +484,7 @@ function AddForm({
 
   return (
     <div className="space-y-2">
-      <div className="text-[12.5px] text-muted">Paste server JSON (name → config):</div>
+      <div className="text-[12.5px] text-muted">粘贴服务器 JSON（名称 → 配置）：</div>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -498,10 +494,10 @@ function AddForm({
       />
       <div className="flex items-center gap-3">
         <button className={BTN_ACCENT} onClick={save}>
-          Add
+          添加
         </button>
         <button className="text-[12.5px] text-muted hover:text-ink" onClick={onCancel}>
-          cancel
+          取消
         </button>
       </div>
     </div>
@@ -542,14 +538,14 @@ export function UnauthorizedBlock({
       data-testid={teamId ? `unauthorized-${c.name}-${teamId}` : `unauthorized-${c.name}`}
     >
       <div className={SEC_H + " mb-2"}>
-        Messages from senders you haven't allowed · {items.length}
+        来自尚未允许的发送者的消息 · {items.length}
       </div>
       <div className="space-y-2">
         {items.map((m) => (
           <div key={m.id} className="rounded-xl border border-line bg-paper p-2.5">
             <div className="flex items-center gap-2 text-[12px] text-muted">
               <span className="font-medium text-ink">{m.user_name || m.user_id}</span>
-              <span>in {m.chat_name || m.chat_id}</span>
+              <span>于 {m.chat_name || m.chat_id}</span>
               <span className="ml-auto shrink-0">{relTime(m.ts) || ""}</span>
             </div>
             <div className="text-[12.5px] mt-1 break-words">{m.text}</div>
@@ -557,26 +553,26 @@ export function UnauthorizedBlock({
               <button
                 className="text-[11.5px] px-2 py-1 rounded-md bg-accent text-white"
                 data-testid={`parked-allow-deliver-${m.id}`}
-                title="Add the sender to the allow-list and deliver this message now"
+                title="将发送者加入允许列表，并立即投递这条消息"
                 onClick={() => act(m.id, "allow_deliver")}
               >
-                Allow & deliver
+                允许并投递
               </button>
               <button
                 className={BTN_BORDERED}
                 data-testid={`parked-allow-${m.id}`}
-                title="Add the sender to the allow-list; this message is discarded"
+                title="将发送者加入允许列表；本条消息将被丢弃"
                 onClick={() => act(m.id, "allow")}
               >
-                Allow only
+                仅允许
               </button>
               <button
                 className="text-[11.5px] px-2 py-1 rounded-md text-faint hover:text-danger"
                 data-testid={`parked-dismiss-${m.id}`}
-                title="Throw this message away"
+                title="丢弃这条消息"
                 onClick={() => act(m.id, "dismiss")}
               >
-                Dismiss
+                忽略
               </button>
             </div>
           </div>
@@ -600,10 +596,10 @@ export function ListeningSessionsBlock({ c }: { c: Connector }) {
   const mine = (subs ?? []).filter((s) => platformOf(s.channel) === c.name);
   return (
     <div className="border-t border-line px-3.5 py-3" data-testid={`listening-${c.name}`}>
-      <div className={SEC_H + " mb-2"}>Sessions listening to {c.title} channels · {mine.length}</div>
+      <div className={SEC_H + " mb-2"}>正在监听 {c.title} 频道的会话 · {mine.length}</div>
       {mine.length === 0 ? (
         <div className="text-[12px] text-faint">
-          None yet — open a session's Sources ▸ Channels to subscribe it to a channel.
+          暂无——打开某个会话的 来源 ▸ 频道，即可把它订阅到某个频道。
         </div>
       ) : (
         <div className="space-y-1.5">
@@ -618,7 +614,7 @@ export function ListeningSessionsBlock({ c }: { c: Connector }) {
               </span>
               <button
                 className="ml-auto text-faint hover:text-danger shrink-0"
-                title="Unsubscribe this session"
+                title="取消订阅此会话"
                 onClick={async () => {
                   await unsubscribeChannel(s.session_id, s.channel);
                   load();
@@ -661,10 +657,10 @@ export function AllowlistBlock({
   return (
     <div className="border-t border-line px-3.5 py-3 grid grid-cols-2 gap-5">
       <div>
-        <div className={SEC_H + " mb-2"}>Allowed to message</div>
+        <div className={SEC_H + " mb-2"}>允许发消息</div>
         <div className="flex flex-wrap gap-1.5">
           {allowedUsers.length === 0 && (
-            <span className="text-[12px] text-faint">nobody yet — Allow a recent sender →</span>
+            <span className="text-[12px] text-faint">还没有——从右侧最近发送者中允许一位 →</span>
           )}
           {allowedUsers.map((u) => (
             <span
@@ -678,7 +674,7 @@ export function AllowlistBlock({
               {names?.[u] || u}
               <button
                 className="w-4 h-4 grid place-items-center text-faint hover:text-danger"
-                title="remove"
+                title="移除"
                 onClick={async () => {
                   await disallowUser(c.name, u, teamId);
                   onChanged();
@@ -691,9 +687,9 @@ export function AllowlistBlock({
         </div>
       </div>
       <div>
-        <div className={SEC_H + " mb-2"}>Recent senders</div>
+        <div className={SEC_H + " mb-2"}>最近发送者</div>
         {unknownRecent.length === 0 ? (
-          <div className="text-[12px] text-faint">None yet. Message the bot once and it'll show here.</div>
+          <div className="text-[12px] text-faint">暂无。给机器人发一次消息，它就会显示在这里。</div>
         ) : (
           <div className="space-y-1.5">
             {unknownRecent.map((r) => (
@@ -702,7 +698,7 @@ export function AllowlistBlock({
                   {initials(r.user_name || "?")}
                 </span>
                 <span className="min-w-0 truncate" title={`id ${r.user_id}`}>
-                  {r.user_name || "unknown"} <span className="text-faint">· {r.chat_type}</span>
+                  {r.user_name || "未知"} <span className="text-faint">· {r.chat_type}</span>
                 </span>
                 <button
                   className="ml-auto text-[11.5px] px-2 py-0.5 rounded-md bg-accent text-white shrink-0"
@@ -711,7 +707,7 @@ export function AllowlistBlock({
                     onChanged();
                   }}
                 >
-                  Allow
+                  允许
                 </button>
               </div>
             ))}
@@ -730,12 +726,12 @@ export function ConnectorTools({ c, onChanged }: { c: Connector; onChanged: () =
   if (!c.tools?.length)
     return (
       <div className="border-t border-line px-3.5 py-3 text-[12.5px] text-muted">
-        No tools for this connector yet.
+        该连接器暂无工具。
       </div>
     );
   return (
     <div className="border-t border-line px-3.5 py-3">
-      <div className={SEC_H + " mb-2"}>Tools exposed to OpenWorker</div>
+      <div className={SEC_H + " mb-2"}>向 OpenWorker 开放的工具</div>
       <div className="space-y-1.5">
         {c.tools.map((tool) => (
           <label
@@ -751,7 +747,7 @@ export function ConnectorTools({ c, onChanged }: { c: Connector; onChanged: () =
             <span className="min-w-0">
               <span className="block text-[13px]">{tool.label}</span>
               <span className="block text-[11.5px] text-faint">
-                {tool.name} · {tool.kind} · asks approval
+                {tool.name} · {tool.kind} · 需审批
               </span>
               <span className="block text-[11.5px] text-faint">{tool.description}</span>
             </span>
@@ -788,7 +784,7 @@ export function ConnectSetup({
     const res = await connectConnector(c.name, values);
     setBusy(false);
     if (res.ok) onConnected();
-    else setError(res.error || "could not connect");
+    else setError(res.error || "无法连接");
   };
 
   const oneClick = async () => {
@@ -797,7 +793,7 @@ export function ConnectSetup({
     // Completion arrives via the tab's poll: the broker form-POSTs the profile
     // to the sidecar, the connector flips to connected, this card closes itself.
     if (res.ok) setWaiting(true);
-    else setError(res.error || "could not start managed connect");
+    else setError(res.error || "无法启动托管连接");
   };
 
   const mcpOneClick = async () => {
@@ -806,7 +802,7 @@ export function ConnectSetup({
     // Completion likewise arrives via the poll — the sidecar flips the connector
     // to connected once the local OAuth flow lands.
     if (res.ok) setWaiting(true);
-    else setError(res.error || "could not start the connect");
+    else setError(res.error || "无法启动连接");
   };
 
   return (
@@ -815,10 +811,10 @@ export function ConnectSetup({
         /* MCP-backed one-click needs no cloud sign-in — the OAuth flow is local. */
         <div className="space-y-2" data-testid="mcp-connect">
           <button className={BTN_ACCENT} onClick={mcpOneClick} disabled={waiting}>
-            {waiting ? "Check your browser…" : `Connect ${c.title} with one click`}
+            {waiting ? "请查看浏览器…" : `一键连接 ${c.title}`}
           </button>
           {c.fields.length > 0 && (
-            <div className="text-[11.5px] text-faint">or connect manually:</div>
+            <div className="text-[11.5px] text-faint">或手动连接：</div>
           )}
         </div>
       )}
@@ -829,22 +825,22 @@ export function ConnectSetup({
             // a visibly-parked button, and the manual path below stays fully live.
             <>
               <button className={BTN_ACCENT + " opacity-50"} disabled data-testid="managed-coming-soon">
-                {`Connect ${c.title} with one click`}
+                {`一键连接 ${c.title}`}
                 <span className="ml-2 text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-white/25">
-                  Coming soon
+                  即将推出
                 </span>
               </button>
               <div className="text-[11.5px] text-faint">
-                One-click sign-in is coming soon — connect manually below for now:
+                一键登录即将推出——目前请在下方手动连接：
               </div>
             </>
           ) : cloud?.signed_in ? (
             <button className={BTN_ACCENT} onClick={oneClick} disabled={waiting}>
-              {waiting ? "Check your browser…" : `Connect ${c.title} with one click`}
+              {waiting ? "请查看浏览器…" : `一键连接 ${c.title}`}
             </button>
           ) : cloud ? (
             <CloudSignInInline
-              blurb={`Sign-in unlocks the one-click ${c.title} connect — or connect manually below.`}
+              blurb={`登录后即可一键连接 ${c.title}——或在下方手动连接。`}
             />
           ) : (
             // Status unknown (fetch pending/failed): never show the sign-in ask to a
@@ -852,7 +848,7 @@ export function ConnectSetup({
             <CloudStatusPending />
           )}
           {!c.managed_paused && cloud?.signed_in && (
-            <div className="text-[11.5px] text-faint">or connect manually:</div>
+            <div className="text-[11.5px] text-faint">或手动连接：</div>
           )}
         </div>
       )}
@@ -867,7 +863,7 @@ export function ConnectSetup({
         <label className="conn-field" key={f.key}>
           <span className="conn-field-label">
             {f.label}
-            {!f.required && <em> (optional)</em>}
+            {!f.required && <em>（可选）</em>}
           </span>
           <input
             type={f.secret ? "password" : "text"}
@@ -881,7 +877,7 @@ export function ConnectSetup({
       ))}
       <div>
         <button className={BTN_ACCENT} onClick={submit} disabled={busy}>
-          {busy ? "Validating…" : "Connect"}
+          {busy ? "验证中…" : "连接"}
         </button>
       </div>
       {error && <div className="text-[12.5px] text-danger">{error}</div>}

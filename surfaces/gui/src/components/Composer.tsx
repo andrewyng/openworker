@@ -21,9 +21,9 @@ import {
 // with no in-app explanation. The server still honors both — a session already in one of
 // those modes keeps working; the picker just doesn't offer them.
 const PERMISSION_OPTIONS: Option[] = [
-  { value: "discuss", label: "Discuss", description: "Chat and explore — no edits or commands" },
-  { value: "interactive", label: "Ask for approval", description: "Ask before edits and commands" },
-  { value: "auto", label: "Full access", description: "Run everything without asking" },
+  { value: "discuss", label: "讨论", description: "对话与探讨 — 不做编辑或执行命令" },
+  { value: "interactive", label: "请求审批", description: "编辑和执行命令前先询问" },
+  { value: "auto", label: "完全访问", description: "无需询问，直接执行一切" },
 ];
 
 // No hardcoded model fallback: until the server supplies the list (a few seconds after a
@@ -271,7 +271,7 @@ export function Composer(props: Props) {
     for (const file of list) {
       if (isPdfFile(file) && file.size > maxMb * 1024 * 1024) {
         showAttachNotice(
-          `${file.name} skipped — ${(file.size / 1024 / 1024).toFixed(1)} MB is over your ${maxMb} MB limit (Settings → Token savings)`,
+          `已跳过 ${file.name} — ${(file.size / 1024 / 1024).toFixed(1)} MB 超出你设定的 ${maxMb} MB 上限（设置 → Token 节省）`,
         );
         continue;
       }
@@ -284,12 +284,12 @@ export function Composer(props: Props) {
         const info = await inspectPdf(a.data_url).catch(() => null);
         if (info?.ok && (info.pages ?? 0) > maxPages) {
           showAttachNotice(
-            `${a.name} skipped — ${info.pages} pages is over your ${maxPages}-page limit (Settings → Token savings)`,
+            `已跳过 ${a.name} — ${info.pages} 页超出你设定的 ${maxPages} 页上限（设置 → Token 节省）`,
           );
           continue;
         }
         if (info && !info.ok) {
-          showAttachNotice(`${a.name} skipped — ${info.error || "could not read PDF"}`);
+          showAttachNotice(`已跳过 ${a.name} — ${info.error || "无法读取该 PDF"}`);
           continue;
         }
       }
@@ -380,9 +380,9 @@ export function Composer(props: Props) {
     setDictationError(null);
     try {
       if (dictation?.recording) {
-        setDictationBusy("Transcribing…");
+        setDictationBusy("正在转写…");
         const transcript = await stopDictation();
-        if (transcript === null) throw new Error("Could not transcribe your recording.");
+        if (transcript === null) throw new Error("无法转写你的录音。");
         if (transcript.trim()) {
           setText((draft) => (draft.trim() ? `${draft.trimEnd()} ${transcript.trim()}` : transcript.trim()));
         }
@@ -392,17 +392,17 @@ export function Composer(props: Props) {
       }
 
       const status = dictation || (await getDictationStatus());
-      if (!status) throw new Error("Voice dictation is unavailable.");
+      if (!status) throw new Error("语音听写不可用。");
       if (!status.supported || !status.model_verified || !status.test_passed) {
         props.onConfigureVoiceInput?.();
         return;
       }
-      setDictationBusy("Starting microphone…");
+      setDictationBusy("正在启动麦克风…");
       const recording = await startDictation();
-      if (!recording?.recording) throw new Error("Could not start the microphone.");
+      if (!recording?.recording) throw new Error("无法启动麦克风。");
       setDictation(recording);
     } catch (error) {
-      setDictationError(error instanceof Error ? error.message : "Voice dictation is unavailable.");
+      setDictationError(error instanceof Error ? error.message : "语音听写不可用。");
       const status = await getDictationStatus();
       if (status) setDictation(status);
     } finally {
@@ -447,7 +447,7 @@ export function Composer(props: Props) {
           <button
             className="shrink-0 opacity-60 hover:opacity-100"
             onClick={() => setAttachNotice(null)}
-            title="Dismiss"
+            title="关闭"
           >
             ✕
           </button>
@@ -484,9 +484,9 @@ export function Composer(props: Props) {
         {slashQuery !== null && (
           <div className="px-2 pt-2" data-testid="skill-popup" role="listbox" aria-label="Skills">
             {slashSkills === null ? (
-              <div className="px-2 py-1.5 text-[12px] text-faint">Loading skills…</div>
+              <div className="px-2 py-1.5 text-[12px] text-faint">正在加载技能…</div>
             ) : slashMatches.length === 0 ? (
-              <div className="px-2 py-1.5 text-[12px] text-faint">No matching skills.</div>
+              <div className="px-2 py-1.5 text-[12px] text-faint">没有匹配的技能。</div>
             ) : (
               slashMatches.map((s, i) => (
                 <button
@@ -513,7 +513,7 @@ export function Composer(props: Props) {
         <textarea
           ref={textareaRef}
           className="w-full block px-3.5 pt-3.5 pb-1.5 text-[14.5px]"
-          placeholder={props.placeholder || "Ask the coworker…  (drop or paste files)"}
+          placeholder={props.placeholder || "向 Coworker 提问…  （可拖入或粘贴文件）"}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKey}
@@ -527,8 +527,8 @@ export function Composer(props: Props) {
           <div className="relative">
             <button
               className={iconBtn + (attachMenuOpen ? " bg-paper text-ink" : "")}
-              title="Attach"
-              aria-label="Attach"
+              title="添加附件"
+              aria-label="添加附件"
               onClick={() => setAttachMenuOpen((v) => !v)}
             >
               <Icon name="plus" size={17} />
@@ -537,11 +537,11 @@ export function Composer(props: Props) {
               <>
                 <div className="fixed inset-0 z-30" onClick={() => setAttachMenuOpen(false)} />
                 <div className="absolute z-40 bottom-full mb-1 left-0 min-w-[180px] rounded-xl border border-line bg-panel shadow-2xl py-1.5">
-                  {attachItem("image", "Photo or image", () => pickFiles("image/*"))}
+                  {attachItem("image", "照片或图片", () => pickFiles("image/*"))}
                   {attachItem("file", "PDF", () => pickFiles("application/pdf,.pdf"))}
                   {attachItem(
                     "fileCode",
-                    "Other files",
+                    "其他文件",
                     () => pickFiles("text/*,.md,.csv,.json,.yaml,.yml,.log,.py,.ts,.tsx,.js,.rs,.go,.toml"),
                   )}
                 </div>
@@ -581,7 +581,7 @@ export function Composer(props: Props) {
             />
           ) : null}
 
-          {dictationBusy === "Transcribing…" && <span className="text-[11.5px] text-accent">Transcribing…</span>}
+          {dictationBusy === "正在转写…" && <span className="text-[11.5px] text-accent">正在转写…</span>}
 
           <span className="ml-auto" />
 
@@ -605,10 +605,10 @@ export function Composer(props: Props) {
             <button
               className="pill model-warn chip"
               onClick={() => props.onConnectModel?.()}
-              title="Connect a model"
-              aria-label="No model connected — connect a model"
+              title="连接一个模型"
+              aria-label="未连接模型 — 连接一个模型"
             >
-              <span className="pill-label">No model</span>
+              <span className="pill-label">无模型</span>
               <span className="model-warn-ico" aria-hidden>⚠</span>
             </button>
           ) : modelsLoaded ? (
@@ -618,9 +618,9 @@ export function Composer(props: Props) {
               className="pill chip text-faint cursor-default"
               disabled
               data-testid="models-loading"
-              title="Fetching the model list from the server"
+              title="正在从服务器获取模型列表"
             >
-              <span className="pill-label">Loading models…</span>
+              <span className="pill-label">正在加载模型…</span>
             </button>
           ))}
 
@@ -638,12 +638,12 @@ export function Composer(props: Props) {
               title={
                 dictationBusy ||
                 (dictation?.recording
-                  ? "Stop recording and transcribe"
+                  ? "停止录音并转写"
                   : voiceReady
-                    ? "Start local voice dictation"
-                    : "Configure Voice Input in Settings")
+                    ? "开始本地语音听写"
+                    : "在设置中配置语音输入")
               }
-              aria-label={dictation?.recording ? "Stop dictation" : voiceReady ? "Start dictation" : "Configure Voice Input in Settings"}
+              aria-label={dictation?.recording ? "停止听写" : voiceReady ? "开始听写" : "在设置中配置语音输入"}
               aria-disabled={!voiceReady && !dictation?.recording}
             >
               <Icon name={dictation?.recording ? "stop" : "mic"} size={16} />
@@ -653,7 +653,7 @@ export function Composer(props: Props) {
           {/* send / stop */}
           {props.running ? (
             <button className="btn danger" onClick={props.onInterrupt}>
-              ⏹ Stop
+              ⏹ 停止
             </button>
           ) : (
             <button
@@ -665,8 +665,8 @@ export function Composer(props: Props) {
               }
               onClick={submit}
               disabled={!props.connected || !!dictation?.recording || !!dictationBusy}
-              title={needsModel ? "Connect a model to send" : undefined}
-              aria-label="Send"
+              title={needsModel ? "请先连接模型再发送" : undefined}
+              aria-label="发送"
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M12 19V5M5 12l7-7 7 7" />
@@ -676,7 +676,7 @@ export function Composer(props: Props) {
         </div>
       </div>
       <span className="sr-only" role="status" aria-live="polite">
-        {dictation?.recording ? `Listening, ${recordingTime}` : dictationBusy || ""}
+        {dictation?.recording ? `正在聆听，${recordingTime}` : dictationBusy || ""}
       </span>
     </div>
   );
@@ -707,7 +707,7 @@ function UsageChip({
   // Settings can hide the bar; without a known window there is nothing to fill either.
   const showBar = pct !== null && contextBar === true;
   const labelFor = (id: string) =>
-    id === "unknown" ? "Unknown model" : modelLabels?.[id] || shortModel(id);
+    id === "unknown" ? "未知模型" : modelLabels?.[id] || shortModel(id);
   // One field per line, session-summed (owner ask 2026-07-28). Values are cumulative
   // across the whole session, never just the last turn; "Input" is the fresh
   // (uncached) share — the cached share sits in the cache rows at its own price.
@@ -724,11 +724,11 @@ function UsageChip({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Token usage"
+        aria-label="Token 用量"
         title={
           showBar
-            ? `Context window ${pct}% full · ${formatTokens(total)} tokens this session`
-            : `Token usage this session: ${formatTokens(total)}`
+            ? `上下文窗口已用 ${pct}% · 本会话 ${formatTokens(total)} Token`
+            : `本会话 Token 用量：${formatTokens(total)}`
         }
         data-testid="usage-chip"
       >
@@ -757,7 +757,7 @@ function UsageChip({
             {contextWindow ? (
               <div className="mb-2.5">
                 <div className="text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold mb-1">
-                  Context window
+                  上下文窗口
                 </div>
                 <div className="h-1.5 rounded-full bg-line overflow-hidden">
                   <div
@@ -766,16 +766,16 @@ function UsageChip({
                   />
                 </div>
                 <div className="mt-1 text-[11.5px] text-muted tabular-nums">
-                  {formatTokens(usage.context)} of {formatTokens(contextWindow)} · {pct}%
+                  {formatTokens(usage.context)} / {formatTokens(contextWindow)} · {pct}%
                 </div>
               </div>
             ) : usage.context > 0 ? (
               <div className="mb-2.5 text-[11.5px] text-muted tabular-nums">
-                In context now: {formatTokens(usage.context)} tokens
+                当前上下文中：{formatTokens(usage.context)} Token
               </div>
             ) : null}
             <div className="text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold mb-1">
-              Session totals
+              会话合计
             </div>
             <div className="flex flex-col gap-1.5">
               {Object.entries(usage.byModel).map(([id, t]) => (
@@ -790,26 +790,26 @@ function UsageChip({
                   <div className="mt-0.5 flex flex-col gap-0.5">
                     {t.cache_read + t.cache_write > 0 ? (
                       <>
-                        {stat("Uncached input", t.input)}
-                        {stat("Cache reads", t.cache_read)}
-                        {stat("Cache writes", t.cache_write)}
-                        {stat("Total input", t.input + t.cache_read + t.cache_write)}
+                        {stat("未缓存输入", t.input)}
+                        {stat("缓存读取", t.cache_read)}
+                        {stat("缓存写入", t.cache_write)}
+                        {stat("输入合计", t.input + t.cache_read + t.cache_write)}
                       </>
                     ) : (
-                      stat("Input", t.input)
+                      stat("输入", t.input)
                     )}
-                    {stat("Output", t.output)}
+                    {stat("输出", t.output)}
                   </div>
                 </div>
               ))}
             </div>
             <div className="mt-2 pt-2 border-t border-line flex items-baseline justify-between text-[11.5px]">
-              <span className="text-faint">Total</span>
-              <span className="text-ink tabular-nums">{formatTokens(total)} tokens</span>
+              <span className="text-faint">合计</span>
+              <span className="text-ink tabular-nums">{formatTokens(total)} Token</span>
             </div>
             {model && !modelLabels?.[model] && contextWindow === undefined && (
               <div className="mt-1 text-[10.5px] text-faint leading-snug">
-                Context meter unavailable for custom models.
+自定义模型无法显示上下文用量。
               </div>
             )}
           </div>
@@ -845,10 +845,10 @@ function ModeMenu({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Mode"
+        aria-label="模式"
         title={
-          `Mode: ${current?.label || mode}` +
-          (unattended ? " · approvals go to the Inbox" : "")
+          `模式：${current?.label || mode}` +
+          (unattended ? " · 审批将进入收件箱" : "")
         }
       >
         {current?.label || mode}
@@ -887,15 +887,15 @@ function ModeMenu({
                 <div className="my-1 border-t border-line" />
                 <div className="flex items-center gap-2 px-2.5 py-1.5">
                   <span className="flex-1 min-w-0">
-                    <span className="block text-[13px] text-ink">Send approvals to Inbox</span>
+                    <span className="block text-[13px] text-ink">将审批发送到收件箱</span>
                     <span className="block text-[11px] text-faint leading-snug">
-                      Approvals &amp; questions go to the Inbox; the agent keeps working.
+                      审批与问题进入收件箱；agent 继续工作。
                     </span>
                   </span>
                   <Toggle
                     checked={!!unattended}
                     onChange={onUnattendedChange}
-                    title="Send approvals to the Inbox"
+                    title="将审批发送到收件箱"
                   />
                 </div>
               </>
@@ -930,7 +930,7 @@ function AttachChip({ a, onRemove }: { a: Attachment; onRemove: () => void }) {
           <span className="attach-name">{a.name}</span>
         </>
       )}
-      <button className="attach-x" onClick={onRemove} title="Remove">
+      <button className="attach-x" onClick={onRemove} title="移除">
         ✕
       </button>
     </div>

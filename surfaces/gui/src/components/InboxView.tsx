@@ -24,9 +24,9 @@ const ICON_FOR: Record<string, "diamond" | "chat" | "code"> = {
 };
 
 const KIND_TABS: { key: string; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "approval", label: "Approvals" },
-  { key: "question", label: "Questions" },
+  { key: "all", label: "全部" },
+  { key: "approval", label: "审批" },
+  { key: "question", label: "问题" },
 ];
 
 const CHIP = (active: boolean) =>
@@ -122,7 +122,7 @@ export function InboxView({
     return (
       <button
         className="inbox-session-chip"
-        title={exists ? `Open “${label}”` : "Session unavailable"}
+        title={exists ? `打开“${label}”` : "会话不可用"}
         disabled={!exists}
         onClick={() =>
           exists && onOpenSession(it.session_id, it.session_workspace || "", it.session_agent || "cowork")
@@ -145,8 +145,8 @@ export function InboxView({
       <div className="flex-1 min-w-0 overflow-y-auto hairline-scroll">
         <div className="max-w-4xl mx-auto px-7 py-6">
           <PanelHead
-            title="Inbox"
-            sub="Approvals, questions, and notifications from your coworkers — including sessions running unattended."
+            title="收件箱"
+            sub="来自你的 Coworker 的审批、问题和通知——包括无人值守运行的会话。"
           />
 
           <div className="flex gap-5 border-b border-line mb-4">
@@ -161,7 +161,7 @@ export function InboxView({
                 load();
               }}
             >
-              Pending
+              待处理
               {items.length > 0 && (
                 <span className="text-[11px] px-1.5 rounded-full bg-accentSoft text-accent leading-4">
                   {items.length}
@@ -173,7 +173,7 @@ export function InboxView({
               data-testid="inbox-tab-configure"
               onClick={() => setTab("configure")}
             >
-              Configure
+              配置
               {unroutedCount > 0 && (
                 <span className="text-[11px] px-1.5 rounded-full bg-warnSoft text-warnInk leading-4">
                   ⚠ {unroutedCount}
@@ -189,18 +189,17 @@ export function InboxView({
               <div className="text-[12px] text-faint -mt-1 mb-4" data-testid="inbox-routing">
                 {routing ? (
                   <span>
-                    Also delivered to{" "}
+                    同时投递到{" "}
                     <span className="text-muted" title={routing}>
                       {routingLabel}
                     </span>{" "}
-                    — replies there resolve items here.{" "}
+                    ——在那里回复即可处理这里的条目。{" "}
                   </span>
                 ) : slackConnected ? (
-                  <span>Delivered here only. </span>
+                  <span>仅投递到这里。</span>
                 ) : (
                   <span>
-                    Delivered here only. Connect Slack (Connectors page) to also get these in a
-                    channel — more platforms later.{" "}
+                    仅投递到这里。连接 Slack（连接器页面）后也可在频道中收到这些内容——后续会支持更多平台。{" "}
                   </span>
                 )}
                 <button
@@ -208,7 +207,7 @@ export function InboxView({
                   data-testid="inbox-route-configure"
                   onClick={() => setTab("configure")}
                 >
-                  Configure ›
+                  配置 ›
                 </button>
               </div>
 
@@ -225,7 +224,7 @@ export function InboxView({
                       className={CHIP(personaFilter === "all")}
                       onClick={() => setPersonaFilter("all")}
                     >
-                      All coworkers
+                      全部 Coworker
                     </button>
                     {personasWithItems.map((p) => (
                       <button
@@ -242,7 +241,7 @@ export function InboxView({
 
               {visible.length === 0 ? (
                 <div className="manage-empty">
-                  {items.length === 0 ? "Nothing pending." : "Nothing pending for this filter."}
+                  {items.length === 0 ? "没有待处理的条目。" : "该筛选条件下没有待处理的条目。"}
                 </div>
               ) : null}
 

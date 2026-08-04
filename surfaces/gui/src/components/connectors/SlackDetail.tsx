@@ -42,14 +42,14 @@ const LABEL = "text-[12.5px] text-muted w-24 shrink-0";
 /** The relay status line, one honest layer at a time: sign-in → socket → live.
  * Dot color + text; never a synthetic "Slack is down" claim. */
 function relayHealth(slack: SlackStatus | null): { dot: string; text: string } {
-  if (!slack) return { dot: "bg-ok", text: "Live · managed relay" };
+  if (!slack) return { dot: "bg-ok", text: "在线 · 托管中继" };
   if (!slack.signed_in)
-    return { dot: "bg-warnInk", text: "Sign-in needed — relaying is paused" };
+    return { dot: "bg-warnInk", text: "需登录 —— 中继已暂停" };
   if (slack.relay.state === "offline")
-    return { dot: "bg-faint/60", text: "Offline — can't reach the relay" };
+    return { dot: "bg-faint/60", text: "离线 —— 无法连接中继" };
   if (slack.relay.state === "reconnecting")
-    return { dot: "bg-warnInk", text: "Reconnecting to the relay…" };
-  return { dot: "bg-ok", text: "Live · managed relay" };
+    return { dot: "bg-warnInk", text: "正在重连中继…" };
+  return { dot: "bg-ok", text: "在线 · 托管中继" };
 }
 
 export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
@@ -84,17 +84,17 @@ export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
                 <span data-testid="slack-mode-badge">
                   {relay
                     ? relayHealth(slack).text
-                    : "Connected · Socket Mode (manual tokens)"}
+                    : "已连接 · Socket Mode（手动 Token）"}
                 </span>
               </>
             ) : (
-              <span>Not connected</span>
+              <span>未连接</span>
             )}
           </div>
         </div>
         {relay || !c.connected ? (
           <button className={PILL_ACCENT} data-testid="add-workspace-btn" onClick={() => setAdding(true)}>
-            ＋ Add workspace
+            ＋ 添加工作区
           </button>
         ) : null}
       </div>
@@ -102,8 +102,8 @@ export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
       {!c.connected && (
         <div className={GRP}>
           <div className={ROW + " text-[12.5px] text-muted"}>
-            One @ocw app, installed per workspace — each keeps its own allow-list.
-            {cloud?.signed_in ? "" : " One-click needs cloud sign-in; Manual works without it."}
+            一个 @ocw 应用，按工作区分别安装 —— 每个都有各自独立的白名单。
+            {cloud?.signed_in ? "" : " 一键连接需要登录 Cloud；「手动」则无需登录。"}
           </div>
         </div>
       )}
@@ -127,7 +127,7 @@ export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
       {/* Manual Socket Mode: one workspace, the flat allow-list (unchanged semantics). */}
       {c.connected && !relay && (
         <div data-testid="slack-manual-card">
-          <div className={GRP_H}>{c.account || "workspace"} <span className="font-normal text-faint">· manual tokens</span></div>
+          <div className={GRP_H}>{c.account || "工作区"} <span className="font-normal text-faint">· 手动 Token</span></div>
           <div className={GRP}>
             <PeopleRow
               allowed={c.allowed_users}
@@ -158,14 +158,14 @@ export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
 
       <ToolsDisclosure c={c} onChanged={onChanged} />
       {c.connected && (
-        <div className={FOOT + " mt-2"}>Names come from Slack automatically. IDs show on hover.</div>
+        <div className={FOOT + " mt-2"}>名称由 Slack 自动获取。悬停可查看 ID。</div>
       )}
 
       {adding && (
         <AddConnectionModal
           c={c}
           cloud={cloud}
-          title="Add a workspace"
+          title="添加工作区"
           onClose={() => setAdding(false)}
           onChanged={changed}
         />
@@ -212,7 +212,7 @@ function WorkspaceGroup({
         </span>
         {!tokenOk && (
           <span className={TAG_WARN} data-testid={`token-warn-${w.team_id}`}>
-            ⚠ Token revoked — reinstall
+            ⚠ Token 已撤销 —— 请重新安装
           </span>
         )}
       </div>
@@ -221,7 +221,7 @@ function WorkspaceGroup({
           <>
             <div className={ROW}>
               <span className="min-w-0 flex-1 text-[12.5px] text-muted flex items-center gap-2 flex-wrap">
-                <span>No one allowed yet — mentions of the bot show up here for your OK.</span>
+                <span>还没有允许任何人 —— 对该 bot 的提及会显示在这里，等你确认。</span>
                 <PersonPicker teamId={w.team_id} allowed={[]} onChanged={onChanged} />
               </span>
               <DisconnectBtn teamId={w.team_id} busy={busy} onClick={disconnect} />
@@ -275,11 +275,11 @@ function DisconnectBtn({ teamId, busy, onClick }: { teamId: string; busy: boolea
     <button
       className="text-[12.5px] text-danger/80 hover:text-danger shrink-0"
       data-testid={`disconnect-workspace-${teamId}`}
-      title="Stops relaying this workspace to this computer. The app stays installed in Slack."
+      title="停止将此工作区中继到这台电脑。该应用仍保留在 Slack 中。"
       onClick={onClick}
       disabled={busy}
     >
-      {busy ? "Disconnecting…" : "Disconnect workspace"}
+      {busy ? "正在断开…" : "断开此工作区"}
     </button>
   );
 }
@@ -306,13 +306,13 @@ function PeopleRow({
   // The installer's chip reads "you" — their name may still be unresolved (it's
   // fetched lazily for outbound attribution), so fall back to a literal "You".
   const label = (u: string) =>
-    names?.[u] || (u === installerId ? installerName || "You" : u);
+    names?.[u] || (u === installerId ? installerName || "你" : u);
   return (
     <div className={ROW}>
-      <span className={LABEL}>People</span>
+      <span className={LABEL}>成员</span>
       <span className="min-w-0 flex-1 flex flex-wrap items-center gap-1.5">
         {allowed.length === 0 && (
-          <span className="text-[12px] text-faint">nobody yet — pick a name, or approve a waiting sender below</span>
+          <span className="text-[12px] text-faint">还没有人 —— 选一个名字，或在下方批准一位等待中的发送者</span>
         )}
         {allowed.map((u) => (
           <span
@@ -325,16 +325,16 @@ function PeopleRow({
               {initials(label(u))}
             </span>
             {label(u)}
-            {u === installerId && <span className="text-[10.5px] text-faint">· you</span>}
+            {u === installerId && <span className="text-[10.5px] text-faint">· 你</span>}
             {protectedIds?.includes(u) ? (
               <span
                 className="text-[10.5px] text-faint"
-                title="Remove approval-owner access before removing this person."
+                title="移除此人前，请先移除其审批负责人权限。"
               >
-                · owner
+                · 负责人
               </span>
             ) : (
-              <button className={XBTN} title="remove" onClick={() => onRemove(u)}>
+              <button className={XBTN} title="移除" onClick={() => onRemove(u)}>
                 ×
               </button>
             )}
@@ -354,7 +354,7 @@ function PersonPicker({
   allowed,
   onChanged,
   onPick,
-  buttonLabel = "＋ Add person",
+  buttonLabel = "＋ 添加成员",
   testId,
 }: {
   teamId: string | null;
@@ -388,9 +388,9 @@ function PersonPicker({
           if (r.ok) {
             setRows(r.members || []);
             setErr(null);
-          } else setErr(r.error || "directory unavailable");
+          } else setErr(r.error || "无法获取通讯录");
         })
-        .catch(() => setErr("directory unavailable"));
+        .catch(() => setErr("无法获取通讯录"));
     }, 200);
     return () => clearTimeout(t);
   }, [open, q, teamId]);
@@ -409,7 +409,7 @@ function PersonPicker({
       ? await onPick(m)
       : await allowUser("slack", m.id, teamId, m.name);
     if (result?.ok === false) {
-      setErr(result.error || "could not add person");
+      setErr(result.error || "无法添加成员");
       return;
     }
     setOpen(false);
@@ -424,7 +424,7 @@ function PersonPicker({
         ref={btn}
         className="inline-flex items-center px-2 py-0.5 rounded-full border border-dashed border-line text-[12.5px] text-muted hover:text-ink hover:border-faint"
         data-testid={testId || `add-person-${teamId || "default"}`}
-        title="Pick from the workspace directory"
+        title="从工作区通讯录中选择"
         onClick={toggle}
       >
         {buttonLabel}
@@ -438,7 +438,7 @@ function PersonPicker({
           <input
             autoFocus
             className="w-full bg-paper border border-line rounded-lg px-2 py-1 text-[12.5px] outline-none placeholder:text-faint"
-            placeholder="Type a name…"
+            placeholder="输入名字…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
@@ -449,7 +449,7 @@ function PersonPicker({
             {err ? (
               <div className="px-2 py-1.5 text-[12px] text-warnInk">{err}</div>
             ) : candidates.length === 0 ? (
-              <div className="px-2 py-1.5 text-[12px] text-faint">no matches</div>
+              <div className="px-2 py-1.5 text-[12px] text-faint">没有匹配项</div>
             ) : (
               candidates.map((m) => (
                 <button
@@ -467,7 +467,7 @@ function PersonPicker({
                   <span className="text-[11.5px] text-faint">@{m.handle}</span>
                   {m.guest && (
                     <span className="ml-1.5 text-[10.5px] text-warnInk bg-warnSoft/70 border border-warnInk/15 rounded px-1 py-0.5">
-                      guest
+                      访客
                     </span>
                   )}
                 </button>
@@ -475,7 +475,7 @@ function PersonPicker({
             )}
           </div>
           <div className="px-2 pb-1 text-[10.5px] text-faint">
-            From your workspace directory — stays on this computer.
+            来自你的工作区通讯录 —— 仅保存在这台电脑上。
           </div>
         </div>
       )}
@@ -500,11 +500,11 @@ function ApprovalOwnersRow({
 }) {
   const [err, setErr] = useState<string | null>(null);
   const label = (u: string) =>
-    names?.[u] || (u === installerId ? installerName || "You" : u);
+    names?.[u] || (u === installerId ? installerName || "你" : u);
   const remove = async (userId: string) => {
     const result = await removeSlackApprovalOwner(userId);
     if (!result.ok) {
-      setErr(result.error || "could not remove approval owner");
+      setErr(result.error || "无法移除审批负责人");
       return;
     }
     setErr(null);
@@ -512,11 +512,11 @@ function ApprovalOwnersRow({
   };
   return (
     <div className={ROW} data-testid="slack-approval-owners">
-      <span className={LABEL}>Approvals</span>
+      <span className={LABEL}>审批</span>
       <span className="min-w-0 flex-1 flex flex-wrap items-center gap-1.5">
         {owners.length === 0 && (
           <span className="text-[12px] text-warnInk">
-            Choose at least one owner before routing Inbox approvals to Slack.
+            将收件箱审批转发到 Slack 前，请至少指定一位负责人。
           </span>
         )}
         {owners.map((u) => (
@@ -530,9 +530,9 @@ function ApprovalOwnersRow({
               {initials(label(u))}
             </span>
             {label(u)}
-            {u === installerId && <span className="text-[10.5px] text-faint">· installer</span>}
+            {u === installerId && <span className="text-[10.5px] text-faint">· 安装者</span>}
             {editable && (
-              <button className={XBTN} title="remove approval owner" onClick={() => remove(u)}>
+              <button className={XBTN} title="移除审批负责人" onClick={() => remove(u)}>
                 ×
               </button>
             )}
@@ -544,12 +544,12 @@ function ApprovalOwnersRow({
             allowed={owners}
             onChanged={onChanged}
             onPick={(m) => addSlackApprovalOwner(m.id, m.name)}
-            buttonLabel="＋ Add owner"
+            buttonLabel="＋ 添加负责人"
             testId="add-approval-owner"
           />
         )}
         {!editable && owners.length > 0 && (
-          <span className="text-[11.5px] text-faint">Set by the workspace installer.</span>
+          <span className="text-[11.5px] text-faint">由工作区安装者设定。</span>
         )}
         {err && <span className="basis-full text-[11.5px] text-warnInk">{err}</span>}
       </span>
@@ -564,29 +564,29 @@ function WaitingRow({ m, onChanged }: { m: ParkedMessage; onChanged: () => void 
   };
   return (
     <div className={ROW + " bg-warnSoft/25"} data-testid={`waiting-${m.id}`}>
-      <span className={LABEL}>Waiting</span>
+      <span className={LABEL}>等待中</span>
       <span className="min-w-0 flex-1">
         <span className="font-medium text-[13px]">{m.user_name || m.user_id}</span>{" "}
-        <span className="text-[12.5px] text-muted">in {m.chat_name || m.chat_id}</span>
+        <span className="text-[12.5px] text-muted">于 {m.chat_name || m.chat_id}</span>
         <span className="block text-[12.5px] text-muted truncate">“{m.text}”</span>
       </span>
       <button
         className={PILL_ACCENT + " !py-1"}
         data-testid={`parked-allow-deliver-${m.id}`}
-        title="Allow the sender and deliver this message now"
+        title="允许该发送者，并立即送达此消息"
         onClick={() => act("allow_deliver")}
       >
-        Allow & deliver
+        允许并送达
       </button>
       <button
         className={PILL_LINE + " !py-1"}
         data-testid={`parked-allow-${m.id}`}
-        title="Allow the sender; this message is discarded"
+        title="允许该发送者；此消息将被丢弃"
         onClick={() => act("allow")}
       >
-        Allow
+        允许
       </button>
-      <button className={XBTN + " px-1"} data-testid={`parked-dismiss-${m.id}`} title="Dismiss" onClick={() => act("dismiss")}>
+      <button className={XBTN + " px-1"} data-testid={`parked-dismiss-${m.id}`} title="忽略" onClick={() => act("dismiss")}>
         ×
       </button>
     </div>
@@ -597,7 +597,7 @@ function ListeningRows({ subs, onChanged }: { subs: Subscription[]; onChanged: (
   if (subs.length === 0) return null;
   return (
     <div className={ROW} data-testid="listening-slack">
-      <span className={LABEL}>Listening</span>
+      <span className={LABEL}>正在监听</span>
       <span className="min-w-0 flex-1 space-y-1">
         {subs.map((s) => (
           <span key={s.session_id + s.channel} className="flex items-center gap-2 text-[12.5px]">
@@ -610,7 +610,7 @@ function ListeningRows({ subs, onChanged }: { subs: Subscription[]; onChanged: (
             </span>
             <button
               className={XBTN + " ml-auto"}
-              title="Unsubscribe this session"
+              title="退订此会话"
               onClick={async () => {
                 await unsubscribeChannel(s.session_id, s.channel);
                 onChanged();

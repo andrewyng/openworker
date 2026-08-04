@@ -68,7 +68,7 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
     setConfirmDel(null);
     const r = await deletePersona(id);
     if (!r.ok) {
-      setMsg(r.error || "delete failed");
+      setMsg(r.error || "删除失败");
       return;
     }
     if (r.personas) setPersonas(r.personas);
@@ -85,20 +85,19 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
     );
     setBusy(false);
     if (!r.ok) {
-      setMsg(r.error || "install failed");
+      setMsg(r.error || "安装失败");
       return;
     }
     setConsent(r.consent || []);
     if (r.personas) setPersonas(r.personas);
-    setMsg(`Installed ${(r.consent || []).length} persona(s) — review and enable below.`);
+    setMsg(`已安装 ${(r.consent || []).length} 个角色——请在下方查看并启用。`);
     setSrc("");
   };
 
   return (
     <div>
       <p className="text-[12.5px] text-muted mb-3 leading-relaxed">
-        Enable a coworker, then choose whether it appears in the new-session picker. The starred persona
-        is the default for new sessions.
+        启用一个 Coworker，然后选择它是否出现在新建会话的选择器中。标星的角色是新会话的默认选项。
       </p>
 
       <div className={CARD + " divide-y divide-line mb-6"}>
@@ -108,8 +107,8 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
             <div className="min-w-0 flex-1">
               <div className="text-[13.5px] font-medium flex items-center gap-1.5">
                 <span className="truncate">{p.name}</span>
-                {p.default && <span className="text-accent" title="Default for new sessions">★</span>}
-                {p.builtin && <span className="text-[11px] text-faint font-normal">· built-in</span>}
+                {p.default && <span className="text-accent" title="新会话默认">★</span>}
+                {p.builtin && <span className="text-[11px] text-faint font-normal">· 内置</span>}
               </div>
               <div className="text-[12px] text-muted truncate">{p.tagline}</div>
             </div>
@@ -121,7 +120,7 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
                   e.target.checked ? toggle(p.id, { enabled: true }) : requestDisable(p)
                 }
               />
-              Enabled
+              已启用
             </label>
             <label className={CHECK + (p.enabled ? "" : " opacity-40")}>
               <input
@@ -130,20 +129,20 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
                 disabled={!p.enabled}
                 onChange={(e) => toggle(p.id, { surfaced: e.target.checked })}
               />
-              In picker
+              在选择器中
             </label>
             <button
               className={BTN_BORDERED}
               disabled={p.default || !p.enabled}
               onClick={() => toggle(p.id, { default: true })}
             >
-              Set default
+              设为默认
             </button>
             {onOpenPersona && (
               <button
                 className="text-faint hover:text-ink shrink-0 p-1"
-                title={`Configure ${p.name}`}
-                aria-label={`Configure ${p.name}`}
+                title={`配置 ${p.name}`}
+                aria-label={`配置 ${p.name}`}
                 data-testid={`persona-configure-${p.id}`}
                 onClick={() => onOpenPersona(p.id)}
               >
@@ -158,17 +157,17 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
                     data-testid={`persona-delete-confirm-${p.id}`}
                     onClick={() => remove(p.id)}
                   >
-                    Delete
+                    删除
                   </button>
                   <button className={BTN_BORDERED} onClick={() => setConfirmDel(null)}>
-                    Keep
+                    保留
                   </button>
                 </span>
               ) : (
                 <button
                   className="text-faint hover:text-danger shrink-0 p-1"
-                  title="Delete this persona"
-                  aria-label={`Delete ${p.name}`}
+                  title="删除该角色"
+                  aria-label={`删除 ${p.name}`}
                   data-testid={`persona-delete-${p.id}`}
                   onClick={() => setConfirmDel(p.id)}
                 >
@@ -182,9 +181,7 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
                 data-testid={`persona-disable-warning-${p.id}`}
               >
                 <span className="min-w-0">
-                  Disabling archives its {liveCount(p.id)} conversation
-                  {liveCount(p.id) === 1 ? "" : "s"} — they stay available under “Show
-                  archived”.
+                  停用会归档它的 {liveCount(p.id)} 个对话——它们仍可在“显示已归档”中找到。
                 </span>
                 <button
                   className="text-[12px] px-2.5 py-1.5 rounded-lg bg-accent text-white shrink-0"
@@ -194,10 +191,10 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
                     toggle(p.id, { enabled: false });
                   }}
                 >
-                  Disable
+                  停用
                 </button>
                 <button className={BTN_BORDERED} onClick={() => setConfirmOff(null)}>
-                  Keep enabled
+                  保持启用
                 </button>
               </div>
             )}
@@ -205,26 +202,24 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
         ))}
       </div>
 
-      <div className={SEC_H + " mb-1.5"}>Add personas</div>
+      <div className={SEC_H + " mb-1.5"}>添加角色</div>
       <p className="text-[12px] text-muted mb-3 leading-relaxed">
-        Load from a local directory or a public GitHub repo. Files are copied into a managed area (a
-        snapshot), so the persona stays stable even if the source changes. No code runs — a persona only
-        composes vetted tools.
+        从本地目录或公开的 GitHub 仓库加载。文件会被复制到一个受管区域（快照），因此即使来源发生变化，角色也保持稳定。不会运行任何代码——角色只是编排经过审核的工具。
       </p>
       <div className="flex items-center gap-2">
         <select className={SELECT} value={mode} onChange={(e) => setMode(e.target.value as "git" | "dir")}>
           <option value="git">GitHub URL</option>
-          <option value="dir">Local directory</option>
+          <option value="dir">本地目录</option>
         </select>
         <input
           className={INPUT}
-          placeholder={mode === "git" ? "https://github.com/acme/ops-persona" : "/path/to/personas"}
+          placeholder={mode === "git" ? "https://github.com/acme/ops-persona" : "/角色包/所在路径"}
           value={src}
           onChange={(e) => setSrc(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && install()}
         />
         <button className={BTN_ACCENT} disabled={busy || !src.trim()} onClick={install}>
-          {busy ? "Installing…" : "Install"}
+          {busy ? "安装中…" : "安装"}
         </button>
       </div>
       {msg && <div className="text-[12.5px] text-muted mt-2.5">{msg}</div>}
@@ -235,15 +230,15 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
             <div key={c.id} className={CARD + " p-3.5"}>
               <div className="text-[13.5px] font-medium">{c.name}</div>
               <div className="text-[12px] text-muted mt-0.5 mb-2">{c.description}</div>
-              <div className="text-[12px] text-ink">Tools: {c.tools.join(", ") || "—"}</div>
+              <div className="text-[12px] text-ink">工具：{c.tools.join(", ") || "—"}</div>
               <div className="text-[12px] text-ink">
-                Risk: {c.risk.join(", ") || "read"}
-                {c.connectors ? " · connectors" : ""}
-                {c.messaging ? " · messaging" : ""}
+                风险：{c.risk.join(", ") || "read"}
+                {c.connectors ? " · 连接器" : ""}
+                {c.messaging ? " · 消息" : ""}
                 {c.mcp.length ? ` · mcp: ${c.mcp.join(", ")}` : ""}
               </div>
               <div className="text-[12px] text-faint mt-1">
-                Recommended mode: {c.recommended_mode}. Enable it above to use it.
+                推荐模式：{c.recommended_mode}。在上方启用后即可使用。
               </div>
             </div>
           ))}

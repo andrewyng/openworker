@@ -23,7 +23,7 @@ export function RootRow({
 }) {
   const label = root.primary
     ? scratchPrimary
-      ? "Temporary space"
+      ? "临时空间"
       : baseName(root.path)
     : root.label;
   return (
@@ -32,7 +32,7 @@ export function RootRow({
       <span className="root-text" title={root.path}>
         <span className="root-label">
           {label}
-          {root.primary && !scratchPrimary && <span className="root-tag"> main</span>}
+          {root.primary && !scratchPrimary && <span className="root-tag"> 主</span>}
           {branch && (
             <span className="root-tag root-branch">
               {" "}
@@ -42,17 +42,17 @@ export function RootRow({
         </span>
         <span className="root-path">{root.path}</span>
       </span>
-      {!root.exists && <span className="root-tag warn">missing</span>}
+      {!root.exists && <span className="root-tag warn">已丢失</span>}
       <button
         className={"root-access" + (root.writable ? " rw" : " ro")}
         onClick={() => onToggle(root)}
         disabled={busy || root.primary}
-        title={root.primary ? "The main workspace is always read-write" : "Toggle read-only / read-write"}
+        title={root.primary ? "主工作区始终为读写" : "切换只读 / 读写"}
       >
-        {root.writable ? "Read-write" : "Read-only"}
+        {root.writable ? "读写" : "只读"}
       </button>
       {!root.primary && (
-        <button className="root-x" onClick={() => onRemove(root.path)} disabled={busy} title="Remove">
+        <button className="root-x" onClick={() => onRemove(root.path)} disabled={busy} title="移除">
           ×
         </button>
       )}

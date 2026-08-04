@@ -26,31 +26,31 @@ export function DirectoryRequestCard({
     <div className="dirreq-card">
       <div className="dirreq-head">
         <Icon name="folderPlus" size={16} className="ico" />
-        <span>The agent is requesting access to a folder</span>
+        <span>agent 正在请求访问某个文件夹</span>
       </div>
       {item.reason && <div className="dirreq-reason">“{item.reason}”</div>}
       <div className="dirreq-pathrow">
         <input
           className="dirreq-path"
-          placeholder="Choose or paste a folder path…"
+          placeholder="选择或粘贴文件夹路径…"
           value={path}
           onChange={(e) => setPath(e.target.value)}
         />
-        <button className="btn icon-only" onClick={browse} title="Choose location" aria-label="Choose location">
+        <button className="btn icon-only" onClick={browse} title="选择位置" aria-label="选择位置">
           <Icon name="folder" size={15} />
         </button>
       </div>
       <div className="dirreq-actions">
         <label className="dirreq-access">
           <input type="checkbox" checked={writable} onChange={(e) => setWritable(e.target.checked)} />
-          Allow writing (read-write)
+          允许写入（读写）
         </label>
         <span className="spacer" />
         <button className="btn" onClick={() => onRespond(false)}>
-          Decline
+          拒绝
         </button>
         <button className="btn primary" disabled={!path.trim()} onClick={() => onRespond(true, path.trim(), writable)}>
-          Grant access
+          授予访问权限
         </button>
       </div>
     </div>

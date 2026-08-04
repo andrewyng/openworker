@@ -43,11 +43,11 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
               <>
                 <span className="w-2 h-2 rounded-full bg-ok" />
                 <span data-testid="accounts-status">
-                  {accounts.length} account{accounts.length === 1 ? "" : "s"}
+                  {accounts.length} 个账户
                 </span>
               </>
             ) : (
-              <span>Not connected</span>
+              <span>未连接</span>
             )}
           </div>
         </div>
@@ -58,17 +58,17 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
           disabled={busy}
           title={
             c.managed && !cloud?.signed_in
-              ? "Sign in to OpenWorker Cloud for one-click — or add a token below"
+              ? "登录 OpenWorker Cloud 即可一键连接 —— 或在下方添加 Token"
               : ""
           }
         >
-          {busy ? "Check your browser…" : "＋ Add account"}
+          {busy ? "请查看浏览器…" : "＋ 添加账户"}
         </button>
       </div>
 
       {accounts.length > 0 && (
         <>
-          <div className={GRP_H + " !mt-0"}>Accounts</div>
+          <div className={GRP_H + " !mt-0"}>账户</div>
           <div className={GRP} data-testid="accounts-group">
             {accounts.map((a) => (
               <Row key={a.account_id} connector={c.name} a={a} onChanged={onChanged} />
@@ -80,7 +80,7 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
       {(showManual || !c.connected) && (
         <>
           <div className={GRP_H + (accounts.length ? "" : " !mt-0")}>
-            {c.managed ? "Add manually" : "Add an account"}
+            {c.managed ? "手动添加" : "添加账户"}
           </div>
           <div className={GRP} data-testid="accounts-manual-add">
             <div className="px-1.5 py-1">
@@ -99,8 +99,7 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
 
       <ToolsDisclosure c={c} onChanged={onChanged} />
       <div className={FOOT + " mt-2"}>
-        Each account stays separate — tool results and approvals name the account
-        they used.
+        每个账户彼此独立 —— 工具结果和审批都会注明所用的账户。
       </div>
     </div>
   );
@@ -125,7 +124,7 @@ function Row({
             {a.account_id}
           </span>
         )}
-        {a.default && <span className={TAG_ACCENT}>Default</span>}
+        {a.default && <span className={TAG_ACCENT}>默认</span>}
       </span>
       {!a.default && (
         <button
@@ -136,12 +135,12 @@ function Row({
             onChanged();
           }}
         >
-          Make default
+          设为默认
         </button>
       )}
       <button
         className={XBTN}
-        title="Disconnect this account"
+        title="断开此账户连接"
         data-testid={`account-disconnect-${a.account_id}`}
         disabled={busy}
         onClick={async () => {

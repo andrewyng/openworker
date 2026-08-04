@@ -36,7 +36,7 @@ export function AvailableDetail({
           data-testid="available-connect"
           onClick={() => setConnecting(true)}
         >
-          Connect
+          连接
         </button>
       </div>
 
@@ -44,7 +44,7 @@ export function AvailableDetail({
 
       {(c.access?.length ?? 0) > 0 && (
         <>
-          <div className={GRP_H}>Access</div>
+          <div className={GRP_H}>访问权限</div>
           <div className={GRP} data-testid="available-access">
             {c.access!.map((line) => (
               <div key={line} className={ROW + " !min-h-[36px] !py-2 text-[13px]"}>
@@ -53,14 +53,14 @@ export function AvailableDetail({
             ))}
           </div>
           <div className={FOOT}>
-            Keys and tokens are stored only on this computer. Disconnect anytime.
+            密钥和 Token 仅保存在这台电脑上，可随时断开连接。
           </div>
         </>
       )}
 
       {tools.length > 0 && (
         <>
-          <div className={GRP_H}>Tools</div>
+          <div className={GRP_H}>工具</div>
           <div className={GRP}>
             <button
               className={ROW + " w-full text-left hover:bg-paper/60 text-[13px]"}
@@ -68,9 +68,9 @@ export function AvailableDetail({
               onClick={() => setShowTools((v) => !v)}
             >
               <span className="min-w-0 flex-1 text-muted">
-                {tools.length} tool{tools.length === 1 ? "" : "s"} this connector adds
+                此连接器新增 {tools.length} 个工具
               </span>
-              <span className="text-faint text-[13px] shrink-0">{showTools ? "Hide" : "View"}</span>
+              <span className="text-faint text-[13px] shrink-0">{showTools ? "收起" : "查看"}</span>
             </button>
             {showTools &&
               tools.map((t) => (
@@ -79,7 +79,7 @@ export function AvailableDetail({
                     <span className="text-[13px]">{t.label}</span>
                     <span className="block text-[12px] text-muted">{t.description}</span>
                   </span>
-                  {t.kind !== "read" && <span className={TAG_QUIET}>asks first</span>}
+                  {t.kind !== "read" && <span className={TAG_QUIET}>需先确认</span>}
                 </div>
               ))}
           </div>

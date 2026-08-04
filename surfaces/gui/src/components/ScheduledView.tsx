@@ -123,21 +123,20 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
     <Shell>
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <PanelHead title="Automations" sub="Recurring tasks OpenWorker runs on a schedule." />
+          <PanelHead title="自动化" sub="OpenWorker 按计划定时运行的重复任务。" />
         </div>
         <button
           className="text-[12.5px] px-3 py-1.5 rounded-lg border border-lineStrong bg-panel hover:border-accent hover:text-accent shrink-0"
           onClick={() => setShowForm((v) => !v)}
         >
-          + New automation
+          + 新建自动化
         </button>
       </div>
 
       <div className="text-[12px] text-faint flex gap-1.5 mb-4">
         <span aria-hidden>ⓘ</span>
         <span>
-          Runs only while openworker-server is up — a missed schedule catches up once when it next
-          starts.
+          仅在 openworker-server 运行时执行——错过的计划会在下次启动时补跑一次。
         </span>
       </div>
 
@@ -156,8 +155,7 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
       {empty ? (
         !showForm && (
           <div className={CARD + " p-4 text-[12.5px] text-muted"}>
-            No scheduled tasks yet — use a template above, click <strong>+ New automation</strong>,
-            or just ask OpenWorker in a session.
+            还没有定时任务——使用上方的模板、点击 <strong>+ 新建自动化</strong>，或直接在会话中让 OpenWorker 帮你创建。
           </div>
         )
       ) : (
@@ -172,8 +170,8 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
                 <span className="text-[13.5px] font-semibold truncate">{t.title}</span>
                 <button
                   className="sched-card-del"
-                  title="Delete automation"
-                  aria-label={`Delete ${t.title}`}
+                  title="删除自动化"
+                  aria-label={`删除 ${t.title}`}
                   onClick={async (e) => {
                     e.stopPropagation();
                     await deleteAutomation(t.id);
@@ -185,8 +183,8 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
               </div>
               <div className="flex items-center gap-1.5 text-[12px] text-muted">
                 <Icon name="clock" size={13} className="text-faint shrink-0" />
-                {t.enabled ? t.schedule : "Paused"} · next {fmt(t.next_run)} · {t.run_count} run{t.run_count === 1 ? "" : "s"}
-                {t.last_status ? ` · last ${t.last_status}` : ""}
+                {t.enabled ? t.schedule : "已暂停"} · 下次 {fmt(t.next_run)} · 已运行 {t.run_count} 次
+                {t.last_status ? ` · 上次 ${t.last_status}` : ""}
               </div>
             </div>
           ))}
@@ -215,23 +213,23 @@ function NewAutomationForm({
   return (
     <div className={CARD + " tmpl-form p-4 mb-4"}>
       <div className="text-[11px] uppercase tracking-[0.05em] text-faint mb-2.5">
-        New automation
+        新建自动化
       </div>
       <input
         className="tmpl-input"
-        placeholder="Title (e.g. Daily standup notes)"
+        placeholder="标题（例如：每日站会记录）"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
       />
       <textarea
         className="tmpl-input tmpl-textarea"
-        placeholder="What should it do each run? (e.g. Summarize today's calendar and open tasks.)"
+        placeholder="每次运行时它该做什么？（例如：总结今天的日程和待办任务。）"
         value={instructions}
         onChange={(e) => setInstructions(e.target.value)}
       />
       <div className="tmpl-sched">
         <label className="tmpl-field">
-          <span>At</span>
+          <span>时间</span>
           <input
             type="time"
             className="tmpl-input tmpl-time"
@@ -240,15 +238,15 @@ function NewAutomationForm({
           />
         </label>
         <label className="tmpl-field">
-          <span>Repeat</span>
+          <span>重复</span>
           <select
             className="tmpl-input tmpl-select"
             value={freq}
             onChange={(e) => setFreq(e.target.value)}
           >
-            <option value="daily">Every day</option>
-            <option value="weekdays">Weekdays</option>
-            <option value="weekends">Weekends</option>
+            <option value="daily">每天</option>
+            <option value="weekdays">工作日</option>
+            <option value="weekends">周末</option>
           </select>
         </label>
       </div>
@@ -264,9 +262,9 @@ function NewAutomationForm({
             })
           }
         >
-          {busy ? "Creating…" : "Create automation"}
+          {busy ? "创建中…" : "创建自动化"}
         </button>
-        <button className="link" onClick={onCancel}>cancel</button>
+        <button className="link" onClick={onCancel}>取消</button>
       </div>
     </div>
   );
@@ -328,7 +326,7 @@ function TaskDetail({
   if (!task)
     return (
       <Shell>
-        <div className="text-[13px] text-muted">Loading…</div>
+        <div className="text-[13px] text-muted">加载中…</div>
       </Shell>
     );
 
@@ -367,7 +365,7 @@ function TaskDetail({
   return (
     <Shell>
       <button className="text-[13px] text-muted hover:text-ink mb-3" onClick={onBack}>
-        ← Automations
+        ← 自动化
       </button>
       <div className="sched-detail">
         <div className="sched-detail-head">
@@ -376,7 +374,7 @@ function TaskDetail({
               className="tmpl-input sched-edit-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Title"
+              placeholder="标题"
             />
           ) : (
             <h2 className="text-[18px] font-semibold tracking-tight">{task.title}</h2>
@@ -385,18 +383,18 @@ function TaskDetail({
             {editing ? (
               <>
                 <button className="btn-primary sm" disabled={saving || !title.trim() || !instructions.trim()} onClick={saveEdit}>
-                  {saving ? "Saving…" : "Save"}
+                  {saving ? "保存中…" : "保存"}
                 </button>
-                <button className="link" onClick={() => setEditing(false)}>cancel</button>
+                <button className="link" onClick={() => setEditing(false)}>取消</button>
               </>
             ) : (
               <>
                 <button className="btn-primary sm" onClick={() => onRunNow(id, task.title)}>
-                  ▶ Run now
+                  ▶ 立即运行
                 </button>
-                <button className="btn sm" onClick={startEdit}>Edit</button>
+                <button className="btn sm" onClick={startEdit}>编辑</button>
                 <button className="btn sm danger-btn" onClick={remove}>
-                  <Icon name="trash" size={14} /> Delete
+                  <Icon name="trash" size={14} /> 删除
                 </button>
               </>
             )}
@@ -406,15 +404,15 @@ function TaskDetail({
         {editing ? (
           <div className="tmpl-sched sched-edit-sched">
             <label className="tmpl-field">
-              <span>At</span>
+              <span>时间</span>
               <input type="time" className="tmpl-input tmpl-time" value={time} onChange={(e) => setTime(e.target.value)} />
             </label>
             <label className="tmpl-field">
-              <span>Repeat</span>
+              <span>重复</span>
               <select className="tmpl-input tmpl-select" value={freq} onChange={(e) => setFreq(e.target.value)}>
-                <option value="daily">Every day</option>
-                <option value="weekdays">Weekdays</option>
-                <option value="weekends">Weekends</option>
+                <option value="daily">每天</option>
+                <option value="weekdays">工作日</option>
+                <option value="weekends">周末</option>
               </select>
             </label>
           </div>
@@ -424,11 +422,11 @@ function TaskDetail({
               <input type="checkbox" checked={task.enabled} onChange={toggle} />
               <span className="slider" />
             </label>{" "}
-            {task.enabled ? `Active · next ${fmt(task.next_run)}` : "Paused"} · {task.schedule}
+            {task.enabled ? `已启用 · 下次 ${fmt(task.next_run)}` : "已暂停"} · {task.schedule}
           </div>
         )}
 
-        <div className="sa-sub">Instructions</div>
+        <div className="sa-sub">指令</div>
         {editing ? (
           <textarea
             className="tmpl-input tmpl-textarea sched-edit-instr"
@@ -441,9 +439,9 @@ function TaskDetail({
 
         {(task.always_allowed || []).length > 0 && (
           <>
-            <div className="sa-sub">Allowed without asking</div>
+            <div className="sa-sub">无需询问即可执行</div>
             <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
-              Standing approvals this automation may use — everything else still asks first.
+              该自动化可使用的常设授权——其余操作仍会先征求你的同意。
             </div>
             <div className="sched-grants" data-testid="task-grants">
               {(task.always_allowed || []).map((rule) => (
@@ -454,13 +452,13 @@ function TaskDetail({
                   </span>
                   <button
                     className="link"
-                    title="This automation will ask for approval again"
+                    title="该自动化将会重新征求审批"
                     onClick={async () => {
                       await updateAutomation(id, { revoke: rule.entry });
                       refresh();
                     }}
                   >
-                    Revoke
+                    撤销
                   </button>
                 </div>
               ))}
@@ -468,11 +466,11 @@ function TaskDetail({
           </>
         )}
 
-        <div className="sa-sub">Runs</div>
+        <div className="sa-sub">运行记录</div>
         <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
-          Each run is a live conversation — open one to see what the agent did and ask a follow-up.
+          每次运行都是一段实时对话——打开任意一条即可查看 agent 做了什么，并继续追问。
         </div>
-        {runs.length === 0 && <div className="dim">No runs yet.</div>}
+        {runs.length === 0 && <div className="dim">还没有运行记录。</div>}
         {runs.map((r) => (
           <div
             className="sched-run open"
@@ -484,18 +482,18 @@ function TaskDetail({
                 title: task.title,
               })
             }
-            title="Open this run's conversation"
+            title="打开这次运行的对话"
           >
             <div className="sched-run-row">
               <span>
                 {seenMark !== null && r.started_at > seenMark && (
-                  <span className="run-new-pill" data-testid="run-new">new</span>
+                  <span className="run-new-pill" data-testid="run-new">新</span>
                 )}
                 {fmt(r.started_at)} · <span className={"run-" + r.status}>{r.status}</span> · {r.trigger}
-                {r.artifacts.length > 0 && <span className="dim"> · {r.artifacts.length} file(s)</span>}
+                {r.artifacts.length > 0 && <span className="dim"> · {r.artifacts.length} 个文件</span>}
               </span>
               <span className="sched-run-go" aria-hidden>
-                Open ›
+                打开 ›
               </span>
             </div>
             {r.result_text && <div className="sched-run-peek">{r.result_text}</div>}
