@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from coworker.inbox import InboxStore
 from coworker.inbox_routing import (
     DEFAULT_INBOX,
@@ -122,3 +124,57 @@ def test_emoji_reactions_still_resolve(tmp_path):
     resolve_from_reply(f"❌ [ow:{b.id}]", store.resolve)
     assert store.get(a.id).resolution == "allow"
     assert store.get(b.id).resolution == "deny"
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "not approved",
+        "I don't approve",
+        "no, do not approve this",
+        "please don't allow that",
+        "never approve this one",
+    ],
+)
+def test_negated_allow_word_resolves_as_deny(tmp_path, reply):
+    """An allow keyword behind a negator is a refusal. Word boundaries alone matched the
+    bare keyword, and allow was tested first, so these all resolved as allow."""
+    store = InboxStore(tmp_path / "inbox.json")
+    item = store.add_approval("s1", "Send the invoice?", inbox="ops")
+    assert resolve_from_reply(f"{reply} [ow:{item.id}]", store.resolve) is True
+    assert store.get(item.id).resolution == "deny"
+
+
+def test_mixed_intent_resolves_closed(tmp_path):
+    """Both intents present - the approval gate fails closed."""
+    store = InboxStore(tmp_path / "inbox.json")
+    item = store.add_approval("s1", "Deploy?", inbox="ops")
+    assert resolve_from_reply(f"denied - do not allow [ow:{item.id}]", store.resolve)
+    assert store.get(item.id).resolution == "deny"
+
+
+def test_plain_approval_still_allows(tmp_path):
+    """The reordering must not make approving harder."""
+    store = InboxStore(tmp_path / "inbox.json")
+    for reply in ("approve", "approved", "yes", "allow", "go ahead, approved"):
+        item = store.add_approval("s1", "Deploy?", inbox="ops")
+        resolve_from_reply(f"{reply} [ow:{item.id}]", store.resolve)
+        assert store.get(item.id).resolution == "allow", reply
+
+
+def test_negator_far_from_allow_word_is_not_a_denial(tmp_path):
+    """Adjacency, not a negator appearing anywhere - otherwise ordinary prose that
+    happens to contain `not` would start swallowing approvals."""
+    store = InboxStore(tmp_path / "inbox.json")
+    item = store.add_approval("s1", "Deploy?", inbox="ops")
+    reply = "the staging run did not surface anything new, so approve"
+    resolve_from_reply(f"{reply} [ow:{item.id}]", store.resolve)
+    assert store.get(item.id).resolution == "allow"
+
+
+def test_free_text_answers_are_unaffected(tmp_path):
+    """Questions reuse this path; widening deny must not swallow free-text replies."""
+    store = InboxStore(tmp_path / "inbox.json")
+    q = store.add_question("s1", "Which region?")
+    assert resolve_from_reply(f"north-east node [ow:{q.id}]", store.resolve) is True
+    assert store.get(q.id).resolution == "north-east node"

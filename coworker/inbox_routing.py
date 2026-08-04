@@ -26,6 +26,15 @@ _ID_TOKEN = re.compile(r"\[o(?:c)?w:([0-9a-f]{6,})\]")
 # Whole words only — substring matching resolved "disallow" as allow and "note" as deny.
 _ALLOW_WORDS = re.compile(r"\b(?:approve|approved|allow|allowed|yes)\b")
 _DENY_WORDS = re.compile(r"\b(?:deny|denied|reject|rejected|no)\b")
+# An allow word carries the opposite meaning when a negator sits just in front of it
+# ("not approved", "I don't approve", "no, do not approve this"). Word boundaries alone
+# can't see this: the allow list matches the bare keyword, and since allow was tested
+# first the deny list was never reached. Bounded to two intervening words so it reads
+# adjacency, not a negator appearing anywhere in the message.
+_NEGATED_ALLOW = re.compile(
+    r"\b(?:not|never|no|nope|cannot|can'?t|won'?t|don'?t|doesn'?t|didn'?t|isn'?t|"
+    r"shouldn'?t)\b(?:\W+\w+){0,2}?\W+(?:approve|approved|allow|allowed|yes)\b"
+)
 
 
 @dataclass
@@ -133,10 +142,15 @@ def resolve_from_reply(
         return None
     item_id = m.group(1)
     lowered = reply.lower()
-    if _ALLOW_WORDS.search(lowered) or "👍" in reply or "✅" in reply:
-        resolution = "allow"
-    elif _DENY_WORDS.search(lowered) or "👎" in reply or "❌" in reply:
+    allowed = _ALLOW_WORDS.search(lowered) or "👍" in reply or "✅" in reply
+    denied = _DENY_WORDS.search(lowered) or "👎" in reply or "❌" in reply
+    # Deny is tested first so a reply carrying both intents ("denied - do not allow")
+    # lands closed rather than open: a wrong deny costs a second click, a wrong allow
+    # has already sent the email or run the command.
+    if _NEGATED_ALLOW.search(lowered) or denied:
         resolution = "deny"
+    elif allowed:
+        resolution = "allow"
     else:
         resolution = _ID_TOKEN.sub("", reply).strip()  # free-text answer to a question
     return resolve(item_id, resolution)
