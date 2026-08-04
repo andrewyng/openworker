@@ -22,7 +22,7 @@ function ClampedUserText({ text }: { text: string }) {
         onClick={() => setOpen((o) => !o)}
         className="block ml-auto mt-1.5 text-[12.5px] font-medium opacity-75 hover:opacity-100"
       >
-        {open ? "less…" : "more…"}
+        {open ? "收起…" : "展开…"}
       </button>
     </>
   );
@@ -57,10 +57,10 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
         <button
           className="flex items-center cursor-pointer hover:text-muted"
           data-testid="bubble-copy"
-          title="Copy message"
+          title="复制消息"
           onClick={copy}
         >
-          {copied ? "Copied" : <Icon name="copy" size={11} />}
+          {copied ? "已复制" : <Icon name="copy" size={11} />}
         </button>
         {when && (
           <span data-testid="bubble-ts" title={when.toLocaleString()}>
@@ -86,7 +86,7 @@ export function ThinkingBlock({ text, live }: { text: string; live?: boolean }) 
       >
         <Icon name="chevronDown" size={12} className={"thinking-caret" + (open ? " open" : "")} />
         <span className={live ? "thinking-live" : undefined}>
-          {live ? "Thinking…" : "Thought process"}
+          {live ? "思考中…" : "思考过程"}
         </span>
       </button>
       {open && (
@@ -156,13 +156,13 @@ function buildRows(items: TurnItem[]): TurnRow[] {
 
 function approvalChip(resolved: ApprovalDecision | undefined) {
   if (resolved === "deny")
-    return <span className="text-[10.5px] px-1.5 rounded-full bg-dangerSoft text-danger shrink-0">✕ declined</span>;
+    return <span className="text-[10.5px] px-1.5 rounded-full bg-dangerSoft text-danger shrink-0">✕ 已拒绝</span>;
   return (
     <span
       className="text-[10.5px] px-1.5 rounded-full bg-okSoft text-ok shrink-0"
-      title={resolved ? `approved · ${resolved.replace(/_/g, " ")}` : "approved"}
+      title={resolved ? `已批准 · ${resolved.replace(/_/g, " ")}` : "已批准"}
     >
-      ✓ approved
+      ✓ 已批准
     </span>
   );
 }
@@ -192,7 +192,7 @@ function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }
             // A refused load must not read as a success — "Used skill:" is the trust line
             // (SKILLS-SPEC §4.1 #4), so a blocked attempt gets honest wording instead.
             tool.name === "load_skill" && tool.preview?.includes('"error"')
-              ? { pre: "Tried skill: ", obj: String(tool.args?.name ?? ""), post: " — not available" }
+              ? { pre: "尝试使用技能：", obj: String(tool.args?.name ?? ""), post: " — 不可用" }
               : humanizeTool(tool.name, tool.args)
           }
         />
@@ -201,18 +201,18 @@ function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }
           <span
             className="text-[10.5px] px-1.5 rounded-full bg-tealSoft text-tealInk shrink-0"
             data-testid="tool-standing-rule"
-            title={`Auto-allowed by this automation's standing approval: ${tool.standingRule}. Revoke on its Automations page.`}
+            title={`由该自动化任务的常设审批自动放行：${tool.standingRule}。可在其自动化页面撤销。`}
           >
-            auto-allowed
+            自动放行
           </span>
         )}
         {!!tool.hidden && (
           <span
             className="text-[11px] text-warnInk shrink-0"
             data-testid="tool-hidden-count"
-            title="Removed by your privacy filters before the agent saw the results — agents get no trace of these."
+            title="在 agent 看到结果前已被你的隐私过滤器移除 — agent 不会留下任何痕迹。"
           >
-            {tool.hidden} hidden
+            已隐藏 {tool.hidden} 条
           </span>
         )}
         {failed && <span className="text-[11px] text-danger shrink-0">{tool.status}</span>}
@@ -221,7 +221,7 @@ function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }
             className="ml-auto shrink-0 text-[11px] text-faint opacity-0 group-hover:opacity-100 cursor-pointer"
             onClick={() => setRaw((v) => !v)}
           >
-            raw
+            原始数据
           </button>
         )}
       </div>
@@ -259,7 +259,7 @@ function TurnGroup({
   const nSteps = rows.filter((r) => r.type !== "narr").length;
   const declined = items.filter((it) => it.kind === "approval" && it.resolved === "deny").length;
   const hiddenTotal = tools.reduce((n, t) => n + (t.hidden || 0), 0);
-  const stepsLabel = `${nSteps} step${nSteps === 1 ? "" : "s"}`;
+  const stepsLabel = `${nSteps} 步`;
 
   return (
     <details className="stepgroup" open={open}>
@@ -272,12 +272,12 @@ function TurnGroup({
       >
         <span className={"chev inline-block transition-transform" + (open ? " rotate-90" : "")}>›</span>
         <span>
-          <span>{running ? `Running ${stepsLabel}…` : stepsLabel}</span>
+          <span>{running ? `正在执行 ${stepsLabel}…` : stepsLabel}</span>
           {declined > 0 && (
             <>
               {" · "}
               <span className="text-danger" data-testid="stepgroup-declined">
-                {declined} declined
+                已拒绝 {declined} 项
               </span>
             </>
           )}
@@ -285,7 +285,7 @@ function TurnGroup({
             <>
               {" · "}
               <span className="text-warnInk" data-testid="stepgroup-hidden">
-                {hiddenTotal} hidden by your filters
+                被你的过滤器隐藏 {hiddenTotal} 条
               </span>
             </>
           )}
@@ -443,7 +443,7 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
               );
             return (
               <div className="group bubble-assistant" key={bi}>
-                <div className="who">assistant</div>
+                <div className="who">助手</div>
                 {item.reasoning && <ThinkingBlock text={item.reasoning} />}
                 <Markdown text={item.text} />
                 <BubbleMeta text={item.text} ts={item.ts} align="left" />
@@ -456,7 +456,7 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
                 <span className={"status " + (item.resolved === "granted" ? "ok" : "denied")}>
                   {item.resolved === "granted" ? "✓" : "✕"}
                 </span>
-                <span>{item.resolved === "granted" ? "Granted folder access" : "Declined folder access"}</span>
+                <span>{item.resolved === "granted" ? "已授予文件夹访问权限" : "已拒绝文件夹访问权限"}</span>
                 {item.path && <span className="dim">{item.path}</span>}
               </div>
             );
@@ -464,13 +464,13 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
             if (!item.resolved) return null; // pending plan renders in the composer head
             return (
               <div className="bubble-assistant" key={bi}>
-                <div className="who">proposed plan</div>
+                <div className="who">提出的计划</div>
                 <Markdown text={item.plan} />
                 <div className="approval-inline">
                   <span className={"status " + (item.resolved === "approved" ? "ok" : "denied")}>
                     {item.resolved === "approved" ? "✓" : "✕"}
                   </span>
-                  <span>{item.resolved === "approved" ? "Plan approved" : "Sent back with feedback"}</span>
+                  <span>{item.resolved === "approved" ? "计划已批准" : "已附反馈退回"}</span>
                 </div>
               </div>
             );
@@ -480,7 +480,7 @@ export function Transcript({ items, running, streamingText, onRetry }: Props) {
                 {item.text}
                 {item.retriable && !running && onRetry && block.i === retryAnchor(items) && (
                   <button className="btn ml-2" data-testid="notice-retry" onClick={onRetry}>
-                    Retry
+                    重试
                   </button>
                 )}
               </div>

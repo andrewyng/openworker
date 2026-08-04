@@ -188,7 +188,7 @@ const PlugLogo = strokeLogo(
 );
 
 /** Neutral fallback for unknown / empty logo ids. */
-export const FALLBACK: ConnectorRegistryEntry = { label: "Connector", logo: PlugLogo };
+export const FALLBACK: ConnectorRegistryEntry = { label: "连接器", logo: PlugLogo };
 
 export const CONNECTORS: Record<string, ConnectorRegistryEntry> = {
   // Real brand marks from simple-icons.
@@ -233,8 +233,8 @@ export const CONNECTORS: Record<string, ConnectorRegistryEntry> = {
   apollo: { label: "Apollo.io", logo: ApolloLogo },
   hunter: { label: "Hunter", logo: HunterLogo },
   // Non-brand utilities.
-  email: { label: "Email", logo: EmailLogo },
-  browser: { label: "Browser", logo: BrowserLogo },
+  email: { label: "邮件", logo: EmailLogo },
+  browser: { label: "浏览器", logo: BrowserLogo },
   mcp: { label: "MCP", logo: McpLogo },
 };
 

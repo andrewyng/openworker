@@ -38,7 +38,7 @@ export function ConnectorsList({
     <div>
       <div className="flex items-center justify-end mb-4">
         <input
-          placeholder="Search"
+          placeholder="搜索"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           className="w-44 px-3.5 py-1.5 rounded-full border border-line bg-panel text-[13px] outline-none focus:border-accent"
@@ -49,7 +49,7 @@ export function ConnectorsList({
           sign-in home, and the connect modals keep their inline sign-in panes. */}
       {connected.length > 0 && (
         <>
-          <div className={GRP_H + " !mt-0"}>Connected · {connected.length}</div>
+          <div className={GRP_H + " !mt-0"}>已连接 · {connected.length}</div>
           <div className={GRP}>
             {connected.map((c) => (
               <button
@@ -71,7 +71,7 @@ export function ConnectorsList({
         </>
       )}
 
-      <div className={GRP_H}>Available</div>
+      <div className={GRP_H}>可用</div>
       <div className={GRP}>
         {shown.map((c) => (
           /* The row navigates to the pre-connect detail page (§38); the pill
@@ -95,19 +95,19 @@ export function ConnectorsList({
                 setConnecting(c.name);
               }}
             >
-              Connect
+              连接
             </span>
           </button>
         ))}
         {shown.length === 0 && (
-          <div className={ROW + " text-[12.5px] text-muted"}>Nothing matches.</div>
+          <div className={ROW + " text-[12.5px] text-muted"}>没有匹配项。</div>
         )}
       </div>
       {!showAll && !q && available.length > AVAILABLE_FOLD && (
         <div className={FOOT}>
-          {available.length - AVAILABLE_FOLD} more ·{" "}
+          还有 {available.length - AVAILABLE_FOLD} 个 ·{" "}
           <button className="text-muted hover:text-ink" onClick={() => setShowAll(true)}>
-            show all
+            显示全部
           </button>
         </div>
       )}
@@ -127,12 +127,12 @@ export function ConnectorsList({
 function statusLine(c: Connector): string {
   if (c.name === "slack" && c.mode === "relay") {
     const n = c.workspaces?.length ?? 0;
-    return `${n} workspace${n === 1 ? "" : "s"} · relay`;
+    return `${n} 个工作区 · 中继`;
   }
-  if ((c.accounts?.length ?? 0) > 1) return `${c.accounts!.length} accounts`;
-  if ((c.portals?.length ?? 0) > 1) return `${c.portals!.length} portals`;
-  if (c.auth === "none") return "Built in";
-  return c.account || "Connected";
+  if ((c.accounts?.length ?? 0) > 1) return `${c.accounts!.length} 个账户`;
+  if ((c.portals?.length ?? 0) > 1) return `${c.portals!.length} 个门户`;
+  if (c.auth === "none") return "内置";
+  return c.account || "已连接";
 }
 
 function healthChip(c: Connector, slack: SlackStatus | null) {
@@ -140,15 +140,15 @@ function healthChip(c: Connector, slack: SlackStatus | null) {
   // surface in the list, never one click deep. Named honestly per layer; we
   // never claim "Slack↔cloud down" (the desktop can't see that leg).
   if (c.name === "slack" && c.mode === "relay" && slack) {
-    if (!slack.signed_in) return <span className={CHIP_WARN}>● Sign-in needed</span>;
-    if (slack.relay.state === "offline") return <span className={CHIP_OFF}>● Offline</span>;
+    if (!slack.signed_in) return <span className={CHIP_WARN}>● 需登录</span>;
+    if (slack.relay.state === "offline") return <span className={CHIP_OFF}>● 离线</span>;
     if (slack.relay.state === "reconnecting")
-      return <span className={CHIP_WARN}>● Reconnecting</span>;
+      return <span className={CHIP_WARN}>● 重连中</span>;
     if (Object.values(slack.teams).some((t) => !t.token_ok))
       return <span className={CHIP_WARN}>⚠ Token</span>;
-    return <span className={CHIP_OK}>● Live</span>;
+    return <span className={CHIP_OK}>● 在线</span>;
   }
-  if (c.two_way && c.connected) return <span className={CHIP_OK}>● Live</span>;
-  return <span className={CHIP_OK}>● Ready</span>;
+  if (c.two_way && c.connected) return <span className={CHIP_OK}>● 在线</span>;
+  return <span className={CHIP_OK}>● 就绪</span>;
 }
 

@@ -31,7 +31,7 @@ export function PersonaHero({
       viewBox="0 0 400 120"
       preserveAspectRatio="xMidYMid slice"
       role="img"
-      aria-label={`${slug} artwork`}
+      aria-label={`${slug} 插图`}
     >
       <rect width="400" height="120" rx="12" fill={bg} />
       {/* orbit rings around a central agent spark, with satellite nodes */}

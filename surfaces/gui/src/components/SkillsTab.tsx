@@ -91,11 +91,11 @@ export function SkillsTab({
   // model will be told…") or engineering timing ("from the next message") — owner-driver
   // review rounds, 2026-07-27. The engine countermands disabled-but-loaded skills silently;
   // the copy promises only the guaranteed part.
-  const CONFIRMATION = "— the worker can now use it in every conversation.";
+  const CONFIRMATION = "——worker 现在可以在每个对话中使用它了。";
   const OFF_NOTE =
-    "turned off everywhere. If a conversation already used it, start a new one for a completely clean slate.";
+    "已在所有地方关闭。如果某个对话已经用过它，请开一个新对话以获得完全干净的环境。";
   const DELETE_NOTE =
-    "removed. If a conversation already used it, start a new one for a completely clean slate.";
+    "已删除。如果某个对话已经用过它，请开一个新对话以获得完全干净的环境。";
 
   const refresh = () => listSkills().then(setRows);
   useEffect(() => {
@@ -105,7 +105,7 @@ export function SkillsTab({
   const fail = (res: { ok?: boolean; error?: string }) => {
     setNotice(null);
     if (res.ok === false) {
-      setError(res.error || "Something went wrong.");
+      setError(res.error || "出了点问题。");
       return true;
     }
     setError("");
@@ -144,7 +144,7 @@ export function SkillsTab({
     const res = await confirmSkillUpload(upload.token);
     if (fail(res)) return;
     setUpload(null);
-    setNotice({ name: upload.name || "Skill", text: CONFIRMATION, tone: "ok" });
+    setNotice({ name: upload.name || "技能", text: CONFIRMATION, tone: "ok" });
     refresh();
   };
 
@@ -164,10 +164,9 @@ export function SkillsTab({
     <section>
       <div className="flex items-start justify-between gap-3 mb-4">
         <div>
-          <h2 className="text-[16px] font-semibold">Skills</h2>
+          <h2 className="text-[16px] font-semibold">技能</h2>
           <p className="text-[12.5px] text-muted mt-1 leading-relaxed">
-            Reusable instructions the worker can follow in every conversation. Off here means
-            off everywhere.
+            worker 可以在每个对话中遵循的可复用指令。在这里关闭即在所有地方关闭。
           </p>
         </div>
         {/* One add-action, three doors behind it (SKILLS-SPEC §5): the list is the page. */}
@@ -179,7 +178,7 @@ export function SkillsTab({
             onClick={() => setAddOpen((v) => !v)}
           >
             <span className="inline-flex items-center gap-1.5">
-              <Icon name="plus" size={13} /> Add skill
+              <Icon name="plus" size={13} /> 添加技能
             </span>
           </button>
           {addOpen ? (
@@ -198,9 +197,9 @@ export function SkillsTab({
                     setEditor(emptyEditor());
                   }}
                 >
-                  <div className="text-[13px] font-medium">Write it myself</div>
+                  <div className="text-[13px] font-medium">我自己写</div>
                   <div className="text-[11.5px] text-muted">
-                    A name, a description, and the instructions
+                    一个名称、一段描述，以及具体指令
                   </div>
                 </button>
                 <button
@@ -211,9 +210,9 @@ export function SkillsTab({
                     fileInput.current?.click();
                   }}
                 >
-                  <div className="text-[13px] font-medium">Import a file</div>
+                  <div className="text-[13px] font-medium">导入文件</div>
                   <div className="text-[11.5px] text-muted">
-                    A .zip or SKILL.md someone shared — you review before it installs
+                    别人分享的 .zip 或 SKILL.md——安装前你可以先审阅
                   </div>
                 </button>
                 <button
@@ -225,10 +224,9 @@ export function SkillsTab({
                     onCreateSkill?.("");
                   }}
                 >
-                  <div className="text-[13px] font-medium">Create with OpenWorker</div>
+                  <div className="text-[13px] font-medium">用 OpenWorker 创建</div>
                   <div className="text-[11.5px] text-muted">
-                    Starts a conversation — the worker builds it and asks before adding it to
-                    your skills
+                    开启一段对话——worker 会构建它，并在加入你的技能前先征求同意
                   </div>
                 </button>
               </div>
@@ -241,7 +239,7 @@ export function SkillsTab({
         type="file"
         accept=".zip,.md"
         className="hidden"
-        aria-label="Upload a skill archive"
+        aria-label="上传技能压缩包"
         onChange={(e) => {
           onPickFile(e.target.files?.[0]);
           e.target.value = "";
@@ -268,7 +266,7 @@ export function SkillsTab({
           </span>
           <button
             className="ml-auto shrink-0 opacity-60 hover:opacity-100"
-            aria-label="Dismiss"
+            aria-label="关闭"
             onClick={() => setNotice(null)}
           >
             ✕
@@ -278,28 +276,28 @@ export function SkillsTab({
 
       {upload ? (
         <div className={`${CARD} p-4 mb-4`}>
-          <div className="text-[13px] font-medium mb-1">Review before installing</div>
+          <div className="text-[13px] font-medium mb-1">安装前请审阅</div>
           <p className="text-[12.5px] text-muted mb-3">
-            Read the instructions — installing a skill means the worker will follow them.
+            请阅读这些指令——安装一个技能意味着 worker 将会遵循它们。
           </p>
           <div className="text-[13px] mb-1">
             <span className="font-medium">{upload.name}</span>
-            <span className="text-muted"> — {upload.description || "no description"}</span>
+            <span className="text-muted"> — {upload.description || "无描述"}</span>
           </div>
           <pre className="text-[12px] bg-paper border border-line rounded-lg p-3 whitespace-pre-wrap max-h-64 overflow-y-auto mb-2">
             {upload.instructions}
           </pre>
           {upload.files?.length ? (
             <div className="text-[12px] text-muted mb-2">
-              Bundled files: {upload.files.join(", ")}
+              附带文件：{upload.files.join(", ")}
             </div>
           ) : null}
           <div className="flex gap-2 mt-3">
             <button className={BTN_ACCENT} onClick={confirmUpload}>
-              Install skill
+              安装技能
             </button>
             <button className={BTN_BORDERED} onClick={() => setUpload(null)}>
-              Cancel
+              取消
             </button>
           </div>
         </div>
@@ -308,10 +306,10 @@ export function SkillsTab({
       {editor ? (
         <div className={`${CARD} p-4 mb-4`}>
           <div className="text-[13px] font-medium mb-3">
-            {editor.mode === "new" ? "New skill" : `Edit ${editor.name}`}
+            {editor.mode === "new" ? "新建技能" : `编辑 ${editor.name}`}
           </div>
           <label className={FIELD_LABEL} htmlFor="skill-name">
-            Name
+            名称
           </label>
           <input
             id="skill-name"
@@ -322,23 +320,23 @@ export function SkillsTab({
             onChange={(e) => setEditor({ ...editor, name: e.target.value })}
           />
           <label className={FIELD_LABEL} htmlFor="skill-desc">
-            Description
+            描述
           </label>
           <input
             id="skill-desc"
             className={`${INPUT} mt-1 mb-3`}
             value={editor.description}
-            placeholder="One line the worker uses to decide when this applies"
+            placeholder="一句话，让 worker 据此判断何时该用它"
             onChange={(e) => setEditor({ ...editor, description: e.target.value })}
           />
           <label className={FIELD_LABEL} htmlFor="skill-instructions">
-            Instructions
+            指令
           </label>
           <textarea
             id="skill-instructions"
             className={`${INPUT} mt-1 mb-3 min-h-[140px] font-mono`}
             value={editor.instructions}
-            placeholder={"1. Gather last week's updates\n2. Write the report, under 300 words"}
+            placeholder={"1. 汇总上周的进展\n2. 写成报告，控制在 300 字以内"}
             onChange={(e) => setEditor({ ...editor, instructions: e.target.value })}
           />
           <div className="flex gap-2 mt-3">
@@ -347,10 +345,10 @@ export function SkillsTab({
               disabled={!editor.name.trim() || !editor.instructions.trim()}
               onClick={save}
             >
-              Save skill
+              保存技能
             </button>
             <button className={BTN_BORDERED} onClick={() => setEditor(null)}>
-              Cancel
+              取消
             </button>
           </div>
         </div>
@@ -359,8 +357,7 @@ export function SkillsTab({
       <div className={`${CARD} divide-y divide-line`}>
         {rows.length === 0 && !editor ? (
           <div className="p-5 text-[13px] text-muted">
-            No skills yet — <b>Add skill</b> teaches your worker its first one, like
-            “prepare my Monday status report”.
+            还没有技能——<b>添加技能</b>，教会你的 worker 第一个本领，比如“帮我准备周一的状态报告”。
           </div>
         ) : null}
         {rows.map((row) => (
@@ -377,10 +374,10 @@ export function SkillsTab({
                 {row.files ? (
                   <button
                     className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md border border-line bg-paper text-muted hover:text-ink hover:border-lineStrong shrink-0"
-                    title="Show folder"
+                    title="显示文件夹"
                     onClick={() => revealSkill(row.name)}
                   >
-                    <Icon name="folder" size={11} /> {row.files} file{row.files === 1 ? "" : "s"}
+                    <Icon name="folder" size={11} /> {row.files} 个文件
                   </button>
                 ) : null}
               </div>
@@ -390,7 +387,7 @@ export function SkillsTab({
             </div>
             <button
               className={BTN_BORDERED}
-              title="Edit"
+              title="编辑"
               onClick={() =>
                 setEditor({
                   mode: "edit",
@@ -404,17 +401,17 @@ export function SkillsTab({
             </button>
             <button
               className={BTN_BORDERED}
-              aria-label={`Delete ${row.name}`}
+              aria-label={`删除 ${row.name}`}
               onClick={() => remove(row)}
               onBlur={() => setArmedDelete(null)}
             >
-              {armedDelete === row.name ? "Confirm delete" : <Icon name="trash" size={13} />}
+              {armedDelete === row.name ? "确认删除" : <Icon name="trash" size={13} />}
             </button>
             <label className="inline-flex items-center gap-1.5 text-[12px] text-muted">
               <input
                 type="checkbox"
                 role="switch"
-                aria-label={`${row.name} enabled`}
+                aria-label={`${row.name} 已启用`}
                 checked={row.enabled}
                 onChange={(e) => {
                   const on = e.target.checked;
@@ -429,7 +426,7 @@ export function SkillsTab({
                   });
                 }}
               />
-              On
+              启用
             </label>
           </div>
         ))}

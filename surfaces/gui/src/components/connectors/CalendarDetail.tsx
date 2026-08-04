@@ -37,11 +37,11 @@ export function CalendarDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
               <>
                 <span className="w-2 h-2 rounded-full bg-ok" />
                 <span data-testid="gcal-status">
-                  {accounts.length} account{accounts.length === 1 ? "" : "s"}
+                  {accounts.length} 个账户
                 </span>
               </>
             ) : (
-              <span>Not connected</span>
+              <span>未连接</span>
             )}
           </div>
         </div>
@@ -52,28 +52,28 @@ export function CalendarDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
           disabled={busy || !cloud?.signed_in || c.managed_paused}
           title={
             c.managed_paused
-              ? "One-click Google sign-in is coming soon"
+              ? "一键 Google 登录即将推出"
               : cloud?.signed_in
                 ? ""
-                : "Sign in to OpenWorker Cloud first"
+                : "请先登录 OpenWorker Cloud"
           }
         >
-          {c.managed_paused ? "＋ Add account · Coming soon" : busy ? "Check your browser…" : "＋ Add account"}
+          {c.managed_paused ? "＋ 添加账户 · 即将推出" : busy ? "请查看浏览器…" : "＋ 添加账户"}
         </button>
       </div>
 
       {!c.connected && (
         <div className={GRP}>
           <div className={ROW + " text-[12.5px] text-muted"}>
-            Sign in with Google — each account stays separate, agents say which one they use.
-            {cloud?.signed_in ? "" : " Requires cloud sign-in."}
+            使用 Google 登录 —— 每个账户彼此独立，agent 会注明使用的是哪一个。
+            {cloud?.signed_in ? "" : " 需要登录 Cloud。"}
           </div>
         </div>
       )}
 
       {accounts.length > 0 && (
         <>
-          <div className={GRP_H + " !mt-0"}>Accounts</div>
+          <div className={GRP_H + " !mt-0"}>账户</div>
           <div className={GRP} data-testid="gcal-accounts">
             {accounts.map((a) => (
               <AccountRow key={a.email} a={a} onChanged={onChanged} />
@@ -84,8 +84,7 @@ export function CalendarDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
 
       <ToolsDisclosure c={c} onChanged={onChanged} />
       <div className={FOOT + " mt-2"}>
-        Creating, changing, or deleting events always asks for your approval first, and the
-        approval names the account.
+        创建、修改或删除日程都会先征得你的批准，且审批会注明对应的账户。
       </div>
     </div>
   );
@@ -97,8 +96,8 @@ function AccountRow({ a, onChanged }: { a: GmailAccount; onChanged: () => void }
     <div className={ROW} data-testid={`gcal-account-${a.email}`}>
       <span className="min-w-0 flex-1 flex items-center gap-2">
         <span className="text-[13px] font-medium truncate">{a.email}</span>
-        {a.default && <span className={TAG_ACCENT}>Default</span>}
-        {a.needs_reauth && <span className={TAG_WARN}>⚠ Sign in again</span>}
+        {a.default && <span className={TAG_ACCENT}>默认</span>}
+        {a.needs_reauth && <span className={TAG_WARN}>⚠ 需重新登录</span>}
       </span>
       {!a.default && (
         <button
@@ -109,12 +108,12 @@ function AccountRow({ a, onChanged }: { a: GmailAccount; onChanged: () => void }
             onChanged();
           }}
         >
-          Make default
+          设为默认
         </button>
       )}
       <button
         className={XBTN}
-        title="Disconnect this account"
+        title="断开此账户连接"
         data-testid={`gcal-disconnect-${a.email}`}
         disabled={busy}
         onClick={async () => {

@@ -51,7 +51,7 @@ export function PersonaView({
     setError(null);
     getPersonaDetail(personaId)
       .then((d) => live && setDetail(d))
-      .catch(() => live && setError("Could not load this persona."));
+      .catch(() => live && setError("无法加载该角色。"));
     getConnectors()
       .then((list) => live && setByName(indexConnectors(list)))
       .catch(() => {});
@@ -83,12 +83,12 @@ export function PersonaView({
             className="inline-flex items-center gap-1 text-[12.5px] text-muted hover:text-ink"
             onClick={onBack}
           >
-            <Icon name="arrowLeft" size={15} /> Back
+            <Icon name="arrowLeft" size={15} /> 返回
           </button>
           <span className="text-faint">·</span>
         </>
       )}
-      <span className="text-[13px] font-semibold">Persona</span>
+      <span className="text-[13px] font-semibold">角色</span>
     </div>
   );
 
@@ -96,7 +96,7 @@ export function PersonaView({
     return (
       <main className="flex-1 min-w-0 flex flex-col bg-paper">
         {header}
-        <div className="p-12 text-center text-faint text-[13px]">{error || "Loading…"}</div>
+        <div className="p-12 text-center text-faint text-[13px]">{error || "加载中…"}</div>
       </main>
     );
   }
@@ -118,15 +118,15 @@ export function PersonaView({
               <p className="text-[13px] text-muted mt-0.5">{detail.tagline}</p>
             </div>
             <div className="ml-auto flex items-center gap-2">
-              <span className="text-[12px] text-muted">{detail.enabled ? "Enabled" : "Disabled"}</span>
-              <Toggle checked={detail.enabled} onChange={toggleEnabled} title="Enable this persona" />
+              <span className="text-[12px] text-muted">{detail.enabled ? "已启用" : "已停用"}</span>
+              <Toggle checked={detail.enabled} onChange={toggleEnabled} title="启用该角色" />
             </div>
           </header>
 
           {/* about */}
           {detail.description && (
             <section>
-              <div className={`${SEC_H} mb-1.5`}>About</div>
+              <div className={`${SEC_H} mb-1.5`}>关于</div>
               <p className="text-[14px] leading-relaxed text-ink/90">{detail.description}</p>
             </section>
           )}
@@ -134,7 +134,7 @@ export function PersonaView({
           {/* tools */}
           {detail.tools.length > 0 && (
             <section>
-              <div className={`${SEC_H} mb-2`}>Built-in capabilities</div>
+              <div className={`${SEC_H} mb-2`}>内置能力</div>
               <div className="flex flex-wrap gap-1.5">
                 {detail.tools.map((t) => (
                   <span
@@ -151,10 +151,9 @@ export function PersonaView({
           {/* connections for full benefit (manifest recommends) */}
           {detail.recommends.length > 0 && (
             <section>
-              <div className={`${SEC_H} mb-1`}>Connections for full benefit</div>
+              <div className={`${SEC_H} mb-1`}>发挥全部能力所需的连接</div>
               <p className="text-[12.5px] text-muted mb-2.5">
-                Declared by the persona — wire {shortPersonaName(detail.name, personaId)} into these
-                to unlock its full workflow.
+                由该角色声明——把 {shortPersonaName(detail.name, personaId)} 接入这些服务，即可解锁它的完整工作流。
               </p>
               <div className="rounded-xl2 border border-line overflow-hidden">
                 {detail.recommends.map((r, i) => {
@@ -173,7 +172,7 @@ export function PersonaView({
                           {isMcp ? (
                             <span className={TAG_MCP}>MCP</span>
                           ) : r.tier === "core" ? (
-                            <span className={TAG_CORE}>core</span>
+                            <span className={TAG_CORE}>核心</span>
                           ) : null}
                         </div>
                         <div className="text-[12px] text-muted">{r.reason}</div>
@@ -181,14 +180,14 @@ export function PersonaView({
                       {r.connected ? (
                         <span className="inline-flex items-center gap-1 text-[11.5px] text-ok shrink-0">
                           <span className="w-1.5 h-1.5 rounded-full bg-ok" />
-                          connected
+                          已连接
                         </span>
                       ) : (
                         <button
                           className={r.tier === "core" && !isMcp ? BTN_ACCENT : BTN_BORDERED}
                           onClick={onOpenIntegrations}
                         >
-                          {isMcp ? "Add" : "Connect"}
+                          {isMcp ? "添加" : "连接"}
                         </button>
                       )}
                     </div>
@@ -201,10 +200,9 @@ export function PersonaView({
           {/* persona-default connections (persona → session default) */}
           {detail.default_connections.length > 0 && (
             <section>
-              <div className={`${SEC_H} mb-1`}>New sessions get by default</div>
+              <div className={`${SEC_H} mb-1`}>新会话默认启用</div>
               <p className="text-[12.5px] text-muted mb-2.5">
-                When you start a {shortPersonaName(detail.name, personaId)} session these are enabled
-                automatically. You can still mute any of them per session.
+                当你开始一个 {shortPersonaName(detail.name, personaId)} 会话时，这些会自动启用。你仍可在每个会话中单独关闭其中任意一项。
               </p>
               <div className="space-y-1.5">
                 {detail.default_connections.map((c) => (
@@ -219,14 +217,14 @@ export function PersonaView({
                     <div className="flex-1 text-[13px] font-medium">
                       {labelFor(c.connector, byName)}
                       {!c.connected && (
-                        <span className="text-[11px] text-faint font-normal"> · connect to enable</span>
+                        <span className="text-[11px] text-faint font-normal"> · 连接后可启用</span>
                       )}
                     </div>
                     <Toggle
                       checked={c.enabled}
                       disabled={!c.connected}
                       onChange={(next) => toggleDefault(c.connector, next)}
-                      title={c.connected ? "On by default for new sessions" : "Connect this first"}
+                      title={c.connected ? "新会话默认开启" : "请先连接"}
                     />
                   </div>
                 ))}
@@ -238,7 +236,7 @@ export function PersonaView({
           <section className="flex flex-wrap gap-x-8 gap-y-2 text-[12.5px]">
             {detail.recommended_models.length > 0 && (
               <div>
-                <span className="text-faint">Models</span> ·{" "}
+                <span className="text-faint">模型</span> ·{" "}
                 {detail.recommended_models.map((m, i) => (
                   <span key={m}>
                     <span className="font-mono">{m}</span>
@@ -249,12 +247,12 @@ export function PersonaView({
             )}
             {detail.default_permission_mode && (
               <div>
-                <span className="text-faint">Default mode</span> · {detail.default_permission_mode}
+                <span className="text-faint">默认模式</span> · {detail.default_permission_mode}
               </div>
             )}
             {detail.workspace && (
               <div>
-                <span className="text-faint">Workspace</span> · {detail.workspace}
+                <span className="text-faint">工作区</span> · {detail.workspace}
               </div>
             )}
           </section>

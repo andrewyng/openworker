@@ -34,21 +34,21 @@ export function AuditView() {
       <div className="flex-1 min-w-0 overflow-y-auto hairline-scroll">
         <div className="max-w-4xl mx-auto px-7 py-6">
           <PanelHead
-            title="Activity"
-            sub="Recent connector and browser tool activity. Arguments are sanitized before storage."
+            title="活动"
+            sub="最近的连接器和浏览器工具活动。参数在存储前已做脱敏处理。"
           />
 
           <div className="flex items-center gap-2 flex-wrap mb-4">
-            <input className={INPUT} placeholder="session id" value={sessionFilter} onChange={(e) => setSessionFilter(e.target.value)} />
-            <input className={INPUT} placeholder="connector" value={connectorFilter} onChange={(e) => setConnectorFilter(e.target.value)} />
-            <input className={INPUT} placeholder="tool" value={toolFilter} onChange={(e) => setToolFilter(e.target.value)} />
+            <input className={INPUT} placeholder="会话 ID" value={sessionFilter} onChange={(e) => setSessionFilter(e.target.value)} />
+            <input className={INPUT} placeholder="连接器" value={connectorFilter} onChange={(e) => setConnectorFilter(e.target.value)} />
+            <input className={INPUT} placeholder="工具" value={toolFilter} onChange={(e) => setToolFilter(e.target.value)} />
             <button className={BTN_ACCENT} onClick={refresh}>
-              Filter
+              筛选
             </button>
           </div>
 
           {events.length === 0 ? (
-            <div className={CARD + " p-4 text-[13px] text-muted"}>No audit events yet.</div>
+            <div className={CARD + " p-4 text-[13px] text-muted"}>暂无审计事件。</div>
           ) : (
             <div className="space-y-2">
               {events.map((ev) => (
@@ -68,13 +68,13 @@ function AuditRow({ ev }: { ev: AuditEvent }) {
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-mono text-[12.5px] font-medium text-ink">{ev.tool}</span>
         <span className="text-[11.5px] text-faint">
-          {ev.connector || "tool"} · {ev.stage || ev.status || "event"} · {ev.timestamp}
+          {ev.connector || "工具"} · {ev.stage || ev.status || "事件"} · {ev.timestamp}
         </span>
       </div>
       <div className="text-[11.5px] text-muted mt-0.5">
-        session {ev.session_id || "-"} {ev.approval ? `· ${ev.approval}` : ""} {ev.status ? `· ${ev.status}` : ""}
+        会话 {ev.session_id || "-"} {ev.approval ? `· ${ev.approval}` : ""} {ev.status ? `· ${ev.status}` : ""}
       </div>
-      {ev.resource && <div className="text-[11.5px] text-faint mt-0.5">resource: {ev.resource}</div>}
+      {ev.resource && <div className="text-[11.5px] text-faint mt-0.5">资源：{ev.resource}</div>}
       {ev.args && Object.keys(ev.args).length > 0 && (
         <div className="font-mono text-[11.5px] text-muted mt-1.5 break-words">{formatAuditArgs(ev.args)}</div>
       )}

@@ -7,13 +7,13 @@ import { addModel, getSettings, removeModel, setDefaultModel } from "../api";
 // carry theirs.
 const MODEL_FAMILIES: Record<string, { value: string; label: string }[]> = {
   bedrock: [
-    { value: "claude", label: "Claude family" },
-    { value: "other", label: "Other models" },
+    { value: "claude", label: "Claude 系列" },
+    { value: "other", label: "其他模型" },
   ],
   vertex: [
-    { value: "gemini", label: "Gemini family" },
-    { value: "claude", label: "Claude family" },
-    { value: "openweight", label: "Open-weight" },
+    { value: "gemini", label: "Gemini 系列" },
+    { value: "claude", label: "Claude 系列" },
+    { value: "openweight", label: "开放权重" },
   ],
 };
 
@@ -94,7 +94,7 @@ export function ModelChecklist({
                 type="checkbox"
                 checked={checked(id)}
                 disabled={isDefault}
-                title={isDefault ? "The default model is always shown — make another model default first" : undefined}
+                title={isDefault ? "默认模型始终显示 — 请先将其他模型设为默认" : undefined}
                 onChange={(e) => tick(id, e.target.checked)}
               />
               <span className="mlist-name" title={id}>
@@ -102,10 +102,10 @@ export function ModelChecklist({
               </span>
             </label>
             {isDefault ? (
-              <span className="mlist-default">default</span>
+              <span className="mlist-default">默认</span>
             ) : (
               <button className="mlist-make" onClick={() => makeDefault(id)}>
-                Make default
+                设为默认
               </button>
             )}
           </div>
@@ -116,7 +116,7 @@ export function ModelChecklist({
           <select
             value={family}
             onChange={(e) => setFamily(e.target.value)}
-            aria-label="Model family"
+            aria-label="模型系列"
             data-testid="mlist-family"
           >
             {families.map((f) => (
@@ -127,7 +127,7 @@ export function ModelChecklist({
           </select>
         )}
         <input
-          placeholder="Add another model…"
+          placeholder="添加其他模型…"
           value={draft}
           spellCheck={false}
           autoComplete="off"
@@ -135,7 +135,7 @@ export function ModelChecklist({
           onKeyDown={(e) => e.key === "Enter" && add()}
         />
         <button className="btn-primary sm" onClick={add} disabled={!draft.trim()}>
-          Add
+          添加
         </button>
       </div>
     </div>

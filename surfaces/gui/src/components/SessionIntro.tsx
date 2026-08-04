@@ -14,11 +14,11 @@ import { AddFolderForm } from "./AddFolderForm";
 // composer. Not ready → "Configure ›" always visible (for a gated row the setup action IS the
 // row's meaning), opening the §23 Session settings drawer — no second setup surface here.
 
-const FOLDER_PROMPT = "Analyze the files in this folder and summarize what matters.";
+const FOLDER_PROMPT = "分析这个文件夹里的文件，总结出重点。";
 const HUBSPOT_PROMPT =
-  "Create a report on my recent HubSpot leads: sources, stages, and who needs follow-up.";
+  "为我近期的 HubSpot 线索生成一份报告：来源、阶段，以及谁需要跟进。";
 const GH_SLACK_PROMPT =
-  "Set up a weekly progress report: summarize activity in my GitHub repos and post it to Slack every Friday morning.";
+  "设置一份每周进展报告：汇总我的 GitHub 仓库动态，并在每周五早上发布到 Slack。";
 
 export function SessionIntro({
   sessionId,
@@ -65,20 +65,19 @@ export function SessionIntro({
   return (
     <div className="intro">
       <h1 className="greeting">
-        <span className="mark">✦</span> What should we produce?
+        <span className="mark">✦</span> 我们来做点什么？
       </h1>
       <p className="intro-lede">
-        Pick a task to start — I'll do the work and save the result. Or just type what you need
-        below.
+        选一个任务开始 — 我来干活并保存结果。也可以直接在下方输入你的需求。
       </p>
 
       <div className="intro-tasks">
         <button className="task-card" data-testid="intro-task-folder" onClick={pickFolder}>
           <span className="task-card-body">
-            <span className="task-card-title">Analyze the files in a directory</span>
-            <span className="task-card-sub">I'll read them and summarize what matters</span>
+            <span className="task-card-title">分析目录里的文件</span>
+            <span className="task-card-sub">我来读一遍，总结出重点</span>
           </span>
-          <span className="task-card-act">Pick a folder →</span>
+          <span className="task-card-act">选择文件夹 →</span>
         </button>
         {addingFolder && (
           <div className="intro-addfolder">
@@ -102,13 +101,13 @@ export function SessionIntro({
           onClick={() => (hubspotReady ? onPrefill(HUBSPOT_PROMPT) : onOpenSessionSettings())}
         >
           <span className="task-card-body">
-            <span className="task-card-title">Create a report from my HubSpot leads</span>
+            <span className="task-card-title">用我的 HubSpot 线索生成报告</span>
             <span className="task-card-sub">
               {dot("hubspot", hubspotReady)}
-              Sources, stages, and who needs follow-up
+              来源、阶段，以及谁需要跟进
             </span>
           </span>
-          <span className="task-card-act">{hubspotReady ? "Start →" : "Configure ›"}</span>
+          <span className="task-card-act">{hubspotReady ? "开始 →" : "配置 ›"}</span>
         </button>
 
         <button
@@ -117,14 +116,14 @@ export function SessionIntro({
           onClick={() => (ghSlackReady ? onPrefill(GH_SLACK_PROMPT) : onOpenSessionSettings())}
         >
           <span className="task-card-body">
-            <span className="task-card-title">Automate a weekly GitHub progress report to Slack</span>
+            <span className="task-card-title">自动把每周 GitHub 进展报告发到 Slack</span>
             <span className="task-card-sub">
               {dot("github", live.has("github"))}
               {dot("slack", live.has("slack"))}
-              Repo activity, summarized and posted every Friday
+              汇总仓库动态，每周五自动发布
             </span>
           </span>
-          <span className="task-card-act">{ghSlackReady ? "Start →" : "Configure ›"}</span>
+          <span className="task-card-act">{ghSlackReady ? "开始 →" : "配置 ›"}</span>
         </button>
       </div>
     </div>

@@ -39,11 +39,11 @@ export function GmailDetail({ c, cloud, slack: _slack, onChanged }: DetailProps)
               <>
                 <span className="w-2 h-2 rounded-full bg-ok" />
                 <span data-testid="gmail-status">
-                  {accounts.length} account{accounts.length === 1 ? "" : "s"}
+                  {accounts.length} 个账户
                 </span>
               </>
             ) : (
-              <span>Not connected</span>
+              <span>未连接</span>
             )}
           </div>
         </div>
@@ -54,28 +54,28 @@ export function GmailDetail({ c, cloud, slack: _slack, onChanged }: DetailProps)
           disabled={busy || !cloud?.signed_in || c.managed_paused}
           title={
             c.managed_paused
-              ? "One-click Google sign-in is coming soon"
+              ? "一键 Google 登录即将推出"
               : cloud?.signed_in
                 ? ""
-                : "Sign in to OpenWorker Cloud first"
+                : "请先登录 OpenWorker Cloud"
           }
         >
-          {c.managed_paused ? "＋ Add account · Coming soon" : busy ? "Check your browser…" : "＋ Add account"}
+          {c.managed_paused ? "＋ 添加账户 · 即将推出" : busy ? "请查看浏览器…" : "＋ 添加账户"}
         </button>
       </div>
 
       {!c.connected && (
         <div className={GRP}>
           <div className={ROW + " text-[12.5px] text-muted"}>
-            Sign in with Google — each mailbox stays separate, agents say which one they use.
-            {cloud?.signed_in ? "" : " Requires cloud sign-in."}
+            使用 Google 登录 —— 每个邮箱彼此独立，agent 会注明使用的是哪一个。
+            {cloud?.signed_in ? "" : " 需要登录 Cloud。"}
           </div>
         </div>
       )}
 
       {accounts.length > 0 && (
         <>
-          <div className={GRP_H + " !mt-0"}>Accounts</div>
+          <div className={GRP_H + " !mt-0"}>账户</div>
           <div className={GRP} data-testid="gmail-accounts">
             {accounts.map((a) => (
               <AccountRow key={a.email} a={a} onChanged={onChanged} />
@@ -88,8 +88,7 @@ export function GmailDetail({ c, cloud, slack: _slack, onChanged }: DetailProps)
 
       <ToolsDisclosure c={c} onChanged={onChanged} />
       <div className={FOOT + " mt-2"}>
-        Filters are enforced on this computer, before an agent sees results. Hidden counts show
-        on the tool card and in Activity — never the content.
+        过滤规则在这台电脑上执行，agent 看到结果之前就已生效。被隐藏的数量会显示在工具卡片和「活动」里，但内容不会。
       </div>
     </div>
   );
@@ -101,8 +100,8 @@ function AccountRow({ a, onChanged }: { a: GmailAccount; onChanged: () => void }
     <div className={ROW} data-testid={`gmail-account-${a.email}`}>
       <span className="min-w-0 flex-1 flex items-center gap-2">
         <span className="text-[13px] font-medium truncate">{a.email}</span>
-        {a.default && <span className={TAG_ACCENT}>Default</span>}
-        {a.needs_reauth && <span className={TAG_WARN}>⚠ Sign in again</span>}
+        {a.default && <span className={TAG_ACCENT}>默认</span>}
+        {a.needs_reauth && <span className={TAG_WARN}>⚠ 需重新登录</span>}
       </span>
       {!a.default && (
         <button
@@ -113,12 +112,12 @@ function AccountRow({ a, onChanged }: { a: GmailAccount; onChanged: () => void }
             onChanged();
           }}
         >
-          Make default
+          设为默认
         </button>
       )}
       <button
         className={XBTN}
-        title="Disconnect this mailbox"
+        title="断开此邮箱连接"
         data-testid={`gmail-disconnect-${a.email}`}
         disabled={busy}
         onClick={async () => {
@@ -138,12 +137,12 @@ function FiltersGroup({ c, onChanged }: Pick<DetailProps, "c" | "onChanged">) {
   const filters = c.filters ?? { senders: [], labels: [] };
   return (
     <>
-      <div className={GRP_H}>Never show agents</div>
+      <div className={GRP_H}>始终对 agent 隐藏</div>
       <div className={GRP} data-testid="gmail-filters">
         <ChipListRow
-          label="Senders"
+          label="发件人"
           testid="gmail-filter-senders"
-          placeholder="name@example.com or @domain.com"
+          placeholder="name@example.com 或 @domain.com"
           values={filters.senders}
           onSave={async (senders) => {
             await setGmailFilters({ senders });
@@ -151,9 +150,9 @@ function FiltersGroup({ c, onChanged }: Pick<DetailProps, "c" | "onChanged">) {
           }}
         />
         <ChipListRow
-          label="Labels"
+          label="标签"
           testid="gmail-filter-labels"
-          placeholder="Label name, e.g. Personal"
+          placeholder="标签名，例如「个人」"
           values={filters.labels}
           onSave={async (labels) => {
             await setGmailFilters({ labels });
@@ -162,7 +161,7 @@ function FiltersGroup({ c, onChanged }: Pick<DetailProps, "c" | "onChanged">) {
         />
       </div>
       <div className={FOOT}>
-        Matching email is silently left out of what agents read — no trace they could probe.
+        匹配的邮件会被静默排除在 agent 可读取的内容之外 —— 不留任何可被探知的痕迹。
       </div>
     </>
   );
@@ -200,7 +199,7 @@ function ChipListRow({
             {v}
             <button
               className={XBTN}
-              title="remove"
+              title="移除"
               onClick={() => onSave(values.filter((x) => x !== v))}
             >
               ×

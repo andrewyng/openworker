@@ -60,7 +60,7 @@ export function InboxItemCard({
         }}
       />
       <button className={BTN_PRIMARY} disabled={!answer.trim()} onClick={() => onResolve(item.id, answer)}>
-        Send
+        发送
       </button>
     </div>
   );
@@ -111,7 +111,7 @@ export function InboxItemCard({
             className={item.data?.tool ? BTN_ACCENT : BTN_PRIMARY}
             onClick={() => onResolve(item.id, "allow")}
           >
-            {item.data?.tool ? approvalActionLabels(item.data.tool).allow : "Approve"}
+            {item.data?.tool ? approvalActionLabels(item.data.tool).allow : "批准"}
           </button>
           {/* Task-persistent standing grant (§25) — present only when the approval was
               raised inside an automation run AND the call can carry a tool+target rule.
@@ -119,17 +119,17 @@ export function InboxItemCard({
           {item.data?.task_id && item.data?.standing_target && (
             <button
               className={BTN_BORDERED}
-              title={`Always allow against ${item.data.standing_target} for “${item.data.task_title || "this automation"}” — revoke any time on its Automations page`}
+              title={`对“${item.data.task_title || "此自动化"}”始终允许作用于 ${item.data.standing_target}——可随时在其自动化页面撤销`}
               onClick={() => onResolve(item.id, "always_task")}
             >
-              Allow every time
+              每次都允许
             </button>
           )}
           <button
             className={item.data?.tool ? BTN_QUIET : BTN_BORDERED}
             onClick={() => onResolve(item.id, "deny")}
           >
-            {item.data?.tool ? approvalActionLabels(item.data.tool).deny : "Deny"}
+            {item.data?.tool ? approvalActionLabels(item.data.tool).deny : "拒绝"}
           </button>
         </div>
       ) : item.kind === "question" ? (
@@ -162,19 +162,19 @@ export function InboxItemCard({
                 disabled={!selected.length}
                 onClick={() => onResolve(item.id, selected.join(", "))}
               >
-                Send{selected.length ? ` (${selected.length})` : ""}
+                发送{selected.length ? `（${selected.length}）` : ""}
               </button>
             </div>
           )}
           {(allowText || options.length === 0) &&
-            textRow(options.length ? "Or type your own answer…" : "Your answer…")}
+            textRow(options.length ? "或输入你自己的回答…" : "你的回答…")}
         </>
       ) : item.kind === "directory" ? (
         <div className="flex items-center gap-2 mt-2.5">
           <button
             className={BTN_PRIMARY}
             disabled={!item.data?.path}
-            title={item.data?.path || "No folder was suggested"}
+            title={item.data?.path || "未建议任何文件夹"}
             onClick={() =>
               onResolve(
                 item.id,
@@ -182,10 +182,10 @@ export function InboxItemCard({
               )
             }
           >
-            {item.data?.path ? "Grant" : "Grant (no folder)"}
+            {item.data?.path ? "授予" : "授予（无文件夹）"}
           </button>
           <button className={BTN_BORDERED} onClick={() => onResolve(item.id, JSON.stringify({ granted: false }))}>
-            Deny
+            拒绝
           </button>
         </div>
       ) : item.kind === "plan" ? (
@@ -194,19 +194,19 @@ export function InboxItemCard({
             className={BTN_PRIMARY}
             onClick={() => onResolve(item.id, JSON.stringify({ approved: true, mode: "interactive" }))}
           >
-            Approve
+            批准
           </button>
           <button
             className={BTN_BORDERED}
             onClick={() => onResolve(item.id, JSON.stringify({ approved: false, feedback: "" }))}
           >
-            Reject
+            拒绝
           </button>
         </div>
       ) : (
         <div className="flex items-center gap-2 mt-2.5">
           <button className={BTN_BORDERED} onClick={() => onResolve(item.id, "seen")}>
-            Dismiss
+            忽略
           </button>
         </div>
       )}

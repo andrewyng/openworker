@@ -99,7 +99,7 @@ export function SelectMenu({
                     className={
                       "w-1.5 h-1.5 rounded-full shrink-0 " + (o.dot ? "bg-ok" : "bg-transparent")
                     }
-                    title={o.dot ? "Key set" : undefined}
+                    title={o.dot ? "已设置密钥" : undefined}
                   />
                   </button>
                 </div>

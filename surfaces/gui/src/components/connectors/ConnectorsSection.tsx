@@ -78,10 +78,10 @@ export function ConnectorsSection() {
           data-testid="connectors-breadcrumb"
           onClick={() => setDetail(null)}
         >
-          ‹ Connectors
+          ‹ 连接器
         </button>
         {!c ? (
-          <div className="text-[13px] text-muted">Loading…</div>
+          <div className="text-[13px] text-muted">加载中…</div>
         ) : !c.connected ? (
           /* Pre-connect page (§38). When a connect completes, the poll flips
              c.connected and this same route re-renders as the connected page. */
@@ -130,7 +130,7 @@ function GenericDetail({
           <h2 className="text-[20px] font-semibold tracking-tight leading-tight">{c.title}</h2>
           <div className="text-[12.5px] text-muted flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-ok" />
-            {c.account || (c.auth === "none" ? "Built in" : "Connected")}
+            {c.account || (c.auth === "none" ? "内置" : "已连接")}
           </div>
         </div>
         {c.auth !== "none" && (
@@ -142,7 +142,7 @@ function GenericDetail({
               onGone();
             }}
           >
-            Disconnect
+            断开连接
           </button>
         )}
       </div>

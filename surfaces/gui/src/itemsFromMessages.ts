@@ -72,13 +72,13 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
       // the Transcript only offers the button when it's the transcript tail.
       items.push(
         m.kind === "interrupted"
-          ? { kind: "notice", tone: "warn", text: "Interrupted." }
+          ? { kind: "notice", tone: "warn", text: "已中断。" }
           : m.kind === "model_switch"
-            ? { kind: "notice", tone: "info", text: m.text || "Model switched" }
+            ? { kind: "notice", tone: "info", text: m.text || "已切换模型" }
             : m.kind === "compacted"
               ? // The subtle "compacted here" divider (OPE-27) — the transcript itself is intact.
-                { kind: "notice", tone: "info", text: m.text || "Context compacted" }
-              : { kind: "notice", tone: "warn", text: "Error: " + (m.text || "unknown"), retriable: true },
+                { kind: "notice", tone: "info", text: m.text || "上下文已压缩" }
+              : { kind: "notice", tone: "warn", text: "错误：" + (m.text || "未知"), retriable: true },
       );
     }
     // system messages are omitted; tool-result messages are folded into the tool row above

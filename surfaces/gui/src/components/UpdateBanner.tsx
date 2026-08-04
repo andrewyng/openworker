@@ -88,13 +88,13 @@ export function UpdateBanner() {
       role="status"
       data-testid="update-banner"
     >
-      <div className="text-[13px] font-semibold">Update available</div>
+      <div className="text-[13px] font-semibold">有可用更新</div>
       <div className="text-[12px] text-muted mt-0.5">
-        OpenWorker v{update.version} is ready to install.
+        OpenWorker v{update.version} 已就绪，可以安装。
       </div>
       {phase === "error" && (
         <div className="text-[11.5px] text-warnInk mt-1.5">
-          The update couldn't be installed — it will be offered again next launch.
+          更新未能安装 — 下次启动时将再次提示。
         </div>
       )}
       <div className="flex items-center gap-2 mt-2.5">
@@ -104,7 +104,7 @@ export function UpdateBanner() {
           disabled={busy}
           data-testid="update-install"
         >
-          {busy ? "Downloading…" : "Restart to update"}
+          {busy ? "正在下载…" : "重启以更新"}
         </button>
         <button
           className="px-2 py-1.5 text-[12.5px] text-faint hover:text-muted"
@@ -119,7 +119,7 @@ export function UpdateBanner() {
           disabled={phase === "installing"}
           data-testid="update-later"
         >
-          Later
+          稍后
         </button>
       </div>
     </div>
