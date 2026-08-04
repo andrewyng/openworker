@@ -158,7 +158,7 @@ const CONNECTORS = {
     // MCP-BACKED connectors (§42): vendor-hosted MCP + local OAuth, pinned tool subset.
     // monday is one-click ONLY (no manual fields); jira also has a manual token path
     // (two-mode modal). Neither needs cloud sign-in.
-    { name: "monday", title: "monday.com", icon: "▦", blurb: "Read boards and items, track work, create items and post updates.", aliases: ["project management", "tasks", "boards"], auth: "oauth", two_way: false, channels: false, available: true, brand_color: "#6161ff", logo: "monday", mcp: true, fields: [], instructions: ["One click connects via monday.com sign-in in your browser.", "Sign-in is fully local — tokens stay on this Mac."], connected: false, account: null, enabled: false, allowed_users: [], tools: [{ name: "mcp__monday__get_board_info", label: "Read board", kind: "read", description: "Read a board's columns and groups.", enabled: true, requires_approval: false }, { name: "mcp__monday__create_item", label: "Create item", kind: "write", description: "Create an item on a board.", enabled: true, requires_approval: true }], managed: false, managed_profile: false },
+    { name: "monday", title: "monday.com", icon: "▦", blurb: "Read boards and items, track work, create items and post updates.", aliases: ["project management", "tasks", "boards"], auth: "oauth", two_way: false, channels: false, available: true, brand_color: "#6161ff", logo: "monday", mcp: true, fields: [], instructions: ["One click connects via monday.com sign-in in your browser.", "Sign-in is fully local — tokens stay on this computer."], connected: false, account: null, enabled: false, allowed_users: [], tools: [{ name: "mcp__monday__get_board_info", label: "Read board", kind: "read", description: "Read a board's columns and groups.", enabled: true, requires_approval: false }, { name: "mcp__monday__create_item", label: "Create item", kind: "write", description: "Create an item on a board.", enabled: true, requires_approval: true }], managed: false, managed_profile: false },
     { name: "jira", title: "Jira", icon: "◆", blurb: "Search, summarize, create, and update issues.", aliases: ["issues", "tickets", "atlassian"], auth: "api_token", two_way: false, channels: false, available: true, brand_color: "#0052cc", logo: "jira", mcp: true, fields: [{ key: "base_url", label: "Atlassian site URL", secret: false, required: true, help: "", placeholder: "" }, { key: "email", label: "Account email", secret: false, required: true, help: "", placeholder: "" }, { key: "api_token", label: "API token", secret: true, required: true, help: "", placeholder: "" }], instructions: [], connected: false, account: null, enabled: false, allowed_users: [], tools: [], managed: false, managed_profile: false },
   ],
 };
@@ -552,6 +552,14 @@ export async function mockApi(page: import("@playwright/test").Page) {
   // Per-session unattended flag — mutable so the composer's "Send to Inbox" toggle persists and
   // the app reads it back (which is what gates parking approvals to the Inbox vs an inline card).
   const unattended: Record<string, boolean> = {};
+  // Skills (SKILLS-SPEC) — mutable folder-is-truth mirror: Settings CRUD, the enabled flag,
+  // staged uploads (stage → preview → confirm), and the composer's per-session menu all
+  // round-trip through this one list.
+  const skills: any[] = [
+    { name: "weekly-report", description: "Monday status report", instructions: "1. Collect updates\n2. Write it up", scope: "global", source: "local", enabled: true, path: "/state/skills/weekly-report", files: 0 },
+    { name: "html-to-markdown", description: "Convert an HTML document or fragment to clean markdown.", instructions: "Convert the given HTML to markdown, preserving structure.", scope: "global", source: "uploaded", enabled: true, path: "/state/skills/html-to-markdown", files: 2 },
+  ];
+  let stagedSkill: any = null;
 
   // Fresh cloud sign-in state per test (module state outlives a page).
   Object.assign(CLOUD_STATE, {
@@ -585,7 +593,12 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const msg = JSON.parse(String(raw));
       if (msg.type === "user_message") {
         hadTurn = true;
-        send("turn_start", { input: msg.text });
+        // Force-run (SKILLS-SPEC §6): like the real server, TURN_START ships the user's
+        // literal "/name …" line as `display` so the client dedupes on what the user sees.
+        send("turn_start", {
+          input: msg.text,
+          ...(msg.skill ? { display: `/${msg.skill}${msg.text ? ` ${msg.text}` : ""}` } : {}),
+        });
         if (/run a tool/i.test(msg.text)) {
           pendingTool = "run_shell";
           send("tool_proposed", { name: "run_shell", arguments: { command: "ls" } });
@@ -721,10 +734,11 @@ export async function mockApi(page: import("@playwright/test").Page) {
         send("assistant_delta", { text: msg.text });
         // Echo the model the message carried — pins the model-per-message contract (the
         // composer's visible model must ride on every user_message; 2026-07-04 fix).
+        // Same for `skill`: the force-run pick must ride as its OWN FIELD, never as text.
         // `usage` mirrors the real engine's assistant_message sidecar (OPE-42): fixed
         // counts per turn so the usage-chip specs can assert exact accumulation.
         send("assistant_message", {
-          text: `Echo: ${msg.text} [model=${msg.model || "none"}]`,
+          text: `Echo: ${msg.text} [model=${msg.model || "none"}]${msg.skill ? ` [skill=${msg.skill}]` : ""}`,
           usage: {
             model: msg.model || "anthropic:claude-opus-4-8",
             input: 1_000,
@@ -835,6 +849,73 @@ export async function mockApi(page: import("@playwright/test").Page) {
       }
       return json(i >= 0 ? sessions[i] : PINNED_SESSION);
     }
+
+    // Skills (SKILLS-SPEC §5/§6). Order matters: upload/confirm before the {name} regexes.
+    if (/\/v1\/sessions\/[^/]+\/skills$/.test(p)) {
+      // The composer's live menu: every Settings-enabled skill (§4 — disabled = invisible).
+      return json({
+        skills: skills
+          .filter((s) => s.enabled)
+          .map((s) => ({ name: s.name, description: s.description, scope: s.scope, enabled: true })),
+      });
+    }
+    if (p.endsWith("/v1/skills/upload/confirm") && m === "POST") {
+      const b = req.postDataJSON() || {};
+      if (!stagedSkill || b.token !== stagedSkill.token)
+        return json({ ok: false, error: "Upload expired — pick the file again." });
+      skills.push({
+        name: stagedSkill.name, description: stagedSkill.description,
+        instructions: stagedSkill.instructions, scope: "global", source: "uploaded",
+        enabled: true, path: `/state/skills/${stagedSkill.name}`, files: stagedSkill.files.length,
+      });
+      stagedSkill = null;
+      return json({ ok: true });
+    }
+    if (p.endsWith("/v1/skills/upload") && m === "POST") {
+      // Stage → preview; nothing lands until confirm. Fixed parse (the mock reads no zips).
+      stagedSkill = {
+        token: "stage-1", name: "greet", description: "says hello",
+        instructions: "Say hello warmly.", files: ["notes.txt"],
+      };
+      return json({ ok: true, ...stagedSkill });
+    }
+    {
+      const mr = p.match(/\/v1\/skills\/([^/]+)\/reveal$/);
+      if (mr && m === "POST") {
+        return json(
+          skills.some((s) => s.name === decodeURIComponent(mr[1]))
+            ? { ok: true }
+            : { ok: false, error: `Unknown skill: ${decodeURIComponent(mr[1])}` },
+        );
+      }
+    }
+    if (/\/v1\/skills\/[^/]+$/.test(p) && (m === "PATCH" || m === "DELETE")) {
+      const name = decodeURIComponent(p.split("/").pop()!);
+      const i = skills.findIndex((s) => s.name === name);
+      if (i < 0) return json({ ok: false, error: `Unknown skill: ${name}` });
+      if (m === "DELETE") {
+        skills.splice(i, 1);
+        return json({ ok: true });
+      }
+      const b = req.postDataJSON() || {};
+      if (typeof b.enabled === "boolean") skills[i].enabled = b.enabled;
+      if (typeof b.description === "string") skills[i].description = b.description;
+      if (typeof b.instructions === "string") skills[i].instructions = b.instructions;
+      return json({ ok: true });
+    }
+    if (p.endsWith("/v1/skills") && m === "POST") {
+      const b = req.postDataJSON() || {};
+      if (!b.name || !(b.instructions || "").trim())
+        return json({ ok: false, error: "Skill name and instructions are required." });
+      if (skills.some((s) => s.name === b.name))
+        return json({ ok: false, error: `A skill named '${b.name}' already exists in that scope.` });
+      skills.push({
+        name: b.name, description: b.description || "", instructions: b.instructions,
+        scope: "global", source: "local", enabled: true, path: `/state/skills/${b.name}`, files: 0,
+      });
+      return json({ ok: true });
+    }
+    if (p.endsWith("/v1/skills")) return json({ skills });
 
     if (p.endsWith("/v1/health")) return json(HEALTH);
     if (p.endsWith("/v1/settings")) return json(SETTINGS);

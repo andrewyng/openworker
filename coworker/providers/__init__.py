@@ -10,6 +10,7 @@ from .base import (
 from .capabilities import capabilities_for
 from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider, resolve_api_key
+from .openai_responses import OpenAIResponsesProvider
 from .registry import (
     ProviderDescriptor,
     ProviderField,
@@ -34,6 +35,7 @@ __all__ = [
     "BedrockProvider",
     "GeminiProvider",
     "OpenAIProvider",
+    "OpenAIResponsesProvider",
     "VertexProvider",
     "resolve_api_key",
     "capabilities_for",

@@ -1,7 +1,11 @@
-"""OpenAI provider — the v1 model access implementation.
+"""OpenAI Chat Completions provider — the compat workhorse.
 
-Uses the OpenAI Python SDK `chat.completions` API only (no Responses/Assistants), so
-the later swap to aisuite (OpenAI-API-shaped) stays a near drop-in.
+Uses the OpenAI Python SDK `chat.completions` API only, which is what the entire
+OpenAI-compatible world implements: the compat vendors (DeepSeek, Z AI, Kimi, …),
+resellers, Ollama, custom endpoints (Azure OpenAI, vLLM), and the Bedrock/Vertex MaaS
+paths. Native OpenAI models (the `openai` provider with no custom endpoint) route to
+`openai_responses.OpenAIResponsesProvider` instead — Chat Completions rejects function
+tools combined with reasoning on GPT-5.6+, so reasoning + tools needs `/v1/responses`.
 """
 
 from __future__ import annotations
@@ -40,10 +44,12 @@ def resolve_api_key(secrets: Any = None) -> Optional[str]:
 
 # GPT-5.6 (2026-07) defaults reasoning_effort to "medium" server-side, and
 # /v1/chat/completions rejects function tools combined with any effort other than
-# "none" ("use /v1/responses"). Until we grow a Responses API path, pin effort to
-# none whenever tools ride along on these models — and when the API rejects a call
-# with that exact complaint anyway (a future generation, an alias we didn't list),
-# retry once at effort none so the user gets a working turn instead of a 400.
+# "none" ("use /v1/responses"). Native OpenAI now routes to the Responses provider,
+# but GPT-5.6 can still land here through a custom endpoint (Azure OpenAI serves the
+# same wire), so keep pinning effort to none whenever tools ride along on these
+# models — and when the API rejects a call with that exact complaint anyway (a future
+# generation, an alias we didn't list), retry once at effort none so the user gets a
+# working turn instead of a 400.
 _EFFORT_ERROR = "function tools with reasoning_effort are not supported"
 
 

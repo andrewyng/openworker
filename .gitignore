@@ -6,4 +6,6 @@ __pycache__/
 build/
 dist/
 .coverage
-openspec/
+
+# Local secrets (live-smoke BYO keys) — never committed
+.env

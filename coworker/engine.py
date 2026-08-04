@@ -163,13 +163,20 @@ class TurnEngine:
 
     # -- main loop --------------------------------------------------------------
     async def run(
-        self, user_input: "str | list", *, source: Optional[dict[str, Any]] = None
+        self,
+        user_input: "str | list",
+        *,
+        source: Optional[dict[str, Any]] = None,
+        display: Optional[str] = None,
     ) -> AsyncIterator[Event]:
         # `user_input` is a string, or OpenAI content-parts (text + image_url) for attachments.
         # `source` (a MessageSource dict) is a display-only sidecar for connector messages: it
         # rides on the persisted user message + the TURN_START event, but is stripped before the
         # message reaches a provider (see `_outbound_messages`). `content` stays the framed text.
-        # `ts` (unix seconds, stamped on every appended message) is the same kind of sidecar.
+        # `display` is the same split for force-run skills (SKILLS-SPEC §4.1 #3): the user's
+        # literal "/skill …" line for the transcript, while `content` carries the model-facing
+        # framing. `ts` (unix seconds, stamped on every appended message) is the same kind of
+        # sidecar.
         message: dict[str, Any] = {
             "role": "user",
             "content": user_input,
@@ -177,11 +184,15 @@ class TurnEngine:
         }
         if source is not None:
             message["source"] = source
+        if display is not None:
+            message["_display"] = display
         self.messages.append(message)
         self._cancel.clear()
         data: dict[str, Any] = {"input": user_input}
         if source is not None:
             data["source"] = source
+        if display is not None:
+            data["display"] = display
         yield Event(EventType.TURN_START, data)
         async for event in self._loop():
             yield event

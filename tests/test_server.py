@@ -175,6 +175,33 @@ def test_artifacts_list_and_read_previewable_files(tmp_path):
     assert "<h1>Preview</h1>" in html["content"]
 
 
+def test_artifact_read_folder_returns_listing(tmp_path):
+    """A linked directory (e.g. a skill package dir) renders as a listing, never a dead
+    'not found' (owner report 2026-07-27). Dirs first, then files, sizes on files only."""
+    pkg = tmp_path / "directory-statistics"
+    pkg.mkdir()
+    (pkg / "SKILL.md").write_text("---\nname: x\n---\nbody", encoding="utf-8")
+    (pkg / "stats.py").write_text("print(1)", encoding="utf-8")
+    (pkg / "examples").mkdir()
+
+    client = _client(tmp_path, [])
+    res = client.get(
+        "/v1/sessions/unknown/artifacts/read", params={"path": "directory-statistics"}
+    ).json()
+    assert res["ok"] is True and res["kind"] == "folder"
+    names = [e["name"] for e in res["entries"]]
+    assert names == ["examples", "SKILL.md", "stats.py"]  # dirs first, then files by name
+    assert res["entries"][0]["dir"] is True
+    assert res["entries"][2]["size"] > 0
+
+    # A genuinely missing path keeps a friendly, non-jargon error.
+    missing = client.get(
+        "/v1/sessions/unknown/artifacts/read", params={"path": "nope.md"}
+    ).json()
+    assert missing["ok"] is False
+    assert "moved or deleted" in missing["error"]
+
+
 def test_artifact_read_rejects_path_escape(tmp_path):
     client = _client(tmp_path, [])
     escaped = client.get(

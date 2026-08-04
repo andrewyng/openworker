@@ -397,6 +397,9 @@ body {
   margin-top: 11px; font-family: var(--mono); font-size: 12px; color: var(--muted);
   background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px;
   overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.55;
+  /* Long previews (a 170-line skill) must scroll INSIDE the card — expanded content
+     otherwise outgrows the viewport with no way to read or reach "show less". */
+  max-height: 42vh; overflow-y: auto;
 }
 .approval-prev-more {
   display: block; margin-top: 4px; font: inherit; font-family: -apple-system, sans-serif;
@@ -1603,3 +1606,14 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
      fussy on a pill); small + high keeps the wordmark the star. */
   vertical-align: 3px;
 }
+
+/* Folder artifact listing (a linked package dir renders as rows, not "not found"). */
+.artifact-folderlist { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; }
+.artifact-folder-row {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  padding: 7px 10px; border: 0; border-radius: 8px; background: none; cursor: pointer;
+  color: var(--ink); font-size: 12.5px;
+}
+.artifact-folder-row:hover { background: var(--paper); }
+.artifact-folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-folder-size { font-size: 11px; color: var(--faint); }

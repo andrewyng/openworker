@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Attachment, SessionUsage } from "../types";
 import { isPdfFile, readFile } from "../attach";
-import { getSettings, inspectPdf } from "../api";
+import { getSettings, inspectPdf, sessionSkills, type SessionSkillRow } from "../api";
 import { formatTokens, totalTokens } from "../usage";
 import { Dropdown, type Option } from "./Dropdown";
 import { Icon } from "./Icon";
@@ -59,7 +59,10 @@ interface Props {
   modelReady?: boolean;
   onConnectModel?: () => void;
   onConfigureVoiceInput?: () => void;
-  onSend: (text: string, attachments?: Attachment[]) => void;
+  onSend: (text: string, attachments?: Attachment[], skill?: string) => void;
+  // Feeds the "/" force-run popup (SKILLS-SPEC §4.1 #3): the popup lists this session's
+  // effective skill menu. Absent (e.g. tests without sessions) → the popup never opens.
+  sessionId?: string;
   onInterrupt: () => void;
   onModeChange: (mode: string) => void;
   onModelChange: (model: string) => void;
@@ -91,6 +94,46 @@ interface Props {
 export function Composer(props: Props) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // "/" force-run (SKILLS-SPEC §4.1 #3). The popup derives from the draft: it is open while
+  // the text is a bare "/query" (no whitespace yet) and no skill is picked. Selecting a row
+  // inserts "/name " INLINE in the box (Claude-Code style — the slash text IS the state);
+  // the user keeps typing after it, and on send the prefix is stripped while the skill name
+  // rides the user_message as its own field. Editing the prefix away un-picks the skill.
+  const [pendingSkill, setPendingSkill] = useState<SessionSkillRow | null>(null);
+  const [slashSkills, setSlashSkills] = useState<SessionSkillRow[] | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const prefixIntact =
+    pendingSkill !== null &&
+    (text === `/${pendingSkill.name}` || text.startsWith(`/${pendingSkill.name} `));
+  useEffect(() => {
+    if (pendingSkill && !prefixIntact) setPendingSkill(null);
+  }, [pendingSkill, prefixIntact]);
+  const slashQuery =
+    !prefixIntact && props.sessionId && text.startsWith("/") && !/\s/.test(text.slice(1))
+      ? text.slice(1).toLowerCase()
+      : null;
+  const slashMatches = (slashSkills ?? []).filter((s) =>
+    s.name.toLowerCase().includes(slashQuery ?? ""),
+  );
+  useEffect(() => {
+    // Fetch on each popup open (fresh menu); drop when closed.
+    if (slashQuery === null) {
+      setSlashSkills(null);
+      setSlashIndex(0);
+      return;
+    }
+    if (slashSkills === null && props.sessionId) {
+      sessionSkills(props.sessionId, props.workspace)
+        .then((all) => setSlashSkills(all.filter((s) => s.enabled)))
+        .catch(() => setSlashSkills([]));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slashQuery === null]);
+  const pickSkill = (s: SessionSkillRow) => {
+    setPendingSkill(s);
+    setText(`/${s.name} `);
+    textareaRef.current?.focus();
+  };
   const [dragging, setDragging] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [dictation, setDictation] = useState<DictationStatus | null>(null);
@@ -119,6 +162,17 @@ export function Composer(props: Props) {
     el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
   }, [text]);
 
+  // Clear the draft when the conversation changes, so a half-typed message / picked file doesn't
+  // bleed from one session into another. Declared BEFORE the prefill effect: when both fire in
+  // the same render (the Skills doorway starts a new session AND prefills it), effects run in
+  // declaration order — clear first, then the prefill lands on the fresh session.
+  useEffect(() => {
+    setText("");
+    setAttachments([]);
+    setPendingSkill(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.resetKey]);
+
   // Apply a prefill (text + attachments) pushed from outside, then focus the composer. Applied at
   // most once per nonce (a ref guards against StrictMode/re-render double-fires), and attachments
   // are de-duplicated so the same file never lands twice.
@@ -132,14 +186,6 @@ export function Composer(props: Props) {
     textareaRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.prefill?.nonce]);
-
-  // Clear the draft when the conversation changes, so a half-typed message / picked file doesn't
-  // bleed from one session into another.
-  useEffect(() => {
-    setText("");
-    setAttachments([]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.resetKey]);
 
   // Dictation is intentionally native-only: the browser/dev build remains a local server client
   // and never turns on the browser microphone or ships audio anywhere.
@@ -264,19 +310,54 @@ export function Composer(props: Props) {
   const needsModel = props.modelReady === false;
 
   const submit = () => {
-    const t = text.trim();
-    if ((!t && attachments.length === 0) || props.running || dictation?.recording || dictationBusy) return;
+    // While the "/" popup is open the draft is a query, not a message — never send it.
+    if (slashQuery !== null) return;
+    // The visible "/name " prefix is UI state, not message text — strip it for the send;
+    // the skill rides as its own field.
+    const skill = prefixIntact ? pendingSkill!.name : undefined;
+    const t = (skill ? text.slice(skill.length + 1) : text).trim();
+    if (
+      (!t && attachments.length === 0 && !skill) ||
+      props.running ||
+      dictation?.recording ||
+      dictationBusy
+    )
+      return;
     // No model connected: keep the draft (don't drop it) and send the user to setup instead.
     if (needsModel) {
       props.onConnectModel?.();
       return;
     }
-    props.onSend(t, attachments);
+    props.onSend(t, attachments, skill);
     setText("");
     setAttachments([]);
+    setPendingSkill(null);
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    if (slashQuery !== null) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashIndex((i) => Math.min(i + 1, Math.max(slashMatches.length - 1, 0)));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setText("");
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        const chosen = slashMatches[slashIndex];
+        if (chosen) pickSkill(chosen);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
@@ -342,7 +423,9 @@ export function Composer(props: Props) {
 
   // The send button is accent only when there's something to send — subtle grey otherwise, so the
   // composer isn't carrying a constant blue dot.
-  const hasContent = text.trim().length > 0 || attachments.length > 0;
+  // A pinned /skill is sendable content on its own (tester catch 2026-07-26: the arrow
+  // stayed grey after picking a skill, reading as "stuck").
+  const hasContent = text.trim().length > 0 || attachments.length > 0 || !!pendingSkill;
 
   return (
     <div className="composer-wrap px-6 pb-5 pt-4">
@@ -396,6 +479,37 @@ export function Composer(props: Props) {
           if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
         }}
       >
+        {/* "/" force-run popup — in-flow above the textarea; rows are the session's
+            effective menu only (muted/disabled skills never appear). */}
+        {slashQuery !== null && (
+          <div className="px-2 pt-2" data-testid="skill-popup" role="listbox" aria-label="Skills">
+            {slashSkills === null ? (
+              <div className="px-2 py-1.5 text-[12px] text-faint">Loading skills…</div>
+            ) : slashMatches.length === 0 ? (
+              <div className="px-2 py-1.5 text-[12px] text-faint">No matching skills.</div>
+            ) : (
+              slashMatches.map((s, i) => (
+                <button
+                  key={s.name}
+                  role="option"
+                  aria-selected={i === slashIndex}
+                  className={
+                    "w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-lg " +
+                    (i === slashIndex ? "bg-paper" : "hover:bg-paper")
+                  }
+                  onMouseEnter={() => setSlashIndex(i)}
+                  onClick={() => pickSkill(s)}
+                >
+                  <span className="text-[13px] font-medium text-accent shrink-0">/{s.name}</span>
+                  <span className="text-[12px] text-faint truncate flex-1">{s.description}</span>
+                  <span className="text-[10.5px] px-1.5 py-0.5 rounded-full border border-line text-faint shrink-0">
+                    {s.scope}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           className="w-full block px-3.5 pt-3.5 pb-1.5 text-[14.5px]"

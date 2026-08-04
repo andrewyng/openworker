@@ -211,10 +211,12 @@ export function App() {
   const [scheduledOpenId, setScheduledOpenId] = useState<string | null>(null);
   const [gateCreate, setGateCreate] = useState(false);
   // Which Settings section the full-page Settings surface opens on (§ Settings-as-page).
-  const [settingsTab, setSettingsTab] = useState<"appearance" | "models" | "voice" | "personas">(
-    "appearance",
-  );
-  const openSettings = (tab: "appearance" | "models" | "voice" | "personas" = "appearance") => {
+  const [settingsTab, setSettingsTab] = useState<
+    "appearance" | "models" | "skills" | "voice" | "personas"
+  >("appearance");
+  const openSettings = (
+    tab: "appearance" | "models" | "skills" | "voice" | "personas" = "appearance",
+  ) => {
     setSettingsTab(tab);
     setSurface("settings");
   };
@@ -613,11 +615,14 @@ export function App() {
                 : [...p, { kind: "connector", source: src }];
             });
           } else if (typeof d.input === "string" && d.input) {
+            // `display` (force-run) is the user's literal "/name …" line; the framed
+            // `input` is model-facing. Surface/dedupe on what the user actually sees.
+            const shown = (typeof d.display === "string" && d.display) || (d.input as string);
             setItems((p) => {
               const last = p[p.length - 1];
-              return last && last.kind === "user" && last.text === d.input
+              return last && last.kind === "user" && last.text === shown
                 ? p
-                : [...p, { kind: "user", text: d.input as string, ts: Date.now() / 1000 }];
+                : [...p, { kind: "user", text: shown, ts: Date.now() / 1000 }];
             });
           }
           break;
@@ -861,10 +866,13 @@ export function App() {
     return () => clearInterval(t);
   }, [surface, sessionId, browserRefreshKey, markUnattended]);
 
-  const send = (text: string, attachments?: Attachment[]) => {
-    setItems((p) => [...p, { kind: "user", text, attachments, ts: Date.now() / 1000 }]);
+  const send = (text: string, attachments?: Attachment[], skill?: string) => {
+    // Force-run shows exactly what the user typed: "/name rest". Must match the server's
+    // `display` sidecar formula so the turn_start dedupe recognizes the local echo.
+    const shown = skill ? `/${skill}${text ? ` ${text}` : ""}` : text;
+    setItems((p) => [...p, { kind: "user", text: shown, attachments, ts: Date.now() / 1000 }]);
     // The visible model rides along with the message (single source of truth per turn).
-    sessionRef.current?.userMessage(text, attachments, model);
+    sessionRef.current?.userMessage(text, attachments, model, skill);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
   };
   // Resolving a LIVE prompt also resolves its parked Inbox mirror server-side, but the polled
@@ -1349,6 +1357,17 @@ export function App() {
           key={settingsTab}
           initialTab={settingsTab}
           onOpenPersona={(id) => openPersona(id, "settings")}
+          onCreateSkill={(description) => {
+            // The Skills doorway (SKILLS-SPEC §5.2): creation is a conversation. Fresh
+            // session, description in the composer — the user reads and hits send. With
+            // no description, the prefill invites them to finish the sentence there.
+            startNewSession();
+            prefillComposer(
+              description
+                ? `Build a new skill for me: ${description}`
+                : "Build a new skill for me: (describe what the skill should do)",
+            );
+          }}
         />
       ) : surface === "audit" ? (
         <AuditView />
@@ -1584,6 +1603,7 @@ export function App() {
               onInterrupt={interrupt}
               onModeChange={changeMode}
               onModelChange={changeModel}
+              sessionId={sessionId}
               workspace={needsWorkspace(agent) ? workspace || "" : undefined}
               unattended={unattended}
               onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}

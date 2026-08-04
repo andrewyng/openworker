@@ -1,8 +1,9 @@
 """Provider-agnostic model access layer.
 
 The runtime never imports a provider SDK directly — it talks to a `ProviderClient`.
-v1 ships `OpenAIProvider` (OpenAI SDK, `chat.completions` only); an `AISuiteProvider`
-slots in later (P12) without touching the engine, since aisuite is OpenAI-API-shaped.
+Implementations: `OpenAIResponsesProvider` (native OpenAI via `/v1/responses`),
+`OpenAIProvider` (Chat Completions — the compat world), and the native
+Anthropic/Gemini/Bedrock/Vertex providers, all selected by the registry/router.
 """
 
 from __future__ import annotations

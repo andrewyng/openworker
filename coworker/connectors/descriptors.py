@@ -66,7 +66,7 @@ class ConnectorDescriptor:
     # doesn't carry (e.g. "calendar" must surface Outlook, not just Google Calendar).
     aliases: tuple = ()
     # Vendor-hosted MCP server URL → this connector is MCP-BACKED: one-click connect
-    # runs the local MCP OAuth flow (DCR, tokens on this Mac — no broker), and the
+    # runs the local MCP OAuth flow (DCR, tokens on this computer — no broker), and the
     # tool surface is the PINNED subset in tool_defs (names `mcp__<name>__<tool>`),
     # never the vendor's full catalog (drift can only shrink capability, not grow it).
     # A connector may carry BOTH mcp_url and manual fields (jira): the profile's
@@ -784,7 +784,7 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         fields=[],
         instructions=[
             "One click connects via monday.com sign-in in your browser.",
-            "Sign-in is fully local — tokens stay on this Mac.",
+            "Sign-in is fully local — tokens stay on this computer.",
         ],
         available=True,
     ),

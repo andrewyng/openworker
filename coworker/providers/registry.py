@@ -6,8 +6,9 @@ GUI, same `to_dict()` shape connectors use) and a `build(profile, secrets)` fact
 a `ProviderClient`. The `ProviderRouter` selects a descriptor by the `provider:` prefix of a
 model string and builds (and caches) its client from the matching SecretStore profile.
 
-Today: `openai` (the default, with an optional custom endpoint that covers Azure OpenAI's
-`/openai/v1` and any OpenAI-compliant gateway), `anthropic` (native Messages API via
+Today: `openai` (the default — native models via the Responses API; an optional custom
+endpoint covering Azure OpenAI's `/openai/v1` and any OpenAI-compliant gateway keeps the
+Chat Completions path), `anthropic` (native Messages API via
 `AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `bedrock`
 (models in the user's own AWS account — Claude natively, everything else via Converse),
 `vertex` (the user's own GCP project — Gemini and Claude natively, open-weight via the
@@ -25,6 +26,7 @@ from .base import ProviderClient
 from .bedrock_provider import BedrockProvider
 from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider
+from .openai_responses import OpenAIResponsesProvider
 from .vertex_provider import VertexProvider
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
@@ -111,11 +113,15 @@ def _normalize_ollama_url(url: Optional[str]) -> str:
 
 
 def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
-    # Key resolution stays in OpenAIProvider/resolve_api_key (explicit → env → SecretStore),
-    # so we just hand it the SecretStore. An optional custom endpoint (Azure OpenAI /openai/v1,
-    # OpenRouter, vLLM, …) comes from the stored profile.
+    # Key resolution stays in resolve_api_key (explicit → env → SecretStore), so we just
+    # hand over the SecretStore. Stock OpenAI (no custom endpoint) speaks the Responses
+    # API — the only wire with reasoning + tools on GPT-5.6+. A custom endpoint (Azure
+    # OpenAI /openai/v1, vLLM, any OpenAI-compliant gateway) keeps Chat Completions,
+    # which is what compat servers implement.
     base_url = ((profile or {}).get("base_url") or "").strip() or None
-    return OpenAIProvider(secrets=secrets, base_url=base_url)
+    if base_url:
+        return OpenAIProvider(secrets=secrets, base_url=base_url)
+    return OpenAIResponsesProvider(secrets=secrets)
 
 
 def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
