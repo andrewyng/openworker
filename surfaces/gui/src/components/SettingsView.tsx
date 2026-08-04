@@ -81,9 +81,9 @@ export function SettingsView({
   // prefilled — the worker builds the skill and proposes it via save_skill.
   onCreateSkill?: (description: string) => void;
 }) {
-  // Personas is flag-gated (hidden for launch) — filter the tab AND coerce a stale
-  // deep-link to it (openSettings("personas") callers) so the page never opens on a
-  // section with no nav entry.
+  // Personas can still be flag-hidden for rollback/testing — filter the tab AND coerce
+  // a stale deep-link to it (openSettings("personas") callers) so the page never opens
+  // on a section with no nav entry.
   const personas = showPersonas();
   const tabs = personas ? SET_TABS : SET_TABS.filter((t) => t.key !== "personas");
   const wanted = initialTab && (personas || initialTab !== "personas") ? initialTab : "appearance";

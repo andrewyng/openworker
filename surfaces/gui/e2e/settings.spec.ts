@@ -2,7 +2,7 @@ import { test, expect } from "./fixtures";
 
 // Guards the Settings-as-page refactor (§13, IA per UX-021): the ⚙ menu opens a full-page
 // surface with a left sub-nav — General · Models · Voice input — and each section renders.
-// Files is a card inside General; Personas is launch-flagged off.
+// Files is a card inside General; Personas is part of the normal role-selection flow.
 test("Settings opens as a full page and navigates sections", async ({ page }) => {
   await page.goto("/");
 
@@ -12,12 +12,11 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   // Full-page: left sub-nav + the General section (no modal backdrop).
   await expect(page.getByRole("heading", { name: "General" })).toBeVisible();
   await expect(page.locator(".modal-backdrop")).toHaveCount(0);
-  for (const label of ["General", "Models", "Voice input"]) {
+  for (const label of ["General", "Models", "Voice input", "Personas"]) {
     await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
   }
-  // Folded/hidden tabs: Files is a General card now; Personas is launch-flagged off.
+  // Folded tabs: Files is a General card now.
   await expect(page.getByRole("button", { name: "Files", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Personas", exact: true })).toHaveCount(0);
 
   // The Files card lives inside General.
   await expect(page.getByText("Each conversation gets its own folder")).toBeVisible();
@@ -26,14 +25,13 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   await expect(page.getByTestId("set-provider-openai")).toBeVisible();
 });
 
-// The launch flag brings the Personas tab back (the gallery/persona suites rely on it).
-test("Settings: Personas tab returns behind the launch flag", async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem("ocw.flag.personas", "1"));
+// The flag can still hide Personas for temporary rollback/testing.
+test("Settings: Personas tab can be hidden by flag", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("ocw.flag.personas", "0"));
   await page.goto("/");
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Personas", exact: true }).click();
-  await expect(page.getByText("Add personas")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Personas", exact: true })).toHaveCount(0);
 });
 
 // UX-021: Settings ▸ Models is the shared provider gallery (§39 components). Cards wear

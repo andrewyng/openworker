@@ -118,8 +118,8 @@ class TurnEngine:
         ):
             self.messages.insert(0, {"role": "system", "content": instructions})
         self._cancel = asyncio.Event()
-        # Each pending steering message: (text, optional MessageSource sidecar dict).
-        self._steering: list[tuple[str, Optional[dict[str, Any]]]] = []
+        # Each pending steering input: text or content-parts + optional MessageSource sidecar.
+        self._steering: list[tuple[str | list, Optional[dict[str, Any]]]] = []
         # tool_call.id → the standing rule that auto-allowed it ("tool → target"), so the
         # TOOL_FINISHED event can carry the note to the tool card (§25).
         self._standing_notes: dict[str, str] = {}
@@ -157,7 +157,7 @@ class TurnEngine:
             cancel_wait.cancel()
 
     def queue_steering(
-        self, text: str, source: Optional[dict[str, Any]] = None
+        self, text: str | list, source: Optional[dict[str, Any]] = None
     ) -> None:
         self._steering.append((text, source))
 
@@ -1187,6 +1187,6 @@ def _tool_error_message(tool_call: ToolCall, reason: str) -> dict[str, Any]:
 
 
 def _preview(value: Any, max_chars: int = 300) -> str:
-    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    text = value if isinstance(value, str) else json.dumps(value, default=str, ensure_ascii=False)
     text = text.replace("\n", "\\n")
     return text if len(text) <= max_chars else text[: max_chars - 3] + "..."

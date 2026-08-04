@@ -91,7 +91,11 @@ class MessageEvent:
     message_id: Optional[str] = None
     message_type: MessageType = MessageType.TEXT
     reply_to_message_id: Optional[str] = None
+    # Native reply-aware platforms can include the parent text so an agent sees the
+    # question being answered without mistaking it for a new instruction.
+    reply_to_text: Optional[str] = None
     raw: Any = None
+    attachments: list[dict[str, Any]] = field(default_factory=list)
     # The bot itself was @-mentioned (UX-DECISIONS §31 mention router). Computed from the RAW
     # platform text at mapping time — mention tokens are rewritten for display afterwards.
     mentions_me: bool = False
@@ -102,9 +106,12 @@ class MessageEvent:
         The local GUI owner ('gui') is answered with plain assistant text (no `send_message`);
         messaging platforms carry a reply handle the agent passes back to `send_message`.
         """
+        reply_context = (
+            f"\n[In reply to: {self.reply_to_text}]" if self.reply_to_text else ""
+        )
         if self.source.platform == "gui":
-            return f"[Owner, in the app]: {self.text}"
-        return f"[{self.source.label()} | reply→{self.source.target}]: {self.text}"
+            return f"[Owner, in the app]: {self.text}{reply_context}"
+        return f"[{self.source.label()} | reply→{self.source.target}]: {self.text}{reply_context}"
 
 
 @dataclass

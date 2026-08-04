@@ -23,6 +23,7 @@ _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 _EXPECTED_BRAND = {
     "slack": "#611f69",
     "telegram": "#229ed9",
+    "feishu": "#00d6b9",
     "github": "#1f2328",
     "datadog": "#632ca6",
     "salesforce": "#00a1e0",

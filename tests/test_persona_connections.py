@@ -65,7 +65,7 @@ def test_persona_detail_endpoint(tmp_path, monkeypatch):
     # identity + capabilities (from the manifest/entry)
     assert detail["id"] == "ops"
     assert detail["name"] == "Ops Coworker"
-    assert detail["enabled"] is False  # non-default personas ship disabled (opt-in)
+    assert detail["enabled"] is True  # core roles ship enabled by default
     assert (
         detail["workspace"] == "deliverable"
     )  # §16 collapse: ops is a scratch persona now

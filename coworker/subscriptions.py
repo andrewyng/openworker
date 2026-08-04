@@ -113,9 +113,9 @@ _SLACK_ARCHIVES_RE = re.compile(r"slack\.com/archives/([A-Za-z0-9]+)")
 def resolve_channel(ref: str, *, default_platform: str = "slack") -> str:
     """Turn a user/agent-supplied channel reference into a `<platform>:<chat_id>` address.
     Accepts a Slack channel-mention token (`<#C0123|name>`), a channel "Copy link" URL, a full
-    address (`slack:C0123`), or a bare chat id (assumed to be on the default platform). A bare
-    `#name` resolves to "" — names can't be looked up locally, and storing one literally would
-    create a subscription that never matches real traffic."""
+    address (`slack:C0123` / `feishu:oc_...`), or a bare chat id (assumed to be on the default
+    platform). A bare `#name` resolves to "" — names can't be looked up locally, and storing one
+    literally would create a subscription that never matches real traffic."""
     ref = (ref or "").strip()
     m = _SLACK_CHANNEL_RE.search(ref)
     if m:

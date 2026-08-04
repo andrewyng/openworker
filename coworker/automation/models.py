@@ -125,6 +125,12 @@ class ScheduledTask:
     model: Optional[str] = None
     notify_on_completion: bool = True
     notify_target: Optional[str] = None  # extra messaging target ("telegram:123")
+    # ``None`` preserves pre-source-config tasks: they retain the legacy effective connector
+    # set. A list (including []) is a task-owned source allow-list.
+    sources: Optional[list[str]] = None
+    # Delivery is owned by the server, never inferred from the agent's prose.
+    # {"kind": "app"} or {"kind": "channel", "connector": "slack", "target": "slack:T/C"}
+    delivery: dict[str, Any] = field(default_factory=lambda: {"kind": "app"})
     always_allowed_tools: list[str] = field(default_factory=list)
     always_allowed_commands: list[str] = field(default_factory=list)
     enabled: bool = True
@@ -135,6 +141,9 @@ class ScheduledTask:
     last_status: Optional[str] = None
     run_count: int = 0
     max_runs: Optional[int] = None
+    # ``None`` keeps all completed run records. A positive value removes completed records
+    # older than this many days whenever the automation finishes another run.
+    run_retention_days: Optional[int] = None
     # Sidebar unread tracking (UX-023): runs started after this mark count as
     # "unseen"; opening the automation's detail advances it. 0.0 = never opened.
     seen_runs_at: float = 0.0
@@ -201,7 +210,10 @@ class ScheduledTask:
             "last_run": self.last_run,
             "last_status": self.last_status,
             "run_count": self.run_count,
+            "run_retention_days": self.run_retention_days,
             "notify_on_completion": self.notify_on_completion,
+            "sources": self.sources,
+            "delivery": self.delivery,
             # UX-023: lets the detail freeze the pre-open mark for its "new" pills.
             "seen_runs_at": self.seen_runs_at,
             # Structured for the task page's revoke list; `entry` is the revoke handle.
@@ -224,6 +236,8 @@ class TaskRun:
     result_text: Optional[str] = None
     artifacts: list[str] = field(default_factory=list)
     error: Optional[str] = None
+    delivery_status: Optional[str] = None  # sent | failed | skipped
+    delivery_error: Optional[str] = None
     trigger: str = "schedule"  # schedule | manual | catchup
     session_id: str = ""  # the run's own conversation thread — persisted + continuable
 

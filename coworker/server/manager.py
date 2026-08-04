@@ -8,29 +8,39 @@ sessions span folders.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import mimetypes
 import os
 import re
 import shutil
 import subprocess
 import time
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
 from ..agent import build_engine
+from ..attachments import MAX_IMAGE_CHARS, build_user_content, content_to_text
 from ..agents import get_agent
 from ..connections import (
     PersonaConnectionStore,
     SessionConnectionStore,
     effective as effective_connections,
 )
+from ..connector_agent_routes import ConnectorAgentRouteStore
 from ..inbox import InboxStore, args_preview
 from ..inbox_routing import InboxRouting
 from ..personas import PersonaRegistry
 from ..personas.registry import set_registry as set_persona_registry
 from ..selfwake import WakeStore
 from ..mentions import MentionSessionStore
+from ..inbound_sessions import (
+    InboundSessionLink,
+    InboundSessionRegistry,
+    inbound_route_key,
+)
 from ..subscriptions import ChannelBuffer, SubscriptionStore
 from ..unrouted import UnroutedStore
 from ..unattended import UnattendedRegistry
@@ -54,6 +64,9 @@ from ..connectors import (
     slack_split,
     update_connector_tools,
 )
+from ..connectors.senders import _download_feishu_resource
+from ..connectors.tools import _resolve_token
+from ..connectors.feishu_progress import FeishuRunProgressReporter
 from ..connectors.browser_automation import (
     browser_close_session,
     browser_state,
@@ -93,6 +106,49 @@ _SCOPES = {s.value for s in Scope}
 
 logger = logging.getLogger("coworker.manager")
 
+_AUTOMATION_SKILLS_ROOT_LABEL = "automation skills"
+
+
+def _image_attachment_part(data: bytes, filename: str) -> Optional[dict[str, str]]:
+    """Encode a downloaded Feishu image for the existing provider-neutral image path."""
+    mime_type = mimetypes.guess_type(filename)[0] or _image_mime_type(data)
+    if not mime_type or not mime_type.startswith("image/"):
+        return None
+    encoded_size = ((len(data) + 2) // 3) * 4
+    prefix = f"data:{mime_type};base64,"
+    if len(prefix) + encoded_size > MAX_IMAGE_CHARS:
+        return None
+    return {
+        "kind": "image",
+        "name": filename,
+        "data_url": prefix + base64.b64encode(data).decode("ascii"),
+    }
+
+
+def _image_mime_type(data: bytes) -> Optional[str]:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _attachment_text_preview(data: bytes, filename: str) -> str:
+    """Inline small plain-text attachments, matching the useful part of Hermes media intake."""
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {".txt", ".md", ".markdown", ".csv", ".json", ".yaml", ".yml", ".log"}:
+        return ""
+    if not data or len(data) > 100_000:
+        return ""
+    try:
+        return data.decode("utf-8").strip()[:20_000]
+    except UnicodeDecodeError:
+        return ""
+
 
 def _grants_of(engine) -> dict[str, Any]:
     """The engine's session-scoped "Always allow" approvals, in persistable shape."""
@@ -108,6 +164,13 @@ def _approval_body(request) -> str:
     reason = (getattr(request, "reason", "") or "").strip()
     preview = args_preview(getattr(request, "arguments", None))
     return "\n".join(p for p in (reason, preview) if p)
+
+
+class _InboundFlight:
+    def __init__(self) -> None:
+        self.event = threading.Event()
+        self.result: Optional[str] = None
+        self.error: Optional[BaseException] = None
 
 
 class SessionManager:
@@ -145,6 +208,8 @@ class SessionManager:
         self._running_sessions: set[str] = (
             set()
         )  # sessions with an in-flight turn (busy)
+        self._inbound_session_flights_lock = threading.Lock()
+        self._inbound_session_flights: dict[str, _InboundFlight] = {}
         # Sessions with an auto-title LLM call in flight (FB-010) — one call at a time.
         self._autotitle_inflight: set[str] = set()
         self._autotitle_tasks: set[asyncio.Task] = set()
@@ -205,6 +270,8 @@ class SessionManager:
         # Also the durable source of the thread's standing send_message grant (re-seeded
         # onto the engine in get_engine).
         self.mention_sessions = MentionSessionStore(base / "mention_threads.json")
+        # Inbound DM router: external conversation key → the durable session that owns it.
+        self.inbound_sessions = InboundSessionRegistry(base / "inbound_sessions.json")
         # Unauthorized inbound messages, parked instead of dropped (one-step allow-and-deliver).
         self.parked = ParkedStore(base / "parked.json")
         # People directory: "platform:user_id" → display name, noted from every inbound
@@ -229,6 +296,12 @@ class SessionManager:
         )
         self.session_connections = SessionConnectionStore(
             base / "session_connections.json"
+        )
+        # Per-connector inbound routing: selects the persona used when a connector creates a
+        # NEW external conversation. Web/manual sessions and existing connector sessions keep
+        # their own agent.
+        self.connector_agent_routes = ConnectorAgentRouteStore(
+            base / "connector_agent_routes.json"
         )
         # Skills (SKILLS-SPEC §4): folder-backed CRUD + per-session mutes. The effective menu
         # gates the engine's skill catalog the same way effective_connectors gates connector
@@ -358,6 +431,20 @@ class SessionManager:
         d.mkdir(parents=True, exist_ok=True)
         return str(d.resolve())
 
+    def session_record_dir(self, session_id: str) -> Path:
+        """Per-session record directory for connector artifacts and downloaded files."""
+        safe_id = re.sub(r"[^A-Za-z0-9._-]+", "_", session_id or "").strip("._")
+        if not safe_id:
+            safe_id = "session"
+        d = self._data_base / "sessions" / safe_id
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def session_record_files_dir(self, session_id: str) -> Path:
+        d = self.session_record_dir(session_id) / "files"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     def resolve_workspace(self, requested: Optional[str]) -> Optional[str]:
         if requested:
             p = Path(requested).expanduser()
@@ -434,6 +521,15 @@ class SessionManager:
                 if Path(str(r.get("path", ""))).is_dir()
             ]
             roots = [{"path": ws, "writable": True, "label": "scratch"}, *extra]
+        owning_task = self.task_store.task_for_run_session(session_id)
+        if owning_task is not None and self._automation_run_is_active(session_id) and ws:
+            roots = self._automation_roots(ws)
+        connector_filter = self.effective_connectors(session_id, agent_name)
+        connector_tool_kinds = None
+        if owning_task is not None and owning_task.sources is not None:
+            connector_filter &= set(owning_task.sources)
+            connector_tool_kinds = {"read"}
+
         engine = build_engine(
             agent=ag,
             workspace=ws,
@@ -463,14 +559,14 @@ class SessionManager:
             channel_buffer=self.channel_buffer,
             routing_targets=self._routing_targets(session_id, agent),
             # Per-session connection hierarchy: expose only effective-enabled connectors' tools.
-            connector_filter=self.effective_connectors(session_id, agent_name),
+            connector_filter=connector_filter,
+            connector_tool_kinds=connector_tool_kinds,
             # Per-session skill menu, LIVE (SKILLS-SPEC §3): a callable so load_skill sees
             # disables/new skills immediately; the catalog snapshot is taken at build.
             skill_filter=lambda sid=session_id, w=ws: self.effective_skill_names(sid, w),
         )
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
-        owning_task = self.task_store.task_for_run_session(session_id)
         if owning_task is not None:
             self._seed_task_permissions(engine, owning_task)
         # A mention-spawned session (§31) keeps its in-thread reply pre-approved across
@@ -479,6 +575,10 @@ class SessionManager:
             engine.permissions.task_rules.setdefault("send_message", set()).add(
                 thread_target
             )
+        # External DM sessions own exactly one inbound conversation. Replies to that same
+        # connector target are pre-approved; other targets and files keep asking as usual.
+        for target in self.inbound_sessions.targets_for(session_id):
+            engine.permissions.task_rules.setdefault("send_message", set()).add(target)
         if record is not None and record.grants:
             self._apply_grants(engine, record.grants)
         # Auto-compaction (OPE-27): restore the persisted view boundary and wire the live
@@ -529,6 +629,160 @@ class SessionManager:
             self.inbox_routing.route_for(session_id, agent)
         )
         return [f"{binding.channel}:{binding.target}"] if binding.channel else []
+
+    @staticmethod
+    def _inbound_origin_label(source) -> str:
+        if getattr(source, "chat_type", "dm") == "dm":
+            label = (
+                getattr(source, "user_name", None)
+                or getattr(source, "chat_name", None)
+                or getattr(source, "user_id", None)
+                or getattr(source, "chat_id", None)
+                or "DM"
+            )
+        else:
+            label = (
+                getattr(source, "chat_name", None)
+                or getattr(source, "chat_id", None)
+                or getattr(source, "user_name", None)
+                or "Channel"
+            )
+        team_id = getattr(source, "team_id", None)
+        return f"{label} · {team_id}" if team_id else str(label)
+
+    def _resolve_or_create_inbound_session(self, source) -> Optional[str]:
+        route_key = inbound_route_key(source)
+        if not route_key:
+            return None
+        with self._inbound_session_flights_lock:
+            flight = self._inbound_session_flights.get(route_key)
+            if flight is None:
+                flight = _InboundFlight()
+                self._inbound_session_flights[route_key] = flight
+                owner = True
+            else:
+                owner = False
+        if not owner:
+            flight.event.wait()
+            if flight.error is not None:
+                raise flight.error
+            return flight.result
+        try:
+            result = self._resolve_or_create_inbound_session_impl(source, route_key)
+            flight.result = result
+            return result
+        except BaseException as exc:
+            flight.error = exc
+            raise
+        finally:
+            flight.event.set()
+            with self._inbound_session_flights_lock:
+                self._inbound_session_flights.pop(route_key, None)
+
+    def _resolve_or_create_inbound_session_impl(
+        self, source, route_key: str
+    ) -> Optional[str]:
+        link = self.inbound_sessions.get(route_key)
+        if link is not None:
+            if (
+                self.session_store.load(link.session_id) is not None
+                or link.session_id in self._engines
+            ):
+                engine = self.get_engine(link.session_id)
+                if engine is not None:
+                    self._seed_inbound_reply_permission(engine, source)
+                self._upsert_inbound_session_link(link.session_id, route_key, source)
+                return link.session_id
+            self.inbound_sessions.remove_route(route_key)
+
+        import uuid
+
+        session_id = uuid.uuid4().hex
+        agent, workspace = self._inbound_agent_for_source(source)
+        self._seed_inbound_connector_override(session_id, source)
+        engine = self.get_engine(session_id, agent=agent, workspace=workspace)
+        if engine is None:
+            return None
+
+        self._seed_inbound_reply_permission(engine, source)
+        self.save(session_id, engine)
+        self._upsert_inbound_session_link(session_id, route_key, source)
+        return session_id
+
+    def _upsert_inbound_session_link(self, session_id: str, route_key: str, source) -> None:
+        origin_label = self._inbound_origin_label(source)
+        self.session_store.set_origin(
+            session_id, str(getattr(source, "platform", "") or ""), origin_label
+        )
+        if origin_label:
+            self.session_store.set_auto_title(session_id, origin_label)
+
+        self.inbound_sessions.upsert(
+            InboundSessionLink(
+                route_key=route_key,
+                session_id=session_id,
+                platform=str(getattr(source, "platform", "") or ""),
+                chat_type=str(getattr(source, "chat_type", "") or "dm"),
+                chat_id=str(getattr(source, "chat_id", "") or ""),
+                user_id=str(getattr(source, "user_id", "") or ""),
+                user_name=str(getattr(source, "user_name", "") or ""),
+                chat_name=str(getattr(source, "chat_name", "") or ""),
+                thread_id=str(getattr(source, "thread_id", "") or ""),
+                team_id=str(getattr(source, "team_id", "") or ""),
+                origin=str(getattr(source, "platform", "") or ""),
+                origin_label=origin_label,
+            )
+        )
+
+    @staticmethod
+    def _seed_inbound_reply_permission(engine, source) -> None:
+        target = str(getattr(source, "target", "") or "").strip()
+        if target:
+            engine.permissions.task_rules.setdefault("send_message", set()).add(target)
+
+    def _inbound_agent_for_source(self, source) -> tuple[str, Optional[str]]:
+        """Resolve the persona/workspace used when an inbound connector creates a NEW session.
+
+        Existing routed sessions never consult this. If a saved route points at a persona that was
+        later disabled or removed, fall back to the current default so inbound messages keep flowing.
+        """
+        connector = str(getattr(source, "platform", "") or "").strip()
+        route = self.connector_agent_routes.get(connector) if connector else None
+        if route is not None:
+            entry = self.personas.get(route.agent)
+            if entry is not None and self.personas.is_enabled(route.agent):
+                if entry.needs_workspace and entry.family != "knowledge":
+                    if not route.workspace or not Path(route.workspace).is_dir():
+                        logger.warning(
+                            "connector inbound route %s -> %s ignored: workspace missing",
+                            connector,
+                            route.agent,
+                        )
+                        return self.personas.default_id(), None
+                return route.agent, route.workspace or None
+            logger.warning(
+                "connector inbound route %s -> %s ignored: persona missing or disabled",
+                connector,
+                route.agent,
+            )
+        return self.personas.default_id(), None
+
+    def _seed_inbound_connector_override(self, session_id: str, source) -> None:
+        """Make the source connector effective for this connector-owned session.
+
+        This does not change the persona default. It only prevents a configured inbound route from
+        creating a session whose own connector gate immediately rejects the first message because
+        that persona happened to default the connector off.
+        """
+        connector = str(getattr(source, "platform", "") or "").strip()
+        if connector:
+            self.session_connections.set(session_id, connector, True)
+
+    def has_feishu_inbound_target(self, session_id: str) -> bool:
+        return any(
+            target.startswith("feishu:")
+            for target in self.inbound_sessions.targets_for(session_id)
+        )
 
     # -- connection hierarchy (UI-REFRESH §4) -----------------------------------
     def _persona_of(self, session_id: str, persona_id: Optional[str] = None) -> str:
@@ -1137,11 +1391,60 @@ class SessionManager:
         return {"ok": True}
 
     # -- connectors -------------------------------------------------------------
+    def connector_agent_route_view(self, connector: str) -> dict[str, Any]:
+        route = self.connector_agent_routes.get(connector)
+        default_agent = self.personas.default_id()
+        return {
+            "agent": route.agent if route else default_agent,
+            "workspace": route.workspace if route else "",
+            "explicit": route is not None,
+            "default_agent": default_agent,
+        }
+
+    def set_connector_agent_route(
+        self, name: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        name = str(name or "").strip()
+        known = {c["name"] for c in connector_list(self.secrets)}
+        if name not in known:
+            return {"ok": False, "error": f"unknown connector: {name}"}
+        agent = str((body or {}).get("agent") or "").strip()
+        if not agent:
+            return {"ok": False, "error": "agent required"}
+        entry = self.personas.get(agent)
+        if entry is None:
+            return {"ok": False, "error": f"unknown agent: {agent}"}
+        if not self.personas.is_enabled(agent):
+            return {"ok": False, "error": f"agent disabled: {agent}"}
+        workspace_raw = str((body or {}).get("workspace") or "").strip()
+        workspace = ""
+        if workspace_raw:
+            resolved = Path(workspace_raw).expanduser()
+            if not resolved.is_dir():
+                return {"ok": False, "error": "workspace is not a directory"}
+            workspace = str(resolved.resolve())
+        if entry.needs_workspace and entry.family != "knowledge" and not workspace:
+            return {
+                "ok": False,
+                "error": f"agent '{agent}' requires a workspace for inbound connector routing",
+            }
+        self.connector_agent_routes.set(name, agent, workspace)
+        return {"ok": True, "route": self.connector_agent_route_view(name)}
+
+    def clear_connector_agent_route(self, name: str) -> dict[str, Any]:
+        name = str(name or "").strip()
+        known = {c["name"] for c in connector_list(self.secrets)}
+        if name not in known:
+            return {"ok": False, "error": f"unknown connector: {name}"}
+        self.connector_agent_routes.delete(name)
+        return {"ok": True, "route": self.connector_agent_route_view(name)}
+
     def list_connectors(self) -> list[dict[str, Any]]:
         # Enrich two-way connectors with the live gateway's recently-seen senders, so the Connectors
         # tab can manage the allow-list inline (each recent sender flagged authorized or not).
         connectors = connector_list(self.secrets)
         for c in connectors:
+            c["inbound_agent_route"] = self.connector_agent_route_view(c["name"])
             if not (c.get("two_way") and c.get("connected")):
                 continue
             allowed = set(c.get("allowed_users") or [])
@@ -2199,6 +2502,25 @@ class SessionManager:
                 return False
         return bool(actor_id) and actor_id in self.slack_approval_owner_ids(owner_team)
 
+    def _feishu_actor_can_resolve_item(
+        self,
+        item,
+        *,
+        actor_id: str,
+        chat_id: str,
+    ) -> bool:
+        """Authorize a Feishu card click against the prompt's delivery chat.
+
+        Gateway already enforces the Feishu allow-list. This extra check prevents an Inbox card
+        forwarded from one chat from resolving prompts for a different session/chat.
+        """
+        if not actor_id or not chat_id:
+            return False
+        binding = self.inbox_routing.binding_for(item.inbox)
+        if binding.channel == "feishu":
+            return str(binding.target or "") == str(chat_id)
+        return f"feishu:{chat_id}" in self.inbound_sessions.targets_for(item.session_id)
+
     def set_inbox_binding(
         self, name: str, *, channel: Optional[str], target: str
     ) -> dict[str, Any]:
@@ -2716,12 +3038,47 @@ class SessionManager:
         for tool in task.name_allowed_tools():
             engine.permissions.allow_tool_for_session(tool)
 
+    @staticmethod
+    def _automation_roots(workspace: str | Path) -> list[RootDir]:
+        """Roots granted only while an automation run is executing."""
+        return [
+            RootDir(path=workspace, writable=True, label="scratch"),
+            RootDir(
+                path=state_dir() / "skills",
+                writable=False,
+                label=_AUTOMATION_SKILLS_ROOT_LABEL,
+            ),
+        ]
+
+    def _automation_run_is_active(self, session_id: str) -> bool:
+        if not session_id.startswith("__run__"):
+            return False
+        run = self.task_store.find_run(session_id[len("__run__") :])
+        return run is not None and run.status == "running"
+
+    @staticmethod
+    def _revoke_automation_skills_root(engine: TurnEngine) -> None:
+        roots = getattr(engine, "roots", None)
+        if roots is not None:
+            roots[:] = [
+                root
+                for root in roots
+                if getattr(root, "label", "") != _AUTOMATION_SKILLS_ROOT_LABEL
+            ]
+
     def _build_task_engine(self, task, *, session_id: str) -> TurnEngine:
         ag = get_agent(task.agent)
         Path(task.workspace).mkdir(parents=True, exist_ok=True)
+        roots = self._automation_roots(task.workspace)
+        connector_filter = self.effective_connectors(session_id, task.agent)
+        connector_tool_kinds = None
+        if task.sources is not None:
+            connector_filter &= set(task.sources)
+            connector_tool_kinds = {"read"}
         engine = build_engine(
             agent=ag,
             workspace=task.workspace,
+            roots=roots,
             model=task.model or self.model,
             mode=Mode.INTERACTIVE,
             approver=self._scheduled_approver(task, session_id),
@@ -2736,7 +3093,8 @@ class SessionManager:
             audit_sink=self.audit_store.append,
             # Scheduled runs respect the same per-session connection hierarchy as live sessions:
             # expose only the persona's effective-enabled connectors' tools (§4.3).
-            connector_filter=self.effective_connectors(session_id, task.agent),
+            connector_filter=connector_filter,
+            connector_tool_kinds=connector_tool_kinds,
             skill_filter=lambda sid=session_id, w=task.workspace: (
                 self.effective_skill_names(sid, w)
             ),
@@ -2753,27 +3111,41 @@ class SessionManager:
         from ..interactions import buttons_for
 
         binding = self.inbox_routing.binding_for(item.inbox)
-        if not (binding.channel and self.gateway is not None):
+        if self.gateway is None:
             return
-        if binding.channel == "slack":
-            team_id, _ = slack_split(binding.target)
-            # Legacy bindings may predate approval ownership. Keep the item
-            # available in-app, but never mirror it to an ownerless channel.
-            if not self.slack_approval_owner_ids(team_id):
-                return
-        target = f"{binding.channel}:{binding.target}"
+        targets: list[str] = []
+        if binding.channel:
+            if binding.channel == "slack":
+                team_id, _ = slack_split(binding.target)
+                # Legacy bindings may predate approval ownership. Keep the item
+                # available in-app, but never mirror it to an ownerless channel.
+                if not self.slack_approval_owner_ids(team_id):
+                    return
+            targets.append(f"{binding.channel}:{binding.target}")
+        else:
+            # A Feishu DM-created session usually has no explicit Inbox binding. In that case,
+            # mirror approval prompts back to its owning DM so the user can approve from Feishu
+            # instead of switching to the UI Inbox.
+            targets.extend(
+                target
+                for target in self.inbound_sessions.targets_for(item.session_id)
+                if target.startswith("feishu:")
+            )
+        if not targets:
+            return
         body = "\n".join(p for p in (item.title, item.body) if p).strip()
         buttons = buttons_for(item)
-        try:
-            if buttons:
-                await self.gateway.deliver_interactive(target, body, buttons)
-            else:
-                await self.gateway.deliver(
-                    target,
-                    f"{body}\n(Open the app to respond.)\n[ow:{item.id}]".strip(),
-                )
-        except Exception:
-            pass
+        for target in targets:
+            try:
+                if buttons:
+                    await self.gateway.deliver_interactive(target, body, buttons)
+                else:
+                    await self.gateway.deliver(
+                        target,
+                        f"{body}\n(Open the app to respond.)\n[ow:{item.id}]".strip(),
+                    )
+            except Exception:
+                pass
 
     # -- interactive prompt buttons (Slack/Telegram) ----------------------------
     async def _on_interaction(self, event) -> None:
@@ -2804,13 +3176,30 @@ class SessionManager:
                 if self.gateway is not None:
                     await self.gateway.reject_interaction(event)
                 return
+        if (
+            getattr(event, "platform", "") == "feishu"
+            and item.kind in protected_kinds
+        ):
+            actor_id = str(getattr(event, "user_id", "") or "")
+            if not self._feishu_actor_can_resolve_item(
+                item,
+                actor_id=actor_id,
+                chat_id=getattr(event, "chat_id", "") or "",
+            ):
+                if self.gateway is not None:
+                    await self.gateway.reject_interaction(event)
+                return
         already = item is not None and item.state != "pending"
         resolved = await self.resolve_inbox(item_id, resolution)
         if not resolved and not already:
             return
         who = getattr(event, "user_name", None) or "someone"
         title = item.title
-        outcome = "already resolved" if already else f"“{resolution}” — by {who}"
+        outcome = (
+            "already resolved"
+            if already
+            else f"{self._interaction_resolution_label(item, resolution)} - by {who}"
+        )
         if self.gateway is not None and getattr(event, "message_id", None):
             try:
                 await self.gateway.update_message(
@@ -2821,6 +3210,20 @@ class SessionManager:
                 )
             except Exception:
                 pass
+
+    @staticmethod
+    def _interaction_resolution_label(item, resolution: str) -> str:
+        if getattr(item, "kind", "") == "directory":
+            data = _parse_inbox_json(resolution)
+            return "granted" if data.get("granted") else "denied"
+        if getattr(item, "kind", "") == "plan":
+            data = _parse_inbox_json(resolution)
+            return "approved" if data.get("approved") else "denied"
+        if resolution in {"allow", "once", "always", "always_tool", "always_command"}:
+            return "approved"
+        if resolution == "deny":
+            return "denied"
+        return f"selected {resolution}"
 
     # -- inbox replies over messaging connectors --------------------------------
     def _resolve_inbox_reply(self, event) -> bool:
@@ -2892,7 +3295,11 @@ class SessionManager:
         await self.deliver_to_session(wake.session_id, self._wake_message(wake))
 
     async def deliver_to_session(
-        self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None
+        self,
+        session_id: str,
+        message: str | list[dict[str, Any]],
+        *,
+        source: Optional[dict[str, Any]] = None,
     ) -> None:
         """Deliver an out-of-band message to a (durable) session — the agent stays resumable
         forever, so this works with no live socket. Busy (mid tool-loop): steer it into the live
@@ -2904,16 +3311,25 @@ class SessionManager:
         engine = self.get_engine(session_id)
         if engine is None:
             return
+        reporter = FeishuRunProgressReporter.for_source(
+            secrets=self.secrets, source=source, session_id=session_id
+        )
         if not self.try_mark_running(session_id):
+            if reporter is not None:
+                await self._notify_feishu_progress_ack(reporter)
             engine.queue_steering(message, source)
             return
         try:
+            if reporter is not None:
+                await self._notify_feishu_progress_start(reporter)
             async for event in engine.run(message, source=source):
                 # Stream every event to any socket viewing this session, so a background turn
                 # (channel delivery, self-wake, durable resume) is seen live — not just on reselect.
                 await self.broadcast_session(
                     session_id, {"type": event.type.value, "data": event.data}
                 )
+                if reporter is not None:
+                    await self._notify_feishu_progress_event(reporter, event)
                 # A background turn has no user watching to read an inline error: a dead model or
                 # tool failure would otherwise vanish. Log it and park it in the dead-letter store.
                 if event.type.value == "error":
@@ -2921,13 +3337,19 @@ class SessionManager:
                     logger.warning(
                         "background turn failed for %s: %s", session_id, reason
                     )
-                    self.unrouted.record(session_id, "-", message, reason=reason)
+                    self.unrouted.record(
+                        session_id, "-", content_to_text(message), reason=reason
+                    )
             self.save(session_id, engine)
         except (
             Exception
         ) as exc:  # an unexpected raise out of the turn must not be swallowed
             logger.warning("background turn crashed for %s: %s", session_id, exc)
-            self.unrouted.record(session_id, "-", message, reason=str(exc))
+            if reporter is not None:
+                await self._notify_feishu_progress_exception(reporter, exc)
+            self.unrouted.record(
+                session_id, "-", content_to_text(message), reason=str(exc)
+            )
             await self.broadcast_session(
                 session_id, {"type": "error", "data": {"error": str(exc)}}
             )
@@ -2935,11 +3357,143 @@ class SessionManager:
             self.mark_idle(session_id)
             await self.broadcast_session(session_id, {"type": "turn_done", "data": {}})
 
+    async def _notify_feishu_progress_ack(self, reporter) -> None:
+        try:
+            await reporter.ack_only()
+        except Exception:
+            logger.debug("feishu progress ack failed", exc_info=True)
+
+    async def _notify_feishu_progress_start(self, reporter) -> None:
+        try:
+            await reporter.start()
+        except Exception:
+            logger.debug("feishu progress start failed", exc_info=True)
+
+    async def _notify_feishu_progress_event(self, reporter, event) -> None:
+        try:
+            await reporter.on_event(event)
+        except Exception:
+            logger.debug("feishu progress event failed", exc_info=True)
+
+    async def _notify_feishu_progress_exception(self, reporter, exc) -> None:
+        try:
+            await reporter.fail_from_exception(exc)
+        except Exception:
+            logger.debug("feishu progress exception update failed", exc_info=True)
+
+    async def _materialize_inbound_attachments(
+        self,
+        session_id: str,
+        event,
+        source_payload: dict[str, Any],
+        base_text: Optional[str] = None,
+    ) -> tuple[str | list[dict[str, Any]], dict[str, Any]]:
+        """Download inbound attachments and preserve Feishu images as model-visible parts."""
+        attachments = list(getattr(event, "attachments", None) or [])
+        rendered_text = base_text if base_text is not None else event.tagged_text()
+        if not attachments:
+            return rendered_text, source_payload
+
+        payload = dict(source_payload)
+        payload["attachments"] = []
+        record_dir = self.session_record_files_dir(session_id)
+        rendered_lines = []
+        image_parts: list[dict[str, Any]] = []
+        for item in attachments:
+            if not isinstance(item, dict):
+                continue
+            attachment = dict(item)
+            platform = str(attachment.get("platform") or event.source.platform or "")
+            filename = str(
+                attachment.get("filename") or attachment.get("key") or "attachment"
+            )
+            resource_type = str(attachment.get("resource_type") or "file")
+            key = str(attachment.get("key") or "")
+            message_id = str(
+                attachment.get("message_id") or getattr(event, "message_id", "") or ""
+            )
+            if not key or platform != "feishu" or not message_id:
+                attachment["saved_path"] = ""
+                payload["attachments"].append(attachment)
+                continue
+            token = _resolve_token(self.secrets, platform, event.source.chat_id)
+            if not token:
+                attachment["saved_path"] = ""
+                attachment["error"] = f"no bot token for {platform}"
+                payload["attachments"].append(attachment)
+                rendered_lines.append(
+                    f"- {filename}: failed to download ({attachment['error']})"
+                )
+                continue
+            try:
+                try:
+                    data, downloaded_name = await asyncio.to_thread(
+                        _download_feishu_resource,
+                        token,
+                        message_id,
+                        key,
+                        resource_type,
+                    )
+                except Exception:
+                    # Feishu uses ``file`` for some audio/media post elements even when the
+                    # event advertises a specialised resource type.  Retry the documented
+                    # generic endpoint before reporting the attachment as unavailable.
+                    if resource_type not in {"audio", "video", "media"}:
+                        raise
+                    data, downloaded_name = await asyncio.to_thread(
+                        _download_feishu_resource,
+                        token,
+                        message_id,
+                        key,
+                        "file",
+                    )
+                safe_name = re.sub(r"[\\\/]+", "_", downloaded_name or filename)
+                safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", safe_name).strip("._ ")
+                if not safe_name:
+                    safe_name = key
+                out = record_dir / safe_name
+                stem = out.stem
+                suffix = out.suffix
+                idx = 2
+                while out.exists():
+                    out = record_dir / f"{stem}-{idx}{suffix}"
+                    idx += 1
+                out.write_bytes(data)
+                attachment["saved_path"] = str(out)
+                attachment["saved_name"] = out.name
+                attachment["saved_dir"] = str(record_dir)
+                payload["attachments"].append(attachment)
+                if attachment.get("type") == "image":
+                    image_part = _image_attachment_part(data, out.name)
+                    if image_part is not None:
+                        image_parts.append(image_part)
+                    else:
+                        # A malformed or unsupported image still needs a usable fallback.
+                        rendered_lines.append(f"- {out.name}: {out}")
+                else:
+                    rendered_lines.append(f"- {out.name}: {out}")
+                text_preview = _attachment_text_preview(data, out.name)
+                if text_preview:
+                    rendered_lines.append(f"  Contents:\n{text_preview}")
+            except Exception as exc:
+                attachment["saved_path"] = ""
+                attachment["error"] = str(exc)
+                payload["attachments"].append(attachment)
+                rendered_lines.append(f"- {filename}: failed to download ({exc})")
+        if payload.get("attachments"):
+            if any(item.get("saved_path") for item in payload["attachments"]):
+                self._grant_session_record_files_root(session_id, record_dir)
+            model_text = rendered_text
+            if rendered_lines:
+                model_text += "\n\nDownloaded files:\n" + "\n".join(rendered_lines)
+            return build_user_content(model_text, image_parts), payload
+        return rendered_text, payload
+
     # -- channel subscriptions (inbound messaging) ------------------------------
     async def _dispatch_inbound(self, event) -> None:
         """Route a non-token inbound message. Channel messages are buffered (for catch-up) and
-        fanned out to every subscribed session; a DM (or any non-channel) goes to the user-designated
-        DM session (delivered like any background turn) or, if none is set, is parked as unrouted.
+        fanned out to every subscribed session; a DM (or any non-channel) goes to its dedicated
+        external-conversation session, with the legacy DM session used only as a fallback.
         """
         src = event.source
         text = getattr(event, "text", "") or ""
@@ -2958,6 +3512,9 @@ class SessionManager:
             ts=_inbound_epoch(getattr(event, "message_id", None)),
             text=text,
         )
+        source_payload = ms.to_dict()
+        if src.platform == "feishu" and getattr(event, "message_id", None):
+            source_payload["message_id"] = str(getattr(event, "message_id", ""))
         if src.chat_type in ("channel", "group"):
             self.channel_buffer.record(
                 channel, who, text, name=src.chat_name
@@ -2987,26 +3544,50 @@ class SessionManager:
                     ):
                         continue
                     try:
+                        (
+                            deliver_msg,
+                            sub_source,
+                        ) = await self._materialize_inbound_attachments(
+                            sub.session_id,
+                            event,
+                            source_payload,
+                            base_text=msg,
+                        )
                         await self.deliver_to_session(
-                            sub.session_id, msg, source=ms.to_dict()
+                            sub.session_id, deliver_msg, source=sub_source
                         )
                     except Exception:
                         pass
                 return
             return  # channel with no subscribers — nobody is listening
-        # DM (or any non-channel): route to the designated session, else park it for visibility.
+        # DM (or any non-channel): route to a dedicated external-conversation session. The legacy
+        # global dm_session remains a fallback only when the auto-route cannot be created.
+        routed = self._resolve_or_create_inbound_session(src)
+        if routed:
+            if self._inbound_connector_allowed(routed, src.platform):
+                msg, routed_source = await self._materialize_inbound_attachments(
+                    routed, event, source_payload, base_text=event.tagged_text()
+                )
+                await self.deliver_to_session(routed, msg, source=routed_source)
+            else:
+                self.unrouted.record(
+                    src.target, who, text, reason="connector muted for inbound session"
+                )
+            return
+
         dm = self.dm_session()
         if dm and self._inbound_connector_allowed(dm, src.platform):
-            await self.deliver_to_session(dm, event.tagged_text(), source=ms.to_dict())
+            msg, dm_source = await self._materialize_inbound_attachments(
+                dm, event, source_payload, base_text=event.tagged_text()
+            )
+            await self.deliver_to_session(dm, msg, source=dm_source)
         elif dm:
             # Designated, but this session has muted the connector → park rather than deliver.
             self.unrouted.record(
                 src.target, who, text, reason="connector muted for DM session"
             )
         else:
-            self.unrouted.record(
-                src.target, who, text, reason="no DM session designated"
-            )
+            self.unrouted.record(src.target, who, text, reason="no inbound session route")
 
     # -- mention router (§31) ----------------------------------------------------
     async def _route_mention(self, event, ms: MessageSource, subs) -> None:
@@ -3016,8 +3597,8 @@ class SessionManager:
         from ..connectors.base import format_target
 
         src = event.source
-        # Slack semantics: replying to a top-level message threads on THAT message's ts, so a
-        # top-level tag (no thread_ts) keys — and is answered — on its own ts.
+        # Reply-capable platforms key a top-level mention to its own message.  Thread replies
+        # retain the platform-provided root/thread id, so follow-ups stay in one conversation.
         thread_key = src.thread_id or getattr(event, "message_id", None)
         thread_target = format_target(src.platform, src.chat_id, thread_key)
         who = src.user_name or src.user_id or "?"
@@ -3034,8 +3615,11 @@ class SessionManager:
                 if not self._inbound_connector_allowed(sub.session_id, src.platform):
                     continue
                 try:
+                    msg2, sub_source = await self._materialize_inbound_attachments(
+                        sub.session_id, event, ms.to_dict(), base_text=msg
+                    )
                     await self.deliver_to_session(
-                        sub.session_id, msg, source=ms.to_dict()
+                        sub.session_id, msg2, source=sub_source
                     )
                 except Exception:
                     pass
@@ -3044,11 +3628,14 @@ class SessionManager:
         if sid and self.session_store.load(sid) is not None:
             # Follow-up tag in a thread we already own → steer the same session.
             msg = (
-                f"💬 Follow-up in your Slack thread ({chan}) from {who}: {event.text}\n"
+                f"💬 Follow-up in your {src.platform.title()} thread ({chan}) from {who}: {event.text}\n"
                 f'(Reply in the thread with the send_message tool, target "{thread_target}" '
                 f"— replies there are pre-approved.)"
             )
-            await self.deliver_to_session(sid, msg, source=ms.to_dict())
+            msg, source_payload = await self._materialize_inbound_attachments(
+                sid, event, ms.to_dict(), base_text=msg
+            )
+            await self.deliver_to_session(sid, msg, source=source_payload)
             return
         await self._spawn_mention_session(event, ms, thread_target)
 
@@ -3057,7 +3644,7 @@ class SessionManager:
     ) -> None:
         """First tag in a thread: a NEW visible coworker session that owns the thread. Its
         in-thread replies carry a standing grant (§25 shape, exact-target match) so the
-        conversation never stalls on an approval nobody in Slack can see; everything else
+        conversation never stalls on an approval nobody in the source chat can see; everything else
         asks as usual (approvals park to the Inbox)."""
         import uuid
 
@@ -3065,7 +3652,9 @@ class SessionManager:
         who = src.user_name or src.user_id or "?"
         chan = f"#{src.chat_name}" if src.chat_name else src.chat_id
         sid = uuid.uuid4().hex
-        engine = self.get_engine(sid, agent=self.personas.default_id())
+        agent, workspace = self._inbound_agent_for_source(src)
+        self._seed_inbound_connector_override(sid, src)
+        engine = self.get_engine(sid, agent=agent, workspace=workspace)
         if engine is None:
             self.unrouted.record(
                 src.target, who, event.text, reason="could not spawn mention session"
@@ -3092,16 +3681,19 @@ class SessionManager:
         recent = self.channel_buffer.recent(f"{src.platform}:{src.chat_id}", 7)[:-1]
         context = "\n".join(f"- {m['from']}: {m['text']}" for m in recent)
         opening = (
-            f"🔔 You were mentioned on Slack in {chan} by {who}: {event.text}\n\n"
-            f"You own this Slack thread. Reply in the thread using the send_message tool "
+            f"🔔 You were mentioned on {src.platform.title()} in {chan} by {who}: {event.text}\n\n"
+            f"You own this {src.platform.title()} thread. Reply in the thread using the send_message tool "
             f'with target "{thread_target}" — replies to this thread are pre-approved and '
             f"never prompt the user. Anything else (other channels, files, external "
             f"actions) asks for approval as usual. Keep replies concise and "
-            f"Slack-appropriate."
+            f"appropriate for {src.platform.title()}."
             + (f"\n\nRecent channel context:\n{context}" if context else "")
         )
         try:
-            await self.deliver_to_session(sid, opening, source=ms.to_dict())
+            msg, source_payload = await self._materialize_inbound_attachments(
+                sid, event, ms.to_dict(), base_text=opening
+            )
+            await self.deliver_to_session(sid, msg, source=source_payload)
         except Exception:
             logger.exception("mention session %s opening turn failed", sid)
 
@@ -3156,7 +3748,9 @@ class SessionManager:
         opening = (
             f"⏰ Scheduled run — {task.title}\n\n"
             "This automation is due now: carry out the task below immediately and produce the "
-            "result. The schedule already exists — do not create or modify any scheduled tasks.\n\n"
+            "result. The schedule already exists — do not create or modify any scheduled tasks.\n"
+            + self._automation_context(task)
+            + "\n"
             f"{task.instructions}"
         )
         try:
@@ -3165,6 +3759,7 @@ class SessionManager:
             run.result_text = _last_assistant_text(engine.messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
             run.status = "ok"
+            await asyncio.to_thread(self._deliver_automation_result, task, run)
             if task.notify_on_completion:
                 await self._notify_task_done(task, run)
         except Exception as exc:
@@ -3175,11 +3770,66 @@ class SessionManager:
             # follow-up; record the run (now carrying its session_id).
             try:
                 self.save(run.session_id, engine)
-                self._engines[run.session_id] = engine
             except Exception:
                 pass
+            finally:
+                self._revoke_automation_skills_root(engine)
+                self._engines[run.session_id] = engine
             self.task_store.add_run(run)
+            self._cleanup_automation_runs(task)
         return run
+
+    @staticmethod
+    def _automation_context(task: ScheduledTask) -> str:
+        if task.sources is None:
+            sources = "Data sources: legacy task — use the connected tools needed for the task."
+        elif task.sources:
+            sources = "Data sources you may query: " + ", ".join(task.sources) + "."
+        else:
+            sources = "Data sources: none configured. Use built-in tools or web research as needed."
+        delivery = task.delivery or {"kind": "app"}
+        if delivery.get("kind") == "channel":
+            destination = str(delivery.get("target") or "configured channel")
+            delivery_note = (
+                f"Final delivery: OpenWorker will send your completed result to {destination}. "
+                "Do not send the final result yourself."
+            )
+        else:
+            delivery_note = "Final delivery: leave the completed result in this run's conversation."
+        return f"\n{sources}\n{delivery_note}\n"
+
+    def _deliver_automation_result(self, task: ScheduledTask, run: TaskRun) -> None:
+        """Send a completed result to its configured destination without giving the model
+        control over the target. Delivery failures remain distinct from task execution."""
+        delivery = task.delivery or {"kind": "app"}
+        if delivery.get("kind") != "channel":
+            run.delivery_status = "skipped"
+            return
+        target = str(delivery.get("target") or "").strip()
+        try:
+            from ..connectors.base import parse_target
+            from ..connectors.senders import DEFAULT_SENDERS
+
+            platform, chat_id, thread = parse_target(target)
+            configured = str(delivery.get("connector") or platform)
+            if configured != platform:
+                raise ValueError("delivery connector does not match its target")
+            sender = DEFAULT_SENDERS.get(platform)
+            token = _resolve_token(self.secrets, platform, chat_id)
+            if sender is None or not token:
+                raise RuntimeError(f"{platform} is not connected")
+            result = sender(
+                token,
+                chat_id,
+                f"✓ {task.title}\n\n{(run.result_text or '').strip()}",
+                thread,
+            )
+            if not result.ok:
+                raise RuntimeError(result.error or "delivery failed")
+            run.delivery_status = "sent"
+        except Exception as exc:
+            run.delivery_status = "failed"
+            run.delivery_error = str(exc)
 
     async def _notify_task_done(self, task, run: TaskRun) -> None:
         summary = (run.result_text or "").strip()[:280]
@@ -3241,14 +3891,123 @@ class SessionManager:
         self.task_store.save(task)
         return {"ok": True}
 
-    def get_automation(self, task_id: str) -> dict[str, Any]:
+    def get_automation(
+        self, task_id: str, *, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
         task = self.task_store.get(task_id)
         if task is None:
             return {"error": "not found"}
+        limit = max(1, min(int(limit), 100))
+        offset = max(0, int(offset))
+        total_runs = self.task_store.run_count(task_id)
+        runs = self.task_store.runs(task_id, limit=limit, offset=offset)
+        next_offset = offset + len(runs)
         return {
             "task": task.public(),
-            "runs": [r.to_dict() for r in self.task_store.runs(task_id)],
+            "runs": [r.to_dict() for r in runs],
+            "total_runs": total_runs,
+            "has_more": next_offset < total_runs,
+            "next_offset": next_offset if next_offset < total_runs else None,
         }
+
+    def _automation_sources(self, raw: Any) -> tuple[Optional[list[str]], Optional[str]]:
+        """Validate a task-owned integration source allow-list.
+
+        ``None`` is reserved for records created before source configuration existed;
+        new GUI/API tasks pass a list, including [] for web/local-only work.
+        """
+        if raw is None:
+            return None, None
+        if not isinstance(raw, list) or any(not isinstance(v, str) for v in raw):
+            return None, "sources must be a list of connector names"
+        sources = list(dict.fromkeys(v.strip() for v in raw if v.strip()))
+        known = {str(c["name"]): c for c in connector_list(self.secrets)}
+        unknown = [name for name in sources if name not in known]
+        if unknown:
+            return None, f"unknown source connector: {', '.join(unknown)}"
+        unavailable = [name for name in sources if not known[name].get("connected")]
+        if unavailable:
+            return None, f"connect source first: {', '.join(unavailable)}"
+        from ..connectors.tool_defs import TOOLS_BY_CONNECTOR
+
+        unreadable = [
+            name
+            for name in sources
+            if not any(tool.kind == "read" for tool in TOOLS_BY_CONNECTOR.get(name, []))
+        ]
+        if unreadable:
+            return None, f"connector has no readable source tools: {', '.join(unreadable)}"
+        return sources, None
+
+    def _automation_delivery(self, raw: Any) -> tuple[Optional[dict[str, str]], Optional[str]]:
+        if raw is None:
+            return {"kind": "app"}, None
+        if not isinstance(raw, dict):
+            return None, "delivery must be an object"
+        kind = str(raw.get("kind") or "app")
+        if kind == "app":
+            return {"kind": "app"}, None
+        if kind != "channel":
+            return None, "delivery kind must be 'app' or 'channel'"
+        target = str(raw.get("target") or "").strip()
+        connector = str(raw.get("connector") or "").strip()
+        try:
+            from ..connectors.base import parse_target
+
+            platform, _chat_id, _thread = parse_target(target)
+        except ValueError:
+            return None, "delivery target must be a platform channel address"
+        if connector and connector != platform:
+            return None, "delivery connector does not match its target"
+        known = {str(c["name"]): c for c in connector_list(self.secrets)}
+        if platform not in known or not known[platform].get("connected"):
+            return None, f"connect delivery connector first: {platform}"
+        from ..connectors.senders import DEFAULT_SENDERS
+
+        if platform not in DEFAULT_SENDERS:
+            return None, f"connector cannot deliver messages: {platform}"
+        return {"kind": "channel", "connector": platform, "target": target}, None
+
+    def _automation_agent(self, value: Any) -> tuple[Optional[str], Optional[str]]:
+        """Validate the Persona selected to run an automation."""
+        agent = str(value or "cowork").strip()
+        entry = self.personas.get(agent)
+        if entry is None:
+            return None, f"unknown agent: {agent}"
+        if not self.personas.is_enabled(agent):
+            return None, f"agent disabled: {agent}"
+        return agent, None
+
+    @staticmethod
+    def _automation_retention_days(value: Any) -> tuple[Optional[int], Optional[str]]:
+        if value is None or value == "":
+            return None, None
+        if isinstance(value, bool):
+            return None, "run retention must be a positive number of days"
+        try:
+            days = int(value)
+        except (TypeError, ValueError):
+            return None, "run retention must be a positive number of days"
+        if days < 1 or days > 3650:
+            return None, "run retention must be between 1 and 3650 days"
+        return days, None
+
+    def _cleanup_automation_runs(self, task: ScheduledTask) -> int:
+        if not task.run_retention_days:
+            return 0
+        cutoff = time.time() - task.run_retention_days * 86400
+        removed = self.task_store.delete_completed_runs(task.id, older_than=cutoff)
+        self._discard_automation_run_sessions(removed)
+        return len(removed)
+
+    def _discard_automation_run_sessions(self, runs: list[TaskRun]) -> None:
+        """Remove conversation data that belongs only to discarded completed runs."""
+        for run in runs:
+            self._engines.pop(run.session_id, None)
+            self.session_store.delete(run.session_id)
+            self.session_connections.remove_session(run.session_id)
+            self.session_skills.remove_session(run.session_id)
+            self.inbox.resolve_session(run.session_id)
 
     def create_automation(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Create an automation directly from the GUI (the "New automation" / template flow).
@@ -3274,6 +4033,19 @@ class SessionManager:
         if cron and not croniter.is_valid(cron):
             return {"ok": False, "error": f"invalid cron expression: {cron}"}
 
+        agent, agent_error = self._automation_agent(payload.get("agent"))
+        if agent_error:
+            return {"ok": False, "error": agent_error}
+
+        # New GUI/API tasks always own their source set. ``sources`` omitted here
+        # intentionally means an empty set, not the broad legacy fallback.
+        sources, source_error = self._automation_sources(payload.get("sources", []))
+        if source_error:
+            return {"ok": False, "error": source_error}
+        delivery, delivery_error = self._automation_delivery(payload.get("delivery"))
+        if delivery_error:
+            return {"ok": False, "error": delivery_error}
+
         schedule = Schedule(
             kind="once" if (fire_at and not cron) else "cron",
             cron=cron,
@@ -3288,7 +4060,9 @@ class SessionManager:
             schedule=schedule,
             workspace="",
             origin_surface="cowork",
-            agent="cowork",
+            agent=agent,
+            sources=sources,
+            delivery=delivery or {"kind": "app"},
             # Human-driven path (GUI form / onboarding recipes): the creating surface
             # rendered the grants, the submit IS the consent. Same validation as the
             # agent tool — only target-bound write grants survive.
@@ -3306,6 +4080,28 @@ class SessionManager:
             return {"ok": False, "error": "not found"}
         if "enabled" in changes:
             task.enabled = bool(changes["enabled"])
+        if "agent" in changes:
+            agent, agent_error = self._automation_agent(changes["agent"])
+            if agent_error:
+                return {"ok": False, "error": agent_error}
+            task.agent = agent
+        if "run_retention_days" in changes:
+            retention_days, retention_error = self._automation_retention_days(
+                changes["run_retention_days"]
+            )
+            if retention_error:
+                return {"ok": False, "error": retention_error}
+            task.run_retention_days = retention_days
+        if "sources" in changes:
+            sources, source_error = self._automation_sources(changes["sources"])
+            if source_error:
+                return {"ok": False, "error": source_error}
+            task.sources = sources
+        if "delivery" in changes:
+            delivery, delivery_error = self._automation_delivery(changes["delivery"])
+            if delivery_error:
+                return {"ok": False, "error": delivery_error}
+            task.delivery = delivery or {"kind": "app"}
         if changes.get("instructions") is not None:
             task.instructions = changes["instructions"]
         if changes.get("title") is not None:
@@ -3321,6 +4117,8 @@ class SessionManager:
             # Human-only, like minting; the agent-facing update tool has no such field.
             task.revoke_rule(str(changes["revoke"]))
         self.task_store.save(task)
+        if "run_retention_days" in changes:
+            self._cleanup_automation_runs(task)
         if changes.get("revoke"):
             # A live run engine may still hold the revoked rule — reseed from the record.
             for sid, engine in self._engines.items():
@@ -3331,6 +4129,22 @@ class SessionManager:
 
     def delete_automation(self, task_id: str) -> dict[str, Any]:
         return {"ok": self.task_store.delete(task_id), "id": task_id}
+
+    def clear_automation_runs(
+        self, task_id: str, *, run_ids: Optional[list[str]] = None
+    ) -> dict[str, Any]:
+        task = self.task_store.get(task_id)
+        if task is None:
+            return {"ok": False, "error": "not found"}
+        if run_ids is not None and (
+            not isinstance(run_ids, list)
+            or any(not isinstance(run_id, str) for run_id in run_ids)
+        ):
+            return {"ok": False, "error": "run_ids must be a list of run IDs"}
+        selected = set(run_ids) if run_ids is not None else None
+        removed = self.task_store.delete_completed_runs(task_id, run_ids=selected)
+        self._discard_automation_run_sessions(removed)
+        return {"ok": True, "cleared": len(removed)}
 
     def prepare_manual_run(self, task_id: str) -> dict[str, Any]:
         """Create a 'running' manual run and return its session, so the GUI can open it and
@@ -3355,7 +4169,7 @@ class SessionManager:
             "prompt": (
                 f"⏰ Running automation '{task.title}' now. Carry out these instructions "
                 "immediately and produce the result. The schedule already exists — do not create "
-                f"or modify any scheduled tasks.\n\n{task.instructions}"
+                f"or modify any scheduled tasks.\n{self._automation_context(task)}\n{task.instructions}"
             ),
         }
 
@@ -3375,10 +4189,15 @@ class SessionManager:
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
             run.status = "ok"
             run.finished_at = _epoch()
+            self._deliver_automation_result(task, run)
             self.task_store.add_run(run)
             task.last_run, task.last_status = run.finished_at, "ok"
             task.run_count += 1
             self.task_store.save(task)
+            self._cleanup_automation_runs(task)
+        engine = self._engines.get(run.session_id)
+        if engine is not None:
+            self._revoke_automation_skills_root(engine)
         return {"ok": True, "run": run.to_dict()}
 
     def save(self, session_id: str, engine: TurnEngine) -> None:
@@ -3419,6 +4238,7 @@ class SessionManager:
         return [
             {"path": str(r.path), "writable": bool(r.writable), "label": r.label}
             for r in roots[1:]
+            if r.label != _AUTOMATION_SKILLS_ROOT_LABEL
         ]
 
     # -- LLM auto-titles (FB-010) -------------------------------------------------
@@ -3631,6 +4451,52 @@ class SessionManager:
         self.session_store.touch_workspace(str(resolved))
         return {"ok": True, "roots": self.get_roots(session_id)}
 
+    def _grant_session_record_files_root(self, session_id: str, path: Path) -> None:
+        """Give a session read-only access to its internal file-drop directory."""
+        if not path.is_dir():
+            return
+        resolved = path.resolve()
+        engine = self._engines.get(session_id)
+        if engine is not None and getattr(engine, "roots", None) is not None:
+            if not any(r.path == resolved for r in engine.roots):
+                engine.roots.append(
+                    RootDir(path=resolved, writable=False, label="session files")
+                )
+            self.session_store.set_extra_roots(session_id, self._extra_roots_of(engine))
+            return
+
+        if self.session_store.load(session_id) is None:
+            self.session_store.save(
+                SessionRecord(
+                    session_id=session_id,
+                    workspace=self._provision_scratch(session_id),
+                    model=self.model,
+                    mode=self.mode.value,
+                    messages=[],
+                    agent="cowork",
+                )
+            )
+        extra = [r for r in self.get_roots(session_id) if not r["primary"]]
+        extra = [r for r in extra if Path(r["path"]).resolve() != resolved]
+        extra.append(
+            {
+                "path": str(resolved),
+                "writable": False,
+                "label": "session files",
+            }
+        )
+        self.session_store.set_extra_roots(
+            session_id,
+            [
+                {
+                    "path": r["path"],
+                    "writable": r["writable"],
+                    "label": r.get("label", ""),
+                }
+                for r in extra
+            ],
+        )
+
     def remove_root(self, session_id: str, path: str) -> dict[str, Any]:
         """Revoke a previously-added folder. The primary scratch cannot be removed."""
         resolved = Path(path).expanduser().resolve()
@@ -3719,6 +4585,9 @@ class SessionManager:
         ok = self.session_store.delete(session_id)
         # Deleting a session is the one implicit unsubscribe (otherwise subscriptions are permanent).
         self.subscriptions.remove_session(session_id)
+        # ...and releases any external DM/chat route it owned; the next inbound message creates a
+        # fresh dedicated session rather than resurrecting a deleted row.
+        self.inbound_sessions.remove_session(session_id)
         # ...and releases any Slack threads it owned (§31): the next tag there spawns fresh.
         self.mention_sessions.remove_session(session_id)
         # ...and drops its per-session connector overrides (§4.2, like subscriptions).

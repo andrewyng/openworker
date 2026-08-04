@@ -37,6 +37,24 @@ def test_buttons_for_kinds(tmp_path):
     assert decode(btns[0].value) == (appr.id, "allow")
     assert decode(btns[1].value) == (appr.id, "deny")
 
+    d = st.add_directory("s1", "Grant access?")
+    db = buttons_for(d)
+    assert [b.label for b in db] == ["Grant", "Deny"]
+    assert decode(db[0].value) == (d.id, '{"granted": true}')
+    assert decode(db[1].value) == (d.id, '{"granted": false}')
+
+    p = st.add_plan("s1", "Approve plan?")
+    pb = buttons_for(p)
+    assert [b.label for b in pb] == ["Approve", "Deny"]
+    assert decode(pb[0].value) == (
+        p.id,
+        '{"approved": true, "mode": "interactive"}',
+    )
+    assert decode(pb[1].value) == (
+        p.id,
+        '{"approved": false, "feedback": "the user rejected the plan"}',
+    )
+
     q = st.add_question("s1", "Which region?", options=["us-east-1", "us-west-2"])
     qb = buttons_for(q)
     assert [b.label for b in qb] == ["us-east-1", "us-west-2"]

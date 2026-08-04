@@ -137,6 +137,50 @@ def _validate_slack(creds: dict) -> ValidationResult:
     return ValidationResult(False, error=data.get("error") or "invalid bot token")
 
 
+def _validate_feishu(creds: dict) -> ValidationResult:
+    import httpx
+
+    base = str(creds.get("base_url") or "https://open.feishu.cn").rstrip("/")
+    try:
+        token_resp = httpx.post(
+            f"{base}/open-apis/auth/v3/tenant_access_token/internal",
+            json={
+                "app_id": creds.get("app_id", ""),
+                "app_secret": creds.get("app_secret", ""),
+            },
+            timeout=15,
+        )
+        token_data = token_resp.json()
+    except Exception as exc:
+        return ValidationResult(False, error=str(exc))
+    if token_resp.status_code >= 400 or token_data.get("code") != 0:
+        return ValidationResult(
+            False,
+            error=str(
+                token_data.get("msg")
+                or token_data.get("error")
+                or f"HTTP {token_resp.status_code}"
+            ),
+        )
+    token = token_data.get("tenant_access_token")
+    if not token:
+        return ValidationResult(False, error="missing tenant_access_token")
+    try:
+        bot_resp = httpx.get(
+            f"{base}/open-apis/bot/v3/info",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        bot_data = bot_resp.json()
+    except Exception:
+        return ValidationResult(True, identity=creds.get("app_id") or "Feishu bot")
+    if bot_resp.status_code < 400 and bot_data.get("code") == 0:
+        data = bot_data.get("bot") or bot_data.get("data") or {}
+        name = data.get("app_name") or data.get("name") or creds.get("app_id")
+        return ValidationResult(True, identity=str(name or "Feishu bot"))
+    return ValidationResult(True, identity=creds.get("app_id") or "Feishu bot")
+
+
 def _validate_whoami(
     method: str,
     url: str,
@@ -487,6 +531,86 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
             "Paste both tokens below and Connect, then invite the bot to a channel or DM it.",
         ],
         validate=_validate_slack,
+    ),
+    ConnectorDescriptor(
+        name="feishu",
+        title="Feishu / Lark",
+        icon="飞",
+        blurb="Two-way messaging with a Feishu or Lark bot over Open Platform.",
+        auth="api_token",
+        two_way=True,
+        channels=True,
+        brand_color="#00d6b9",
+        logo="feishu",
+        fields=[
+            Field(
+                "app_id",
+                "App ID",
+                help="Feishu/Lark Open Platform → your app → Credentials & Basic Info.",
+                placeholder="cli_…",
+            ),
+            Field(
+                "app_secret",
+                "App Secret",
+                secret=True,
+                help="Feishu/Lark Open Platform → your app → Credentials & Basic Info.",
+            ),
+            Field(
+                "base_url",
+                "OpenAPI base URL",
+                required=False,
+                help="Use https://open.feishu.cn for Feishu or https://open.larksuite.com for Lark.",
+                placeholder="https://open.feishu.cn",
+            ),
+            Field(
+                "bot_open_id",
+                "Bot Open ID",
+                required=False,
+                help="Optional. Resolved from Bot API automatically when omitted; set it when mention detection cannot resolve your bot.",
+                placeholder="ou_…",
+            ),
+            Field(
+                "group_policy",
+                "Group policy",
+                required=False,
+                help="Optional: open, allowlist, blacklist, admin_only, or disabled. Default: open.",
+                placeholder="open",
+            ),
+            Field(
+                "require_mention",
+                "Require @mention in groups",
+                required=False,
+                help="Optional true/false. Default false so existing channel subscriptions still receive normal group traffic.",
+                placeholder="false",
+            ),
+            Field(
+                "allow_bots",
+                "Other bot messages",
+                required=False,
+                help="Optional: none, mentions, or all. Default none; OpenWorker's own message echoes are always ignored.",
+                placeholder="none",
+            ),
+            Field(
+                "group_rules",
+                "Per-group rules (JSON)",
+                required=False,
+                help='Optional JSON keyed by chat_id, e.g. {"oc_x":{"policy":"allowlist","allowed_users":["ou_x"]}}.',
+                placeholder='{"oc_x":{"policy":"open"}}',
+            ),
+            Field(
+                "allowed_users",
+                "Allowed sender IDs (comma-separated)",
+                required=False,
+                help="Only these open_id/user_id values may start work. Leave blank, then allow senders from parked messages.",
+            ),
+        ],
+        instructions=[
+            "Create an internal app in Feishu/Lark Open Platform and enable Bot.",
+            "Enable event subscription by long connection/WebSocket. Subscribe to message receive, card action, message read/reaction, bot chat membership, bot P2P entry and message recall events if they are enabled in your app.",
+            "Grant bot message permissions, publish or install the app to the tenant, then paste App ID and App Secret here.",
+            "Invite the bot to a chat and send it a message; copy the chat_id from the parked message or subscribe with feishu:<chat_id>.",
+        ],
+        validate=_validate_feishu,
     ),
     ConnectorDescriptor(
         name="email",

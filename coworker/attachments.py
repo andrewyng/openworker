@@ -54,7 +54,12 @@ def build_user_content(
         if kind == "image":
             url = a.get("data_url") or ""
             if _is_data_image(url) and len(url) <= MAX_IMAGE_CHARS:
-                parts.append({"type": "image_url", "image_url": {"url": url}})
+                parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": url, "detail": "high"},
+                    }
+                )
                 added += 1
         elif kind == "pdf":
             url = a.get("data_url") or ""

@@ -1129,6 +1129,11 @@ def connector_for_tool(tool_name: str) -> str | None:
     return TOOL_TO_CONNECTOR.get(tool_name)
 
 
+def kind_for_tool(tool_name: str) -> str | None:
+    """Return the catalogued read/write kind for a connector tool, if known."""
+    return _KIND_BY_NAME.get(tool_name)
+
+
 def load_tool_settings(secrets: SecretStore, connector: str) -> dict[str, bool]:
     raw = secrets.get(f"{connector}:tools") or {}
     enabled = raw.get("enabled") if isinstance(raw, dict) else None

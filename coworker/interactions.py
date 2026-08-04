@@ -16,7 +16,7 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
-from .inbox import KIND_APPROVAL, KIND_QUESTION
+from .inbox import KIND_APPROVAL, KIND_DIRECTORY, KIND_PLAN, KIND_QUESTION
 
 
 @dataclass
@@ -47,6 +47,43 @@ def buttons_for(item) -> list[Button]:
         return [
             Button("Approve", encode(item.id, "allow")),
             Button("Deny", encode(item.id, "deny")),
+        ]
+    if item.kind == KIND_DIRECTORY:
+        return [
+            Button(
+                "Grant",
+                encode(item.id, json.dumps({"granted": True}, ensure_ascii=False)),
+            ),
+            Button(
+                "Deny",
+                encode(item.id, json.dumps({"granted": False}, ensure_ascii=False)),
+            ),
+        ]
+    if item.kind == KIND_PLAN:
+        return [
+            Button(
+                "Approve",
+                encode(
+                    item.id,
+                    json.dumps(
+                        {"approved": True, "mode": "interactive"},
+                        ensure_ascii=False,
+                    ),
+                ),
+            ),
+            Button(
+                "Deny",
+                encode(
+                    item.id,
+                    json.dumps(
+                        {
+                            "approved": False,
+                            "feedback": "the user rejected the plan",
+                        },
+                        ensure_ascii=False,
+                    ),
+                ),
+            ),
         ]
     if item.kind == KIND_QUESTION and getattr(item, "options", None):
         # One button per option; the resolution IS the chosen option text (what the agent gets).

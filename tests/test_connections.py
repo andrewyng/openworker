@@ -210,14 +210,20 @@ def test_dm_muted_session_not_delivered(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mgr, "deliver_to_session", fake_deliver)
 
-    mgr.set_dm_session("sDM")
-    mgr.session_connections.set("sDM", "slack", False)  # mute slack for the DM session
+    mgr.secrets.put(
+        "slack:default",
+        {"bot_token": "xoxb-test", "app_token": "xapp-test", "enabled": True},
+    )
+    asyncio.run(mgr._dispatch_inbound(_dm_event()))
+    sid = delivered[0]
+    delivered.clear()
+    mgr.session_connections.set(sid, "slack", False)
 
     asyncio.run(mgr._dispatch_inbound(_dm_event()))
 
     assert delivered == []  # parked, not delivered
     parked = mgr.unrouted.list()
-    assert parked and parked[0]["reason"] == "connector muted for DM session"
+    assert parked and parked[0]["reason"] == "connector muted for inbound session"
 
 
 # -- runtime gating: outbound / tools ------------------------------------------
