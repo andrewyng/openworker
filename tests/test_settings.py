@@ -156,7 +156,11 @@ def test_scratch_base_setting_persists_and_drives_provisioning(tmp_path, monkeyp
     reborn = SessionManager(data_dir=data_dir)
     assert reborn.get_settings()["scratch_base"] == str(base)
     scratch = reborn._provision_scratch("sess-xyz")
-    assert Path(scratch) == (base / "sess-xyz").resolve() and Path(scratch).is_dir()
+    # Scratch dirs are date-prefixed `<YYYY>-<MMDD>-<session_id>` (owner request 2026-08-03)
+    import time
+
+    expected = base / f"{time.strftime('%Y-%m%d')}-sess-xyz"
+    assert Path(scratch) == expected.resolve() and Path(scratch).is_dir()
 
 
 def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):

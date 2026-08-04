@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { setWorkspaceTrusted, type WorkspaceCommandTrust } from "../api";
+import { useI18n } from "../i18n";
 
 export function WorkspaceTrustPrompt({
   request,
@@ -8,6 +9,7 @@ export function WorkspaceTrustPrompt({
   request: WorkspaceCommandTrust;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -17,7 +19,7 @@ export function WorkspaceTrustPrompt({
     const result = await setWorkspaceTrusted(request.workspace, true).catch(() => null);
     setSaving(false);
     if (!result?.ok) {
-      setError(result?.error || "Could not save workspace trust.");
+      setError(result?.error || t("Could not save workspace trust."));
       return;
     }
     onClose();
@@ -27,11 +29,9 @@ export function WorkspaceTrustPrompt({
     <div className="gate-overlay" role="dialog" aria-modal="true" aria-labelledby="workspace-trust-title">
       <div className="gate max-w-[560px]">
         <div className="gate-mark">✦</div>
-        <h2 id="workspace-trust-title">Trust this workspace&rsquo;s commands?</h2>
+        <h2 id="workspace-trust-title">{t("Trust this workspace's commands?")}</h2>
         <p className="gate-sub">
-          This project asks OpenWorker to run the commands below without individual approval.
-          Trust applies to future configuration changes at this exact folder until you revoke it
-          in Settings.
+          {t("This project asks OpenWorker to run the commands below without individual approval. Trust applies to future configuration changes at this exact folder until you revoke it in Settings.")}
         </p>
         <div className="rounded-lg border border-line bg-paper px-3 py-2.5 max-h-48 overflow-y-auto">
           {request.requested_commands.map((command) => (
@@ -44,10 +44,10 @@ export function WorkspaceTrustPrompt({
         {error && <div className="gate-error">{error}</div>}
         <div className="gate-foot justify-end gap-2">
           <button className="btn" onClick={onClose} disabled={saving}>
-            Keep asking
+            {t("Keep asking")}
           </button>
           <button className="btn primary" onClick={() => void trust()} disabled={saving}>
-            {saving ? "Saving…" : "Trust workspace"}
+            {saving ? t("Saving…") : t("Trust workspace")}
           </button>
         </div>
       </div>

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { imeComposing } from "../ime";
 import {
   announceCloudChanged,
   AUTOMATIONS_CHANGED,
@@ -20,13 +21,15 @@ import {
   type SurfaceVisibility,
 } from "../api";
 import type { SessionInfo } from "../types";
-import { isProjectScoped, shortPersonaName } from "../personaScope";
+import { shortPersonaName } from "../personaScope";
 import { ConnectorIcon } from "../connectors/ConnectorIcon";
 import { Icon, type IconName } from "./Icon";
 import { PersonaGlyph, personaGlyph } from "./personaIcon";
 import { SearchModal } from "./SearchModal";
 import { baseName } from "../paths";
 import { showPersonas } from "../flags";
+import { useI18n } from "../i18n";
+import type { ProjectInfo } from "../api";
 
 // Session surfaces shown as accordions, in display order. The surfaced personas drive this list
 // (so third-party / Ops personas appear); the hardcoded set is the fallback before personas load.
@@ -46,11 +49,12 @@ const surfaceFromPersona = (p: Persona) => ({
 // Attention = Inbox items awaiting a session (an accent count that bubbles session → persona →
 // footer Inbox — all views of the one Inbox queue, never a second list).
 function AttnBadge({ n }: { n: number }) {
+  const { t } = useI18n();
   if (!n) return null;
   return (
     <span
       className="text-[10px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
-      title={`${n} awaiting your attention`}
+      title={t("{{count}} awaiting your attention", { count: n })}
     >
       {n > 99 ? "99+" : n}
     </span>
@@ -61,11 +65,16 @@ function AttnBadge({ n }: { n: number }) {
 // treatment as the attention badge; failure only colors the tooltip's words, not the
 // sidebar (owner call 2026-07-20: no color, and the entry alone carries the count).
 function UnseenBadge({ n, failed }: { n: number; failed?: boolean }) {
+  const { t } = useI18n();
   if (!n) return null;
   return (
     <span
       className="text-[10px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
-      title={failed ? `${n} new run${n > 1 ? "s" : ""} — the latest failed` : `${n} new run${n > 1 ? "s" : ""}`}
+      title={
+        failed
+          ? t("{{count}} new runs — the latest failed", { count: n })
+          : t("{{count}} new runs", { count: n })
+      }
     >
       {n > 99 ? "99+" : n}
     </span>
@@ -75,13 +84,14 @@ function UnseenBadge({ n, failed }: { n: number; failed?: boolean }) {
 // Liveness = working (in-flight turn) / sleeping (a self-wake is pending). A count-less dot that
 // never bubbles — it says "this is alive", not "this needs you".
 function LiveDot({ state }: { state?: "working" | "sleeping" | "idle" }) {
+  const { t } = useI18n();
   if (state !== "working" && state !== "sleeping") return null;
   return state === "working" ? (
-    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" title="Working now" />
+    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" title={t("Working now")} />
   ) : (
     <span
       className="w-1.5 h-1.5 rounded-full bg-faint/60 shrink-0"
-      title="Sleeping (will wake itself)"
+      title={t("Sleeping (will wake itself)")}
     />
   );
 }
@@ -89,12 +99,13 @@ function LiveDot({ state }: { state?: "working" | "sleeping" | "idle" }) {
 // §31: a session spawned by a platform mention wears its platform's logo, right-aligned beside
 // the title cluster (owner call 2026-07-13). Slack today; the origin key is the platform id.
 function OriginIcon({ s }: { s: SessionInfo }) {
+  const { t } = useI18n();
   if (s.origin !== "slack") return null;
   return (
     <ConnectorIcon
       connector={{ logo: "slack", brand_color: "#611f69" }}
       size={12}
-      title={s.origin_label || "From Slack"}
+      title={s.origin_label || t("From Slack")}
     />
   );
 }
@@ -118,11 +129,12 @@ interface Props {
   surfaces: SurfaceVisibility;
   sessions: SessionInfo[];
   projects: RecentWorkspace[];
+  // Registered Codex-style projects (id → name/path) for grouping sessions by name.
+  projectIndex: ProjectInfo[];
   activeSession: string;
   onSwitchAgent: (agent: string) => void;
   onNewSession: (agent: string) => void;
   onSelectSession: (id: string, workspace: string, agent: string) => void;
-  onNewProject: (persona: string) => void;
   onRenameSession: (id: string, title: string) => void;
   onDeleteSession: (id: string) => void;
   onArchiveSession: (id: string, archived: boolean) => void;
@@ -137,10 +149,12 @@ interface Props {
   onOpenIntegrations: () => void;
   onOpenAudit: () => void;
   onOpenInbox: () => void;
+  onOpenSkills: () => void;
   scheduledActive: boolean;
   integrationsActive: boolean;
   auditActive: boolean;
   inboxActive: boolean;
+  skillsActive: boolean;
   // Collapse controls (⌘B / hover-peek). `onCollapse` docks/undocks; `onPeekLeave` hides the
   // floating peek when the pointer leaves the panel.
   collapsed?: boolean;
@@ -171,6 +185,7 @@ const compactAge = (iso?: string | null): string => {
 // Sessions shown per group before "Show more" comes from Settings (sessions_peek, default 5).
 
 export function Sidebar(props: Props) {
+  const { t } = useI18n();
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
   // The account row (§26): cloud sign-in status drives the avatar/name/dot; refreshed on
@@ -274,7 +289,6 @@ export function Sidebar(props: Props) {
     window.addEventListener(PERSONAS_CHANGED, load);
     return () => window.removeEventListener(PERSONAS_CHANGED, load);
   }, []);
-  const personaOf = (id: string) => personas?.find((p) => p.id === id);
 
   // Sidebar layout (§7): "grouped" = the per-persona accordion; "flat" = a single ungrouped list
   // (Pinned + Recent). Read the persisted preference on load; ABSENT falls back by the
@@ -407,11 +421,6 @@ export function Sidebar(props: Props) {
   const all = props.sessions.filter((s) => s.agent === browseKey && !s.session_id.startsWith("__"));
   const mine = all.filter((s) => !s.archived && !s.pinned);
   const archived = all.filter((s) => s.archived);
-  // Only PROJECT-SCOPED personas group sessions by project (git-bound Code, project-bound Ops).
-  // Scratch/deliverable conversations are orphan (each has its own per-conversation scratch dir),
-  // so they list flat. Workspace-aware (not id-aware) — any git/project persona gets Projects.
-  const workspaceSurface = isProjectScoped(personaOf(browseKey));
-
   // Search now lives in the SearchModal (command-palette overlay), so the sidebar lists never filter
   // in place — these stay constant and the `.filter(matches)` / `normalizedQuery ? …` call sites
   // below are intentional no-ops kept to avoid churn.
@@ -425,6 +434,13 @@ export function Sidebar(props: Props) {
     .filter((s) => personaVisible(s.agent))
     .filter(matches)
     .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+
+  // Flat layout = the same TWO sections (owner ask 2026-08-03): 普通会话 (no project) and
+  // 项目会话 (project tree). The chronological cap applies to the whole list first, then the
+  // shown slice is split into the two sections.
+  const recentShown = recentExpanded ? recentSessions : recentSessions.slice(0, RECENT_PEEK);
+  const recentRegular = recentShown.filter((s) => !s.project_id);
+  const recentProject = recentShown.filter((s) => s.project_id);
 
   // Row actions live behind ONE ⋮ kebab per row (FB-011: four hover icons read as clutter) —
   // the menu offers Rename · Pin/Unpin · Archive/Unarchive · Delete, with the two-step delete
@@ -453,8 +469,8 @@ export function Sidebar(props: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <button
-          title="Session actions"
-          aria-label="Session actions"
+          title={t("Session actions")}
+          aria-label={t("Session actions")}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           data-testid="row-menu"
@@ -475,20 +491,20 @@ export function Sidebar(props: Props) {
               style={{ top: rowMenu!.top, left: rowMenu!.left }}
               role="menu"
             >
-              {item("row-menu-rename", "pencil", "Rename", () => {
+              {item("row-menu-rename", "pencil", t("Rename"), () => {
                 setEditingId(s.session_id);
                 setEditValue(title);
               })}
-              {item("row-menu-pin", "pin", s.pinned ? "Unpin" : "Pin", () =>
+              {item("row-menu-pin", "pin", s.pinned ? t("Unpin") : t("Pin"), () =>
                 props.onTogglePin(s.session_id, !s.pinned),
               )}
-              {item("row-menu-archive", "archive", s.archived ? "Unarchive" : "Archive", () =>
+              {item("row-menu-archive", "archive", s.archived ? t("Unarchive") : t("Archive"), () =>
                 props.onArchiveSession(s.session_id, !s.archived),
               )}
               <div className="h-px bg-line my-1 mx-2" />
               {confirmDelId === s.session_id ? (
                 <button
-                  title="Click again to permanently delete"
+                  title={t("Click again to permanently delete")}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] text-left font-medium text-danger hover:bg-paper"
                   data-testid="row-menu-delete"
                   role="menuitem"
@@ -498,7 +514,7 @@ export function Sidebar(props: Props) {
                   }}
                 >
                   <Icon name="trash" size={13} className="shrink-0" />
-                  <span className="flex-1">Delete?</span>
+                  <span className="flex-1">{t("Delete?")}</span>
                 </button>
               ) : (
                 <button
@@ -508,7 +524,7 @@ export function Sidebar(props: Props) {
                   onClick={() => setConfirmDelId(s.session_id)}
                 >
                   <Icon name="trash" size={13} className="shrink-0" />
-                  <span className="flex-1">Delete</span>
+                  <span className="flex-1">{t("Delete")}</span>
                 </button>
               )}
             </div>
@@ -553,6 +569,7 @@ export function Sidebar(props: Props) {
             onBlur={commitRename}
             onKeyDown={(e) => {
               e.stopPropagation();
+              if (imeComposing(e)) return;
               if (e.key === "Enter") commitRename();
               else if (e.key === "Escape") setEditingId(null);
             }}
@@ -627,6 +644,7 @@ export function Sidebar(props: Props) {
             onBlur={commitRename}
             onKeyDown={(e) => {
               e.stopPropagation();
+              if (imeComposing(e)) return;
               if (e.key === "Enter") commitRename();
               else if (e.key === "Escape") setEditingId(null);
             }}
@@ -660,7 +678,7 @@ export function Sidebar(props: Props) {
     pinnedSessions.length > 0 ? (
       <div>
         <div className="px-1.5 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">
-          Pinned
+          {t("Pinned")}
         </div>
         <div className="space-y-0.5">
           {pinnedSessions.map((s) => cardRow(s))}
@@ -675,7 +693,7 @@ export function Sidebar(props: Props) {
     automations.length > 0 ? (
       <div data-testid="scheduled-band">
         <div className="px-1.5 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">
-          Scheduled
+          {t("Scheduled")}
         </div>
         <div className="space-y-0.5">
           {automations.map((a) => (
@@ -707,12 +725,12 @@ export function Sidebar(props: Props) {
     return (
     <div className="relative flex items-center justify-between px-1.5 mb-1" data-testid="recent-header">
       <span className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">
-        Recent
+        {t("Recent")}
       </span>
       <button
         className="w-6 h-6 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper -mr-1"
-        title="Group & filter conversations"
-        aria-label="Group and filter conversations"
+        title={t("Group & filter conversations")}
+        aria-label={t("Group and filter conversations")}
         onClick={() => setGroupMenuOpen((v) => !v)}
       >
         <Icon name="sliders" size={14} />
@@ -726,9 +744,9 @@ export function Sidebar(props: Props) {
             data-testid="group-filter-menu"
           >
             <div className="px-2 pt-1 pb-1 text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-              Group by
+              {t("Group by")}
             </div>
-            {([["grouped", "Persona"], ["flat", "Chronological"]] as ["flat" | "grouped", string][]).map(
+            {([["grouped", t("Persona")], ["flat", t("Chronological")]] as ["flat" | "grouped", string][]).map(
               ([key, label]) => (
                 <button
                   key={key}
@@ -745,11 +763,11 @@ export function Sidebar(props: Props) {
                 <div className="my-1 border-t border-line" />
                 <div className="px-2 pt-1 pb-1 flex items-center justify-between">
                   <span className="text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-                    Filter by coworker
+                    {t("Filter by coworker")}
                   </span>
                   {filterPersonas.size > 0 && (
                     <button className="text-[11px] text-accent" onClick={() => setFilterPersonas(new Set())}>
-                      Clear
+                      {t("Clear")}
                     </button>
                   )}
                 </div>
@@ -787,37 +805,120 @@ export function Sidebar(props: Props) {
     );
   };
 
-  // Code/Cowork group by project; Chat is a flat recents list.
-  const byProject = useMemo(() => {
-    const grouped = new Map<string, SessionInfo[]>();
-    for (const s of mine) {
-      if (!grouped.has(s.workspace)) grouped.set(s.workspace, []);
-      grouped.get(s.workspace)!.push(s);
-    }
-    return grouped;
-  }, [mine]);
+  // Sidebar session list = TWO flat sections (owner ask 2026-08-03): 普通会话 (sessions without a
+  // project) and 项目会话 (project sessions in a project tree). Sessions are bound to a project by
+  // project_id; the backend auto-binds any session whose workspace matches a registered project.
+  const sectionLabel = (label: string) => (
+    <div className="px-1.5 pt-1 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">
+      {t(label)}
+    </div>
+  );
 
-  const filteredByProject = useMemo(() => {
-    const grouped = new Map<string, SessionInfo[]>();
-    for (const [proj, list] of byProject) grouped.set(proj, list.filter(matches));
-    return grouped;
-  }, [byProject, normalizedQuery]);
-
-  // Projects are tracked PER SURFACE: a folder appears under Code only if it has Code sessions,
-  // under Cowork only if it has Cowork sessions (+ the currently-open folder). No cross-bleed.
-  const projectOrder: string[] = [];
-  const seen = new Set<string>();
-  // Pin the active folder at top only when browsing the active persona (else it belongs elsewhere).
-  if (props.workspace && browseKey === props.agent) {
-    projectOrder.push(props.workspace);
-    seen.add(props.workspace);
-  }
-  for (const s of mine) {
-    if (s.workspace && !seen.has(s.workspace)) {
-      seen.add(s.workspace);
-      projectOrder.push(s.workspace);
+  // The 项目会话 tree: project folders (collapsible; flush-open by default = 平铺), each holding
+  // its sessions. Works for any session list (a persona body or the flat Recent split).
+  const projectTree = (list: SessionInfo[], row: (s: SessionInfo) => ReactNode) => {
+    const byId = new Map(props.projectIndex.map((p) => [p.project_id, p]));
+    const groups = new Map<
+      string,
+      { key: string; label: string; path: string; sessions: SessionInfo[] }
+    >();
+    for (const s of list) {
+      if (!s.project_id) continue;
+      const proj = byId.get(s.project_id);
+      const key = proj ? proj.project_id : `ws:${s.workspace}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = {
+          key,
+          label: proj ? proj.name : baseName(s.workspace) || s.workspace,
+          path: proj ? proj.path : s.workspace,
+          sessions: [],
+        };
+        groups.set(key, g);
+      }
+      g.sessions.push(s);
     }
-  }
+    // Pinned projects first, then by name — a stable tree.
+    const order = [...groups.values()].sort((a, b) => {
+      const ap = a.key.startsWith("ws:") ? 0 : byId.get(a.key)?.pinned ? 1 : 0;
+      const bp = b.key.startsWith("ws:") ? 0 : byId.get(b.key)?.pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return a.label.localeCompare(b.label);
+    });
+    if (order.length === 0) {
+      return (
+        <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
+          {t("Sessions assigned to a project appear here.")}
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-0.5">
+        {order.map((g) => {
+          const list2 = g.sessions.filter(matches);
+          if (normalizedQuery && list2.length === 0) return null; // hide non-matching folders while searching
+          const isActive = g.path === props.workspace;
+          // Flush tree: folders are open until toggled (XOR on the key).
+          const open = !!normalizedQuery || !projToggled.has(g.key);
+          const showAll = !!normalizedQuery || projShowAll.has(g.key);
+          const shown = showAll ? list2 : list2.slice(0, peek);
+          return (
+            <div key={g.key}>
+              <div
+                className={
+                  "flex items-center gap-1.5 px-1.5 py-1 rounded-lg cursor-pointer select-none hover:bg-panel " +
+                  (isActive ? "text-ink" : "text-muted hover:text-ink")
+                }
+                onClick={() => setProjToggled((s) => toggleSet(s, g.key))}
+                title={g.path}
+              >
+                <Icon name="folder" size={15} className="shrink-0" />
+                <span
+                  className={
+                    "truncate min-w-0 text-[12.5px] " + (isActive ? "font-semibold" : "font-medium")
+                  }
+                >
+                  {g.label}
+                </span>
+                {/* Registered projects show a dim path breadcrumb after the name. */}
+                {g.label !== g.path && (
+                  <span className="truncate min-w-0 text-[10.5px] text-faint shrink-0 max-w-[45%]">
+                    {g.path}
+                  </span>
+                )}
+                {/* Disclosure chevron sits AFTER the name (Codex parity), not leading the row. */}
+                <Icon
+                  name={open ? "chevronDown" : "chevronRight"}
+                  size={12}
+                  className="text-faint shrink-0"
+                />
+              </div>
+              {open &&
+                (list2.length > 0 ? (
+                  // pl-[19px] aligns each session's name under the folder NAME (folder icon
+                  // 15 + gap 6 + row px 6 − session px 8 = 19).
+                  <div className="space-y-0.5 pl-[19px]">
+                    {shown.map((s) => row(s))}
+                    {!showAll && list2.length > peek && (
+                      <button
+                        className="px-2 py-1 text-[12px] text-faint hover:text-muted"
+                        onClick={() => setProjShowAll((s) => toggleSet(s, g.key))}
+                      >
+                        {t("Show more ({{count}})", { count: list2.length - peek })}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="px-2 py-1.5 pl-[19px] text-[12px] text-faint leading-snug">
+                    {t("No conversations in this project yet.")}
+                  </div>
+                ))}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   // Surfaced + enabled personas drive the surface list (default persona first); fall back to the
   // static set until loaded. A persona that has live sessions ALWAYS gets a section, surfaced or
@@ -845,123 +946,45 @@ export function Sidebar(props: Props) {
   // changes only when a session is selected or "New session" is clicked.
   const onHeaderClick = (key: string) => setOpenKey((k) => (k === key ? null : key));
 
-  // The expanded body for the active surface: a "New session" action, then the project-grouped
-  // (or flat) session list, then the archived disclosure.
+  // The expanded body for the active surface: TWO flat sections (owner ask 2026-08-03) — 普通会话
+  // (no project) and 项目会话 (project tree) — then the archived disclosure. Every persona gets the
+  // same layout: regular vs project sessions is a sidebar-wide concept, not per-persona.
   const surfaceBody = () => {
+    const regular = mine.filter((s) => !s.project_id);
+    const projectBound = mine.filter((s) => s.project_id);
     return (
       <div className="space-y-1 px-1.5 pb-2 pt-0.5">
-        {/* Body is flush inside the expanded group's fill (provided by the wrapper) so the header +
-            its sessions read as one connected block — clear where a group ends and the next begins. */}
-        {/* No per-persona "New session" here — the top split button's ▾ already starts a session
-            in any persona (it was redundant + the mock's grouped cards don't have it). */}
-        {workspaceSurface ? (
+        {regular.length > 0 || projectBound.length === 0 ? (
           <>
-            {/* Codex-style Projects: a "+" header affordance, then collapsible folders whose
-                rows carry a right-aligned compact age and truncate to PROJECT_PEEK + "Show more". */}
-            <div className="flex items-center justify-between px-1.5 pt-1">
-              <span className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">
-                Projects
-              </span>
-              <button
-                className="w-5 h-5 grid place-items-center rounded text-faint hover:text-ink hover:bg-panel"
-                title="New project"
-                aria-label="New project"
-                onClick={() => props.onNewProject(browseKey)}
-              >
-                <Icon name="folderPlus" size={14} />
-              </button>
-            </div>
-            <div className="space-y-0.5">
-              {projectOrder.length === 0 && (
-                <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                  No projects yet — start one with the + above.
-                </div>
-              )}
-              {projectOrder.map((proj) => {
-                const list = filteredByProject.get(proj) || [];
-                if (normalizedQuery && list.length === 0) return null; // hide non-matching folders while searching
-                const isActive = proj === props.workspace;
-                // Open the active project by default; if none is active (browsing from another
-                // persona), open the most-recent folder so the accordion isn't all-collapsed.
-                const activeInOrder = !!props.workspace && projectOrder.includes(props.workspace);
-                const defaultOpen = isActive || (!activeInOrder && proj === projectOrder[0]);
-                const open = !!normalizedQuery || defaultOpen !== projToggled.has(proj);
-                const showAll = !!normalizedQuery || projShowAll.has(proj);
-                const shown = showAll ? list : list.slice(0, peek);
-                return (
-                  <div key={proj}>
-                    <div
-                      className={
-                        "flex items-center gap-1.5 px-1.5 py-1 rounded-lg cursor-pointer select-none hover:bg-panel " +
-                        (isActive ? "text-ink" : "text-muted hover:text-ink")
-                      }
-                      onClick={() => setProjToggled((s) => toggleSet(s, proj))}
-                      title={proj}
-                    >
-                      <Icon name="folder" size={15} className="shrink-0" />
-                      <span
-                        className={
-                          "truncate min-w-0 text-[12.5px] " + (isActive ? "font-semibold" : "font-medium")
-                        }
-                      >
-                        {baseName(proj)}
-                      </span>
-                      {/* Disclosure chevron sits AFTER the name (Codex parity), not leading the row. */}
-                      <Icon
-                        name={open ? "chevronDown" : "chevronRight"}
-                        size={12}
-                        className="text-faint shrink-0"
-                      />
-                    </div>
-                    {open &&
-                      (list.length > 0 ? (
-                        // pl-[19px] aligns each session's name under the folder NAME (folder icon
-                        // 15 + gap 6 + row px 6 − session px 8 = 19), per Rohit's clean-column ask.
-                        <div className="space-y-0.5 pl-[19px]">
-                          {shown.map((s) => sessionRow(s, { showTime: true }))}
-                          {!showAll && list.length > peek && (
-                            <button
-                              className="px-2 py-1 text-[12px] text-faint hover:text-muted"
-                              onClick={() => setProjShowAll((s) => toggleSet(s, proj))}
-                            >
-                              Show more ({list.length - peek})
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="px-2 py-1.5 pl-[19px] text-[12px] text-faint leading-snug">
-                          No conversations in this project yet.
-                        </div>
-                      ))}
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        ) : (
-          <div className="space-y-0.5">
-            {mine.filter(matches).length === 0 ? (
+            {sectionLabel("Regular sessions")}
+            {regular.length === 0 ? (
               <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                {normalizedQuery ? "No matching conversations." : "No conversations yet."}
+                {t("No regular sessions yet.")}
               </div>
             ) : (
-              <>
-                {(personaShowAll.has(browseKey)
-                  ? mine.filter(matches)
-                  : mine.filter(matches).slice(0, peek)
-                ).map((s) => sessionRow(s))}
-                {!personaShowAll.has(browseKey) && mine.filter(matches).length > peek && (
+              <div className="space-y-0.5">
+                {(personaShowAll.has(browseKey) ? regular : regular.slice(0, peek)).map((s) =>
+                  sessionRow(s),
+                )}
+                {!personaShowAll.has(browseKey) && regular.length > peek && (
                   <button
                     className="px-2 py-1 text-[12px] text-faint hover:text-muted"
                     onClick={() => setPersonaShowAll((s) => toggleSet(s, browseKey))}
                   >
-                    Show more ({mine.filter(matches).length - peek})
+                    {t("Show more ({{count}})", { count: regular.length - peek })}
                   </button>
                 )}
-              </>
+              </div>
             )}
-          </div>
-        )}
+          </>
+        ) : null}
+
+        {projectBound.length > 0 ? (
+          <>
+            {sectionLabel("Project sessions")}
+            {projectTree(projectBound, (s) => sessionRow(s, { showTime: true }))}
+          </>
+        ) : null}
 
         {archived.length > 0 && (
           <div className="mt-2 pt-1.5 border-t border-line">
@@ -970,7 +993,7 @@ export function Sidebar(props: Props) {
               onClick={() => setShowArchived((v) => !v)}
             >
               <Icon name={showArchived ? "chevronDown" : "chevronRight"} size={13} className="shrink-0" />
-              Archived ({archived.length})
+              {t("Archived ({{count}})", { count: archived.length })}
             </button>
             {showArchived && (
               <div className="space-y-0.5 mt-0.5">{archived.filter(matches).map((s) => sessionRow(s))}</div>
@@ -995,8 +1018,8 @@ export function Sidebar(props: Props) {
         {props.onCollapse && (
           <button
             className="nav-pin-btn w-7 h-7 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper shrink-0"
-            title={props.collapsed ? "Dock sidebar (⌘B)" : "Collapse sidebar (⌘B)"}
-            aria-label={props.collapsed ? "Dock sidebar" : "Collapse sidebar"}
+            title={props.collapsed ? t("Dock sidebar (⌘B)") : t("Collapse sidebar (⌘B)")}
+            aria-label={props.collapsed ? t("Dock sidebar") : t("Collapse sidebar")}
             onClick={props.onCollapse}
           >
             <Icon name="sidebar" size={16} />
@@ -1013,6 +1036,24 @@ export function Sidebar(props: Props) {
         onManage={props.onManagePersonas}
       />
 
+
+
+      {/* Skills: a first-class nav row (owner ask 2026-08-03) — the skills list in one
+          click, right between New session and Search. The account menu keeps its entry. */}
+      <div className="px-2.5 mt-1">
+        <button
+          className={
+            "w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left hover:bg-paper hover:text-ink " +
+            (props.skillsActive ? "text-ink bg-paper" : "text-muted")
+          }
+          data-testid="nav-skills"
+          onClick={props.onOpenSkills}
+        >
+          <Icon name="book" size={15} className="shrink-0" />
+          <span className="flex-1">{t("Skills")}</span>
+        </button>
+      </div>
+
       {/* Search: a borderless nav-style entry (not a boxed input) that opens the command-palette
           SearchModal over the whole app. Matches the bottom-nav rows to reduce the boxy look. */}
       <div className="px-2.5 mt-1">
@@ -1020,7 +1061,7 @@ export function Sidebar(props: Props) {
           className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left text-muted hover:bg-paper hover:text-ink"
           onClick={() => setSearchModalOpen(true)}
         >
-          <Icon name="search" size={15} className="shrink-0" /> Search
+          <Icon name="search" size={15} className="shrink-0" /> {t("Search")}
         </button>
       </div>
 
@@ -1036,7 +1077,7 @@ export function Sidebar(props: Props) {
           onClick={props.onOpenScheduled}
         >
           <Icon name="clock" size={15} className="shrink-0" />
-          <span className="flex-1">Automations</span>
+          <span className="flex-1">{t("Automations")}</span>
         </button>
       </div>
 
@@ -1076,7 +1117,7 @@ export function Sidebar(props: Props) {
                           (isCurrent(s.key) ? "font-semibold text-ink" : "font-medium text-ink")
                         }
                       >
-                        {s.label}
+                        {t(s.label)}
                       </span>
                       <LiveDot state={liveByPersona.get(s.key)} />
                       <AttnBadge n={attnByPersona.get(s.key) || 0} />
@@ -1097,22 +1138,32 @@ export function Sidebar(props: Props) {
             <div className="space-y-0.5">
               {recentSessions.length === 0 ? (
                 <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                  {normalizedQuery ? "No matching conversations." : "No conversations yet."}
+                  {normalizedQuery ? t("No matching conversations.") : t("No conversations yet.")}
                 </div>
               ) : (
                 <>
-                  {(recentExpanded
-                    ? recentSessions
-                    : recentSessions.slice(0, RECENT_PEEK)
-                  ).map((s) => cardRow(s))}
+                  {sectionLabel("Regular sessions")}
+                  {recentRegular.length === 0 ? (
+                    <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
+                      {t("No regular sessions yet.")}
+                    </div>
+                  ) : (
+                    <div className="space-y-0.5">{recentRegular.map((s) => cardRow(s))}</div>
+                  )}
+                  {recentProject.length > 0 && (
+                    <>
+                      {sectionLabel("Project sessions")}
+                      {projectTree(recentProject, cardRow)}
+                    </>
+                  )}
                   {recentSessions.length > RECENT_PEEK && (
                     <button
                       className="w-full text-left px-2 py-1.5 text-[12px] text-muted hover:text-ink"
                       onClick={() => setRecentExpanded((v) => !v)}
                     >
                       {recentExpanded
-                        ? "Show less"
-                        : `Show ${recentSessions.length - RECENT_PEEK} more`}
+                        ? t("Show less")
+                        : t("Show {{count}} more", { count: recentSessions.length - RECENT_PEEK })}
                     </button>
                   )}
                 </>
@@ -1146,7 +1197,7 @@ export function Sidebar(props: Props) {
                 ) : (
                   <>
                     <div className="px-3 py-1.5 text-[11px] text-faint border-b border-line">
-                      Not signed in — one-click connections need OpenWorker Cloud
+                      {t("Not signed in — one-click connections need OpenWorker Cloud")}
                     </div>
                     <button
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 mb-1 text-[13px] text-left text-accent hover:bg-paper"
@@ -1164,33 +1215,33 @@ export function Sidebar(props: Props) {
                         });
                       }}
                     >
-                      <Icon name="plug" size={15} className="shrink-0" /> Sign in to OpenWorker
-                      Cloud
+                      <Icon name="plug" size={15} className="shrink-0" /> {t("Sign in to OpenWorker Cloud")}
                     </button>
                   </>
                 )}
                 {appMenuItem(
                   "inbox",
-                  "Inbox",
+                  t("Inbox"),
                   props.onOpenInbox,
                   props.inboxActive,
                   <AttnBadge n={totalAttention} />,
                 )}
-                {appMenuItem("plug", "Connectors", props.onOpenIntegrations, props.integrationsActive)}
+                {appMenuItem("plug", t("Connectors"), props.onOpenIntegrations, props.integrationsActive)}
                 <div className="h-px bg-line my-1 mx-2" />
                 {appMenuItem(
                   "gear",
-                  "Settings",
+                  t("Settings"),
                   props.onManage,
                   false,
                   <span className="text-[11px] text-faint">⌘ ,</span>,
                 )}
-                {appMenuItem("clock", "Automations", props.onOpenScheduled, props.scheduledActive)}
-                {appMenuItem("audit", "Activity", props.onOpenAudit, props.auditActive)}
+                {appMenuItem("clock", t("Automations"), props.onOpenScheduled, props.scheduledActive)}
+                {appMenuItem("book", t("Skills"), props.onOpenSkills, props.skillsActive)}
+                {appMenuItem("audit", t("Activity"), props.onOpenAudit, props.auditActive)}
                 {cloud?.signed_in && (
                   <>
                     <div className="h-px bg-line my-1 mx-2" />
-                    {appMenuItem("signOut", "Sign out", async () => {
+                    {appMenuItem("signOut", t("Sign out"), async () => {
                       await cloudLogout().catch(() => {});
                       announceCloudChanged();
                     })}
@@ -1212,7 +1263,11 @@ export function Sidebar(props: Props) {
             }}
             aria-haspopup="menu"
             aria-expanded={appMenuOpen}
-            aria-label={cloud?.signed_in ? `Account: ${accountEmail}` : "Account: not signed in"}
+            aria-label={
+              cloud?.signed_in
+                ? t("Account: {{email}}", { email: accountEmail })
+                : t("Account: not signed in")
+            }
           >
             <span
               className={
@@ -1226,12 +1281,12 @@ export function Sidebar(props: Props) {
               {cloud?.signed_in ? accountName.slice(0, 1).toUpperCase() : "?"}
             </span>
             <span className={"truncate " + (cloud?.signed_in ? "" : "text-muted")}>
-              {cloud?.signed_in ? accountName : "Not signed in"}
+              {cloud?.signed_in ? accountName : t("Not signed in")}
             </span>
             {cloud?.signed_in && (
               <span
                 className="w-[7px] h-[7px] rounded-full bg-ok shrink-0"
-                title="Signed in to OpenWorker Cloud"
+                title={t("Signed in to OpenWorker Cloud")}
                 aria-hidden
               />
             )}
@@ -1247,9 +1302,15 @@ export function Sidebar(props: Props) {
                 data-testid="inbox-chip"
                 role="button"
                 aria-label={
-                  totalAttention > 0 ? `Inbox — ${totalAttention} items need you` : "Inbox"
+                  totalAttention > 0
+                    ? t("Inbox — {{count}} items need you", { count: totalAttention })
+                    : t("Inbox")
                 }
-                title={totalAttention > 0 ? `Inbox — ${totalAttention} items need you` : "Inbox"}
+                title={
+                  totalAttention > 0
+                    ? t("Inbox — {{count}} items need you", { count: totalAttention })
+                    : t("Inbox")
+                }
                 onClick={(e) => {
                   // The chip goes STRAIGHT to Inbox — the menu is the row's target, not the chip's.
                   e.stopPropagation();
@@ -1299,6 +1360,7 @@ function NewSessionSplit({
   onNew: (agent: string) => void;
   onManage: () => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const enabled = (personas || []).filter((p) => p.enabled);
   // With a single enabled persona there is nothing to pick — the split collapses to a plain
@@ -1315,13 +1377,13 @@ function NewSessionSplit({
           }
           onClick={() => onNew(solo && enabled.length === 1 ? enabled[0].id : current)}
         >
-          <Icon name="plus" size={15} className="shrink-0" /> New session
+          <Icon name="plus" size={15} className="shrink-0" /> {t("New session")}
         </button>
         {!solo && (
           <button
             className="px-2.5 rounded-r-lg bg-accent text-white border-l border-white/25 hover:opacity-95 flex items-center"
-            title="Start with a specific persona"
-            aria-label="Choose a persona"
+            title={t("Start with a specific persona")}
+            aria-label={t("Choose a persona")}
             onClick={() => setOpen((v) => !v)}
           >
             <Icon name="chevronDown" size={13} />
@@ -1333,7 +1395,7 @@ function NewSessionSplit({
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
           <div className="newsplit-menu absolute left-3 right-3 mt-1 z-30 bg-panel border border-line rounded-xl2 shadow-xl p-1">
             <div className="px-2 py-1 text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-              Start a session as
+              {t("Start a session as")}
             </div>
             {enabled.map((p) => (
               <button
@@ -1366,7 +1428,7 @@ function NewSessionSplit({
                     onManage();
                   }}
                 >
-                  Manage personas…
+                  {t("Manage personas…")}
                 </button>
               </div>
             )}

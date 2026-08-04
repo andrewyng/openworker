@@ -12,7 +12,9 @@ Chat Completions path), `anthropic` (native Messages API via
 `AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `bedrock`
 (models in the user's own AWS account — Claude natively, everything else via Converse),
 `vertex` (the user's own GCP project — Gemini and Claude natively, open-weight via the
-MaaS endpoint), and `ollama` (local, OpenAI-compatible `/v1`).
+MaaS endpoint), `volcengine` (Volcengine Ark's Agent Plan — one subscription key
+covering GLM/DeepSeek/Kimi/MiniMax via the OpenAI-compatible `/api/plan/v3` endpoint),
+and `ollama` (local, OpenAI-compatible `/v1`).
 """
 
 from __future__ import annotations
@@ -518,6 +520,17 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="MISTRAL_API_KEY",
     ),
     _compat(
+        "volcengine",
+        "Volcengine Ark (Agent Plan)",
+        base_url="https://ark.cn-beijing.volces.com/api/plan/v3",
+        recommended_model="ark-code-latest",
+        env_key="VOLCENGINE_API_KEY",
+        endpoint_help="Prefilled with Ark's Agent Plan OpenAI-compatible endpoint (region: "
+        "cn-beijing). Requires a dedicated Agent Plan API key from "
+        "console.volcengine.com/ark; `ark-code-latest` auto-routes to the console-selected "
+        "best model. Anthropic-compatible variant: https://ark.cn-beijing.volces.com/api/plan",
+    ),
+    _compat(
         "meta",
         "Meta (Muse Spark)",
         base_url="https://api.meta.ai/v1",
@@ -829,6 +842,27 @@ def verify_provider_key(
                 params={"key": key},
                 timeout=timeout,
             )
+        elif name == "volcengine":
+            # Agent Plan's OpenAI-compatible endpoint has no GET /models route
+            # (an authenticated key gets HTTP 404 there), so probe with the
+            # cheapest chat completion instead. 401/403 still means bad key.
+            base = (
+                (base_url or "").strip().rstrip("/")
+                or "https://ark.cn-beijing.volces.com/api/plan/v3"
+            )
+            resp = httpx.post(
+                base + "/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "ark-code-latest",
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1,
+                },
+                timeout=timeout,
+            )
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
@@ -858,6 +892,10 @@ def verify_provider_key(
         if name == "ollama":
             return {"ok": False, "error": "Server rejected the request."}
         return {"ok": False, "error": "Invalid API key."}
+    if name == "volcengine":
+        # 400 (probe model rejected) / 404 / 429 etc. all mean the key passed
+        # auth; only 401/403 mean the key itself is bad.
+        return {"ok": True, "note": f"Key accepted (HTTP {resp.status_code})."}
     if resp.status_code == 404 and name == "ollama":
         return {
             "ok": False,

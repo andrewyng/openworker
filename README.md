@@ -14,11 +14,11 @@ It runs on your machine and doesn't lock you into any model: bring your own API 
 
 ## Download
 
-[**⬇ macOS (Apple Silicon)**](https://download.openworker.com/mac)
-<sub>macOS 12+ · signed & notarized · auto-updates</sub>
+[**⬇ macOS (Apple Silicon) — v0.1.11 (this fork)**](https://github.com/SerienYang/Openworker/releases/download/v0.1.11/OpenWorker_0.1.11_aarch64.dmg)
+<sub>macOS 12+ · unsigned — first launch: right-click → Open (this fork's build)</sub>
 
-[**⬇ Windows 10/11 (x64)**](https://download.openworker.com/windows)
-<sub>builds are not yet code-signed, so SmartScreen will warn; signing is in progress</sub>
+[**⬇ Windows 10/11 (x64) — official build**](https://download.openworker.com/windows)
+<sub>official upstream build (does not include this fork's changes) · not yet code-signed, so SmartScreen will warn</sub>
 
 Open the app, add a model key (or point it at Ollama), and ask for something real.
 
@@ -54,7 +54,7 @@ Under the hood:
 
 Model access is yours: pick a provider, paste your key, switch anytime. Supported out of the box:
 
-**OpenAI · Anthropic · Google Gemini · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI)** - plus open-weight models via **Together** and **Fireworks**, and fully local models via **Ollama**.
+**OpenAI · Anthropic · Google Gemini · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI) · Volcengine Ark (Agent Plan)** - plus open-weight models via **Together** and **Fireworks**, and fully local models via **Ollama**.
 
 A curated model list marks what we've verified for tool-calling work. Adding any model string works at your own risk.
 

@@ -647,6 +647,39 @@ def create_app(manager: SessionManager) -> FastAPI:
         # paths from web file dialogs). Off the event loop: blocks until pick/cancel.
         return await asyncio.to_thread(manager.pick_native_folder)
 
+    # -- projects (Codex-style first-class entities) ----------------------------
+    @app.get("/v1/projects")
+    def projects_list() -> dict[str, Any]:
+        return {"projects": manager.list_projects()}
+
+    @app.post("/v1/projects")
+    def projects_create(body: dict) -> dict[str, Any]:
+        body = body or {}
+        return manager.create_project(
+            str(body.get("name", "")),
+            str(body.get("path", "")),
+            str(body.get("description", "")),
+        )
+
+    @app.patch("/v1/projects/{project_id}")
+    def projects_update(project_id: str, body: dict) -> dict[str, Any]:
+        body = body or {}
+        return manager.update_project(
+            project_id,
+            name=body.get("name"),
+            description=body.get("description"),
+            pinned=body.get("pinned"),
+        )
+
+    @app.delete("/v1/projects/{project_id}")
+    def projects_delete(project_id: str) -> dict[str, Any]:
+        return manager.delete_project(project_id)
+
+    @app.post("/v1/sessions/{session_id}/project")
+    def sessions_set_project(session_id: str, body: dict) -> dict[str, Any]:
+        body = body or {}
+        return manager.set_session_project(session_id, body.get("project_id"))
+
     @app.get("/v1/sessions")
     def sessions(workspace: str | None = None) -> dict[str, Any]:
         return {"sessions": manager.list_sessions(workspace)}

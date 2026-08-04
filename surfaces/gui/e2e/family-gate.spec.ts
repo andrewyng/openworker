@@ -30,7 +30,7 @@ test("code persona: the folder gate blocks until a project is chosen", async ({ 
 
   const gate = page.locator(".gate-overlay");
   await expect(gate).toBeVisible();
-  await expect(gate.getByText("Choose a project folder")).toBeVisible();
+  await expect(gate.getByText("Choose a workspace")).toBeVisible();
   // No escape hatch: the gate offers pick-a-folder only (no "switch to Chat" — owner call, §16).
   await expect(gate.getByText(/chat/i)).toHaveCount(0);
 

@@ -49,6 +49,19 @@ export interface RecentWorkspace {
   exists: boolean;
 }
 
+/** A Codex-style first-class project: a named, pinned-able folder that sessions group under. */
+export interface ProjectInfo {
+  project_id: string;
+  name: string;
+  path: string;
+  description?: string;
+  pinned?: number;
+  n_sessions: number;
+  last_used: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface WorkspaceCommandTrust {
   workspace: string;
   requested_commands: string[];
@@ -65,6 +78,59 @@ export async function getHealth(): Promise<Health> {
 export async function getRecentWorkspaces(): Promise<RecentWorkspace[]> {
   const res = await fetch(`${httpBase()}/v1/workspaces/recent`);
   return (await res.json()).workspaces ?? [];
+}
+
+// -- projects (Codex-style first-class entities) ---------------------------------
+export async function getProjects(): Promise<ProjectInfo[]> {
+  const res = await fetch(`${httpBase()}/v1/projects`);
+  const d = await res.json();
+  return d.projects ?? [];
+}
+
+export async function createProject(
+  name: string,
+  path: string,
+  description = "",
+): Promise<{ ok: boolean; error?: string; project?: ProjectInfo }> {
+  const res = await fetch(`${httpBase()}/v1/projects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, path, description }),
+  });
+  return res.json();
+}
+
+export async function updateProject(
+  projectId: string,
+  patch: { name?: string; description?: string; pinned?: boolean },
+): Promise<{ ok: boolean; error?: string; project?: ProjectInfo }> {
+  const res = await fetch(`${httpBase()}/v1/projects/${projectId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
+export async function deleteProject(
+  projectId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/projects/${projectId}`, {
+    method: "DELETE",
+  });
+  return res.json();
+}
+
+export async function setSessionProject(
+  sessionId: string,
+  projectId: string | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${sessionId}/project`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: projectId }),
+  });
+  return res.json();
 }
 
 /** Ask the LOCAL sidecar to open the OS folder picker — the browser GUI can't obtain absolute
@@ -687,6 +753,8 @@ export interface ModelSettings {
   onboarded: boolean;
   surfaces: SurfaceVisibility;
   scratch_base: string;
+  // Where "New project" folder pickers open by default (absent → OS default location).
+  default_dir?: string;
   secrets_path: string;  // OS-native on-disk location the server reports (not hardcoded)
   // Sidebar layout preference (§7): "flat" = the persona accordions / today's list; "grouped" =
   // bounded per-persona cards. Defaults to "flat" (absent → flat) so the GUI is robust to an older

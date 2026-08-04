@@ -345,6 +345,60 @@ class SessionManager:
             out.append({"path": path, "name": p.name, "exists": p.is_dir()})
         return out
 
+    # -- projects (Codex-style first-class entities) ----------------------------
+    def create_project(
+        self, name: str, path: str, description: str = ""
+    ) -> dict[str, Any]:
+        """Create a named project at a folder (created if missing). One project per path."""
+        p = Path(path or "").expanduser()
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        result = self.session_store.create_project(name, str(p), description)
+        if result.get("ok"):
+            self.session_store.touch_workspace(str(Path(result["project"]["path"]).resolve()))
+        return result
+
+    def list_projects(self) -> list[dict[str, Any]]:
+        return self.session_store.list_projects()
+
+    def update_project(
+        self,
+        project_id: str,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        pinned: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        ok = self.session_store.update_project(
+            project_id, name=name, description=description, pinned=pinned
+        )
+        if not ok:
+            return {"ok": False, "error": "project not found or nothing to update"}
+        return {"ok": True, "project": self.session_store.get_project(project_id)}
+
+    def delete_project(self, project_id: str) -> dict[str, Any]:
+        ok = self.session_store.delete_project(project_id)
+        return {"ok": ok, "error": None if ok else "project not found"}
+
+    def set_session_project(
+        self, session_id: str, project_id: Optional[str]
+    ) -> dict[str, Any]:
+        """Bind a session to a project (or None to unbind it back to a plain session)."""
+        if project_id is not None and self.session_store.get_project(project_id) is None:
+            return {"ok": False, "error": "project not found"}
+        ok = self.session_store.set_session_project(session_id, project_id)
+        return {"ok": ok, "error": None if ok else "session not found"}
+
+    def default_dir(self) -> str:
+        """Where new folders should default to (folder picker / gate prefill)."""
+        return (
+            self._prefs.get("default_dir")
+            or self._prefs.get("scratch_base")
+            or self.DEFAULT_SCRATCH_BASE
+        )
+
     DEFAULT_SCRATCH_BASE = "~/OpenWorker"
 
     def scratch_base(self) -> Path:
@@ -353,8 +407,12 @@ class SessionManager:
         return Path(base).expanduser()
 
     def _provision_scratch(self, session_id: str) -> str:
-        """Create (idempotently) and return this conversation's scratch directory."""
-        d = self.scratch_base() / session_id
+        """Create (idempotently) and return this conversation's scratch directory.
+
+        Named ``<YYYY>-<MMDD>-<session_id>`` (e.g. ``2026-0803-10f75855-0c7``) so scratch
+        dirs self-sort by creation date under the scratch base (owner request 2026-08-03).
+        """
+        d = self.scratch_base() / f"{time.strftime('%Y-%m%d')}-{session_id}"
         d.mkdir(parents=True, exist_ok=True)
         return str(d.resolve())
 
@@ -1499,12 +1557,20 @@ class SessionManager:
         import sys
 
         if sys.platform == "darwin":
+            # Pre-open the picker at the configured default dir ("New project" flow) when it
+            # exists; otherwise fall back to the OS's own default location.
+            default_loc = ""
+            dd = self.default_dir()
+            if dd and Path(dd).expanduser().is_dir():
+                default_loc = f" default location POSIX file {json.dumps(dd)}"
             cmd = [
                 "osascript",
                 "-e",
                 'tell application "System Events" to activate',
                 "-e",
-                'POSIX path of (choose folder with prompt "Give the coworker access to a folder")',
+                'POSIX path of (choose folder with prompt "Give the coworker access to a folder"'
+                + default_loc
+                + ")",
             ]
         elif sys.platform == "win32":
             # WinForms folder dialog via PowerShell — no extra deps. -STA is required
@@ -1555,6 +1621,15 @@ class SessionManager:
         "qwen": ["qwen3-max", "qwen3-coder-plus", "qwen-plus"],
         "xai": ["grok-4.3", "grok-4"],
         "mistral": ["mistral-large-latest", "mistral-small-latest"],
+        "volcengine": [
+            "ark-code-latest",
+            "glm-5.2",
+            "deepseek-v4-flash",
+            "deepseek-v4-pro",
+            "kimi-k2.6",
+            "kimi-k2.7-code",
+            "minimax-m3",
+        ],
     }
 
     def _suggested_models(self, name: str) -> list[str]:
@@ -1853,6 +1928,9 @@ class SessionManager:
             "context_bar": self.context_bar(),
             "scratch_base": self._prefs.get("scratch_base")
             or self.DEFAULT_SCRATCH_BASE,
+            # Where new folders default to (folder picker / gate prefill) — falls back
+            # to the scratch base so one setting covers both.
+            "default_dir": self.default_dir(),
             # Real on-disk secrets location, so the UI shows the OS-native path instead of a
             # hardcoded POSIX one (Windows -> %APPDATA%\coworker, macOS/Linux -> ~/.config).
             "secrets_path": str(self.secrets.path),
@@ -3384,10 +3462,19 @@ class SessionManager:
     def save(self, session_id: str, engine: TurnEngine) -> None:
         executor = getattr(engine, "executor", None)
         workspace = os.path.realpath(str(executor.cwd)) if executor else ""
+        # Auto-bind to a first-class project when the session's workspace matches one.
+        # Explicit bindings (set via the API) are preserved: ConversationStore.save keeps an
+        # existing project_id via COALESCE, and None here never overwrites it.
+        project_id = None
+        if workspace:
+            proj = self.session_store.project_by_path(workspace)
+            if proj:
+                project_id = proj["project_id"]
         self.session_store.save(
             SessionRecord(
                 session_id=session_id,
                 workspace=workspace,
+                project_id=project_id,
                 model=engine.model,
                 mode=engine.permissions.mode.value,
                 messages=engine.messages,
@@ -3764,6 +3851,7 @@ class SessionManager:
                 "session_id": r.session_id,
                 "title": r.title or "New session",
                 "workspace": r.workspace,
+                "project_id": r.project_id,
                 "agent": r.agent,
                 "model": r.model,
                 "mode": r.mode,
