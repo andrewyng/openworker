@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { imeComposing } from "../ime";
 import { getRecentWorkspaces, openWorkspace, type RecentWorkspace } from "../api";
 import { chooseFolder } from "../tauri";
 
@@ -52,7 +53,7 @@ export function FolderGate({ onChoose, onCancel, create }: Props) {
             placeholder="/path/to/your/project"
             value={path}
             onChange={(e) => setPath(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && open(path, create)}
+            onKeyDown={(e) => !imeComposing(e) && e.key === "Enter" && open(path, create)}
             autoFocus
           />
           <button className="btn" onClick={browse} title="Pick a folder">
