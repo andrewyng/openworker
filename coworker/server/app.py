@@ -802,6 +802,14 @@ def create_app(manager: SessionManager) -> FastAPI:
     def connectors_list() -> dict[str, Any]:
         return {"connectors": manager.list_connectors()}
 
+    @app.put("/v1/connectors/{name}/agent-route")
+    def connector_agent_route(name: str, body: dict) -> dict[str, Any]:
+        return manager.set_connector_agent_route(name, body or {})
+
+    @app.delete("/v1/connectors/{name}/agent-route")
+    def clear_connector_agent_route(name: str) -> dict[str, Any]:
+        return manager.clear_connector_agent_route(name)
+
     async def _refresh_listeners_if_two_way(name: str) -> None:
         # New/removed creds only take effect when the platform socket reconnects (Socket Mode
         # authenticates at connect time) — hot-reload the listeners in-process so pasting
@@ -1510,12 +1518,20 @@ def create_app(manager: SessionManager) -> FastAPI:
         return manager.create_automation(body or {})
 
     @app.get("/v1/automations/{task_id}")
-    def automation_get(task_id: str) -> dict[str, Any]:
-        return manager.get_automation(task_id)
+    def automation_get(task_id: str, limit: int = 20, offset: int = 0) -> dict[str, Any]:
+        return manager.get_automation(task_id, limit=limit, offset=offset)
 
     @app.patch("/v1/automations/{task_id}")
     def automation_update(task_id: str, body: dict) -> dict[str, Any]:
         return manager.update_automation(task_id, body or {})
+
+    @app.delete("/v1/automations/{task_id}/runs")
+    def automation_runs_clear(task_id: str) -> dict[str, Any]:
+        return manager.clear_automation_runs(task_id)
+
+    @app.post("/v1/automations/{task_id}/runs/clear")
+    def automation_selected_runs_clear(task_id: str, body: dict) -> dict[str, Any]:
+        return manager.clear_automation_runs(task_id, run_ids=(body or {}).get("run_ids"))
 
     @app.delete("/v1/automations/{task_id}")
     def automation_delete(task_id: str) -> dict[str, Any]:

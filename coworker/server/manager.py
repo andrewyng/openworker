@@ -29,6 +29,7 @@ from ..connections import (
     SessionConnectionStore,
     effective as effective_connections,
 )
+from ..connector_agent_routes import ConnectorAgentRouteStore
 from ..inbox import InboxStore, args_preview
 from ..inbox_routing import InboxRouting
 from ..personas import PersonaRegistry
@@ -104,6 +105,8 @@ from ..skills import (
 _SCOPES = {s.value for s in Scope}
 
 logger = logging.getLogger("coworker.manager")
+
+_AUTOMATION_SKILLS_ROOT_LABEL = "automation skills"
 
 
 def _image_attachment_part(data: bytes, filename: str) -> Optional[dict[str, str]]:
@@ -293,6 +296,12 @@ class SessionManager:
         )
         self.session_connections = SessionConnectionStore(
             base / "session_connections.json"
+        )
+        # Per-connector inbound routing: selects the persona used when a connector creates a
+        # NEW external conversation. Web/manual sessions and existing connector sessions keep
+        # their own agent.
+        self.connector_agent_routes = ConnectorAgentRouteStore(
+            base / "connector_agent_routes.json"
         )
         # Skills (SKILLS-SPEC §4): folder-backed CRUD + per-session mutes. The effective menu
         # gates the engine's skill catalog the same way effective_connectors gates connector
@@ -513,6 +522,8 @@ class SessionManager:
             ]
             roots = [{"path": ws, "writable": True, "label": "scratch"}, *extra]
         owning_task = self.task_store.task_for_run_session(session_id)
+        if owning_task is not None and self._automation_run_is_active(session_id) and ws:
+            roots = self._automation_roots(ws)
         connector_filter = self.effective_connectors(session_id, agent_name)
         connector_tool_kinds = None
         if owning_task is not None and owning_task.sources is not None:
@@ -687,8 +698,9 @@ class SessionManager:
         import uuid
 
         session_id = uuid.uuid4().hex
-        agent = self.personas.default_id()
-        engine = self.get_engine(session_id, agent=agent)
+        agent, workspace = self._inbound_agent_for_source(source)
+        self._seed_inbound_connector_override(session_id, source)
+        engine = self.get_engine(session_id, agent=agent, workspace=workspace)
         if engine is None:
             return None
 
@@ -727,6 +739,44 @@ class SessionManager:
         target = str(getattr(source, "target", "") or "").strip()
         if target:
             engine.permissions.task_rules.setdefault("send_message", set()).add(target)
+
+    def _inbound_agent_for_source(self, source) -> tuple[str, Optional[str]]:
+        """Resolve the persona/workspace used when an inbound connector creates a NEW session.
+
+        Existing routed sessions never consult this. If a saved route points at a persona that was
+        later disabled or removed, fall back to the current default so inbound messages keep flowing.
+        """
+        connector = str(getattr(source, "platform", "") or "").strip()
+        route = self.connector_agent_routes.get(connector) if connector else None
+        if route is not None:
+            entry = self.personas.get(route.agent)
+            if entry is not None and self.personas.is_enabled(route.agent):
+                if entry.needs_workspace and entry.family != "knowledge":
+                    if not route.workspace or not Path(route.workspace).is_dir():
+                        logger.warning(
+                            "connector inbound route %s -> %s ignored: workspace missing",
+                            connector,
+                            route.agent,
+                        )
+                        return self.personas.default_id(), None
+                return route.agent, route.workspace or None
+            logger.warning(
+                "connector inbound route %s -> %s ignored: persona missing or disabled",
+                connector,
+                route.agent,
+            )
+        return self.personas.default_id(), None
+
+    def _seed_inbound_connector_override(self, session_id: str, source) -> None:
+        """Make the source connector effective for this connector-owned session.
+
+        This does not change the persona default. It only prevents a configured inbound route from
+        creating a session whose own connector gate immediately rejects the first message because
+        that persona happened to default the connector off.
+        """
+        connector = str(getattr(source, "platform", "") or "").strip()
+        if connector:
+            self.session_connections.set(session_id, connector, True)
 
     def has_feishu_inbound_target(self, session_id: str) -> bool:
         return any(
@@ -1341,11 +1391,60 @@ class SessionManager:
         return {"ok": True}
 
     # -- connectors -------------------------------------------------------------
+    def connector_agent_route_view(self, connector: str) -> dict[str, Any]:
+        route = self.connector_agent_routes.get(connector)
+        default_agent = self.personas.default_id()
+        return {
+            "agent": route.agent if route else default_agent,
+            "workspace": route.workspace if route else "",
+            "explicit": route is not None,
+            "default_agent": default_agent,
+        }
+
+    def set_connector_agent_route(
+        self, name: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        name = str(name or "").strip()
+        known = {c["name"] for c in connector_list(self.secrets)}
+        if name not in known:
+            return {"ok": False, "error": f"unknown connector: {name}"}
+        agent = str((body or {}).get("agent") or "").strip()
+        if not agent:
+            return {"ok": False, "error": "agent required"}
+        entry = self.personas.get(agent)
+        if entry is None:
+            return {"ok": False, "error": f"unknown agent: {agent}"}
+        if not self.personas.is_enabled(agent):
+            return {"ok": False, "error": f"agent disabled: {agent}"}
+        workspace_raw = str((body or {}).get("workspace") or "").strip()
+        workspace = ""
+        if workspace_raw:
+            resolved = Path(workspace_raw).expanduser()
+            if not resolved.is_dir():
+                return {"ok": False, "error": "workspace is not a directory"}
+            workspace = str(resolved.resolve())
+        if entry.needs_workspace and entry.family != "knowledge" and not workspace:
+            return {
+                "ok": False,
+                "error": f"agent '{agent}' requires a workspace for inbound connector routing",
+            }
+        self.connector_agent_routes.set(name, agent, workspace)
+        return {"ok": True, "route": self.connector_agent_route_view(name)}
+
+    def clear_connector_agent_route(self, name: str) -> dict[str, Any]:
+        name = str(name or "").strip()
+        known = {c["name"] for c in connector_list(self.secrets)}
+        if name not in known:
+            return {"ok": False, "error": f"unknown connector: {name}"}
+        self.connector_agent_routes.delete(name)
+        return {"ok": True, "route": self.connector_agent_route_view(name)}
+
     def list_connectors(self) -> list[dict[str, Any]]:
         # Enrich two-way connectors with the live gateway's recently-seen senders, so the Connectors
         # tab can manage the allow-list inline (each recent sender flagged authorized or not).
         connectors = connector_list(self.secrets)
         for c in connectors:
+            c["inbound_agent_route"] = self.connector_agent_route_view(c["name"])
             if not (c.get("two_way") and c.get("connected")):
                 continue
             allowed = set(c.get("allowed_users") or [])
@@ -2939,9 +3038,38 @@ class SessionManager:
         for tool in task.name_allowed_tools():
             engine.permissions.allow_tool_for_session(tool)
 
+    @staticmethod
+    def _automation_roots(workspace: str | Path) -> list[RootDir]:
+        """Roots granted only while an automation run is executing."""
+        return [
+            RootDir(path=workspace, writable=True, label="scratch"),
+            RootDir(
+                path=state_dir() / "skills",
+                writable=False,
+                label=_AUTOMATION_SKILLS_ROOT_LABEL,
+            ),
+        ]
+
+    def _automation_run_is_active(self, session_id: str) -> bool:
+        if not session_id.startswith("__run__"):
+            return False
+        run = self.task_store.find_run(session_id[len("__run__") :])
+        return run is not None and run.status == "running"
+
+    @staticmethod
+    def _revoke_automation_skills_root(engine: TurnEngine) -> None:
+        roots = getattr(engine, "roots", None)
+        if roots is not None:
+            roots[:] = [
+                root
+                for root in roots
+                if getattr(root, "label", "") != _AUTOMATION_SKILLS_ROOT_LABEL
+            ]
+
     def _build_task_engine(self, task, *, session_id: str) -> TurnEngine:
         ag = get_agent(task.agent)
         Path(task.workspace).mkdir(parents=True, exist_ok=True)
+        roots = self._automation_roots(task.workspace)
         connector_filter = self.effective_connectors(session_id, task.agent)
         connector_tool_kinds = None
         if task.sources is not None:
@@ -2950,6 +3078,7 @@ class SessionManager:
         engine = build_engine(
             agent=ag,
             workspace=task.workspace,
+            roots=roots,
             model=task.model or self.model,
             mode=Mode.INTERACTIVE,
             approver=self._scheduled_approver(task, session_id),
@@ -3523,7 +3652,9 @@ class SessionManager:
         who = src.user_name or src.user_id or "?"
         chan = f"#{src.chat_name}" if src.chat_name else src.chat_id
         sid = uuid.uuid4().hex
-        engine = self.get_engine(sid, agent=self.personas.default_id())
+        agent, workspace = self._inbound_agent_for_source(src)
+        self._seed_inbound_connector_override(sid, src)
+        engine = self.get_engine(sid, agent=agent, workspace=workspace)
         if engine is None:
             self.unrouted.record(
                 src.target, who, event.text, reason="could not spawn mention session"
@@ -3639,10 +3770,13 @@ class SessionManager:
             # follow-up; record the run (now carrying its session_id).
             try:
                 self.save(run.session_id, engine)
-                self._engines[run.session_id] = engine
             except Exception:
                 pass
+            finally:
+                self._revoke_automation_skills_root(engine)
+                self._engines[run.session_id] = engine
             self.task_store.add_run(run)
+            self._cleanup_automation_runs(task)
         return run
 
     @staticmethod
@@ -3757,13 +3891,23 @@ class SessionManager:
         self.task_store.save(task)
         return {"ok": True}
 
-    def get_automation(self, task_id: str) -> dict[str, Any]:
+    def get_automation(
+        self, task_id: str, *, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
         task = self.task_store.get(task_id)
         if task is None:
             return {"error": "not found"}
+        limit = max(1, min(int(limit), 100))
+        offset = max(0, int(offset))
+        total_runs = self.task_store.run_count(task_id)
+        runs = self.task_store.runs(task_id, limit=limit, offset=offset)
+        next_offset = offset + len(runs)
         return {
             "task": task.public(),
-            "runs": [r.to_dict() for r in self.task_store.runs(task_id)],
+            "runs": [r.to_dict() for r in runs],
+            "total_runs": total_runs,
+            "has_more": next_offset < total_runs,
+            "next_offset": next_offset if next_offset < total_runs else None,
         }
 
     def _automation_sources(self, raw: Any) -> tuple[Optional[list[str]], Optional[str]]:
@@ -3824,6 +3968,47 @@ class SessionManager:
             return None, f"connector cannot deliver messages: {platform}"
         return {"kind": "channel", "connector": platform, "target": target}, None
 
+    def _automation_agent(self, value: Any) -> tuple[Optional[str], Optional[str]]:
+        """Validate the Persona selected to run an automation."""
+        agent = str(value or "cowork").strip()
+        entry = self.personas.get(agent)
+        if entry is None:
+            return None, f"unknown agent: {agent}"
+        if not self.personas.is_enabled(agent):
+            return None, f"agent disabled: {agent}"
+        return agent, None
+
+    @staticmethod
+    def _automation_retention_days(value: Any) -> tuple[Optional[int], Optional[str]]:
+        if value is None or value == "":
+            return None, None
+        if isinstance(value, bool):
+            return None, "run retention must be a positive number of days"
+        try:
+            days = int(value)
+        except (TypeError, ValueError):
+            return None, "run retention must be a positive number of days"
+        if days < 1 or days > 3650:
+            return None, "run retention must be between 1 and 3650 days"
+        return days, None
+
+    def _cleanup_automation_runs(self, task: ScheduledTask) -> int:
+        if not task.run_retention_days:
+            return 0
+        cutoff = time.time() - task.run_retention_days * 86400
+        removed = self.task_store.delete_completed_runs(task.id, older_than=cutoff)
+        self._discard_automation_run_sessions(removed)
+        return len(removed)
+
+    def _discard_automation_run_sessions(self, runs: list[TaskRun]) -> None:
+        """Remove conversation data that belongs only to discarded completed runs."""
+        for run in runs:
+            self._engines.pop(run.session_id, None)
+            self.session_store.delete(run.session_id)
+            self.session_connections.remove_session(run.session_id)
+            self.session_skills.remove_session(run.session_id)
+            self.inbox.resolve_session(run.session_id)
+
     def create_automation(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Create an automation directly from the GUI (the "New automation" / template flow).
         Mirrors the agent-facing `create_scheduled_task` validation, but binds the task to a
@@ -3848,6 +4033,10 @@ class SessionManager:
         if cron and not croniter.is_valid(cron):
             return {"ok": False, "error": f"invalid cron expression: {cron}"}
 
+        agent, agent_error = self._automation_agent(payload.get("agent"))
+        if agent_error:
+            return {"ok": False, "error": agent_error}
+
         # New GUI/API tasks always own their source set. ``sources`` omitted here
         # intentionally means an empty set, not the broad legacy fallback.
         sources, source_error = self._automation_sources(payload.get("sources", []))
@@ -3871,7 +4060,7 @@ class SessionManager:
             schedule=schedule,
             workspace="",
             origin_surface="cowork",
-            agent="cowork",
+            agent=agent,
             sources=sources,
             delivery=delivery or {"kind": "app"},
             # Human-driven path (GUI form / onboarding recipes): the creating surface
@@ -3891,6 +4080,18 @@ class SessionManager:
             return {"ok": False, "error": "not found"}
         if "enabled" in changes:
             task.enabled = bool(changes["enabled"])
+        if "agent" in changes:
+            agent, agent_error = self._automation_agent(changes["agent"])
+            if agent_error:
+                return {"ok": False, "error": agent_error}
+            task.agent = agent
+        if "run_retention_days" in changes:
+            retention_days, retention_error = self._automation_retention_days(
+                changes["run_retention_days"]
+            )
+            if retention_error:
+                return {"ok": False, "error": retention_error}
+            task.run_retention_days = retention_days
         if "sources" in changes:
             sources, source_error = self._automation_sources(changes["sources"])
             if source_error:
@@ -3916,6 +4117,8 @@ class SessionManager:
             # Human-only, like minting; the agent-facing update tool has no such field.
             task.revoke_rule(str(changes["revoke"]))
         self.task_store.save(task)
+        if "run_retention_days" in changes:
+            self._cleanup_automation_runs(task)
         if changes.get("revoke"):
             # A live run engine may still hold the revoked rule — reseed from the record.
             for sid, engine in self._engines.items():
@@ -3926,6 +4129,22 @@ class SessionManager:
 
     def delete_automation(self, task_id: str) -> dict[str, Any]:
         return {"ok": self.task_store.delete(task_id), "id": task_id}
+
+    def clear_automation_runs(
+        self, task_id: str, *, run_ids: Optional[list[str]] = None
+    ) -> dict[str, Any]:
+        task = self.task_store.get(task_id)
+        if task is None:
+            return {"ok": False, "error": "not found"}
+        if run_ids is not None and (
+            not isinstance(run_ids, list)
+            or any(not isinstance(run_id, str) for run_id in run_ids)
+        ):
+            return {"ok": False, "error": "run_ids must be a list of run IDs"}
+        selected = set(run_ids) if run_ids is not None else None
+        removed = self.task_store.delete_completed_runs(task_id, run_ids=selected)
+        self._discard_automation_run_sessions(removed)
+        return {"ok": True, "cleared": len(removed)}
 
     def prepare_manual_run(self, task_id: str) -> dict[str, Any]:
         """Create a 'running' manual run and return its session, so the GUI can open it and
@@ -3975,6 +4194,10 @@ class SessionManager:
             task.last_run, task.last_status = run.finished_at, "ok"
             task.run_count += 1
             self.task_store.save(task)
+            self._cleanup_automation_runs(task)
+        engine = self._engines.get(run.session_id)
+        if engine is not None:
+            self._revoke_automation_skills_root(engine)
         return {"ok": True, "run": run.to_dict()}
 
     def save(self, session_id: str, engine: TurnEngine) -> None:
@@ -4015,6 +4238,7 @@ class SessionManager:
         return [
             {"path": str(r.path), "writable": bool(r.writable), "label": r.label}
             for r in roots[1:]
+            if r.label != _AUTOMATION_SKILLS_ROOT_LABEL
         ]
 
     # -- LLM auto-titles (FB-010) -------------------------------------------------

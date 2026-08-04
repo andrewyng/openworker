@@ -38,6 +38,62 @@ def test_create_automation_success(tmp_path, monkeypatch):
     assert Path(saved.workspace).is_dir()
 
 
+def test_create_automation_uses_selected_enabled_agent(tmp_path, monkeypatch):
+    manager = _manager(tmp_path, monkeypatch)
+
+    out = manager.create_automation(
+        {
+            "title": "Daily conversation review",
+            "instructions": "Summarize the latest discussion.",
+            "cron": "0 8 * * *",
+            "agent": "ops",
+        }
+    )
+
+    assert out["ok"] is True
+    assert out["task"]["agent"] == "ops"
+    assert manager.task_store.get(out["task"]["id"]).agent == "ops"
+
+
+def test_create_automation_rejects_unknown_or_disabled_agent(tmp_path, monkeypatch):
+    manager = _manager(tmp_path, monkeypatch)
+    base = {
+        "title": "Daily review",
+        "instructions": "Summarize the latest discussion.",
+        "cron": "0 8 * * *",
+    }
+
+    unknown = manager.create_automation({**base, "agent": "missing-agent"})
+    assert unknown == {"ok": False, "error": "unknown agent: missing-agent"}
+
+    manager.personas.set_enabled("ops", False)
+    disabled = manager.create_automation({**base, "agent": "ops"})
+    assert disabled == {"ok": False, "error": "agent disabled: ops"}
+
+
+def test_update_automation_changes_to_an_enabled_agent(tmp_path, monkeypatch):
+    manager = _manager(tmp_path, monkeypatch)
+    created = manager.create_automation(
+        {
+            "title": "Daily review",
+            "instructions": "Summarize the latest discussion.",
+            "cron": "0 8 * * *",
+        }
+    )
+
+    out = manager.update_automation(created["task"]["id"], {"agent": "ops"})
+
+    assert out["ok"] is True
+    assert out["task"]["agent"] == "ops"
+    assert manager.task_store.get(created["task"]["id"]).agent == "ops"
+
+    rejected = manager.update_automation(
+        created["task"]["id"], {"agent": "missing-agent"}
+    )
+    assert rejected == {"ok": False, "error": "unknown agent: missing-agent"}
+    assert manager.task_store.get(created["task"]["id"]).agent == "ops"
+
+
 def test_create_automation_persists_sources_and_delivery(tmp_path, monkeypatch):
     manager = _manager(tmp_path, monkeypatch)
     scratch = tmp_path / "scratch"

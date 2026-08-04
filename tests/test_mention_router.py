@@ -135,6 +135,20 @@ def test_mention_spawns_visible_session_with_thread_grant(tmp_path, monkeypatch)
     assert source["connector"] == "slack" and source["kind"] == "channel"
 
 
+def test_connector_agent_route_controls_mention_spawn(tmp_path, monkeypatch):
+    mgr = _mgr(tmp_path)
+    assert mgr.set_connector_agent_route("slack", {"agent": "ops"})["ok"]
+    _capture_deliveries(mgr, monkeypatch)
+
+    asyncio.run(mgr._dispatch_inbound(_mention_event()))
+
+    sid = mgr.list_sessions()[0]["session_id"]
+    record = mgr.session_store.load(sid)
+    assert record is not None
+    assert record.agent == "ops"
+    assert mgr.session_connections.get(sid)["slack"] is True
+
+
 def test_followup_tag_steers_same_session(tmp_path, monkeypatch):
     mgr = _mgr(tmp_path)
     captured = _capture_deliveries(mgr, monkeypatch)

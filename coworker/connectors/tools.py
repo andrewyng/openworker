@@ -25,6 +25,7 @@ _SCHEMA = {
         "description": (
             "Send a message to a connected chat (Slack, Telegram, or Feishu/Lark). `target` is the "
             "reply handle from an inbound message (e.g. 'telegram:12345', 'slack:C0123', or 'feishu:oc_abc'), "
+            "or a Feishu user's open ID ('feishu:ou_abc'), "
             "optionally with a ':<thread>' suffix) — or, for Slack, just the channel NAME "
             "('#general' or 'general'; resolved against the connected workspaces). Use this to "
             "actually reach a person — plain assistant text is not delivered anywhere."

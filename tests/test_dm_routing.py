@@ -156,6 +156,92 @@ def test_feishu_dm_auto_route_persists_across_manager_reload(tmp_path, monkeypat
     assert record.title == "Ada Feishu"
 
 
+def test_connector_agent_route_controls_new_dm_session(tmp_path, monkeypatch):
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider())
+    _connect_feishu(mgr)
+    assert mgr.set_connector_agent_route("feishu", {"agent": "ops"})["ok"]
+    delivered: list[str] = []
+
+    async def fake_deliver(session_id, message, *, source=None):
+        delivered.append(session_id)
+
+    monkeypatch.setattr(mgr, "deliver_to_session", fake_deliver)
+
+    asyncio.run(mgr._dispatch_inbound(_feishu_dm("你好", chat_id="oc_ops")))
+    sid = delivered[0]
+    record = mgr.session_store.load(sid)
+    assert record is not None
+    assert record.agent == "ops"
+    assert mgr.session_connections.get(sid)["feishu"] is True
+    assert "feishu:oc_ops" in mgr._engines[sid].permissions.task_rules["send_message"]
+
+
+def test_connector_agent_route_does_not_migrate_existing_dm_session(
+    tmp_path, monkeypatch
+):
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider())
+    _connect_feishu(mgr)
+    assert mgr.set_connector_agent_route("feishu", {"agent": "ops"})["ok"]
+    delivered: list[str] = []
+
+    async def fake_deliver(session_id, message, *, source=None):
+        delivered.append(session_id)
+
+    monkeypatch.setattr(mgr, "deliver_to_session", fake_deliver)
+
+    asyncio.run(mgr._dispatch_inbound(_feishu_dm("first", chat_id="oc_same")))
+    first_sid = delivered[-1]
+    assert mgr.session_store.load(first_sid).agent == "ops"
+
+    assert mgr.set_connector_agent_route("feishu", {"agent": "cowork"})["ok"]
+    asyncio.run(mgr._dispatch_inbound(_feishu_dm("again", chat_id="oc_same")))
+    assert delivered[-1] == first_sid
+    assert mgr.session_store.load(first_sid).agent == "ops"
+
+    asyncio.run(mgr._dispatch_inbound(_feishu_dm("new", chat_id="oc_new")))
+    new_sid = delivered[-1]
+    assert new_sid != first_sid
+    assert mgr.session_store.load(new_sid).agent == "cowork"
+
+
+def test_connector_agent_route_view_and_validation(tmp_path):
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider())
+    app = create_app(mgr)
+    routes = {
+        (getattr(route, "path", ""), frozenset(getattr(route, "methods", set())))
+        for route in app.routes
+    }
+    assert any(
+        path == "/v1/connectors/{name}/agent-route" and "PUT" in methods
+        for path, methods in routes
+    )
+    assert any(
+        path == "/v1/connectors/{name}/agent-route" and "DELETE" in methods
+        for path, methods in routes
+    )
+
+    body = mgr.set_connector_agent_route("feishu", {"agent": "ops"})
+    assert body["ok"] is True
+    assert body["route"]["explicit"] is True
+    assert body["route"]["agent"] == "ops"
+    listed = {c["name"]: c for c in mgr.list_connectors()}
+    assert listed["feishu"]["inbound_agent_route"]["agent"] == "ops"
+    assert listed["feishu"]["inbound_agent_route"]["explicit"] is True
+
+    bad = mgr.set_connector_agent_route("feishu", {"agent": "missing"})
+    assert bad["ok"] is False
+    assert "unknown agent" in bad["error"]
+
+    needs_workspace = mgr.set_connector_agent_route("feishu", {"agent": "code"})
+    assert needs_workspace["ok"] is False
+    assert "requires a workspace" in needs_workspace["error"]
+
+    cleared = mgr.clear_connector_agent_route("feishu")
+    assert cleared["ok"] is True
+    assert cleared["route"]["explicit"] is False
+    assert cleared["route"]["agent"] == mgr.personas.default_id()
+
+
 def test_dm_route_endpoints(tmp_path):
     mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider())
     client = TestClient(create_app(mgr))

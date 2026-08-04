@@ -141,6 +141,9 @@ class ScheduledTask:
     last_status: Optional[str] = None
     run_count: int = 0
     max_runs: Optional[int] = None
+    # ``None`` keeps all completed run records. A positive value removes completed records
+    # older than this many days whenever the automation finishes another run.
+    run_retention_days: Optional[int] = None
     # Sidebar unread tracking (UX-023): runs started after this mark count as
     # "unseen"; opening the automation's detail advances it. 0.0 = never opened.
     seen_runs_at: float = 0.0
@@ -207,6 +210,7 @@ class ScheduledTask:
             "last_run": self.last_run,
             "last_status": self.last_status,
             "run_count": self.run_count,
+            "run_retention_days": self.run_retention_days,
             "notify_on_completion": self.notify_on_completion,
             "sources": self.sources,
             "delivery": self.delivery,
