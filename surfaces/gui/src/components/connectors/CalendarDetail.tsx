@@ -6,6 +6,7 @@ import {
   type GmailAccount,
 } from "../../api";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
+import { useI18n } from "../../i18n";
 import type { DetailProps } from "./ConnectorsSection";
 import { ToolsDisclosure } from "./ToolsDisclosure";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_ACCENT, TAG_WARN, XBTN } from "./ui";
@@ -15,6 +16,7 @@ import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_ACCENT, TAG_WARN, XBTN } from "
 // Adding an account launches managed OAuth DIRECTLY (one connect mode, no modal).
 
 export function CalendarDetail({ c, cloud, slack: _slack, onChanged }: DetailProps) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const accounts = (c.accounts ?? []) as GmailAccount[]; // email-keyed (pre-generic-layer shape)
 
@@ -37,11 +39,11 @@ export function CalendarDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
               <>
                 <span className="w-2 h-2 rounded-full bg-ok" />
                 <span data-testid="gcal-status">
-                  {accounts.length} account{accounts.length === 1 ? "" : "s"}
+                  {t("{{count}} accounts", { count: accounts.length })}
                 </span>
               </>
             ) : (
-              <span>Not connected</span>
+              <span>{t("Not connected")}</span>
             )}
           </div>
         </div>
@@ -92,13 +94,14 @@ export function CalendarDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
 }
 
 function AccountRow({ a, onChanged }: { a: GmailAccount; onChanged: () => void }) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   return (
     <div className={ROW} data-testid={`gcal-account-${a.email}`}>
       <span className="min-w-0 flex-1 flex items-center gap-2">
         <span className="text-[13px] font-medium truncate">{a.email}</span>
-        {a.default && <span className={TAG_ACCENT}>Default</span>}
-        {a.needs_reauth && <span className={TAG_WARN}>⚠ Sign in again</span>}
+        {a.default && <span className={TAG_ACCENT}>{t("Default")}</span>}
+        {a.needs_reauth && <span className={TAG_WARN}>⚠ {t("Sign in again")}</span>}
       </span>
       {!a.default && (
         <button
@@ -109,12 +112,12 @@ function AccountRow({ a, onChanged }: { a: GmailAccount; onChanged: () => void }
             onChanged();
           }}
         >
-          Make default
+          {t("Make default")}
         </button>
       )}
       <button
         className={XBTN}
-        title="Disconnect this account"
+        title={t("Disconnect this account")}
         data-testid={`gcal-disconnect-${a.email}`}
         disabled={busy}
         onClick={async () => {
