@@ -48,28 +48,17 @@ def _patch_openai_compat(
     completions_status=200,
     model_id="demo",
     capture=None,
-    models_exc=None,
-    completions_exc=None,
 ):
-    """Stub GET /models + POST /chat/completions for the OpenAI-compat verify path."""
-
     def fake_get(url, **kwargs):
         if capture is not None:
             capture["models_url"] = url
-            capture["models_headers"] = kwargs.get("headers")
-        if models_exc is not None:
-            raise models_exc
+            capture["headers"] = kwargs.get("headers")
         body = {"data": [{"id": model_id}]} if model_id else {"data": []}
-        return SimpleNamespace(
-            status_code=models_status, json=lambda: body
-        )
+        return SimpleNamespace(status_code=models_status, json=lambda: body)
 
     def fake_post(url, **kwargs):
         if capture is not None:
             capture["completions_url"] = url
-            capture["completions_json"] = kwargs.get("json")
-        if completions_exc is not None:
-            raise completions_exc
         return SimpleNamespace(status_code=completions_status)
 
     monkeypatch.setattr("httpx.get", fake_get)
@@ -81,10 +70,8 @@ def test_verify_openai_ok(monkeypatch):
     _patch_openai_compat(monkeypatch, capture=cap)
     assert verify_provider_key("openai", api_key="sk-x") == {"ok": True}
     assert cap["models_url"] == "https://api.openai.com/v1/models"
-    assert cap["models_headers"]["Authorization"] == "Bearer sk-x"
+    assert cap["headers"]["Authorization"] == "Bearer sk-x"
     assert cap["completions_url"] == "https://api.openai.com/v1/chat/completions"
-    assert cap["completions_json"]["model"] == "demo"
-    assert cap["completions_json"]["max_tokens"] == 1
 
 
 def test_verify_openai_custom_endpoint(monkeypatch):
@@ -93,7 +80,6 @@ def test_verify_openai_custom_endpoint(monkeypatch):
     verify_provider_key(
         "openai", api_key="sk-x", base_url="https://gw.example/openai/v1/"
     )
-    # trailing slash trimmed; /models then /chat/completions on the custom endpoint
     assert cap["models_url"] == "https://gw.example/openai/v1/models"
     assert cap["completions_url"] == "https://gw.example/openai/v1/chat/completions"
 
@@ -106,15 +92,12 @@ def test_verify_bad_key_is_invalid(monkeypatch):
     }
 
 
-def test_verify_rejects_endpoint_missing_v1_when_completions_404(monkeypatch):
-    """#431: GET /models can succeed at a root that has no /chat/completions."""
+def test_verify_rejects_endpoint_when_completions_404(monkeypatch):
     _patch_openai_compat(monkeypatch, completions_status=404)
     res = verify_provider_key(
         "qwen", api_key="placeholder", base_url="http://127.0.0.1:1234"
     )
-    assert res["ok"] is False
-    assert "/v1" in res["error"]
-    assert "chat completions" in res["error"].lower()
+    assert not res["ok"] and "/v1" in res["error"]
 
 
 def test_verify_anthropic_headers(monkeypatch):

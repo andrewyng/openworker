@@ -795,29 +795,13 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
     return {"ok": False, "error": f"Vertex AI returned HTTP {resp.status_code}."}
 
 
-def _first_listed_model_id(resp: Any) -> Optional[str]:
-    """Best-effort `id` from an OpenAI-style `GET /models` body, or None."""
-    try:
-        data = resp.json().get("data") or []
-    except Exception:
-        return None
-    if data and isinstance(data[0], dict) and data[0].get("id"):
-        return str(data[0]["id"])
-    return None
-
-
 def _verify_openai_compat(
     d: ProviderDescriptor,
     key: str,
     base_url: Optional[str],
     timeout: float,
 ) -> dict[str, Any]:
-    """Validate an OpenAI-compatible endpoint: list models, then probe chat completions.
-
-    Listing `/models` alone is not enough — a base missing the `/v1` segment can still
-    answer GET /models while POST /chat/completions 404s, and Test would green-light a
-    setup that hangs on every real turn (#431).
-    """
+    """List models, then probe `/chat/completions` so a missing `/v1` fails Test (#431)."""
     import httpx
 
     default_base = next(
@@ -829,19 +813,31 @@ def _verify_openai_compat(
         or "https://api.openai.com/v1"
     )
     headers = {"Authorization": f"Bearer {key}"}
-    try:
-        resp = httpx.get(base + "/models", headers=headers, timeout=timeout)
-    except Exception as exc:
+
+    def _unreachable(exc: Exception) -> dict[str, Any]:
         return {
             "ok": False,
             "error": f"Couldn't reach {d.title} ({exc.__class__.__name__}).",
         }
-    if resp.status_code in (401, 403):
-        return {"ok": False, "error": "Invalid API key."}
-    if resp.status_code >= 300:
-        return {"ok": False, "error": f"{d.title} returned HTTP {resp.status_code}."}
 
-    model = _first_listed_model_id(resp) or "openworker-verify"
+    def _http_error(code: int) -> dict[str, Any]:
+        if code in (401, 403):
+            return {"ok": False, "error": "Invalid API key."}
+        return {"ok": False, "error": f"{d.title} returned HTTP {code}."}
+
+    try:
+        resp = httpx.get(base + "/models", headers=headers, timeout=timeout)
+    except Exception as exc:
+        return _unreachable(exc)
+    if resp.status_code >= 300:
+        return _http_error(resp.status_code)
+
+    try:
+        data = resp.json().get("data") or []
+        model = str(data[0]["id"]) if data and data[0].get("id") else "openworker-verify"
+    except Exception:
+        model = "openworker-verify"
+
     try:
         creq = httpx.post(
             base + "/chat/completions",
@@ -854,27 +850,19 @@ def _verify_openai_compat(
             timeout=timeout,
         )
     except Exception as exc:
-        return {
-            "ok": False,
-            "error": f"Couldn't reach {d.title} ({exc.__class__.__name__}).",
-        }
-    if creq.status_code < 300:
-        return {"ok": True}
-    if creq.status_code in (401, 403):
-        return {"ok": False, "error": "Invalid API key."}
+        return _unreachable(exc)
+    if creq.status_code < 300 or creq.status_code in (400, 422):
+        return {"ok": True}  # 400/422: path exists, model rejected
     if creq.status_code == 404:
         return {
             "ok": False,
             "error": (
                 "Reached the server, but chat completions aren't at this endpoint. "
-                "For OpenAI-compatible servers the URL usually needs a `/v1` suffix "
+                "OpenAI-compatible URLs usually need a `/v1` suffix "
                 "(e.g. http://127.0.0.1:1234/v1)."
             ),
         }
-    # Endpoint exists; a 400/422 is often "unknown model" when the list was empty.
-    if creq.status_code in (400, 422):
-        return {"ok": True}
-    return {"ok": False, "error": f"{d.title} returned HTTP {creq.status_code}."}
+    return _http_error(creq.status_code)
 
 
 def verify_provider_key(
@@ -885,11 +873,10 @@ def verify_provider_key(
     fields: Optional[dict[str, Any]] = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
-    """Validate a provider's credentials with a cheap live call. OpenAI-compatible
-    endpoints also probe `/chat/completions` so a missing `/v1` fails Test instead of
-    hanging later (#431). Transient: callers pass the key directly so a user can Test
-    before saving. Never raises; returns {ok, error?}. Multi-field cloud providers
-    (Bedrock, Vertex) take their whole form via `fields`; everyone else uses api_key/base_url.
+    """Validate a provider's credentials with one cheap live call. Transient: callers
+    pass the key directly so a user can Test before saving. Never raises; returns
+    {ok, error?}. Multi-field cloud providers (Bedrock, Vertex) take their whole form
+    via `fields`; everyone else uses api_key/base_url.
     """
     import httpx
 
@@ -900,7 +887,7 @@ def verify_provider_key(
     if name == "vertex":
         return _verify_vertex(fields or {}, timeout)
     if name not in ("anthropic", "gemini", "ollama"):
-        # openai + any OpenAI-compatible endpoint (Azure, OpenRouter, vendors, vLLM…)
+        # openai + OpenAI-compatible endpoints (Azure, OpenRouter, vendors, vLLM…)
         return _verify_openai_compat(d, key, base_url, timeout)
     try:
         if name == "anthropic":
