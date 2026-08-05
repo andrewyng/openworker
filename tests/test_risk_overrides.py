@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from coworker.overrides import RiskOverrideStore
-from coworker.permissions import Mode, PermissionEngine
+from coworker.permissions import PermissionEngine
 from coworker.risk import RiskClass, classify
 
 MCP_META = SimpleNamespace(requires_approval=True, category="mcp")

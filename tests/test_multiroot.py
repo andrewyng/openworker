@@ -14,7 +14,7 @@ import pytest
 import aisuite as ai
 from coworker.engine import TurnEngine
 from coworker.events import EventType
-from coworker.permissions import Decision, Mode, PermissionEngine
+from coworker.permissions import PermissionEngine
 from coworker.providers import AssistantTurn, ToolCall
 from coworker.roots import RootDir, normalize_roots, render_context
 from coworker.tools import ToolRegistry

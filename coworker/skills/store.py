@@ -28,7 +28,7 @@ from typing import Any, Callable, Optional
 import aisuite as ai
 
 from ..secrets import state_dir
-from .base import Skill, _parse_skill
+from .base import _parse_skill
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _MAX_NAME = 64

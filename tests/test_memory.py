@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import aisuite as ai
 from coworker.conversations import ConversationStore
 from coworker.memory import Scope, SQLiteMemoryStore, format_memories, memory_tools
 from coworker.sessions import SessionRecord

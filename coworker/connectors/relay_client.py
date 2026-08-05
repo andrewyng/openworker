@@ -30,7 +30,7 @@ import time
 from typing import Any, Awaitable, Callable, Optional, Protocol
 
 from .adapters import _SLACK_MENTION_RE, slack_event_to_event
-from .base import BasePlatformAdapter, InteractionEvent, SendResult, SessionSource
+from .base import BasePlatformAdapter, InteractionEvent, SendResult
 from .senders import _send_slack, _send_slack_interactive
 from .slack_addr import qualify
 

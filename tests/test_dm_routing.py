@@ -3,7 +3,6 @@ background turn) or is parked as unrouted; the legacy super-agent surface is gon
 
 import asyncio
 
-import pytest
 from fastapi.testclient import TestClient
 
 from coworker.connectors.base import MessageEvent, SessionSource

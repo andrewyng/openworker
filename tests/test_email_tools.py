@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 
-import pytest
-
 from coworker.connectors.email_tools import (
     build_search_criteria,
     decode_mime_header,

@@ -11,7 +11,6 @@ import base64
 import io
 import zipfile
 
-import pytest
 from fastapi.testclient import TestClient
 
 from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient

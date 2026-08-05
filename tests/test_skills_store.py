@@ -9,7 +9,6 @@ never a marker committed with a project folder).
 from __future__ import annotations
 
 import io
-import json
 import os
 import zipfile
 from pathlib import Path

@@ -2656,8 +2656,6 @@ class SessionManager:
         """Map an approval resolution (from any surface) to an ApprovalOutcome, handling
         the task-persistent "always_task" vocabulary alongside the session-scoped ones.
         """
-        from ..engine import ApprovalOutcome
-
         if resolution == "always_task":
             self.mint_task_rule(
                 session_id,
@@ -2677,7 +2675,6 @@ class SessionManager:
         return ApprovalOutcome.DENY
 
     def _scheduled_approver(self, task, session_id: str):
-        from ..engine import ApprovalOutcome
         from ..permissions import WRITE_TOOLS
 
         name_allowed = task.name_allowed_tools()
