@@ -14,6 +14,7 @@ import vertex from "./logos/vertex.svg";
 import openrouter from "./logos/openrouter.svg";
 import fireworks from "./logos/fireworks.svg";
 import together from "./logos/together.svg";
+import vercel from "./logos/vercel.svg";
 import zai from "./logos/zai.svg";
 import kimi from "./logos/kimi.svg";
 import deepseek from "./logos/deepseek.svg";
@@ -34,6 +35,7 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   openrouter,
   fireworks,
   together,
+  vercel,
   zai,
   kimi,
   deepseek,
@@ -54,6 +56,7 @@ export const PROVIDER_ORDER = [
   "openrouter",
   "fireworks",
   "together",
+  "vercel",
   "zai",
   "kimi",
   "deepseek",

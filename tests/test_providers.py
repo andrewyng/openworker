@@ -352,6 +352,7 @@ def test_compat_models_route_and_get_tool_capabilities():
         "qwen:qwen3-max",
         "xai:grok-4.3",
         "mistral:mistral-large-latest",
+        "vercel:zai/glm-5.2",
     ):
         prefix = model.split(":", 1)[0]
         assert router._provider_name(model) == prefix
@@ -383,6 +384,8 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         "fireworks:accounts/fireworks/models/kimi-k2p6",
         "openrouter:z-ai/glm-5.2",
         "openrouter:meta-llama/llama-4-maverick",
+        "vercel:anthropic/claude-haiku-4.5",
+        "vercel:moonshotai/kimi-k2.7-code",
     ):
         caps = capabilities_for(mid)
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
@@ -409,7 +412,7 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
     from coworker.providers.matrix import models_for_provider
     from coworker.providers.registry import get_descriptor
 
-    for name in ("together", "fireworks", "openrouter"):
+    for name in ("together", "fireworks", "openrouter", "vercel"):
         d = get_descriptor(name)
         assert d is not None and d.needs_key
         curated = models_for_provider(name)
