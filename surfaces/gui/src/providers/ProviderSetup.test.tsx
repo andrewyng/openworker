@@ -64,6 +64,10 @@ function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): Provid
     statusFor: () => null,
     saveField: async () => {},
     fieldSaved: null,
+    models: null,
+    fetchingModels: false,
+    fetchModelsError: null,
+    fetchModels: async () => {},
   };
 }
 
