@@ -8,6 +8,8 @@ proxy so any OpenAI-format client can use the runtime as a backend.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import os
 import re
@@ -388,6 +390,29 @@ def create_app(manager: SessionManager) -> FastAPI:
         manager.unattended.set(session_id, on)
         return {"ok": True, "session_id": session_id, "unattended": on}
 
+    @app.get("/v1/sessions/{session_id}/skills")
+    def session_skills(session_id: str, workspace: str = "") -> dict[str, Any]:
+        # The rail's Skills group + the composer popup both read this (SKILLS-SPEC §4.1).
+        return manager.session_skills_view(session_id, workspace or None)
+
+    @app.post("/v1/sessions/{session_id}/skills")
+    def set_session_skill(session_id: str, body: dict) -> dict[str, Any]:
+        # A session mute. `clear` drops the override (inherit again); otherwise explicit
+        # on/off. Nothing on disk changes — Settings owns permanent state.
+        body = body or {}
+        skill = str(body.get("skill", "")).strip()
+        if not skill:
+            return {"ok": False, "error": "skill required"}
+        if body.get("clear"):
+            manager.session_skills.clear(session_id, skill)
+        else:
+            manager.session_skills.set(
+                session_id, skill, bool(body.get("enabled", False))
+            )
+        return manager.session_skills_view(
+            session_id, str(body.get("workspace", "")) or None
+        )
+
     @app.get("/v1/sessions/{session_id}/connections")
     def session_connections(session_id: str, persona: str = "") -> dict[str, Any]:
         # `persona` is the GUI's hint for brand-new sessions (no record yet) — without it the
@@ -555,8 +580,45 @@ def create_app(manager: SessionManager) -> FastAPI:
         )
 
     @app.get("/v1/skills")
-    def skills() -> dict[str, Any]:
-        return {"skills": manager.list_skills()}
+    def skills(workspace: str = "") -> dict[str, Any]:
+        return {"skills": manager.list_skills(workspace or None)}
+
+    @app.post("/v1/skills")
+    def create_skill(body: dict) -> dict[str, Any]:
+        return manager.create_skill(body or {})
+
+    @app.patch("/v1/skills/{name}")
+    def update_skill(name: str, body: dict) -> dict[str, Any]:
+        return manager.update_skill(name, body or {})
+
+    @app.delete("/v1/skills/{name}")
+    def delete_skill(name: str, workspace: str = "") -> dict[str, Any]:
+        return manager.delete_skill(name, workspace or None)
+
+    @app.post("/v1/skills/{name}/move")
+    def move_skill(name: str, body: dict) -> dict[str, Any]:
+        return manager.move_skill(name, body or {})
+
+    @app.post("/v1/skills/{name}/reveal")
+    def reveal_skill(name: str, body: dict) -> dict[str, Any]:
+        # §6 "Show folder": open the skill's folder in the OS file manager (local machine).
+        return manager.reveal_skill(name, str((body or {}).get("workspace", "")) or None)
+
+    @app.post("/v1/skills/upload")
+    def stage_skill_upload(body: dict) -> dict[str, Any]:
+        # Stage → preview; nothing is installed until /upload/confirm (SKILLS-SPEC §4.2).
+        data_b64 = str((body or {}).get("data_b64", ""))
+        if not data_b64:
+            return {"ok": False, "error": "No archive supplied."}
+        try:
+            data = base64.b64decode(data_b64, validate=True)
+        except (ValueError, binascii.Error):
+            return {"ok": False, "error": "Invalid archive encoding."}
+        return manager.stage_skill_upload(data, str((body or {}).get("filename", "")))
+
+    @app.post("/v1/skills/upload/confirm")
+    def confirm_skill_upload(body: dict) -> dict[str, Any]:
+        return manager.confirm_skill_upload(body or {})
 
     @app.get("/v1/workspaces/recent")
     def recent_workspaces() -> dict[str, Any]:
@@ -1367,6 +1429,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         # Sidebar: sessions shown per group before "Show more" (owner ask, 2026-07-03).
         return manager.set_sessions_peek((body or {}).get("sessions_peek", 5))
 
+    @app.post("/v1/settings/context-bar")
+    def settings_set_context_bar(body: dict) -> dict[str, Any]:
+        # Composer: show the context-window fill bar, or just the popover (owner ask).
+        return manager.set_context_bar((body or {}).get("context_bar", True))
+
     @app.post("/v1/settings/pdf")
     def settings_set_pdf(body: dict) -> dict[str, Any]:
         # Token savings (owner ask, 2026-07-17): fallback mode for models without native
@@ -1376,6 +1443,17 @@ def create_app(manager: SessionManager) -> FastAPI:
             fallback=b.get("pdf_fallback"),
             max_pages=b.get("pdf_max_pages"),
             max_mb=b.get("pdf_max_mb"),
+        )
+
+    @app.post("/v1/settings/compaction")
+    def settings_set_compaction(body: dict) -> dict[str, Any]:
+        # Auto-compaction overrides (OPE-27): threshold % of the context window, the
+        # absolute token cap, and the summarizer-model pin ("" → session's own model).
+        b = body or {}
+        return manager.set_compaction_settings(
+            threshold_pct=b.get("compaction_threshold_pct"),
+            cap_tokens=b.get("compaction_cap_tokens"),
+            model=b.get("compaction_model"),
         )
 
     @app.post("/v1/attachments/inspect-pdf")
@@ -1677,6 +1755,9 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             await ws.close()
             return
+        # Auto-compaction failure prompt (OPE-27): only an ATTENDED session may be asked
+        # Retry/Trim — unattended runs auto-trim (the policy in engine._compact_now).
+        engine.is_attended = lambda: _visibility() == VIS_INLINE
         await ws.send_json(
             {
                 "type": "ready",
@@ -1710,11 +1791,15 @@ def create_app(manager: SessionManager) -> FastAPI:
             "iteration_end",
         }
 
-        async def run_turn(content, *, retry: bool = False) -> None:
+        async def run_turn(content, *, retry: bool = False, display=None) -> None:
             # The receive loop atomically claims this session before scheduling the task.
             # Keeping the claim outside prevents two back-to-back frames from both starting.
             try:
-                events = engine.retry() if retry else engine.run(content)
+                events = (
+                    engine.retry()
+                    if retry
+                    else engine.run(content, display=display)
+                )
                 async for event in events:
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.
@@ -1740,13 +1825,13 @@ def create_app(manager: SessionManager) -> FastAPI:
             # or flush an in-progress assistant stream in the GUI.
             await ws.send_json({"type": "input_rejected", "data": {"error": reason}})
 
-        async def claim_turn(*, retry: bool = False, content=None) -> None:
+        async def claim_turn(*, retry: bool = False, content=None, display=None) -> None:
             if not manager.try_mark_running(session_id):
                 await reject_input(
                     "This session is already running a turn. Wait for it to finish or stop it."
                 )
                 return
-            asyncio.create_task(run_turn(content, retry=retry))
+            asyncio.create_task(run_turn(content, retry=retry, display=display))
 
         try:
             while True:
@@ -1899,10 +1984,34 @@ def create_app(manager: SessionManager) -> FastAPI:
                     if model is not None and not isinstance(model, str):
                         await reject_input("Invalid model: expected a string.")
                         continue
+                    # Force-run (SKILLS-SPEC §4.1 #3): the composer's `/skill` pick rides as a
+                    # separate field. Validated against the session's effective menu — a muted
+                    # or unknown skill is a visible error, never a silent no-op (§4.6 #15).
+                    # The model-facing framing goes into `content`; the transcript shows the
+                    # user's literal "/name …" line via the `_display` sidecar (one bubble).
+                    skill = message.get("skill")
+                    display = None
+                    if skill is not None:
+                        if not isinstance(skill, str) or not skill.strip():
+                            await reject_input("Invalid skill: expected a name.")
+                            continue
+                        skill = skill.strip()
+                        menu = manager.effective_skill_names(session_id, workspace)
+                        if skill not in menu:
+                            await reject_input(
+                                f"Skill '{skill}' is not available in this session."
+                            )
+                            continue
+                        display = f"/{skill}" + (f" {text}" if text else "")
+                        text = (
+                            f'Use the skill "{skill}" for this request: first call '
+                            f'load_skill("{skill}") and follow its instructions.'
+                            + (f"\n\n{text}" if text else "")
+                        )
                     await _apply_model(model)
                     if text or attachments:
                         content = build_user_content(text, attachments)
-                        await claim_turn(content=content)
+                        await claim_turn(content=content, display=display)
                 else:
                     await reject_input(f"Unknown WebSocket message type: {kind}.")
         except WebSocketDisconnect:

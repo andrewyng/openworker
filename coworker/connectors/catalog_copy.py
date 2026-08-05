@@ -49,7 +49,7 @@ ABOUT: dict[str, str] = {
     "Multiple accounts connect side by side.",
     "monday": "Work with your monday.com boards — read items, summarize and "
     "aggregate board data, create items, and post updates. One-click sign-in "
-    "runs entirely on this Mac against monday.com's own agent service; agents "
+    "runs entirely on this computer against monday.com's own agent service; agents "
     "get a small curated set of its tools, never the full catalog.",
     "asana": "Keep up with your Asana work — search and read tasks and "
     "projects, create tasks, and comment. Connects with a personal access "

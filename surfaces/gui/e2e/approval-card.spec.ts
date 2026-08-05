@@ -45,7 +45,7 @@ test("run_shell → full card: description title, command preview, stays-on-this
   // The mocked proposal has no description → plain "Run a command" title; the command is
   // the preview; the reason still renders; the scope note replaces the old badge.
   await expect(page.getByText("Run a command").last()).toBeVisible();
-  await expect(page.getByText("stays on this Mac").last()).toBeVisible();
+  await expect(page.getByText("stays on this computer").last()).toBeVisible();
   await expect(page.getByText("The coworker wants to run a command.").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Always allow this command" }).last()).toBeVisible();
   await expect(page.getByText(/local action/)).toHaveCount(0);

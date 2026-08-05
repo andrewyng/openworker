@@ -409,12 +409,16 @@ def test_provider_builders(monkeypatch):
     with pytest.raises(RuntimeError, match="Gemini"):
         build_provider_client("gemini", {}, None)._ensure_client()
 
-    # OpenAI custom endpoint (Azure /openai/v1, OpenRouter, vLLM, …) passes through
+    # OpenAI custom endpoint (Azure /openai/v1, OpenRouter, vLLM, …) passes through and
+    # keeps Chat Completions; a blank endpoint means stock OpenAI → the Responses API.
+    from coworker.providers import OpenAIResponsesProvider
+
     o = build_provider_client(
         "openai", {"base_url": "https://my.azure.example/openai/v1"}, None
     )
+    assert isinstance(o, OpenAIProvider)
     assert o._base_url == "https://my.azure.example/openai/v1"
-    assert build_provider_client("openai", {}, None)._base_url is None
+    assert isinstance(build_provider_client("openai", {}, None), OpenAIResponsesProvider)
 
 
 def test_anthropic_gemini_capabilities():
