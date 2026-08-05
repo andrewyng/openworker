@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 
 import aisuite as ai
-import pytest
 
 from coworker.automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
 from coworker.automation.models import grant_entries, rule_entry, rule_parts

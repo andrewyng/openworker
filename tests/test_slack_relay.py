@@ -11,7 +11,7 @@ import pytest
 from coworker.connectors import relay_client
 from coworker.connectors.adapters import make_adapter
 from coworker.connectors.base import InteractionEvent, MessageEvent
-from coworker.connectors.config import ConnectorSettings, load_settings
+from coworker.connectors.config import load_settings
 from coworker.connectors.relay_client import SlackRelayAdapter
 from coworker.connectors.slack_addr import qualify, split
 from coworker.connectors.tools import make_send_message_tool

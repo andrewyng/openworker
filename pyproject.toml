@@ -37,7 +37,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio", "httpx"]
+dev = ["pytest>=8", "pytest-asyncio", "httpx", "ruff>=0.16"]
 # Inbound messaging listeners (outbound send_message needs only httpx, already a core dep).
 # aiohttp is slack-bolt's Socket Mode transport at runtime (and the FakeSlack test harness
 # drives the real handler) — declare it so CI installs it, not just transitively.
@@ -62,3 +62,15 @@ coworker = ["personas/builtin/*.md"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff]
+# CI actually runs 3.12 (see ci.yml); pinning here (rather than deriving from the
+# 3.10-floor `requires-python`) avoids false undefined-name positives on names the
+# stdlib only added later (e.g. `ExceptionGroup`, 3.11+).
+target-version = "py312"
+
+[tool.ruff.lint]
+# Deliberately narrow (owner call — see issue #34): pyflakes catches real latent bugs
+# (undefined names, dead imports/variables, shadowed-unused redefinitions) with ~zero
+# false positives and no style opinions to bikeshed. Widen once this is settled in.
+select = ["E9", "F"]

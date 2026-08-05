@@ -4,8 +4,6 @@ tool, settings/authorization, and the gateway inbound loop — all offline via F
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from coworker.connectors import (

@@ -9,7 +9,7 @@ results (the artifacts are real files in that folder).
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import aisuite as ai
 

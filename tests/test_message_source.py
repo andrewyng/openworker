@@ -9,7 +9,7 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-from coworker.connectors.base import MessageEvent, MessageSource, SessionSource
+from coworker.connectors.base import MessageEvent, SessionSource
 from coworker.engine import TurnEngine
 from coworker.permissions import PermissionEngine
 from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient

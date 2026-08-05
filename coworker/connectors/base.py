@@ -9,7 +9,7 @@ can `send` outbound. Inbound identity is carried by `SessionSource`; a `target` 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any, Awaitable, Callable, Optional
 

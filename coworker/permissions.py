@@ -25,8 +25,8 @@ def _has_shell_operators(command: str) -> bool:
     return any(op in command for op in _SHELL_OPERATORS)
 
 from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
-    SHELL_TOOL,
-    WRITE_TOOLS,
+    SHELL_TOOL,  # noqa: F401
+    WRITE_TOOLS,  # noqa: F401
     RiskClass,
     RiskOverrides,
     classify,

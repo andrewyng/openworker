@@ -6,6 +6,20 @@ name: CI
 on: [push, pull_request]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Ruff (pyflakes — undefined names, dead imports/vars, syntax errors)
+        run: ruff check coworker tests
+
   pytest:
     runs-on: ubuntu-latest
     steps:

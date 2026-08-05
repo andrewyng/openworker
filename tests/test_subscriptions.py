@@ -2,8 +2,6 @@
 
 import asyncio
 
-import pytest
-
 from coworker.connectors.base import MessageEvent, SessionSource
 from coworker.subscriptions import (
     ChannelBuffer,

@@ -195,7 +195,7 @@ def test_discuss_mode_blocks_writes_without_plan_pressure(tmp_path):
         ],
     )
     permissions.mode = Mode.DISCUSS
-    events = _collect(engine, "tweak x.py")
+    _collect(engine, "tweak x.py")
     assert not (tmp_path / "x.py").exists()
     assert any(
         m.get("role") == "tool" and "discuss mode is read-only" in m["content"]
