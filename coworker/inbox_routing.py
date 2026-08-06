@@ -23,6 +23,9 @@ DEFAULT_INBOX = "default"
 # to OpenWorker (2026-07-22); the legacy [ocw:…] spelling stays parseable so replies to
 # messages sent before the rename still resolve.
 _ID_TOKEN = re.compile(r"\[o(?:c)?w:([0-9a-f]{6,})\]")
+# Whole words only — substring matching resolved "disallow" as allow and "note" as deny.
+_ALLOW_WORDS = re.compile(r"\b(?:approve|approved|allow|allowed|yes)\b")
+_DENY_WORDS = re.compile(r"\b(?:deny|denied|reject|rejected|no)\b")
 
 
 @dataclass
@@ -130,9 +133,9 @@ def resolve_from_reply(
         return None
     item_id = m.group(1)
     lowered = reply.lower()
-    if any(w in lowered for w in ("approve", "allow", "yes", "👍", "✅")):
+    if _ALLOW_WORDS.search(lowered) or "👍" in reply or "✅" in reply:
         resolution = "allow"
-    elif any(w in lowered for w in ("deny", "reject", "no", "👎", "❌")):
+    elif _DENY_WORDS.search(lowered) or "👎" in reply or "❌" in reply:
         resolution = "deny"
     else:
         resolution = _ID_TOKEN.sub("", reply).strip()  # free-text answer to a question

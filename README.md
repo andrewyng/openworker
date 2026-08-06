@@ -2,6 +2,8 @@
 
 **[openworker.com](https://openworker.com)** · [Download](#download) · [Issues](https://github.com/andrewyng/openworker/issues)
 
+<a href="https://trendshift.io/repositories/91434?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-91434" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/91434/daily?language=Python" alt="andrewyng%2Fopenworker | Trendshift" width="250" height="55"/></a>
+
 > **Beta** - OpenWorker is in open beta: fully usable, updates itself, and we're actively polishing rough edges. [Issues](https://github.com/andrewyng/openworker/issues) welcome.
 
 **AI that gets your everyday tasks done.** OpenWorker is an open-source AI coworker that lives on your desktop and delivers **finished work**, not just chat: a polished document, a Slack reply with the numbers, an updated calendar, a triaged inbox.
@@ -81,6 +83,11 @@ cd surfaces/gui
 npm install
 npm run dev        # browser UI on the Vite dev port
 ```
+
+The standalone server creates a per-launch token at
+`<state-dir>/sidecar-8765.token`; Vite reads that user-only file when it starts.
+For direct API calls, send its value in the `X-OpenWorker-Token` header. The
+desktop app uses an in-memory launch token instead and never writes it to disk.
 
 To run the full desktop app instead of the browser UI, replace step 3 with `npm run tauri dev` (from `surfaces/gui/`) - the Tauri shell launches the window and supervises the server itself.
 

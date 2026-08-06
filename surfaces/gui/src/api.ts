@@ -1,5 +1,7 @@
 import type { SessionInfo, WsEvent } from "./types";
 
+declare const __COWORKER_DEV_TOKEN__: string;
+
 // Endpoint resolution order: runtime-injected globals (Tauri sets `window.__COWORKER_HTTP__`
 // for its dynamically-chosen sidecar port) → Vite env → the 127.0.0.1:8765 dev default. This
 // keeps a single codebase: browser `npm run dev` hits 8765; the desktop shell hits its sidecar.
@@ -11,6 +13,29 @@ const wsBase = (): string =>
   (globalThis as any).__COWORKER_WS__ ||
   (import.meta as any).env?.VITE_COWORKER_WS ||
   "ws://127.0.0.1:8765";
+const apiToken = (): string =>
+  (globalThis as any).__COWORKER_API_TOKEN__ ||
+  (import.meta as any).env?.VITE_COWORKER_API_TOKEN ||
+  (typeof __COWORKER_DEV_TOKEN__ === "string" ? __COWORKER_DEV_TOKEN__ : "");
+
+// All local REST calls pass through this module, so a module-local wrapper applies launch
+// authentication without asking every endpoint helper to remember the security header.
+const fetch = (
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<Response> => {
+  const headers = new Headers(init.headers);
+  const token = apiToken();
+  if (token) headers.set("X-OpenWorker-Token", token);
+  return globalThis.fetch(input, { ...init, headers });
+};
+
+const openWebSocket = (url: string): WebSocket => {
+  const token = apiToken();
+  return token
+    ? new WebSocket(url, ["openworker", token])
+    : new WebSocket(url);
+};
 
 export interface Health {
   status: string;
@@ -22,6 +47,14 @@ export interface RecentWorkspace {
   path: string;
   name: string;
   exists: boolean;
+}
+
+export interface WorkspaceCommandTrust {
+  workspace: string;
+  requested_commands: string[];
+  trusted: boolean;
+  required: boolean;
+  exists?: boolean;
 }
 
 export async function getHealth(): Promise<Health> {
@@ -49,11 +82,34 @@ export async function pickFolderViaServer(): Promise<string | null> {
 export async function openWorkspace(
   path: string,
   create = false,
-): Promise<{ path: string; ok: boolean; error?: string; git_branch?: string | null }> {
+): Promise<{
+  path: string;
+  ok: boolean;
+  error?: string;
+  git_branch?: string | null;
+  command_trust?: WorkspaceCommandTrust;
+}> {
   const res = await fetch(`${httpBase()}/v1/workspaces/open`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path, create }),
+  });
+  return res.json();
+}
+
+export async function getTrustedWorkspaces(): Promise<WorkspaceCommandTrust[]> {
+  const res = await fetch(`${httpBase()}/v1/workspaces/trusted`);
+  return (await res.json()).workspaces ?? [];
+}
+
+export async function setWorkspaceTrusted(
+  path: string,
+  trusted: boolean,
+): Promise<{ ok: boolean; error?: string } & WorkspaceCommandTrust> {
+  const res = await fetch(`${httpBase()}/v1/workspaces/trust`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, trusted }),
   });
   return res.json();
 }
@@ -85,6 +141,9 @@ export interface ConversationMessage {
   tool_calls?: any[];
   tool_call_id?: string;
   source?: MessageSource;
+  // Token counts for the round-trip that produced an assistant message
+  // ({model, input, output, cache_read, cache_write}); absent on older servers.
+  usage?: import("./types").TurnUsage;
   [key: string]: any;
 }
 
@@ -136,6 +195,8 @@ export interface ArtifactContent {
   content?: string;
   data_url?: string;
   truncated?: boolean;
+  // kind === "folder": a directory listing (models sometimes link a whole package dir).
+  entries?: { name: string; dir: boolean; size: number }[];
 }
 
 export async function getArtifacts(sessionId: string): Promise<ArtifactInfo[]> {
@@ -307,6 +368,8 @@ export interface SlackWorkspace {
   allowed_users: string[];
   allow_all: boolean;
   allowed_user_names?: Record<string, string | null>;
+  approval_owner_ids?: string[];
+  approval_owner_names?: Record<string, string | null>;
   // Who installed this workspace (authed_user) — pre-added to the allow-list on
   // connect (UX-027); the GUI marks their chip "you" and keys the setup card copy.
   installer_user_id?: string;
@@ -387,6 +450,8 @@ export interface Connector {
   mcp?: boolean; // MCP-backed one-click (vendor-hosted MCP + local OAuth — no cloud sign-in)
   allowed_users: string[]; // the allow-list (managed inline in the Connectors tab)
   allowed_user_names?: Record<string, string | null>; // id → display name (people directory)
+  approval_owner_ids?: string[]; // Manual Slack: humans allowed to resolve approvals
+  approval_owner_names?: Record<string, string | null>;
   recent?: RecentSender[]; // recently-seen senders on a connected two-way connector
   unauthorized?: ParkedMessage[]; // parked messages from unallowed senders (§19)
   tools: ConnectorTool[];
@@ -629,13 +694,25 @@ export interface ModelSettings {
   nav_layout?: "flat" | "grouped";
   // Sidebar: sessions shown per group before "Show more" (default 5, 1–50).
   sessions_peek?: number;
+  // Composer: show the context-window fill bar (default FALSE; absent → the chip shows
+  // the session total). The usage popover keeps both numbers regardless.
+  context_bar?: boolean;
   // Curated-matrix display names ({full id → "GLM-5.2 · via Together"}); custom models absent.
   model_labels?: Record<string, string>;
+  // {full id → context window in tokens}, verified matrix entries only — drives the
+  // composer's context-fill meter (absent id → the meter hides). Optional for older backends.
+  model_context_windows?: Record<string, number>;
   // Token savings (PDF attachments): fallback for models without native PDF support,
   // and attach-time thresholds. Optional so the GUI is robust to an older backend.
   pdf_fallback?: "text" | "images";
   pdf_max_pages?: number; // default 20, 1–100
   pdf_max_mb?: number; // default 10, 1–10
+  // Auto-compaction of long histories (OPE-27): trigger = min(threshold% × context
+  // window, cap tokens); model pins the summarizer ("" → the session's own model).
+  // Optional so the GUI is robust to an older backend.
+  compaction_threshold_pct?: number; // default 0.8, 0.10–0.95
+  compaction_cap_tokens?: number; // default 250000
+  compaction_model?: string;
 }
 
 export interface PdfSettings {
@@ -656,6 +733,24 @@ export async function setPdfSettings(
   return res.json();
 }
 
+export interface CompactionSettings {
+  compaction_threshold_pct: number;
+  compaction_cap_tokens: number;
+  compaction_model: string;
+}
+
+/** Persist the auto-compaction overrides (threshold %, token cap, summarizer model). */
+export async function setCompactionSettings(
+  patch: Partial<CompactionSettings>,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/compaction`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
 /** Local page/size probe for a PDF data URL — the composer's attach-time threshold check. */
 export async function inspectPdf(
   dataUrl: string,
@@ -664,6 +759,18 @@ export async function inspectPdf(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ data_url: dataUrl }),
+  });
+  return res.json();
+}
+
+/** Persist whether the composer shows the context-window fill bar. */
+export async function setContextBar(
+  shown: boolean,
+): Promise<{ ok: boolean; context_bar?: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/context-bar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ context_bar: shown }),
   });
   return res.json();
 }
@@ -984,6 +1091,141 @@ export async function setSessionConnection(
   return res.json();
 }
 
+// -- Skills (SKILLS-SPEC §4) ----------------------------------------------------
+// Scope = folder location: "global" (every session) or "project" (one workspace).
+// The session endpoints resolve the effective menu (Settings disables + session mutes).
+
+export interface SkillRow {
+  name: string;
+  description: string;
+  instructions: string;
+  scope: "global" | "project";
+  source: string; // "local" | "uploaded"
+  enabled: boolean;
+  path: string;
+  files?: number; // bundled resources beyond SKILL.md (§6 — rich skills are visible)
+}
+
+export interface SessionSkillRow {
+  name: string;
+  description: string;
+  scope: "global" | "project";
+  enabled: boolean; // false = muted for this session only
+}
+
+export interface SkillUploadPreview {
+  ok: boolean;
+  error?: string;
+  token?: string;
+  name?: string;
+  description?: string;
+  instructions?: string;
+  files?: string[];
+}
+
+const skillUrl = (path = "") => `${httpBase()}/v1/skills${path}`;
+const jsonPost = (body: unknown, method = "POST") => ({
+  method,
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+export async function listSkills(workspace?: string): Promise<SkillRow[]> {
+  const qs = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+  const res = await fetch(skillUrl(qs));
+  return (await res.json()).skills ?? [];
+}
+
+export async function createSkill(body: {
+  name: string;
+  description: string;
+  instructions: string;
+  scope?: "global" | "project";
+  workspace?: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(skillUrl(), jsonPost(body));
+  return res.json();
+}
+
+export async function updateSkill(
+  name: string,
+  patch: { description?: string; instructions?: string; enabled?: boolean; workspace?: string },
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(skillUrl(`/${encodeURIComponent(name)}`), jsonPost(patch, "PATCH"));
+  return res.json();
+}
+
+export async function revealSkill(name: string): Promise<{ ok: boolean; error?: string }> {
+  // §6 "Show folder": the backend opens the skill's folder in the OS file manager.
+  const res = await fetch(skillUrl(`/${encodeURIComponent(name)}/reveal`), jsonPost({}));
+  return res.json();
+}
+
+export async function deleteSkill(
+  name: string,
+  workspace?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const qs = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+  const res = await fetch(skillUrl(`/${encodeURIComponent(name)}${qs}`), { method: "DELETE" });
+  return res.json();
+}
+
+export async function moveSkill(
+  name: string,
+  scope: "global" | "project",
+  workspace?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(skillUrl(`/${encodeURIComponent(name)}/move`), jsonPost({ scope, workspace }));
+  return res.json();
+}
+
+export async function stageSkillUpload(
+  dataB64: string,
+  filename = "",
+): Promise<SkillUploadPreview> {
+  const res = await fetch(skillUrl("/upload"), jsonPost({ data_b64: dataB64, filename }));
+  return res.json();
+}
+
+export async function confirmSkillUpload(
+  token: string,
+  scope: "global" | "project" = "global",
+  workspace?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(skillUrl("/upload/confirm"), jsonPost({ token, scope, workspace }));
+  return res.json();
+}
+
+
+export async function sessionSkills(
+  sessionId: string,
+  workspace?: string,
+): Promise<SessionSkillRow[]> {
+  const qs = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/skills${qs}`,
+  );
+  return (await res.json()).skills ?? [];
+}
+
+export async function setSessionSkill(
+  sessionId: string,
+  skill: string,
+  enabled: boolean,
+  opts: { clear?: boolean; workspace?: string } = {},
+): Promise<{ skills?: SessionSkillRow[]; ok?: boolean; error?: string }> {
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/skills`,
+    jsonPost({
+      skill,
+      enabled,
+      ...(opts.clear ? { clear: true } : {}),
+      ...(opts.workspace ? { workspace: opts.workspace } : {}),
+    }),
+  );
+  return res.json();
+}
+
 // -- Inbox + Unattended -------------------------------------------------------
 export interface InboxItem {
   id: string;
@@ -1205,6 +1447,10 @@ export interface ProviderField {
   help: string;
   placeholder: string;
   default?: string; // pre-filled editable value (e.g. an OpenAI-compatible vendor's endpoint)
+  // Non-empty → segmented choice, not a text input. tag = tiny badge ("Easiest");
+  // desc = one-liner atop the method panel; command = copyable terminal command.
+  choices?: { value: string; label: string; tag?: string; desc?: string; command?: string }[];
+  show_when?: Record<string, string> | null; // render only while these fields hold these values
 }
 
 export interface ProviderInfo {
@@ -1264,6 +1510,7 @@ export function detectProvider(apiKey: string): string | null {
   const key = (apiKey || "").trim();
   if (!key) return null;
   if (key.startsWith("sk-ant-")) return "anthropic";
+  if (key.startsWith("sk-or-")) return "openrouter";
   if (key.startsWith("AIza")) return "gemini";
   if (key.startsWith("sk-") || key.startsWith("sk_")) return "openai";
   return null;
@@ -1357,7 +1604,7 @@ export function connectEvents(
   let closed = false;
   const open = () => {
     if (closed) return;
-    ws = new WebSocket(`${wsBase()}/ws/events`);
+    ws = openWebSocket(`${wsBase()}/ws/events`);
     ws.onmessage = (e) => {
       try {
         onEvent(JSON.parse(e.data));
@@ -1529,6 +1776,32 @@ export async function disallowUser(name: string, userId: string, teamId?: string
   return res.json();
 }
 
+export async function addSlackApprovalOwner(
+  userId: string,
+  displayName?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/connectors/slack/approval-owners/add`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id: userId,
+      ...(displayName ? { name: displayName } : {}),
+    }),
+  });
+  return res.json();
+}
+
+export async function removeSlackApprovalOwner(
+  userId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/connectors/slack/approval-owners/remove`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId }),
+  });
+  return res.json();
+}
+
 /** Stop relaying one managed Slack workspace (the app stays installed in Slack). */
 export async function disconnectSlackWorkspace(teamId: string): Promise<{ ok: boolean; error?: string; remaining_workspaces?: number }> {
   const res = await fetch(
@@ -1684,7 +1957,7 @@ export class Session {
 
   constructor(sessionId: string, workspace: string, agent: string, handlers: Handlers) {
     const q = `?workspace=${encodeURIComponent(workspace)}&agent=${encodeURIComponent(agent)}`;
-    this.ws = new WebSocket(`${wsBase()}/ws/session/${sessionId}${q}`);
+    this.ws = openWebSocket(`${wsBase()}/ws/session/${sessionId}${q}`);
     this.ws.onmessage = (e) => handlers.onEvent(JSON.parse(e.data));
     this.ws.onopen = () => {
       this.flush();
@@ -1710,12 +1983,15 @@ export class Session {
    * exactly what the user sees — immune to set_model races across reconnects (a new cowork
    * session always reconnects once to adopt its scratch dir, which could drop a queued
    * set_model and leave the engine on a stale/resumed model; found 2026-07-04). */
-  userMessage(text: string, attachments?: unknown[], model?: string) {
+  userMessage(text: string, attachments?: unknown[], model?: string, skill?: string) {
     this.send({
       type: "user_message",
       text,
       ...(model ? { model } : {}),
       ...(attachments?.length ? { attachments } : {}),
+      // Force-run (SKILLS-SPEC §4.1): the composer's /skill pick rides as its own field;
+      // the server validates it against the session's effective menu and frames the turn.
+      ...(skill ? { skill } : {}),
     });
   }
 
@@ -1771,4 +2047,3 @@ export class Session {
     this.ws.close();
   }
 }
-

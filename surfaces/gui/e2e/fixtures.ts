@@ -47,6 +47,11 @@ const SETTINGS = {
     "zai:glm-5.2": "GLM-5.2 · Z AI",
     "nvidia:z-ai/glm-5.2": "GLM-5.2 · NVIDIA NIM",
   },
+  // Context windows (subset — mirrors /v1/settings.model_context_windows); drives the
+  // composer usage chip's context-fill meter.
+  model_context_windows: {
+    "anthropic:claude-opus-4-8": 200_000,
+  },
 };
 
 const PERSONAS = {
@@ -154,7 +159,7 @@ const CONNECTORS = {
     // MCP-BACKED connectors (§42): vendor-hosted MCP + local OAuth, pinned tool subset.
     // monday is one-click ONLY (no manual fields); jira also has a manual token path
     // (two-mode modal). Neither needs cloud sign-in.
-    { name: "monday", title: "monday.com", icon: "▦", blurb: "Read boards and items, track work, create items and post updates.", aliases: ["project management", "tasks", "boards"], auth: "oauth", two_way: false, channels: false, available: true, brand_color: "#6161ff", logo: "monday", mcp: true, fields: [], instructions: ["One click connects via monday.com sign-in in your browser.", "Sign-in is fully local — tokens stay on this Mac."], connected: false, account: null, enabled: false, allowed_users: [], tools: [{ name: "mcp__monday__get_board_info", label: "Read board", kind: "read", description: "Read a board's columns and groups.", enabled: true, requires_approval: false }, { name: "mcp__monday__create_item", label: "Create item", kind: "write", description: "Create an item on a board.", enabled: true, requires_approval: true }], managed: false, managed_profile: false },
+    { name: "monday", title: "monday.com", icon: "▦", blurb: "Read boards and items, track work, create items and post updates.", aliases: ["project management", "tasks", "boards"], auth: "oauth", two_way: false, channels: false, available: true, brand_color: "#6161ff", logo: "monday", mcp: true, fields: [], instructions: ["One click connects via monday.com sign-in in your browser.", "Sign-in is fully local — tokens stay on this computer."], connected: false, account: null, enabled: false, allowed_users: [], tools: [{ name: "mcp__monday__get_board_info", label: "Read board", kind: "read", description: "Read a board's columns and groups.", enabled: true, requires_approval: false }, { name: "mcp__monday__create_item", label: "Create item", kind: "write", description: "Create an item on a board.", enabled: true, requires_approval: true }], managed: false, managed_profile: false },
     { name: "jira", title: "Jira", icon: "◆", blurb: "Search, summarize, create, and update issues.", aliases: ["issues", "tickets", "atlassian"], auth: "api_token", two_way: false, channels: false, available: true, brand_color: "#0052cc", logo: "jira", mcp: true, fields: [{ key: "base_url", label: "Atlassian site URL", secret: false, required: true, help: "", placeholder: "" }, { key: "email", label: "Account email", secret: false, required: true, help: "", placeholder: "" }, { key: "api_token", label: "API token", secret: true, required: true, help: "", placeholder: "" }], instructions: [], connected: false, account: null, enabled: false, allowed_users: [], tools: [], managed: false, managed_profile: false },
   ],
 };
@@ -360,11 +365,12 @@ export async function mockApi(page: import("@playwright/test").Page) {
     mode: "relay" as "" | "relay",
     account: "deeplearning.ai",
     allowed_users: [] as string[], // flat list (manual Socket Mode only)
+    approval_owner_ids: [] as string[],
     workspaces: [
       // T1DL mirrors a managed install: the installer (authed_user) was pre-added
       // to the allow-list on connect (UX-027) — keys the "you" chip + setup card.
-      { team_id: "T1DL", account: "deeplearning.ai", domain: "dlaiteam", allowed_users: ["U_ME"] as string[], allow_all: false, allowed_user_names: {} as Record<string, string | null>, installer_user_id: "U_ME", installer_name: "Rohit Prasad" },
-      { team_id: "T2AC", account: "acme-partners", domain: "acmehq", allowed_users: [] as string[], allow_all: false, allowed_user_names: {} as Record<string, string | null>, installer_user_id: "", installer_name: "" },
+      { team_id: "T1DL", account: "deeplearning.ai", domain: "dlaiteam", allowed_users: ["U_ME"] as string[], allow_all: false, allowed_user_names: {} as Record<string, string | null>, approval_owner_ids: ["U_ME"] as string[], approval_owner_names: { U_ME: "Rohit Prasad" } as Record<string, string | null>, installer_user_id: "U_ME", installer_name: "Rohit Prasad" },
+      { team_id: "T2AC", account: "acme-partners", domain: "acmehq", allowed_users: [] as string[], allow_all: false, allowed_user_names: {} as Record<string, string | null>, approval_owner_ids: [] as string[], approval_owner_names: {} as Record<string, string | null>, installer_user_id: "", installer_name: "" },
     ],
   };
   const slackConnector = () => ({
@@ -372,7 +378,9 @@ export async function mockApi(page: import("@playwright/test").Page) {
     auth: "bot_token", two_way: true, channels: true, available: true, brand_color: "#611f69", logo: "slack",
     fields: [], instructions: [], connected: slackState.connected,
     account: slackState.account, enabled: slackState.connected,
-    allowed_users: [...slackState.allowed_users], tools: [], managed: true,
+    allowed_users: [...slackState.allowed_users],
+    approval_owner_ids: [...slackState.approval_owner_ids],
+    tools: [], managed: true,
     managed_profile: slackState.mode === "relay", mode: slackState.mode,
     workspaces: slackState.workspaces.map((w) => ({ ...w, allowed_users: [...w.allowed_users] })),
     unauthorized: parked.map((x) => ({ ...x })),
@@ -547,6 +555,14 @@ export async function mockApi(page: import("@playwright/test").Page) {
   // Per-session unattended flag — mutable so the composer's "Send to Inbox" toggle persists and
   // the app reads it back (which is what gates parking approvals to the Inbox vs an inline card).
   const unattended: Record<string, boolean> = {};
+  // Skills (SKILLS-SPEC) — mutable folder-is-truth mirror: Settings CRUD, the enabled flag,
+  // staged uploads (stage → preview → confirm), and the composer's per-session menu all
+  // round-trip through this one list.
+  const skills: any[] = [
+    { name: "weekly-report", description: "Monday status report", instructions: "1. Collect updates\n2. Write it up", scope: "global", source: "local", enabled: true, path: "/state/skills/weekly-report", files: 0 },
+    { name: "html-to-markdown", description: "Convert an HTML document or fragment to clean markdown.", instructions: "Convert the given HTML to markdown, preserving structure.", scope: "global", source: "uploaded", enabled: true, path: "/state/skills/html-to-markdown", files: 2 },
+  ];
+  let stagedSkill: any = null;
 
   // Fresh cloud sign-in state per test (module state outlives a page).
   Object.assign(CLOUD_STATE, {
@@ -580,7 +596,12 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const msg = JSON.parse(String(raw));
       if (msg.type === "user_message") {
         hadTurn = true;
-        send("turn_start", { input: msg.text });
+        // Force-run (SKILLS-SPEC §6): like the real server, TURN_START ships the user's
+        // literal "/name …" line as `display` so the client dedupes on what the user sees.
+        send("turn_start", {
+          input: msg.text,
+          ...(msg.skill ? { display: `/${msg.skill}${msg.text ? ` ${msg.text}` : ""}` } : {}),
+        });
         if (/run a tool/i.test(msg.text)) {
           pendingTool = "run_shell";
           send("tool_proposed", { name: "run_shell", arguments: { command: "ls" } });
@@ -676,6 +697,18 @@ export async function mockApi(page: import("@playwright/test").Page) {
           }, 120);
           return;
         }
+        // Auto-compaction (OPE-27): the server signals `compacting` (the transient
+        // spinner label), summarizes for a beat, then emits the marker and the turn
+        // continues normally — the divider must render inline.
+        if (/compact the context/i.test(msg.text)) {
+          send("compacting", {});
+          setTimeout(() => {
+            send("compacted", { text: "Context compacted — earlier turns were summarized" });
+            send("assistant_message", { text: "Still on it — continuing where I left off." });
+            send("turn_done");
+          }, 400);
+          return;
+        }
         // A turn that dies on a provider error; the follow-up {type:"retry"} recovers.
         if (/fail the turn/i.test(msg.text)) {
           send("error", { error: "model unreachable" });
@@ -704,7 +737,19 @@ export async function mockApi(page: import("@playwright/test").Page) {
         send("assistant_delta", { text: msg.text });
         // Echo the model the message carried — pins the model-per-message contract (the
         // composer's visible model must ride on every user_message; 2026-07-04 fix).
-        send("assistant_message", { text: `Echo: ${msg.text} [model=${msg.model || "none"}]` });
+        // Same for `skill`: the force-run pick must ride as its OWN FIELD, never as text.
+        // `usage` mirrors the real engine's assistant_message sidecar (OPE-42): fixed
+        // counts per turn so the usage-chip specs can assert exact accumulation.
+        send("assistant_message", {
+          text: `Echo: ${msg.text} [model=${msg.model || "none"}]${msg.skill ? ` [skill=${msg.skill}]` : ""}`,
+          usage: {
+            model: msg.model || "anthropic:claude-opus-4-8",
+            input: 1_000,
+            output: 200,
+            cache_read: 8_000,
+            cache_write: 800,
+          },
+        });
         send("turn_done");
       } else if (msg.type === "approval") {
         if (pendingTool === "run_shell") {
@@ -808,8 +853,79 @@ export async function mockApi(page: import("@playwright/test").Page) {
       return json(i >= 0 ? sessions[i] : PINNED_SESSION);
     }
 
+    // Skills (SKILLS-SPEC §5/§6). Order matters: upload/confirm before the {name} regexes.
+    if (/\/v1\/sessions\/[^/]+\/skills$/.test(p)) {
+      // The composer's live menu: every Settings-enabled skill (§4 — disabled = invisible).
+      return json({
+        skills: skills
+          .filter((s) => s.enabled)
+          .map((s) => ({ name: s.name, description: s.description, scope: s.scope, enabled: true })),
+      });
+    }
+    if (p.endsWith("/v1/skills/upload/confirm") && m === "POST") {
+      const b = req.postDataJSON() || {};
+      if (!stagedSkill || b.token !== stagedSkill.token)
+        return json({ ok: false, error: "Upload expired — pick the file again." });
+      skills.push({
+        name: stagedSkill.name, description: stagedSkill.description,
+        instructions: stagedSkill.instructions, scope: "global", source: "uploaded",
+        enabled: true, path: `/state/skills/${stagedSkill.name}`, files: stagedSkill.files.length,
+      });
+      stagedSkill = null;
+      return json({ ok: true });
+    }
+    if (p.endsWith("/v1/skills/upload") && m === "POST") {
+      // Stage → preview; nothing lands until confirm. Fixed parse (the mock reads no zips).
+      stagedSkill = {
+        token: "stage-1", name: "greet", description: "says hello",
+        instructions: "Say hello warmly.", files: ["notes.txt"],
+      };
+      return json({ ok: true, ...stagedSkill });
+    }
+    {
+      const mr = p.match(/\/v1\/skills\/([^/]+)\/reveal$/);
+      if (mr && m === "POST") {
+        return json(
+          skills.some((s) => s.name === decodeURIComponent(mr[1]))
+            ? { ok: true }
+            : { ok: false, error: `Unknown skill: ${decodeURIComponent(mr[1])}` },
+        );
+      }
+    }
+    if (/\/v1\/skills\/[^/]+$/.test(p) && (m === "PATCH" || m === "DELETE")) {
+      const name = decodeURIComponent(p.split("/").pop()!);
+      const i = skills.findIndex((s) => s.name === name);
+      if (i < 0) return json({ ok: false, error: `Unknown skill: ${name}` });
+      if (m === "DELETE") {
+        skills.splice(i, 1);
+        return json({ ok: true });
+      }
+      const b = req.postDataJSON() || {};
+      if (typeof b.enabled === "boolean") skills[i].enabled = b.enabled;
+      if (typeof b.description === "string") skills[i].description = b.description;
+      if (typeof b.instructions === "string") skills[i].instructions = b.instructions;
+      return json({ ok: true });
+    }
+    if (p.endsWith("/v1/skills") && m === "POST") {
+      const b = req.postDataJSON() || {};
+      if (!b.name || !(b.instructions || "").trim())
+        return json({ ok: false, error: "Skill name and instructions are required." });
+      if (skills.some((s) => s.name === b.name))
+        return json({ ok: false, error: `A skill named '${b.name}' already exists in that scope.` });
+      skills.push({
+        name: b.name, description: b.description || "", instructions: b.instructions,
+        scope: "global", source: "local", enabled: true, path: `/state/skills/${b.name}`, files: 0,
+      });
+      return json({ ok: true });
+    }
+    if (p.endsWith("/v1/skills")) return json({ skills });
+
     if (p.endsWith("/v1/health")) return json(HEALTH);
     if (p.endsWith("/v1/settings")) return json(SETTINGS);
+    if (p.endsWith("/v1/settings/context-bar") && m === "POST") {
+      Object.assign(SETTINGS, req.postDataJSON());
+      return json({ ok: true, context_bar: SETTINGS.context_bar });
+    }
     if (p.endsWith("/v1/settings/pdf") && m === "POST") {
       Object.assign(SETTINGS, req.postDataJSON());
       return json({
@@ -913,6 +1029,24 @@ export async function mockApi(page: import("@playwright/test").Page) {
       // Directory picks carry the display name — backend seeds the people directory.
       if (add && b.name && ws) ws.allowed_user_names[b.user_id] = b.name;
       return json({ ok: true, allowed_users: [...pool], team_id: b.team_id ?? null });
+    }
+    if (p.endsWith("/v1/connectors/slack/approval-owners/add") && m === "POST") {
+      const b = req.postDataJSON();
+      if (!slackState.approval_owner_ids.includes(b.user_id))
+        slackState.approval_owner_ids.push(b.user_id);
+      if (!slackState.allowed_users.includes(b.user_id))
+        slackState.allowed_users.push(b.user_id);
+      return json({
+        ok: true,
+        approval_owner_ids: [...slackState.approval_owner_ids],
+        allowed_users: [...slackState.allowed_users],
+      });
+    }
+    if (p.endsWith("/v1/connectors/slack/approval-owners/remove") && m === "POST") {
+      const b = req.postDataJSON();
+      const i = slackState.approval_owner_ids.indexOf(b.user_id);
+      if (i >= 0) slackState.approval_owner_ids.splice(i, 1);
+      return json({ ok: true, approval_owner_ids: [...slackState.approval_owner_ids] });
     }
     // Workspace rosters for the pickers (users.list / conversations.list, mocked).
     if (/\/v1\/connectors\/slack\/workspaces\/[^/]+\/directory$/.test(p) && m === "GET") {
@@ -1140,7 +1274,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
       // Slack managed install = add a workspace. The real flow completes in the system
       // browser; the mock installs instantly so the page's poll picks it up.
       if (p.includes("/connectors/slack/")) {
-        slackState.workspaces.push({ team_id: "T3NEW", account: "new-workspace", allowed_users: [], allow_all: false, allowed_user_names: {} });
+        slackState.workspaces.push({ team_id: "T3NEW", account: "new-workspace", domain: "new-workspace", allowed_users: ["U_ME"], allow_all: false, allowed_user_names: { U_ME: "Rohit Prasad" }, approval_owner_ids: ["U_ME"], approval_owner_names: { U_ME: "Rohit Prasad" }, installer_user_id: "U_ME", installer_name: "Rohit Prasad" });
         slackState.connected = true;
         slackState.mode = "relay";
       }
