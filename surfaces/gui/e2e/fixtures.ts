@@ -548,6 +548,8 @@ export async function mockApi(page: import("@playwright/test").Page) {
   const automations: any[] = [{ ...AUTOMATION }, { ...AUTOMATION_CLEAN }];
   // MCP servers (empty by default; the granola OAuth quick-add test populates it).
   const mcpServers: any[] = [];
+  // User-local risk overrides (Phase 2): pattern → risk, mutated by /v1/risk-overrides.
+  const riskOverrides: { pattern: string; risk: string }[] = [];
   const automationRuns: any[] = AUTOMATION_RUNS.map((r) => ({ ...r }));
   // Per-session unattended flag — mutable so the composer's "Send to Inbox" toggle persists and
   // the app reads it back (which is what gates parking approvals to the Inbox vs an inline card).
@@ -1561,6 +1563,41 @@ export async function mockApi(page: import("@playwright/test").Page) {
           s2._flip = false;
         }
         return json({ ok: true });
+      }
+      // Tool listing with per-tool effective risk (Phase 2 overrides). Two tools:
+      // by MCP default both are external ("asks") until a user override relaxes one.
+      const mt = p.match(/\/v1\/mcp\/([^/]+)\/tools$/);
+      if (mt && m === "GET") {
+        const server = decodeURIComponent(mt[1]);
+        const tools = ["get_status", "set_value"].map((name) => {
+          const full = `mcp__${server}__${name}`;
+          const ov = riskOverrides.find((r) => r.pattern === full);
+          return {
+            name,
+            description: `${name} on ${server}`,
+            full_name: full,
+            risk: ov ? ov.risk : "external",
+            default_risk: "external",
+            overridden: !!ov,
+          };
+        });
+        return json({ name: server, ok: true, tools });
+      }
+    }
+    if (p.endsWith("/v1/risk-overrides")) {
+      if (m === "GET") return json({ rules: riskOverrides });
+      if (m === "POST") {
+        const b = req.postDataJSON();
+        const i = riskOverrides.findIndex((r) => r.pattern === b.pattern);
+        if (i >= 0) riskOverrides.splice(i, 1);
+        riskOverrides.push({ pattern: b.pattern, risk: b.risk });
+        return json({ ok: true, rules: riskOverrides });
+      }
+      if (m === "DELETE") {
+        const pat = new URL(req.url()).searchParams.get("pattern");
+        const i = riskOverrides.findIndex((r) => r.pattern === pat);
+        if (i >= 0) riskOverrides.splice(i, 1);
+        return json({ ok: i >= 0, rules: riskOverrides });
       }
     }
     if (p.endsWith("/v1/unrouted")) return json([]);

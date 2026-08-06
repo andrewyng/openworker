@@ -306,10 +306,41 @@ export async function deleteMcpServer(name: string) {
   return res.json();
 }
 
+export interface McpToolRow {
+  name: string;
+  description: string;
+  /** Registry name (`mcp__<server>__<tool>`) — the pattern risk overrides match. */
+  full_name: string;
+  /** Effective risk with the user's overrides applied. */
+  risk: string;
+  /** What the tool would be without overrides (MCP default: external → asks). */
+  default_risk: string;
+  overridden: boolean;
+}
+
 export async function getMcpTools(
   name: string,
-): Promise<{ ok: boolean; error?: string; tools: { name: string; description: string }[] }> {
+): Promise<{ ok: boolean; error?: string; tools: McpToolRow[] }> {
   const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}/tools`);
+  return res.json();
+}
+
+// User-local risk overrides (Phase 2): relax a trusted MCP tool to `read` so it
+// stops prompting, or remove the override to restore the conservative default.
+export async function setRiskOverride(pattern: string, risk: string) {
+  const res = await fetch(`${httpBase()}/v1/risk-overrides`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pattern, risk }),
+  });
+  return res.json();
+}
+
+export async function deleteRiskOverride(pattern: string) {
+  const res = await fetch(
+    `${httpBase()}/v1/risk-overrides?pattern=${encodeURIComponent(pattern)}`,
+    { method: "DELETE" },
+  );
   return res.json();
 }
 

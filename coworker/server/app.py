@@ -793,6 +793,20 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
         )
 
+    @app.get("/v1/risk-overrides")
+    def risk_overrides_list() -> dict[str, Any]:
+        return manager.list_risk_overrides()
+
+    @app.post("/v1/risk-overrides")
+    def risk_overrides_set(body: dict) -> dict[str, Any]:
+        # User-local trust decision (GUI/REST). Personas/packages never reach this
+        # path — the no-self-grant rule lives in the store's design, not here.
+        return manager.set_risk_override(body or {})
+
+    @app.delete("/v1/risk-overrides")
+    def risk_overrides_delete(pattern: str) -> dict[str, Any]:
+        return manager.delete_risk_override(pattern)
+
     @app.post("/v1/mcp/reload")
     async def mcp_reload() -> dict[str, Any]:
         return await manager.reload_mcp()

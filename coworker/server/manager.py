@@ -159,6 +159,12 @@ class SessionManager:
                 self.secrets, default_provider="openai", on_use=self._note_provider_use
             )
         self.mcp = MCPManager(secrets=self.secrets)
+        # The user-local risk-override store (Phase 2). Same file as the per-engine
+        # instances in build_engine; the store's mtime watch makes REST writes here
+        # visible to live engines without a rebuild.
+        from ..overrides import RiskOverrideStore
+
+        self.risk_overrides = RiskOverrideStore(state_dir() / "risk_overrides.json")
         # OAuth MCP servers with a sign-in in flight / their last connect error —
         # feeds list_mcp's status so the GUI can show "authorizing…" and failures.
         self._mcp_authorizing: set[str] = set()
@@ -1125,11 +1131,53 @@ class SessionManager:
                     "name": name,
                     "ok": True,
                     "tools": [
-                        {"name": t.name, "description": getattr(t, "description", "")}
-                        for t in conn.tools
+                        self._mcp_tool_row(server, t) for t in conn.tools
                     ],
                 }
         return {"name": name, "ok": False, "error": "unknown server", "tools": []}
+
+    def _mcp_tool_row(self, server: Any, t: Any) -> dict[str, Any]:
+        """One tool listing row, enriched with its registry name and effective risk
+        so the GUI can render per-tool risk controls (Phase 2 overrides)."""
+        from types import SimpleNamespace
+
+        from ..mcp.tools import tool_name as mcp_tool_name
+        from ..risk import classify
+
+        full = mcp_tool_name(server.name, t.name)
+        meta = SimpleNamespace(requires_approval=server.requires_approval, category="mcp")
+        return {
+            "name": t.name,
+            "description": getattr(t, "description", ""),
+            "full_name": full,
+            "risk": classify(full, meta, self.risk_overrides.resolver()).value,
+            "default_risk": classify(full, meta).value,
+            "overridden": self.risk_overrides.resolve(full) is not None,
+        }
+
+    # ---- risk overrides (Phase 2 surface) -----------------------------------
+    def list_risk_overrides(self) -> dict[str, Any]:
+        return {"rules": self.risk_overrides.rules()}
+
+    def set_risk_override(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from ..risk import RiskClass
+
+        pattern = str(payload.get("pattern") or "").strip()
+        if not pattern:
+            return {"ok": False, "error": "pattern is required"}
+        try:
+            risk = RiskClass(str(payload.get("risk") or ""))
+        except ValueError:
+            return {
+                "ok": False,
+                "error": f"risk must be one of {[r.value for r in RiskClass]}",
+            }
+        self.risk_overrides.set_rule(pattern, risk)
+        return {"ok": True, "rules": self.risk_overrides.rules()}
+
+    def delete_risk_override(self, pattern: str) -> dict[str, Any]:
+        removed = self.risk_overrides.remove_rule(pattern)
+        return {"ok": removed, "rules": self.risk_overrides.rules()}
 
     async def reload_mcp(self) -> dict[str, Any]:
         """Drop live MCP connections so new sessions reconnect with fresh config."""
