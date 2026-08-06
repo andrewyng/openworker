@@ -33,6 +33,12 @@ const PERMISSION_OPTIONS: Option[] = [
 // Drop the provider prefix for display (anthropic:claude-opus-4-8 → claude-opus-4-8); full id on hover.
 const shortModel = (m: string) => (m.includes(":") ? m.split(":").slice(1).join(":") : m);
 
+// WebKit can end the composition immediately before the Enter keydown used to confirm an IME
+// candidate, making `isComposing` false by the time React sees it. In that sequence it still
+// reports the legacy process-key code 229, so keep both signals to avoid sending the draft.
+const isImeConfirmKey = (e: React.KeyboardEvent) =>
+  e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229;
+
 // Identify an attachment by name + payload size so duplicates (e.g. the same file picked twice,
 // or a prefill applied twice) collapse to one chip.
 const attKey = (a: Attachment) =>
@@ -351,14 +357,14 @@ export function Composer(props: Props) {
         setText("");
         return;
       }
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && !e.shiftKey && !isImeConfirmKey(e)) {
         e.preventDefault();
         const chosen = slashMatches[slashIndex];
         if (chosen) pickSkill(chosen);
         return;
       }
     }
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !isImeConfirmKey(e)) {
       e.preventDefault();
       submit();
     }
