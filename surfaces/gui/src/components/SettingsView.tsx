@@ -850,7 +850,7 @@ function IntentAnalysisCard() {
 
   useEffect(() => {
     getSettings()
-      .then((s) => setEnabled(s.intent_analysis !== false))
+      .then((s) => setEnabled(s.intent_analysis === true))
       .catch(() => setEnabled(false));
   }, []);
 

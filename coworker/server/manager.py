@@ -434,10 +434,10 @@ class SessionManager:
                 if Path(str(r.get("path", ""))).is_dir()
             ]
             roots = [{"path": ws, "writable": True, "label": "scratch"}, *extra]
-        # AI intent analysis: inject when the pref is on (default on).
+        # AI intent analysis: inject when the pref is on (opt-in; default off).
         from ..intent_analysis.analyzer import analyze
         intent_analyzer = None
-        if self._prefs.get("intent_analysis", True):
+        if self._prefs.get("intent_analysis", False):
             intent_analyzer = analyze
         engine = build_engine(
             agent=ag,
@@ -1857,7 +1857,7 @@ class SessionManager:
             "nav_layout": self._nav_layout(),
             "sessions_peek": self.sessions_peek(),
             "context_bar": self.context_bar(),
-            "intent_analysis": self._prefs.get("intent_analysis", True),
+            "intent_analysis": self._prefs.get("intent_analysis", False),
             "scratch_base": self._prefs.get("scratch_base")
             or self.DEFAULT_SCRATCH_BASE,
             # Real on-disk secrets location, so the UI shows the OS-native path instead of a
@@ -2734,10 +2734,10 @@ class SessionManager:
     def _build_task_engine(self, task, *, session_id: str) -> TurnEngine:
         ag = get_agent(task.agent)
         Path(task.workspace).mkdir(parents=True, exist_ok=True)
-        # AI intent analysis: inject when the pref is on (default on).
+        # AI intent analysis: inject when the pref is on (opt-in; default off).
         from ..intent_analysis.analyzer import analyze
         intent_analyzer = None
-        if self._prefs.get("intent_analysis", True):
+        if self._prefs.get("intent_analysis", False):
             intent_analyzer = analyze
         engine = build_engine(
             agent=ag,

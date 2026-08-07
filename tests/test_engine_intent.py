@@ -212,8 +212,8 @@ def test_approval_prompt_data_no_intent_omits_field():
         assert "intent" not in data
 
 
-def test_get_settings_includes_intent_analysis_default_true():
-    """get_settings returns intent_analysis, defaulting to True."""
+def test_get_settings_includes_intent_analysis_default_false():
+    """get_settings returns intent_analysis, defaulting to False (opt-in)."""
     import tempfile
 
     from coworker.server.manager import SessionManager
@@ -221,7 +221,7 @@ def test_get_settings_includes_intent_analysis_default_true():
     with tempfile.TemporaryDirectory() as tmp:
         manager = SessionManager(data_dir=tmp)
         settings = manager.get_settings()
-        assert settings.get("intent_analysis") is True
+        assert settings.get("intent_analysis") is False
 
 
 def test_set_intent_analysis_via_rest():
@@ -235,13 +235,13 @@ def test_set_intent_analysis_via_rest():
         manager = SessionManager(data_dir=tmp)
         app = create_app(manager)
         client = TestClient(app)
-        # default True
-        assert client.get("/v1/settings").json().get("intent_analysis") is True
-        # turn off
-        r = client.post("/v1/settings/intent-analysis", json={"enabled": False})
-        assert r.json()["intent_analysis"] is False
-        # GET reflects
+        # default False (opt-in)
         assert client.get("/v1/settings").json().get("intent_analysis") is False
+        # turn on
+        r = client.post("/v1/settings/intent-analysis", json={"enabled": True})
+        assert r.json()["intent_analysis"] is True
+        # GET reflects
+        assert client.get("/v1/settings").json().get("intent_analysis") is True
 
 
 # -- helpers --
