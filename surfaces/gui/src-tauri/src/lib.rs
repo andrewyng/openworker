@@ -50,13 +50,15 @@ fn launch_token() -> String {
 /// Path to the server entrypoint. Resolution order:
 ///   1. `COWORKER_SERVER_BIN` env override.
 ///   2. The bundled onedir sidecar shipped via Tauri `resources` (production): the
-///      `sidecar/` folder lands in Contents/Resources on macOS and in the install dir
-///      (next to the app exe) on Windows.
+///      `sidecar/` folder lands in Contents/Resources on macOS, in the install dir
+///      (next to the app exe) on Windows, and under Tauri's `resource_dir()`
+///      (e.g. `/usr/lib/<productName>/`) on Linux — NOT next to the binary like the
+///      other two, so Linux resolves via the runtime path API instead of `current_exe`.
 ///   3. Legacy onefile slot: `openworker-server[.exe]` next to the app binary (pre-onedir
 ///      builds used Tauri externalBin).
 ///   4. Dev fallback: the repo venv, relative to this crate (`src-tauri` → `platform/.venv`;
 ///      `bin/` on POSIX, `Scripts\` on Windows).
-fn server_bin() -> PathBuf {
+fn server_bin(app: &tauri::AppHandle) -> PathBuf {
     if let Ok(p) = std::env::var("COWORKER_SERVER_BIN") {
         return PathBuf::from(p);
     }
@@ -65,6 +67,18 @@ fn server_bin() -> PathBuf {
     } else {
         "openworker-server"
     };
+    // Linux: .deb/.rpm/AppImage install resources under `resource_dir()`, not next to the
+    // exe (`current_exe` is /usr/bin/<app> on a deb, while the sidecar is in /usr/lib/<app>/).
+    // Resolving through Tauri's own path API stays correct across every Linux bundle format.
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(rd) = app.path().resource_dir() {
+            let cand = rd.join("sidecar").join(exe_name);
+            if cand.exists() {
+                return cand;
+            }
+        }
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             // macOS: Contents/MacOS/<app> → Contents/Resources/sidecar/; Windows: resources
@@ -626,7 +640,7 @@ pub fn run() {
         ])
         .setup(move |app| {
             // 1. Start the Python server sidecar on the chosen port (inherits our env).
-            let mut server_cmd = Command::new(server_bin());
+            let mut server_cmd = Command::new(server_bin(app.handle()));
             server_cmd
                 .args(["--host", "127.0.0.1", "--port", &port.to_string()])
                 // The sidecar self-exits if we die abruptly (dev-watcher restart, crash) —
@@ -688,6 +702,9 @@ pub fn run() {
 
             // 2. Build the window, injecting the sidecar endpoints before the SPA loads.
             //    Overlay title bar (macOS): traffic lights float over the edge-to-edge UI.
+            //    `mut` is only used in the macOS title-bar block below; silence the unused-mut
+            //    warning on Windows/Linux without changing macOS behavior.
+            #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
             let mut builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("OpenWorker")
