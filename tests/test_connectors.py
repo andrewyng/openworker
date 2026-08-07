@@ -1333,6 +1333,183 @@ def test_outlook_managed_multi_account_keys_by_email(tmp_path, monkeypatch):
     assert calls[-1]["url"] == "https://graph.microsoft.com/v1.0/me/calendarView"
 
 
+def _managed_outlook_tools(tmp_path, monkeypatch, fake_request):
+    import coworker.connectors.integration_tools as it
+    from coworker.cloud import managed_profile_from_callback
+    from coworker.connectors.setup import managed_connect_connector
+
+    secrets = SecretStore(tmp_path / "secrets.json")
+    managed_connect_connector(
+        secrets,
+        "outlook",
+        managed_profile_from_callback(
+            {
+                "access_token": "tok",
+                "account": "mail@acme.com",
+                "provider": "microsoft",
+            }
+        ),
+    )
+    monkeypatch.setattr(it, "_request", fake_request)
+    return {t.__name__: t for t in it.make_integration_tools(secrets)}
+
+
+def test_outlook_search_paginates_deduplicates_and_reports_completion(
+    tmp_path, monkeypatch
+):
+    """Search owns Graph pagination instead of making the model guess at nextLink."""
+    next_url = "https://graph.microsoft.com/v1.0/me/messages?$skiptoken=opaque"
+    responses = [
+        {
+            "ok": True,
+            "data": {
+                "value": [
+                    {"id": "m1", "subject": "One", "body": {"content": "large"}},
+                    {"id": "m2", "subject": "Two"},
+                ],
+                "@odata.nextLink": next_url,
+            },
+        },
+        {
+            "ok": True,
+            "data": {
+                "value": [
+                    {"id": "m2", "subject": "Two"},
+                    {"id": "m3", "subject": "Three"},
+                ]
+            },
+        },
+    ]
+    calls = []
+
+    def fake_request(method, url, *, headers=None, params=None, json=None, auth=None):
+        calls.append({"method": method, "url": url, "params": params})
+        return responses.pop(0)
+
+    tools = _managed_outlook_tools(tmp_path, monkeypatch, fake_request)
+
+    out = tools["outlook_search_messages"](
+        "received:2026-08-06", max_results=3
+    )
+
+    assert [m["id"] for m in out["data"]["value"]] == ["m1", "m2", "m3"]
+    assert "body" not in out["data"]["value"][0]
+    assert out["data"]["returned_count"] == 3
+    assert out["data"]["has_more"] is False
+    assert out["data"]["query_complete"] is True
+    assert "@odata.nextLink" not in out["data"]
+    assert calls[0]["params"]["$top"] == 3
+    assert "$select" in calls[0]["params"]
+    assert calls[1] == {"method": "GET", "url": next_url, "params": None}
+
+
+def test_outlook_search_honors_bounded_result_limit_and_exposes_truncation(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    def fake_request(method, url, *, headers=None, params=None, json=None, auth=None):
+        calls.append({"url": url, "params": params})
+        return {
+            "ok": True,
+            "data": {
+                "value": [{"id": f"m{i}", "subject": str(i)} for i in range(100)],
+                "@odata.nextLink": "https://graph.microsoft.com/next",
+            },
+        }
+
+    tools = _managed_outlook_tools(tmp_path, monkeypatch, fake_request)
+
+    out = tools["outlook_search_messages"]("q", max_results=1_000)
+
+    assert calls[0]["params"]["$top"] == 100
+    assert out["data"]["returned_count"] == 100
+    assert out["data"]["has_more"] is True
+    assert out["data"]["query_complete"] is False
+    assert len(calls) == 1
+
+
+def test_outlook_search_marks_unconsumed_final_page_as_truncated(
+    tmp_path, monkeypatch
+):
+    responses = [
+        {
+            "ok": True,
+            "data": {
+                "value": [{"id": "m1"}, {"id": "m2"}],
+                "@odata.nextLink": "https://graph.microsoft.com/v1.0/next",
+            },
+        },
+        {
+            "ok": True,
+            "data": {"value": [{"id": "m3"}, {"id": "m4"}, {"id": "m5"}]},
+        },
+    ]
+
+    def fake_request(method, url, *, headers=None, params=None, json=None, auth=None):
+        return responses.pop(0)
+
+    tools = _managed_outlook_tools(tmp_path, monkeypatch, fake_request)
+
+    out = tools["outlook_search_messages"]("q", max_results=3)
+
+    assert [m["id"] for m in out["data"]["value"]] == ["m1", "m2", "m3"]
+    assert out["data"]["has_more"] is True
+    assert out["data"]["query_complete"] is False
+
+
+def test_outlook_search_rejects_untrusted_pagination_url(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_request(method, url, *, headers=None, params=None, json=None, auth=None):
+        calls.append(url)
+        return {
+            "ok": True,
+            "data": {
+                "value": [],
+                "@odata.nextLink": "https://attacker.example/steal-token",
+            },
+        }
+
+    tools = _managed_outlook_tools(tmp_path, monkeypatch, fake_request)
+
+    out = tools["outlook_search_messages"]("no matches")
+
+    assert calls == ["https://graph.microsoft.com/v1.0/me/messages"]
+    assert out["data"]["value"] == []
+    assert out["data"]["query_complete"] is False
+    assert out["data"]["pagination_warning"] == (
+        "Microsoft Graph returned an unsafe pagination URL"
+    )
+
+
+def test_outlook_get_message_fetches_one_full_message(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_request(method, url, *, headers=None, params=None, json=None, auth=None):
+        calls.append({"method": method, "url": url, "params": params})
+        return {"ok": True, "data": {"id": "a/b", "body": {"content": "hello"}}}
+
+    tools = _managed_outlook_tools(tmp_path, monkeypatch, fake_request)
+
+    out = tools["outlook_get_message"]("a/b")
+
+    assert out["data"]["body"]["content"] == "hello"
+    assert calls == [
+        {
+            "method": "GET",
+            "url": "https://graph.microsoft.com/v1.0/me/messages/a%2Fb",
+            "params": {
+                "$select": (
+                    "id,subject,from,sender,receivedDateTime,sentDateTime,isRead,"
+                    "hasAttachments,importance,conversationId,webLink,toRecipients,"
+                    "ccRecipients,replyTo,body,bodyPreview"
+                )
+            },
+        }
+    ]
+
+
 def test_outlook_calendar_tools_hit_the_right_graph_endpoints(tmp_path, monkeypatch):
     """The calendar CRUD + invite-response tools map onto Microsoft Graph:
     create carries attendees/location/Teams flags, update PATCHes only the
