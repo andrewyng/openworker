@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { ApprovalDecision, Item } from "../types";
 import { humanizeApprovalTitle, type HumanLine } from "../humanize";
 import { Icon } from "./Icon";
@@ -29,6 +29,21 @@ const TOOL_VERBS: Record<string, string> = {
 const FILE_WRITES = new Set(["write_file", "replace_in_file", "apply_patch", "apply_unified_diff"]);
 // Actions that leave the Mac get the warm border + explicit destination note.
 const EXTERNAL = new Set(["send_message", "send_file"]);
+
+// Render a single intent-analysis line: strip a leading bullet marker (the dot is
+// rendered via CSS) and turn **bold** spans into <strong>.
+export function renderIntentText(line: string): ReactNode {
+  const stripped = line.replace(/^[\s•·\-*]+/, "").trim();
+  if (!stripped) return null;
+  const parts = stripped.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((p, i) =>
+    p.startsWith("**") && p.endsWith("**") ? (
+      <strong key={i} className="approval-intent-em">{p.slice(2, -2)}</strong>
+    ) : (
+      <span key={i}>{p}</span>
+    )
+  );
+}
 
 type ApprovalItem = Extract<Item, { kind: "approval" }>;
 
@@ -243,7 +258,8 @@ export function ApprovalCard({
   // §35 compact row: routine workspace writes — one line, preview expands inline from the
   // tool args. Standing/grant flows keep the full card (they carry §25 consent weight).
   const content = typeof item.args?.content === "string" ? item.args.content : "";
-  if (FILE_WRITES.has(item.name) && !offerStanding && !grants.length && !item.resolved) {
+  // An intent annotation forces the full card (the compact row can't render it).
+  if (FILE_WRITES.has(item.name) && !offerStanding && !grants.length && !item.resolved && !item.intent) {
     return (
       <div className={"approval approval-row" + dock} data-testid="approval-row">
         <div className="approval-row-line">
@@ -273,6 +289,17 @@ export function ApprovalCard({
         </div>
         <span className={"approval-scope" + (scope.external ? " out" : "")}>{scope.text}</span>
       </div>
+
+      {item.intent && (
+        <ul className="approval-intent">
+          {item.intent.split("\n").map((line, i) => (
+            <li key={i}>
+              <span className="approval-intent-dot" aria-hidden={true} />
+              <span>{renderIntentText(line)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {/* Tool-shaped previews — the proposal, not an args dump. */}
       {item.name === "run_shell" && item.args?.command && (
