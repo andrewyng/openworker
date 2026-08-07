@@ -41,6 +41,7 @@ class PermissionRequest:
     metadata: Any
     reason: str
     tool_call_id: Optional[str] = None  # for durable resume (idempotent inbox item)
+    intent: Optional[str] = None  # AI-generated consequence summary, surfaced to the approver
 
 
 Approver = Callable[[PermissionRequest], Awaitable[ApprovalOutcome]]
@@ -77,8 +78,16 @@ class TurnEngine:
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
         interrupt_hooks: Optional[list[Callable[[], None]]] = None,
+        # Optional AI intent analyzer (dependency injection). None = feature off
+        # (upstream behavior unchanged). Signature: (tool_call, provider, model) -> str | None.
+        intent_analyzer: Optional[Callable] = None,
+        # Analyzer timeout in seconds (default 20s covers cloud-model tail latency;
+        # tests inject smaller values to avoid real waits).
+        intent_analyzer_timeout: float = 20.0,
     ) -> None:
         self.provider = provider
+        self.intent_analyzer = intent_analyzer  # None = feature off
+        self.intent_analyzer_timeout = intent_analyzer_timeout
         self.registry = registry
         self.permissions = permissions
         self.model = model
@@ -695,6 +704,40 @@ class TurnEngine:
             )
 
         if not allowed and decision.needs_user:
+            # AI intent analysis: synchronously generate a consequence summary before
+            # surfacing the approval prompt, so the card appears already annotated.
+            # None = feature off (or analysis failed/timed out/stopped) → no annotation.
+            intent: Optional[str] = None
+            if self.intent_analyzer:
+                async def _do_analyze():
+                    return await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.intent_analyzer, tool_call, self.provider, self.model
+                        ),
+                        timeout=self.intent_analyzer_timeout,
+                    )
+                # try/except is required: wait_for re-raises TimeoutError via task.result(),
+                # and _interruptible does not swallow it — without this the approval flow
+                # would crash on timeout.
+                try:
+                    intent = await self._interruptible(_do_analyze(), interrupted=None)
+                except Exception:
+                    intent = None
+
+            # If the user stopped during analysis, don't surface a card at all — go
+            # straight to the interrupted path (avoids a flash-then-deny flicker).
+            if self._cancel.is_set():
+                self.messages.append(_tool_error_message(tool_call, "interrupted by user"))
+                self._audit(
+                    tool_call, stage="finished", status="interrupted", reason="user stop"
+                )
+                yield Event(
+                    EventType.TOOL_FINISHED,
+                    {"name": tool_call.name, "status": "interrupted", "reason": "stopped"},
+                )
+                yield False
+                return
+
             yield Event(
                 EventType.PERMISSION_REQUIRED,
                 {
@@ -711,6 +754,7 @@ class TurnEngine:
                         metadata,
                         self.permissions.risk_overrides,
                     ),
+                    "intent": intent,
                 },
             )
             self._audit(tool_call, stage="approval_requested", reason=decision.reason)
@@ -722,6 +766,7 @@ class TurnEngine:
                         metadata=metadata,
                         reason=decision.reason,
                         tool_call_id=tool_call.id,
+                        intent=intent,
                     )
                 ),
                 interrupted=ApprovalOutcome.DENY,
