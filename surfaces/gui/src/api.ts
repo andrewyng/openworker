@@ -697,6 +697,9 @@ export interface ModelSettings {
   // Composer: show the context-window fill bar (default FALSE; absent → the chip shows
   // the session total). The usage popover keeps both numbers regardless.
   context_bar?: boolean;
+  // AI command intent analysis (default true): annotate approval prompts with a
+  // short LLM-generated consequence summary before the user decides.
+  intent_analysis?: boolean;
   // Curated-matrix display names ({full id → "GLM-5.2 · via Together"}); custom models absent.
   model_labels?: Record<string, string>;
   // {full id → context window in tokens}, verified matrix entries only — drives the
@@ -771,6 +774,18 @@ export async function setContextBar(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ context_bar: shown }),
+  });
+  return res.json();
+}
+
+/** Toggle AI command intent analysis on approval prompts. */
+export async function setIntentAnalysis(
+  enabled: boolean,
+): Promise<{ ok: boolean; intent_analysis?: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/intent-analysis`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
   });
   return res.json();
 }
