@@ -25,7 +25,7 @@ const HEALTH = { status: "ok", default_workspace: null, model: "anthropic:claude
 const SETTINGS = {
   provider: "openai",
   model: "anthropic:claude-opus-4-8",
-  models: ["anthropic:claude-opus-4-8", "gpt-5.5", "gpt-4o", "gpt-4o-mini", "o3-mini"],
+  models: ["anthropic:claude-opus-4-8", "gpt-5.5", "gpt-4o", "gpt-4o-mini", "o3-mini", "openai:qwen36-35b"],
   has_key: true,
   model_ready: true,
   source: "store",
@@ -922,6 +922,17 @@ export async function mockApi(page: import("@playwright/test").Page) {
     if (p.endsWith("/v1/settings/context-bar") && m === "POST") {
       Object.assign(SETTINGS, req.postDataJSON());
       return json({ ok: true, context_bar: SETTINGS.context_bar });
+    }
+    if (p.endsWith("/v1/settings/model-context-window") && m === "POST") {
+      const b = req.postDataJSON();
+      const windows = SETTINGS.model_context_windows as Record<string, number>;
+      if (b.context_window == null) delete windows[b.model];
+      else windows[b.model] = b.context_window;
+      return json({
+        ok: true,
+        context_window: windows[b.model],
+        model_context_windows: { ...windows },
+      });
     }
     if (p.endsWith("/v1/settings/pdf") && m === "POST") {
       Object.assign(SETTINGS, req.postDataJSON());

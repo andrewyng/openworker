@@ -1434,6 +1434,13 @@ def create_app(manager: SessionManager) -> FastAPI:
         # Composer: show the context-window fill bar, or just the popover (owner ask).
         return manager.set_context_bar((body or {}).get("context_bar", True))
 
+    @app.post("/v1/settings/model-context-window")
+    def settings_set_model_context_window(body: dict) -> dict[str, Any]:
+        b = body or {}
+        return manager.set_model_context_window(
+            b.get("model", ""), b.get("context_window")
+        )
+
     @app.post("/v1/settings/pdf")
     def settings_set_pdf(body: dict) -> dict[str, Any]:
         # Token savings (owner ask, 2026-07-17): fallback mode for models without native

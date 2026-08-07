@@ -517,6 +517,22 @@ export function App() {
       })
       .catch(() => {});
 
+  useEffect(() => {
+    const refreshContextWindows = () => loadSettings();
+    window.addEventListener(
+      "coworker:model-context-windows-changed",
+      refreshContextWindows,
+    );
+    return () =>
+      window.removeEventListener(
+        "coworker:model-context-windows-changed",
+        refreshContextWindows,
+      );
+    // Settings changes are infrequent; the event intentionally refreshes the full model
+    // payload so the composer meter cannot drift from the backend's effective values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Open Settings → Configure Models (from the composer's "No model connected" chip).
   const openModelSetup = () => openSettings("models");
 
