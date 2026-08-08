@@ -475,10 +475,10 @@ export interface CloudStatus {
   signed_in: boolean;
   account: string;
   user_id: string;
-  telemetry_enabled?: boolean; // Phase 5 opt-out; signed-out users send nothing regardless
+  telemetry_enabled?: boolean; // Disabled by default; signed-out users send nothing regardless
 }
 
-/** Flip the product-telemetry preference (local; only meaningful when signed in). */
+/** Set the local product-telemetry preference (only meaningful when signed in). */
 export async function setCloudTelemetry(
   enabled: boolean,
 ): Promise<{ ok: boolean; telemetry_enabled?: boolean }> {

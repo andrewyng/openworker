@@ -210,7 +210,7 @@ export const CLOUD_STATE = {
   signed_in: false,
   account: "",
   user_id: "",
-  telemetry_enabled: true,
+  telemetry_enabled: false,
 };
 
 const GALLERY_PERSONAS = [
@@ -566,7 +566,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
     signed_in: false,
     account: "",
     user_id: "",
-    telemetry_enabled: true,
+    telemetry_enabled: false,
   });
 
   // The scripted fake agent behind the session WebSocket. Speaks the real event protocol
