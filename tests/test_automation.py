@@ -111,14 +111,21 @@ async def test_scheduler_runs_due_task_and_advances(tmp_path):
     store._conn.commit()
 
     ran: list[str] = []
+    ran_once = asyncio.Event()
 
     async def runner(task, trigger):
         ran.append(task.id)
+        ran_once.set()
         return TaskRun(task_id=task.id, status="ok", trigger=trigger)
 
     sched = Scheduler(store, runner, tick_seconds=0.05)
     sched.start()
-    await asyncio.sleep(0.2)
+    # Wait for the run instead of sleeping a fixed window: with an every-minute cron, a
+    # fixed sleep that happens to straddle a minute boundary lets the advanced task come
+    # due AGAIN and legitimately fire twice. Stopping right after the first run (the
+    # advance is synchronous once the runner returns) makes the single-fire assertion
+    # deterministic.
+    await asyncio.wait_for(ran_once.wait(), timeout=5.0)
     await sched.stop()
     assert ran == [t.id]
     advanced = store.get(t.id)
