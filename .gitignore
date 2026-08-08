@@ -6,6 +6,9 @@ __pycache__/
 build/
 dist/
 .coverage
+temp/
+.codegraph/
+surfaces/gui/.playwright-cli/
 
 # Local secrets (live-smoke BYO keys) — never committed
 .env
