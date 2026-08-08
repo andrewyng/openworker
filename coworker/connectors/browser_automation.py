@@ -17,7 +17,42 @@ from typing import Any, Callable, Optional
 
 import aisuite as ai
 
+from ..roots import RootDir
 from ..web.guard import check_url
+
+
+def _resolve_in_roots(
+    path: str, roots: Optional[list[RootDir]], *, need_write: bool
+) -> tuple[Optional[Path], Optional[dict[str, Any]]]:
+    """Resolve a local path and require it to sit inside a granted session root.
+
+    The permission engine only path-scopes the built-in ``WRITE_TOOLS`` by inspecting
+    ``arguments["path"]``, so a connector tool that touches the filesystem is invisible to
+    it. These two do, in both directions: ``browser_upload_file`` reads a file and hands it
+    to whatever page is loaded, and ``browser_screenshot`` writes one. Without this check
+    they reach anything the OS lets the process reach — ``~/.ssh/id_rsa``, the secret store
+    itself — regardless of which folders the user actually granted the session.
+
+    Mirrors the confinement ``email_tools`` already applies to outgoing attachments.
+    Returns ``(resolved_path, None)`` on success or ``(None, error_dict)`` for the tool to
+    return verbatim.
+    """
+    candidates = [r for r in (roots or []) if r.writable or not need_write]
+    if not candidates:
+        return None, {
+            "error": (
+                "no writable session directory is available"
+                if need_write
+                else "this session has no granted directories"
+            )
+        }
+    resolved = Path(str(path)).expanduser().resolve()
+    if not any(resolved.is_relative_to(r.path) for r in candidates):
+        verb = "writable " if need_write else ""
+        return None, {
+            "error": f"{path} is outside the session's {verb}directories"
+        }
+    return resolved, None
 
 
 def _meta(
@@ -326,7 +361,9 @@ def _snapshot(page, max_chars: int) -> dict[str, Any]:
     }
 
 
-def make_browser_automation_tools() -> list[Callable[..., Any]]:
+def make_browser_automation_tools(
+    roots: Optional[list[RootDir]] = None,
+) -> list[Callable[..., Any]]:
     tools: list[Callable[..., Any]] = []
 
     def browser_open_url(
@@ -484,9 +521,11 @@ def make_browser_automation_tools() -> list[Callable[..., Any]]:
     )
 
     def browser_upload_file(target: str, path: str) -> dict[str, Any]:
-        file_path = Path(path).expanduser().resolve()
+        file_path, err = _resolve_in_roots(path, roots, need_write=False)
+        if err:
+            return err
         if not file_path.exists():
-            return {"error": f"file not found: {file_path}"}
+            return {"error": f"file not found: {path}"}
         return _BROWSER.call(
             "upload_file",
             lambda page: (
@@ -538,13 +577,16 @@ def make_browser_automation_tools() -> list[Callable[..., Any]]:
     )
 
     def browser_screenshot(path: str = "") -> dict[str, Any]:
-        def run(page):
+        if path:
+            out, err = _resolve_in_roots(path, roots, need_write=True)
+            if err:
+                return err
+        else:
             out = (
-                Path(path).expanduser()
-                if path
-                else Path(tempfile.gettempdir()) / "coworker-browser-screenshot.png"
-            )
-            out = out.resolve()
+                Path(tempfile.gettempdir()) / "coworker-browser-screenshot.png"
+            ).resolve()
+
+        def run(page):
             out.parent.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(out), full_page=True)
             return {"ok": True, "path": str(out), "url": page.url}
