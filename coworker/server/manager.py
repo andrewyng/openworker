@@ -38,7 +38,7 @@ from ..audit import AuditStore
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
-from ..roots import RootDir
+from ..roots import RootDir, overbroad_root_warning
 from ..workspace_trust import WorkspaceTrustStore
 from ..automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
 from ..connectors import (
@@ -3648,7 +3648,11 @@ class SessionManager:
                 ],
             )
         self.session_store.touch_workspace(str(resolved))
-        return {"ok": True, "roots": self.get_roots(session_id)}
+        result: dict[str, Any] = {"ok": True, "roots": self.get_roots(session_id)}
+        if warning := overbroad_root_warning(resolved):
+            logger.warning("session %s: %s", session_id, warning)
+            result["warning"] = warning
+        return result
 
     def remove_root(self, session_id: str, path: str) -> dict[str, Any]:
         """Revoke a previously-added folder. The primary scratch cannot be removed."""

@@ -12,7 +12,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
+
+
+def overbroad_root_warning(resolved: Path | str) -> Optional[str]:
+    """Warn when a granted root resolves to ``$HOME`` or an ancestor of it."""
+    root = Path(resolved).expanduser().resolve()
+    home = Path.home().resolve()
+    try:
+        home.relative_to(root)
+    except ValueError:
+        return None
+    return f"granted root resolves to or above $HOME ({root})"
 
 
 @dataclass
