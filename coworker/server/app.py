@@ -1382,6 +1382,13 @@ def create_app(manager: SessionManager) -> FastAPI:
             manager.verify_provider, name, (body or {}).get("fields")
         )
 
+    @app.post("/v1/providers/{name}/models")
+    async def providers_fetch_models(name: str, body: dict) -> dict[str, Any]:
+        """Fetch the model list from a provider (live read-only call, does NOT persist)."""
+        return await asyncio.to_thread(
+            manager.fetch_models, name, (body or {}).get("fields")
+        )
+
     # -- settings (model API key) -----------------------------------------------
     @app.get("/v1/settings")
     def settings_get() -> dict[str, Any]:

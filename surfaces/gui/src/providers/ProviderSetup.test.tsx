@@ -64,6 +64,11 @@ function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): Provid
     statusFor: () => null,
     saveField: async () => {},
     fieldSaved: null,
+    models: null,
+    fetchingModels: false,
+    fetchModelsError: null,
+    fetchModels: async () => {},
+    addFetchedModel: async () => {},
   };
 }
 
@@ -92,5 +97,17 @@ describe("ProviderForm auth-method choice", () => {
     render(<ProviderForm ps={makePs({ auth_method: "iam" })} tp="t" />);
     expect(screen.getByTestId("t-field-aws_secret_access_key")).toBeTruthy();
     expect(screen.queryByTestId("t-field-bedrock_api_key")).toBeNull();
+  });
+
+  it("renders a + Add button per fetched model and calls addFetchedModel on click", () => {
+    const addFetchedModel = vi.fn(async () => {});
+    const ps = makePs({ auth_method: "api_key" });
+    ps.models = [{ id: "amazon.nova-pro-v1:0", owned_by: "amazon" }];
+    ps.addFetchedModel = addFetchedModel;
+    render(<ProviderForm ps={ps} tp="t" />);
+    const btn = screen.getByTestId("t-add-model-amazon.nova-pro-v1:0");
+    expect(btn).toBeTruthy();
+    fireEvent.click(btn);
+    expect(addFetchedModel).toHaveBeenCalledWith("amazon.nova-pro-v1:0");
   });
 });

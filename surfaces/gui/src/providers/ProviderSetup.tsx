@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  addModel,
   getProviders,
   removeProvider,
   setProvider,
   verifyProvider,
+  fetchProviderModels,
   type ProviderField as ProviderFieldT,
   type ProviderInfo,
+  type ProviderModelInfo,
 } from "../api";
 import { openExternal } from "../tauri";
 import { PROVIDER_LOGOS, providerRank } from "./logos";
@@ -92,6 +95,12 @@ export interface ProviderSetupState {
   // owner-hit 2026-07-23: the budget silently never saved).
   saveField: (key: string) => Promise<void>;
   fieldSaved: string | null; // field key flashing "✓ Saved"
+  // Model list fetching (cc-switch style)
+  models: ProviderModelInfo[] | null;
+  fetchingModels: boolean;
+  fetchModelsError: string | null;
+  fetchModels: () => Promise<void>;
+  addFetchedModel: (modelId: string) => Promise<void>;
 }
 
 export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetupState {
@@ -111,6 +120,9 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   // Which non-secret field just blur-saved (flashes "✓ Saved" in the input).
   const [fieldSaved, setFieldSaved] = useState<string | null>(null);
   const fieldSavedTimer = useRef<number | null>(null);
+  const [models, setModels] = useState<ProviderModelInfo[] | null>(null);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
 
   const refreshProviders = () =>
     getProviders()
@@ -199,6 +211,37 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   };
 
   // Settings-only: forget the stored key; the card reverts to "Not set up".
+  const fetchModels = async () => {
+    if (!sel) return;
+    setFetchingModels(true);
+    setFetchModelsError(null);
+    setModels(null);
+    const res = await fetchProviderModels(sel, fields).catch(
+      (): { ok: false; error: string; models: never[] } => ({
+        ok: false,
+        error: "unreachable",
+        models: [],
+      }),
+    );
+    if (!res.ok) {
+      setFetchModelsError(res.error || "couldn't fetch models");
+      setFetchingModels(false);
+      return;
+    }
+    setModels(res.models || []);
+    setFetchingModels(false);
+  };
+
+  // One-click add from the fetched list straight into the composer's picker,
+  // so a fetched model never has to be typed by hand. Mirrors ModelChecklist's
+  // prefix rule (OpenAI ids stay bare; everyone else gets `provider:`).
+  const addFetchedModel = async (modelId: string) => {
+    if (!sel) return;
+    const id = sel === "openai" || modelId.startsWith(`${sel}:`) ? modelId : `${sel}:${modelId}`;
+    const res = await addModel(id).catch(() => null);
+    if (res?.ok) opts?.onSaved?.();
+  };
+
   const removeKey = async () => {
     if (!sel) return;
     await removeProvider(sel).catch(() => {});
@@ -264,6 +307,11 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     removeKey,
     saveField,
     fieldSaved,
+    models,
+    fetchingModels,
+    fetchModelsError,
+    fetchModels,
+    addFetchedModel,
     cancelBackTimer: () => {
       if (backTimer.current) window.clearTimeout(backTimer.current);
     },
@@ -549,6 +597,55 @@ export function ProviderForm({
               )}
             </div>
             {ep.help && <p className="text-[11.5px] text-faint mt-1">{ep.help}</p>}
+          </div>
+        );
+      })()}
+
+      {/* Fetch models (cc-switch style): only for keyed providers with a custom endpoint */}
+      {(() => {
+        const keyed = (info?.fields || []).some((x) => x.secret);
+        if (!keyed) return null;
+        return (
+          <div className="mt-4">
+            <button
+              className="text-[12.5px] text-muted hover:text-ink underline decoration-line underline-offset-2 disabled:opacity-40"
+              onClick={() => ps.fetchModels()}
+              disabled={ps.fetchingModels}
+              data-testid={`${tp}-fetch-models`}
+            >
+              {ps.fetchingModels ? "Fetching models…" : "Fetch models"}
+            </button>
+            {ps.fetchModelsError && (
+              <p className="mt-1 text-[11.5px] text-warnInk">{ps.fetchModelsError}</p>
+            )}
+            {ps.models && ps.models.length > 0 && (
+              <div className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-line bg-panel">
+                {ps.models.map((m) => (
+                  <div
+                    key={m.id}
+                    className="flex items-center justify-between gap-2 px-3 py-1.5 text-[12.5px] text-ink border-b border-line last:border-b-0 hover:bg-line/20"
+                    title={m.owned_by ? `Owned by: ${m.owned_by}` : undefined}
+                  >
+                    <span className="font-mono min-w-0 truncate">{m.id}</span>
+                    <span className="flex items-center gap-2 shrink-0">
+                      {m.owned_by && (
+                        <span className="text-[11px] text-faint">{m.owned_by}</span>
+                      )}
+                      <button
+                        className="text-[11.5px] text-accent hover:underline whitespace-nowrap"
+                        data-testid={`${tp}-add-model-${m.id}`}
+                        onClick={() => void ps.addFetchedModel(m.id)}
+                      >
+                        + Add
+                      </button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {ps.models && ps.models.length === 0 && (
+              <p className="mt-1 text-[11.5px] text-faint">No models returned.</p>
+            )}
           </div>
         );
       })()}

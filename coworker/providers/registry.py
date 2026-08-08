@@ -864,3 +864,210 @@ def verify_provider_key(
             "error": "Reached the server, but no OpenAI-compatible /v1 API there.",
         }
     return {"ok": False, "error": f"{d.title} returned HTTP {resp.status_code}."}
+
+
+def fetch_provider_models(
+    name: str,
+    *,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    fields: Optional[dict[str, Any]] = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Fetch the list of models available from a provider.
+
+    Like ``verify_provider_key`` but returns the parsed model list on success. Uses
+    candidate URL generation (ported from cc-switch) to handle edge cases: compat
+    suffixes, version segments, and custom endpoints.
+
+    Returns:
+        ``{"ok": True, "models": [{"id": str, "owned_by": str | None}, ...]}`` on success,
+        or ``{"ok": False, "error": str}`` on failure.
+    """
+    from ._models_candidates import build_models_candidates
+
+    import httpx
+
+    d = _BY_NAME.get(name) or _BY_NAME["openai"]
+    key = (api_key or "").strip()
+
+    # Cloud providers (Bedrock, Vertex) — use their existing verify logic
+    if name == "bedrock":
+        result = _verify_bedrock(fields or {}, timeout)
+        if not result.get("ok"):
+            return result
+        # Bedrock: list models via boto3
+        from .bedrock_provider import _session_kwargs
+
+        def get(key: str) -> Optional[str]:
+            return ((fields or {}).get(key) or "").strip() or None
+
+        try:
+            import boto3
+            from botocore.config import Config
+
+            method = get("auth_method") or "api_key"
+            session_kwargs: dict[str, Any] = {}
+            if method == "api_key":
+                if get("bedrock_api_key"):
+                    os.environ["AWS_BEARER_TOKEN_BEDROCK"] = get("bedrock_api_key")
+            elif method == "profile":
+                session_kwargs = _session_kwargs(get("aws_profile"), None, None, None)
+            else:  # iam
+                session_kwargs = _session_kwargs(
+                    None, get("aws_access_key_id"), get("aws_secret_access_key"), get("aws_session_token")
+                )
+            session = boto3.session.Session(**session_kwargs)
+            client = session.client(
+                "bedrock",
+                region_name=get("region"),
+                config=Config(connect_timeout=timeout, read_timeout=timeout),
+            )
+            models = client.list_foundation_models()
+            data = [
+                {"id": m["modelId"], "owned_by": m.get("providerName")}
+                for m in models.get("modelSummaries", [])
+            ]
+            return {"ok": True, "models": data}
+        except Exception as exc:
+            return {"ok": False, "error": f"Couldn't list Bedrock models ({exc.__class__.__name__})."}
+
+    if name == "vertex":
+        result = _verify_vertex(fields or {}, timeout)
+        if not result.get("ok"):
+            return result
+        # Vertex: list models via the Vertex AI API
+        project = ((fields or {}).get("project") or "").strip()
+        location = ((fields or {}).get("location") or "").strip()
+        method = ((fields or {}).get("auth_method") or "").strip() or "adc"
+        try:
+            if method == "api_key":
+                vkey = ((fields or {}).get("vertex_api_key") or "").strip()
+                resp = httpx.get(
+                    f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/models",
+                    headers={"x-goog-api-key": vkey},
+                    timeout=timeout,
+                )
+            else:
+                from .vertex_provider import _regional_host, load_credentials
+
+                creds = None
+                if method == "service_account":
+                    creds = load_credentials((fields or {}).get("service_account_json"))
+                if creds is None:
+                    import google.auth
+                    creds, _ = google.auth.default(
+                        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                    )
+                from google.auth.transport.requests import Request
+                creds.refresh(Request())
+                resp = httpx.get(
+                    f"https://{_regional_host(location)}/v1/projects/{project}/locations/{location}/models",
+                    headers={"Authorization": f"Bearer {creds.token}"},
+                    timeout=timeout,
+                )
+            if resp.status_code < 300:
+                data = resp.json().get("models", [])
+                models = [{"id": m.get("name", ""), "owned_by": None} for m in data]
+                return {"ok": True, "models": models}
+            return {"ok": False, "error": f"Vertex AI returned HTTP {resp.status_code}."}
+        except Exception as exc:
+            return {"ok": False, "error": f"Couldn't list Vertex models ({exc.__class__.__name__})."}
+
+    # Native API providers + generic OpenAI-compatible
+    try:
+        if name == "anthropic":
+            candidates = build_models_candidates(
+                "https://api.anthropic.com",
+                is_full_url=False,
+            )
+            headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
+            resp = None
+            for url in candidates:
+                try:
+                    resp = httpx.get(url, headers=headers, timeout=timeout)
+                    if resp.status_code < 300:
+                        break
+                except Exception:
+                    continue
+            if resp is None or resp.status_code >= 300:
+                return {"ok": False, "error": "Couldn't reach Anthropic API."}
+            data = resp.json().get("data", [])
+            models = [{"id": m["id"], "owned_by": m.get("owned_by")} for m in data]
+            return {"ok": True, "models": models}
+
+        elif name == "gemini":
+            candidates = build_models_candidates(
+                "https://generativelanguage.googleapis.com/v1beta",
+                is_full_url=False,
+            )
+            resp = None
+            for url in candidates:
+                try:
+                    resp = httpx.get(url, params={"key": key}, timeout=timeout)
+                    if resp.status_code < 300:
+                        break
+                except Exception:
+                    continue
+            if resp is None or resp.status_code >= 300:
+                return {"ok": False, "error": "Couldn't reach Gemini API."}
+            data = resp.json().get("models", [])
+            models = [{"id": m.get("name", "").split("/")[-1], "owned_by": None} for m in data]
+            return {"ok": True, "models": models}
+
+        elif name == "ollama":
+            base = _normalize_ollama_url(base_url)
+            # Ollama's /v1/models returns OpenAI-compatible model list
+            candidates = build_models_candidates(base.rstrip("/v1"), is_full_url=False)
+            resp = None
+            for url in candidates:
+                try:
+                    resp = httpx.get(url, timeout=timeout)
+                    if resp.status_code < 300:
+                        break
+                except Exception:
+                    continue
+            if resp is None or resp.status_code >= 300:
+                return {"ok": False, "error": "Couldn't reach Ollama."}
+            data = resp.json().get("data", [])
+            models = [{"id": m["id"], "owned_by": m.get("owned_by")} for m in data]
+            return {"ok": True, "models": models}
+
+        else:  # openai + any OpenAI-compatible endpoint
+            default_base = next(
+                (f.default for f in d.fields if f.key == "base_url" and f.default), ""
+            )
+            base = (
+                (base_url or "").strip().rstrip("/")
+                or default_base.rstrip("/")
+                or "https://api.openai.com/v1"
+            )
+            # Determine if this is a full URL (has a non-trivial path like /api/paas/v4)
+            from urllib.parse import urlparse
+
+            parsed = urlparse(base)
+            is_full = bool(parsed.path) and parsed.path not in ("", "/", "/v1")
+            candidates = build_models_candidates(base, is_full_url=is_full)
+            resp = None
+            for url in candidates:
+                try:
+                    resp = httpx.get(
+                        url,
+                        headers={"Authorization": f"Bearer {key}"},
+                        timeout=timeout,
+                    )
+                    if resp.status_code < 300:
+                        break
+                except Exception:
+                    continue
+            if resp is None or resp.status_code >= 300:
+                return {"ok": False, "error": f"Couldn't reach {d.title}."}
+            data = resp.json().get("data", [])
+            models = [{"id": m["id"], "owned_by": m.get("owned_by")} for m in data]
+            return {"ok": True, "models": models}
+
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"Couldn't reach {d.title} ({exc.__class__.__name__}).",
+        }
