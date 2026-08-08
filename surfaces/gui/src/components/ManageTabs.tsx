@@ -28,6 +28,7 @@ import {
   type ProviderInfo,
 } from "../api";
 import { CloudSignInInline, CloudStatusPending } from "./connectors/CloudSignIn";
+import { isTauri, pickFolder } from "../tauri";
 import { ModelChecklist } from "./ModelChecklist";
 import { ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
 import { Toggle } from "./Toggle";
@@ -869,13 +870,41 @@ export function ConnectSetup({
             {f.label}
             {!f.required && <em> (optional)</em>}
           </span>
-          <input
-            type={f.secret ? "password" : "text"}
-            placeholder={f.placeholder}
-            value={values[f.key] || ""}
-            spellCheck={false}
-            onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
-          />
+          {f.kind === "folder" ? (
+            /* Local-folder credential (obsidian): native picker on desktop, and the
+               text input stays for browser dev / hand-typed paths. */
+            <div className="flex gap-2">
+              <input
+                className="flex-1 min-w-0"
+                type="text"
+                placeholder={f.placeholder}
+                value={values[f.key] || ""}
+                spellCheck={false}
+                onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+              />
+              {isTauri() && (
+                <button
+                  type="button"
+                  className={BTN_BORDERED}
+                  data-testid={`pick-${f.key}`}
+                  onClick={async () => {
+                    const path = await pickFolder();
+                    if (path) setValues({ ...values, [f.key]: path });
+                  }}
+                >
+                  Choose…
+                </button>
+              )}
+            </div>
+          ) : (
+            <input
+              type={f.secret ? "password" : "text"}
+              placeholder={f.placeholder}
+              value={values[f.key] || ""}
+              spellCheck={false}
+              onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+            />
+          )}
           {f.help && <span className="conn-field-help">{f.help}</span>}
         </label>
       ))}
