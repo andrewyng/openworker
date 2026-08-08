@@ -34,14 +34,36 @@ def _specificity(pattern: str) -> int:
 
 
 class RiskOverrideStore:
+    """Rules live in one JSON file; every instance watches its mtime and reloads
+    lazily, so a REST write through one instance is seen by the per-engine
+    instances already captured in live PermissionEngines — no rebuild needed."""
+
     def __init__(self, path: Optional[str | Path] = None) -> None:
         self.path = Path(path) if path else None
-        self._rules: list[_Rule] = self._load()
+        self._mtime: Optional[float] = None
+        self._rules: list[_Rule] = []
+        self._refresh()
+
+    def _refresh(self) -> None:
+        """Reload from disk iff the file changed since we last read it."""
+        if not self.path:
+            return
+        try:
+            mtime = self.path.stat().st_mtime
+        except OSError:
+            self._rules, self._mtime = [], None
+            return
+        if mtime == self._mtime:
+            return
+        self._rules, self._mtime = self._load(), mtime
 
     def _load(self) -> list[_Rule]:
         if not (self.path and self.path.is_file()):
             return []
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
         rules = []
         for r in data.get("rules", []):
             try:
@@ -66,15 +88,36 @@ class RiskOverrideStore:
             ),
             encoding="utf-8",
         )
+        try:
+            self._mtime = self.path.stat().st_mtime
+        except OSError:
+            self._mtime = None
 
     def set_rule(self, pattern: str, risk: RiskClass | str) -> None:
         """Add/replace a user override (the everyday path writes this from the approval UI)."""
         risk = RiskClass(risk) if not isinstance(risk, RiskClass) else risk
+        self._refresh()
         self._rules = [r for r in self._rules if r.pattern != pattern]
         self._rules.append(_Rule(pattern, risk))
         self.save()
 
+    def remove_rule(self, pattern: str) -> bool:
+        """Delete an override by exact pattern. True if a rule was removed."""
+        self._refresh()
+        before = len(self._rules)
+        self._rules = [r for r in self._rules if r.pattern != pattern]
+        if len(self._rules) == before:
+            return False
+        self.save()
+        return True
+
+    def rules(self) -> list[dict]:
+        """Current rules as plain dicts (REST/GUI listing)."""
+        self._refresh()
+        return [{"pattern": r.pattern, "risk": r.risk.value} for r in self._rules]
+
     def resolve(self, tool_name: str) -> Optional[RiskClass]:
+        self._refresh()
         best: Optional[RiskClass] = None
         best_score = -1
         for r in self._rules:

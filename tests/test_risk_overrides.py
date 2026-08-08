@@ -66,3 +66,65 @@ def test_persona_manifest_cannot_carry_an_override(tmp_path):
     # The override store the engine reads is untouched by loading a persona.
     store = RiskOverrideStore(tmp_path / "ro.json")
     assert store.resolve("anything") is None
+
+
+# -- Phase 2 surface: live reload + REST ----------------------------------------
+
+
+def test_second_instance_sees_writes_via_mtime(tmp_path):
+    """The write path (REST) and the read path (live engines) hold separate store
+    instances over one file; a write through one must be visible to the other
+    without a rebuild."""
+    import os
+
+    path = tmp_path / "ro.json"
+    writer = RiskOverrideStore(path)
+    reader = RiskOverrideStore(path)  # captured at engine build, long-lived
+    assert reader.resolve("mcp__hg__status") is None
+    writer.set_rule("mcp__hg__*", "read")
+    # Same-second writes can share an mtime on coarse filesystems; nudge it the
+    # way a later real-world write would land.
+    os.utime(path, (path.stat().st_atime, path.stat().st_mtime + 1))
+    assert reader.resolve("mcp__hg__status") == RiskClass.READ
+
+
+def test_remove_rule_and_rules_listing(tmp_path):
+    store = RiskOverrideStore(tmp_path / "ro.json")
+    store.set_rule("mcp__a__*", "read")
+    store.set_rule("mcp__b__*", "external")
+    assert {r["pattern"] for r in store.rules()} == {"mcp__a__*", "mcp__b__*"}
+    assert store.remove_rule("mcp__a__*") is True
+    assert store.remove_rule("mcp__a__*") is False  # already gone
+    assert store.rules() == [{"pattern": "mcp__b__*", "risk": "external"}]
+    assert store.resolve("mcp__a__x") is None
+
+
+def test_rest_endpoints_round_trip(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from coworker.server import SessionManager, create_app
+
+    manager = SessionManager(workspace=tmp_path)
+    client = TestClient(create_app(manager))
+
+    assert client.get("/v1/risk-overrides").json() == {"rules": []}
+
+    resp = client.post(
+        "/v1/risk-overrides", json={"pattern": "mcp__heatguard__*", "risk": "read"}
+    ).json()
+    assert resp["ok"] and resp["rules"] == [
+        {"pattern": "mcp__heatguard__*", "risk": "read"}
+    ]
+    # Live engines resolve through the same file immediately.
+    assert manager.risk_overrides.resolve("mcp__heatguard__status") == RiskClass.READ
+
+    bad = client.post("/v1/risk-overrides", json={"pattern": "x", "risk": "nope"}).json()
+    assert not bad["ok"] and "risk must be one of" in bad["error"]
+    missing = client.post("/v1/risk-overrides", json={"risk": "read"}).json()
+    assert not missing["ok"]
+
+    gone = client.delete(
+        "/v1/risk-overrides", params={"pattern": "mcp__heatguard__*"}
+    ).json()
+    assert gone["ok"] and gone["rules"] == []
+    assert client.delete("/v1/risk-overrides", params={"pattern": "never"}).json()["ok"] is False
