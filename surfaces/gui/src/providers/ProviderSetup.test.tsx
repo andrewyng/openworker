@@ -39,13 +39,17 @@ const BEDROCK: ProviderInfo = {
   ],
 };
 
-function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): ProviderSetupState {
+function makePs(
+  fields: Record<string, string>,
+  setFieldValue = vi.fn(),
+  info: ProviderInfo = BEDROCK,
+): ProviderSetupState {
   return {
-    providers: [BEDROCK],
-    ordered: [BEDROCK],
+    providers: [info],
+    ordered: [info],
     refreshProviders: async () => {},
-    sel: "bedrock",
-    info: BEDROCK,
+    sel: info.name,
+    info,
     fields,
     setFieldValue,
     dirty: false,
@@ -92,5 +96,27 @@ describe("ProviderForm auth-method choice", () => {
     render(<ProviderForm ps={makePs({ auth_method: "iam" })} tp="t" />);
     expect(screen.getByTestId("t-field-aws_secret_access_key")).toBeTruthy();
     expect(screen.queryByTestId("t-field-bedrock_api_key")).toBeNull();
+  });
+});
+
+describe("ProviderForm required endpoint", () => {
+  it("keeps the required CC Switch proxy URL in the primary form", () => {
+    const ccswitch: ProviderInfo = {
+      name: "ccswitch",
+      title: "CC Switch (local proxy)",
+      needs_key: true,
+      configured: false,
+      values: {},
+      suggested_models: [],
+      recommended_model: null,
+      fields: [
+        { key: "base_url", label: "CC Switch proxy URL", secret: false, required: true, help: "", placeholder: "http://127.0.0.1:<port>/v1" },
+        { key: "api_key", label: "Proxy token (optional)", secret: true, required: false, help: "", placeholder: "" },
+      ],
+    };
+
+    render(<ProviderForm ps={makePs({}, vi.fn(), ccswitch)} tp="t" />);
+    expect(screen.getByTestId("t-field-base_url")).toBeTruthy();
+    expect(screen.queryByTestId("t-endpoint-link")).toBeNull();
   });
 });

@@ -112,6 +112,19 @@ def _normalize_ollama_url(url: Optional[str]) -> str:
     return base
 
 
+def _normalize_ccswitch_url(url: Optional[str]) -> str:
+    """Return CC Switch's OpenAI-compatible `/v1` base URL.
+
+    CC Switch exposes its proxy API beneath `/v1`. Accepting its root URL keeps the
+    setup form forgiving while ensuring both verification and completions use the
+    same OpenAI-compatible route.
+    """
+    base = (url or "").strip().rstrip("/")
+    if base and not base.endswith("/v1"):
+        base += "/v1"
+    return base
+
+
 def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Key resolution stays in resolve_api_key (explicit → env → SecretStore), so we just
     # hand over the SecretStore. Stock OpenAI (no custom endpoint) speaks the Responses
@@ -186,6 +199,21 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # string, so we pass a placeholder. `base_url` comes from the stored profile (or the default).
     base_url = _normalize_ollama_url((profile or {}).get("base_url"))
     return OpenAIProvider(api_key="ollama", base_url=base_url)
+
+
+def _build_ccswitch(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    """Build the CC Switch local-proxy client without ever borrowing an OpenAI key.
+
+    CC Switch is a user-configured OpenAI-compatible route, not an upstream provider: its
+    active provider can change or fail over while OpenWorker is running. Its proxy token is
+    optional, but the SDK still needs a non-empty value when the proxy has no auth enabled.
+    """
+    p = profile or {}
+    base_url = _normalize_ccswitch_url(p.get("base_url"))
+    if not base_url:
+        raise RuntimeError("No CC Switch proxy URL configured — add it in Settings ▸ Models.")
+    api_key = (p.get("api_key") or "").strip() or "cc-switch"
+    return OpenAIProvider(api_key=api_key, base_url=base_url.rstrip("/"))
 
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
@@ -551,6 +579,29 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="OPENROUTER_API_KEY",
     ),
     ProviderDescriptor(
+        name="ccswitch",
+        title="CC Switch (local proxy)",
+        needs_key=True,
+        fields=[
+            ProviderField(
+                "base_url",
+                "CC Switch proxy URL",
+                secret=False,
+                placeholder="http://127.0.0.1:<port>/v1",
+                help="Copy the OpenAI-compatible URL from CC Switch's Proxy panel. OpenWorker adds /v1 when it is omitted.",
+            ),
+            ProviderField(
+                "api_key",
+                "Proxy token (optional)",
+                secret=True,
+                required=False,
+                placeholder="Paste a token only when proxy authentication is enabled.",
+            ),
+        ],
+        build=_build_ccswitch,
+        blurb="Routes requests through CC Switch's local OpenAI-compatible proxy. Switching and failover stay in CC Switch.",
+    ),
+    ProviderDescriptor(
         name="ollama",
         title="Ollama (local models)",
         needs_key=False,
@@ -602,7 +653,8 @@ def descriptor_configured(d: ProviderDescriptor, profile: dict[str, Any]) -> boo
     if not d.needs_key:
         return True  # keyless (Ollama) — usable out of the box
     profile = profile or {}
-    if any(f.key == "api_key" for f in d.fields):
+    api_key_field = next((f for f in d.fields if f.key == "api_key"), None)
+    if api_key_field is not None and api_key_field.required:
         return bool(profile.get("api_key")) or bool(
             d.env_key and os.environ.get(d.env_key)
         )
@@ -832,6 +884,14 @@ def verify_provider_key(
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
+        elif name == "ccswitch":
+            base = _normalize_ccswitch_url(base_url)
+            if not base:
+                return {"ok": False, "error": "Enter a CC Switch proxy URL to test."}
+            kwargs: dict[str, Any] = {"timeout": timeout}
+            if key:
+                kwargs["headers"] = {"Authorization": f"Bearer {key}"}
+            resp = httpx.get(base + "/models", **kwargs)
         else:  # openai + any OpenAI-compatible endpoint (Azure, OpenRouter, vendors, vLLM…)
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""

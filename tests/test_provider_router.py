@@ -71,6 +71,42 @@ def test_build_ollama_client_uses_base_url(monkeypatch):
     assert captured["api_key"] == "ollama"  # placeholder, Ollama ignores it
 
 
+def test_build_ccswitch_client_uses_its_proxy_token_or_a_local_placeholder(monkeypatch):
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-the-proxy")
+    client = build_provider_client(
+        "ccswitch", {"base_url": "http://127.0.0.1:8317/v1"}, secrets=None
+    )
+    client._ensure_client()  # type: ignore[attr-defined]
+
+    assert captured == {
+        "api_key": "cc-switch",
+        "base_url": "http://127.0.0.1:8317/v1",
+    }
+
+
+def test_build_ccswitch_client_normalizes_the_proxy_root_to_v1(monkeypatch):
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    client = build_provider_client(
+        "ccswitch", {"base_url": " http://127.0.0.1:8317/ "}, secrets=None
+    )
+    client._ensure_client()  # type: ignore[attr-defined]
+
+    assert captured["base_url"] == "http://127.0.0.1:8317/v1"
+
+
 # -- router routing -------------------------------------------------------------
 class _Recorder(ProviderClient):
     def __init__(self, name: str):
@@ -114,6 +150,16 @@ def test_router_routes_and_strips_prefix(monkeypatch):
 
     router.complete(model="gpt-5.5", messages=[])  # bare → default openai
     assert state["latest"]["openai"].models == ["gpt-5.5"]
+
+
+def test_router_routes_ccswitch_models_and_strips_the_provider_prefix(monkeypatch):
+    state = _patch_build(monkeypatch)
+    router = ProviderRouter(secrets=None)
+
+    turn = router.complete(model="ccswitch:kimi-k2.7-code", messages=[])
+
+    assert turn.text == "ccswitch"
+    assert state["latest"]["ccswitch"].models == ["kimi-k2.7-code"]
 
 
 def test_router_caches_and_invalidates(monkeypatch):
@@ -306,9 +352,51 @@ def test_manager_provider_config(tmp_path, monkeypatch):
     assert provs["openai"]["needs_key"] is True
     # never leak secret values
     assert "api_key" not in provs["openai"].get("values", {})
-
     assert mgr.set_provider("nope", {})["ok"] is False  # unknown provider rejected
 
+
+def test_manager_verifies_ccswitch_without_an_optional_proxy_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    captured: dict = {}
+
+    def fake_get(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return SimpleNamespace(status_code=200)
+
+    monkeypatch.setattr("httpx.get", fake_get)
+    manager = SessionManager(data_dir=tmp_path)
+
+    assert manager.verify_provider(
+        "ccswitch", {"base_url": "http://127.0.0.1:8317/v1"}
+    ) == {"ok": True}
+    assert captured["url"] == "http://127.0.0.1:8317/v1/models"
+    assert "headers" not in captured
+
+
+def test_manager_rejects_an_explicitly_cleared_ccswitch_proxy_url(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    manager = SessionManager(data_dir=tmp_path)
+    assert manager.set_provider(
+        "ccswitch", {"base_url": "http://127.0.0.1:8317/v1"}
+    )["ok"]
+
+    def should_not_connect(*args, **kwargs):
+        raise AssertionError("verification must not reuse the stored proxy URL")
+
+    monkeypatch.setattr("httpx.get", should_not_connect)
+    assert manager.verify_provider("ccswitch", {"base_url": ""}) == {
+        "ok": False,
+        "error": "missing: CC Switch proxy URL",
+    }
+    assert manager.set_provider("ccswitch", {"base_url": ""}) == {
+        "ok": False,
+        "error": "missing: CC Switch proxy URL",
+    }
 
 def test_manager_curated_models(tmp_path, monkeypatch):
     """No seed list: the picker is the curated matrix filtered to key-holding providers,

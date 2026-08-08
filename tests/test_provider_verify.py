@@ -91,6 +91,39 @@ def test_verify_ollama_uses_v1_models_no_key(monkeypatch):
     assert "headers" not in cap  # keyless
 
 
+def test_verify_ccswitch_uses_the_configured_proxy_without_a_token(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+
+    assert verify_provider_key("ccswitch", base_url="http://127.0.0.1:8317/v1/") == {
+        "ok": True
+    }
+    assert cap["url"] == "http://127.0.0.1:8317/v1/models"
+    assert "headers" not in cap
+
+
+def test_verify_ccswitch_normalizes_the_proxy_root_to_v1(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+
+    assert verify_provider_key("ccswitch", base_url="http://127.0.0.1:8317/") == {
+        "ok": True
+    }
+    assert cap["url"] == "http://127.0.0.1:8317/v1/models"
+
+
+def test_verify_ccswitch_forwards_an_optional_proxy_token(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+
+    verify_provider_key(
+        "ccswitch",
+        api_key="proxy-token",
+        base_url="http://127.0.0.1:8317/v1",
+    )
+    assert cap["headers"] == {"Authorization": "Bearer proxy-token"}
+
+
 def test_verify_network_error_is_clean(monkeypatch):
     _patch_get(monkeypatch, raise_exc=ConnectionError("boom"))
     res = verify_provider_key("openai", api_key="sk-x")
