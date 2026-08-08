@@ -75,11 +75,18 @@ class Scheduler:
 
     async def _tick(self, *, trigger: str) -> None:
         for task in self.store.due():
+            # Claim synchronously before create_task: under event-loop starvation,
+            # another tick can otherwise enqueue the same overdue task before the
+            # first spawned coroutine gets a chance to update _running_ids.
+            if task.id in self._running_ids:
+                logger.info("skipping %s — previous run still going", task.id)
+                continue
+            self._running_ids.add(task.id)
             # Spawn, don't await: a run can suspend on a parked approval (standing
             # scoped approvals, §25) and one blocked automation must never stall the
             # scheduler loop, other due tasks, or self-wake resumption. Overlap is
-            # still guarded inside run_task via _running_ids.
-            spawned = asyncio.create_task(self.run_task(task, trigger=trigger))
+            # claimed above before yielding control.
+            spawned = asyncio.create_task(self._run_claimed(task, trigger=trigger))
             self._spawned.add(spawned)
             spawned.add_done_callback(self._spawned.discard)
         if self.extra_tick is not None:
@@ -93,21 +100,28 @@ class Scheduler:
             logger.info("skipping %s — previous run still going", task.id)
             return None
         self._running_ids.add(task.id)
+        return await self._run_claimed(task, trigger=trigger)
+
+    async def _run_claimed(
+        self, task: ScheduledTask, *, trigger: str
+    ) -> Optional[TaskRun]:
         try:
-            run = await self.runner(task, trigger)
-        except Exception as exc:
-            logger.exception("task %s run failed", task.id)
-            run = TaskRun(
-                task_id=task.id, status="error", error=str(exc), trigger=trigger
-            )
-            self.store.add_run(run)
+            try:
+                run = await self.runner(task, trigger)
+            except Exception as exc:
+                logger.exception("task %s run failed", task.id)
+                run = TaskRun(
+                    task_id=task.id, status="error", error=str(exc), trigger=trigger
+                )
+                self.store.add_run(run)
+            # Advance before releasing the claim. Otherwise a tick can see the
+            # stale due row between completion and save and immediately rerun it.
+            fresh = self.store.get(task.id)
+            if fresh is not None:
+                fresh.run_count += 1
+                fresh.last_run = run.started_at if run else None
+                fresh.last_status = run.status if run else "error"
+                self.store.save(fresh)
+            return run
         finally:
             self._running_ids.discard(task.id)
-        # advance the task (run_count/last_run) → save recomputes next_run.
-        fresh = self.store.get(task.id)
-        if fresh is not None:
-            fresh.run_count += 1
-            fresh.last_run = run.started_at if run else None
-            fresh.last_status = run.status if run else "error"
-            self.store.save(fresh)
-        return run
