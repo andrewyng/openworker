@@ -674,6 +674,7 @@ export function App() {
               reason: d.reason,
               category: d.category,
               standingTarget: d.standing_target || undefined,
+              intent: d.intent || undefined,
             },
           ]);
           break;

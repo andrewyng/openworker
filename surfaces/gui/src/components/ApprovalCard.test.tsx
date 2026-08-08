@@ -304,3 +304,39 @@ describe("InboxItemCard — parked save_skill proposals (SKILLS-SPEC §5.2)", ()
     expect(onResolve).toHaveBeenCalledWith("i9", "deny");
   });
 });
+
+describe("ApprovalCard — AI intent block", () => {
+  it("renders the intent block when item.intent is present", () => {
+    render(
+      <ApprovalCard
+        item={sendApproval({ intent: "• dangerous op\n• irreversible" })}
+        onApprove={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/dangerous op/)).toBeTruthy();
+    expect(screen.getByText(/irreversible/)).toBeTruthy();
+  });
+
+  it("does not render an intent block when item.intent is absent", () => {
+    const { container } = render(<ApprovalCard item={sendApproval()} onApprove={vi.fn()} />);
+    expect(container.querySelector(".approval-intent")).toBeNull();
+  });
+
+  it("renders the intent for file_write (forces the full card, not the compact row)", () => {
+    // Routine file writes normally render as a compact one-line row; when an intent is
+    // present they must fall back to the full card so the annotation is visible.
+    render(
+      <ApprovalCard
+        item={{
+          kind: "approval",
+          name: "write_file",
+          args: { path: "/x", content: "y" },
+          reason: "test",
+          intent: "• overwrites the file",
+        }}
+        onApprove={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/overwrites the file/)).toBeTruthy();
+  });
+});

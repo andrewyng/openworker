@@ -217,6 +217,8 @@ def build_engine(
     connector_filter: Optional[set[str]] = None,
     # A set (static snapshot) or a zero-arg callable (live, re-evaluated per load_skill).
     skill_filter: Optional[set[str] | Callable[[], set[str]]] = None,
+    # Optional AI intent analyzer (dependency injection): None = feature off.
+    intent_analyzer: Optional[Callable] = None,
 ) -> TurnEngine:
     ws = Path(workspace).expanduser().resolve() if workspace else None
     if agent.needs_workspace and ws is None:
@@ -484,6 +486,7 @@ def build_engine(
         directory_requester=directory_requester,
         plan_approver=plan_approver,
         question_asker=question_asker,
+        intent_analyzer=intent_analyzer,
     )
     engine.executor = executor  # type: ignore[attr-defined]
     engine.todo = todo  # type: ignore[attr-defined]

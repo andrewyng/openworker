@@ -4,6 +4,7 @@ import {
   getTrustedWorkspaces,
   setCompactionSettings,
   setContextBar,
+  setIntentAnalysis,
   setOnboarded,
   setPdfSettings,
   setScratchBase,
@@ -446,6 +447,7 @@ function AppearanceSection() {
       <SidebarCard />
 
       <ContextBarCard />
+      <IntentAnalysisCard />
 
       <FilesCard />
 
@@ -844,6 +846,44 @@ function ContextBarCard() {
             A small meter showing how full the model&rsquo;s context window is. Turn it off
             to show this session&rsquo;s token total instead; either way the full breakdown
             is one click away.
+          </span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
+function IntentAnalysisCard() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => setEnabled(s.intent_analysis === true))
+      .catch(() => setEnabled(false));
+  }, []);
+
+  const save = async (next: boolean) => {
+    setEnabled(next);
+    await setIntentAnalysis(next);
+  };
+
+  if (enabled === null) return null;
+  return (
+    <div className={CARD + " p-4 mb-4"} data-testid="intent-analysis-card">
+      <div className={FIELD_LABEL}>Approvals</div>
+      <label className="flex items-start gap-3 py-2">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          data-testid="intent-analysis-toggle"
+          checked={enabled}
+          onChange={(e) => save(e.target.checked)}
+        />
+        <span>
+          <span className="block text-[13px] text-ink">Explain commands before I approve them</span>
+          <span className="block text-[12px] text-muted">
+            Before surfacing an approval prompt, ask the model to summarize what the command
+            will do in a couple of bullet points so the consequences are clear at a glance.
           </span>
         </span>
       </label>
