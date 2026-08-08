@@ -20,9 +20,21 @@ from coworker.secrets import SecretStore
 
 @pytest.fixture(autouse=True)
 def _no_slack_network(monkeypatch):
-    """Name/channel resolution is best-effort; unstubbed lookups must fail
-    instantly at a dead loopback port, never reach slack.com — a slow real
-    answer was blowing the 2s wait_dispatched window intermittently."""
+    """Name/channel resolution is best-effort, so stub it at its single chokepoint.
+
+    A dead loopback port alone is not enough. Refusing a connection is only instant
+    on POSIX; on Windows it takes ~2.0s, and `_dispatch_slack_event` awaits both
+    `_display_name` and `_channel_name`, so one frame cost ~4s against the 2.0s
+    budget and no frame ever dispatched in time. `SLACK_API_URL` still points at a
+    dead port as a backstop, so an unstubbed path can never reach slack.com.
+    """
+
+    async def _no_slack_api(self, team_id, method, params):
+        return None
+
+    monkeypatch.setattr(
+        relay_client.SlackRelayAdapter, "_slack_get", _no_slack_api
+    )
     monkeypatch.setenv("SLACK_API_URL", "http://127.0.0.1:9/")
 
 
