@@ -795,6 +795,76 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
     return {"ok": False, "error": f"Vertex AI returned HTTP {resp.status_code}."}
 
 
+def _verify_openai_compat(
+    d: ProviderDescriptor,
+    key: str,
+    base_url: Optional[str],
+    timeout: float,
+) -> dict[str, Any]:
+    """List models, then probe `/chat/completions` so a missing `/v1` fails Test (#431)."""
+    import httpx
+
+    default_base = next(
+        (f.default for f in d.fields if f.key == "base_url" and f.default), ""
+    )
+    base = (
+        (base_url or "").strip().rstrip("/")
+        or default_base.rstrip("/")
+        or "https://api.openai.com/v1"
+    )
+    headers = {"Authorization": f"Bearer {key}"}
+
+    def _unreachable(exc: Exception) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "error": f"Couldn't reach {d.title} ({exc.__class__.__name__}).",
+        }
+
+    def _http_error(code: int) -> dict[str, Any]:
+        if code in (401, 403):
+            return {"ok": False, "error": "Invalid API key."}
+        return {"ok": False, "error": f"{d.title} returned HTTP {code}."}
+
+    try:
+        resp = httpx.get(base + "/models", headers=headers, timeout=timeout)
+    except Exception as exc:
+        return _unreachable(exc)
+    if resp.status_code >= 300:
+        return _http_error(resp.status_code)
+
+    try:
+        data = resp.json().get("data") or []
+        model = str(data[0]["id"]) if data and data[0].get("id") else "openworker-verify"
+    except Exception:
+        model = "openworker-verify"
+
+    try:
+        creq = httpx.post(
+            base + "/chat/completions",
+            headers=headers,
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 1,
+            },
+            timeout=timeout,
+        )
+    except Exception as exc:
+        return _unreachable(exc)
+    if creq.status_code < 300 or creq.status_code in (400, 422):
+        return {"ok": True}  # 400/422: path exists, model rejected
+    if creq.status_code == 404:
+        return {
+            "ok": False,
+            "error": (
+                "Reached the server, but chat completions aren't at this endpoint. "
+                "OpenAI-compatible URLs usually need a `/v1` suffix "
+                "(e.g. http://127.0.0.1:1234/v1)."
+            ),
+        }
+    return _http_error(creq.status_code)
+
+
 def verify_provider_key(
     name: str,
     *,
@@ -803,10 +873,10 @@ def verify_provider_key(
     fields: Optional[dict[str, Any]] = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
-    """Validate a provider's credentials with one cheap, read-only call (list models) — the same
-    pattern connectors use to validate tokens. Transient: callers pass the key directly so a user
-    can Test before saving. Never raises; returns {ok, error?}. Multi-field cloud providers
-    (Bedrock, Vertex) take their whole form via `fields`; everyone else uses api_key/base_url.
+    """Validate a provider's credentials with one cheap live call. Transient: callers
+    pass the key directly so a user can Test before saving. Never raises; returns
+    {ok, error?}. Multi-field cloud providers (Bedrock, Vertex) take their whole form
+    via `fields`; everyone else uses api_key/base_url.
     """
     import httpx
 
@@ -816,6 +886,9 @@ def verify_provider_key(
         return _verify_bedrock(fields or {}, timeout)
     if name == "vertex":
         return _verify_vertex(fields or {}, timeout)
+    if name not in ("anthropic", "gemini", "ollama"):
+        # openai + OpenAI-compatible endpoints (Azure, OpenRouter, vendors, vLLM…)
+        return _verify_openai_compat(d, key, base_url, timeout)
     try:
         if name == "anthropic":
             resp = httpx.get(
@@ -829,23 +902,9 @@ def verify_provider_key(
                 params={"key": key},
                 timeout=timeout,
             )
-        elif name == "ollama":
+        else:  # ollama
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
-        else:  # openai + any OpenAI-compatible endpoint (Azure, OpenRouter, vendors, vLLM…)
-            default_base = next(
-                (f.default for f in d.fields if f.key == "base_url" and f.default), ""
-            )
-            base = (
-                (base_url or "").strip().rstrip("/")
-                or default_base.rstrip("/")
-                or "https://api.openai.com/v1"
-            )
-            resp = httpx.get(
-                base + "/models",
-                headers={"Authorization": f"Bearer {key}"},
-                timeout=timeout,
-            )
     except Exception as exc:  # DNS/connection/timeout — never let it bubble to a 500
         return {
             "ok": False,
