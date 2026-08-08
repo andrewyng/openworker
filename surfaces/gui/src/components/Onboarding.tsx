@@ -10,7 +10,9 @@ import {
 } from "../api";
 import { ConnectorBadge } from "../connectors/ConnectorIcon";
 import { ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
+import { isTauri, platformOS } from "../tauri";
 import { Spinner } from "./AutomationQuickstart";
+import { Icon } from "./Icon";
 
 // First-run onboarding (UX-DECISIONS §24 → §29 → §39): model → your tools → go.
 // §39 (owner design, 2026-07-18): step 1 is a PROVIDER GALLERY — 13 real brand
@@ -109,8 +111,22 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
     </div>
   );
 
+  // macOS overlay title bar (hidden native title bar, App.tsx's `overlay`): the app's only
+  // drag surfaces (Sidebar's brand row, App.tsx's topbar) sit UNDER this full-viewport
+  // backdrop and can't be reached, same gap the boot splash already covers (App.tsx
+  // ~line 1130) before the sidebar even mounts. Mirror that same strip here, above the
+  // backdrop's z-50 (z-180), so the window stays movable while onboarding is on screen.
+  const overlay = isTauri() && platformOS() === "macos";
+
   return (
     <div className="fixed inset-0 z-50 bg-ink/30 grid place-items-center" data-testid="onboarding">
+      {overlay && (
+        <div className="titlebar-drag" data-tauri-drag-region>
+          <span className="titlebar-brand brand-wordmark">
+            <Icon name="logo" size={13} className="mark" /> OpenWorker<span className="beta-tag">BETA</span>
+          </span>
+        </div>
+      )}
       {/* FIXED height across all three steps (owner call 2026-07-12, reaffirmed §39: the
           modal must never resize — the gallery⇄form swap happens inside this box). */}
       <div className="w-[600px] max-w-[92vw] h-[560px] max-h-[88vh] rounded-2xl border border-line bg-panel shadow-2xl p-8 flex flex-col">
