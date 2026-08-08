@@ -29,6 +29,12 @@ DEFAULT_CONTEXT_WINDOW = 128_000
 KEEP_RECENT_FRACTION = 0.25
 # The summarizer call itself: tools off, modest ceiling.
 SUMMARY_MAX_TOKENS = 3_000
+# Space the summarizer never spends on its input or requested output. Provider tokenizers
+# and chat framing differ, so this is deliberately conservative rather than exact.
+SUMMARY_SAFETY_MARGIN_TOKENS = 2_048
+# Room kept outside the compacted prompt for a normal assistant response. This scales
+# down for tiny windows but reaches 4k for the 32k+ models that motivated #441.
+RESPONSE_RESERVE_TOKENS = 4_096
 # Per-message clip when rendering the span for the summarizer; tool results are the
 # first casualty (huge and mostly stale — a file read 40 turns ago is better re-read).
 _SPAN_TOOL_RESULT_CLIP = 400
@@ -77,6 +83,55 @@ def should_compact(
     return signal >= trigger_tokens(
         context_window, threshold_pct=threshold_pct, cap_tokens=cap_tokens
     )
+
+
+def summary_call_budget(
+    context_window: Optional[int], *, max_tokens: int = SUMMARY_MAX_TOKENS
+) -> tuple[int, int]:
+    """Return safe ``(input_tokens, output_tokens)`` limits for the summarizer call.
+
+    Recovery must fit inside the same model window that just overflowed. Small local
+    models therefore get a proportionally smaller output allowance and margin, while
+    normal/large windows retain the existing 3k summary ceiling.
+    """
+    try:
+        window = int(context_window or DEFAULT_CONTEXT_WINDOW)
+    except (TypeError, ValueError):
+        window = DEFAULT_CONTEXT_WINDOW
+    window = max(4_096, window)
+    output = min(max(256, int(max_tokens)), SUMMARY_MAX_TOKENS, max(512, window // 8))
+    margin = min(SUMMARY_SAFETY_MARGIN_TOKENS, max(512, window // 16))
+    return max(1_024, window - output - margin), output
+
+
+def retained_history_budget(
+    context_window: Optional[int],
+    *,
+    threshold_pct: float = DEFAULT_THRESHOLD_PCT,
+    cap_tokens: int = DEFAULT_CAP_TOKENS,
+) -> int:
+    """Verbatim-tail budget after compaction, with response and safety reserves.
+
+    The compacted summary, system instructions, tool schemas, injected context, and a
+    normal response all share the model window with this tail. Limiting the base to the
+    usable prompt budget makes high custom thresholds safe instead of assuming the full
+    nominal window is available to retained conversation history.
+    """
+    try:
+        window = int(context_window or DEFAULT_CONTEXT_WINDOW)
+    except (TypeError, ValueError):
+        window = DEFAULT_CONTEXT_WINDOW
+    window = max(4_096, window)
+    response = min(RESPONSE_RESERVE_TOKENS, max(512, window // 8))
+    margin = min(SUMMARY_SAFETY_MARGIN_TOKENS, max(512, window // 16))
+    usable_prompt = max(1_024, window - response - margin)
+    target = min(
+        trigger_tokens(
+            window, threshold_pct=threshold_pct, cap_tokens=cap_tokens
+        ),
+        usable_prompt,
+    )
+    return max(1, int(KEEP_RECENT_FRACTION * target))
 
 
 # -- state --------------------------------------------------------------------
@@ -371,21 +426,63 @@ def _render_span(span: list[dict[str, Any]], *, budget_chars: int = _SPAN_BUDGET
 
 
 def summarizer_messages(
-    span: list[dict[str, Any]], *, prior_summary: str = ""
+    span: list[dict[str, Any]],
+    *,
+    prior_summary: str = "",
+    input_budget_tokens: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     """The provider-ready messages for the summarizer call. On repeated compaction the
     previous summary is message zero of the new span — summarized along with the turns
     since."""
-    body = _render_span(span)
+    # Convert the conservative chars/4 estimator into a render cap after accounting for
+    # the fixed system prompt and message framing. Repeated compaction splits the budget
+    # between the previous summary and recent conversation so neither can crowd out the
+    # other; within each part, the newest text wins.
+    body_chars = _SPAN_BUDGET_CHARS
+    if input_budget_tokens is not None:
+        fixed = estimate_tokens(
+            [
+                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": ""},
+            ]
+        )
+        body_chars = max(1_000, (int(input_budget_tokens) - fixed - 64) * 4)
+
+    def _tail(text: str, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        return "(…oldest content elided…)\n" + text[-limit:]
+
     if prior_summary:
+        prior_chars = body_chars // 2
+        current_chars = body_chars - prior_chars
         body = (
             "[previous compaction summary — fold its still-relevant content into the new "
-            "summary]\n" + prior_summary + "\n\n[conversation since]\n" + body
+            "summary]\n"
+            + _tail(prior_summary, prior_chars)
+            + "\n\n[conversation since]\n"
+            + _render_span(span, budget_chars=current_chars)
         )
-    return [
+    else:
+        body = _render_span(span, budget_chars=body_chars)
+
+    messages = [
         {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
         {"role": "user", "content": body},
     ]
+    # JSON/message overhead makes chars/4 only approximate. Tighten using the same
+    # estimator that drives compaction and retain the recent tail if the first cap missed.
+    if input_budget_tokens is not None:
+        estimated = estimate_tokens(messages)
+        while estimated > input_budget_tokens and len(body) > 256:
+            excess_chars = (estimated - input_budget_tokens + 32) * 4
+            clipped = _tail(body, max(256, len(body) - excess_chars))
+            if len(clipped) >= len(body):
+                break
+            body = clipped
+            messages[1]["content"] = body
+            estimated = estimate_tokens(messages)
+    return messages
 
 
 def summarize_span(
@@ -395,15 +492,23 @@ def summarize_span(
     *,
     prior_summary: str = "",
     max_tokens: int = SUMMARY_MAX_TOKENS,
+    context_window: Optional[int] = None,
 ) -> str:
     """One summarizer round-trip (blocking — the engine runs it off-loop). Tools are
     disabled; the Settings model override is just a different `model` id. Raises on
     provider failure or an empty summary — the caller owns the retry/trim policy."""
+    input_budget, output_budget = summary_call_budget(
+        context_window, max_tokens=max_tokens
+    )
     turn = provider.complete(
         model=model,
-        messages=summarizer_messages(span, prior_summary=prior_summary),
+        messages=summarizer_messages(
+            span,
+            prior_summary=prior_summary,
+            input_budget_tokens=input_budget,
+        ),
         tools=None,
-        max_tokens=max_tokens,
+        max_tokens=output_budget,
     )
     text = (getattr(turn, "text", None) or "").strip()
     if not text:
@@ -421,6 +526,7 @@ def build_state(
     model: str,
     keep_tokens: int,
     prior: Optional[CompactionState] = None,
+    context_window: Optional[int] = None,
 ) -> Optional[CompactionState]:
     """Summarize everything older than the picked boundary into a new CompactionState.
     On repeated compaction the prior summary heads the new span. Returns None when there
@@ -436,6 +542,7 @@ def build_state(
         model,
         span,
         prior_summary=prior.summary_text if prior is not None else "",
+        context_window=context_window,
     )
     users, dropped = _cap_user_messages(
         prior_users + extract_user_messages(span),

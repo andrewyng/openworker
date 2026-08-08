@@ -46,6 +46,22 @@ test("Settings: Context compaction card edits threshold, cap, and summarizer mod
     card.getByTestId("compaction-model").selectOption("gpt-4o-mini"),
   ]);
   expect(req3.postDataJSON()).toEqual({ compaction_model: "gpt-4o-mini" });
+
+  // A custom model gets explicit context metadata, which the backend shares with the
+  // meter, trigger, retained-history budget, and overflow recovery.
+  await card.getByTestId("context-window-model").selectOption("openai:qwen36-35b");
+  await card.getByTestId("context-window-tokens").fill("32768");
+  const [req4] = await Promise.all([
+    page.waitForRequest(
+      (r) => r.url().endsWith("/v1/settings/model-context-window") && r.method() === "POST",
+    ),
+    card.getByTestId("context-window-save").click(),
+  ]);
+  expect(req4.postDataJSON()).toEqual({
+    model: "openai:qwen36-35b",
+    context_window: 32768,
+  });
+  await expect(card.getByTestId("context-window-tokens")).toHaveValue("32768");
 });
 
 test("the compacted divider renders mid-session and the transcript stays intact", async ({

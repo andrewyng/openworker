@@ -230,6 +230,26 @@ def test_set_compaction_settings_validates_and_round_trips(tmp_path):
     assert payload["compaction_model"] == "gpt-4o-mini"
 
 
+def test_custom_model_context_window_drives_live_engine_config(tmp_path):
+    from coworker.server.manager import SessionManager
+
+    provider = CompactingProvider([AssistantTurn(text="done", finish_reason="stop")])
+    mgr = SessionManager(
+        workspace=tmp_path,
+        data_dir=tmp_path / "data",
+        provider=provider,
+        model="openai:qwen36-35b",
+    )
+    assert mgr.set_model_context_window("openai:qwen36-35b", 32_768)["ok"]
+    engine = mgr.get_engine("small-window", agent="cowork", workspace=str(tmp_path))
+    assert engine is not None
+    assert engine._compaction_config()["context_window"] == 32_768
+
+    # The live settings getter means an already-open engine observes edits immediately.
+    mgr.set_model_context_window("openai:qwen36-35b", 65_536)
+    assert engine._compaction_config()["context_window"] == 65_536
+
+
 def test_compaction_state_survives_save_and_rebuild(tmp_path):
     from coworker.compaction import CompactionState
     from coworker.server.manager import SessionManager

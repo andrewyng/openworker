@@ -4,6 +4,7 @@ import {
   getTrustedWorkspaces,
   setCompactionSettings,
   setContextBar,
+  setModelContextWindow,
   setOnboarded,
   setPdfSettings,
   setScratchBase,
@@ -702,6 +703,10 @@ function CompactionCard() {
   const [cfg, setCfg] = useState<CompactionSettings | null>(null);
   const [models, setModels] = useState<string[]>([]);
   const [labels, setLabels] = useState<Record<string, string>>({});
+  const [windows, setWindows] = useState<Record<string, number>>({});
+  const [windowModel, setWindowModel] = useState("");
+  const [windowTokens, setWindowTokens] = useState("");
+  const [windowError, setWindowError] = useState("");
 
   useEffect(() => {
     getSettings()
@@ -713,6 +718,14 @@ function CompactionCard() {
         });
         setModels(s.models || []);
         setLabels(s.model_labels || {});
+        setWindows(s.model_context_windows || {});
+        const first = s.model || s.models?.[0] || "";
+        setWindowModel(first);
+        setWindowTokens(
+          s.model_context_windows?.[first]
+            ? String(s.model_context_windows[first])
+            : "",
+        );
       })
       .catch(() =>
         setCfg({
@@ -726,6 +739,32 @@ function CompactionCard() {
   const save = async (patch: Partial<CompactionSettings>) => {
     setCfg((p) => (p ? { ...p, ...patch } : p));
     await setCompactionSettings(patch);
+  };
+
+  const chooseWindowModel = (model: string) => {
+    setWindowModel(model);
+    setWindowTokens(windows[model] ? String(windows[model]) : "");
+    setWindowError("");
+  };
+
+  const saveWindow = async (reset = false) => {
+    const tokens = reset ? null : Number(windowTokens);
+    if (!windowModel) return;
+    if (!reset && (!Number.isInteger(tokens) || Number(tokens) < 4_096)) {
+      setWindowError("Enter at least 4,096 tokens.");
+      return;
+    }
+    const result = await setModelContextWindow(windowModel, tokens as number | null);
+    if (!result.ok) {
+      setWindowError(result.error || "Could not save the context window.");
+      return;
+    }
+    const next = result.model_context_windows || {};
+    setWindows(next);
+    setWindowTokens(next[windowModel] ? String(next[windowModel]) : "");
+    setWindowError("");
+    // App owns the live context meter state; tell it to refresh without a reload.
+    window.dispatchEvent(new CustomEvent("coworker:model-context-windows-changed"));
   };
 
   if (!cfg) return null;
@@ -804,6 +843,51 @@ function CompactionCard() {
       <div className={FIELD_HELP}>
         The summary is written by this model. The default follows whatever model the
         session is using.
+      </div>
+
+      <div className="mt-4 pt-4 border-t border-line">
+        <div className={FIELD_LABEL}>Model context window</div>
+        <div className={FIELD_HELP}>
+          Set the real limit for custom models or provider deployments with a different
+          limit. This value drives the context meter, compaction trigger, retained history,
+          and overflow recovery.
+        </div>
+        <div className="mt-3 flex items-center gap-2.5 flex-wrap">
+          <select
+            value={windowModel}
+            data-testid="context-window-model"
+            className="max-w-[260px] px-2 py-1.5 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent"
+            onChange={(e) => chooseWindowModel(e.target.value)}
+          >
+            {models.map((m) => (
+              <option key={m} value={m}>{modelLabel(m)}</option>
+            ))}
+          </select>
+          <input
+            type="number"
+            min={4_096}
+            max={10_000_000}
+            step={1_024}
+            placeholder="e.g. 32768"
+            value={windowTokens}
+            data-testid="context-window-tokens"
+            className="w-32 px-2 py-1.5 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent"
+            onChange={(e) => setWindowTokens(e.target.value)}
+          />
+          <span className="text-[12.5px] text-muted">tokens</span>
+          <button className={BTN_ACCENT} data-testid="context-window-save" onClick={() => void saveWindow()}>
+            Save
+          </button>
+          <button className={BTN_BORDERED} data-testid="context-window-reset" onClick={() => void saveWindow(true)}>
+            Reset
+          </button>
+        </div>
+        {windowError && <div className="mt-2 text-[12px] text-red-600" role="alert">{windowError}</div>}
+        <div className={FIELD_HELP}>
+          Reset removes your override. Curated models return to their built-in value;
+          custom models return to the 128,000-token compaction fallback and the meter
+          becomes unavailable.
+        </div>
       </div>
     </div>
   );
