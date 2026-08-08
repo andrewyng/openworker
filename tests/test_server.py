@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -752,6 +754,8 @@ def test_workspace_command_trust_controls_live_engine(tmp_path):
         )
         assert not after.allowed and after.needs_user
 
+    manager.delete_session("trust")
+    assert "trust" not in manager._engines
     manager.workspace_trust.set_trusted(proj, True)
     proj.rename(tmp_path / "moved-project")
     assert client.post(
@@ -759,6 +763,39 @@ def test_workspace_command_trust_controls_live_engine(tmp_path):
         json={"path": str(proj), "trusted": False},
     ).json()["ok"]
     assert manager.trusted_workspaces() == []
+
+
+def test_delete_session_stops_its_shell_and_releases_workspace(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = SessionManager(
+        data_dir=tmp_path / "data", provider=ScriptedProvider([])
+    )
+    engine = manager.get_engine("session", workspace=str(project))
+    assert engine is not None
+    shell = engine.executor._proc
+    manager.save("session", engine)
+
+    assert manager.delete_session("session")["ok"] is True
+    assert shell.poll() is not None
+
+    project.rename(tmp_path / "renamed-project")
+    asyncio.run(manager.aclose())
+
+
+def test_manager_aclose_stops_live_session_shells(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = SessionManager(
+        data_dir=tmp_path / "data", provider=ScriptedProvider([])
+    )
+    engine = manager.get_engine("session", workspace=str(project))
+    assert engine is not None
+    shell = engine.executor._proc
+
+    asyncio.run(manager.aclose())
+
+    assert shell.poll() is not None
 
 
 def test_recent_workspaces_exclude_scratch_dirs(tmp_path):
