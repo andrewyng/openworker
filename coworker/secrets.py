@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -22,6 +23,10 @@ from typing import Any, Optional
 
 _REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _IS_WINDOWS = sys.platform == "win32"
+
+
+class SecretStoreCorrupt(RuntimeError):
+    """The store file exists but cannot be parsed — raised instead of overwriting it."""
 
 
 def state_dir() -> Path:
@@ -91,16 +96,44 @@ def _restrict_to_user(path: Path, *, is_dir: bool) -> None:
 def write_private_text(path: str | Path, content: str) -> Path:
     """Atomically write a user-only text file using the SecretStore's OS protections."""
     target = Path(path).expanduser()
+    _write_private_atomic(target, content)
+    return target
+
+
+def _write_private_atomic(target: Path, content: str) -> None:
+    """Write `content` to `target` atomically, never exposing it at the process umask.
+
+    Three things `Path.write_text` + `os.replace` did not do:
+
+    * **Mode.** `write_text` creates the temp at the umask (0644 on a stock install) and
+      only narrows it afterwards, so the plaintext tokens are world-readable for the
+      length of the write. `mkstemp` creates at 0600 before a byte is written.
+    * **Durability.** Without an fsync, a crash between write and rename can promote a
+      truncated temp. That truncated file is exactly what makes `_read` unparseable, which
+      used to cost the user every other credential in the store (see `_read`).
+    * **A unique name.** The fixed `<name>.tmp` is shared by every process pointed at the
+      same store — the server and the `openworker-connectors` CLI, say — so two concurrent
+      writes could interleave into one temp and rename the mix into place.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
         _restrict_to_user(target.parent, is_dir=True)
     except OSError:
         pass
-    tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    _restrict_to_user(tmp, is_dir=False)
-    os.replace(tmp, target)
-    return target
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=target.name + ".", suffix=".tmp"
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _restrict_to_user(tmp, is_dir=False)  # no-op on POSIX; sets the ACL on Windows
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 class SecretStore:
@@ -159,13 +192,13 @@ class SecretStore:
     # -- writes -----------------------------------------------------------------
     def put(self, profile: str, data: dict[str, Any]) -> None:
         with self._lock:
-            store = self._read()
+            store = self._read(strict=True)
             store[profile] = data
             self._write(store)
 
     def delete(self, profile: str) -> bool:
         with self._lock:
-            store = self._read()
+            store = self._read(strict=True)
             if profile not in store:
                 return False
             del store[profile]
@@ -173,21 +206,39 @@ class SecretStore:
             return True
 
     # -- internals --------------------------------------------------------------
-    def _read(self) -> dict[str, Any]:
+    def _read(self, *, strict: bool = False) -> dict[str, Any]:
+        """The parsed store, or `{}` when it is absent or unreadable.
+
+        `strict=True` (the read-modify-write paths) raises `SecretStoreCorrupt` instead of
+        returning `{}` for a file that exists but does not parse. Swallowing that on the
+        write path meant a single truncated `secrets.json` — a crash mid-write, a full
+        disk — turned the next `put()` into a one-key store, silently discarding every
+        other connector credential the user had authorized.
+        """
         if not self.path.is_file():
             return {}
         try:
-            return json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            raw = self.path.read_text(encoding="utf-8")
+        except OSError as exc:
+            if strict:
+                raise SecretStoreCorrupt(f"cannot read {self.path}: {exc}") from exc
             return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            if strict:
+                raise SecretStoreCorrupt(
+                    f"{self.path} exists but is not valid JSON ({exc}). Refusing to "
+                    "overwrite it — move it aside to start a fresh store."
+                ) from exc
+            return {}
+        if not isinstance(data, dict):
+            if strict:
+                raise SecretStoreCorrupt(
+                    f"{self.path} does not contain a JSON object. Refusing to overwrite it."
+                )
+            return {}
+        return data
 
     def _write(self, store: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            _restrict_to_user(self.path.parent, is_dir=True)
-        except OSError:
-            pass
-        tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(store, indent=2), encoding="utf-8")
-        _restrict_to_user(tmp, is_dir=False)
-        os.replace(tmp, self.path)
+        _write_private_atomic(self.path, json.dumps(store, indent=2))
