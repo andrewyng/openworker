@@ -339,6 +339,8 @@ const PROVIDERS = [
   // ollama: keyless local provider — "configured" without proving anything runs; the
   // onboarding gallery shows "No key needed" and its form is endpoint + Detect (§39).
   { name: "ollama", title: "Ollama (local models)", needs_key: false, fields: [{ key: "base_url", label: "Endpoint", secret: false, required: false, help: "", placeholder: "http://127.0.0.1:11434", default: "http://127.0.0.1:11434" }], configured: true, values: {}, suggested_models: ["qwen3-coder:30b"], key_set_at: null, last_used_at: null },
+  // lmstudio: the second keyless local provider — same Detect flow, its own install copy.
+  { name: "lmstudio", title: "LM Studio (local models)", needs_key: false, fields: [{ key: "base_url", label: "LM Studio server URL", secret: false, required: false, help: "", placeholder: "http://localhost:1234", default: "" }], configured: true, values: {}, suggested_models: ["qwen/qwen3-coder-30b"], key_set_at: null, last_used_at: null },
 ];
 
 /** Install the API + WebSocket mocks on a page. Returns handles for assertions/seed data. */

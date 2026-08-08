@@ -1,11 +1,19 @@
 // Auth-method segmented choice + show_when field visibility (Bedrock's "Connect with"):
 // only the selected method's fields render, and clicking a segment switches them.
+// Plus the hook's keyless Detect contract (persist even when the form is clean).
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { ProviderForm, type ProviderSetupState } from "./ProviderSetup";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { ProviderForm, useProviderSetup, type ProviderSetupState } from "./ProviderSetup";
+import * as api from "../api";
 import type { ProviderInfo } from "../api";
 
 vi.mock("../tauri", () => ({ openExternal: vi.fn() }));
+vi.mock("../api", () => ({
+  getProviders: vi.fn(),
+  setProvider: vi.fn(),
+  verifyProvider: vi.fn(),
+  removeProvider: vi.fn(),
+}));
 
 afterEach(cleanup);
 
@@ -92,5 +100,58 @@ describe("ProviderForm auth-method choice", () => {
     render(<ProviderForm ps={makePs({ auth_method: "iam" })} tp="t" />);
     expect(screen.getByTestId("t-field-aws_secret_access_key")).toBeTruthy();
     expect(screen.queryByTestId("t-field-bedrock_api_key")).toBeNull();
+  });
+});
+
+const LMSTUDIO: ProviderInfo = {
+  name: "lmstudio",
+  title: "LM Studio (local models)",
+  needs_key: false,
+  configured: true, // keyless providers always report configured — even before first use
+  values: {},
+  suggested_models: [],
+  recommended_model: null,
+  fields: [
+    { key: "base_url", label: "LM Studio server URL", secret: false, required: false, help: "", placeholder: "http://localhost:1234" },
+  ],
+};
+
+function HookHarness({ grab }: { grab: (ps: ProviderSetupState) => void }) {
+  grab(useProviderSetup());
+  return null;
+}
+
+describe("useProviderSetup keyless Detect", () => {
+  it("persists a clean keyless form on a passing Detect", async () => {
+    // Keyless providers report `configured` out of the box, so a dirty/configured gate
+    // would skip the FIRST-time save — no stored profile, and the backend's
+    // recommended-model auto-add would never run (codex review, 2026-08-03).
+    vi.mocked(api.getProviders).mockResolvedValue([LMSTUDIO]);
+    vi.mocked(api.verifyProvider).mockResolvedValue({ ok: true });
+    vi.mocked(api.setProvider).mockResolvedValue({ ok: true });
+
+    let ps!: ProviderSetupState;
+    render(<HookHarness grab={(v) => (ps = v)} />);
+    await waitFor(() => expect(ps.providers.length).toBe(1));
+    act(() => ps.openProvider("lmstudio"));
+    await act(async () => {
+      expect(await ps.runTestAndSave()).toBe(true);
+    });
+    expect(api.setProvider).toHaveBeenCalledWith("lmstudio", { base_url: "" });
+  });
+
+  it("a failed save surfaces as an error, not '✓ Tested & saved'", async () => {
+    vi.mocked(api.getProviders).mockResolvedValue([LMSTUDIO]);
+    vi.mocked(api.verifyProvider).mockResolvedValue({ ok: true });
+    vi.mocked(api.setProvider).mockResolvedValue({ ok: false, error: "disk full" });
+
+    let ps!: ProviderSetupState;
+    render(<HookHarness grab={(v) => (ps = v)} />);
+    await waitFor(() => expect(ps.providers.length).toBe(1));
+    act(() => ps.openProvider("lmstudio"));
+    await act(async () => {
+      expect(await ps.runTestAndSave()).toBe(false);
+    });
+    expect(ps.verify).toEqual({ state: "error", msg: "disk full" });
   });
 });

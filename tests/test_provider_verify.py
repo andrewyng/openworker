@@ -29,14 +29,22 @@ def test_detect_provider(key, expected):
 
 
 # -- verify_provider_key: status-code mapping + per-provider request shape -------
-def _patch_get(monkeypatch, status=200, capture=None, raise_exc=None):
+def _patch_get(monkeypatch, status=200, capture=None, raise_exc=None, json_body=None):
     def fake_get(url, **kwargs):
         if capture is not None:
             capture["url"] = url
             capture.update(kwargs)
         if raise_exc is not None:
             raise raise_exc
-        return SimpleNamespace(status_code=status)
+
+        def _json():
+            # json_body=None mimics a 200 that isn't JSON (only the local-provider
+            # branch ever calls .json(); everyone else passes on status alone).
+            if json_body is None:
+                raise ValueError("not JSON")
+            return json_body
+
+        return SimpleNamespace(status_code=status, json=_json)
 
     monkeypatch.setattr("httpx.get", fake_get)
 
@@ -85,10 +93,32 @@ def test_verify_gemini_key_param(monkeypatch):
 
 def test_verify_ollama_uses_v1_models_no_key(monkeypatch):
     cap: dict = {}
-    _patch_get(monkeypatch, status=200, capture=cap)
-    verify_provider_key("ollama", base_url="http://localhost:11434")
+    _patch_get(monkeypatch, status=200, capture=cap, json_body={"data": []})
+    assert verify_provider_key("ollama", base_url="http://localhost:11434") == {
+        "ok": True
+    }
     assert cap["url"] == "http://localhost:11434/v1/models"
     assert "headers" not in cap  # keyless
+
+
+def test_verify_lmstudio_uses_v1_models_no_key(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap, json_body={"data": []})
+    assert verify_provider_key("lmstudio") == {"ok": True}  # no URL → the default port
+    assert cap["url"] == "http://localhost:1234/v1/models"
+    assert "headers" not in cap  # keyless
+
+
+def test_verify_local_rejects_non_model_server(monkeypatch):
+    """A 200 that isn't the OpenAI list shape (some other service on the port) must not
+    read as a working local provider."""
+    _patch_get(monkeypatch, status=200)  # 200 but not JSON (an HTML page)
+    res = verify_provider_key("lmstudio")
+    assert res["ok"] is False and "/v1" in res["error"]
+
+    _patch_get(monkeypatch, status=200, json_body={"whatever": 1})  # JSON, wrong shape
+    res = verify_provider_key("ollama", base_url="http://localhost:11434")
+    assert res["ok"] is False and "/v1" in res["error"]
 
 
 def test_verify_network_error_is_clean(monkeypatch):

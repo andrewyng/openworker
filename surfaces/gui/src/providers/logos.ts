@@ -9,6 +9,7 @@ import anthropic from "./logos/anthropic.svg";
 import openai from "./logos/openai.svg";
 import gemini from "./logos/gemini.svg";
 import ollama from "./logos/ollama.svg";
+import lmstudio from "./logos/lmstudio.svg";
 import bedrock from "./logos/bedrock.svg";
 import vertex from "./logos/vertex.svg";
 import openrouter from "./logos/openrouter.svg";
@@ -29,6 +30,7 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   gemini,
   meta,
   ollama,
+  lmstudio,
   bedrock,
   vertex,
   openrouter,
@@ -49,6 +51,7 @@ export const PROVIDER_ORDER = [
   "gemini",
   "meta",
   "ollama",
+  "lmstudio",
   "bedrock",
   "vertex",
   "openrouter",
