@@ -32,8 +32,9 @@ fi
 # The coworker package (server, engine, connectors) + inbound-messaging extras.
 # aisuite comes in as a regular dependency (git-pinned in pyproject.toml until
 # the next PyPI release).
-"$VBIN/pip" install --quiet --upgrade pip
-"$VBIN/pip" install --quiet -e "$ROOT[messaging,dev]"
+"$VBIN/python" -m pip install --quiet --upgrade pip
+cd "$ROOT"
+"$VBIN/python" -m pip install --quiet -e ".[messaging,dev]"
 
 "$VBIN/python" -c 'import aisuite, coworker' # fail loudly if the wiring broke
 echo "Ready: $VENV"

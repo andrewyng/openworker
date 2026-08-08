@@ -110,6 +110,16 @@ MATRIX: dict[str, ModelEntry] = {
         "Mistral Large · Mistral", _AGENTIC, 128_000
     ),
     # -- resellers (their model namespaces, verbatim) -----------------------------
+    "nvidia:nvidia/nemotron-3-nano-30b-a3b": ModelEntry(
+        "Nemotron 3 Nano 30B · NVIDIA NIM",
+        ModelCapabilities(
+            tools=True,
+            vision=False,
+            parallel_tool_calls=False,
+            streaming=True,
+        ),
+        262_144,
+    ),
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
     "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together", _AGENTIC, 128_000),
     # Kimi K3 on Together (landed late July 2026): 1M window, native vision; PDFs

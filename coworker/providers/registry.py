@@ -558,10 +558,12 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         "nvidia",
         "NVIDIA NIM",
         base_url="https://integrate.api.nvidia.com/v1",
-        recommended_model="nvidia/nemotron-super-3-120b",
+        recommended_model="nvidia/nemotron-3-nano-30b-a3b",
         env_key="NVIDIA_API_KEY",
-        endpoint_help="Prefilled with NVIDIA's cloud NIM endpoint. Get a free key (no credit "
-        "card) at build.nvidia.com — it reaches 100+ open-weight models behind one key.",
+        endpoint_help=(
+            "Prefilled with NVIDIA's hosted NIM endpoint. "
+            "You can replace it with a self-hosted NIM or compatible proxy."
+        ),
     ),
     ProviderDescriptor(
         name="ollama",
