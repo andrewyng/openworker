@@ -598,6 +598,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -699,6 +700,28 @@ pub fn run() {
                     // worked, DMGs didn't. main.tsx guards against drops outside the
                     // composer navigating the page.
                     .disable_drag_drop_handler()
+                    // External links must open in the system browser, never navigate the SPA
+                    // away. This catches full-page navigations the SPA can't intercept —
+                    // notably the webview's context-menu "Open Link" (issue #270), which was
+                    // silently dropped before. Left-clicks are handled in the SPA (openExternal),
+                    // so anything landing here that isn't the app itself goes to the OS.
+                    .on_navigation(|url| {
+                        let scheme = url.scheme();
+                        let host = url.host_str().unwrap_or("");
+                        // The SPA itself: tauri:// (macOS/Linux prod), http://tauri.localhost
+                        // (Windows prod), the Vite devUrl in dev builds. Any other localhost
+                        // URL (e.g. a preview server the agent started) is still external.
+                        let is_dev_spa = cfg!(debug_assertions)
+                            && host == "localhost"
+                            && url.port() == Some(1420);
+                        if scheme == "tauri" || host == "tauri.localhost" || is_dev_spa {
+                            return true;
+                        }
+                        if matches!(scheme, "http" | "https" | "mailto") {
+                            let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
+                        }
+                        false
+                    })
                     .initialization_script(&inject);
             #[cfg(target_os = "macos")]
             {

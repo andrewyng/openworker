@@ -1,6 +1,7 @@
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
+import { openExternal } from "../tauri";
 
 // §34 (UX-016): the agent ends a deliverable turn with plain markdown —
 // [Title](artifact:relative/path) — and the renderer turns it into a chip that opens the
@@ -50,7 +51,21 @@ export function Markdown({ text }: { text: string }) {
               return <ArtifactChip path={href.slice("artifact:".length)} title={title} />;
             }
             return (
-              <a href={href} {...props} target="_blank" rel="noreferrer">
+              <a
+                href={href}
+                {...props}
+                target="_blank"
+                rel="noreferrer"
+                // The desktop webview silently drops target="_blank" (issue #270) — route the
+                // click through the opener plugin instead; in the browser this is window.open.
+                // main.tsx's capture-phase guard handles it first in the desktop shell (and
+                // preventDefaults), so skip when already handled to avoid opening twice.
+                onClick={(e) => {
+                  if (!href || e.defaultPrevented) return;
+                  e.preventDefault();
+                  openExternal(href);
+                }}
+              >
                 {children}
               </a>
             );
