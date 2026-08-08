@@ -507,6 +507,16 @@ button.btn.danger { color: var(--accent); }
 .dd-label { font-size: 13.5px; color: var(--ink); display: flex; justify-content: space-between; align-items: center; }
 .dd-item .chk { color: var(--accent); }
 .dd-desc { font-size: 12px; color: var(--faint); margin-top: 1px; }
+/* Editable dropdown (the composer's model picker): a filter box above the list, plus a
+   keyboard-active row that reads the same as :hover. */
+.dd-filter {
+  width: 100%; box-sizing: border-box; margin-bottom: 4px; padding: 7px 10px;
+  font: inherit; font-size: 13.5px; color: var(--ink);
+  background: var(--paper); border: 1px solid var(--line); border-radius: 8px; outline: none;
+}
+.dd-filter:focus { border-color: var(--accent); }
+.dd-item.active { background: var(--paper); }
+.dd-custom { border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; margin-top: 4px; padding-top: 8px; }
 .send { width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--accent); color: #fff; cursor: pointer; font-size: 16px; }
 .send:disabled { opacity: 0.4; cursor: default; }
 .statusline { max-width: 760px; margin: 6px auto 0; font-size: 12px; color: var(--faint); display: flex; gap: 12px; }
