@@ -22,10 +22,11 @@ Both stores are tiny JSON files mirroring ``SubscriptionStore`` (optional path, 
 
 from __future__ import annotations
 
-import json
 import threading
 from pathlib import Path
 from typing import Optional
+
+from .jsonstore import read_json, write_json_atomic
 
 
 class PersonaConnectionStore:
@@ -38,21 +39,14 @@ class PersonaConnectionStore:
         self._load()
 
     def _load(self) -> None:
-        if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            self._rows = {
-                pid: {str(c): bool(v) for c, v in (row or {}).items()}
-                for pid, row in data.get("personas", {}).items()
-            }
+        data = read_json(self.path, {}) or {}
+        self._rows = {
+            pid: {str(c): bool(v) for c, v in (row or {}).items()}
+            for pid, row in data.get("personas", {}).items()
+        }
 
     def _save(self) -> None:
-        if not self.path:
-            return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"personas": self._rows}, indent=2),
-            encoding="utf-8",
-        )
+        write_json_atomic(self.path, {"personas": self._rows})
 
     # -- queries ----------------------------------------------------------------
     def get(self, persona_id: str) -> dict[str, bool]:
@@ -111,21 +105,14 @@ class SessionConnectionStore:
         self._load()
 
     def _load(self) -> None:
-        if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            self._rows = {
-                sid: {str(c): bool(v) for c, v in (row or {}).items()}
-                for sid, row in data.get("sessions", {}).items()
-            }
+        data = read_json(self.path, {}) or {}
+        self._rows = {
+            sid: {str(c): bool(v) for c, v in (row or {}).items()}
+            for sid, row in data.get("sessions", {}).items()
+        }
 
     def _save(self) -> None:
-        if not self.path:
-            return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"sessions": self._rows}, indent=2),
-            encoding="utf-8",
-        )
+        write_json_atomic(self.path, {"sessions": self._rows})
 
     # -- queries ----------------------------------------------------------------
     def get(self, session_id: str) -> dict[str, bool]:

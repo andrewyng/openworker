@@ -15,11 +15,12 @@ clears its records (same contract as subscriptions).
 
 from __future__ import annotations
 
-import json
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
+
+from .jsonstore import read_json, write_json_atomic
 
 
 @dataclass
@@ -37,18 +38,11 @@ class MentionSessionStore:
         self._load()
 
     def _load(self) -> None:
-        if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            self._threads = [MentionThread(**raw) for raw in data.get("threads", [])]
+        data = read_json(self.path, {}) or {}
+        self._threads = [MentionThread(**raw) for raw in data.get("threads", [])]
 
     def _save(self) -> None:
-        if not self.path:
-            return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"threads": [asdict(t) for t in self._threads]}, indent=2),
-            encoding="utf-8",
-        )
+        write_json_atomic(self.path, {"threads": [asdict(t) for t in self._threads]})
 
     # -- mutations --------------------------------------------------------------
     def set(self, thread_target: str, session_id: str, channel: str) -> MentionThread:

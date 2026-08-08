@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from .jsonstore import read_json, write_json_atomic
+
 KIND_APPROVAL = "approval"
 KIND_QUESTION = "question"
 KIND_NOTIFICATION = "notification"
@@ -105,19 +107,14 @@ class InboxStore:
 
     # -- persistence ------------------------------------------------------------
     def _load(self) -> None:
-        if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            for raw in data.get("items", []):
-                item = InboxItem(**raw)
-                self._items[item.id] = item
+        data = read_json(self.path, {}) or {}
+        for raw in data.get("items", []):
+            item = InboxItem(**raw)
+            self._items[item.id] = item
 
     def _save(self) -> None:
-        if not self.path:
-            return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"items": [asdict(i) for i in self._items.values()]}, indent=2),
-            encoding="utf-8",
+        write_json_atomic(
+            self.path, {"items": [asdict(i) for i in self._items.values()]}
         )
 
     # -- adding -----------------------------------------------------------------
