@@ -11,12 +11,19 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV="$ROOT/.venv"
 
 python3 -m venv "$VENV"
+# venv puts executables in Scripts/ on Windows (Git Bash) and bin/ on Unix/WSL.
+if [ -d "$VENV/Scripts" ]; then BIN="$VENV/Scripts"; else BIN="$VENV/bin"; fi
+
 # The coworker package (server, engine, connectors) + inbound-messaging extras.
 # aisuite comes in as a regular dependency (git-pinned in pyproject.toml until
 # the next PyPI release).
-"$VENV/bin/pip" install --quiet --upgrade pip
-"$VENV/bin/pip" install --quiet -e "$ROOT[messaging,dev]"
+# Use `python -m pip` (not the pip launcher) so pip can upgrade itself on
+# Windows, where the running pip.exe is locked against modification.
+"$BIN/python" -m pip install --quiet --upgrade pip
+# Install from "." inside $ROOT rather than an absolute path: under Git Bash the
+# MSYS-style $ROOT (/h/...) is not resolvable by the native Windows pip.
+(cd "$ROOT" && "$BIN/python" -m pip install --quiet -e ".[messaging,dev]")
 
-"$VENV/bin/python" -c 'import aisuite, coworker' # fail loudly if the wiring broke
+"$BIN/python" -c 'import aisuite, coworker' # fail loudly if the wiring broke
 echo "Ready: $VENV"
-echo "  server: $VENV/bin/openworker-server --cwd /path/to/your/project --port 8765"
+echo "  server: $BIN/openworker-server --cwd /path/to/your/project --port 8765"
