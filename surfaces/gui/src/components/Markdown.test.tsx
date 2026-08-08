@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
 
-afterEach(cleanup);
+vi.mock("../tauri", () => ({ openExternal: vi.fn() }));
+const { openExternal } = await import("../tauri");
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
 // §34 (UX-016): [Title](artifact:path) renders as a chip that opens the artifact viewer via
 // a window event; ordinary links keep the open-externally treatment.
@@ -28,6 +34,13 @@ describe("Markdown artifact links", () => {
     const a = container.querySelector("a")!;
     expect(a.getAttribute("target")).toBe("_blank");
     expect(a.getAttribute("href")).toBe("https://example.com");
+  });
+
+  it("clicking an ordinary link opens it via openExternal (default browser)", () => {
+    const { container } = render(<Markdown text="see [the docs](https://example.com)" />);
+    const a = container.querySelector("a")!;
+    fireEvent.click(a);
+    expect(openExternal).toHaveBeenCalledWith("https://example.com");
   });
 
   it("chip title falls back to the filename when the link text is empty", () => {
