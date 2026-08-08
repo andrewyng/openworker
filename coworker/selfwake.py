@@ -156,20 +156,37 @@ def selfwake_tools(store: WakeStore, session_id: str) -> list:
     """Tools an agent calls to schedule its own resumption."""
 
     def sleep_for(seconds: int, note: str = "") -> dict:
-        """Suspend and wake this session after `seconds`. Use for polling/waiting without
-        burning context while idle."""
+        """Suspend this session and wake it after `seconds`. Use for polling/waiting
+        without burning context while idle.
+
+        IMPORTANT: after this call succeeds, END YOUR TURN — stop producing output
+        and do not continue the task. The waiting happens while you are suspended;
+        a wake message will start your next turn. Calling this and then continuing
+        to work defeats the wait (your own wake will arrive stale)."""
         w = store.add_timer(
             session_id, _now() + timedelta(seconds=int(seconds)), note=note
         )
-        return {"ok": True, "wake_id": w.id, "fire_at": w.fire_at}
+        return {
+            "ok": True,
+            "wake_id": w.id,
+            "fire_at": w.fire_at,
+            "next": "wake scheduled — end your turn now; you will be re-invoked at fire_at",
+        }
 
     def sleep_until(when_iso: str, note: str = "") -> dict:
-        """Suspend and wake this session at an ISO-8601 timestamp."""
+        """Suspend this session and wake it at an ISO-8601 timestamp. After this call
+        succeeds, END YOUR TURN — stop producing output; a wake message will start
+        your next turn (see sleep_for)."""
         when = datetime.fromisoformat(when_iso)
         if when.tzinfo is None:
             when = when.replace(tzinfo=timezone.utc)
         w = store.add_timer(session_id, when, note=note)
-        return {"ok": True, "wake_id": w.id, "fire_at": w.fire_at}
+        return {
+            "ok": True,
+            "wake_id": w.id,
+            "fire_at": w.fire_at,
+            "next": "wake scheduled — end your turn now; you will be re-invoked at fire_at",
+        }
 
     def wake_on(job_id: str, note: str = "") -> dict:
         """Suspend and wake this session when a backgrounded job (`job_id`) completes."""
