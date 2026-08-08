@@ -46,6 +46,30 @@ def test_ops_persona_composes_knowledge_toolset(tmp_path):
     assert "read_file_lines" in _names(a, ctx)  # multi-root knowledge files
 
 
+def test_sales_persona_composes_knowledge_toolset(tmp_path):
+    reg = PersonaRegistry()
+    ctx = _ctx(tmp_path)
+    # Sales uses the same capability list as Cowork (files/search/shell/todo).
+    assert _names(reg.agent("sales"), ctx) == _names(cowork_agent(), ctx)
+    a = reg.agent("sales")
+    assert a.family == "knowledge" and a.messaging and a.connectors
+
+
+def test_sales_persona_recommends_only_cataloged_connectors():
+    # Every connector the manifest recommends must exist in the descriptor catalog
+    # (real or placeholder), so the GUI can render its brand badge.
+    from coworker.connectors.descriptors import DESCRIPTORS
+    from coworker.personas.manifest import load_manifest_file
+    from pathlib import Path
+
+    manifest = load_manifest_file(
+        Path("coworker/personas/builtin/sales.md"), builtin=True
+    )
+    known = {d.name for d in DESCRIPTORS}
+    refs = [r.ref for r in manifest.recommends if r.kind == "connector"]
+    assert refs and all(ref in known for ref in refs)
+
+
 def test_code_keeps_single_root_file_tools(tmp_path):
     reg = PersonaRegistry()
     names = _names(reg.agent("code"), _ctx(tmp_path))
