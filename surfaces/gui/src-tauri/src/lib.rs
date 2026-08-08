@@ -755,6 +755,16 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building the OpenWorker desktop app")
         .run(|app, event| {
+            // macOS: clicking the Dock icon fires Reopen. Close-to-tray only HIDES the main
+            // window (see on_window_event above), and Tauri does nothing on Reopen by default,
+            // so the app activates (menu bar switches) but no window appears (#248). Reshow it —
+            // same path as the tray "Open" item.
+            #[cfg(target_os = "macos")]
+            {
+                if let RunEvent::Reopen { .. } = &event {
+                    show_main(app);
+                }
+            }
             // Also on Exit: belt-and-suspenders in case a quit path reaches teardown without
             // a preceding ExitRequested (observed with macOS Cmd+Q under the tray setup).
             if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
