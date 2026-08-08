@@ -24,7 +24,6 @@ import { isProjectScoped, shortPersonaName } from "../personaScope";
 import { ConnectorIcon } from "../connectors/ConnectorIcon";
 import { Icon, type IconName } from "./Icon";
 import { PersonaGlyph, personaGlyph } from "./personaIcon";
-import { SearchModal } from "./SearchModal";
 import { baseName } from "../paths";
 import { showPersonas } from "../flags";
 
@@ -146,6 +145,9 @@ interface Props {
   collapsed?: boolean;
   onCollapse?: () => void;
   onPeekLeave?: () => void;
+  // Opens the app-level SearchModal. Kept out of this tree so the collapsed sidebar's
+  // `transform` cannot become the containing block for `position: fixed` (#282).
+  onOpenSearch?: () => void;
 }
 
 // Compact age for project session rows: "now" / "5m" / "6h" / "3d" / "2w" / "4mo" / "2y".
@@ -171,7 +173,6 @@ const compactAge = (iso?: string | null): string => {
 // Sessions shown per group before "Show more" comes from Settings (sessions_peek, default 5).
 
 export function Sidebar(props: Props) {
-  const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
   // The account row (§26): cloud sign-in status drives the avatar/name/dot; refreshed on
   // focus and whenever the menu opens (sign-in completes out-of-band in the browser).
@@ -1014,11 +1015,16 @@ export function Sidebar(props: Props) {
       />
 
       {/* Search: a borderless nav-style entry (not a boxed input) that opens the command-palette
-          SearchModal over the whole app. Matches the bottom-nav rows to reduce the boxy look. */}
+          SearchModal over the whole app. Matches the bottom-nav rows to reduce the boxy look.
+          Opens via App so the palette is never mounted under the transformed collapsed sidebar. */}
       <div className="px-2.5 mt-1">
         <button
           className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left text-muted hover:bg-paper hover:text-ink"
-          onClick={() => setSearchModalOpen(true)}
+          onClick={() => {
+            // Dismiss a hover-peek first so the floating sidebar doesn't sit above the palette.
+            props.onPeekLeave?.();
+            props.onOpenSearch?.();
+          }}
         >
           <Icon name="search" size={15} className="shrink-0" /> Search
         </button>
@@ -1270,17 +1276,6 @@ export function Sidebar(props: Props) {
         </div>
       </div>
 
-      {searchModalOpen && (
-        <SearchModal
-          sessions={props.sessions}
-          personas={personas ?? undefined}
-          onSelect={(id, ws, ag) => {
-            setSearchModalOpen(false);
-            props.onSelectSession(id, ws, ag);
-          }}
-          onClose={() => setSearchModalOpen(false)}
-        />
-      )}
     </div>
   );
 }
