@@ -1837,8 +1837,9 @@ class SessionManager:
                 return self._ollama_alive()
             return self._provider_configured(provider)
 
-        selectable = [m for m in self._curated_models() if _selectable(m)]
-        if self.model not in selectable:
+        ready_models = [m for m in self._curated_models() if _selectable(m)]
+        selectable = list(ready_models)
+        if self.model not in ready_models:
             selectable.insert(0, self.model)
         from ..providers.matrix import model_context_windows, model_labels
 
@@ -1846,6 +1847,10 @@ class SessionManager:
             "provider": "openai",
             "model": self.model,
             "models": selectable,
+            # Models that can run right now.  `models` also retains the active default
+            # when its provider is unavailable, so the picker can explain the "No model"
+            # state; consumers must use this separate list for a session-selected model.
+            "ready_models": ready_models,
             # Curated-matrix display names ({full id → "GLM-5.2 · via Together"}) so every
             # picker shows human labels; custom models absent here render their raw id.
             "model_labels": model_labels(),
