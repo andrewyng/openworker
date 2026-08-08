@@ -88,6 +88,31 @@ def _restrict_to_user(path: Path, *, is_dir: bool) -> None:
     os.chmod(path, 0o700 if is_dir else 0o600)
 
 
+def _write_restricted(tmp: Path, content: str) -> None:
+    """Write `content` to `tmp`, never letting it exist at default (world/group-readable)
+    permissions.
+
+    POSIX: create the fd with mode 0600 up front via `os.open` — there's no window where
+    the file exists with the umask's default mode, unlike `Path.write_text()` followed by
+    a separate `chmod`. Windows has no creation-time mode bits, so we still fall back to a
+    post-write ACL restriction there (best-effort, same as before).
+    """
+    if _IS_WINDOWS:
+        tmp.write_text(content, encoding="utf-8")
+        _restrict_to_user(tmp, is_dir=False)
+        return
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def write_private_text(path: str | Path, content: str) -> Path:
     """Atomically write a user-only text file using the SecretStore's OS protections."""
     target = Path(path).expanduser()
@@ -97,8 +122,7 @@ def write_private_text(path: str | Path, content: str) -> Path:
     except OSError:
         pass
     tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    _restrict_to_user(tmp, is_dir=False)
+    _write_restricted(tmp, content)
     os.replace(tmp, target)
     return target
 
@@ -188,6 +212,5 @@ class SecretStore:
         except OSError:
             pass
         tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(store, indent=2), encoding="utf-8")
-        _restrict_to_user(tmp, is_dir=False)
+        _write_restricted(tmp, json.dumps(store, indent=2))
         os.replace(tmp, self.path)
