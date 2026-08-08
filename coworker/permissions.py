@@ -20,9 +20,88 @@ from typing import Any, Optional
 # (`` ` `` `$(`), process substitution / grouping (`(`), and newlines.
 _SHELL_OPERATORS = (";", "&", "|", ">", "<", "`", "$(", "(", "\n", "\r")
 
+# find(1) flags that run an arbitrary helper. Shell-operator rejection already blocks the
+# classic `… -exec … ;` form (`;` is an operator), but `… -exec … {} +` has no shell
+# metacharacters — so a bare allowlisted `find` would otherwise auto-run helpers.
+_FIND_HELPER_FLAGS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+
+# find(1) primaries/options that consume the next argv token as their argument. Used so a
+# pattern like `find . -name -exec` does not treat `-exec` as helper execution.
+_FIND_UNARY_OPTS = frozenset(
+    {
+        "-name",
+        "-iname",
+        "-lname",
+        "-ilname",
+        "-path",
+        "-ipath",
+        "-wholename",
+        "-iwholename",
+        "-regex",
+        "-iregex",
+        "-type",
+        "-xtype",
+        "-user",
+        "-group",
+        "-perm",
+        "-size",
+        "-links",
+        "-maxdepth",
+        "-mindepth",
+        "-printf",
+        "-fprintf",
+        "-fls",
+        "-fprint",
+        "-fprint0",
+        "-newer",
+        "-anewer",
+        "-cnewer",
+        "-uid",
+        "-gid",
+        "-context",
+        "-fstype",
+    }
+)
+
 
 def _has_shell_operators(command: str) -> bool:
     return any(op in command for op in _SHELL_OPERATORS)
+
+
+def _find_helper_flags_used(argv: list[str]) -> set[str]:
+    """Helper-exec flags used as find primaries (not as arguments to other primaries)."""
+    used: set[str] = set()
+    i = 1  # skip program name
+    while i < len(argv):
+        tok = argv[i]
+        if tok in _FIND_HELPER_FLAGS:
+            used.add(tok)
+            i += 1
+            while i < len(argv) and argv[i] not in {"+", ";"}:
+                i += 1
+            if i < len(argv):
+                i += 1
+            continue
+        if tok in _FIND_UNARY_OPTS or tok.startswith("-newer"):
+            i += 2
+            continue
+        i += 1
+    return used
+
+
+def _unauthorized_find_helper(argv: list[str], prefix: list[str]) -> bool:
+    """True when argv uses find helper-exec flags the allowlist entry did not itself name.
+
+    A bare allowlisted `find` does not authorize `-exec`/`-execdir`/`-ok`/`-okdir` unless
+    the entry itself names that flag (e.g. `find . -exec`). Other find predicates are
+    unchanged by this check.
+    """
+    prog = Path(argv[0]).name.lower()
+    if prog not in {"find", "gfind"}:
+        return False
+    used = _find_helper_flags_used(argv)
+    authorized = {t for t in prefix if t in _FIND_HELPER_FLAGS}
+    return bool(used - authorized)
 
 from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
     SHELL_TOOL,
@@ -219,7 +298,8 @@ class PermissionEngine:
         # carrying shell operators (chaining/redirection/substitution) up front, then match
         # the parsed argv against each entry — the entry's own tokens must be an exact
         # prefix of the command's tokens (so `git status` matches `git status -s` but never
-        # `git statusfoo` or a bare `git`).
+        # `git statusfoo` or a bare `git`). Also reject program-native helper execution
+        # that the entry did not authorize (find -exec / -execdir / -ok / -okdir).
         if _has_shell_operators(command):
             return False
         try:
@@ -233,6 +313,9 @@ class PermissionEngine:
                 prefix = shlex.split(allowed)
             except ValueError:
                 continue
-            if prefix and argv[: len(prefix)] == prefix:
-                return True
+            if not prefix or argv[: len(prefix)] != prefix:
+                continue
+            if _unauthorized_find_helper(argv, prefix):
+                continue
+            return True
         return False

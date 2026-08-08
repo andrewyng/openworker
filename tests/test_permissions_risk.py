@@ -149,3 +149,53 @@ def test_shell_commands_not_auto_allowed_by_default(tmp_path):
     ):
         d = eng.evaluate("run_shell", {"command": cmd}, None)
         assert not d.allowed and d.needs_user, cmd
+
+
+@pytest.mark.parametrize(
+    "allowed,command",
+    [
+        ("find", "find . -exec touch /tmp/pwned {} +"),
+        ("find", "find /tmp -execdir sh -c 'id' {} +"),
+        ("find", "find . -ok rm {} +"),
+        ("find", "find . -okdir echo {} +"),
+        # Path-qualified binary: allowlist entry must match argv[0] for the helper
+        # check to run (prefix match happens first).
+        ("/usr/bin/find", "/usr/bin/find . -exec cat {} +"),
+    ],
+)
+def test_allowlisted_find_rejects_helper_execution(tmp_path, allowed, command):
+    # Bare allowlisted `find` does not authorize helper-exec flags. The `{} +` form has
+    # no shell metacharacters, so operator rejection alone is not enough.
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=[allowed])
+    d = eng.evaluate("run_shell", {"command": command}, None)
+    assert not d.allowed and d.needs_user, command
+
+
+def test_allowlisted_find_still_allows_inspection(tmp_path):
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=["find"])
+    assert eng.evaluate(
+        "run_shell", {"command": "find . -name '*.py'"}, None
+    ).allowed
+    assert eng.evaluate("run_shell", {"command": "find . -type f"}, None).allowed
+    # `-exec` as a -name pattern is not helper execution.
+    assert eng.evaluate(
+        "run_shell", {"command": "find . -name -exec"}, None
+    ).allowed
+    assert eng.evaluate(
+        "run_shell", {"command": "find . -name '-ok'"}, None
+    ).allowed
+
+
+def test_find_helper_allowed_only_when_entry_names_flag(tmp_path):
+    # Opting into helper execution requires naming the flag in the allowlist entry.
+    eng = PermissionEngine(
+        workspace_root=tmp_path, allowed_commands=["find . -exec"]
+    )
+    assert eng.evaluate(
+        "run_shell", {"command": "find . -exec touch /tmp/x {} +"}, None
+    ).allowed
+    # A different helper flag is still not covered by `-exec`.
+    d = eng.evaluate(
+        "run_shell", {"command": "find . -execdir touch /tmp/x {} +"}, None
+    )
+    assert not d.allowed and d.needs_user
