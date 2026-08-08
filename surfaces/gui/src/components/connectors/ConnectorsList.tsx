@@ -131,6 +131,7 @@ function statusLine(c: Connector): string {
   }
   if ((c.accounts?.length ?? 0) > 1) return `${c.accounts!.length} accounts`;
   if ((c.portals?.length ?? 0) > 1) return `${c.portals!.length} portals`;
+  if (c.mcp && c.auth === "none") return "Local app";
   if (c.auth === "none") return "Built in";
   return c.account || "Connected";
 }
@@ -151,4 +152,3 @@ function healthChip(c: Connector, slack: SlackStatus | null) {
   if (c.two_way && c.connected) return <span className={CHIP_OK}>● Live</span>;
   return <span className={CHIP_OK}>● Ready</span>;
 }
-

@@ -54,6 +54,14 @@ ABOUT: dict[str, str] = {
     "asana": "Keep up with your Asana work — search and read tasks and "
     "projects, create tasks, and comment. Connects with a personal access "
     "token from the Asana developer console.",
+    "inwise": "Requires the free open-source Inwise desktop app, which records "
+    "and transcribes your meetings locally. Once it's installed and running, "
+    "the agent can search your meetings, read action items, look up the people "
+    "you work with, and prepare a source-linked agenda before a 1:1 or an "
+    "upcoming meeting. The connection is local — the app's own server on this "
+    "computer, no account and no sign-in — and read-only. What the agent reads still "
+    "reaches your AI provider like anything else in a session, so reading a full "
+    "transcript is a separate tool you approve on its own.",
 }
 
 # What connecting actually grants, as short honest bullets. Write powers always
@@ -111,6 +119,13 @@ ACCESS: dict[str, list[str]] = {
     "asana": [
         "Reads and searches tasks your account can see.",
         "Creates tasks as you.",
+    ],
+    "inwise": [
+        "Needs the free Inwise desktop app installed and running on this computer.",
+        "Reads your meetings, action items, people, and upcoming meetings from it.",
+        "Talks only to the app's local server — no account, no tokens, nothing hosted.",
+        "Reading a full transcript is its own tool, so you approve verbatim text separately.",
+        "Read-only — never writes to Inwise.",
     ],
     "confluence": [
         "Reads and searches spaces and pages your account can see.",

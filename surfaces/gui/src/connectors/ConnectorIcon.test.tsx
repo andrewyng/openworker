@@ -34,6 +34,17 @@ describe("ConnectorIcon", () => {
     expect(el.style.getPropertyValue("--brand")).toBe("#6b7280");
   });
 
+  it("renders the supplied full-color image for Inwise", () => {
+    const { container } = render(
+      <ConnectorIcon connector={{ logo: "inwise", brand_color: "#0F738C" }} />,
+    );
+    const el = container.querySelector('[data-logo="inwise"]') as HTMLElement;
+    const image = el.querySelector("img");
+    expect(image).not.toBeNull();
+    expect(image?.getAttribute("src")).toContain("inwise-logo");
+    expect(image?.getAttribute("aria-hidden")).toBe("true");
+  });
+
   it("flags near-black marks so dark-mode CSS can compensate", () => {
     // GitHub / Notion near-black → flagged; HubSpot orange → not.
     expect(isDarkMark("#1f2328")).toBe(true);
