@@ -547,6 +547,20 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "Create a Linear issue.",
     ),
     ConnectorToolDef(
+        "linear",
+        "linear_update_issue",
+        "Update issue",
+        "write",
+        "Update a Linear issue.",
+    ),
+    ConnectorToolDef(
+        "linear",
+        "linear_add_comment",
+        "Add comment",
+        "write",
+        "Add a comment to a Linear issue.",
+    ),
+    ConnectorToolDef(
         "gitlab",
         "gitlab_search",
         "Search GitLab",
