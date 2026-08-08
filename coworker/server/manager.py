@@ -2854,9 +2854,16 @@ class SessionManager:
             item = self.inbox.get(item_id)
             if item is None:
                 return False
+            # Plan and directory items need a structured JSON payload (approved/granted,
+            # mode/path/writable) that a bare chat reply cannot provide. The mirrored
+            # message already says "(Open the app to respond.)" and buttons_for returns
+            # [] for these kinds — honour that by leaving them pending instead of
+            # consuming them into a silent refusal.
+            if item.kind in {"plan", "directory"}:
+                return False
             if (
                 getattr(event.source, "platform", "") == "slack"
-                and item.kind in {"approval", "directory", "plan"}
+                and item.kind in {"approval", "plan"}
             ):
                 actor_id = str(getattr(event.source, "user_id", "") or "")
                 if not self._slack_actor_owns_item(
