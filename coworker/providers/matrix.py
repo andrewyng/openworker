@@ -109,6 +109,17 @@ MATRIX: dict[str, ModelEntry] = {
     "mistral:mistral-large-latest": ModelEntry(
         "Mistral Large · Mistral", _AGENTIC, 128_000
     ),
+    # SambaNova hosted models (ids + context lengths verified against SambaNova's
+    # catalog 2026-07-29). Production tier:
+    "sambanova:Meta-Llama-3.3-70B-Instruct": ModelEntry(
+        "Llama 3.3 70B · SambaNova", _AGENTIC, 128_000
+    ),
+    "sambanova:MiniMax-M2.7": ModelEntry("MiniMax M2.7 · SambaNova", _AGENTIC, 192_000),
+    "sambanova:DeepSeek-V3.1": ModelEntry("DeepSeek V3.1 · SambaNova", _AGENTIC, 128_000),
+    "sambanova:gpt-oss-120b": ModelEntry("GPT OSS 120B · SambaNova", _AGENTIC, 128_000),
+    # Preview tier (evaluation only per SambaNova; may be withdrawn at short notice):
+    "sambanova:DeepSeek-V3.2": ModelEntry("DeepSeek V3.2 · SambaNova", _AGENTIC, 32_000),
+    "sambanova:gemma-4-31B-it": ModelEntry("Gemma 4 31B · SambaNova", _AGENTIC, 128_000),
     # -- resellers (their model namespaces, verbatim) -----------------------------
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
     "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together", _AGENTIC, 128_000),

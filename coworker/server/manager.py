@@ -1568,6 +1568,14 @@ class SessionManager:
         "qwen": ["qwen3-max", "qwen3-coder-plus", "qwen-plus"],
         "xai": ["grok-4.3", "grok-4"],
         "mistral": ["mistral-large-latest", "mistral-small-latest"],
+        "sambanova": [
+            "Meta-Llama-3.3-70B-Instruct",
+            "MiniMax-M2.7",
+            "DeepSeek-V3.1",
+            "gpt-oss-120b",
+            "DeepSeek-V3.2",
+            "gemma-4-31B-it",
+        ],
     }
 
     def _suggested_models(self, name: str) -> list[str]:
