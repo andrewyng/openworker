@@ -134,16 +134,24 @@ class PermissionEngine:
             )
 
         # Path scoping for writes that name a path (all modes): must land in a writable root.
-        if is_write:
-            path = arguments.get("path")
-            if path is not None and not self._under_writable_root(path):
-                return Decision(False, f"path is not in a writable directory: {path}")
+        # Some write tools (apply_patch, apply_unified_diff) carry their target path(s)
+        # embedded inside a diff/patch string rather than a top-level "path" argument, so this
+        # check can't verify them here — write_unverifiable_target tracks that case so the
+        # allowlist shortcuts below don't silently bypass approval for a target we never
+        # actually looked at (the underlying file toolkit still enforces the same shared roots
+        # as a backstop, but the permission engine's own decision should not claim "allowed"
+        # for a target it didn't check).
+        path = arguments.get("path") if is_write else None
+        write_unverifiable_target = is_write and path is None
+        if is_write and path is not None and not self._under_writable_root(path):
+            return Decision(False, f"path is not in a writable directory: {path}")
 
         # Non-consequential tools always run.
         if not consequential:
             return Decision(True, "low risk")
 
-        # Full access.
+        # Full access. The underlying tool implementations still enforce the same shared roots
+        # independently, so this is safe even for a write_unverifiable_target call.
         if self.mode is Mode.AUTO:
             return Decision(True, "full access")
 
@@ -154,7 +162,11 @@ class PermissionEngine:
                 return Decision(True, "command on allowlist")
             if command and command in self.session_allow_commands:
                 return Decision(True, "command allowed for session")
-        if tool_name in self.session_allow_tools and not is_connector:
+        if (
+            tool_name in self.session_allow_tools
+            and not is_connector
+            and not write_unverifiable_target
+        ):
             return Decision(True, "tool allowed for session")
 
         # Task-scoped standing rules (§25): tool + exact target, owned by the automation.
@@ -171,7 +183,11 @@ class PermissionEngine:
                 return Decision(True, f"allowed by standing rule: {rule}", rule=rule)
 
         # Custom mode auto-approves the configured tools.
-        if self.mode is Mode.CUSTOM and tool_name in self.auto_allow_tools:
+        if (
+            self.mode is Mode.CUSTOM
+            and tool_name in self.auto_allow_tools
+            and not write_unverifiable_target
+        ):
             return Decision(True, "auto-allowed by config")
 
         # Otherwise: ask the user.
