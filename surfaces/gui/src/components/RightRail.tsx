@@ -182,15 +182,14 @@ export function RightRail({
             onToggle={() => setOpen({ ...open, artifacts: !open.artifacts })}
             action={
               <>
-                {artifacts.length > 0 && (
-                  <button
-                    className="rail-mini-btn"
-                    onClick={(e) => { e.stopPropagation(); revealArtifact(sessionId, artifacts[0].path, "reveal"); }}
-                    title="Show the folder where these files are saved"
-                  >
-                    <Icon name="folder" size={13} />
-                  </button>
-                )}
+                <button
+                  className="rail-mini-btn"
+                  onClick={(e) => { e.stopPropagation(); revealArtifact(sessionId, "", "reveal"); }}
+                  title="Open session working folder"
+                  aria-label="Open session working folder"
+                >
+                  <Icon name="folder" size={13} />
+                </button>
                 <button className="rail-mini-btn" onClick={(e) => { e.stopPropagation(); refreshArtifacts(); }} title="Refresh artifacts"><Icon name="refresh" size={13} /></button>
               </>
             }
