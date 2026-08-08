@@ -31,7 +31,7 @@ _DENY_WORDS = re.compile(r"\b(?:deny|denied|reject|rejected|no)\b")
 @dataclass
 class InboxBinding:
     name: str
-    channel: Optional[str] = None  # None (in-app only) | "slack" | "telegram"
+    channel: Optional[str] = None  # None (in-app only) | "slack" | "telegram" | "weixin"
     target: str = ""  # channel id / chat id for the binding
 
 

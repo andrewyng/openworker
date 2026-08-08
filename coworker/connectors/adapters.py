@@ -477,4 +477,11 @@ def make_adapter(
         return GitHubRelayAdapter(
             hub, installs=installs, token_client=github_token_client
         )
+    if platform == "weixin" and profile.get("bot_token"):
+        from .weixin_adapter import WeixinAdapter
+
+        return WeixinAdapter(
+            profile["bot_token"],
+            base_url=profile.get("baseurl") or profile.get("base_url") or None,
+        )
     return None

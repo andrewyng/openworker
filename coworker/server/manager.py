@@ -2920,8 +2920,18 @@ class SessionManager:
         by self-wake and channel-subscription delivery. `source` is the display-only MessageSource
         sidecar for connector messages (framed `message` stays the model-facing text).
         """
+        # Background delivery often targets a Cowork scratch session that was never opened as
+        # Code. get_engine defaults to agent="code", which returns None without a repo workspace
+        # — WeChat/Telegram DMs then vanished silently. Prefer the in-memory engine, then a
+        # recorded session, then Cowork (knowledge family auto-provisions scratch).
         engine = self.get_engine(session_id)
         if engine is None:
+            engine = self.get_engine(session_id, agent="cowork")
+        if engine is None:
+            logger.warning("deliver_to_session: no engine for %s", session_id)
+            self.unrouted.record(
+                session_id, "-", message, reason="no engine for DM session"
+            )
             return
         if not self.try_mark_running(session_id):
             engine.queue_steering(message, source)

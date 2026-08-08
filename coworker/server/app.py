@@ -428,16 +428,24 @@ def create_app(manager: SessionManager) -> FastAPI:
         connector = str(body.get("connector", "")).strip()
         if not connector:
             return {"ok": False, "error": "connector required"}
+        enabled = bool(body.get("enabled", False))
         if body.get("clear"):
             manager.session_connections.clear(session_id, connector)
         else:
-            manager.session_connections.set(
-                session_id, connector, bool(body.get("enabled", False))
-            )
+            manager.session_connections.set(session_id, connector, enabled)
+            # Turning on a DM-capable messaging connector without a designated DM session
+            # used to silently park every inbound (reason: "no DM session designated") —
+            # WeChat/Telegram users hit this constantly after enabling Access → WeChat.
+            # Claim this session as the DM route when none is set yet (same surface the
+            # Inbox "DM routing" card uses). Slack channel traffic still uses subscriptions.
+            if enabled and connector in ("weixin", "telegram", "slack"):
+                if not manager.dm_session():
+                    manager.set_dm_session(session_id)
         persona = str(body.get("persona", "")) or None
         return {
             "ok": True,
             "connections": manager.session_connections_view(session_id, persona),
+            "dm_session": manager.dm_session(),
         }
 
     @app.post("/v1/personas/install")
@@ -854,6 +862,60 @@ def create_app(manager: SessionManager) -> FastAPI:
         if result.get("ok"):
             await _refresh_listeners_if_two_way(name)
         return result
+
+    @app.post("/v1/connectors/weixin/qrcode")
+    async def weixin_qrcode() -> dict[str, Any]:
+        """Start a WeChat ClawBot (iLink) QR login — returns poll token + PNG data URL."""
+        from ..connectors import weixin_ilink as ilink
+
+        try:
+            data = await asyncio.to_thread(ilink.get_bot_qrcode)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        if not data.get("qrcode"):
+            return {"ok": False, "error": "iLink did not return a qrcode"}
+        if not data.get("qrcode_data_url"):
+            return {"ok": False, "error": "iLink did not return qrcode_img_content"}
+        return {
+            "ok": True,
+            "qrcode": data["qrcode"],
+            "qrcode_img_content": data.get("qrcode_img_content") or "",
+            "qrcode_data_url": data.get("qrcode_data_url") or "",
+            # Alias for older GUI builds that read qrcode_url as <img src>.
+            "qrcode_url": data.get("qrcode_data_url") or "",
+        }
+
+    @app.post("/v1/connectors/weixin/qrcode/status")
+    async def weixin_qrcode_status(body: dict) -> dict[str, Any]:
+        """Poll QR status; on confirmed, save credentials and reload the gateway."""
+        from ..connectors import weixin_ilink as ilink
+        from ..connectors.setup import save_weixin_qr_credentials
+
+        qrcode = (body or {}).get("qrcode") if isinstance(body, dict) else None
+        if not qrcode:
+            return {"ok": False, "error": "missing qrcode"}
+        try:
+            status = await asyncio.to_thread(ilink.get_qrcode_status, str(qrcode))
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        st = status.get("status") or "wait"
+        out: dict[str, Any] = {"ok": True, "status": st}
+        if st == "confirmed" and status.get("bot_token"):
+            saved = await asyncio.to_thread(
+                lambda: save_weixin_qr_credentials(
+                    manager.secrets,
+                    bot_token=status["bot_token"],
+                    ilink_bot_id=status.get("ilink_bot_id") or "",
+                    ilink_user_id=status.get("ilink_user_id") or "",
+                    baseurl=status.get("baseurl") or "",
+                )
+            )
+            if not saved.get("ok"):
+                return {"ok": False, "error": saved.get("error") or "save failed", "status": st}
+            await _refresh_listeners_if_two_way("weixin")
+            out["connected"] = True
+            out["account"] = saved.get("account")
+        return out
 
     @app.post("/v1/connectors/{name}/mcp-connect")
     async def connector_mcp_connect(name: str) -> dict[str, Any]:
