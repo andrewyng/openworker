@@ -54,7 +54,9 @@ Under the hood:
 
 Model access is yours: pick a provider, paste your key, switch anytime. Supported out of the box:
 
-**OpenAI · Anthropic · Google Gemini · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI)** - plus open-weight models via **Together** and **Fireworks**, and fully local models via **Ollama**.
+**OpenAI · Anthropic · Google Gemini · NVIDIA NIM · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI)** - plus open-weight models via **Together** and **Fireworks**, and fully local models via **Ollama**.
+
+NVIDIA NIM provides hosted OpenAI-compatible model endpoints, including free development endpoints for selected models.
 
 A curated model list marks what we've verified for tool-calling work. Adding any model string works at your own risk.
 

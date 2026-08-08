@@ -550,6 +550,21 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="z-ai/glm-5.2",
         env_key="OPENROUTER_API_KEY",
     ),
+    # NVIDIA NIM: NVIDIA's own hosted catalog of 100+ open-weight models (its own Nemotron
+    # line alongside Llama, DeepSeek, Qwen, Mistral, and others), all behind one key and one
+    # OpenAI-compatible endpoint. Free API keys (no credit card) are issued at build.nvidia.com,
+    # which is what makes this worth listing next to the paid resellers above.
+    _compat(
+        "nvidia",
+        "NVIDIA NIM",
+        base_url="https://integrate.api.nvidia.com/v1",
+        recommended_model="nvidia/nemotron-3-nano-30b-a3b",
+        env_key="NVIDIA_API_KEY",
+        endpoint_help=(
+            "Prefilled with NVIDIA's hosted NIM endpoint. "
+            "You can replace it with a self-hosted NIM or compatible proxy."
+        ),
+    ),
     ProviderDescriptor(
         name="ollama",
         title="Ollama (local models)",

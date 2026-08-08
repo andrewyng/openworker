@@ -25,7 +25,7 @@ const HEALTH = { status: "ok", default_workspace: null, model: "anthropic:claude
 const SETTINGS = {
   provider: "openai",
   model: "anthropic:claude-opus-4-8",
-  models: ["anthropic:claude-opus-4-8", "gpt-5.5", "gpt-4o", "gpt-4o-mini", "o3-mini"],
+   models: ["anthropic:claude-opus-4-8", "nvidia:nvidia/nemotron-3-nano-30b-a3b", "gpt-5.5", "gpt-4o", "gpt-4o-mini", "o3-mini"],
   has_key: true,
   model_ready: true,
   source: "store",
@@ -41,16 +41,18 @@ const SETTINGS = {
   pdf_fallback: "text",
   pdf_max_pages: 2,
   pdf_max_mb: 10,
-  // Curated-matrix display names (subset — mirrors /v1/settings.model_labels).
-  model_labels: {
-    "anthropic:claude-opus-4-8": "Claude Opus 4.8 · Anthropic",
-    "zai:glm-5.2": "GLM-5.2 · Z AI",
-  },
-  // Context windows (subset — mirrors /v1/settings.model_context_windows); drives the
-  // composer usage chip's context-fill meter.
-  model_context_windows: {
-    "anthropic:claude-opus-4-8": 200_000,
-  },
+   // Curated-matrix display names (subset — mirrors /v1/settings.model_labels).
+   model_labels: {
+     "anthropic:claude-opus-4-8": "Claude Opus 4.8 · Anthropic",
+     "nvidia:nvidia/nemotron-3-nano-30b-a3b": "Nemotron 3 Nano 30B · NVIDIA NIM",
+     "zai:glm-5.2": "GLM-5.2 · Z AI",
+   },
+   // Context windows (subset — mirrors /v1/settings.model_context_windows); drives the
+   // composer usage chip's context-fill meter.
+   model_context_windows: {
+     "anthropic:claude-opus-4-8": 200_000,
+     "nvidia:nvidia/nemotron-3-nano-30b-a3b": 262_144,
+   },
 };
 
 const PERSONAS = {
@@ -336,6 +338,8 @@ const PROVIDERS = [
   { name: "anthropic", title: "Claude (Anthropic)", needs_key: true, fields: [{ key: "api_key", label: "API key", secret: true, required: true, help: "", placeholder: "sk-…" }], configured: true, values: {}, suggested_models: ["claude-opus-4-8"], key_set_at: null, last_used_at: null },
   // zai: an OpenAI-compatible vendor — unconfigured, with a prefilled editable endpoint + blurb.
   { name: "zai", title: "Z AI (GLM)", needs_key: true, blurb: "Uses Z AI's OpenAI-compatible API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "Z AI API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Prefilled with Z AI's international endpoint.", placeholder: "https://api.z.ai/api/paas/v4", default: "https://api.z.ai/api/paas/v4" }], configured: false, values: {}, suggested_models: ["glm-5.2"], key_set_at: null, last_used_at: null },
+  // nvidia: NVIDIA NIM — OpenAI-compatible vendor with hosted endpoint.
+  { name: "nvidia", title: "NVIDIA NIM", needs_key: true, blurb: "Uses NVIDIA's OpenAI-compatible API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "NVIDIA API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Prefilled with NVIDIA's hosted NIM endpoint. You can replace it with a self-hosted NIM or compatible proxy.", placeholder: "https://integrate.api.nvidia.com/v1", default: "https://integrate.api.nvidia.com/v1" }], configured: false, values: {}, suggested_models: ["nvidia/nemotron-3-nano-30b-a3b"], key_set_at: null, last_used_at: null },
   // ollama: keyless local provider — "configured" without proving anything runs; the
   // onboarding gallery shows "No key needed" and its form is endpoint + Detect (§39).
   { name: "ollama", title: "Ollama (local models)", needs_key: false, fields: [{ key: "base_url", label: "Endpoint", secret: false, required: false, help: "", placeholder: "http://127.0.0.1:11434", default: "http://127.0.0.1:11434" }], configured: true, values: {}, suggested_models: ["qwen3-coder:30b"], key_set_at: null, last_used_at: null },
