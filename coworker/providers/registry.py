@@ -12,7 +12,8 @@ Chat Completions path), `anthropic` (native Messages API via
 `AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `bedrock`
 (models in the user's own AWS account — Claude natively, everything else via Converse),
 `vertex` (the user's own GCP project — Gemini and Claude natively, open-weight via the
-MaaS endpoint), and `ollama` (local, OpenAI-compatible `/v1`).
+MaaS endpoint), `trustedrouter` (OpenAI-compatible multi-model routing), and `ollama`
+(local, OpenAI-compatible `/v1`).
 """
 
 from __future__ import annotations
@@ -525,6 +526,17 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="META_API_KEY",
         endpoint_help="Prefilled with the Meta Model API endpoint (public preview, US-only as of 2026-07).",
     ),
+    _compat(
+        "trustedrouter",
+        "TrustedRouter",
+        base_url="https://api.trustedrouter.com/v1",
+        recommended_model="trustedrouter/auto",
+        env_key="TRUSTEDROUTER_API_KEY",
+        endpoint_help=(
+            "TrustedRouter's attested OpenAI-compatible API. Create a key at "
+            "https://trustedrouter.com/console/api-keys."
+        ),
+    ),
     # Resellers: many labs' models behind one key, using THEIR model namespaces (the curated
     # ids + display labels live in providers/matrix.py). TODO: add Groq here (+ its matrix
     # rows) once the current provider surface is tested — deliberately deferred to bound
@@ -622,6 +634,8 @@ def detect_provider(api_key: str) -> Optional[str]:
         return "openrouter"
     if key.startswith("AIza"):
         return "gemini"
+    if key.startswith("sk-tr-"):
+        return "trustedrouter"
     if key.startswith(("sk-", "sk_")):
         return "openai"
     return None
