@@ -1,5 +1,6 @@
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { artifactBaseName, decodeArtifactPath } from "../artifactPaths";
 import { Icon } from "./Icon";
 
 // §34 (UX-016): the agent ends a deliverable turn with plain markdown —
@@ -10,14 +11,17 @@ import { Icon } from "./Icon";
 export const OPEN_ARTIFACT_EVENT = "ocw-open-artifact";
 
 function ArtifactChip({ path, title }: { path: string; title: string }) {
-  const file = path.split("/").pop() || path;
+  const decodedPath = decodeArtifactPath(path);
+  const file = artifactBaseName(decodedPath);
   return (
     <button
       className="art-chip"
       data-testid="artifact-chip"
-      title={path}
+      title={decodedPath}
       onClick={() =>
-        window.dispatchEvent(new CustomEvent(OPEN_ARTIFACT_EVENT, { detail: { path } }))
+        window.dispatchEvent(
+          new CustomEvent(OPEN_ARTIFACT_EVENT, { detail: { path: decodedPath } }),
+        )
       }
     >
       <span className="art-chip-ico">

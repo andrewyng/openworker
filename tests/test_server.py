@@ -211,6 +211,69 @@ def test_artifact_read_rejects_path_escape(tmp_path):
     assert "escapes" in escaped["error"]
 
 
+def test_artifacts_include_and_read_granted_external_directories(tmp_path):
+    workspace = tmp_path / "workspace"
+    external = tmp_path / "external"
+    read_only = tmp_path / "read_only"
+    workspace.mkdir()
+    external.mkdir()
+    read_only.mkdir()
+    (workspace / "primary.md").write_text("primary", encoding="utf-8")
+    (external / "外部摘要.md").write_text("external", encoding="utf-8")
+    (read_only / "reference.md").write_text("reference", encoding="utf-8")
+
+    manager = SessionManager(
+        workspace=workspace,
+        data_dir=tmp_path / "data",
+        provider=ScriptedProvider([]),
+    )
+    manager.session_store.save(
+        SessionRecord(
+            session_id="multi-root",
+            workspace=str(workspace),
+            model="gpt-5.5",
+            mode="interactive",
+            messages=[],
+            agent="cowork",
+            extra_roots=[
+                {"path": str(external), "writable": True},
+                {"path": str(read_only), "writable": False},
+            ],
+        )
+    )
+    client = TestClient(create_app(manager))
+
+    artifacts = client.get("/v1/sessions/multi-root/artifacts").json()["artifacts"]
+    by_name = {artifact["name"]: artifact for artifact in artifacts}
+    assert by_name["primary.md"]["path"] == "primary.md"
+    assert by_name["外部摘要.md"]["path"] == str((external / "外部摘要.md").resolve())
+    assert "reference.md" not in by_name
+
+    # A bare artifact: link can resolve against an additional root even before the
+    # frontend's artifact list has refreshed.
+    preview = client.get(
+        "/v1/sessions/multi-root/artifacts/read", params={"path": "外部摘要.md"}
+    ).json()
+    assert preview["ok"] is True
+    assert preview["content"] == "external"
+
+    # Read-only roots stay out of the produced-artifact list, but remain readable because
+    # the user explicitly granted the session read access to them.
+    reference = client.get(
+        "/v1/sessions/multi-root/artifacts/read",
+        params={"path": str(read_only / "reference.md")},
+    ).json()
+    assert reference["ok"] is True
+    assert reference["content"] == "reference"
+
+    escaped = client.get(
+        "/v1/sessions/multi-root/artifacts/read",
+        params={"path": str(tmp_path / "not-granted.md")},
+    ).json()
+    assert escaped["ok"] is False
+    assert "escapes" in escaped["error"]
+
+
 def test_sessions_hide_scheduled_internal_runs(tmp_path):
     manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
     manager.session_store.save(
