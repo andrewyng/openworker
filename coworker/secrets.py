@@ -88,6 +88,18 @@ def _restrict_to_user(path: Path, *, is_dir: bool) -> None:
     os.chmod(path, 0o700 if is_dir else 0o600)
 
 
+def _write_user_only(path: Path, content: str) -> None:
+    """Write `content` to a file that is owner-only from its first byte.
+
+    `Path.write_text` creates the file with umask-default permissions (typically 0644) and a
+    later chmod leaves a window where the plaintext is readable by other local users. Opening
+    with mode 0600 closes that window on POSIX. Windows ignores the mode bits, so callers
+    still run the icacls-based `_restrict_to_user` afterwards."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
 def write_private_text(path: str | Path, content: str) -> Path:
     """Atomically write a user-only text file using the SecretStore's OS protections."""
     target = Path(path).expanduser()
@@ -97,7 +109,7 @@ def write_private_text(path: str | Path, content: str) -> Path:
     except OSError:
         pass
     tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
+    _write_user_only(tmp, content)
     _restrict_to_user(tmp, is_dir=False)
     os.replace(tmp, target)
     return target
@@ -188,6 +200,6 @@ class SecretStore:
         except OSError:
             pass
         tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(store, indent=2), encoding="utf-8")
+        _write_user_only(tmp, json.dumps(store, indent=2))
         _restrict_to_user(tmp, is_dir=False)
         os.replace(tmp, self.path)
