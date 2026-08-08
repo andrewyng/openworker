@@ -181,6 +181,14 @@ const HunterLogo = strokeLogo(
   </>,
 );
 
+// Matrix / Element — no stable simple-icons export in our pin; hex grid stroke glyph.
+const MatrixLogo = strokeLogo(
+  <>
+    <path d="M12 2 2 7v10l10 5 10-5V7L12 2z" />
+    <path d="M12 12 2 7M12 12l10-5M12 12v10" />
+  </>,
+);
+
 const PlugLogo = strokeLogo(
   <>
     <path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7zM12 16v5" />
@@ -208,6 +216,7 @@ export const CONNECTORS: Record<string, ConnectorRegistryEntry> = {
   hubspot: brand(siHubspot),
   jira: brand(siJira),
   linear: brand(siLinear),
+  matrix: { label: "Matrix", logo: MatrixLogo },
   mixpanel: brand(siMixpanel),
   notion: brand(siNotion),
   pagerduty: brand(siPagerduty),

@@ -144,6 +144,17 @@ DEFAULT_SENDERS: dict[str, Sender] = {
 }
 
 
+def _send_matrix(
+    token: str, chat_id: str, text: str, thread_id: Optional[str] = None
+) -> SendResult:
+    from .matrix_adapter import send_matrix_sync
+
+    return send_matrix_sync(chat_id, text, thread_id)
+
+
+DEFAULT_SENDERS["matrix"] = _send_matrix
+
+
 # -- file upload (§34 / UX-016) --------------------------------------------------------
 # A FileSender is (token, chat_id, thread_id, filename, data, title, comment) -> SendResult.
 FileSender = Callable[
@@ -214,3 +225,22 @@ def _send_slack_file(
 DEFAULT_FILE_SENDERS: dict[str, FileSender] = {
     "slack": _send_slack_file,
 }
+
+
+def _send_matrix_file(
+    token: str,
+    chat_id: str,
+    thread_id: Optional[str],
+    filename: str,
+    data: bytes,
+    title: Optional[str] = None,
+    comment: Optional[str] = None,
+) -> SendResult:
+    from .matrix_adapter import send_matrix_file_sync
+
+    return send_matrix_file_sync(
+        chat_id, thread_id, filename, data, title=title, comment=comment
+    )
+
+
+DEFAULT_FILE_SENDERS["matrix"] = _send_matrix_file

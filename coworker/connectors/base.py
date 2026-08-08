@@ -8,10 +8,16 @@ can `send` outbound. Inbound identity is carried by `SessionSource`; a `target` 
 
 from __future__ import annotations
 
+import base64
+import re
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Awaitable, Callable, Optional
+
+_MATRIX_TARGET_RE = re.compile(
+    r"^matrix/([^/]+)(?:/thread/([^/]+))?$"
+)
 
 
 class MessageType(str, Enum):
@@ -21,17 +27,57 @@ class MessageType(str, Enum):
 
 
 # -- target tokens -------------------------------------------------------------
+def encode_matrix_target(
+    room_id: str, thread_id: Optional[str] = None
+) -> str:
+    """URL-safe base64 room (and optional thread) for Matrix reply handles."""
+    enc = base64.urlsafe_b64encode(room_id.encode()).decode().rstrip("=")
+    if not thread_id:
+        return f"matrix/{enc}"
+    tenc = base64.urlsafe_b64encode(thread_id.encode()).decode().rstrip("=")
+    return f"matrix/{enc}/thread/{tenc}"
+
+
+def decode_matrix_target(target: str) -> tuple[str, Optional[str]]:
+    """`matrix/<b64room>[/thread/<b64thread>]` -> (room_id, thread_id)."""
+    m = _MATRIX_TARGET_RE.match((target or "").strip())
+    if not m:
+        raise ValueError(
+            f"invalid matrix target {target!r} "
+            "(expected 'matrix/<b64room>[/thread/<b64thread>]')"
+        )
+    room_b64, thread_b64 = m.group(1), m.group(2)
+
+    def _dec(part: str) -> str:
+        pad = "=" * (-len(part) % 4)
+        try:
+            return base64.urlsafe_b64decode(part + pad).decode()
+        except Exception as exc:
+            raise ValueError(f"invalid matrix target encoding in {target!r}") from exc
+
+    room_id = _dec(room_b64)
+    thread_id = _dec(thread_b64) if thread_b64 else None
+    return room_id, thread_id
+
+
 def format_target(platform: str, chat_id: str, thread_id: Optional[str] = None) -> str:
+    if platform == "matrix":
+        return encode_matrix_target(chat_id, thread_id)
     base = f"{platform}:{chat_id}"
     return f"{base}:{thread_id}" if thread_id else base
 
 
 def parse_target(target: str) -> tuple[str, str, Optional[str]]:
-    """`'platform:chat_id[:thread]'` -> (platform, chat_id, thread_id)."""
-    parts = (target or "").split(":")
+    """`'platform:chat_id[:thread]'` or `matrix/<b64room>[/thread/<b64thread>]` -> triple."""
+    raw = (target or "").strip()
+    if raw.startswith("matrix/"):
+        room_id, thread_id = decode_matrix_target(raw)
+        return "matrix", room_id, thread_id
+    parts = raw.split(":")
     if len(parts) < 2 or not parts[0] or not parts[1]:
         raise ValueError(
-            f"invalid target {target!r} (expected 'platform:chat_id[:thread]')"
+            f"invalid target {target!r} (expected 'platform:chat_id[:thread]' "
+            "or 'matrix/<b64room>[/thread/<b64thread>]')"
         )
     thread = ":".join(parts[2:]) if len(parts) > 2 else None
     return parts[0], parts[1], (thread or None)
@@ -95,6 +141,8 @@ class MessageEvent:
     # The bot itself was @-mentioned (UX-DECISIONS §31 mention router). Computed from the RAW
     # platform text at mapping time — mention tokens are rewritten for display afterwards.
     mentions_me: bool = False
+    # When set, delivered to the agent instead of `tagged_text()` — e.g. multimodal parts.
+    agent_content: Any = None
 
     def tagged_text(self) -> str:
         """How the message enters the super-agent thread: source + reply handle + text.
@@ -119,10 +167,11 @@ MessageHandler = Callable[[MessageEvent], Awaitable[None]]
 
 @dataclass
 class InteractionEvent:
-    """A button click on an interactive prompt.
+    """A button click or emoji reaction on an interactive prompt.
 
     Stable actor/workspace ids are security inputs; display names are presentation only.
     `response_url` is Slack's short-lived reply capability for a private rejection notice.
+    Matrix reactions set `interaction_kind="reaction"` and `reaction_key` to the emoji.
     """
 
     platform: str
@@ -133,6 +182,8 @@ class InteractionEvent:
     user_name: Optional[str] = None
     team_id: Optional[str] = None
     response_url: Optional[str] = None
+    interaction_kind: str = "button"  # "button" | "reaction"
+    reaction_key: Optional[str] = None
 
 
 InteractionHandler = Callable[[InteractionEvent], Awaitable[None]]

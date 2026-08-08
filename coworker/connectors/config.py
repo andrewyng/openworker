@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 from ..secrets import SecretStore
 from .base import SessionSource
 
-PLATFORMS = ("telegram", "slack", "github")
+PLATFORMS = ("telegram", "slack", "matrix", "github")
 
 
 @dataclass
@@ -62,6 +62,18 @@ def _csv(value: Optional[str]) -> set[str]:
     return {p.strip() for p in (value or "").split(",") if p.strip()}
 
 
+def _profile_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [p.strip() for p in str(value).split(",") if p.strip()]
+
+
+def _profile_set(value: Any) -> set[str]:
+    return set(_profile_list(value))
+
+
 def load_settings(
     secrets: Optional[SecretStore] = None,
 ) -> dict[str, ConnectorSettings]:
@@ -76,6 +88,8 @@ def load_settings(
     for platform in PLATFORMS:
         profile = secrets.get(f"{platform}:default") or {}
         token = profile.get("bot_token")
+        if platform == "matrix":
+            token = profile.get("access_token")
         allowed = set(profile.get("allowed_users") or [])
         allowed |= _csv(os.environ.get(f"{platform.upper()}_ALLOWED_USERS"))
         allow_all = bool(profile.get("allow_all")) or os.environ.get(

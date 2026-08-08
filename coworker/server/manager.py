@@ -2780,7 +2780,12 @@ class SessionManager:
             # available in-app, but never mirror it to an ownerless channel.
             if not self.slack_approval_owner_ids(team_id):
                 return
-        target = f"{binding.channel}:{binding.target}"
+        if binding.channel == "matrix":
+            target = binding.target
+            if not target.startswith("matrix/"):
+                target = f"matrix/{binding.target}"
+        else:
+            target = f"{binding.channel}:{binding.target}"
         body = "\n".join(p for p in (item.title, item.body) if p).strip()
         buttons = buttons_for(item)
         try:
@@ -3015,8 +3020,13 @@ class SessionManager:
             return  # channel with no subscribers — nobody is listening
         # DM (or any non-channel): route to the designated session, else park it for visibility.
         dm = self.dm_session()
+        agent_msg = (
+            event.agent_content
+            if getattr(event, "agent_content", None) is not None
+            else event.tagged_text()
+        )
         if dm and self._inbound_connector_allowed(dm, src.platform):
-            await self.deliver_to_session(dm, event.tagged_text(), source=ms.to_dict())
+            await self.deliver_to_session(dm, agent_msg, source=ms.to_dict())
         elif dm:
             # Designated, but this session has muted the connector → park rather than deliver.
             self.unrouted.record(

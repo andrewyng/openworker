@@ -22,18 +22,21 @@ _SCHEMA = {
     "function": {
         "name": "send_message",
         "description": (
-            "Send a message to a connected chat (Slack or Telegram). `target` is the "
-            "reply handle from an inbound message (e.g. 'telegram:12345' or 'slack:C0123', "
-            "optionally with a ':<thread>' suffix) — or, for Slack, just the channel NAME "
-            "('#general' or 'general'; resolved against the connected workspaces). Use this to "
-            "actually reach a person — plain assistant text is not delivered anywhere."
+            "Send a message to a connected chat (Slack, Telegram, or Matrix). `target` is the "
+            "reply handle from an inbound message (e.g. 'telegram:12345', 'slack:C0123', "
+            "or 'matrix/<encoded_room>[/thread/<encoded_thread>]') — or, for Slack, just the "
+            "channel NAME ('#general' or 'general'; resolved against the connected workspaces). "
+            "Use this to actually reach a person — plain assistant text is not delivered anywhere."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "target": {
                     "type": "string",
-                    "description": "Destination handle 'platform:chat_id[:thread]', e.g. 'telegram:12345'.",
+                    "description": (
+                        "Destination handle: 'platform:chat_id[:thread]' for Slack/Telegram, "
+                        "or 'matrix/<b64room>[/thread/<b64thread>]' for Matrix."
+                    ),
                 },
                 "text": {"type": "string", "description": "The message text to send."},
             },
@@ -128,6 +131,8 @@ def _resolve_token(secrets: SecretStore, platform: str, chat_id: str) -> Optiona
             per_team = secrets.get(f"slack:team:{team}") or {}
             return per_team.get("bot_token")
     creds = secrets.get(f"{platform}:default") or {}
+    if platform == "matrix":
+        return creds.get("access_token")
     return creds.get("bot_token")
 
 
@@ -184,7 +189,7 @@ _FILE_SCHEMA = {
     "function": {
         "name": "send_file",
         "description": (
-            "Upload a file from the session's workspace into a connected chat (Slack). "
+            "Upload a file from the session's workspace into a connected chat (Slack or Matrix). "
             "`target` is the same handle send_message uses. Slack shows its own previews "
             "for pdf/csv/images — send the actual file, not a screenshot of it. For .html "
             "artifacts (which Slack can't preview) set as_screenshot=true to send a "
@@ -196,7 +201,10 @@ _FILE_SCHEMA = {
             "properties": {
                 "target": {
                     "type": "string",
-                    "description": "Destination handle 'platform:chat_id[:thread]', e.g. 'slack:C0123:171234.5678'.",
+                    "description": (
+                        "Destination handle (same as send_message): "
+                        "'platform:chat_id[:thread]' or matrix encoding."
+                    ),
                 },
                 "path": {
                     "type": "string",
