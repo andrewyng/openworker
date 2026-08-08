@@ -383,6 +383,8 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         "fireworks:accounts/fireworks/models/kimi-k2p6",
         "openrouter:z-ai/glm-5.2",
         "openrouter:meta-llama/llama-4-maverick",
+        "nvidia:nvidia/nemotron-super-3-120b",
+        "nvidia:meta/llama-4-maverick-17b-128e-instruct",
     ):
         caps = capabilities_for(mid)
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
@@ -409,7 +411,7 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
     from coworker.providers.matrix import models_for_provider
     from coworker.providers.registry import get_descriptor
 
-    for name in ("together", "fireworks", "openrouter"):
+    for name in ("together", "fireworks", "openrouter", "nvidia"):
         d = get_descriptor(name)
         assert d is not None and d.needs_key
         curated = models_for_provider(name)
@@ -417,6 +419,29 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
         # full ids in the matrix must round-trip: prefix + bare == matrix key
         base = next(f for f in d.fields if f.key == "base_url")
         assert base.default.startswith("https://")
+
+
+def test_nvidia_nim_descriptor_is_free_tier_friendly():
+    """NVIDIA NIM is a reseller-shaped descriptor (own endpoint + own key profile), but the
+    whole point of adding it is the free tier — the endpoint help should say so, and the key
+    must never fall back to a configured OPENAI_API_KEY."""
+    import pytest
+
+    from coworker.providers.registry import build_provider_client, get_descriptor
+
+    d = get_descriptor("nvidia")
+    assert d is not None and d.needs_key
+    assert d.env_key == "NVIDIA_API_KEY"
+    endpoint = next(f for f in d.fields if f.key == "base_url")
+    assert endpoint.default == "https://integrate.api.nvidia.com/v1"
+    assert "build.nvidia.com" in endpoint.help
+
+    with pytest.raises(RuntimeError, match="NVIDIA"):
+        build_provider_client("nvidia", {}, None)
+
+    p = build_provider_client("nvidia", {"api_key": "nvapi-test"}, None)
+    assert p._base_url == "https://integrate.api.nvidia.com/v1"
+    assert p._api_key == "nvapi-test"
 
 
 def test_foreign_sidecars_stripped_from_outbound_messages():

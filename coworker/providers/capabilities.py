@@ -29,6 +29,15 @@ def capabilities_for(model: str) -> ModelCapabilities:
             tools=True, vision=False, parallel_tool_calls=False, streaming=True
         )
 
+    # NVIDIA NIM (custom-added ids; curated ones answered from the matrix above). The catalog
+    # spans many labs' checkpoints (Nemotron, Llama, DeepSeek, Qwen, …) with mixed tool-calling
+    # reliability across them, so stay conservative on parallel calls until a specific model is
+    # probed and added to the matrix — mirrors the Bedrock/Vertex custom-id posture below.
+    if provider == "nvidia":
+        return ModelCapabilities(
+            tools=True, vision=False, parallel_tool_calls=False, streaming=True
+        )
+
     # Cloud-account providers (custom-added ids; curated ones answered from the matrix).
     # The family segment decides: Claude keeps its native capabilities; everything else
     # stays conservative until probed (Converse tool calling works across families, but

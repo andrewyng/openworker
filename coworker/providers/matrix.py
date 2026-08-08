@@ -16,8 +16,8 @@ where the vendor spec wasn't re-checked stay ``None`` — the meter simply hides
 showing a made-up denominator. Values entered 2026-07-28 from vendor docs; verify alongside
 the id refresh.
 
-Resellers: Together + Fireworks + OpenRouter. TODO: add Groq entries here AND its
-descriptor in ``registry.py`` once the current provider surface is tested — deliberately
+Resellers: Together + Fireworks + OpenRouter + NVIDIA NIM. TODO: add Groq entries here AND
+its descriptor in ``registry.py`` once the current provider surface is tested — deliberately
 deferred to bound how much needs verifying at once.
 """
 
@@ -156,6 +156,18 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "openrouter:meta-llama/llama-4-maverick": ModelEntry(
         "Llama 4 Maverick · via OpenRouter", _AGENTIC, 1_000_000
+    ),
+    # NVIDIA NIM ids use the catalog's own `<publisher>/<model>` namespace (checked against
+    # the NIM catalog 2026-07-04). Nemotron Super 3 120B is NVIDIA's own flagship — the reason
+    # to reach for NIM over another reseller when it's on the free tier.
+    "nvidia:nvidia/nemotron-super-3-120b": ModelEntry(
+        "Nemotron Super 3 120B · via NVIDIA NIM", _AGENTIC, 128_000
+    ),
+    "nvidia:deepseek-ai/deepseek-v4-pro": ModelEntry(
+        "DeepSeek V4 Pro · via NVIDIA NIM", _AGENTIC, 128_000
+    ),
+    "nvidia:meta/llama-4-maverick-17b-128e-instruct": ModelEntry(
+        "Llama 4 Maverick · via NVIDIA NIM", _AGENTIC, 1_000_000
     ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
