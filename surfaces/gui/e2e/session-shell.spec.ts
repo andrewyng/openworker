@@ -75,3 +75,27 @@ test("composer is three controls (+ attach · Mode · send); folder and branch c
   await expect(page.locator(".wschip")).toHaveCount(0);
   await expect(page.locator(".wsbranch")).toHaveCount(0);
 });
+
+test("right-rail Hide side panel toggle collapses and restores the inspector (#342)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByText("Draft the launch note").first().click();
+
+  const hide = page.getByRole("button", { name: "Hide side panel" });
+  await expect(hide).toBeVisible();
+  await expect(page.locator(".right-rail")).toBeVisible();
+  await expect(page.locator(".main")).toHaveClass(/rail-open/);
+
+  // Clicks must reach the button even though the topbar side is a window-drag surface —
+  // the actions cluster stops pointerdown so beginWindowDrag never runs (#342).
+  await hide.click();
+  await expect(page.locator(".right-rail")).toHaveCount(0);
+  await expect(page.locator(".main")).not.toHaveClass(/rail-open/);
+  await expect(page.getByRole("button", { name: "Show side panel" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Show side panel" }).click();
+  await expect(page.locator(".right-rail")).toBeVisible();
+  await expect(page.locator(".main")).toHaveClass(/rail-open/);
+  await expect(page.getByRole("button", { name: "Hide side panel" })).toBeVisible();
+});
