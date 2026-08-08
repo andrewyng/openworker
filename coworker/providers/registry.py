@@ -525,6 +525,14 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="META_API_KEY",
         endpoint_help="Prefilled with the Meta Model API endpoint (public preview, US-only as of 2026-07).",
     ),
+    _compat(
+        "sambanova",
+        "SambaNova",
+        base_url="https://api.sambanova.ai/v1",
+        recommended_model="Meta-Llama-3.3-70B-Instruct",
+        env_key="SAMBANOVA_API_KEY",
+        endpoint_help="Prefilled with SambaNova's official OpenAI-compatible endpoint.",
+    ),
     # Resellers: many labs' models behind one key, using THEIR model namespaces (the curated
     # ids + display labels live in providers/matrix.py). TODO: add Groq here (+ its matrix
     # rows) once the current provider surface is tested — deliberately deferred to bound
