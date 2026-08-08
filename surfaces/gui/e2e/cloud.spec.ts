@@ -41,11 +41,12 @@ test("signed out: the account row is the sign-in home; managed connector still c
   await expect(modal.getByRole("button", { name: /one click/i })).toHaveCount(0);
 });
 
-test("signed in: account row shows the name; one-click appears; sign out from the menu", async ({
+test("signed in: account row shows the name and status; one-click appears; sign out from the menu", async ({
   page,
 }) => {
   await openConnectors(page);
   await signIn(page);
+  await expect(page.getByTestId("cloud-status")).toHaveText("Signed in");
 
   await page.getByTestId("connector-gmail").getByRole("button", { name: "Connect", exact: true }).click();
   const modal = page.getByTestId("add-connection-modal");
