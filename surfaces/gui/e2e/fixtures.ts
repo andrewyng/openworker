@@ -827,6 +827,22 @@ export async function mockApi(page: import("@playwright/test").Page) {
       }
       return json({ roots });
     }
+    if (/\/v1\/sessions\/[^/]+\/artifacts\/read/.test(p)) {
+      return json({ kind: "markdown", content: "# Sample Artifact" });
+    }
+    if (/\/v1\/sessions\/[^/]+\/artifacts/.test(p)) {
+      return json({
+        artifacts: [
+          {
+            path: "sample.md",
+            name: "sample.md",
+            kind: "markdown",
+            size: 120,
+            modified_at: 1700000000,
+          },
+        ],
+      });
+    }
     if (/\/v1\/sessions\/[^/]+\/messages$/.test(p)) return json({ messages: [] });
     if (/\/v1\/sessions\/[^/]+\/unattended$/.test(p)) {
       const id = decodeURIComponent(p.split("/").slice(-2)[0]);

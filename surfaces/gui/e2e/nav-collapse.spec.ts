@@ -20,12 +20,13 @@ test("collapse hides the sidebar and reclaims the width; reveal button docks it 
   await expect(app).not.toHaveClass(/nav-collapsed/);
 });
 
-test("⌘B toggles the sidebar collapse", async ({ page }) => {
+test("⌘B / Ctrl+B toggles the sidebar collapse", async ({ page }) => {
   await page.goto("/");
   const app = page.locator(".app");
-  await page.keyboard.press("Meta+b");
+  await page.locator("body").focus();
+  await page.keyboard.press("Control+b");
   await expect(app).toHaveClass(/nav-collapsed/);
-  await page.keyboard.press("Meta+b");
+  await page.keyboard.press("Control+b");
   await expect(app).not.toHaveClass(/nav-collapsed/);
 });
 
@@ -48,4 +49,29 @@ test("RECENT header group/filter popover: switch grouping + see coworker filters
 
   // Filter-by-coworker checkboxes are present (none checked by default → all shown).
   await expect(menu).toContainText("None checked shows all.");
+});
+
+test("hiding side panel while artifact preview is open restores nav collapse state (#135)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const app = page.locator(".app");
+  await expect(page.locator(".sidebar")).toBeVisible();
+  await expect(app).not.toHaveClass(/nav-collapsed/);
+
+  // Open artifact preview from the right rail
+  await page.getByRole("button", { name: "sample.md" }).click();
+
+  // Left nav auto-collapses
+  await expect(app).toHaveClass(/nav-collapsed/);
+
+  // Hide the side panel via topbar toggle
+  await page.getByRole("button", { name: "Hide side panel" }).click();
+
+  // Nav should restore to uncollapsed
+  await expect(app).not.toHaveClass(/nav-collapsed/);
+
+  // Reveal affordance button or sidebar brand button works to toggle nav
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await expect(app).toHaveClass(/nav-collapsed/);
 });
