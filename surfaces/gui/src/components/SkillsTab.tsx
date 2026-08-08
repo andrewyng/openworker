@@ -31,6 +31,8 @@ const BTN_BORDERED =
   "text-[12.5px] px-3 py-2 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
 const BADGE =
   "text-[11px] px-2 py-0.5 rounded-full border border-line bg-paper text-muted shrink-0";
+const BTN_DELETE_BORDERED =
+  "text-[12.5px] px-3 py-2 rounded-lg danger shrink-0 border border-line bg-paper hover:border-lineStrong shrink-0";
 
 type Editor = {
   mode: "new" | "edit";
@@ -403,12 +405,12 @@ export function SkillsTab({
               <Icon name="pencil" size={13} />
             </button>
             <button
-              className={BTN_BORDERED}
+              className={armedDelete === row.name ? BTN_DELETE_BORDERED : BTN_BORDERED}
               aria-label={`Delete ${row.name}`}
               onClick={() => remove(row)}
               onBlur={() => setArmedDelete(null)}
             >
-              {armedDelete === row.name ? "Confirm delete" : <Icon name="trash" size={13} />}
+              {armedDelete === row.name ? "Confirm delete" : <Icon name="trash" size={13} className="danger" />}
             </button>
             <label className="inline-flex items-center gap-1.5 text-[12px] text-muted">
               <input
