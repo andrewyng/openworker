@@ -52,6 +52,20 @@ _NONINTERACTIVE_ENV = {
 }
 
 
+# OpenWorker's own sidecar credential. It authenticates every request to the local API
+# (server/app.py `require_sidecar_token`), which is the only thing standing between a
+# process on this machine and the agent's shell/file tools. `run_shell` used to inherit it
+# straight from `os.environ`, so `echo $COWORKER_API_TOKEN` — or any build script, test
+# suite or npm postinstall the agent runs — read it back out. Nothing a user asks the shell
+# to do needs OpenWorker's own token, so it never enters the shell environment.
+_SIDECAR_ENV_VARS = ("COWORKER_API_TOKEN",)
+
+
+def _shell_base_env() -> dict[str, str]:
+    """The parent environment minus OpenWorker's own sidecar credential."""
+    return {k: v for k, v in os.environ.items() if k not in _SIDECAR_ENV_VARS}
+
+
 class Executor(ABC):
     @abstractmethod
     def run(self, command: str, timeout: Optional[float] = None) -> dict[str, Any]: ...
@@ -161,7 +175,11 @@ class LocalExecutor(Executor):
         if shell_path is None:
             shell_path = "powershell.exe" if self._is_windows else "/bin/bash"
         self._shell_path = shell_path
-        self._env = {**os.environ, **_NONINTERACTIVE_ENV, **(env or {})}
+        self._env = {
+            **_shell_base_env(),
+            **_NONINTERACTIVE_ENV,
+            **(env or {}),
+        }
         self._spawn()
 
     def _spawn(self) -> None:
