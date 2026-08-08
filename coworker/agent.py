@@ -25,7 +25,7 @@ from .engine import Approver, TurnEngine
 from .environment import environment_context
 from .memory import MemoryStore, Scope, format_memories, memory_tools
 from .permissions import Mode, PermissionEngine
-from .project import load_agents_md
+from .project import load_agents_md, load_wiki_index
 from .roots import RootDir, normalize_roots, render_context
 from .providers import ProviderClient, ProviderRouter
 from .overrides import RiskOverrideStore
@@ -280,6 +280,9 @@ def build_engine(
         conventions = load_agents_md(ws)
         if conventions:
             instructions = f"{instructions}\n\n{conventions}"
+        wiki = load_wiki_index(ws)
+        if wiki:
+            instructions = f"{instructions}\n\n{wiki}"
 
     if memory_store is not None:
         registry.register_all(
