@@ -131,6 +131,121 @@ def test_allowlist_prefix_is_argv_boundary(tmp_path):
     assert eng.evaluate("run_shell", {"command": "lsof"}, None).needs_user
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Interpreters: the argument is a program the user never saw.
+        "python3 /tmp/evil.py",
+        "python3 -c 'import shutil'",
+        "python3 -m http.server",
+        "python3 -m pip install attacker-pkg",
+        "node /tmp/evil.js",
+        "perl /tmp/evil.pl",
+        # Package managers: install/exec fetch remote code and run its hooks.
+        "npm install attacker-pkg",
+        "npm run anything",
+        "npm exec -- attacker-pkg",
+        "pip install attacker-pkg",
+        # Exec wrappers: the argument IS the command to run.
+        "env FOO=1 /tmp/evil.sh",
+        "xargs rm",
+        "sudo rm -rf /",
+        # find's helper-exec family. The classic `-exec ... ;` form is already caught by
+        # operator rejection; `{} +` carries no shell metacharacter at all.
+        "find . -exec touch /tmp/pwned {} +",
+        "find . -execdir /tmp/evil.sh {} +",
+        "find . -ok rm {} +",
+    ],
+)
+def test_bare_allowlist_entry_does_not_auto_run_delegated_execution(tmp_path, command):
+    # A bare program name auto-runs the program, not everything the program can be
+    # pointed at. Every one of these used to auto-run under the allowlist that
+    # docs/config.example.toml recommended.
+    eng = PermissionEngine(
+        workspace_root=tmp_path,
+        allowed_commands=["python3", "node", "perl", "npm", "pip", "env", "xargs", "sudo", "find"],
+    )
+    d = eng.evaluate("run_shell", {"command": command}, None)
+    assert not d.allowed and d.needs_user, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find . -name '*.py'",
+        "find . -type f -newer setup.py",
+        "find . -maxdepth 2 -size +1k",
+    ],
+)
+def test_runner_escape_check_leaves_ordinary_use_alone(tmp_path, command):
+    # Only the helper-exec flags are held back; `find` itself stays useful.
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=["find"])
+    assert eng.evaluate("run_shell", {"command": command}, None).allowed, command
+
+
+def test_entry_that_pins_the_operation_still_auto_runs(tmp_path):
+    # Naming the operation in the entry is the opt-in: the user chose that authority, and
+    # further arguments may be appended to it as with any other allowlist entry.
+    eng = PermissionEngine(
+        workspace_root=tmp_path,
+        allowed_commands=["npm test", "python3 -m pytest", "find . -exec"],
+    )
+    assert eng.evaluate("run_shell", {"command": "npm test"}, None).allowed
+    assert eng.evaluate("run_shell", {"command": "npm test --silent"}, None).allowed
+    assert eng.evaluate("run_shell", {"command": "python3 -m pytest -q"}, None).allowed
+    assert eng.evaluate(
+        "run_shell", {"command": "find . -exec grep -l TODO {} +"}, None
+    ).allowed
+    # ...but only that operation, not a sibling the entry never named.
+    assert eng.evaluate("run_shell", {"command": "npm install pkg"}, None).needs_user
+
+
+def test_runner_check_matches_on_the_program_not_the_path(tmp_path):
+    # An absolute path to the same interpreter must not slip past the check.
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=["/usr/bin/python3"])
+    assert eng.evaluate("run_shell", {"command": "/usr/bin/python3"}, None).allowed
+    d = eng.evaluate("run_shell", {"command": "/usr/bin/python3 /tmp/evil.py"}, None)
+    assert not d.allowed and d.needs_user
+
+
+@pytest.mark.parametrize(
+    "entry,command",
+    [
+        ("python.exe", "python.exe C:/tmp/evil.py"),
+        ("python3.exe", "python3.exe evil.py"),
+        ("node.exe", "node.exe evil.js"),
+        ("npm.cmd", "npm.cmd install attacker-pkg"),
+        ("Python3", "Python3 evil.py"),
+        ("PYTHON3", "PYTHON3 evil.py"),
+        (r"C:\\Python\\python.exe", r"C:\\Python\\python.exe evil.py"),
+    ],
+)
+def test_runner_check_survives_windows_spelling(tmp_path, entry, command):
+    # Windows names the same interpreters python.exe / npm.cmd, and paths use backslashes.
+    # Matching on the bare lowercased stem keeps the rule from being spelled around.
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=[entry])
+    d = eng.evaluate("run_shell", {"command": command}, None)
+    assert not d.allowed and d.needs_user, command
+
+
+def test_positional_script_interpreters_are_held_back(tmp_path):
+    # `sed`/`awk` carry their program as a POSITIONAL argument (`sed 'e ls'` shells out on
+    # GNU sed), so there is no flag to key on and they belong with the interpreters.
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=["sed", "awk"])
+    assert eng.evaluate("run_shell", {"command": "sed"}, None).allowed
+    assert eng.evaluate("run_shell", {"command": "sed e_ls README.md"}, None).needs_user
+    assert eng.evaluate("run_shell", {"command": "awk BEGIN_system README.md"}, None).needs_user
+
+
+def test_project_local_task_runners_are_unaffected(tmp_path):
+    # `pytest`/`make` run the workspace's own code, which the agent can already edit, so
+    # they stay on the ordinary prefix rule. Pointing them outside the workspace is a
+    # path-scoping concern, not something the command allowlist can express.
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=["pytest", "make"])
+    assert eng.evaluate("run_shell", {"command": "pytest -q"}, None).allowed
+    assert eng.evaluate("run_shell", {"command": "make build"}, None).allowed
+
+
 def test_shell_commands_not_auto_allowed_by_default(tmp_path):
     # There is no generally safe executable: these examples cover code execution,
     # environment disclosure, reads outside the workspace, and helper execution.
