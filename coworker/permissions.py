@@ -154,7 +154,7 @@ class PermissionEngine:
                 return Decision(True, "command on allowlist")
             if command and command in self.session_allow_commands:
                 return Decision(True, "command allowed for session")
-        if tool_name in self.session_allow_tools and not is_connector:
+        if tool_name in self.session_allow_tools and not is_connector and not is_shell:
             return Decision(True, "tool allowed for session")
 
         # Task-scoped standing rules (§25): tool + exact target, owned by the automation.
