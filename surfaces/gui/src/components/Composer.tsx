@@ -48,6 +48,7 @@ interface Props {
   mode: string;
   model: string;
   models?: string[];
+  modelsLoaded?: boolean;
   modelLabels?: Record<string, string>; // curated display names (raw id when absent)
   // The model is FIXED once the session has history (§17): the picker renders ONLY on a fresh
   // session; after the first turn the fact lives in the topbar subtitle (§22) — no
@@ -410,7 +411,7 @@ export function Composer(props: Props) {
     }
   };
 
-  const modelsLoaded = !!(props.models && props.models.length);
+  const modelsLoaded = props.modelsLoaded ?? !!(props.models && props.models.length);
   const modelOptions: Option[] = Array.from(
     new Set([props.model, ...(props.models || [])]),
   ).map((m) => ({

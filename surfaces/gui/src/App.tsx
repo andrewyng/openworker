@@ -227,6 +227,7 @@ export function App() {
   // composer's "No model connected" chip. Default true so we don't flash the chip before settings
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
   const [surface, setSurface] = useState<
     "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings"
   >("session");
@@ -516,9 +517,12 @@ export function App() {
         setModelContextWindows(s.model_context_windows || {});
         setContextBar(s.context_bar === true);
         setModelReady(s.model_ready);
+        setModelsLoaded(true);
         if (s.surfaces) setSurfaces(s.surfaces);
       })
-      .catch(() => {});
+      .catch(() => {
+        setModelsLoaded(true);
+      });
 
   // Open Settings → Configure Models (from the composer's "No model connected" chip).
   const openModelSetup = () => openSettings("models");
@@ -1629,6 +1633,7 @@ export function App() {
               mode={mode}
               model={model}
               models={models}
+              modelsLoaded={modelsLoaded}
               modelLabels={modelLabels}
               running={running}
               connected={connected}
