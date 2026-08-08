@@ -76,7 +76,9 @@ export function GithubDetail({ c, cloud, onChanged }: DetailProps) {
                 <span data-testid="github-mode-badge">
                   {relay
                     ? relayHealth(status).text
-                    : "Connected · personal access token"}
+                    : c.auth_method === "device"
+                      ? `Connected as ${c.account || "GitHub user"} · local OAuth`
+                      : "Connected · personal access token"}
                 </span>
               </>
             ) : (
@@ -100,7 +102,9 @@ export function GithubDetail({ c, cloud, onChanged }: DetailProps) {
           <div className={ROW + " text-[12.5px] text-muted"}>
             One @ocw-agent App, installed per account or org — you pick the repos on
             GitHub; each installation keeps its own allow-list.
-            {cloud?.signed_in ? "" : " One-click needs cloud sign-in; a PAT works without it."}
+            {cloud?.signed_in
+              ? ""
+              : " One-click needs cloud sign-in; local GitHub sign-in works without it."}
           </div>
         </div>
       )}
@@ -116,11 +120,14 @@ export function GithubDetail({ c, cloud, onChanged }: DetailProps) {
           />
         ))}
 
-      {/* Manual PAT: request/response tools only — no inbound triggers. */}
+      {/* Local user auth: request/response tools only — no inbound triggers. */}
       {c.connected && !relay && (
         <div className={GRP} data-testid="github-manual-card">
           <div className={ROW + " text-[12.5px] text-muted"}>
-            Personal access token · tools only. Install the GitHub App to let
+            {c.auth_method === "device"
+              ? `Signed in locally${c.account ? ` as @${c.account}` : ""}`
+              : "Personal access token"}{" "}
+            · tools only. Install the GitHub App to let
             @-mentions and the agent label reach this computer.
           </div>
         </div>

@@ -311,8 +311,10 @@ export function App() {
     window.addEventListener("ocw-open-artifact", show);
     return () => window.removeEventListener("ocw-open-artifact", show);
   }, []);
-  // The command-palette search, openable from the collapsed-sidebar topbar cluster (§22). The
-  // expanded sidebar owns its own instance; this one exists so search never disappears with it.
+  // The command-palette search — single app-level instance for both the expanded sidebar's
+  // Search row and the collapsed-sidebar topbar cluster (§22). Mounting it here (and portaling
+  // to document.body) keeps `position: fixed` viewport-centered even when the collapsed sidebar
+  // applies a CSS transform for peek/slide (#282).
   const [searchOpen, setSearchOpen] = useState(false);
   // A pending composer prefill (text + attachments) pushed from the session start panel.
   const [composerPrefill, setComposerPrefill] = useState<{ text: string; attachments?: Attachment[]; nonce: number }>();
@@ -1378,6 +1380,7 @@ export function App() {
         collapsed={navCollapsed}
         onCollapse={toggleNav}
         onPeekLeave={() => setNavPeek(false)}
+        onOpenSearch={() => setSearchOpen(true)}
       />
       {surface === "scheduled" ? (
         <ScheduledView
@@ -1715,8 +1718,7 @@ export function App() {
       </div>
       )}
 
-      {/* Search from the collapsed-sidebar topbar cluster (the sidebar's own instance is
-          unreachable while it's collapsed). */}
+      {/* Single SearchModal for sidebar Search and the collapsed topbar cluster. */}
       {searchOpen && (
         <SearchModal
           sessions={sessions}

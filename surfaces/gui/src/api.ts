@@ -458,6 +458,7 @@ export interface Connector {
   managed: boolean; // one-click managed OAuth available (needs cloud sign-in)
   managed_paused?: boolean; // one-click temporarily off (e.g. Google CASA pending) — badge "Coming soon"
   managed_profile: boolean; // current profile came from managed OAuth (vs manual paste)
+  auth_method?: string; // "device" for local GitHub OAuth; empty for PAT/relay
   mode?: string; // "relay" for the managed cloud path; "" for manual/token connect
   workspaces?: SlackWorkspace[]; // Slack only: connected workspaces (managed relay)
   // Gmail/Calendar: email-keyed rows; generic account connectors (notion,
@@ -550,6 +551,48 @@ export async function connectManaged(
         ...(options?.access ? { access: options.access } : {}),
       }),
     },
+  );
+  return res.json();
+}
+
+export interface GithubDeviceStart {
+  ok: boolean;
+  flow_id?: string;
+  user_code?: string;
+  verification_uri?: string;
+  expires_in?: number;
+  expires_at?: number;
+  interval?: number;
+  error?: string;
+}
+
+export interface GithubDevicePoll {
+  ok: boolean;
+  state: "pending" | "complete" | "expired" | "denied" | "error";
+  retry_after?: number;
+  account?: string;
+  error?: string;
+}
+
+export async function startGithubDeviceAuth(): Promise<GithubDeviceStart> {
+  const res = await fetch(`${httpBase()}/v1/connectors/github/device/start`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
+export async function pollGithubDeviceAuth(flowId: string): Promise<GithubDevicePoll> {
+  const res = await fetch(
+    `${httpBase()}/v1/connectors/github/device/${encodeURIComponent(flowId)}/poll`,
+    { method: "POST" },
+  );
+  return res.json();
+}
+
+export async function cancelGithubDeviceAuth(flowId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(
+    `${httpBase()}/v1/connectors/github/device/${encodeURIComponent(flowId)}`,
+    { method: "DELETE" },
   );
   return res.json();
 }
