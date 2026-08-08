@@ -29,6 +29,13 @@ class AuditStore:
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # WAL + synchronous=NORMAL: a commit no longer fsyncs on every write. The
+        # audit sink is called synchronously from the engine's async loop (one row
+        # per tool stage), so the default DELETE journal + FULL synchronous was
+        # blocking the event loop by ~1-10ms per tool call. WAL keeps transaction
+        # durability (rollback/atomicity) and only checkpoints to disk periodically.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS audit_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
