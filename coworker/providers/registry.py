@@ -550,6 +550,13 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="z-ai/glm-5.2",
         env_key="OPENROUTER_API_KEY",
     ),
+    _compat(
+        "vercel",
+        "Vercel AI Gateway",
+        base_url="https://ai-gateway.vercel.sh/v1",
+        recommended_model="anthropic/claude-haiku-4.5",
+        env_key="AI_GATEWAY_API_KEY",  # Vercel's documented name for this key
+    ),
     ProviderDescriptor(
         name="ollama",
         title="Ollama (local models)",
