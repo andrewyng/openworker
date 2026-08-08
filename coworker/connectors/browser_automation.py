@@ -326,8 +326,30 @@ def _snapshot(page, max_chars: int) -> dict[str, Any]:
     }
 
 
-def make_browser_automation_tools() -> list[Callable[..., Any]]:
+def make_browser_automation_tools(
+    roots: Optional[list[Any]] = None,
+) -> list[Callable[..., Any]]:
     tools: list[Callable[..., Any]] = []
+
+    def _confine_upload_path(raw: str) -> tuple[Optional[Path], Optional[dict]]:
+        """Resolve a caller-supplied upload source inside a granted session root.
+
+        browser_upload_file is kind=write → EXTERNAL, and Mode.AUTO returns full access
+        with no path check — so without this, a model-controlled `path` can exfiltrate
+        anything readable (secrets store, SSH keys) through a page file input. Any
+        granted root is fine (this is a read/exfil boundary, not a write). Mirrors
+        email outgoing-attachment confinement and the sibling browser_screenshot fix.
+        """
+        allowed = [Path(r.path) for r in (roots or [])]
+        if not allowed:
+            return None, {"error": "no granted session directory for the upload"}
+        p = Path(raw).expanduser()
+        cand = (p if p.is_absolute() else allowed[0] / p).resolve()
+        if not any(cand.is_relative_to(root.resolve()) for root in allowed):
+            return None, {
+                "error": f"{cand} is outside the session's granted directories"
+            }
+        return cand, None
 
     def browser_open_url(
         url: str, wait_until: str = "domcontentloaded"
@@ -484,8 +506,13 @@ def make_browser_automation_tools() -> list[Callable[..., Any]]:
     )
 
     def browser_upload_file(target: str, path: str) -> dict[str, Any]:
-        file_path = Path(path).expanduser().resolve()
-        if not file_path.exists():
+        # Confine BEFORE opening the browser (fail fast; hermetic tests assert without
+        # Playwright). Relative paths resolve against the primary granted root.
+        file_path, err = _confine_upload_path(path)
+        if err:
+            return err
+        assert file_path is not None
+        if not file_path.is_file():
             return {"error": f"file not found: {file_path}"}
         return _BROWSER.call(
             "upload_file",
@@ -503,7 +530,8 @@ def make_browser_automation_tools() -> list[Callable[..., Any]]:
             browser_upload_file,
             _schema(
                 "browser_upload_file",
-                "Upload a local file through a file input. Requires approval.",
+                "Upload a local file through a file input. The path must be inside a "
+                "granted session directory. Requires approval.",
                 {"target": {"type": "string"}, "path": {"type": "string"}},
                 ["target", "path"],
             ),
