@@ -46,7 +46,7 @@ import { itemsFromMessages } from "./itemsFromMessages";
 import { addTurnUsage, emptyUsage, usageFromMessages } from "./usage";
 import { streamMode } from "./streamGate";
 import { InboxItemCard } from "./components/InboxItemCard";
-import { isTauri, platformOS, startWindowDrag } from "./tauri";
+import { getServerStatus, isTauri, platformOS, startWindowDrag, type ServerStatus } from "./tauri";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
@@ -55,6 +55,7 @@ import { Markdown } from "./components/Markdown";
 import { SearchModal } from "./components/SearchModal";
 import { SessionIntro } from "./components/SessionIntro";
 import { FolderGate } from "./components/FolderGate";
+import { ServerFault } from "./components/ServerFault";
 import { Onboarding } from "./components/Onboarding";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ScheduledView } from "./components/ScheduledView";
@@ -393,6 +394,9 @@ export function App() {
   // Retry health for a while: the desktop shell starts its sidecar in parallel, so the
   // server may not answer for a second or two. Only fall back to the gate once it's truly up.
   const [booting, setBooting] = useState(true);
+  // Desktop only: the shell reported its sidecar dead or unreachable — full-stop screen
+  // with diagnostics instead of a UI where every backend call hangs (#382).
+  const [serverFault, setServerFault] = useState<ServerStatus | null>(null);
   const [onboarding, setOnboarding] = useState(false);
   // True once we've resumed a prior conversation on boot (drives the splash wording).
   const [resumedExisting, setResumedExisting] = useState(false);
@@ -477,14 +481,32 @@ export function App() {
           loadSettings();
           if (!cancelled) setBooting(false);
         })
-        .catch(() => {
+        .catch(async () => {
           if (cancelled) return;
-          if (tries <= 0) {
+          // Desktop: ask the shell what happened to its sidecar. A launch failure or an
+          // early exit can't be polled away, so fail fast to the fault screen instead of
+          // burning the remaining retries (#382 — the packaged app used to render a fully
+          // navigable UI where every backend call hung silently). If retries exhaust while
+          // it's still "starting", surface that too rather than offering a dead folder gate.
+          if (isTauri()) {
+            const s = await getServerStatus().catch(() => null);
+            if (cancelled) return;
+            if (s && (s.status === "spawn_failed" || s.status === "exited")) {
+              setServerFault(s);
+              setBooting(false);
+              return;
+            }
+            if (tries <= 0) {
+              setServerFault(s ?? { status: "starting", detail: null, bin_path: "", log_path: "" });
+              setBooting(false);
+              return;
+            }
+          } else if (tries <= 0) {
             setBooting(false);
             setShowGate(true);
-          } else {
-            setTimeout(() => attempt(tries - 1), 500);
+            return;
           }
+          setTimeout(() => attempt(tries - 1), 500);
         });
     };
     attempt(40); // ~20s of 500ms retries
@@ -1213,6 +1235,11 @@ export function App() {
     if (!desktop || event.button !== 0) return;
     startWindowDrag();
   };
+
+  // A dead backend outranks the splash and the gate: nothing behind either works.
+  if (serverFault) {
+    return <ServerFault fault={serverFault} onRetry={() => window.location.reload()} />;
+  }
 
   if (booting || !uiReady) {
     return (

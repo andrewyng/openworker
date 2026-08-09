@@ -77,6 +77,21 @@ export const setKeepAwake = (enabled: boolean) => invoke<boolean>("set_keep_awak
 /** Begin native window dragging from a custom title/header region. */
 export const startWindowDrag = () => invoke<boolean>("start_window_drag");
 
+// --- Sidecar server status (desktop only) ----------------------------------------
+
+export type ServerStatus = {
+  status: "starting" | "listening" | "spawn_failed" | "exited";
+  detail: string | null;
+  bin_path: string;
+  log_path: string;
+};
+
+/** The shell's view of its Python sidecar: launched and listening, still starting, or
+ * dead — with the log/binary paths for diagnostics. The SPA polls this when health
+ * checks fail so a server that never came up is reported instead of hanging (#382).
+ * null in the browser build. */
+export const getServerStatus = () => invoke<ServerStatus>("get_server_status");
+
 // Local dictation is native-only. The browser build deliberately keeps this unavailable rather
 // than silently sending microphone audio to a server.
 export const getDictationStatus = () => invoke<DictationStatus>("get_dictation_status");
