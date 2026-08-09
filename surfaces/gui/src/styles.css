@@ -1146,6 +1146,8 @@ html[data-theme="dark"] .aglyph-f7 { color: #9aa5b3; }
 .gate-input input:focus { border-color: var(--accent); }
 .gate-error { color: var(--accent); font-size: var(--fs-ui); margin-top: 8px; }
 .gate-label { font-size: var(--fs-label); color: var(--faint); margin: 18px 0 6px; }
+/* Diagnostic paths on the server-fault screen: long absolute paths must wrap inside the card. */
+.gate-path { word-break: break-all; margin: 0; }
 .gate-recents { display: flex; flex-direction: column; max-height: 200px; overflow-y: auto; }
 .gate-recent { display: flex; flex-direction: column; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
 .gate-recent:hover { background: var(--panel); }
