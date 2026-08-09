@@ -388,6 +388,19 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
 
 
+def test_openrouter_vision_matches_declared_input_modalities():
+    """Vision must track what OpenRouter declares per model, or the engine swaps in its
+    non-vision placeholder and the image never reaches a model that can read it."""
+    for mid in (
+        "openrouter:moonshotai/kimi-k2.6",
+        "openrouter:meta-llama/llama-4-maverick",
+    ):
+        caps = capabilities_for(mid)
+        assert caps.vision and not caps.pdf, mid
+    for mid in ("openrouter:z-ai/glm-5.2", "openrouter:deepseek/deepseek-v4-pro"):
+        assert not capabilities_for(mid).vision, mid
+
+
 def test_matrix_labels_and_custom_model_fallback():
     from coworker.providers.matrix import MATRIX, model_labels
 
