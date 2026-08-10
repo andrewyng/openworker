@@ -240,10 +240,60 @@ def test_script_file_target_scoping_blocks_escapes(tmp_path):
         'import os\ntarget = os.path.join("/tmp", "poemaa.txt")\nwith open(target, "w") as f:\n    f.write("test")\n'
     )
 
-    eng = PermissionEngine(workspace_root=tmp_path, mode=Mode.AUTO)
-    d = eng.evaluate("run_shell", {"command": f"python3 {script}"}, None)
+def test_shell_command_variable_expansion_scoping_blocks_escapes(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", "/private/tmp/outside_home")
+    monkeypatch.setenv("USERPROFILE", "C:\\Users\\Admin")
+
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    eng = PermissionEngine(workspace_root=ws, mode=Mode.AUTO)
+
+    # POSIX ${HOME} expansion targeting path outside workspace root
+    cmd_posix_braces = "cp source ${HOME}/outside.txt"
+    d1 = eng.evaluate("run_shell", {"command": cmd_posix_braces}, None)
+    assert not d1.allowed
+    assert "not in a writable directory" in d1.reason
+
+    # POSIX $HOME expansion
+    cmd_posix_bare = "cp source $HOME/outside.txt"
+    d2 = eng.evaluate("run_shell", {"command": cmd_posix_bare}, None)
+    assert not d2.allowed
+
+    # Windows %USERPROFILE% expansion
+    cmd_win_percent = "copy source %USERPROFILE%\\outside.txt"
+    d3 = eng.evaluate("run_shell", {"command": cmd_win_percent}, None)
+    assert not d3.allowed
+
+    # PowerShell $env:USERPROFILE expansion
+    cmd_ps_env = "Copy-Item source $env:USERPROFILE\\outside.txt"
+    d4 = eng.evaluate("run_shell", {"command": cmd_ps_env}, None)
+    assert not d4.allowed
+
+
+def test_unresolved_variable_expansion_blocks_fail_open(tmp_path, monkeypatch):
+    monkeypatch.delenv("OUTDIR", raising=False)
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    eng = PermissionEngine(workspace_root=ws, mode=Mode.AUTO)
+
+    # Unset $OUTDIR must NOT fail open into workspace root
+    cmd = "cp secrets.txt $OUTDIR/x"
+    d = eng.evaluate("run_shell", {"command": cmd}, None)
     assert not d.allowed
-    assert "not in a writable directory" in d.reason
+    assert "unresolved variable expansion" in d.reason
+
+
+def test_single_quoted_variables_preserved(tmp_path):
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+
+    # Single-quoted string '$HOME/x' must NOT be expanded
+    from coworker.permissions import expand_shell_vars
+
+    assert expand_shell_vars("echo '$HOME/x'") == "echo '$HOME/x'"
+
+
+
 
 
 

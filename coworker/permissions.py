@@ -9,6 +9,7 @@ prefixes) and a session allowlist. The engine only *decides*; the turn engine ro
 from __future__ import annotations
 
 import base64
+import os
 import re
 import shlex
 import sys
@@ -19,8 +20,81 @@ from typing import Any, Optional
 
 
 
+
+_UNRESOLVED_VAR_PATTERN = re.compile(
+    r"(?:\$[a-zA-Z_][a-zA-Z0-9_]*|\$\{[^}]+\}|\%[a-zA-Z_][a-zA-Z0-9_]*\%|\$env:[a-zA-Z_][a-zA-Z0-9_]*)",
+    re.IGNORECASE,
+)
+
+
+
+def expand_and_check_shell_vars(cmd_str: str) -> tuple[str, bool]:
+    """Single-pass, single-quote aware environment variable expansion.
+    Returns (expanded_command, has_unresolved_vars).
+    """
+    if not cmd_str:
+        return "", False
+
+    has_unresolved = False
+
+    def replacer(match):
+        nonlocal has_unresolved
+        raw = match.group(0)
+
+        # Single-quoted strings: bash single quotes prevent variable expansion
+        if raw.startswith("'") and raw.endswith("'"):
+            return raw
+
+        var_token = raw.strip('"')
+
+        if var_token.lower().startswith("$env:"):
+            var_name = var_token[5:]
+        elif var_token.startswith("${") and var_token.endswith("}"):
+            var_name = var_token[2:-1]
+        elif var_token.startswith("%") and var_token.endswith("%"):
+            var_name = var_token[1:-1]
+        elif var_token.startswith("$"):
+            var_name = var_token[1:]
+        else:
+            return raw
+
+        if var_name in os.environ:
+            val = os.environ[var_name]
+            return f'"{val}"' if raw.startswith('"') else val
+        else:
+            has_unresolved = True
+            return raw
+
+    # Single-pass regex matching single quotes or double-quoted/unquoted variable tokens
+    pattern = re.compile(
+        r"\'[^\']*\'|\"?\$env:[a-zA-Z0-9_]+\"?|\"?\$\{[a-zA-Z0-9_]+\}\"?|\"?\$[a-zA-Z0-9_]+\"?|\"?%[a-zA-Z0-9_]+%\"?"
+    )
+
+    expanded_cmd = pattern.sub(replacer, cmd_str)
+
+    if _UNRESOLVED_VAR_PATTERN.search(expanded_cmd):
+        has_unresolved = True
+
+    return expanded_cmd, has_unresolved
+
+
+def expand_shell_vars(cmd_str: str) -> str:
+    """Expand shell environment variables (single-pass, quote-aware)."""
+    expanded, _ = expand_and_check_shell_vars(cmd_str)
+    return expanded
+
+
+def has_unresolved_vars(path_str: str) -> bool:
+    """Return True if path contains unresolvable variable syntax ($VAR, ${VAR}, %VAR%, $env:VAR)."""
+    _, unresolved = expand_and_check_shell_vars(str(path_str))
+    if unresolved:
+        return True
+    return bool(_UNRESOLVED_VAR_PATTERN.search(str(path_str)))
+
+
 # Shell metacharacters that turn one "allowlisted" command into several. Any of these in a
 # command disqualifies it from allowlist auto-run — approval is required instead. Covers
+
 # chaining (`;` `&` `&&` `||`), pipes (`|`), redirection (`>` `<`), command substitution
 # (`` ` `` `$(`), process substitution / grouping (`(`), and newlines.
 _SHELL_OPERATORS = (";", "&", "|", ">", "<", "`", "$(", "(", "\n", "\r")
@@ -110,6 +184,7 @@ def extract_shell_write_targets(command: str) -> list[str]:
     if not command or not command.strip():
         return []
 
+    command = expand_shell_vars(command)
     targets: list[str] = []
 
     # 1. Redirections > and >>
@@ -188,7 +263,9 @@ def extract_shell_all_paths(command: str) -> list[str]:
     if not command or not command.strip():
         return []
 
+    command = expand_shell_vars(command)
     paths: list[str] = []
+
 
     # 1. Regex search across entire command string
     for match in _PATH_REGEX.findall(command):
@@ -453,12 +530,30 @@ class PermissionEngine:
             )
 
             for target in write_targets:
+                if has_unresolved_vars(target):
+                    return Decision(
+                        False,
+                        f"shell command target path contains unresolved variable expansion: {target}",
+                        needs_user=(self.mode not in (Mode.AUTO, *READ_ONLY_MODES)),
+                    )
                 if not self._under_writable_root(target):
                     return Decision(
                         False,
                         f"shell command target path is not in a writable directory: {target}",
                     )
             for path in all_paths:
+                if has_unresolved_vars(path):
+                    if self.mode is Mode.AUTO or self.mode in READ_ONLY_MODES:
+                        return Decision(
+                            False,
+                            f"shell command path contains unresolved variable expansion: {path}",
+                            needs_user=False,
+                        )
+                    return Decision(
+                        False,
+                        f"shell command path contains unresolved variable expansion: {path}",
+                        needs_user=True,
+                    )
                 if not self._under_root(path):
                     if self.mode is Mode.AUTO or self.mode in READ_ONLY_MODES:
                         return Decision(
@@ -471,6 +566,8 @@ class PermissionEngine:
                         f"shell command path requires approval: {path}",
                         needs_user=True,
                     )
+
+
 
 
 
@@ -526,8 +623,10 @@ class PermissionEngine:
     # -- helpers ----------------------------------------------------------------
     def _candidate(self, path: str) -> Path:
         # Relative paths resolve against primary (workspace_root); absolute/`~` taken as-is.
+        # Expand environment variables ($HOME, ${HOME}, %USERPROFILE%, $env:USERPROFILE) before path resolution.
         # Normalize backslashes for cross-platform resolution on POSIX systems.
-        path_str = str(path).replace("\\", "/")
+        expanded_path = expand_shell_vars(str(path))
+        path_str = expanded_path.replace("\\", "/")
         try:
             p = Path(path_str).expanduser()
         except RuntimeError:
