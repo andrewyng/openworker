@@ -54,7 +54,7 @@ fn launch_token() -> String {
 ///      (next to the app exe) on Windows.
 ///   3. Legacy onefile slot: `openworker-server[.exe]` next to the app binary (pre-onedir
 ///      builds used Tauri externalBin).
-///   4. Dev fallback: the repo venv, relative to this crate (`src-tauri` → `platform/.venv`;
+///   4. Dev fallback: the repo venv, relative to this crate (`src-tauri` → repo-root `.venv`;
 ///      `bin/` on POSIX, `Scripts\` on Windows).
 fn server_bin() -> PathBuf {
     if let Ok(p) = std::env::var("COWORKER_SERVER_BIN") {

@@ -26,11 +26,20 @@ class SQLiteMemoryStore(MemoryStore):
                 scope TEXT NOT NULL,
                 key TEXT,
                 content TEXT NOT NULL,
+                summary TEXT,
                 workspace TEXT,
                 session_id TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """)
+        # Databases created before the summary column existed: rows without one fall
+        # back to a truncated first line of content at render time (no data migration).
+        cols = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(memories)").fetchall()
+        }
+        if "summary" not in cols:
+            self._conn.execute("ALTER TABLE memories ADD COLUMN summary TEXT")
         self._conn.commit()
 
     def add(
@@ -39,15 +48,16 @@ class SQLiteMemoryStore(MemoryStore):
         *,
         scope: Scope = Scope.WORKSPACE,
         key: Optional[str] = None,
+        summary: Optional[str] = None,
         workspace: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> MemoryItem:
         scope = Scope(scope)
         with self._lock:
             cursor = self._conn.execute(
-                "INSERT INTO memories (scope, key, content, workspace, session_id) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (scope.value, key, content, workspace, session_id),
+                "INSERT INTO memories (scope, key, content, summary, workspace, session_id) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (scope.value, key, content, summary, workspace, session_id),
             )
             self._conn.commit()
             item = self.get(cursor.lastrowid)
@@ -84,11 +94,19 @@ class SQLiteMemoryStore(MemoryStore):
             rows = self._conn.execute(query, params).fetchall()
         return [_row_to_item(row) for row in rows]
 
-    def update(self, item_id: int, content: str) -> Optional[MemoryItem]:
+    def update(
+        self, item_id: int, content: str, *, summary: Optional[str] = None
+    ) -> Optional[MemoryItem]:
         with self._lock:
-            self._conn.execute(
-                "UPDATE memories SET content = ? WHERE id = ?", (content, item_id)
-            )
+            if summary is not None:
+                self._conn.execute(
+                    "UPDATE memories SET content = ?, summary = ? WHERE id = ?",
+                    (content, summary, item_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE memories SET content = ? WHERE id = ?", (content, item_id)
+                )
             self._conn.commit()
         return self.get(item_id)
 
@@ -97,6 +115,18 @@ class SQLiteMemoryStore(MemoryStore):
             cursor = self._conn.execute("DELETE FROM memories WHERE id = ?", (item_id,))
             self._conn.commit()
         return cursor.rowcount > 0
+
+    def delete_all(self, *, scope: Optional[Scope] = None) -> int:
+        """Delete every memory (optionally one scope). Returns the number removed."""
+        with self._lock:
+            if scope is not None:
+                cursor = self._conn.execute(
+                    "DELETE FROM memories WHERE scope = ?", (Scope(scope).value,)
+                )
+            else:
+                cursor = self._conn.execute("DELETE FROM memories")
+            self._conn.commit()
+        return cursor.rowcount
 
     def close(self) -> None:
         self._conn.close()
@@ -108,6 +138,7 @@ def _row_to_item(row: sqlite3.Row) -> MemoryItem:
         scope=Scope(row["scope"]),
         content=row["content"],
         key=row["key"],
+        summary=row["summary"],
         workspace=row["workspace"],
         session_id=row["session_id"],
         created_at=row["created_at"],

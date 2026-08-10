@@ -1,4 +1,4 @@
-import type { SessionInfo, WsEvent } from "./types";
+import type { GroupedQuestion, QuestionOption, SessionInfo, WsEvent } from "./types";
 
 declare const __COWORKER_DEV_TOKEN__: string;
 
@@ -1239,10 +1239,14 @@ export interface InboxItem {
   created_at: string;
   resolved_at: string | null;
   visibility?: "inline" | "inbox";
-  // Question metadata (ask_user): quick-reply choices + a free-text escape.
-  options?: string[];
+  // Question metadata (ask_user): quick-reply choices + a free-text escape. Options may be rich
+  // {label, description, recommended, preview} objects (OPE-51); `questions` is the grouped form
+  // (stepper), whose resolution is a JSON object string keyed by header-or-question.
+  options?: QuestionOption[];
   allow_text?: boolean;
   multi?: boolean;
+  header?: string;
+  questions?: GroupedQuestion[];
   // Kind-specific payload (directory: {path, writable}; …).
   data?: Record<string, any>;
   // Originating-session context (server-joined) so the Inbox is self-contained.
@@ -1434,6 +1438,73 @@ export async function setOnboarded(value: boolean): Promise<{ ok: boolean; onboa
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value }),
+  });
+  return res.json();
+}
+
+// -- Memory (MEMORY-SPEC §5.3/§6: the memory screen, user rules, toast Undo) ----
+
+export interface MemoryEntry {
+  id: number;
+  scope: string;
+  content: string;
+  summary: string;
+  created_at: string;
+}
+
+export interface MemorySettings {
+  enabled: boolean;
+  user_rules: string;
+}
+
+// Fired whenever memory changes from OUTSIDE the memory screen — today the agent
+// saving or editing one mid-conversation. The screen only loads its list on mount, so
+// without this it sits there stale and the user reads "Nothing yet" seconds after a
+// save actually landed (owner-hit 2026-07-28).
+export const MEMORY_CHANGED = "coworker:memory-changed";
+export function announceMemoryChanged() {
+  window.dispatchEvent(new CustomEvent(MEMORY_CHANGED));
+}
+
+export async function getMemory(): Promise<MemoryEntry[]> {
+  const res = await fetch(`${httpBase()}/v1/memory`);
+  return (await res.json()).memory ?? [];
+}
+
+export async function updateMemory(
+  id: number,
+  content: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/memory/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  return res.json();
+}
+
+export async function deleteMemory(id: number): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/memory/${id}`, { method: "DELETE" });
+  return res.json();
+}
+
+export async function deleteAllMemory(): Promise<{ ok: boolean; deleted: number }> {
+  const res = await fetch(`${httpBase()}/v1/memory`, { method: "DELETE" });
+  return res.json();
+}
+
+export async function getMemorySettings(): Promise<MemorySettings> {
+  const res = await fetch(`${httpBase()}/v1/memory/settings`);
+  return res.json();
+}
+
+export async function setMemorySettings(
+  patch: Partial<MemorySettings>,
+): Promise<MemorySettings> {
+  const res = await fetch(`${httpBase()}/v1/memory/settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
   });
   return res.json();
 }

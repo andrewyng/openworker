@@ -18,6 +18,7 @@ export type EventType =
   | "input_rejected"
   | "interrupted"
   | "model_changed"
+  | "memory_saved"
   | "compacting"
   | "compacted"
   | "turn_done";
@@ -133,9 +134,35 @@ export type Item =
       // A live ask_user prompt (attended sessions answer inline; unattended ones route to the Inbox).
       kind: "question";
       question: string;
-      options?: string[];
+      options?: QuestionOption[];
       allow_text?: boolean;
       multi?: boolean;
+      header?: string;
+      questions?: GroupedQuestion[];
       resolved?: string;
     }
-  | { kind: "notice"; tone: "info" | "warn"; text: string; retriable?: boolean };
+  | { kind: "notice"; tone: "info" | "warn"; text: string; retriable?: boolean }
+  // MEMORY-SPEC §5.1: the save notice, inline in the conversation where the user is
+  // already looking (a corner toast vanished before it could be read or undone —
+  // owner-hit 2026-07-28). Stays put. `previous` is set when an existing memory was
+  // EDITED rather than a new one added (the update-don't-duplicate rule sends many
+  // saves that way) — Undo restores that text instead of deleting the memory.
+  | { kind: "memory"; id: number; text: string; previous?: string; undone?: boolean };
+
+// -- ask_user question metadata (OPE-51) --------------------------------------
+// An option is a plain string (renders as today's pill) or a rich object: `label` is the answer
+// value, `description` renders under it, `recommended` adds the green tag, `preview` is monospace
+// text shown in the side pane (≥1 preview switches the card to the two-pane layout).
+export type QuestionOption =
+  | string
+  | { label: string; description?: string; recommended?: boolean; preview?: string };
+
+// One step of a grouped ask_user call (up to 4, rendered as a stepper). The answer map is keyed
+// by `header` (falling back to `question`).
+export interface GroupedQuestion {
+  question: string;
+  header?: string;
+  options?: QuestionOption[];
+  allow_text?: boolean;
+  multi?: boolean;
+}
