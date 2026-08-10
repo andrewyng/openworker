@@ -687,6 +687,9 @@ export interface ModelSettings {
   onboarded: boolean;
   surfaces: SurfaceVisibility;
   scratch_base: string;
+  // Account defaults copied into newly created Cowork sessions. Existing sessions keep
+  // their own root snapshot; optional for compatibility with older sidecars.
+  default_roots?: RootInfo[];
   secrets_path: string;  // OS-native on-disk location the server reports (not hardcoded)
   // Sidebar layout preference (§7): "flat" = the persona accordions / today's list; "grouped" =
   // bounded per-persona cards. Defaults to "flat" (absent → flat) so the GUI is robust to an older
@@ -794,6 +797,17 @@ export async function setScratchBase(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path }),
+  });
+  return res.json();
+}
+
+export async function setDefaultRoots(
+  roots: Array<Pick<RootInfo, "path" | "writable">>,
+): Promise<{ ok: boolean; error?: string; default_roots?: RootInfo[] }> {
+  const res = await fetch(`${httpBase()}/v1/settings/default-roots`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ roots }),
   });
   return res.json();
 }

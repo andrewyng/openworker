@@ -1446,6 +1446,10 @@ def create_app(manager: SessionManager) -> FastAPI:
     def settings_set_scratch_base(body: dict) -> dict[str, Any]:
         return manager.set_scratch_base(str((body or {}).get("path", "")))
 
+    @app.post("/v1/settings/default-roots")
+    def settings_set_default_roots(body: dict) -> dict[str, Any]:
+        return manager.set_default_roots((body or {}).get("roots"))
+
     @app.post("/v1/settings/nav-layout")
     def settings_set_nav_layout(body: dict) -> dict[str, Any]:
         return manager.set_nav_layout(str((body or {}).get("nav_layout", "")))
