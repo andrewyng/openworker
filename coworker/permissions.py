@@ -8,6 +8,7 @@ prefixes) and a session allowlist. The engine only *decides*; the turn engine ro
 
 from __future__ import annotations
 
+import base64
 import re
 import shlex
 import sys
@@ -15,6 +16,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
+
 
 
 # Shell metacharacters that turn one "allowlisted" command into several. Any of these in a
@@ -54,8 +56,57 @@ _DEST_FLAGS = {
 }
 
 
+_INLINE_WRITE_PATTERNS = (
+    "'w'",
+    '"w"',
+    "'w+'",
+    '"w+"',
+    "'wb'",
+    '"wb"',
+    "'a'",
+    '"a"',
+    "'a+'",
+    '"a+"',
+    "'ab'",
+    '"ab"',
+    "'r+'",
+    '"r+"',
+    "open(",
+    "write_text",
+    "write_bytes",
+    "write(",
+    "writeFileSync",
+    "Set-Content",
+    "Out-File",
+    "Add-Content",
+    "New-Item",
+)
+
+_PATH_REGEX = re.compile(
+    r'(?:[a-zA-Z]:[/\\]|/|~|\.\.[/\\])[^\s"\'\`\;\|\&\<\>\)\,\{\}\[\]]+'
+)
+
+
+def extract_base64_paths(command: str) -> list[str]:
+    """Decode base64 payload strings in command lines to extract hidden path targets."""
+    if not command:
+        return []
+    paths: list[str] = []
+    b64_candidates = re.findall(r"[A-Za-z0-9+/]{8,}={0,2}", command)
+    for token in b64_candidates:
+        try:
+            decoded = base64.b64decode(token).decode("utf-8", errors="ignore")
+            for match in _PATH_REGEX.findall(decoded):
+                clean = match.strip("\"'")
+                if clean and clean not in paths:
+                    paths.append(clean)
+        except Exception:
+            continue
+    return paths
+
+
 def extract_shell_write_targets(command: str) -> list[str]:
-    """Extract destination file or directory path targets from shell commands (e.g. copy, move, redirection)."""
+    """Extract destination file or directory path targets from shell commands (e.g. copy, move, redirection, inline scripts)."""
     if not command or not command.strip():
         return []
 
@@ -83,39 +134,46 @@ def extract_shell_write_targets(command: str) -> list[str]:
             return cmd_str.split()
 
     tokens = _split_cmd(command)
-    if not tokens:
-        return targets
+    if tokens:
+        # 3. Destination flags (-Destination, -OutFile, of=, etc.)
+        for i, tok in enumerate(tokens[:-1]):
+            tok_lower = tok.lower()
+            if tok_lower in _DEST_FLAGS:
+                targets.append(tokens[i + 1])
+            elif tok_lower.startswith("of=") and len(tok) > 3:
+                targets.append(tok[3:])
 
-    # 3. Destination flags (-Destination, -OutFile, of=, etc.)
-    for i, tok in enumerate(tokens[:-1]):
-        tok_lower = tok.lower()
-        if tok_lower in _DEST_FLAGS:
-            targets.append(tokens[i + 1])
-        elif tok_lower.startswith("of=") and len(tok) > 3:
-            targets.append(tok[3:])
+        # 4. Copy/move utilities
+        subcommands = re.split(r";|&&|\|\||\|", command)
+        for subcmd in subcommands:
+            sub_tokens = _split_cmd(subcmd.strip())
+            if not sub_tokens:
+                continue
 
-    # 4. Copy/move utilities
-    subcommands = re.split(r";|&&|\|\||\|", command)
-    for subcmd in subcommands:
-        sub_tokens = _split_cmd(subcmd.strip())
-        if not sub_tokens:
-            continue
+            cmd_name = Path(sub_tokens[0]).name.lower()
+            if "." in cmd_name:
+                cmd_name = cmd_name.split(".")[0]
 
-        cmd_name = Path(sub_tokens[0]).name.lower()
-        if "." in cmd_name:
-            cmd_name = cmd_name.split(".")[0]
+            if cmd_name in _WRITE_COMMANDS:
+                pos_args = []
+                for t in sub_tokens[1:]:
+                    if t.startswith("-") or (
+                        t.startswith("/") and len(t) <= 3 and not t.startswith("//")
+                    ):
+                        continue
+                    pos_args.append(t)
+                if pos_args:
+                    targets.append(pos_args[-1])
 
-        if cmd_name in _WRITE_COMMANDS:
-            pos_args = []
-            for t in sub_tokens[1:]:
-                # Ignore options/flags (e.g. -f, --recursive, /Y)
-                if t.startswith("-") or (
-                    t.startswith("/") and len(t) <= 3 and not t.startswith("//")
-                ):
-                    continue
-                pos_args.append(t)
-            if pos_args:
-                targets.append(pos_args[-1])
+    # 5. Regex search across full command for paths inside inline scripts or parameters
+    has_inline_write = any(pattern in command for pattern in _INLINE_WRITE_PATTERNS)
+    if has_inline_write:
+        for match in _PATH_REGEX.findall(command):
+            targets.append(match)
+
+    # 6. Check base64 payload strings
+    for b64_path in extract_base64_paths(command):
+        targets.append(b64_path)
 
     cleaned: list[str] = []
     for t in targets:
@@ -132,6 +190,23 @@ def extract_shell_all_paths(command: str) -> list[str]:
 
     paths: list[str] = []
 
+    # 1. Regex search across entire command string
+    for match in _PATH_REGEX.findall(command):
+        clean = match.strip("\"'")
+        clean = re.sub(r"^(?:>>|>|<)\s*", "", clean)
+        if not clean:
+            continue
+        if (
+            clean.startswith("/")
+            and sys.platform == "win32"
+            and len(clean) <= 3
+            and "/" not in clean[1:]
+        ):
+            continue
+        if clean not in paths:
+            paths.append(clean)
+
+    # 2. Tokenize command for token-level paths
     def _split_cmd(cmd_str: str) -> list[str]:
         if "\\" in cmd_str or ":" in cmd_str:
             try:
@@ -166,13 +241,87 @@ def extract_shell_all_paths(command: str) -> list[str]:
             if clean not in paths:
                 paths.append(clean)
 
+    # 3. Check base64 payload strings
+    for b64_path in extract_base64_paths(command):
+        if b64_path not in paths:
+            paths.append(b64_path)
+
     return paths
 
 
 
 
+
+
+_SCRIPT_EXTENSIONS = (
+    ".py",
+    ".js",
+    ".ts",
+    ".sh",
+    ".bash",
+    ".ps1",
+    ".pl",
+    ".rb",
+    ".cmd",
+    ".bat",
+)
+
+
+def extract_script_file_targets(
+    command: str, workspace_root: Path
+) -> tuple[list[str], list[str]]:
+    """Inspect local script files referenced in a command line and extract embedded write and read targets."""
+    write_targets: list[str] = []
+    all_paths: list[str] = []
+
+    if not command or not command.strip():
+        return write_targets, all_paths
+
+    def _split_cmd(cmd_str: str) -> list[str]:
+        if "\\" in cmd_str or ":" in cmd_str:
+            try:
+                return shlex.split(cmd_str, posix=False)
+            except ValueError:
+                pass
+        try:
+            return shlex.split(cmd_str, posix=(sys.platform != "win32"))
+        except ValueError:
+            return cmd_str.split()
+
+    tokens = _split_cmd(command)
+
+    for tok in tokens:
+        clean = tok.strip("\"'")
+        if not clean or clean.startswith("-"):
+            continue
+
+        p = Path(clean)
+        if (
+            p.suffix.lower() in _SCRIPT_EXTENSIONS
+            or clean.startswith("./")
+            or clean.startswith(".\\")
+        ):
+            candidate = (
+                p.resolve() if p.is_absolute() else (workspace_root / p).resolve()
+            )
+            if candidate.is_file():
+                try:
+                    content = candidate.read_text(encoding="utf-8", errors="ignore")
+                    for w in extract_shell_write_targets(content):
+                        if w not in write_targets:
+                            write_targets.append(w)
+                    for r in extract_shell_all_paths(content):
+                        if r not in all_paths:
+                            all_paths.append(r)
+                except Exception:
+                    pass
+
+    return write_targets, all_paths
+
+
 def _has_shell_operators(command: str) -> bool:
     return any(op in command for op in _SHELL_OPERATORS)
+
 
 
 from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
@@ -293,13 +442,23 @@ class PermissionEngine:
         # Path scoping for shell commands performing file read/write/copy/move operations (all modes).
         if is_shell:
             command = str(arguments.get("command", ""))
-            for target in extract_shell_write_targets(command):
+            script_writes, script_reads = extract_script_file_targets(
+                command, self.workspace_root
+            )
+            write_targets = list(
+                dict.fromkeys([*extract_shell_write_targets(command), *script_writes])
+            )
+            all_paths = list(
+                dict.fromkeys([*extract_shell_all_paths(command), *script_reads])
+            )
+
+            for target in write_targets:
                 if not self._under_writable_root(target):
                     return Decision(
                         False,
                         f"shell command target path is not in a writable directory: {target}",
                     )
-            for path in extract_shell_all_paths(command):
+            for path in all_paths:
                 if not self._under_root(path):
                     if self.mode is Mode.AUTO or self.mode in READ_ONLY_MODES:
                         return Decision(
@@ -312,6 +471,8 @@ class PermissionEngine:
                         f"shell command path requires approval: {path}",
                         needs_user=True,
                     )
+
+
 
 
 

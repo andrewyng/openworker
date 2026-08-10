@@ -227,3 +227,25 @@ def test_shell_command_path_scoping_blocks_unallowed_reads(tmp_path):
     assert "not in an allowed directory" in d3.reason
 
 
+def test_base64_encoded_path_scoping_blocks_escapes(tmp_path):
+    from coworker.permissions import extract_base64_paths
+
+    # L3RtcC9wb2VtYWEudHh0 -> /tmp/poemaa.txt
+    b64_cmd = 'node work.js "$(echo L3RtcC9wb2VtYWEudHh0 | base64 -d)"'
+    assert extract_base64_paths(b64_cmd) == ["/tmp/poemaa.txt"]
+
+def test_script_file_target_scoping_blocks_escapes(tmp_path):
+    script = tmp_path / "script.py"
+    script.write_text(
+        'import os\ntarget = os.path.join("/tmp", "poemaa.txt")\nwith open(target, "w") as f:\n    f.write("test")\n'
+    )
+
+    eng = PermissionEngine(workspace_root=tmp_path, mode=Mode.AUTO)
+    d = eng.evaluate("run_shell", {"command": f"python3 {script}"}, None)
+    assert not d.allowed
+    assert "not in a writable directory" in d.reason
+
+
+
+
+
