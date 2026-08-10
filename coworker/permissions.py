@@ -8,11 +8,14 @@ prefixes) and a session allowlist. The engine only *decides*; the turn engine ro
 
 from __future__ import annotations
 
+import re
 import shlex
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
+
 
 # Shell metacharacters that turn one "allowlisted" command into several. Any of these in a
 # command disqualifies it from allowlist auto-run — approval is required instead. Covers
@@ -21,8 +24,156 @@ from typing import Any, Optional
 _SHELL_OPERATORS = (";", "&", "|", ">", "<", "`", "$(", "(", "\n", "\r")
 
 
+_WRITE_COMMANDS = {
+    "copy",
+    "cp",
+    "move",
+    "mv",
+    "xcopy",
+    "robocopy",
+    "rsync",
+    "install",
+    "copy-item",
+    "move-item",
+    "out-file",
+    "set-content",
+    "add-content",
+    "new-item",
+    "tee",
+}
+
+_DEST_FLAGS = {
+    "-destination",
+    "-outfile",
+    "-filepath",
+    "-target",
+    "--output",
+    "-o",
+    "-c",
+    "-d",
+}
+
+
+def extract_shell_write_targets(command: str) -> list[str]:
+    """Extract destination file or directory path targets from shell commands (e.g. copy, move, redirection)."""
+    if not command or not command.strip():
+        return []
+
+    targets: list[str] = []
+
+    # 1. Redirections > and >>
+    redir_matches = re.findall(
+        r'(?:>>|>)\s*(?:"([^"]+)"|\'([^\']+)\'|([^\s;&|]+))', command
+    )
+    for m in redir_matches:
+        path = m[0] or m[1] or m[2]
+        if path:
+            targets.append(path)
+
+    # 2. Tokenize command preserving Windows backslashes
+    def _split_cmd(cmd_str: str) -> list[str]:
+        if "\\" in cmd_str or ":" in cmd_str:
+            try:
+                return shlex.split(cmd_str, posix=False)
+            except ValueError:
+                pass
+        try:
+            return shlex.split(cmd_str, posix=(sys.platform != "win32"))
+        except ValueError:
+            return cmd_str.split()
+
+    tokens = _split_cmd(command)
+    if not tokens:
+        return targets
+
+    # 3. Destination flags (-Destination, -OutFile, of=, etc.)
+    for i, tok in enumerate(tokens[:-1]):
+        tok_lower = tok.lower()
+        if tok_lower in _DEST_FLAGS:
+            targets.append(tokens[i + 1])
+        elif tok_lower.startswith("of=") and len(tok) > 3:
+            targets.append(tok[3:])
+
+    # 4. Copy/move utilities
+    subcommands = re.split(r";|&&|\|\||\|", command)
+    for subcmd in subcommands:
+        sub_tokens = _split_cmd(subcmd.strip())
+        if not sub_tokens:
+            continue
+
+        cmd_name = Path(sub_tokens[0]).name.lower()
+        if "." in cmd_name:
+            cmd_name = cmd_name.split(".")[0]
+
+        if cmd_name in _WRITE_COMMANDS:
+            pos_args = []
+            for t in sub_tokens[1:]:
+                # Ignore options/flags (e.g. -f, --recursive, /Y)
+                if t.startswith("-") or (
+                    t.startswith("/") and len(t) <= 3 and not t.startswith("//")
+                ):
+                    continue
+                pos_args.append(t)
+            if pos_args:
+                targets.append(pos_args[-1])
+
+    cleaned: list[str] = []
+    for t in targets:
+        t_clean = t.strip("\"'")
+        if t_clean and t_clean not in cleaned:
+            cleaned.append(t_clean)
+    return cleaned
+
+
+def extract_shell_all_paths(command: str) -> list[str]:
+    """Extract all explicit path candidates (absolute paths or upward relative paths) from a shell command."""
+    if not command or not command.strip():
+        return []
+
+    paths: list[str] = []
+
+    def _split_cmd(cmd_str: str) -> list[str]:
+        if "\\" in cmd_str or ":" in cmd_str:
+            try:
+                return shlex.split(cmd_str, posix=False)
+            except ValueError:
+                pass
+        try:
+            return shlex.split(cmd_str, posix=(sys.platform != "win32"))
+        except ValueError:
+            return cmd_str.split()
+
+    tokens = _split_cmd(command)
+
+    for tok in tokens:
+        clean = tok.strip("\"'")
+        clean = re.sub(r"^(?:>>|>|<)\s*", "", clean)
+        if not clean:
+            continue
+
+        is_abs_win = bool(re.match(r"^[a-zA-Z]:[/\\]", clean))
+        is_abs_posix = clean.startswith("/") or clean.startswith("~")
+        is_traversal = ".." in clean.split("/") or ".." in clean.split("\\")
+
+        if is_abs_win or is_abs_posix or is_traversal:
+            if (
+                clean.startswith("/")
+                and sys.platform == "win32"
+                and len(clean) <= 3
+                and "/" not in clean[1:]
+            ):
+                continue
+            if clean not in paths:
+                paths.append(clean)
+
+    return paths
+
+
+
+
 def _has_shell_operators(command: str) -> bool:
     return any(op in command for op in _SHELL_OPERATORS)
+
 
 from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
     SHELL_TOOL,
@@ -139,6 +290,32 @@ class PermissionEngine:
             if path is not None and not self._under_writable_root(path):
                 return Decision(False, f"path is not in a writable directory: {path}")
 
+        # Path scoping for shell commands performing file read/write/copy/move operations (all modes).
+        if is_shell:
+            command = str(arguments.get("command", ""))
+            for target in extract_shell_write_targets(command):
+                if not self._under_writable_root(target):
+                    return Decision(
+                        False,
+                        f"shell command target path is not in a writable directory: {target}",
+                    )
+            for path in extract_shell_all_paths(command):
+                if not self._under_root(path):
+                    if self.mode is Mode.AUTO or self.mode in READ_ONLY_MODES:
+                        return Decision(
+                            False,
+                            f"shell command path is not in an allowed directory: {path}",
+                            needs_user=False,
+                        )
+                    return Decision(
+                        False,
+                        f"shell command path requires approval: {path}",
+                        needs_user=True,
+                    )
+
+
+
+
         # Non-consequential tools always run.
         if not consequential:
             return Decision(True, "low risk")
@@ -187,9 +364,19 @@ class PermissionEngine:
 
     # -- helpers ----------------------------------------------------------------
     def _candidate(self, path: str) -> Path:
-        # Relative paths resolve against the primary (workspace_root); absolute/`~` taken as-is.
-        p = Path(path).expanduser()
+        # Relative paths resolve against primary (workspace_root); absolute/`~` taken as-is.
+        # Normalize backslashes for cross-platform resolution on POSIX systems.
+        path_str = str(path).replace("\\", "/")
+        try:
+            p = Path(path_str).expanduser()
+        except RuntimeError:
+            p = Path(path_str)
+
+        if re.match(r"^[a-zA-Z]:", path_str):
+            return p
         return p.resolve() if p.is_absolute() else (self.workspace_root / p).resolve()
+
+
 
     def _under_root(self, path: str) -> bool:
         candidate = self._candidate(path)
