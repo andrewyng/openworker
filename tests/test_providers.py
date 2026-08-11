@@ -388,6 +388,16 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
 
 
+def test_qwen38_max_preview_matrix_entry_is_vision_capable():
+    """Qwen3.8-Max-Preview is multimodal; a curated matrix entry keeps the qwen prefix
+    heuristic from stripping its image input."""
+    caps = capabilities_for("qwen:qwen3.8-max-preview")
+    assert caps.tools and caps.vision and caps.parallel_tool_calls and caps.streaming
+    from coworker.providers.matrix import model_context_windows
+
+    assert model_context_windows()["qwen:qwen3.8-max-preview"] == 1_000_000
+
+
 def test_matrix_labels_and_custom_model_fallback():
     from coworker.providers.matrix import MATRIX, model_labels
 
