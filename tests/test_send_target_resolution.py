@@ -46,7 +46,7 @@ def test_browser_automation_reads_are_free_interactions_gate():
         tools["browser_snapshot"].__aisuite_tool_metadata__.requires_approval is False
     )
     assert (
-        tools["browser_open_url"].__aisuite_tool_metadata__.requires_approval is False
+        tools["browser_open_url"].__aisuite_tool_metadata__.requires_approval is True
     )
     assert tools["browser_click"].__aisuite_tool_metadata__.requires_approval is True
     assert tools["browser_type"].__aisuite_tool_metadata__.requires_approval is True
