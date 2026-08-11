@@ -542,6 +542,40 @@ def test_ws_error_persists_notice_and_retry_reruns(tmp_path):
     assert sum(1 for m in messages if m["role"] == "user") == 1
 
 
+def test_ws_turn_crash_broadcasts_error_event(tmp_path):
+    """An exception escaping engine.run() (not a provider error the engine converts into an
+    error event) must surface as an error event + turn_done — not die silently as an
+    unretrieved task exception with only a bare turn_done (#367)."""
+    import asyncio
+
+    from coworker.engine import Event
+
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    engine = manager.get_engine("boom", workspace=tmp_path)
+    assert engine is not None
+
+    async def exploding_run(*args, **kwargs):
+        raise RuntimeError("engine blew up")
+        yield  # pragma: no cover - makes this an async generator
+
+    engine.run = exploding_run  # type: ignore[method-assign]
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/boom") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "user_message", "text": "hello"})
+        types, errors = [], []
+        while True:
+            event = ws.receive_json()
+            types.append(event["type"])
+            if event["type"] == "error":
+                errors.append(event["data"].get("error"))
+            if event["type"] == "turn_done":
+                break
+        assert len(errors) == 1 and "engine blew up" in errors[0]
+        assert "turn_done" in types
+        assert "assistant_message" not in types  # the crashed turn produced no reply
+
+
 # -- origin gate (local-API hardening): a browser page on a foreign origin must not be able to
 # read the API cross-origin or open the driving WebSocket. -------------------------------------
 
