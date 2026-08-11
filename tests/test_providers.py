@@ -388,6 +388,15 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
 
 
+def test_openrouter_matrix_marks_image_capable_models():
+    """Kimi K2.6 and Llama 4 Maverick accept image input on OpenRouter (their catalog's
+    input_modalities); GLM-5.2 and DeepSeek V4 Pro are text-only, so vision stays off."""
+    assert capabilities_for("openrouter:moonshotai/kimi-k2.6").vision is True
+    assert capabilities_for("openrouter:meta-llama/llama-4-maverick").vision is True
+    assert capabilities_for("openrouter:z-ai/glm-5.2").vision is False
+    assert capabilities_for("openrouter:deepseek/deepseek-v4-pro").vision is False
+
+
 def test_matrix_labels_and_custom_model_fallback():
     from coworker.providers.matrix import MATRIX, model_labels
 
