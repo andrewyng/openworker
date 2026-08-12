@@ -846,6 +846,24 @@ def verify_provider_key(
                 headers={"Authorization": f"Bearer {key}"},
                 timeout=timeout,
             )
+            # Reachability of /models isn't enough: a base URL that omits the /v1 path
+            # segment (e.g. LM Studio served at http://127.0.0.1:1234) can still answer
+            # /models while every completion 404s — the session then hangs silently on
+            # an endpoint that "tested" fine. Probe the real completions route too and
+            # fail fast with a path-specific message instead (issue #431).
+            if resp.status_code < 300:
+                route = httpx.get(
+                    base + "/chat/completions",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=timeout,
+                )
+                if route.status_code == 404:
+                    return {
+                        "ok": False,
+                        "error": "Server reachable, but the completions route 404s — the "
+                        "endpoint is usually missing a /v1 path segment (e.g. "
+                        "http://127.0.0.1:1234/v1).",
+                    }
     except Exception as exc:  # DNS/connection/timeout — never let it bubble to a 500
         return {
             "ok": False,
