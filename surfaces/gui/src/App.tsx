@@ -8,7 +8,10 @@ import {
   getSessionMessages,
   getSessions,
   announceAutomationsChanged,
+  announceMemoryChanged,
   connectEvents,
+  deleteMemory,
+  updateMemory,
   getSettings,
   getPersonas,
   getInbox,
@@ -212,10 +215,10 @@ export function App() {
   const [gateCreate, setGateCreate] = useState(false);
   // Which Settings section the full-page Settings surface opens on (§ Settings-as-page).
   const [settingsTab, setSettingsTab] = useState<
-    "appearance" | "models" | "skills" | "voice" | "personas"
+    "appearance" | "models" | "skills" | "voice" | "memory" | "personas"
   >("appearance");
   const openSettings = (
-    tab: "appearance" | "models" | "skills" | "voice" | "personas" = "appearance",
+    tab: "appearance" | "models" | "skills" | "voice" | "memory" | "personas" = "appearance",
   ) => {
     setSettingsTab(tab);
     setSurface("settings");
@@ -727,6 +730,24 @@ export function App() {
           if (d.model) setModel(d.model);
           setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || "Model switched" }]);
           break;
+        case "memory_saved":
+          // §5.1 save notice — inline in the transcript, where the user is already
+          // looking and where it keeps until they act (a corner toast disappeared
+          // before it could be read or undone — owner-hit 2026-07-28). Summary is the
+          // friendly one-liner; content is the fallback when the model skipped it.
+          setItems((p) => [
+            ...p,
+            {
+              kind: "memory",
+              id: Number(d.id),
+              text: String(d.summary || d.content || ""),
+              // Present when an existing memory was edited rather than added — the
+              // notice says so, and Undo restores this text instead of deleting.
+              ...(d.previous ? { previous: String(d.previous) } : {}),
+            },
+          ]);
+          announceMemoryChanged(); // Settings ▸ Memory, if open, is now stale
+          break;
         case "compacting":
           setCompacting(true);
           break;
@@ -975,6 +996,18 @@ export function App() {
     const t = window.setTimeout(() => setRunToast(null), 5000);
     return () => window.clearTimeout(t);
   }, [runToast]);
+
+  // MEMORY-SPEC §5.1: undo a write the transcript just announced. A new memory is
+  // deleted; an EDIT is rolled back to its previous text (deleting there would throw
+  // away whatever the memory already held). The notice confirms in place either way.
+  const undoMemorySave = async (id: number, previous?: string) => {
+    if (previous) await updateMemory(id, previous).catch(() => {});
+    else await deleteMemory(id).catch(() => {});
+    announceMemoryChanged();
+    setItems((p) =>
+      p.map((it) => (it.kind === "memory" && it.id === id ? { ...it, undone: true } : it)),
+    );
+  };
 
   const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
   const selectSession = async (id: string, ws: string, ag: string) => {
@@ -1541,6 +1574,7 @@ export function App() {
                     onApprove={approve}
                     running={running}
                     onRetry={retry}
+                    onUndoMemory={(id, previous) => void undoMemorySave(id, previous)}
                     // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
                     // group (header when collapsed, quiet line when expanded) — never as a
                     // floating paragraph.

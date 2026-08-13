@@ -180,6 +180,64 @@ describe("bubble hover affordances (FB-005)", () => {
   });
 });
 
+// MEMORY-SPEC §5.1 — the save notice lives IN the conversation (a corner toast vanished
+// before it could be read or undone, owner-hit 2026-07-28) and stays until acted on.
+describe("memory save notice", () => {
+  it("announces the save inline and offers Undo", () => {
+    const onUndo = vi.fn();
+    render(
+      <Transcript
+        items={[{ kind: "memory", id: 7, text: "prefers short replies" }]}
+        onApprove={vi.fn()}
+        onUndoMemory={onUndo}
+      />,
+    );
+    const notice = screen.getByTestId("memory-notice");
+    expect(notice.textContent).toContain("I'll remember that");
+    expect(notice.textContent).toContain("prefers short replies");
+
+    fireEvent.click(screen.getByTestId("memory-notice-undo"));
+    // No `previous` on a brand-new save — undo deletes it outright.
+    expect(onUndo).toHaveBeenCalledWith(7, undefined);
+  });
+
+  it("says an existing memory was UPDATED and undoes by restoring its old text", () => {
+    const onUndo = vi.fn();
+    render(
+      <Transcript
+        items={[
+          {
+            kind: "memory",
+            id: 4,
+            text: "diabetic, lactose-free, likes ice cream",
+            previous: "diabetic, lactose-free",
+          },
+        ]}
+        onApprove={vi.fn()}
+        onUndoMemory={onUndo}
+      />,
+    );
+    expect(screen.getByTestId("memory-notice").textContent).toContain(
+      "I've updated what I remember",
+    );
+    fireEvent.click(screen.getByTestId("memory-notice-undo"));
+    // Undo restores the previous wording rather than deleting the whole memory.
+    expect(onUndo).toHaveBeenCalledWith(4, "diabetic, lactose-free");
+  });
+
+  it("confirms in place once undone, with no Undo left to click", () => {
+    render(
+      <Transcript
+        items={[{ kind: "memory", id: 7, text: "prefers short replies", undone: true }]}
+        onApprove={vi.fn()}
+        onUndoMemory={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("memory-notice-undone").textContent).toContain("forgotten");
+    expect(screen.queryByTestId("memory-notice-undo")).toBeNull();
+  });
+});
+
 describe("humanizeTool", () => {
   it("prefers run_shell's model-written description and keeps the command as the object", () => {
     const line = humanizeTool("run_shell", { command: "git log --since=yesterday", description: "List yesterday's merges" });

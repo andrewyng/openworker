@@ -86,6 +86,8 @@ class CoworkerApp(App):
         mode: Mode = Mode.INTERACTIVE,
         provider: Optional[ProviderClient] = None,
         memory_store: Optional[MemoryStore] = None,
+        memory_off: bool = False,
+        user_rules: str = "",
         session_store: Optional[ConversationStore] = None,
         session_id: Optional[str] = None,
         resume_messages: Optional[list[dict]] = None,
@@ -96,6 +98,8 @@ class CoworkerApp(App):
         self.mode = mode
         self._provider = provider
         self._memory_store = memory_store
+        self._memory_off = memory_off
+        self._user_rules = user_rules
         self._session_store = session_store
         self._session_id = session_id
         self._resume_messages = resume_messages
@@ -116,6 +120,8 @@ class CoworkerApp(App):
             approver=self._approve,
             provider=self._provider,
             memory_store=self._memory_store,
+            memory_off=self._memory_off,
+            user_rules=self._user_rules,
             messages=self._resume_messages,
         )
         self._write(

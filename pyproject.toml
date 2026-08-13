@@ -34,6 +34,8 @@ dependencies = [
     # IANA tz database for zoneinfo. Windows ships no system tz db, so without this every
     # named schedule timezone (UTC, Asia/Kolkata, …) silently falls back to local time.
     "tzdata; sys_platform == 'win32'",
+    # tomllib landed in the 3.11 stdlib; on the 3.10 floor config.py falls back to tomli.
+    "tomli>=2; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

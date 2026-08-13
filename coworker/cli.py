@@ -10,7 +10,7 @@ from typing import Optional
 
 from .config import load_config
 from .conversations import ConversationStore
-from .memory import SQLiteMemoryStore
+from .memory import MemorySettingsStore, SQLiteMemoryStore
 from .permissions import Mode
 from .secrets import state_dir
 
@@ -39,6 +39,9 @@ def main(argv: Optional[list[str]] = None) -> None:
     workspace = Path(args.cwd).expanduser().resolve()
     # Unified global store shared with the GUI/server (one place for all conversations).
     data_dir = state_dir()
+    # Same on/off switch and user rules the GUI manages (MEMORY-SPEC §4.3/§6). The
+    # store is always wired: off means "stop learning", so saved facts stay usable.
+    memory_settings = MemorySettingsStore(data_dir / "memory-settings.json")
     memory_store = SQLiteMemoryStore(data_dir / "coworker.db")
     session_store = ConversationStore(data_dir)
     session_store.touch_workspace(os.path.realpath(str(workspace)))
@@ -59,6 +62,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         model=model,
         mode=Mode(mode),
         memory_store=memory_store,
+        memory_off=not memory_settings.enabled,
+        user_rules=memory_settings.user_rules,
         session_store=session_store,
         session_id=session_id,
         resume_messages=resume_messages,

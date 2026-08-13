@@ -18,6 +18,7 @@ export type EventType =
   | "input_rejected"
   | "interrupted"
   | "model_changed"
+  | "memory_saved"
   | "compacting"
   | "compacted"
   | "turn_done";
@@ -140,7 +141,13 @@ export type Item =
       questions?: GroupedQuestion[];
       resolved?: string;
     }
-  | { kind: "notice"; tone: "info" | "warn"; text: string; retriable?: boolean };
+  | { kind: "notice"; tone: "info" | "warn"; text: string; retriable?: boolean }
+  // MEMORY-SPEC §5.1: the save notice, inline in the conversation where the user is
+  // already looking (a corner toast vanished before it could be read or undone —
+  // owner-hit 2026-07-28). Stays put. `previous` is set when an existing memory was
+  // EDITED rather than a new one added (the update-don't-duplicate rule sends many
+  // saves that way) — Undo restores that text instead of deleting the memory.
+  | { kind: "memory"; id: number; text: string; previous?: string; undone?: boolean };
 
 // -- ask_user question metadata (OPE-51) --------------------------------------
 // An option is a plain string (renders as today's pill) or a rich object: `label` is the answer

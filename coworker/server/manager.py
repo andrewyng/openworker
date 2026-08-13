@@ -69,7 +69,7 @@ from ..mcp import (
     put_global_server,
     read_global,
 )
-from ..memory import MemoryStore, Scope, SQLiteMemoryStore
+from ..memory import MemorySettingsStore, MemoryStore, Scope, SQLiteMemoryStore
 from ..permissions import Mode
 from ..agents import list_agents as _list_agents
 from ..providers import (
@@ -136,6 +136,9 @@ class SessionManager:
         base.mkdir(parents=True, exist_ok=True)
 
         self.memory_store: MemoryStore = SQLiteMemoryStore(base / "coworker.db")
+        # MEMORY-SPEC §4.3/§6: the on/off switch + the user's standing rules. Settings-
+        # level, outside the memory table; read at engine build time.
+        self.memory_settings = MemorySettingsStore(base / "memory-settings.json")
         self.audit_store = AuditStore(base / "coworker.db")
         self.session_store = ConversationStore(base)
         self.session_store.canonicalize_workspaces()  # collapse /tmp vs /private/tmp etc.
@@ -440,7 +443,18 @@ class SessionManager:
             model=model,
             mode=mode,
             provider=self.provider,
+            # Memory off (§4.3) = stop LEARNING, not amnesia: saved facts still inject
+            # and stay usable, only the write tools go. Read at build time; running
+            # sessions finish under the mode they started with.
             memory_store=self.memory_store,
+            memory_off=not self.memory_settings.enabled,
+            # LIVE, not a snapshot: turning saving off mid-conversation must take
+            # effect at once (owner-hit 2026-07-28 — a running session kept saving).
+            memory_saving_enabled=lambda: self.memory_settings.enabled,
+            # Callable, not a snapshot: editing your instructions in Settings applies
+            # to conversations already open (same reason as the saving switch).
+            user_rules=lambda: self.memory_settings.user_rules,
+            on_memory_saved=self._memory_saved_notifier(session_id),
             messages=messages,
             extra_tools=extra_tools,
             secrets=self.secrets,
@@ -2726,6 +2740,12 @@ class SessionManager:
             approver=self._scheduled_approver(task, session_id),
             provider=self.provider,
             memory_store=self.memory_store,
+            memory_off=not self.memory_settings.enabled,
+            memory_saving_enabled=lambda: self.memory_settings.enabled,
+            # Callable, not a snapshot: editing your instructions in Settings applies
+            # to conversations already open (same reason as the saving switch).
+            user_rules=lambda: self.memory_settings.user_rules,
+            on_memory_saved=self._memory_saved_notifier(session_id),
             secrets=self.secrets,
             # No scheduling tools inside a scheduled run: the executing agent's job is to DO the
             # task, and instructions that mention timing ("every day at 5:32pm…") otherwise tempt
@@ -3967,19 +3987,90 @@ class SessionManager:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "skill": saved}
 
+    def _memory_saved_notifier(self, session_id: str):
+        """MEMORY-SPEC §5.1: push the memory_saved event that powers the GUI's save
+        toast ("I'll remember that — … [Undo]"). Best-effort by design: `remember` may
+        run with no socket attached (background runs) or off the loop thread — a lost
+        toast never fails the save."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        def notify(item, previous=None) -> None:
+            if loop is None or not loop.is_running():
+                return
+            payload = {
+                "type": "memory_saved",
+                "data": {
+                    "id": item.id,
+                    "scope": item.scope.value,
+                    "summary": item.summary or "",
+                    "content": item.content,
+                    # Set when this was an EDIT of an existing memory: the surface says
+                    # "I've updated what I remember" and Undo restores this text.
+                    "previous": previous or "",
+                },
+            }
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.broadcast_session(session_id, payload), loop
+                )
+            except RuntimeError:
+                pass
+
+        return notify
+
     def list_memory(self) -> list[dict[str, Any]]:
         return [
-            {"id": m.id, "scope": m.scope.value, "content": m.content}
+            {
+                "id": m.id,
+                "scope": m.scope.value,
+                "content": m.content,
+                "summary": m.summary or "",
+                "created_at": m.created_at or "",
+            }
             for m in self.memory_store.list()
         ]
 
     def add_memory(
         self, content: str, scope: str = "workspace", workspace: Optional[str] = None
     ) -> dict[str, Any]:
+        content = (content or "").strip()
+        if not content:
+            return {"ok": False, "error": "content required"}
         chosen = Scope(scope) if scope in _SCOPES else Scope.WORKSPACE
         ws = self.resolve_workspace(workspace) if chosen is Scope.WORKSPACE else None
         item = self.memory_store.add(content, scope=chosen, workspace=ws)
         return {"id": item.id, "scope": item.scope.value, "content": item.content}
+
+    def update_memory(self, item_id: int, content: str) -> dict[str, Any]:
+        """Edit-in-place from the memory screen (§5.3). The user rewrote the fact, so
+        the stale one-line summary is cleared rather than left contradicting it."""
+        content = (content or "").strip()
+        if not content:
+            return {"ok": False, "error": "content required"}
+        item = self.memory_store.update(item_id, content, summary="")
+        if item is None:
+            return {"ok": False, "error": f"no memory with id {item_id}"}
+        return {"ok": True, "id": item.id, "content": item.content}
+
+    def delete_memory(self, item_id: int) -> dict[str, Any]:
+        """Row delete on the memory screen — and the toast's Undo (§5.1)."""
+        if self.memory_store.delete(item_id):
+            return {"ok": True, "id": item_id}
+        return {"ok": False, "error": f"no memory with id {item_id}"}
+
+    def delete_all_memory(self) -> dict[str, Any]:
+        return {"ok": True, "deleted": self.memory_store.delete_all()}
+
+    def get_memory_settings(self) -> dict[str, Any]:
+        return self.memory_settings.snapshot()
+
+    def set_memory_settings(
+        self, enabled: Optional[bool] = None, user_rules: Optional[str] = None
+    ) -> dict[str, Any]:
+        return self.memory_settings.set(enabled=enabled, user_rules=user_rules)
 
 
 def _parse_inbox_json(s: str) -> dict[str, Any]:

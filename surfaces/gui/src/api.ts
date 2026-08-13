@@ -1442,6 +1442,73 @@ export async function setOnboarded(value: boolean): Promise<{ ok: boolean; onboa
   return res.json();
 }
 
+// -- Memory (MEMORY-SPEC §5.3/§6: the memory screen, user rules, toast Undo) ----
+
+export interface MemoryEntry {
+  id: number;
+  scope: string;
+  content: string;
+  summary: string;
+  created_at: string;
+}
+
+export interface MemorySettings {
+  enabled: boolean;
+  user_rules: string;
+}
+
+// Fired whenever memory changes from OUTSIDE the memory screen — today the agent
+// saving or editing one mid-conversation. The screen only loads its list on mount, so
+// without this it sits there stale and the user reads "Nothing yet" seconds after a
+// save actually landed (owner-hit 2026-07-28).
+export const MEMORY_CHANGED = "coworker:memory-changed";
+export function announceMemoryChanged() {
+  window.dispatchEvent(new CustomEvent(MEMORY_CHANGED));
+}
+
+export async function getMemory(): Promise<MemoryEntry[]> {
+  const res = await fetch(`${httpBase()}/v1/memory`);
+  return (await res.json()).memory ?? [];
+}
+
+export async function updateMemory(
+  id: number,
+  content: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/memory/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  return res.json();
+}
+
+export async function deleteMemory(id: number): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/memory/${id}`, { method: "DELETE" });
+  return res.json();
+}
+
+export async function deleteAllMemory(): Promise<{ ok: boolean; deleted: number }> {
+  const res = await fetch(`${httpBase()}/v1/memory`, { method: "DELETE" });
+  return res.json();
+}
+
+export async function getMemorySettings(): Promise<MemorySettings> {
+  const res = await fetch(`${httpBase()}/v1/memory/settings`);
+  return res.json();
+}
+
+export async function setMemorySettings(
+  patch: Partial<MemorySettings>,
+): Promise<MemorySettings> {
+  const res = await fetch(`${httpBase()}/v1/memory/settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
 // -- model providers (OpenAI, Ollama, …) --------------------------------------
 export interface ProviderField {
   key: string;
