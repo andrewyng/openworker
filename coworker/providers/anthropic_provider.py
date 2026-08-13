@@ -137,20 +137,26 @@ _PDF_DATA_URL_RE = re.compile(
 )
 
 
-def resolve_api_key(secrets: Any = None) -> Optional[str]:
+def resolve_api_key(secrets: Any = None, *, prefer_profile: bool = False) -> Optional[str]:
     """Resolve the Anthropic API key: env `ANTHROPIC_API_KEY` first, else the SecretStore
     `provider:anthropic` profile (`{api_key}`). Same contract as the OpenAI resolver: the
     Tauri-launched sidecar does not inherit the shell env, so Settings-entered keys must work.
+
+    `prefer_profile` flips that order, and is set whenever a custom endpoint is configured:
+    the key then leaves the machine for a host that is NOT Anthropic, so the one the user
+    typed alongside that endpoint must win over an ambient `ANTHROPIC_API_KEY` meant for
+    api.anthropic.com (same reasoning as `_openai_compat` in registry.py).
     """
     import os
 
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    if key:
-        return key
+    env_key = os.environ.get("ANTHROPIC_API_KEY")
+    profile_key = None
     if secrets is not None:
         profile = secrets.get("provider:anthropic") or {}
-        return profile.get("api_key") or None
-    return None
+        profile_key = profile.get("api_key") or None
+    if prefer_profile:
+        return profile_key or env_key or None
+    return env_key or profile_key or None
 
 
 def _parse_args(raw: Any) -> dict[str, Any]:
@@ -384,6 +390,7 @@ class AnthropicProvider(ProviderClient):
         *,
         default_model: str = "claude-sonnet-4-6",
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         secrets: Any = None,
         thinking_budget: Optional[int] = None,
     ):
@@ -391,8 +398,14 @@ class AnthropicProvider(ProviderClient):
         # before any key exists; the key resolves at call time (explicit → env → SecretStore).
         # Tests inject a `client` directly. `thinking_budget` (tokens, from the provider
         # profile's optional field) opts every request into extended thinking.
+        #
+        # `base_url` points the same Anthropic SDK at any Messages-API-compatible endpoint
+        # (LiteLLM, a corporate gateway). It is the ROOT — the SDK appends `/v1/messages`
+        # itself — and the registry normalizes it. When None the SDK falls back to its own
+        # default, which still honours `ANTHROPIC_BASE_URL` from the environment.
         self._client = client
         self._api_key = api_key
+        self._base_url = base_url or None
         self._secrets = secrets
         self.default_model = default_model
         self.thinking_budget = thinking_budget or 0
@@ -402,13 +415,18 @@ class AnthropicProvider(ProviderClient):
             # Lazy import so the SDK is only required when actually talking to Anthropic.
             from anthropic import Anthropic
 
-            key = self._api_key or resolve_api_key(self._secrets)
+            key = self._api_key or resolve_api_key(
+                self._secrets, prefer_profile=bool(self._base_url)
+            )
             if not key:
                 raise RuntimeError(
                     "No Anthropic API key configured. Set ANTHROPIC_API_KEY in the environment, "
                     "or add your key in Manage → Configure Models."
                 )
-            self._client = Anthropic(api_key=key)
+            kwargs: dict[str, Any] = {"api_key": key}
+            if self._base_url:
+                kwargs["base_url"] = self._base_url
+            self._client = Anthropic(**kwargs)
         return self._client
 
     def _request_kwargs(
@@ -454,6 +472,14 @@ class AnthropicProvider(ProviderClient):
         _add_cache_breakpoints(kwargs)
         return kwargs
 
+    def _use_refusal_fallback(self, model: str) -> bool:
+        """Whether this call takes the beta server-side-fallback path. Never on a custom
+        endpoint: the beta header, the `fallbacks` param and the beta messages route are
+        Anthropic-only, and a compatible gateway that doesn't know them 400s the whole
+        turn. Losing the fallback there costs a refusal retry, not a working request.
+        """
+        return self._base_url is None and _needs_refusal_fallback(model)
+
     def complete(
         self,
         *,
@@ -466,7 +492,7 @@ class AnthropicProvider(ProviderClient):
             model=model, messages=messages, tools=tools, settings=settings
         )
         client = self._ensure_client()
-        if _needs_refusal_fallback(model):
+        if self._use_refusal_fallback(model):
             response = client.beta.messages.create(
                 **kwargs,
                 betas=[_FALLBACK_BETA],
@@ -533,7 +559,7 @@ class AnthropicProvider(ProviderClient):
         )
         kwargs["stream"] = True
         client = self._ensure_client()
-        if _needs_refusal_fallback(model):
+        if self._use_refusal_fallback(model):
             events = client.beta.messages.create(
                 **kwargs,
                 betas=[_FALLBACK_BETA],

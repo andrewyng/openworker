@@ -8,8 +8,10 @@ model string and builds (and caches) its client from the matching SecretStore pr
 
 Today: `openai` (the default — native models via the Responses API; an optional custom
 endpoint covering Azure OpenAI's `/openai/v1` and any OpenAI-compliant gateway keeps the
-Chat Completions path), `anthropic` (native Messages API via
-`AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `bedrock`
+Chat Completions path), `anthropic` (native Messages API via `AnthropicProvider`, with an
+optional custom endpoint for LiteLLM and other Anthropic-compatible gateways — one wire
+either way, so the endpoint only swaps the host), `gemini` (native Google GenAI API via
+`GeminiProvider`), `bedrock`
 (models in the user's own AWS account — Claude natively, everything else via Converse),
 `vertex` (the user's own GCP project — Gemini and Claude natively, open-weight via the
 MaaS endpoint), and `ollama` (local, OpenAI-compatible `/v1`).
@@ -112,6 +114,23 @@ def _normalize_ollama_url(url: Optional[str]) -> str:
     return base
 
 
+def _normalize_anthropic_base(url: Optional[str]) -> Optional[str]:
+    """A pasted Anthropic-compatible endpoint → the ROOT the SDK expects, or None.
+
+    Unlike the OpenAI field (where the user pastes a `/v1` path and the SDK appends
+    `/chat/completions`), the Anthropic SDK builds `<base>/v1/messages` itself — so a
+    user who copies the `/v1` habit over from the OpenAI box would get `/v1/v1/messages`.
+    The trailing `/v1` is stripped for them. A gateway whose real root genuinely ends in
+    `/v1` is the price; the SDK's own convention makes root-without-`/v1` the norm.
+    """
+    base = (url or "").strip().rstrip("/")
+    if not base:
+        return None
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")].rstrip("/")
+    return base or None
+
+
 def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Key resolution stays in resolve_api_key (explicit → env → SecretStore), so we just
     # hand over the SecretStore. Stock OpenAI (no custom endpoint) speaks the Responses
@@ -136,8 +155,14 @@ def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
         thinking_budget = int(str((profile or {}).get("thinking_budget") or "").strip())
     except ValueError:
         thinking_budget = DEFAULT_THINKING_BUDGET
+    # A custom endpoint (LiteLLM, a corporate gateway) points the same SDK elsewhere; blank
+    # keeps api.anthropic.com — and leaves the SDK's own ANTHROPIC_BASE_URL env support intact.
+    base_url = _normalize_anthropic_base((profile or {}).get("base_url"))
     return AnthropicProvider(
-        api_key=api_key, secrets=secrets, thinking_budget=thinking_budget
+        api_key=api_key,
+        base_url=base_url,
+        secrets=secrets,
+        thinking_budget=thinking_budget,
     )
 
 
@@ -357,6 +382,15 @@ DESCRIPTORS: list[ProviderDescriptor] = [
                 "Anthropic API key",
                 secret=True,
                 placeholder="sk-ant-…",
+            ),
+            ProviderField(
+                "base_url",
+                "Custom endpoint (optional)",
+                secret=False,
+                required=False,
+                placeholder="https://…/anthropic",
+                help="For LiteLLM or any Anthropic-compatible gateway. Give the root — "
+                "/v1 is added automatically. Leave blank for api.anthropic.com.",
             ),
             # No thinking_budget field (owner call 2026-07-23): extended thinking is
             # on by default; the profile key stays a hidden override (0 = off).
@@ -889,6 +923,31 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
     return {"ok": False, "error": f"Vertex AI returned HTTP {resp.status_code}."}
 
 
+# Verify fallback (custom Anthropic endpoints only): a one-token Messages call, on the
+# most widely proxied current model. Its own availability is not what's being tested —
+# see `_anthropic_error_shaped`.
+_ANTHROPIC_PROBE_MODEL = "claude-sonnet-4-6"
+
+
+def _anthropic_error_shaped(resp: Any) -> bool:
+    """Whether a 4xx body is an Anthropic API error object (`{"type":"error","error":{…}}`)
+    rather than a generic gateway/proxy 404 page — i.e. whether something on the other end
+    actually speaks the Messages API.
+
+    The top-level `type` discriminator is what's checked, NOT just a nested `error` object:
+    `{"error": {"message": …}}` alone is the OpenAI/LiteLLM error shape, and passing it
+    would green-light an OpenAI-compatible URL pasted into the Anthropic endpoint box —
+    Test would say "saved" and every turn would then fail at runtime.
+    """
+    try:
+        body = resp.json()
+    except Exception:
+        return False
+    if not isinstance(body, dict) or not isinstance(body.get("error"), dict):
+        return False
+    return body.get("type") == "error"
+
+
 def verify_provider_key(
     name: str,
     *,
@@ -914,11 +973,30 @@ def verify_provider_key(
         return _verify_vertex(fields or {}, timeout)
     try:
         if name == "anthropic":
-            resp = httpx.get(
-                "https://api.anthropic.com/v1/models",
-                headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
-                timeout=timeout,
-            )
+            base = _normalize_anthropic_base(base_url) or "https://api.anthropic.com"
+            headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
+            resp = httpx.get(base + "/v1/models", timeout=timeout, headers=headers)
+            if resp.status_code == 404 and base != "https://api.anthropic.com":
+                # Gateways commonly proxy /v1/messages only, so a missing model list says
+                # nothing about the endpoint. Fall back to the one call every
+                # Anthropic-compatible endpoint must serve, capped at a single output
+                # token so a Test button never costs anything meaningful.
+                resp = httpx.post(
+                    base + "/v1/messages",
+                    headers=headers,
+                    json={
+                        "model": _ANTHROPIC_PROBE_MODEL,
+                        "max_tokens": 1,
+                        "messages": [{"role": "user", "content": "hi"}],
+                    },
+                    timeout=timeout,
+                )
+                # 4xx that came back in Anthropic's error shape (an unknown probe model on
+                # a gateway that only serves its own aliases, a param it dislikes) still
+                # proves what Test is for: an Anthropic-speaking endpoint that accepted
+                # the key. Auth failures are 401/403 and fall through to the mapping below.
+                if resp.status_code not in (401, 403) and _anthropic_error_shaped(resp):
+                    return {"ok": True}
         elif name == "gemini":
             resp = httpx.get(
                 "https://generativelanguage.googleapis.com/v1beta/models",
