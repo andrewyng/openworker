@@ -12,7 +12,8 @@ Chat Completions path), `anthropic` (native Messages API via
 `AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `bedrock`
 (models in the user's own AWS account — Claude natively, everything else via Converse),
 `vertex` (the user's own GCP project — Gemini and Claude natively, open-weight via the
-MaaS endpoint), and `ollama` (local, OpenAI-compatible `/v1`).
+MaaS endpoint), `nexus` (Dappnode's OpenAI-compatible inference gateway), and `ollama`
+(local, OpenAI-compatible `/v1`).
 """
 
 from __future__ import annotations
@@ -525,10 +526,18 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="META_API_KEY",
         endpoint_help="Prefilled with the Meta Model API endpoint (public preview, US-only as of 2026-07).",
     ),
-    # Resellers: many labs' models behind one key, using THEIR model namespaces (the curated
+    # Gateways/resellers: many labs' models behind one key, using THEIR model namespaces (the curated
     # ids + display labels live in providers/matrix.py). TODO: add Groq here (+ its matrix
     # rows) once the current provider surface is tested — deliberately deferred to bound
     # how much needs verifying at once (owner call, 2026-07-04).
+    _compat(
+        "nexus",
+        "Dappnode Nexus",
+        base_url="https://nexus-api.dappnode.com/v1",
+        recommended_model="deepseek/deepseek-v4-flash",
+        env_key="NEXUS_API_KEY",
+        endpoint_help="Prefilled with Dappnode Nexus's OpenAI-compatible endpoint.",
+    ),
     _compat(
         "together",
         "Together AI",
@@ -803,10 +812,11 @@ def verify_provider_key(
     fields: Optional[dict[str, Any]] = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
-    """Validate a provider's credentials with one cheap, read-only call (list models) — the same
-    pattern connectors use to validate tokens. Transient: callers pass the key directly so a user
-    can Test before saving. Never raises; returns {ok, error?}. Multi-field cloud providers
-    (Bedrock, Vertex) take their whole form via `fields`; everyone else uses api_key/base_url.
+    """Validate a provider's credentials with one cheap live call. Most providers expose an
+    authenticated model-list endpoint; Nexus does not, so its probe performs a one-token
+    completion. Transient: callers pass the key directly so a user can Test before saving. Never
+    raises; returns {ok, error?}. Multi-field cloud providers (Bedrock, Vertex) take their whole
+    form via `fields`; everyone else uses api_key/base_url.
     """
     import httpx
 
@@ -832,6 +842,24 @@ def verify_provider_key(
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
+        elif name == "nexus":
+            # Nexus's /v1/models catalog is public, so it cannot prove the submitted key works.
+            # Exercise the real authenticated inference path with the smallest useful request.
+            default_base = next(
+                (f.default for f in d.fields if f.key == "base_url" and f.default), ""
+            )
+            base = (base_url or "").strip().rstrip("/") or default_base.rstrip("/")
+            resp = httpx.post(
+                base + "/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": d.recommended_model,
+                    "messages": [{"role": "user", "content": "Reply OK"}],
+                    "max_tokens": 1,
+                    "stream": False,
+                },
+                timeout=timeout,
+            )
         else:  # openai + any OpenAI-compatible endpoint (Azure, OpenRouter, vendors, vLLM…)
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""

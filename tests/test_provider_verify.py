@@ -1,5 +1,5 @@
-"""Tests for provider key detection + the live (read-only) Test/verify path. SDK-free: the
-single httpx.get is monkeypatched so no network is touched."""
+"""Tests for provider key detection + the live Test/verify path. SDK-free: httpx is
+monkeypatched so no network is touched."""
 
 from __future__ import annotations
 
@@ -41,6 +41,18 @@ def _patch_get(monkeypatch, status=200, capture=None, raise_exc=None):
     monkeypatch.setattr("httpx.get", fake_get)
 
 
+def _patch_post(monkeypatch, status=200, capture=None, raise_exc=None):
+    def fake_post(url, **kwargs):
+        if capture is not None:
+            capture["url"] = url
+            capture.update(kwargs)
+        if raise_exc is not None:
+            raise raise_exc
+        return SimpleNamespace(status_code=status)
+
+    monkeypatch.setattr("httpx.post", fake_post)
+
+
 def test_verify_openai_ok(monkeypatch):
     cap: dict = {}
     _patch_get(monkeypatch, status=200, capture=cap)
@@ -57,6 +69,47 @@ def test_verify_openai_custom_endpoint(monkeypatch):
     )
     # trailing slash trimmed, /models appended to the custom endpoint
     assert cap["url"] == "https://gw.example/openai/v1/models"
+
+
+def test_verify_nexus_uses_prefilled_endpoint_and_bearer_key(monkeypatch):
+    cap: dict = {}
+    _patch_post(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("nexus", api_key="nx-test") == {"ok": True}
+    assert cap["url"] == "https://nexus-api.dappnode.com/v1/chat/completions"
+    assert cap["headers"]["Authorization"] == "Bearer nx-test"
+    assert cap["json"] == {
+        "model": "deepseek/deepseek-v4-flash",
+        "messages": [{"role": "user", "content": "Reply OK"}],
+        "max_tokens": 1,
+        "stream": False,
+    }
+
+
+def test_verify_nexus_rejects_invalid_key(monkeypatch):
+    _patch_post(monkeypatch, status=401)
+    assert verify_provider_key("nexus", api_key="not-a-real-key") == {
+        "ok": False,
+        "error": "Invalid API key.",
+    }
+
+
+def test_verify_nexus_custom_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_post(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key(
+        "nexus", api_key="nx-test", base_url="https://proxy.example/nexus/v1/"
+    ) == {"ok": True}
+    assert cap["url"] == "https://proxy.example/nexus/v1/chat/completions"
+
+
+def test_verify_nexus_network_error_is_clean(monkeypatch):
+    import httpx
+
+    _patch_post(monkeypatch, raise_exc=httpx.ConnectError("offline"))
+    assert verify_provider_key("nexus", api_key="nx-test") == {
+        "ok": False,
+        "error": "Couldn't reach Dappnode Nexus (ConnectError).",
+    }
 
 
 def test_verify_bad_key_is_invalid(monkeypatch):

@@ -1376,7 +1376,7 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.post("/v1/providers/verify")
     async def providers_verify(body: dict) -> dict[str, Any]:
-        # Live read-only credential check (sync httpx) — run off the event loop.
+        # Live credential check (sync httpx) — run off the event loop.
         name = (body or {}).get("name", "") or "openai"
         return await asyncio.to_thread(
             manager.verify_provider, name, (body or {}).get("fields")

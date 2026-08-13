@@ -1630,7 +1630,7 @@ class SessionManager:
     def verify_provider(
         self, name: str, fields: Optional[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Test a provider's credentials with a live read-only call, WITHOUT persisting them, so
+        """Test a provider's credentials with a live call, WITHOUT persisting them, so
         onboarding can offer a "Test" button. Falls back to stored/env values when the form left
         a field blank (e.g. testing an already-configured provider)."""
         import os

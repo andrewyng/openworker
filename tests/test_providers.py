@@ -419,6 +419,44 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
         assert base.default.startswith("https://")
 
 
+def test_nexus_descriptor_and_models_are_in_lockstep(monkeypatch):
+    """Dappnode Nexus is a first-class OpenAI-compatible gateway with its own key.
+
+    Keeping a separate provider profile prevents an OpenAI key from ever being sent to
+    Nexus and gives Nexus model ids their own routed namespace.
+    """
+    import pytest
+
+    from coworker.providers.matrix import models_for_provider
+    from coworker.providers.registry import build_provider_client, get_descriptor
+
+    descriptor = get_descriptor("nexus")
+    assert descriptor is not None and descriptor.needs_key
+    assert descriptor.title == "Dappnode Nexus"
+    assert descriptor.env_key == "NEXUS_API_KEY"
+    assert descriptor.recommended_model == "deepseek/deepseek-v4-flash"
+
+    endpoint = next(f for f in descriptor.fields if f.key == "base_url")
+    assert endpoint.default == "https://nexus-api.dappnode.com/v1"
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
+    monkeypatch.delenv("NEXUS_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="Dappnode Nexus"):
+        build_provider_client("nexus", {}, None)
+
+    provider = build_provider_client("nexus", {"api_key": "nx-test"}, None)
+    assert isinstance(provider, OpenAIProvider)
+    assert provider._api_key == "nx-test"
+    assert provider._base_url == endpoint.default
+
+    curated = models_for_provider("nexus")
+    assert descriptor.recommended_model in curated
+    assert "private/glm-5.2" in curated
+    for model in curated:
+        caps = capabilities_for(f"nexus:{model}")
+        assert caps.tools and caps.parallel_tool_calls and caps.streaming
+
+
 def test_foreign_sidecars_stripped_from_outbound_messages():
     """Provider-private sidecars (`_gemini` thought signatures et al) must never reach the
     OpenAI wire — it and its compat servers reject unknown message fields."""

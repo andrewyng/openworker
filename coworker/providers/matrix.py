@@ -109,7 +109,42 @@ MATRIX: dict[str, ModelEntry] = {
     "mistral:mistral-large-latest": ModelEntry(
         "Mistral Large · Mistral", _AGENTIC, 128_000
     ),
-    # -- resellers (their model namespaces, verbatim) -----------------------------
+    # -- gateways/resellers (their model namespaces, verbatim) --------------------
+    # Dappnode Nexus model ids and capabilities come from its public /v1/models
+    # catalog (checked 2026-08-08). `nexus/auto` is intentionally not curated: the
+    # router record does not advertise function calling, which OpenWorker requires.
+    "nexus:deepseek/deepseek-v4-flash": ModelEntry(
+        "DeepSeek V4 Flash · via Nexus", _AGENTIC, 1_048_576
+    ),
+    "nexus:deepseek/deepseek-v4-pro": ModelEntry(
+        "DeepSeek V4 Pro · via Nexus", _AGENTIC, 1_048_576
+    ),
+    "nexus:minimax/minimax-m2.7": ModelEntry(
+        "MiniMax 2.7 · via Nexus", _AGENTIC, 204_800
+    ),
+    # The upstream Nexus catalog currently spells this slug `minmax-m3`; retain
+    # it verbatim even though the display name is MiniMax-M3.
+    "nexus:minimax/minmax-m3": ModelEntry(
+        "MiniMax M3 · via Nexus", _AGENTIC, 512_000
+    ),
+    "nexus:moonshotai/kimi-k2.6": ModelEntry(
+        "Kimi K2.6 · via Nexus", _AGENTIC, 262_144
+    ),
+    "nexus:moonshotai/kimi-k2.7-code": ModelEntry(
+        "Kimi K2.7 Code · via Nexus", _AGENTIC, 262_144
+    ),
+    "nexus:moonshotai/kimi-k3": ModelEntry(
+        "Kimi K3 · via Nexus", _AGENTIC, 1_048_576
+    ),
+    "nexus:private/gemma4-31b": ModelEntry(
+        "Gemma 4 31B Private · via Nexus", _AGENTIC, 256_000
+    ),
+    "nexus:private/glm-5.2": ModelEntry(
+        "GLM 5.2 Private · via Nexus", _AGENTIC, 128_000
+    ),
+    "nexus:zai-org/glm-5.2": ModelEntry(
+        "GLM 5.2 · via Nexus", _AGENTIC, 1_048_576
+    ),
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
     "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together", _AGENTIC, 128_000),
     # Kimi K3 on Together (landed late July 2026): 1M window, native vision; PDFs
