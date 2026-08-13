@@ -18,8 +18,9 @@
 #     (aisuite installs like any other dependency — git-pinned in pyproject.toml.)
 #
 # SIGNING: set APPLE_SIGNING_IDENTITY to a "Developer ID Application: … (TEAMID)" identity and
-# `tauri build` signs the .app + the bundled sidecar with it. Left unset → UNSIGNED (first launch
-# needs right-click → Open).
+# `tauri build` signs the .app + the bundled sidecar with it. Left unset → Tauri applies an
+# ad-hoc signature (`-`), which is required for downloaded Apple Silicon apps. Ad-hoc builds
+# still need right-click → Open or their quarantine attribute cleared on first launch.
 #
 # NOTARIZATION (step 5, runs only when the identity is set): signs the .dmg CONTAINER, submits
 # to Apple's notary service, staples the ticket, and verifies with spctl. Signing alone is NOT
@@ -29,7 +30,7 @@
 # `.ocw-notary.env` one directory ABOVE the repo (shared by every clone/worktree on a machine,
 # never committed). Vars missing → the DMG is still produced, with a loud warning.
 #
-# LOCAL ITERATION: leave APPLE_SIGNING_IDENTITY unset for a fully unsigned dev build, or set
+# LOCAL ITERATION: leave APPLE_SIGNING_IDENTITY unset for an ad-hoc-signed dev build, or set
 # OCW_SKIP_NOTARIZE=1 to sign but skip the slow notary round-trip. Neither is distributable.
 #
 # Experimental (use-at-your-own-risk) connectors are EXCLUDED from this build by default —
@@ -138,18 +139,32 @@ if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ] && [ -f "$UPDATER_ENV" ]; then
   # shellcheck disable=SC1090
   source "$UPDATER_ENV"
 fi
-UPDATER_OVERLAY=()
-if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-  UPDATER_OVERLAY=(--config '{"bundle":{"createUpdaterArtifacts":true}}')
-else
+if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
   echo "    WARNING: no updater signing key — building WITHOUT auto-update artifacts (not releasable)."
+fi
+if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+  echo "    no Apple identity — applying Tauri's ad-hoc macOS signature"
+fi
+TAURI_BUNDLE_CONFIG="$(bash "$HERE/tauri_macos_overlay.sh")"
+TAURI_OVERLAY=()
+if [ -n "$TAURI_BUNDLE_CONFIG" ]; then
+  TAURI_OVERLAY=(--config "$TAURI_BUNDLE_CONFIG")
 fi
 # ${arr[@]+…} guard: plain "${arr[@]}" on an EMPTY array is an "unbound variable"
 # under set -u on macOS's stock bash 3.2 — hit by keyless (fresh-clone) builds.
-( cd "$GUI" && npm run tauri build -- --bundles app ${UPDATER_OVERLAY[@]+"${UPDATER_OVERLAY[@]}"} )
+( cd "$GUI" && npm run tauri build -- --bundles app ${TAURI_OVERLAY[@]+"${TAURI_OVERLAY[@]}"} )
+
+BUNDLE="$GUI/src-tauri/target/release/bundle"
+APP_BUNDLE="$BUNDLE/macos/$APP.app"
+echo "    verifying final app-bundle signature"
+codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+if [ -z "${APPLE_SIGNING_IDENTITY:-}" ] && \
+   ! codesign -d --verbose=2 "$APP_BUNDLE" 2>&1 | grep -q "Signature=adhoc"; then
+  echo "ERROR: keyless build did not produce an ad-hoc-signed app bundle" >&2
+  exit 1
+fi
 
 echo "==> [4/5] hdiutil: wrapping into .dmg"
-BUNDLE="$GUI/src-tauri/target/release/bundle"
 STAGING="$(mktemp -d)"
 cp -R "$BUNDLE/macos/$APP.app" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
@@ -263,7 +278,7 @@ elif [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
     echo "    (env, \$OCW_NOTARY_ENV, or $NOTARY_ENV)."
   fi
 else
-  echo "    (unsigned dev build — set APPLE_SIGNING_IDENTITY for a distributable DMG)"
+  echo "    (ad-hoc-signed dev build — set APPLE_SIGNING_IDENTITY for a distributable DMG)"
 fi
 
 echo ""

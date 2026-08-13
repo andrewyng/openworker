@@ -23,8 +23,9 @@
 #   APPLE_API_KEY_CONTENT        base64 App Store Connect API .p8 (notarytool)
 #   APPLE_API_KEY                the API key id
 #   APPLE_API_ISSUER             the API issuer id
-# When the secrets are absent (forks, scratch runs) the build degrades to unsigned —
-# installable via `xattr -cr`. Windows remains unsigned (Authenticode is a later step).
+# When the secrets are absent (forks, scratch runs) Tauri applies an ad-hoc signature —
+# installable after right-click → Open or `xattr -cr`. Windows remains unsigned
+# (Authenticode is a later step).
 
 name: Release
 
