@@ -84,9 +84,8 @@ jobs:
           "$VPY" -m pip install -e ".[bedrock]" pyinstaller typer tzdata
           "$VPY" -c "import aisuite, coworker"  # fail fast if either import breaks
 
-      - name: npm ci
-        working-directory: surfaces/gui
-        run: npm ci
+      - name: Install npm dependencies (7-day quarantine)
+        run: bash packaging/npm_install_safe.sh
 
       - name: Build .dmg (macOS)
         if: runner.os == 'macOS'

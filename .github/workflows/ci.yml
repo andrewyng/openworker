@@ -29,12 +29,11 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: surfaces/gui/package-lock.json
-      - name: npm ci
-        working-directory: surfaces/gui
-        run: npm ci
+      - name: Install npm dependencies (7-day quarantine)
+        run: bash packaging/npm_install_safe.sh
       - name: Typecheck
         working-directory: surfaces/gui
-        run: npx tsc --noEmit
+        run: npm exec --offline -- tsc --noEmit
       - name: Unit tests
         working-directory: surfaces/gui
         run: npm test
@@ -48,12 +47,11 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: surfaces/gui/package-lock.json
-      - name: npm ci
-        working-directory: surfaces/gui
-        run: npm ci
+      - name: Install npm dependencies (7-day quarantine)
+        run: bash packaging/npm_install_safe.sh
       - name: Install Playwright browsers
         working-directory: surfaces/gui
-        run: npx playwright install --with-deps chromium
+        run: npm exec --offline -- playwright install --with-deps chromium
       - name: e2e
         working-directory: surfaces/gui
         run: npm run e2e
