@@ -12,6 +12,7 @@ import ollama from "./logos/ollama.svg";
 import bedrock from "./logos/bedrock.svg";
 import vertex from "./logos/vertex.svg";
 import openrouter from "./logos/openrouter.svg";
+import orcarouter from "./logos/orcarouter.svg";
 import fireworks from "./logos/fireworks.svg";
 import together from "./logos/together.svg";
 import zai from "./logos/zai.svg";
@@ -32,6 +33,7 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   bedrock,
   vertex,
   openrouter,
+  orcarouter,
   fireworks,
   together,
   zai,
@@ -52,6 +54,7 @@ export const PROVIDER_ORDER = [
   "bedrock",
   "vertex",
   "openrouter",
+  "orcarouter",
   "fireworks",
   "together",
   "zai",

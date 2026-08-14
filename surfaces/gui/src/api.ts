@@ -1581,6 +1581,7 @@ export function detectProvider(apiKey: string): string | null {
   const key = (apiKey || "").trim();
   if (!key) return null;
   if (key.startsWith("sk-ant-")) return "anthropic";
+  if (key.startsWith("sk-orca-")) return "orcarouter";
   if (key.startsWith("sk-or-")) return "openrouter";
   if (key.startsWith("AIza")) return "gemini";
   if (key.startsWith("sk-") || key.startsWith("sk_")) return "openai";

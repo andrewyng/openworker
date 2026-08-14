@@ -16,7 +16,7 @@ where the vendor spec wasn't re-checked stay ``None`` — the meter simply hides
 showing a made-up denominator. Values entered 2026-07-28 from vendor docs; verify alongside
 the id refresh.
 
-Resellers: Together + Fireworks + OpenRouter. TODO: add Groq entries here AND its
+Resellers/aggregators: Together + Fireworks + OpenRouter + OrcaRouter. TODO: add Groq entries here AND its
 descriptor in ``registry.py`` once the current provider surface is tested — deliberately
 deferred to bound how much needs verifying at once.
 """
@@ -156,6 +156,15 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "openrouter:meta-llama/llama-4-maverick": ModelEntry(
         "Llama 4 Maverick · via OpenRouter", _AGENTIC, 1_000_000
+    ),
+    # OrcaRouter: the same vendor namespaces, one key for all of them (ids + context
+    # windows checked against their catalog/pricing API 2026-08-14).
+    "orcarouter:anthropic/claude-sonnet-5": ModelEntry(
+        "Claude Sonnet 5 · via OrcaRouter", _AGENTIC, 1_000_000
+    ),
+    "orcarouter:openai/gpt-5.5": ModelEntry("GPT-5.5 · via OrcaRouter", _AGENTIC),
+    "orcarouter:deepseek/deepseek-v4-pro": ModelEntry(
+        "DeepSeek V4 Pro · via OrcaRouter", _AGENTIC, 1_048_576
     ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
