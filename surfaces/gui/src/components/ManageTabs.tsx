@@ -232,14 +232,20 @@ function ComposerPickerCard({
   );
 }
 
-// Curated OAuth quick-adds: remote MCP servers with browser sign-in (OAuth 2.1 + DCR) —
-// no keys to paste, tokens stay in the local secret store. First: Granola.
+// Curated remote MCP quick-adds. OAuth presets keep tokens in the local secret store;
+// no-auth presets use the same explicit connection path without opening a browser.
 const MCP_PRESETS: { name: string; label: string; blurb: string; config: Record<string, any> }[] = [
   {
     name: "granola",
     label: "Granola",
     blurb: "Meeting notes & transcripts — sign in with your Granola account.",
     config: { type: "http", url: "https://mcp.granola.ai/mcp", auth: "oauth" },
+  },
+  {
+    name: "parallel-search",
+    label: "Parallel Search",
+    blurb: "Live web search & URL fetching — no account or API key required.",
+    config: { type: "http", url: "https://search.parallel.ai/mcp" },
   },
 ];
 
@@ -306,7 +312,7 @@ export function McpTab() {
         </div>
       )}
 
-      {/* One-click OAuth presets not yet configured. */}
+      {/* One-click MCP presets not yet configured. */}
       {MCP_PRESETS.filter((p) => !servers.some((s) => s.name === p.name)).map((p) => (
         <div key={p.name} className={CARD + " p-3.5 flex items-center gap-3"} data-testid={`mcp-preset-${p.name}`}>
           <div className="flex-1 min-w-0">
@@ -317,7 +323,7 @@ export function McpTab() {
             className={BTN_ACCENT}
             onClick={async () => {
               await addMcpServer(p.name, p.config);
-              await connectMcp(p.name); // opens the browser sign-in right away
+              await connectMcp(p.name); // OAuth presets may open browser sign-in
               refresh();
             }}
           >
