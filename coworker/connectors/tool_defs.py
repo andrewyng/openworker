@@ -86,6 +86,20 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
     ),
     ConnectorToolDef(
         "browser",
+        "browser_list_tabs",
+        "List tabs",
+        "read",
+        "List open browser tabs and identify the active tab.",
+    ),
+    ConnectorToolDef(
+        "browser",
+        "browser_switch_tab",
+        "Switch tab",
+        "read",
+        "Switch subsequent browser actions to another tab.",
+    ),
+    ConnectorToolDef(
+        "browser",
         "browser_screenshot",
         "Screenshot",
         "read",
