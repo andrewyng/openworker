@@ -1568,6 +1568,11 @@ class SessionManager:
         "qwen": ["qwen3-max", "qwen3-coder-plus", "qwen-plus"],
         "xai": ["grok-4.3", "grok-4"],
         "mistral": ["mistral-large-latest", "mistral-small-latest"],
+        "orcarouter": [
+            "anthropic/claude-sonnet-5",
+            "openai/gpt-5.5",
+            "deepseek/deepseek-v4-pro",
+        ],
     }
 
     def _suggested_models(self, name: str) -> list[str]:

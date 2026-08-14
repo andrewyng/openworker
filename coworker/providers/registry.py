@@ -550,6 +550,14 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="z-ai/glm-5.2",
         env_key="OPENROUTER_API_KEY",
     ),
+    _compat(
+        "orcarouter",
+        "OrcaRouter",
+        base_url="https://api.orcarouter.ai/v1",
+        recommended_model="anthropic/claude-sonnet-5",
+        env_key="ORCAROUTER_API_KEY",
+        endpoint_help="Keys start with sk-orca-; get one at orcarouter.ai.",
+    ),
     ProviderDescriptor(
         name="ollama",
         title="Ollama (local models)",
@@ -618,6 +626,8 @@ def detect_provider(api_key: str) -> Optional[str]:
         return None
     if key.startswith("sk-ant-"):
         return "anthropic"
+    if key.startswith("sk-orca-"):
+        return "orcarouter"
     if key.startswith("sk-or-"):
         return "openrouter"
     if key.startswith("AIza"):

@@ -15,6 +15,7 @@ from coworker.providers import detect_provider, verify_provider_key
     "key,expected",
     [
         ("sk-ant-api03-abc", "anthropic"),
+        ("sk-orca-v1-abc", "orcarouter"),
         ("sk-or-v1-abc", "openrouter"),
         ("AIzaSyAbc123", "gemini"),
         ("sk-proj-abc", "openai"),
@@ -57,6 +58,15 @@ def test_verify_openai_custom_endpoint(monkeypatch):
     )
     # trailing slash trimmed, /models appended to the custom endpoint
     assert cap["url"] == "https://gw.example/openai/v1/models"
+
+
+def test_verify_orcarouter_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("orcarouter", api_key="sk-orca-x") == {"ok": True}
+    # OpenAI-compatible branch: prefilled vendor endpoint, bearer key
+    assert cap["url"] == "https://api.orcarouter.ai/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer sk-orca-x"
 
 
 def test_verify_bad_key_is_invalid(monkeypatch):
