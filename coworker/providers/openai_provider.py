@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .base import (
     AssistantTurn,
@@ -23,6 +23,36 @@ from .base import (
     ToolCall,
 )
 from .capabilities import capabilities_for
+
+
+# Azure OpenAI's v1 data-plane OAuth scope. Keep the resource identity here beside the
+# credential factory so the runtime and the Settings verification probe cannot drift.
+AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default"
+
+
+def build_azure_ad_token_provider(
+    tenant_id: str, client_id: str, client_secret: str
+) -> Callable[[], str]:
+    """Build Azure Identity's caching, auto-refreshing service-principal token callback.
+
+    The callback is passed straight to the OpenAI SDK as ``api_key``. It is internal
+    authentication state, never a model-controlled tool argument.
+    """
+    try:
+        from azure.identity import ClientSecretCredential, get_bearer_token_provider
+    # Defensive for source installs made before azure-identity became a core dependency.
+    except ImportError as exc:
+        raise RuntimeError(
+            "Microsoft Entra ID authentication requires azure-identity. "
+            "Reinstall OpenWorker to add it."
+        ) from exc
+
+    credential = ClientSecretCredential(
+        tenant_id=tenant_id,
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+    return get_bearer_token_provider(credential, AZURE_OPENAI_SCOPE)
 
 
 def resolve_api_key(secrets: Any = None) -> Optional[str]:
@@ -128,7 +158,7 @@ class OpenAIProvider(ProviderClient):
         client: Any = None,
         *,
         default_model: str = "gpt-5.6-sol",
-        api_key: Optional[str] = None,
+        api_key: Optional[str | Callable[[], str]] = None,
         base_url: Optional[str] = None,
         secrets: Any = None,
     ):

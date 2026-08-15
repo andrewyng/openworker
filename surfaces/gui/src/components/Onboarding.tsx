@@ -52,7 +52,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
   const canNext = anyReady || nextFromForm;
 
   const advance = async () => {
-    if (nextFromForm && !ps.credentialed) {
+    if (nextFromForm && !ps.activeCredentialed) {
       ps.cancelBackTimer();
       if (!(await ps.runTestAndSave())) return;
     }
