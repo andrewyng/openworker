@@ -183,9 +183,12 @@ def _build_vertex(profile: dict[str, Any], secrets: Any) -> ProviderClient:
 
 def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Ollama's OpenAI-compatible endpoint ignores the key but the SDK requires a non-empty
-    # string, so we pass a placeholder. `base_url` comes from the stored profile (or the default).
-    base_url = _normalize_ollama_url((profile or {}).get("base_url"))
-    return OpenAIProvider(api_key="ollama", base_url=base_url)
+    # string, so we pass a placeholder. `base_url` is the selected endpoint (mirrored onto
+    # the legacy profile field for backward compatibility).
+    from . import ollama_endpoints as ollama_ep
+
+    base_url = ollama_ep.selected_base_url(profile) or DEFAULT_OLLAMA_URL
+    return OpenAIProvider(api_key="ollama", base_url=_normalize_ollama_url(base_url))
 
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
@@ -561,7 +564,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
                 secret=False,
                 required=False,
                 placeholder=DEFAULT_OLLAMA_URL,
-                help="Where `ollama serve` is listening. The OpenAI-compatible /v1 path is added automatically.",
+                help="Selected endpoint URL (mirrored). Prefer the Endpoints list in Settings to manage multiple hosts. The OpenAI-compatible /v1 path is added automatically.",
             ),
         ],
         build=_build_ollama,

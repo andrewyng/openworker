@@ -1408,6 +1408,37 @@ def create_app(manager: SessionManager) -> FastAPI:
             manager.verify_provider, name, (body or {}).get("fields")
         )
 
+    # -- Ollama multi-endpoint management ---------------------------------------
+    @app.post("/v1/providers/ollama/endpoints")
+    def ollama_endpoint_add(body: dict) -> dict[str, Any]:
+        body = body or {}
+        return manager.add_ollama_endpoint(
+            label=str(body.get("label") or ""),
+            base_url=str(body.get("base_url") or ""),
+            enabled=bool(body.get("enabled", True)),
+            select=bool(body.get("select", True)),
+        )
+
+    @app.patch("/v1/providers/ollama/endpoints/{endpoint_id}")
+    def ollama_endpoint_update(endpoint_id: str, body: dict) -> dict[str, Any]:
+        body = body or {}
+        kwargs: dict[str, Any] = {}
+        if "label" in body:
+            kwargs["label"] = body.get("label")
+        if "base_url" in body:
+            kwargs["base_url"] = body.get("base_url")
+        if "enabled" in body:
+            kwargs["enabled"] = bool(body.get("enabled"))
+        return manager.update_ollama_endpoint(endpoint_id, **kwargs)
+
+    @app.delete("/v1/providers/ollama/endpoints/{endpoint_id}")
+    def ollama_endpoint_delete(endpoint_id: str) -> dict[str, Any]:
+        return manager.delete_ollama_endpoint(endpoint_id)
+
+    @app.post("/v1/providers/ollama/endpoints/{endpoint_id}/select")
+    def ollama_endpoint_select(endpoint_id: str) -> dict[str, Any]:
+        return manager.select_ollama_endpoint(endpoint_id)
+
     # -- settings (model API key) -----------------------------------------------
     @app.get("/v1/settings")
     def settings_get() -> dict[str, Any]:

@@ -1536,6 +1536,69 @@ export interface ProviderInfo {
   blurb?: string; // one-line note under the title ("Uses X's OpenAI-compatible API…")
   key_set_at?: string | null; // ISO date the key was last (re)saved — absent for env-only config
   last_used_at?: number | null; // epoch secs the provider last served a completion
+  // Ollama only: saved local/remote inference endpoints + which one is active.
+  endpoints?: OllamaEndpoint[];
+  selected_endpoint_id?: string | null;
+}
+
+export interface OllamaEndpoint {
+  id: string;
+  label: string;
+  base_url: string;
+  enabled: boolean;
+}
+
+export type OllamaEndpointsResult = {
+  ok: boolean;
+  error?: string;
+  endpoints?: OllamaEndpoint[];
+  selected_endpoint_id?: string | null;
+  values?: Record<string, string>;
+};
+
+export async function addOllamaEndpoint(body: {
+  label: string;
+  base_url: string;
+  enabled?: boolean;
+  select?: boolean;
+}): Promise<OllamaEndpointsResult> {
+  const res = await fetch(`${httpBase()}/v1/providers/ollama/endpoints`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+export async function updateOllamaEndpoint(
+  id: string,
+  body: { label?: string; base_url?: string; enabled?: boolean },
+): Promise<OllamaEndpointsResult> {
+  const res = await fetch(
+    `${httpBase()}/v1/providers/ollama/endpoints/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  return res.json();
+}
+
+export async function deleteOllamaEndpoint(id: string): Promise<OllamaEndpointsResult> {
+  const res = await fetch(
+    `${httpBase()}/v1/providers/ollama/endpoints/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
+  return res.json();
+}
+
+export async function selectOllamaEndpoint(id: string): Promise<OllamaEndpointsResult> {
+  const res = await fetch(
+    `${httpBase()}/v1/providers/ollama/endpoints/${encodeURIComponent(id)}/select`,
+    { method: "POST" },
+  );
+  return res.json();
 }
 
 export async function getProviders(): Promise<ProviderInfo[]> {

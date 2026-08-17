@@ -1477,30 +1477,37 @@ class SessionManager:
         """Descriptor + per-provider status for the Settings UI. Never returns secret values;
         non-secret field values (e.g. the Ollama base URL) ARE returned so the form can prefill.
         """
+        from ..providers import ollama_endpoints as ollama_ep
+
         out: list[dict[str, Any]] = []
         for d in provider_descriptors():
             profile = self.secrets.get(f"provider:{d.name}") or {}
+            if d.name == "ollama":
+                # Surface the migrated multi-endpoint shape + keep `values.base_url`
+                # synced to the selected endpoint for older clients / blur-save.
+                profile = ollama_ep.migrate_profile(profile)
             configured = descriptor_configured(d, profile)
             values = {
                 f.key: profile.get(f.key)
                 for f in d.fields
                 if not f.secret and profile.get(f.key)
             }
-            out.append(
-                {
-                    **d.to_dict(),
-                    "configured": configured,
-                    "values": values,
-                    "suggested_models": self._suggested_models(d.name),
-                    # Key hygiene for the Settings pane: when the key was saved (date, stamped
-                    # by set_provider) and when the provider last served a completion (epoch,
-                    # stamped by the router's on_use hook). Absent for env-only config.
-                    "key_set_at": profile.get("key_set_at"),
-                    "last_used_at": (self._prefs.get("provider_last_used") or {}).get(
-                        d.name
-                    ),
-                }
-            )
+            row: dict[str, Any] = {
+                **d.to_dict(),
+                "configured": configured,
+                "values": values,
+                "suggested_models": self._suggested_models(d.name),
+                # Key hygiene for the Settings pane: when the key was saved (date, stamped
+                # by set_provider) and when the provider last served a completion (epoch,
+                # stamped by the router's on_use hook). Absent for env-only config.
+                "key_set_at": profile.get("key_set_at"),
+                "last_used_at": (self._prefs.get("provider_last_used") or {}).get(
+                    d.name
+                ),
+            }
+            if d.name == "ollama":
+                row.update(ollama_ep.public_endpoints(profile))
+            out.append(row)
         return out
 
     def pick_native_folder(self) -> dict[str, Any]:
@@ -1589,6 +1596,8 @@ class SessionManager:
     ) -> dict[str, Any]:
         """Store a provider's config in its `provider:<name>` SecretStore profile and rebuild
         its cached client. Merges provided fields into any existing profile."""
+        from ..providers import ollama_endpoints as ollama_ep
+
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
@@ -1600,10 +1609,25 @@ class SessionManager:
             val = fields.get(f.key)
             if isinstance(val, str):
                 val = val.strip()
+            if name == "ollama" and f.key == "base_url":
+                # Legacy single-URL write → upsert into the multi-endpoint list and
+                # keep `base_url` mirrored to the selected endpoint.
+                if val:
+                    profile, err = ollama_ep.upsert_from_base_url(profile, val)
+                    if err:
+                        return err
+                elif not f.required:
+                    # Empty save clears the URL config (pre-multi-endpoint blur-clear).
+                    profile["endpoints"] = []
+                    profile.pop("base_url", None)
+                    profile.pop("selected_endpoint_id", None)
+                continue
             if val:
                 profile[f.key] = val
             elif not f.required:
                 profile.pop(f.key, None)
+        if name == "ollama":
+            profile = ollama_ep.migrate_profile(profile)
         missing = [f.label for f in d.fields if f.required and not profile.get(f.key)]
         if missing:
             return {"ok": False, "error": "missing: " + ", ".join(missing)}
@@ -1615,6 +1639,9 @@ class SessionManager:
             profile["key_set_at"] = date.today().isoformat()
         self.secrets.put(f"provider:{name}", profile)
         self._refresh_provider(name)
+        if name == "ollama":
+            # URL change invalidates the 30s liveness cache so models refresh promptly.
+            self._ollama_alive_cache = None
         # Convenience: if the provider recommends a model and it's actually available, add it to
         # the curated list so it shows up in the composer right after configuring the provider.
         rec = d.recommended_model
@@ -1629,6 +1656,80 @@ class SessionManager:
         if added and not self._provider_configured(self._model_provider(self.model)):
             self.set_default_model(added)
         return {"ok": True, "provider": name, "recommended_model": rec}
+
+    def _save_ollama_profile(self, profile: dict[str, Any]) -> dict[str, Any]:
+        """Persist an Ollama profile, rebuild the client, and clear the liveness cache."""
+        from ..providers import ollama_endpoints as ollama_ep
+
+        profile = ollama_ep.migrate_profile(profile)
+        self.secrets.put("provider:ollama", profile)
+        self._refresh_provider("ollama")
+        self._ollama_alive_cache = None
+        return {
+            "ok": True,
+            **ollama_ep.public_endpoints(profile),
+            "values": {"base_url": profile.get("base_url")}
+            if profile.get("base_url")
+            else {},
+        }
+
+    def add_ollama_endpoint(
+        self,
+        *,
+        label: str,
+        base_url: str,
+        enabled: bool = True,
+        select: bool = True,
+    ) -> dict[str, Any]:
+        from ..providers import ollama_endpoints as ollama_ep
+
+        profile = self.secrets.get("provider:ollama") or {}
+        profile, err = ollama_ep.add_endpoint(
+            profile, label=label, base_url=base_url, enabled=enabled, select=select
+        )
+        if err:
+            return err
+        return self._save_ollama_profile(profile)
+
+    def update_ollama_endpoint(
+        self,
+        endpoint_id: str,
+        *,
+        label: Optional[str] = None,
+        base_url: Optional[str] = None,
+        enabled: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        from ..providers import ollama_endpoints as ollama_ep
+
+        profile = self.secrets.get("provider:ollama") or {}
+        profile, err = ollama_ep.update_endpoint(
+            profile,
+            endpoint_id,
+            label=label,
+            base_url=base_url,
+            enabled=enabled,
+        )
+        if err:
+            return err
+        return self._save_ollama_profile(profile)
+
+    def delete_ollama_endpoint(self, endpoint_id: str) -> dict[str, Any]:
+        from ..providers import ollama_endpoints as ollama_ep
+
+        profile = self.secrets.get("provider:ollama") or {}
+        profile, err = ollama_ep.delete_endpoint(profile, endpoint_id)
+        if err:
+            return err
+        return self._save_ollama_profile(profile)
+
+    def select_ollama_endpoint(self, endpoint_id: str) -> dict[str, Any]:
+        from ..providers import ollama_endpoints as ollama_ep
+
+        profile = self.secrets.get("provider:ollama") or {}
+        profile, err = ollama_ep.select_endpoint(profile, endpoint_id)
+        if err:
+            return err
+        return self._save_ollama_profile(profile)
 
     def remove_provider(self, name: str) -> dict[str, Any]:
         """Forget a provider's stored config (Settings ▸ Models "Remove key"). The whole
@@ -1727,17 +1828,20 @@ class SessionManager:
         fetch — no 2s probe inline). Keyless is not the same as PRESENT: `ollama:*` picker
         entries render only when an Ollama actually answers, so a machine with no Ollama
         never shows phantom local models (e.g. a stray pasted string saved as a model id,
-        caught 2026-07-21)."""
+        caught 2026-07-21). Probes the *selected* endpoint only."""
         import time
+
+        from ..providers import ollama_endpoints as ollama_ep
 
         now = time.monotonic()
         cached = getattr(self, "_ollama_alive_cache", None)
         if cached and now - cached[0] < 30:
             return cached[1]
         profile = self.secrets.get("provider:ollama") or {}
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
+        base = ollama_ep.selected_base_url(profile)
+        if not base:
+            self._ollama_alive_cache = (now, False)
+            return False
         try:
             import httpx
 
@@ -1748,15 +1852,17 @@ class SessionManager:
         return alive
 
     def _ollama_models(self) -> list[str]:
-        """Live list of models pulled into the configured Ollama server (via its native
+        """Live list of models pulled into the *selected* Ollama endpoint (via its native
         `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama isn't
-        configured or unreachable — best-effort, never raises."""
+        configured or unreachable — best-effort, never raises. Never mixes hosts."""
+        from ..providers import ollama_endpoints as ollama_ep
+
         profile = self.secrets.get("provider:ollama")
         if not profile:
             return []
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
+        base = ollama_ep.selected_base_url(profile)
+        if not base:
+            return []
         try:
             import httpx
 

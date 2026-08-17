@@ -337,8 +337,9 @@ const PROVIDERS = [
   // zai: an OpenAI-compatible vendor — unconfigured, with a prefilled editable endpoint + blurb.
   { name: "zai", title: "Z AI (GLM)", needs_key: true, blurb: "Uses Z AI's OpenAI-compatible API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "Z AI API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Prefilled with Z AI's international endpoint.", placeholder: "https://api.z.ai/api/paas/v4", default: "https://api.z.ai/api/paas/v4" }], configured: false, values: {}, suggested_models: ["glm-5.2"], key_set_at: null, last_used_at: null },
   // ollama: keyless local provider — "configured" without proving anything runs; the
-  // onboarding gallery shows "No key needed" and its form is endpoint + Detect (§39).
-  { name: "ollama", title: "Ollama (local models)", needs_key: false, fields: [{ key: "base_url", label: "Endpoint", secret: false, required: false, help: "", placeholder: "http://127.0.0.1:11434", default: "http://127.0.0.1:11434" }], configured: true, values: {}, suggested_models: ["qwen3-coder:30b"], key_set_at: null, last_used_at: null },
+  // onboarding gallery shows "No key needed". Multi-endpoint list starts empty so the
+  // Settings form shows the add-endpoint UI.
+  { name: "ollama", title: "Ollama (local models)", needs_key: false, fields: [{ key: "base_url", label: "Endpoint", secret: false, required: false, help: "", placeholder: "http://127.0.0.1:11434", default: "http://127.0.0.1:11434" }], configured: true, values: {}, suggested_models: ["qwen3-coder:30b"], key_set_at: null, last_used_at: null, endpoints: [] as any[], selected_endpoint_id: null as string | null },
 ];
 
 /** Install the API + WebSocket mocks on a page. Returns handles for assertions/seed data. */
@@ -543,7 +544,11 @@ export async function mockApi(page: import("@playwright/test").Page) {
   };
   // Providers — mutable so save (POST) flips `configured` and stamps key_set_at, matching the
   // backend's set_provider. verify (POST) never mutates: it's a live read-only credential check.
-  const providers: any[] = PROVIDERS.map((p) => ({ ...p }));
+  const providers: any[] = PROVIDERS.map((p) => ({
+    ...p,
+    values: { ...(p.values || {}) },
+    endpoints: [...((p as any).endpoints || [])],
+  }));
   // Automations — mutable so Run now appends a run, enable/disable toggles, and delete removes.
   const automations: any[] = [{ ...AUTOMATION }, { ...AUTOMATION_CLEAN }];
   // MCP servers (empty by default; the granola OAuth quick-add test populates it).
@@ -1364,6 +1369,85 @@ export async function mockApi(page: import("@playwright/test").Page) {
       return /bad/i.test(key)
         ? json({ ok: false, error: "Invalid API key." })
         : json({ ok: true });
+    }
+    // Ollama multi-endpoint CRUD (mirrors SessionManager.add/update/delete/select).
+    const ollama = () => providers.find((x) => x.name === "ollama");
+    const ollamaResult = (prov: any) =>
+      json({
+        ok: true,
+        endpoints: prov.endpoints || [],
+        selected_endpoint_id: prov.selected_endpoint_id || null,
+        values: prov.values || {},
+      });
+    if (p.endsWith("/v1/providers/ollama/endpoints") && m === "POST") {
+      const prov = ollama();
+      if (!prov) return json({ ok: false, error: "unknown provider: ollama" });
+      const b = req.postDataJSON() || {};
+      const label = String(b.label || "").trim();
+      const base_url = String(b.base_url || "").trim().replace(/\/+$/, "");
+      if (!label) return json({ ok: false, error: "Nickname is required." });
+      if (!/^https?:\/\//i.test(base_url))
+        return json({ ok: false, error: "URL must start with http:// or https://." });
+      prov.endpoints = prov.endpoints || [];
+      if (prov.endpoints.some((e: any) => e.base_url.toLowerCase() === base_url.toLowerCase())) {
+        return json({ ok: false, error: "An endpoint with this URL already exists." });
+      }
+      const id = `ep_mock_${prov.endpoints.length + 1}`;
+      const ep = { id, label, base_url, enabled: b.enabled !== false };
+      prov.endpoints.push(ep);
+      if (b.select !== false && ep.enabled) {
+        prov.selected_endpoint_id = id;
+        prov.values = { ...prov.values, base_url };
+      }
+      return ollamaResult(prov);
+    }
+    if (/\/v1\/providers\/ollama\/endpoints\/[^/]+\/select$/.test(p) && m === "POST") {
+      const prov = ollama();
+      if (!prov) return json({ ok: false, error: "unknown provider: ollama" });
+      const id = decodeURIComponent(p.split("/").slice(-2)[0]);
+      const ep = (prov.endpoints || []).find((e: any) => e.id === id);
+      if (!ep) return json({ ok: false, error: "Endpoint not found." });
+      if (!ep.enabled) return json({ ok: false, error: "Enable the endpoint before selecting it." });
+      prov.selected_endpoint_id = id;
+      prov.values = { ...prov.values, base_url: ep.base_url };
+      return ollamaResult(prov);
+    }
+    if (/\/v1\/providers\/ollama\/endpoints\/[^/]+$/.test(p) && m === "PATCH") {
+      const prov = ollama();
+      if (!prov) return json({ ok: false, error: "unknown provider: ollama" });
+      const id = decodeURIComponent(p.split("/").pop()!);
+      const ep = (prov.endpoints || []).find((e: any) => e.id === id);
+      if (!ep) return json({ ok: false, error: "Endpoint not found." });
+      const b = req.postDataJSON() || {};
+      if (b.label != null) ep.label = String(b.label).trim();
+      if (b.base_url != null) ep.base_url = String(b.base_url).trim().replace(/\/+$/, "");
+      if (b.enabled != null) ep.enabled = !!b.enabled;
+      if (prov.selected_endpoint_id === id) {
+        if (!ep.enabled) {
+          const alt = (prov.endpoints || []).find((e: any) => e.id !== id && e.enabled);
+          prov.selected_endpoint_id = alt ? alt.id : null;
+          if (alt) prov.values = { ...prov.values, base_url: alt.base_url };
+          else if (prov.values) delete prov.values.base_url;
+        } else {
+          prov.values = { ...prov.values, base_url: ep.base_url };
+        }
+      }
+      return ollamaResult(prov);
+    }
+    if (/\/v1\/providers\/ollama\/endpoints\/[^/]+$/.test(p) && m === "DELETE") {
+      const prov = ollama();
+      if (!prov) return json({ ok: false, error: "unknown provider: ollama" });
+      const id = decodeURIComponent(p.split("/").pop()!);
+      const before = (prov.endpoints || []).length;
+      prov.endpoints = (prov.endpoints || []).filter((e: any) => e.id !== id);
+      if (prov.endpoints.length === before) return json({ ok: false, error: "Endpoint not found." });
+      if (prov.selected_endpoint_id === id) {
+        const alt = prov.endpoints.find((e: any) => e.enabled) || prov.endpoints[0];
+        prov.selected_endpoint_id = alt ? alt.id : null;
+        if (alt) prov.values = { ...prov.values, base_url: alt.base_url };
+        else if (prov.values) delete prov.values.base_url;
+      }
+      return ollamaResult(prov);
     }
     // save a provider key — flips `configured`, stamps key_set_at (backend set_provider parity).
     if (p.endsWith("/v1/providers") && m === "POST") {
