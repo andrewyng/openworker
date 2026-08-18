@@ -7,7 +7,8 @@
   The Windows counterpart to build_dmg.sh:
     1. PyInstaller-bundle the server into a standalone onedir folder (no venv at runtime).
     2. Stage it at binaries\sidecar\ for Tauri's `resources` slot.
-    3. `tauri build --bundles nsis,msi` -> Coworker NSIS setup .exe + .msi (resources copied in).
+    3. Verify and stage the pinned Cua Driver Windows sidecar + capability policy.
+    4. `tauri build --bundles nsis,msi` -> Coworker NSIS setup .exe + .msi (resources copied in).
 
   Prerequisites (see the toolchain notes in the PR/plan):
     - Rust (rustup) with the x86_64-pc-windows-msvc target + the MSVC C++ build tools (link.exe).
@@ -62,13 +63,13 @@ if ($running) {
     Start-Sleep -Seconds 1
 }
 
-Write-Host "==> [1/3] PyInstaller: bundling openworker-server ($Triple)" -ForegroundColor Cyan
+Write-Host "==> [1/4] PyInstaller: bundling openworker-server ($Triple)" -ForegroundColor Cyan
 & $PyInst --noconfirm --clean `
     --distpath (Join-Path $Here "dist") --workpath (Join-Path $Here "build") `
     (Join-Path $Here "openworker-server.spec")
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (exit $LASTEXITCODE)" }
 
-Write-Host "==> [2/3] staging sidecar resources" -ForegroundColor Cyan
+Write-Host "==> [2/4] staging sidecar resources" -ForegroundColor Cyan
 # Onedir bundle (exe + _internal\) ships via Tauri `resources`, landing at <install>\sidecar\
 # next to the app exe — onefile's per-launch self-extraction cost seconds of boot splash.
 $BinDir = Join-Path $Gui "src-tauri\binaries"
@@ -81,7 +82,38 @@ Remove-Item -Force (Join-Path $BinDir "openworker-server-$Triple.exe") -ErrorAct
 Copy-Item -Recurse -Force $Src $Dst
 Write-Host "    -> $Dst"
 
-Write-Host "==> [3/3] tauri build (--bundles $Bundles)" -ForegroundColor Cyan
+Write-Host "==> [3/4] staging pinned Cua Driver" -ForegroundColor Cyan
+$CuaVersion = "0.20.0"
+$CuaSha256  = "c020fefee01aacc174a27fea84a0cb77d47ef8290bfc772b3db7e3e06670d2b2"
+$CuaCache   = Join-Path $Here "cache"
+$CuaArchive = if ($env:CUA_DRIVER_ARCHIVE) {
+    $env:CUA_DRIVER_ARCHIVE
+} else {
+    Join-Path $CuaCache "cua-driver-$CuaVersion-windows-x86_64.zip"
+}
+if (-not (Test-Path $CuaArchive)) {
+    New-Item -ItemType Directory -Force -Path $CuaCache | Out-Null
+    $CuaUrl = "https://github.com/trycua/cua/releases/download/cua-driver-rs-v$CuaVersion/cua-driver-rs-$CuaVersion-windows-x86_64-binary.zip"
+    Write-Host "    downloading $CuaUrl"
+    Invoke-WebRequest -UseBasicParsing -Uri $CuaUrl -OutFile $CuaArchive
+}
+$ActualCuaSha = (Get-FileHash -Algorithm SHA256 $CuaArchive).Hash.ToLowerInvariant()
+if ($ActualCuaSha -ne $CuaSha256) {
+    throw "Cua Driver archive checksum mismatch: expected $CuaSha256, got $ActualCuaSha"
+}
+$CuaStage = Join-Path $CuaCache "extracted-$CuaVersion"
+if (Test-Path $CuaStage) { Remove-Item -Recurse -Force $CuaStage }
+New-Item -ItemType Directory -Force -Path $CuaStage | Out-Null
+Expand-Archive -Path $CuaArchive -DestinationPath $CuaStage -Force
+$CuaDst = Join-Path $Dst "cua-driver"
+if (Test-Path $CuaDst) { Remove-Item -Recurse -Force $CuaDst }
+New-Item -ItemType Directory -Force -Path $CuaDst | Out-Null
+Copy-Item -Force (Join-Path $CuaStage "*") $CuaDst
+Copy-Item -Force (Join-Path $Here "cua-driver-capabilities.yaml") $CuaDst
+Copy-Item -Force (Join-Path $Here "cua-driver-LICENSE.txt") $CuaDst
+Write-Host "    -> $CuaDst (v$CuaVersion, SHA256 verified)"
+
+Write-Host "==> [4/4] tauri build (--bundles $Bundles)" -ForegroundColor Cyan
 # Auto-update artifacts (NSIS setup .exe + minisign .sig): produced only when the updater
 # signing key env is present (CI secret TAURI_SIGNING_PRIVATE_KEY). Keyless builds skip
 # the overlay so dev builds keep working; keyless RELEASES strand installs without

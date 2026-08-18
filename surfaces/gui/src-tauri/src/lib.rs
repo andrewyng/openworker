@@ -357,6 +357,21 @@ async fn pick_folder(app: tauri::AppHandle) -> Option<String> {
     rx.recv().ok().flatten().map(|fp| fp.to_string())
 }
 
+/// Native executable picker for Settings > Computer use. The selected path is
+/// still validated by the local Python server before it enters the allowlist.
+#[tauri::command]
+async fn pick_program(app: tauri::AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .add_filter("Windows programs", &["exe"])
+        .pick_file(move |p| {
+            let _ = tx.send(p);
+        });
+    rx.recv().ok().flatten().map(|fp| fp.to_string())
+}
+
 #[tauri::command]
 fn get_autostart(app: tauri::AppHandle) -> bool {
     app.autolaunch().is_enabled().unwrap_or(false)
@@ -724,6 +739,7 @@ pub fn run() {
         ))
         .invoke_handler(tauri::generate_handler![
             pick_folder,
+            pick_program,
             get_autostart,
             set_autostart,
             get_keep_awake,

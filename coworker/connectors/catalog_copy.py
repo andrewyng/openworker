@@ -30,6 +30,9 @@ ABOUT: dict[str, str] = {
     "browser": "A built-in browser agents drive to read pages and act on "
     "websites — separate from your personal browser, with actions subject to "
     "approval.",
+    "computer": "Operate explicitly allowed Windows applications through a local "
+    "native accessibility driver. OpenWorker reads fresh window state before each "
+    "action and keeps program launches and desktop input behind approval.",
     "github": "Work with issues, pull requests, repository files, and CI "
     "status. One click installs the OpenWorker GitHub App on the repositories "
     "you pick; mention the agent on an issue or PR and it answers from your "
@@ -88,6 +91,11 @@ ACCESS: dict[str, list[str]] = {
         "Opens and reads web pages in its own browser session.",
         "Clicks, types, and uploads files only inside that session.",
         "Never touches your personal browser or its logins.",
+    ],
+    "computer": [
+        "Reads visible window structure and screenshots only from programs you allow.",
+        "Asks before opening a program, clicking, typing, or pressing a key.",
+        "The bundled driver policy denies access to other applications and does not expose shell or file-control tools.",
     ],
     "github": [
         "Reads code, issues, pull requests, and CI on repositories you grant.",

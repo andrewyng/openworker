@@ -61,6 +61,13 @@ from ..connectors.browser_automation import (
     browser_state,
     browser_take_screenshot,
 )
+from ..connectors.computer_automation import (
+    computer_use_configuration,
+    configure_computer_use,
+    reset_computer_use_permissions,
+    shutdown_computer_use,
+    validate_allowed_programs,
+)
 from ..connectors.parked import ParkedStore
 from ..mcp import (
     MCPManager,
@@ -259,6 +266,7 @@ class SessionManager:
         self._prefs = self._load_prefs()
         if self._prefs.get("default_model"):
             self.model = self._prefs["default_model"]
+        self._apply_computer_use_preferences()
         # Seed the PDF-fallback module global from prefs so engines see the user's
         # choice from the first turn (set_pdf_settings keeps it in sync after).
         from ..pdf_support import set_fallback_mode
@@ -3150,6 +3158,57 @@ class SessionManager:
             json.dumps(self._prefs, indent=2), encoding="utf-8"
         )
 
+    def _computer_use_programs(self) -> list[dict[str, str]]:
+        raw = self._prefs.get("computer_use_programs")
+        if raw is None:
+            return []
+        try:
+            return validate_allowed_programs(raw, require_exists=False)
+        except ValueError:
+            return []
+
+    def _apply_computer_use_preferences(self) -> dict[str, Any]:
+        programs = self._computer_use_programs()
+        configure_computer_use(
+            enabled=bool(self._prefs.get("computer_use_enabled", False)),
+            allowed_programs=programs,
+        )
+        config = computer_use_configuration()
+        config["supported"] = os.name == "nt"
+        config["allowed_programs"] = [
+            {**program, "available": Path(program["path"]).is_file()}
+            for program in config["allowed_programs"]
+        ]
+        return config
+
+    def computer_use_settings(self) -> dict[str, Any]:
+        return self._apply_computer_use_preferences()
+
+    def set_computer_use_settings(
+        self,
+        *,
+        enabled: Optional[bool] = None,
+        allowed_programs: Any = None,
+    ) -> dict[str, Any]:
+        if allowed_programs is not None:
+            try:
+                programs = validate_allowed_programs(allowed_programs)
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            self._prefs["computer_use_programs"] = programs
+        if enabled is not None:
+            self._prefs["computer_use_enabled"] = bool(enabled)
+        self._save_prefs()
+        payload = self._apply_computer_use_preferences()
+        try:
+            runtime = reset_computer_use_permissions()
+        except (OSError, RuntimeError) as exc:
+            runtime = {
+                "driver_installed": True,
+                "driver_reloaded": False,
+                "reload_warning": str(exc),
+            }
+        return {"ok": True, **payload, **runtime}
     # -- direct-message routing -------------------------------------------------
     def dm_session(self) -> Optional[str]:
         """The session a DM to the bot is routed to (user-designated). None → DMs are parked."""
@@ -4087,6 +4146,7 @@ class SessionManager:
         await self.scheduler.stop()
         await self.stop_gateway()
         await self.mcp.aclose()
+        await asyncio.to_thread(shutdown_computer_use)
         self.audit_store.close()
 
     # -- automation (scheduled tasks) -------------------------------------------

@@ -56,6 +56,12 @@ export async function pickFolder(): Promise<string | null> {
   return typeof path === "string" && path ? path : null;
 }
 
+/** Select one Windows executable for the Computer use allowlist. */
+export async function pickProgram(): Promise<string | null> {
+  const path = await invoke<string>("pick_program");
+  return typeof path === "string" && path ? path : null;
+}
+
 /** The folder picker that works EVERYWHERE: Tauri's native dialog in the desktop shell, else the
  * sidecar-opened OS dialog (the sidecar is local, so the browser GUI still gets a real picker —
  * owner report 2026-07-04: "Browse" was desktop-only and the browser had paste-a-path only). */

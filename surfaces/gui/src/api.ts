@@ -908,6 +908,20 @@ export interface ModelSettings {
   compaction_model?: string;
 }
 
+export interface ComputerUseProgram {
+  name: string;
+  path: string;
+  available: boolean;
+}
+
+export interface ComputerUseSettings {
+  enabled: boolean;
+  supported: boolean;
+  allowed_programs: ComputerUseProgram[];
+  driver_installed?: boolean;
+  driver_reloaded?: boolean;
+  reload_warning?: string;
+}
 export interface PdfSettings {
   pdf_fallback: "text" | "images";
   pdf_max_pages: number;
@@ -1677,6 +1691,22 @@ export async function getSettings(): Promise<ModelSettings> {
   return res.json();
 }
 
+export async function getComputerUseSettings(): Promise<ComputerUseSettings> {
+  const res = await fetch(`${httpBase()}/v1/settings/computer-use`);
+  return res.json();
+}
+
+export async function setComputerUseSettings(patch: {
+  enabled: boolean;
+  allowed_programs: Array<Pick<ComputerUseProgram, "name" | "path">>;
+}): Promise<ComputerUseSettings & { ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/computer-use`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return res.json();
+}
 export async function setModelKey(
   apiKey: string,
 ): Promise<{ ok: boolean; error?: string; has_key?: boolean; source?: string }> {

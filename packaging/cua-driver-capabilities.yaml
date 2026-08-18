@@ -1,0 +1,20 @@
+version: 3
+
+# Bootstrap profile. OpenWorker replaces this file with exact PIDs and window IDs
+# for programs selected in Settings > Computer use before exposing any window state
+# or input action. No shell, filesystem, browser-profile, process-control, or
+# desktop-wide screenshot/input tools are admitted.
+resources:
+  apps: []
+  desktop:
+    display: true
+    applications: []
+    windows: []
+
+allow:
+  tools:
+    - list_windows
+    - get_window_state
+    - click
+    - type_text
+    - press_key

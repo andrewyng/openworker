@@ -5,6 +5,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+packaging/cache/
 .coverage
 
 # Local secrets (live-smoke BYO keys) — never committed

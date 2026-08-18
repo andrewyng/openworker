@@ -43,6 +43,7 @@ import { PanelHead } from "./IntegrationsView";
 import { ModelsTab } from "./ManageTabs";
 import { MemorySection } from "./MemorySection";
 import { PersonasTab } from "./PersonasTab";
+import { ComputerUseSection } from "./ComputerUseSection";
 import { SkillsTab } from "./SkillsTab";
 import { showPersonas } from "../flags";
 
@@ -53,7 +54,7 @@ import { showPersonas } from "../flags";
 // Models + Personas host the existing tab components inside the page shell (field re-skin to follow).
 // "appearance" is the General tab's stable key — callers deep-link with it, so the
 // rename (UX-021) changed only the label. "files" folded into General as a card.
-type SetTab = "appearance" | "models" | "context" | "skills" | "voice" | "memory" | "personas";
+type SetTab = "appearance" | "models" | "context" | "skills" | "voice" | "memory" | "computer-use" | "personas";
 
 const CARD = "rounded-xl2 border border-line bg-panel";
 const FIELD_LABEL = "text-[13px] font-medium text-ink";
@@ -67,7 +68,7 @@ const BTN_BORDERED =
 const SET_TABS: {
   key: SetTab;
   label: string;
-  icon: "sliders" | "code" | "mic" | "archive" | "sparkle" | "book" | "refresh";
+  icon: "sliders" | "code" | "mic" | "archive" | "sparkle" | "book" | "refresh" | "wrench";
 }[] = [
   { key: "appearance", label: "General", icon: "sliders" },
   { key: "models", label: "Models", icon: "code" },
@@ -75,6 +76,7 @@ const SET_TABS: {
   { key: "skills", label: "Skills", icon: "book" },
   { key: "voice", label: "Voice input", icon: "mic" },
   { key: "memory", label: "Memory", icon: "archive" },
+  { key: "computer-use", label: "Computer use", icon: "wrench" },
   { key: "personas", label: "Coworkers", icon: "sparkle" },
 ];
 
@@ -147,6 +149,8 @@ export function SettingsView({
             <VoiceInputSection />
           ) : tab === "memory" ? (
             <MemorySection />
+          ) : tab === "computer-use" ? (
+            <ComputerUseSection />
           ) : (
             <PersonasSection onOpenPersona={onOpenPersona} />
           )}

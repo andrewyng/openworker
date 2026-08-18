@@ -21,6 +21,7 @@ import aisuite as ai
 from ..secrets import SecretStore
 from ..web.guard import get_checked
 from .browser_automation import make_browser_automation_tools
+from .computer_automation import make_computer_automation_tools
 from .email_tools import make_email_tools
 from .tool_defs import approval_for_tool, connector_for_tool
 
@@ -553,6 +554,7 @@ def make_integration_tools(
     # Browser upload/screenshot touch local files but classify EXTERNAL, so the engine's
     # root scoping never runs for them — they enforce the granted roots themselves.
     tools: list[Callable[..., Any]] = make_browser_automation_tools(roots=roots)
+    tools.extend(make_computer_automation_tools(roots=roots))
     # Email needs the session roots: attachment downloads land in the primary scratch
     # and outgoing attachments must resolve inside a granted directory.
     tools.extend(make_email_tools(secrets, roots=roots))

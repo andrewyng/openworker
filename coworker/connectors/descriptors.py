@@ -606,6 +606,23 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         available=True,
     ),
     ConnectorDescriptor(
+        name="computer",
+        title="Computer use",
+        icon="▣",
+        blurb="Let agents read and operate explicitly allowed Windows apps with approval.",
+        auth="none",
+        two_way=False,
+        brand_color="#2563eb",
+        logo="computer",
+        aliases=("desktop", "Windows", "CUA", "computer use"),
+        fields=[],
+        instructions=[
+            "No account setup is required.",
+            "Program launches and desktop input require approval and are bounded to programs selected in Settings by the bundled Cua Driver policy.",
+        ],
+        available=True,
+    ),
+    ConnectorDescriptor(
         name="github",
         title="GitHub",
         icon="⌘",

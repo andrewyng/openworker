@@ -1860,6 +1860,17 @@ def create_app(manager: SessionManager) -> FastAPI:
     def settings_get() -> dict[str, Any]:
         return manager.get_settings()
 
+    @app.get("/v1/settings/computer-use")
+    def settings_computer_use_get() -> dict[str, Any]:
+        return manager.computer_use_settings()
+
+    @app.post("/v1/settings/computer-use")
+    def settings_computer_use_set(body: dict) -> dict[str, Any]:
+        b = body or {}
+        return manager.set_computer_use_settings(
+            enabled=b.get("enabled"),
+            allowed_programs=b.get("allowed_programs"),
+        )
     @app.post("/v1/settings/model-key")
     def settings_set_model_key(body: dict) -> dict[str, Any]:
         return manager.set_model_key((body or {}).get("api_key", ""))
