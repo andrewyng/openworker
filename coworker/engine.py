@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -23,6 +24,11 @@ from . import compaction as _compaction
 from .events import Event, EventType
 from .permissions import Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
+
+# Compaction is otherwise entirely silent: it emits in-process events that never reach the
+# service log, so from outside there is no way to tell a run that compacted cleanly from one
+# that overflowed and lost its early turns. That gap made a 50-minute run undiagnosable.
+logger = logging.getLogger("coworker.engine")
 from .providers.errors import friendly_model_error
 from .tools import ToolRegistry
 
@@ -464,16 +470,27 @@ class TurnEngine:
         # number stops rising — and then falls — exactly when compaction is most needed;
         # trusting it alone means the trigger is never reached. The local estimate keeps
         # rising with the real history, so max() stays honest under both failure modes.
-        signal = max(
-            self._last_context_tokens or 0,
-            _compaction.estimate_tokens(self._outbound_messages()),
-        )
-        return _compaction.should_compact(
-            signal,
-            cfg.get("context_window"),
-            threshold_pct=float(cfg["threshold_pct"]),
-            cap_tokens=int(cfg["cap_tokens"]),
-        )
+        reported = self._last_context_tokens or 0
+        estimated = _compaction.estimate_tokens(self._outbound_messages())
+        signal = max(reported, estimated)
+        window = cfg.get("context_window")
+        pct = float(cfg["threshold_pct"])
+        cap = int(cfg["cap_tokens"])
+        trigger = _compaction.trigger_tokens(window, threshold_pct=pct, cap_tokens=cap)
+        due = signal >= trigger
+        # Quiet while there is nothing to watch; from half-full onward every turn reports
+        # where it stands, so a run can be followed live rather than guessed at afterwards.
+        # `reported` vs `estimated` are logged separately on purpose: a provider that
+        # truncates shows up here as the reported number stalling or falling while the
+        # estimate keeps climbing — the exact signature that made this silent before.
+        if due or signal * 2 >= trigger:
+            logger.info(
+                "[compaction] %d/%d tokens (%d%% of trigger) "
+                "reported=%d estimated=%d window=%s due=%s",
+                signal, trigger, (signal * 100 // trigger) if trigger else 0,
+                reported, estimated, window, due,
+            )
+        return due
 
     async def _compact_now(self, *, force: bool = False) -> Optional[str]:
         """Run the compaction policy. Callers gate on `_compaction_due()` (or `force`,
@@ -500,6 +517,11 @@ class TurnEngine:
                 prior=self.compaction_state,
             )
 
+        before = _compaction.estimate_tokens(self._outbound_messages())
+        logger.info(
+            "[compaction] starting (force=%s) outbound=%d tokens keep=%d model=%s",
+            force, before, keep, model,
+        )
         state: Optional[_compaction.CompactionState] = None
         failed = False
         for _attempt in range(2):  # first try + the unconditional single retry
@@ -508,6 +530,9 @@ class TurnEngine:
                 failed = False
                 break
             except Exception:
+                logger.warning(
+                    "[compaction] summarizer attempt %d failed", _attempt + 1, exc_info=True
+                )
                 failed = True
         if failed and self.question_asker is not None and self.is_attended and self.is_attended():
             while True:
@@ -537,13 +562,24 @@ class TurnEngine:
         if state is not None:
             self.compaction_state = state
             self._last_context_tokens = None  # stale once the outbound view shrank
+            after = _compaction.estimate_tokens(self._outbound_messages())
+            logger.info(
+                "[compaction] done: %d -> %d tokens (freed %d, %d%%)",
+                before, after, before - after,
+                ((before - after) * 100 // before) if before else 0,
+            )
             return "Context compacted — earlier turns were summarized"
         if failed or force:
             trimmed = _compaction.trim_state(self.messages, prior=self.compaction_state)
             if trimmed is not None:
                 self.compaction_state = trimmed
                 self._last_context_tokens = None
+                logger.warning(
+                    "[compaction] fell back to trim: %d -> %d tokens",
+                    before, _compaction.estimate_tokens(self._outbound_messages()),
+                )
                 return "Context trimmed — oldest turns dropped (summary unavailable)"
+        logger.warning("[compaction] made no change (outbound=%d tokens)", before)
         return None
 
     # -- helpers ----------------------------------------------------------------

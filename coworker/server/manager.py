@@ -3440,10 +3440,17 @@ class SessionManager:
             record = self.session_store.load(run.session_id)
             run.result_text = _last_assistant_text(record.messages) if record else None
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
-            run.status = "ok"
+            # Same rule as the scheduled path: "ok" has to mean the run produced
+            # something. No engine events reach here (this reads the persisted
+            # transcript), so output is the only evidence available.
+            if (run.result_text or "").strip() or run.artifacts:
+                run.status = "ok"
+            else:
+                run.status = "incomplete"
+                run.error = "run produced no output"
             run.finished_at = _epoch()
             self.task_store.add_run(run)
-            task.last_run, task.last_status = run.finished_at, "ok"
+            task.last_run, task.last_status = run.finished_at, run.status
             task.run_count += 1
             self.task_store.save(task)
         return {"ok": True, "run": run.to_dict()}
