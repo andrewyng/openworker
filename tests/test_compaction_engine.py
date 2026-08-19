@@ -130,6 +130,25 @@ def test_usage_signal_triggers_between_tool_turns(tmp_path):
     assert engine._last_context_tokens is None  # reset once the view shrank
 
 
+def test_truncated_usage_report_cannot_suppress_the_trigger(tmp_path):
+    """A provider that silently truncates must not be able to stall compaction.
+
+    Ollama drops the overflow, answers from what fits, and reports the TRUNCATED
+    prompt_tokens with no error — measured against a 65,536-token window: 40k in ->
+    40,019 reported, 90k in -> 32,770 reported. The reported figure stops rising and then
+    *falls* exactly when compaction is most needed, so preferring it over the local
+    estimate meant the trigger was never reached and the run quietly lost its earliest
+    turns. The signal takes the larger of the two.
+
+    Asserted on `_compaction_due()` directly: through a full run the estimate path fires
+    on iteration 1 before any usage is recorded, which would mask the regression.
+    """
+    engine = make_engine(tmp_path, CompactingProvider([]), messages=long_history(), cap=400)
+    # Trigger is min(0.8 * 100_000, 400) = 400, and the history estimates far above it.
+    engine._last_context_tokens = 53  # the shape of a truncated prompt report
+    assert engine._compaction_due()
+
+
 def test_summarizer_failure_unattended_auto_trims(tmp_path):
     provider = CompactingProvider(
         [AssistantTurn(text="done", finish_reason="stop")], summary_fails=99

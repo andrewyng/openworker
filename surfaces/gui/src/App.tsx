@@ -978,15 +978,23 @@ export function App() {
   } | null>(null);
   useEffect(() => {
     const stop = connectEvents((msg) => {
-      if (msg.type !== "automation_run_started") return;
+      const finished = msg.type === "automation_run_finished";
+      if (msg.type !== "automation_run_started" && !finished) return;
       const d = (msg.data ?? {}) as Record<string, string>;
-      setRunToast({
-        title: d.task_title || "Automation",
-        sessionId: d.session_id || "",
-        workspace: d.workspace || "",
-        agent: d.agent || "cowork",
-        time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
-      });
+      // A finished run only interrupts when it ended badly — a clean run is already
+      // reflected in the Scheduled badge, and a second toast per run would be noise.
+      // A run that stopped halfway used to end in silence, which is the whole bug.
+      if (!finished || (d.status && d.status !== "ok")) {
+        setRunToast({
+          title: finished
+            ? `${d.task_title || "Automation"} — ${d.status || "ended"}`
+            : d.task_title || "Automation",
+          sessionId: d.session_id || "",
+          workspace: d.workspace || "",
+          agent: d.agent || "cowork",
+          time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+        });
+      }
       announceAutomationsChanged(); // the Scheduled band's badge is now stale
     });
     return stop;

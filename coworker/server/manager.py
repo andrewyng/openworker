@@ -25,6 +25,7 @@ from ..connections import (
     SessionConnectionStore,
     effective as effective_connections,
 )
+from ..events import EventType
 from ..inbox import InboxStore, args_preview
 from ..inbox_routing import InboxRouting
 from ..personas import PersonaRegistry
@@ -3179,11 +3180,30 @@ class SessionManager:
             f"{task.instructions}"
         )
         try:
+            # The engine's terminal TURN_END carries why the loop stopped. Discarding it
+            # is what let a run that exhausted its iterations — or lost its instructions to
+            # a silently truncated context — be filed as a success: `status = "ok"` then
+            # meant only "did not raise". Keep the last one and judge the run on it.
+            terminal = ""
             async for _event in engine.run(opening):
-                pass
+                if _event.type is EventType.TURN_END:
+                    terminal = str((_event.data or {}).get("status") or "")
+                elif _event.type is EventType.INTERRUPTED:
+                    terminal = "interrupted"
             run.result_text = _last_assistant_text(engine.messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
-            run.status = "ok"
+            produced = bool((run.result_text or "").strip() or run.artifacts)
+            if terminal == "completed" and produced:
+                run.status = "ok"
+            else:
+                # Distinct from "error": nothing threw, the agent just never finished.
+                # Surfaced so six quiet mornings of half-run automations can't look green.
+                run.status = "incomplete"
+                run.error = (
+                    f"run ended as {terminal or 'unknown'}"
+                    if terminal != "completed"
+                    else "run completed but produced no output"
+                )
             if task.notify_on_completion:
                 await self._notify_task_done(task, run)
         except Exception as exc:
@@ -3198,6 +3218,31 @@ class SessionManager:
             except Exception:
                 pass
             self.task_store.add_run(run)
+            # App-wide counterpart to `automation_run_started`. The completion notice in
+            # `_notify_task_done` only reaches sockets already viewing this run's own
+            # session — for a background run that set is always empty, so the outcome
+            # never surfaced anywhere. This rides the same /ws/events stream the start
+            # toast already uses, so the Scheduled badge refreshes and a run that ended
+            # badly can say so.
+            try:
+                await self.broadcast_event(
+                    {
+                        "type": "automation_run_finished",
+                        "data": {
+                            "task_id": task.id,
+                            "task_title": task.title,
+                            "session_id": run.session_id,
+                            "workspace": task.workspace,
+                            "agent": task.agent,
+                            "run_id": run.run_id,
+                            "status": run.status,
+                            "artifacts": len(run.artifacts or []),
+                            "trigger": trigger,
+                        },
+                    }
+                )
+            except Exception:
+                pass
         return run
 
     async def _notify_task_done(self, task, run: TaskRun) -> None:
@@ -3247,7 +3292,10 @@ class SessionManager:
                 {
                     **t.public(),
                     "unseen_runs": len(unseen),
-                    "unseen_failed": bool(unseen) and unseen[0].status == "error",
+                    # "incomplete" counts as failed for the badge: a run that stopped
+                    # halfway is exactly what the tint exists to surface.
+                    "unseen_failed": bool(unseen)
+                    and unseen[0].status in ("error", "incomplete"),
                 }
             )
         return {"tasks": tasks}

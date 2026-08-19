@@ -255,6 +255,43 @@ async def test_scheduled_run_persists_continuable_session(tmp_path, monkeypatch)
     assert _last_assistant_text(engine.messages) == "Sure — here is more detail."
 
 
+async def test_scheduled_run_with_no_output_is_not_reported_ok(tmp_path, monkeypatch):
+    """A run that ends without producing anything must not be filed as a success.
+
+    `status` used to be set to "ok" unconditionally once `engine.run()` returned without
+    raising, so a run that exhausted its context (the model silently loses its earliest
+    turns and trails off) recorded exactly like one that did the work. Six consecutive
+    mornings of half-finished briefs showed as green.
+    """
+    from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
+    from coworker.server.manager import SessionManager
+
+    class ScriptedProvider(ProviderClient):
+        def __init__(self, turns):
+            self._turns = list(turns)
+
+        def complete(self, *, model, messages, tools=None, **settings):
+            return self._turns.pop(0)
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    # Finishes cleanly but says nothing and writes nothing — no text, no artifacts.
+    provider = ScriptedProvider([AssistantTurn(text="", finish_reason="stop")])
+    manager = SessionManager(data_dir=tmp_path / "data", provider=provider)
+    task = _task(workspace=str(ws), agent="cowork")
+    manager.task_store.save(task)
+
+    run = await manager._run_scheduled_task(task, trigger="manual")
+    assert run.status == "incomplete"
+    assert run.error  # says why, so the Automations list can explain itself
+    # "incomplete" is distinct from "error": nothing threw, the work just isn't done.
+    assert run.status != "error"
+
+
 def test_task_engine_has_no_scheduling_tools(tmp_path, monkeypatch):
     """A scheduled run executes its instructions — it must not be able to (re)schedule. With
     instructions like 'every day at 5:32pm, prepare…', an agent holding create_scheduled_task

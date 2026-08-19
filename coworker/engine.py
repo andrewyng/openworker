@@ -440,6 +440,15 @@ class TurnEngine:
             from .providers.matrix import model_context_windows
 
             cfg["context_window"] = model_context_windows().get(self.model)
+        if not cfg.get("context_window"):
+            # The matrix is hosted-models-only, so every `ollama:*` id lands here and
+            # would otherwise inherit DEFAULT_CONTEXT_WINDOW (128k) — roughly double what
+            # a local server typically serves. Ollama truncates past its window silently
+            # and reports the truncated count, so that guess is never corrected; ask it
+            # what it is actually serving instead.
+            from .providers.local_context import local_context_window
+
+            cfg["context_window"] = local_context_window(self.model)
         cfg.setdefault("threshold_pct", _compaction.DEFAULT_THRESHOLD_PCT)
         cfg.setdefault("cap_tokens", _compaction.DEFAULT_CAP_TOKENS)
         return cfg
@@ -450,8 +459,14 @@ class TurnEngine:
         cfg = self._compaction_config()
         if cfg.get("enabled") is False:
             return False
-        signal = self._last_context_tokens or _compaction.estimate_tokens(
-            self._outbound_messages()
+        # Take the LARGER of what the provider reported and what we can estimate locally.
+        # A provider that silently truncates (ollama) reports the truncated prompt, so its
+        # number stops rising — and then falls — exactly when compaction is most needed;
+        # trusting it alone means the trigger is never reached. The local estimate keeps
+        # rising with the real history, so max() stays honest under both failure modes.
+        signal = max(
+            self._last_context_tokens or 0,
+            _compaction.estimate_tokens(self._outbound_messages()),
         )
         return _compaction.should_compact(
             signal,
