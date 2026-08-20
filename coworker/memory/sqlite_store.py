@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from .base import MemoryItem, MemoryStore, Scope
+from ..sqlite_util import connect as sqlite_connect
 
 
 class SQLiteMemoryStore(MemoryStore):
@@ -18,8 +19,7 @@ class SQLiteMemoryStore(MemoryStore):
         # check_same_thread=False: the server runs the WS handler on a different thread
         # than the store was created on; a lock serializes access.
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        self._conn = sqlite_connect(self.path)
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS memories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

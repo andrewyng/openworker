@@ -17,6 +17,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from .models import ScheduledTask, TaskRun
+from ..sqlite_util import connect as sqlite_connect
 
 
 def compute_next_run(
@@ -66,8 +67,7 @@ class TaskStore:
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        self._conn = sqlite_connect(self.path)
         self._init()
 
     def _init(self) -> None:
