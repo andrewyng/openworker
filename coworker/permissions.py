@@ -11,7 +11,7 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, Optional
 
 # Shell metacharacters that turn one "allowlisted" command into several. Any of these in a
@@ -24,6 +24,7 @@ _SHELL_OPERATORS = (";", "&", "|", ">", "<", "`", "$(", "(", "\n", "\r")
 def _has_shell_operators(command: str) -> bool:
     return any(op in command for op in _SHELL_OPERATORS)
 
+
 from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
     SHELL_TOOL,
     WRITE_TOOLS,
@@ -32,6 +33,107 @@ from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOO
     classify,
     is_consequential,
 )
+
+
+
+# An allowlist entry auto-runs a command with NO prompt, matched as an argv prefix. That
+# is only sound while extra arguments cannot add authority. For the programs below they
+# can: the program's own arguments choose what code executes, so an entry that stops
+# before those arguments hands over unbounded authority.
+#
+# Two shapes, both keyed by program so the check never touches unrelated tools:
+#
+# `_RUNNER_ANY_ARG` - interpreters, package managers and exec wrappers where essentially
+# ANY argument names code to run that is not already in the workspace: `python3 -c '...'`
+# is a program the user never saw, `npm install pkg` fetches and runs a package's install
+# scripts, `env CMD` / `xargs CMD` / `ssh host CMD` take the command as an argument.
+# A bare-program entry auto-runs only the zero-argument invocation; to auto-run a specific
+# operation, name it in the entry (`npm test`, `python3 -m pytest`) and arguments may
+# still be appended to that.
+#
+# Deliberately NOT here: project-local task runners (`pytest`, `tox`, `nox`, `make`,
+# `just`) whose default target is the workspace's own code, which the agent can already
+# edit. Their escape is a path pointing outside the workspace (`pytest /tmp/evil_test.py`,
+# `make -f /tmp/evil.mk`) - the same axis as `cat /etc/passwd`, and one the command
+# allowlist cannot express. That belongs to path scoping, not to program matching.
+#
+# Names are matched lowercased and without a Windows executable suffix (see
+# `_program_name`), so `python.exe` and `npm.cmd` are the same programs as `python`
+# and `npm`.
+_RUNNER_ANY_ARG = frozenset(
+    {
+        # language interpreters. `awk`/`sed` are here rather than in the flag table below
+        # because their program text is a POSITIONAL argument (`sed 'e ls'`, `awk
+        # 'BEGIN{system(...)}'`), so no flag is what carries the escape.
+        "python", "python3", "node", "deno", "bun", "ruby", "perl", "php", "rscript",
+        "awk", "gawk", "sed", "osascript",
+        # package managers: install/exec fetch remote code and run its build hooks
+        "npm", "npx", "pnpm", "yarn", "pip", "pip3", "uv", "uvx", "pipx",
+        "cargo", "go", "gem", "bundle", "gradle", "mvn",
+        # shells and exec wrappers (their argument IS the command to run)
+        "sh", "bash", "zsh", "dash", "fish", "env", "sudo", "doas",
+        "nohup", "timeout", "watch", "nice", "xargs",
+        # remote / container execution
+        "ssh", "scp", "docker", "podman", "kubectl",
+    }
+)
+
+# `_RUNNER_ESCAPES` - otherwise-inert tools with a SPECIFIC flag that delegates execution.
+# Only those flags are refused, so ordinary use still auto-runs (`find . -name '*.py'`
+# stays allowed under a bare `find` entry; only the `-exec` family is held back).
+# An entry that names the flag itself opts back in (e.g. `find . -exec`).
+_RUNNER_ESCAPES: dict[str, frozenset[str]] = {
+    "find": frozenset({"-exec", "-execdir", "-ok", "-okdir"}),
+    "git": frozenset({"-c", "--exec-path", "--upload-pack", "--receive-pack"}),
+    "tar": frozenset({"--checkpoint-action", "--to-command", "--use-compress-program"}),
+    "rsync": frozenset({"-e", "--rsh", "--rsync-path"}),
+    "vim": frozenset({"-c", "--cmd"}),
+    "vi": frozenset({"-c", "--cmd"}),
+    "nvim": frozenset({"-c", "--cmd"}),
+}
+
+# Windows spells the same programs `python.exe`, `npm.cmd`, `node.exe`.
+_EXE_SUFFIXES = (".exe", ".cmd", ".bat", ".com", ".ps1")
+
+
+def _program_name(argv0: str) -> str:
+    """The program a command invokes, normalised for lookup: directories dropped, case
+    folded, Windows executable suffix removed. Backslashes are treated as separators
+    regardless of host OS so a Windows-style path is not read as one long filename."""
+    name = PurePath(argv0.replace("\\", "/")).name.lower()
+    for suffix in _EXE_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def _flag_name(token: str) -> str:
+    """`--opt=value` and `-e=x` carry the flag in the part before `=`."""
+    return token.split("=", 1)[0]
+
+
+def _delegates_execution(argv: list[str], prefix: list[str]) -> bool:
+    """True when `argv` extends an allowlist `prefix` in a way that lets the program pick
+    what code runs. Deliberately conservative: an unclear case returns True, which only
+    means "ask the user" - the safe direction for an approval gate.
+    """
+    program = _program_name(argv[0])
+    extra = argv[len(prefix) :]
+    if not extra:
+        return False  # exactly the allowlisted invocation, nothing added
+
+    # Any argument can name code, and the entry pinned nothing but the program itself.
+    if program in _RUNNER_ANY_ARG and len(prefix) == 1:
+        return True
+
+    escapes = _RUNNER_ESCAPES.get(program)
+    if escapes:
+        named = {_flag_name(t) for t in prefix}
+        for token in extra:
+            flag = _flag_name(token)
+            if flag in escapes and flag not in named:
+                return True
+    return False
 
 
 class Mode(str, Enum):
@@ -245,5 +347,10 @@ class PermissionEngine:
             except ValueError:
                 continue
             if prefix and argv[: len(prefix)] == prefix:
+                # A prefix match is not enough on its own: for interpreters, package
+                # managers and exec-delegating tools, the arguments AFTER the prefix are
+                # what choose the code to run (see _delegates_execution).
+                if _delegates_execution(argv, prefix):
+                    continue
                 return True
         return False
