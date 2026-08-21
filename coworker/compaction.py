@@ -40,6 +40,19 @@ _SPAN_BUDGET_CHARS = 400_000
 _USER_MESSAGE_CLIP = 600
 _USER_MESSAGES_MAX = 40
 _TRIM_FRACTION = 0.10
+# Room left for the answer when sizing a prompt against the serving window. llama.cpp
+# needs somewhere to put the generation; with `--context-shift` it makes that room by
+# evicting the OLDEST tokens — the system prompt and the user message — which is how a
+# prompt that "fit" still came back as "no user query found in messages".
+GENERATION_RESERVE_TOKENS = 4_096
+# A clipped tool result keeps at least this many characters, so the model can still see
+# what the call returned even when the bulk had to go.
+_CLAMP_MIN_KEEP_CHARS = 400
+CLAMP_MARKER = "\n\n[… truncated to fit the model's context window]"
+# chars/4 under-counts the JSON-escaped form, so each clip overshoots slightly and a
+# few passes converge. Both are safety margins, not tuning knobs.
+_CLAMP_SAFETY_CHARS = 256
+_CLAMP_MAX_PASSES = 6
 
 
 # -- token math ---------------------------------------------------------------
@@ -538,6 +551,64 @@ def apply_to_outbound(
         head.append(messages[0])
     head.append({"role": "user", "content": compacted_block(state)})
     return head + messages[boundary:]
+
+
+def clamp_tool_results(
+    messages: list[dict[str, Any]], *, limit: int
+) -> list[dict[str, Any]]:
+    """`messages` with oversized `tool` contents clipped until the estimate fits `limit`.
+
+    The last line of defence, and the one case compaction genuinely cannot handle:
+    it summarizes whole turns, so when ONE assistant turn's tool results exceed the
+    entire budget there is no boundary that helps. On 2026-08-20 a papers run held
+    58,423 tokens of arXiv responses in a single turn; `pick_boundary` fell through to
+    its best-effort branch and the "compacted" view was still 61,547 tokens against an
+    11,250 budget. It overran the 65,536 window, the runner evicted the head of the
+    prompt to make room to generate, and the model rejected the result with
+    "no user query found in messages" (HTTP 500). The run was filed `incomplete`.
+
+    Outbound-only: the canonical transcript keeps the full tool output, so nothing is
+    lost from the record. Tool results are clipped first, and largest first, because they
+    are both the bulk and the most replaceable — a page can be fetched again, a user's
+    instruction cannot. Returns the input unchanged when it already fits.
+    """
+    if limit <= 0 or estimate_tokens(messages) <= limit:
+        return messages
+    out = [dict(m) for m in messages]
+    by_size = sorted(
+        (i for i, m in enumerate(out) if m.get("role") == "tool"),
+        key=lambda i: len(str(out[i].get("content") or "")),
+        reverse=True,
+    )
+    # Several passes: chars/4 is an approximation and JSON escaping inflates the encoded
+    # form, so one pass sized off `excess` can land a hair over. Re-measure and shave
+    # again until it fits or no result can give up any more.
+    for _ in range(_CLAMP_MAX_PASSES):
+        excess = estimate_tokens(out) - limit
+        if excess <= 0:
+            break
+        progressed = False
+        for i in by_size:
+            excess = estimate_tokens(out) - limit
+            if excess <= 0:
+                break
+            content = out[i].get("content")
+            if not isinstance(content, str):
+                continue
+            body = content[: -len(CLAMP_MARKER)] if content.endswith(CLAMP_MARKER) else content
+            if len(body) <= _CLAMP_MIN_KEEP_CHARS:
+                continue
+            keep = max(
+                _CLAMP_MIN_KEEP_CHARS,
+                len(body) - (excess * 4) - len(CLAMP_MARKER) - _CLAMP_SAFETY_CHARS,
+            )
+            if keep >= len(body):
+                continue
+            out[i]["content"] = body[:keep] + CLAMP_MARKER
+            progressed = True
+        if not progressed:
+            break
+    return out
 
 
 # -- overflow detection -------------------------------------------------------

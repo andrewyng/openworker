@@ -459,6 +459,47 @@ class TurnEngine:
         cfg.setdefault("cap_tokens", _compaction.DEFAULT_CAP_TOKENS)
         return cfg
 
+    def _tools_tokens(self) -> int:
+        """Tokens the tool schemas add to EVERY request.
+
+        They are prompt tokens like any other, but nothing counted them: the trigger and
+        the keep budget both measured `_outbound_messages()` alone. With a large tool
+        surface that undercounts by thousands of tokens, so a history that "fits" on
+        paper still overflows the window once the schemas are rendered — the 2026-08-20
+        papers run passed at 60,159 message-tokens and failed the moment a tools array
+        was attached (~62.5k), with the identical message list.
+        """
+        try:
+            schemas = self.registry.schemas() or []
+        except Exception:  # a tool registry problem must never break the size check
+            return 0
+        return _compaction.estimate_tokens(schemas)
+
+    def _fit_to_window(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Final guarantee that what we send fits: clip oversized tool results if the
+        outbound view (plus tool schemas, plus room to answer) would still overflow.
+
+        Compaction runs first and is preferred — it summarizes rather than truncates.
+        This only bites in the case compaction cannot fix: a single turn larger than the
+        whole budget. Without it that prompt reaches the server, which makes room by
+        evicting the head — the system prompt and the user message — and the request
+        comes back as "no user query found in messages".
+        """
+        window = self._compaction_config().get("context_window")
+        if not window:
+            return messages
+        limit = int(window) - self._tools_tokens() - _compaction.GENERATION_RESERVE_TOKENS
+        clamped = _compaction.clamp_tool_results(messages, limit=limit)
+        if clamped is not messages:
+            logger.warning(
+                "[compaction] clamped tool results to fit: %d -> %d tokens "
+                "(limit=%d window=%s tools=%d)",
+                _compaction.estimate_tokens(messages),
+                _compaction.estimate_tokens(clamped),
+                limit, window, self._tools_tokens(),
+            )
+        return clamped
+
     def _compaction_due(self) -> bool:
         """The trigger check alone — cheap and side-effect free, so the loop can emit
         the COMPACTING signal before committing to the (slow) summarizer call."""
@@ -471,7 +512,9 @@ class TurnEngine:
         # trusting it alone means the trigger is never reached. The local estimate keeps
         # rising with the real history, so max() stays honest under both failure modes.
         reported = self._last_context_tokens or 0
-        estimated = _compaction.estimate_tokens(self._outbound_messages())
+        # + tool schemas: they are sent on every request, so leaving them out of the
+        # estimate understates the real prompt by the whole tool surface.
+        estimated = _compaction.estimate_tokens(self._outbound_messages()) + self._tools_tokens()
         signal = max(reported, estimated)
         window = cfg.get("context_window")
         pct = float(cfg["threshold_pct"])
@@ -502,10 +545,17 @@ class TurnEngine:
         pct = float(cfg["threshold_pct"])
         cap = int(cfg["cap_tokens"])
         window = cfg.get("context_window")
-        keep = int(
-            _compaction.KEEP_RECENT_FRACTION
-            * _compaction.trigger_tokens(window, threshold_pct=pct, cap_tokens=cap)
-        )
+        # The tool schemas are a FIXED cost on every request and compaction cannot
+        # shrink them, so the budget compaction gets to play with is what is left after
+        # them. Sizing `keep` off the raw trigger is how a tail that "fit" still
+        # overflowed once the schemas were rendered.
+        fixed = self._tools_tokens()
+        trigger = _compaction.trigger_tokens(window, threshold_pct=pct, cap_tokens=cap)
+        # Floor is a FRACTION of the trigger, never an absolute: a fixed floor larger
+        # than the trigger silently raises the budget instead of lowering it, and a
+        # small configured cap then stops compacting altogether.
+        budget = max(trigger - fixed, max(1, trigger // 4))
+        keep = int(_compaction.KEEP_RECENT_FRACTION * budget)
         model = str(cfg.get("model") or "") or self.model
 
         def _build() -> Optional[_compaction.CompactionState]:
@@ -517,10 +567,11 @@ class TurnEngine:
                 prior=self.compaction_state,
             )
 
-        before = _compaction.estimate_tokens(self._outbound_messages())
+        before = _compaction.estimate_tokens(self._outbound_messages()) + fixed
         logger.info(
-            "[compaction] starting (force=%s) outbound=%d tokens keep=%d model=%s",
-            force, before, keep, model,
+            "[compaction] starting (force=%s) outbound=%d tokens (incl %d tool-schema) "
+            "keep=%d budget=%d model=%s",
+            force, before, fixed, keep, budget, model,
         )
         state: Optional[_compaction.CompactionState] = None
         failed = False
@@ -562,12 +613,26 @@ class TurnEngine:
         if state is not None:
             self.compaction_state = state
             self._last_context_tokens = None  # stale once the outbound view shrank
-            after = _compaction.estimate_tokens(self._outbound_messages())
+            after = _compaction.estimate_tokens(self._outbound_messages()) + fixed
+            freed = before - after
             logger.info(
                 "[compaction] done: %d -> %d tokens (freed %d, %d%%)",
-                before, after, before - after,
-                ((before - after) * 100 // before) if before else 0,
+                before, after, freed, (freed * 100 // before) if before else 0,
             )
+            # Report what actually happened. A single turn bigger than the whole budget
+            # cannot be summarized away — compaction "succeeds" while freeing nothing,
+            # and saying "compacted" there is how six quiet mornings looked green while
+            # the next request overflowed the window and died.
+            if freed <= 0 or after > budget:
+                logger.warning(
+                    "[compaction] freed %d tokens; outbound %d still over budget %d — "
+                    "one turn exceeds the budget, tool results will be clipped to fit",
+                    freed, after, budget,
+                )
+                return (
+                    "Context compacted — one turn is larger than the budget, so its "
+                    "tool output will be truncated to fit"
+                )
             return "Context compacted — earlier turns were summarized"
         if failed or force:
             trimmed = _compaction.trim_state(self.messages, prior=self.compaction_state)
@@ -591,7 +656,9 @@ class TurnEngine:
         tools = self.registry.schemas() or None
         model, messages, settings = (
             self.model,
-            self._outbound_messages(),
+            # _outbound_messages is the canonical view; _fit_to_window is the last-resort
+            # clamp that keeps a single oversized turn from overflowing the window.
+            self._fit_to_window(self._outbound_messages()),
             self.model_settings,
         )
         provider = self.provider
