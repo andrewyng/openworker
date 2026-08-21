@@ -36,7 +36,7 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "browser",
         "browser_open_url",
         "Open URL",
-        "read",
+        "write",
         "Open a URL in the Playwright browser.",
     ),
     ConnectorToolDef(

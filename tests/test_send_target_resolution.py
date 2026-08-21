@@ -38,7 +38,7 @@ def test_integration_tools_reads_are_free_writes_gate(tmp_path):
     )
 
 
-def test_browser_automation_reads_are_free_interactions_gate():
+def test_browser_automation_reads_are_free_navigation_and_interactions_gate():
     from coworker.connectors.browser_automation import make_browser_automation_tools
 
     tools = {t.__name__: t for t in make_browser_automation_tools()}
@@ -46,7 +46,7 @@ def test_browser_automation_reads_are_free_interactions_gate():
         tools["browser_snapshot"].__aisuite_tool_metadata__.requires_approval is False
     )
     assert (
-        tools["browser_open_url"].__aisuite_tool_metadata__.requires_approval is False
+        tools["browser_open_url"].__aisuite_tool_metadata__.requires_approval is True
     )
     assert tools["browser_click"].__aisuite_tool_metadata__.requires_approval is True
     assert tools["browser_type"].__aisuite_tool_metadata__.requires_approval is True
