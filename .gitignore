@@ -9,3 +9,6 @@ dist/
 
 # Local secrets (live-smoke BYO keys) — never committed
 .env
+
+# Unsloth writes compiled trainer stubs here on import; 3.4M of generated code.
+unsloth_compiled_cache/
