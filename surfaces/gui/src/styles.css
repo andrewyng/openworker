@@ -451,6 +451,7 @@ button.btn.icon-only:hover { color: var(--ink); }
 button.btn:hover { background: var(--paper); }
 button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.btn.danger { color: var(--accent); }
+.danger { color: var(--danger); }
 
 /* composer — the wrap/card/head/bar layout is supplied by Tailwind utilities on the elements
    (Composer.tsx); only the textarea reset + drag-ring remain in CSS. */

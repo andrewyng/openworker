@@ -13,6 +13,7 @@ import {
 import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { AutomationQuickstart } from "./AutomationQuickstart";
+import { DeleteConfirmModal } from "./DeleteConfirmModal";
 
 // Shared utility strings (the §28 page shell — mirrors IntegrationsView's constants).
 const CARD = "rounded-xl2 border border-line bg-panel";
@@ -68,6 +69,11 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
   const [openId, setOpenId] = useState<string | null>(initialOpenId ?? null);
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{
+    id: string;
+    title: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
 
   // The sidebar's Scheduled band can retarget an ALREADY-open Automations surface —
   // initial state alone would ignore the change (UX-023).
@@ -118,9 +124,27 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
   }
 
   const empty = tasks.length === 0;
+  const closeDeleteModal = () => setPendingDelete(null);
+  const handleDeleteConfirm = async () => {
+    if (!pendingDelete) return;
+    try {
+      await pendingDelete.onConfirm();
+    } finally {
+      closeDeleteModal();
+    }
+  };
 
   return (
     <Shell>
+      {pendingDelete && (
+        <DeleteConfirmModal
+          isOpen
+          title={`Delete “${pendingDelete.title}”?`}
+          description="This action permanently removes the automation and it cannot be restored."
+          onCancel={closeDeleteModal}
+          onConfirm={handleDeleteConfirm}
+        />
+      )}
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
           <PanelHead title="Automations" sub="Recurring tasks OpenWorker runs on a schedule." />
@@ -174,10 +198,17 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
                   className="sched-card-del"
                   title="Delete automation"
                   aria-label={`Delete ${t.title}`}
-                  onClick={async (e) => {
+                  onClick={(e) => {
                     e.stopPropagation();
-                    await deleteAutomation(t.id);
-                    refresh();
+                    setPendingDelete({
+                      id: t.id,
+                      title: t.title,
+                      onConfirm: async () => {
+                        await deleteAutomation(t.id);
+                        announceAutomationsChanged();
+                        await refresh();
+                      },
+                    });
                   }}
                 >
                   <Icon name="trash" size={14} />
@@ -296,6 +327,10 @@ function TaskDetail({
   const [time, setTime] = useState("09:00");
   const [freq, setFreq] = useState("daily");
   const [saving, setSaving] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<{
+    title: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
 
   // The seen mark AS OF opening — the "new" pills compare against this frozen value
   // while mark-seen advances the stored one (badge clears; highlights survive).
@@ -358,6 +393,15 @@ function TaskDetail({
     await updateAutomation(id, { enabled: !task.enabled });
     refresh();
   };
+  const closeDeleteModal = () => setPendingDelete(null);
+  const handleDeleteConfirm = async () => {
+    if (!pendingDelete) return;
+    try {
+      await pendingDelete.onConfirm();
+    } finally {
+      closeDeleteModal();
+    }
+  };
   const remove = async () => {
     await deleteAutomation(id);
     announceAutomationsChanged(); // the sidebar band must not wait out its poll
@@ -366,6 +410,15 @@ function TaskDetail({
 
   return (
     <Shell>
+      {pendingDelete && (
+        <DeleteConfirmModal
+          isOpen
+          title={`Delete “${pendingDelete.title}”?`}
+          description="This action permanently removes the automation and it cannot be restored."
+          onCancel={closeDeleteModal}
+          onConfirm={handleDeleteConfirm}
+        />
+      )}
       <button className="text-[13px] text-muted hover:text-ink mb-3" onClick={onBack}>
         ← Automations
       </button>
@@ -395,7 +448,15 @@ function TaskDetail({
                   ▶ Run now
                 </button>
                 <button className="btn sm" onClick={startEdit}>Edit</button>
-                <button className="btn sm danger-btn" onClick={remove}>
+                <button
+                  className="btn sm danger-btn"
+                  onClick={() =>
+                    setPendingDelete({
+                      title: task.title,
+                      onConfirm: remove,
+                    })
+                  }
+                >
                   <Icon name="trash" size={14} /> Delete
                 </button>
               </>

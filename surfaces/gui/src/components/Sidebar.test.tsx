@@ -136,12 +136,12 @@ describe("Chronological list row actions (⋮ menu)", () => {
     fireEvent.click(screen.getByTestId("row-menu-archive"));
     expect(baseProps.onArchiveSession).toHaveBeenCalledWith("s-ops-1", true);
 
-    // Delete is two-step: first click arms ("Delete?"), the second deletes.
+    // Delete now confirms through the shared modal.
     openOpsMenu();
     fireEvent.click(screen.getByTestId("row-menu-delete"));
     expect(baseProps.onDeleteSession).not.toHaveBeenCalled();
-    expect(screen.getByTestId("row-menu-delete").textContent).toContain("Delete?");
-    fireEvent.click(screen.getByTestId("row-menu-delete"));
+    expect(screen.getByTestId("delete-confirm-delete")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("delete-confirm-delete"));
     expect(baseProps.onDeleteSession).toHaveBeenCalledWith("s-ops-1");
   });
 

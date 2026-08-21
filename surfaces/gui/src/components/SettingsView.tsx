@@ -42,6 +42,7 @@ import { ModelsTab } from "./ManageTabs";
 import { MemorySection } from "./MemorySection";
 import { PersonasTab } from "./PersonasTab";
 import { SkillsTab } from "./SkillsTab";
+import { DeleteConfirmModal } from "./DeleteConfirmModal";
 import { showPersonas } from "../flags";
 
 // Settings, restructured (Option 2) into a full-page surface that mirrors IntegrationsView's shell:
@@ -169,6 +170,7 @@ function VoiceInputSection() {
   const [phase, setPhase] = useState<"idle" | "downloading" | "verifying" | "testing" | "transcribing">("idle");
   const [error, setError] = useState<string | null>(null);
   const [testTranscript, setTestTranscript] = useState("");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const desktop = isTauri();
 
   const publish = (next: DictationStatus) => {
@@ -238,7 +240,6 @@ function VoiceInputSection() {
   };
 
   const remove = async () => {
-    if (!window.confirm("Delete the local Whisper model and disable Voice Input?")) return;
     setError(null);
     try {
       publish(await deleteDictationModel());
@@ -328,7 +329,7 @@ function VoiceInputSection() {
                 <>
                   <span className="text-[11.5px] px-2 py-1 rounded-full bg-green-50 text-green-700">Verified</span>
                   <button className={BTN_BORDERED} onClick={() => void repair()}>Repair</button>
-                  <button className="text-[12px] text-red-600 px-2 py-2" onClick={() => void remove()}>Delete</button>
+                  <button className="text-[12px] text-red-600 px-2 py-2" onClick={() => setShowDeleteConfirm(true)}>Delete</button>
                 </>
               ) : downloading ? (
                 <button className={BTN_BORDERED} onClick={() => void cancelDownload()}>Cancel</button>
@@ -367,6 +368,17 @@ function VoiceInputSection() {
           {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-[12px] text-red-700">{error}</div>}
         </div>
       )}
+      <DeleteConfirmModal
+        isOpen={showDeleteConfirm}
+        title="Delete voice model?"
+        description="This removes the local Whisper model and disables Voice Input until you download it again."
+        confirmLabel="Delete"
+        onCancel={() => setShowDeleteConfirm(false)}
+        onConfirm={async () => {
+          setShowDeleteConfirm(false);
+          await remove();
+        }}
+      />
     </section>
   );
 }
