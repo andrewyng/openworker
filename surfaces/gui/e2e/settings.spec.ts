@@ -26,6 +26,55 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   await expect(page.getByTestId("set-provider-openai")).toBeVisible();
 });
 
+test("Settings: default folders are saved with access and apply to new conversations", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("account-row").click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+
+  const defaults = page.getByTestId("default-folders");
+  await expect(defaults.getByText("No default folders.")).toBeVisible();
+  await defaults.getByRole("button", { name: "Give access to a folder" }).click();
+  await defaults.getByRole("button", { name: "Choose location" }).click();
+  await expect(defaults.getByPlaceholder(/Choose or paste a folder path/)).toHaveValue(
+    "/tmp/picked-folder",
+  );
+
+  const [addRequest] = await Promise.all([
+    page.waitForRequest(
+      (request) =>
+        request.url().endsWith("/v1/settings/default-roots") && request.method() === "POST",
+    ),
+    defaults.getByRole("button", { name: "Add", exact: true }).click(),
+  ]);
+  expect(addRequest.postDataJSON()).toEqual({
+    roots: [{ path: "/tmp/picked-folder", writable: false }],
+  });
+  const row = defaults.locator(".root-row").filter({ hasText: "/tmp/picked-folder" });
+  await expect(row.getByRole("button", { name: "Read-only" })).toBeVisible();
+
+  const [toggleRequest] = await Promise.all([
+    page.waitForRequest(
+      (request) =>
+        request.url().endsWith("/v1/settings/default-roots") && request.method() === "POST",
+    ),
+    row.getByRole("button", { name: "Read-only" }).click(),
+  ]);
+  expect(toggleRequest.postDataJSON()).toEqual({
+    roots: [{ path: "/tmp/picked-folder", writable: true }],
+  });
+  await expect(row.getByRole("button", { name: "Read-write" })).toBeVisible();
+
+  const [removeRequest] = await Promise.all([
+    page.waitForRequest(
+      (request) =>
+        request.url().endsWith("/v1/settings/default-roots") && request.method() === "POST",
+    ),
+    row.getByTitle("Remove").click(),
+  ]);
+  expect(removeRequest.postDataJSON()).toEqual({ roots: [] });
+  await expect(defaults.getByText("No default folders.")).toBeVisible();
+});
+
 // The launch flag brings the Personas tab back (the gallery/persona suites rely on it).
 test("Settings: Personas tab returns behind the launch flag", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("ocw.flag.personas", "1"));

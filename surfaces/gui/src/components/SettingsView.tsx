@@ -4,6 +4,7 @@ import {
   getTrustedWorkspaces,
   setCompactionSettings,
   setContextBar,
+  setDefaultRoots,
   setOnboarded,
   setPdfSettings,
   setScratchBase,
@@ -41,7 +42,9 @@ import { PanelHead } from "./IntegrationsView";
 import { ModelsTab } from "./ManageTabs";
 import { MemorySection } from "./MemorySection";
 import { GalleryModal } from "./GalleryModal";
+import { AddFolderForm } from "./AddFolderForm";
 import { PersonasTab } from "./PersonasTab";
+import { RootRow } from "./RootRow";
 import { SkillsTab } from "./SkillsTab";
 import { showPersonas } from "../flags";
 
@@ -894,6 +897,8 @@ function FilesCard() {
   const [settings, setSettings] = useState<ModelSettings | null>(null);
   const [scratchDraft, setScratchDraft] = useState("");
   const [scratchMsg, setScratchMsg] = useState<string | null>(null);
+  const [defaultsBusy, setDefaultsBusy] = useState(false);
+  const [defaultsMsg, setDefaultsMsg] = useState<string | null>(null);
   const desktop = isTauri();
 
   const refresh = () =>
@@ -921,6 +926,43 @@ function FilesCard() {
     const picked = await pickFolder();
     if (picked) setScratchDraft(picked);
   };
+
+  const saveDefaults = async (
+    roots: Array<{ path: string; writable: boolean }>,
+  ): Promise<boolean> => {
+    setDefaultsBusy(true);
+    setDefaultsMsg(null);
+    const res = await setDefaultRoots(roots);
+    setDefaultsBusy(false);
+    if (!res.ok || !res.default_roots) {
+      setDefaultsMsg(res.error || "Could not save default folders.");
+      return false;
+    }
+    setSettings((current) =>
+      current ? { ...current, default_roots: res.default_roots } : current,
+    );
+    setDefaultsMsg("Saved for new conversations.");
+    return true;
+  };
+  const defaults = settings?.default_roots ?? [];
+  const addDefault = (path: string, writable: boolean) =>
+    saveDefaults([
+      ...defaults.map((root) => ({ path: root.path, writable: root.writable })),
+      { path, writable },
+    ]);
+  const toggleDefault = (path: string) =>
+    saveDefaults(
+      defaults.map((root) => ({
+        path: root.path,
+        writable: root.path === path ? !root.writable : root.writable,
+      })),
+    );
+  const removeDefault = (path: string) =>
+    saveDefaults(
+      defaults
+        .filter((root) => root.path !== path)
+        .map((root) => ({ path: root.path, writable: root.writable })),
+    );
 
   if (!settings) return null;
 
@@ -952,6 +994,33 @@ function FilesCard() {
         folder; you can grant access to more folders inside any conversation.
       </div>
       {scratchMsg && <div className="text-[12.5px] text-muted mt-2.5">{scratchMsg}</div>}
+
+      <div className="border-t border-line mt-4 pt-4" data-testid="default-folders">
+        <div className={FIELD_LABEL}>Default folders</div>
+        <div className={FIELD_HELP}>
+          New Cowork conversations start with access to these folders. Changes do not affect existing
+          conversations, and each conversation can still change or remove its inherited access.
+        </div>
+        {defaults.length > 0 ? (
+          <div className="mt-2 -mx-1.5">
+            {defaults.map((root) => (
+              <RootRow
+                key={root.path}
+                root={root}
+                busy={defaultsBusy}
+                onToggle={() => void toggleDefault(root.path)}
+                onRemove={(path) => void removeDefault(path)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="text-[12px] text-faint mt-2">No default folders.</div>
+        )}
+        <div className="mt-2">
+          <AddFolderForm onAdd={addDefault} busy={defaultsBusy} compact />
+        </div>
+        {defaultsMsg && <div className="text-[12.5px] text-muted mt-2">{defaultsMsg}</div>}
+      </div>
     </div>
   );
 }

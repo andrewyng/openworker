@@ -262,6 +262,110 @@ def test_add_root_before_first_turn_persists(tmp_path):
     assert record is not None and record.agent == "cowork"
 
 
+def test_default_roots_apply_only_to_new_sessions_as_a_persisted_snapshot(tmp_path):
+    mgr = _cowork_manager(tmp_path)
+    old_default = tmp_path / "old-default"
+    new_default = tmp_path / "new-default"
+    old_default.mkdir()
+    new_default.mkdir()
+
+    # A session that already exists when defaults are saved stays unchanged.
+    existing = mgr.get_engine("existing", agent="cowork")
+    assert existing is not None
+    mgr.save("existing", existing)
+
+    saved = mgr.set_default_roots(
+        [{"path": str(old_default), "writable": False}]
+    )
+    assert saved["ok"] is True
+
+    listed = {root["path"]: root for root in mgr.get_roots("fresh")}
+    assert listed[str(old_default.resolve())]["writable"] is False
+    assert listed[str(old_default.resolve())]["primary"] is False
+
+    fresh = mgr.get_engine("fresh", agent="cowork")
+    assert fresh is not None
+    assert old_default.resolve() in {r.path for r in fresh.roots}
+    assert not fresh.permissions._under_writable_root(str(old_default / "blocked.txt"))
+
+    existing_after = _cowork_manager(tmp_path).get_engine("existing", agent="cowork")
+    assert existing_after is not None
+    assert old_default.resolve() not in {r.path for r in existing_after.roots}
+
+    # Defaults are copied into the new session, not referenced live. Changing the
+    # account setting must not rewrite a session that already inherited them.
+    mgr.set_default_roots([{"path": str(new_default), "writable": True}])
+    mgr.save("fresh", fresh)
+    reborn = _cowork_manager(tmp_path)
+    restored = reborn.get_engine("fresh", agent="cowork")
+    assert restored is not None
+    restored_paths = {r.path for r in restored.roots}
+    assert old_default.resolve() in restored_paths
+    assert new_default.resolve() not in restored_paths
+
+    newest = reborn.get_engine("newest", agent="cowork")
+    assert newest is not None
+    assert new_default.resolve() in {r.path for r in newest.roots}
+    assert newest.permissions._under_writable_root(str(new_default / "allowed.txt"))
+
+
+def test_default_roots_validate_deduplicate_and_remain_session_removable(tmp_path):
+    mgr = _cowork_manager(tmp_path)
+    shared = tmp_path / "shared"
+    shared.mkdir()
+
+    missing = mgr.set_default_roots(
+        [{"path": str(tmp_path / "missing"), "writable": False}]
+    )
+    assert missing["ok"] is False
+    assert mgr.get_settings()["default_roots"] == []
+
+    saved = mgr.set_default_roots(
+        [
+            {"path": str(shared), "writable": False},
+            {"path": str(shared / "."), "writable": True},
+        ]
+    )
+    assert saved["ok"] is True
+    assert saved["default_roots"] == [
+        {
+            "path": str(shared.resolve()),
+            "writable": True,
+            "label": "shared",
+            "primary": False,
+            "exists": True,
+        }
+    ]
+
+    sid = "can-remove-default"
+    engine = mgr.get_engine(sid, agent="cowork")
+    assert engine is not None
+    assert shared.resolve() in {r.path for r in engine.roots}
+    assert mgr.remove_root(sid, str(shared))["ok"] is True
+    assert shared.resolve() not in {r.path for r in engine.roots}
+    mgr.save(sid, engine)
+    restored = _cowork_manager(tmp_path).get_engine(sid, agent="cowork")
+    assert restored is not None
+    assert shared.resolve() not in {r.path for r in restored.roots}
+
+    # Removing an inherited folder is session-local; the account default remains
+    # available to subsequently created sessions.
+    assert mgr.get_settings()["default_roots"][0]["path"] == str(shared.resolve())
+    another = mgr.get_engine("another", agent="cowork")
+    assert another is not None
+    assert shared.resolve() in {r.path for r in another.roots}
+
+    # The Access rail can remove a default before the first turn builds an engine.
+    sid_before_turn = "remove-before-first-turn"
+    assert str(shared.resolve()) in {
+        root["path"] for root in mgr.get_roots(sid_before_turn)
+    }
+    assert mgr.remove_root(sid_before_turn, str(shared))["ok"] is True
+    built_later = mgr.get_engine(sid_before_turn, agent="cowork")
+    assert built_later is not None
+    assert shared.resolve() not in {r.path for r in built_later.roots}
+
+
 # -- Slice D: request_directory (interactive grant) ----------------------------
 
 

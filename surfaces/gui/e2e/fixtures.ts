@@ -34,6 +34,7 @@ const SETTINGS = {
   surfaces: { cowork: true, chat: false, code: true },
   nav_layout: "grouped",
   scratch_base: "~/OpenWorker",
+  default_roots: [] as any[],
   secrets_path: "/Users/test/.config/coworker/secrets.json",
   sessions_peek: 5,
   // Token savings (PDF attachments): 2-page limit keeps the composer threshold test's
@@ -927,6 +928,18 @@ export async function mockApi(page: import("@playwright/test").Page) {
 
     if (p.endsWith("/v1/health")) return json(HEALTH);
     if (p.endsWith("/v1/settings")) return json(SETTINGS);
+    if (p.endsWith("/v1/settings/default-roots") && m === "POST") {
+      const requested = req.postDataJSON()?.roots;
+      if (!Array.isArray(requested)) return json({ ok: false, error: "roots must be a list" });
+      SETTINGS.default_roots = requested.map((root: any) => ({
+        path: root.path,
+        writable: !!root.writable,
+        label: baseName(root.path),
+        primary: false,
+        exists: true,
+      }));
+      return json({ ok: true, default_roots: SETTINGS.default_roots });
+    }
     if (p.endsWith("/v1/settings/context-bar") && m === "POST") {
       Object.assign(SETTINGS, req.postDataJSON());
       return json({ ok: true, context_bar: SETTINGS.context_bar });

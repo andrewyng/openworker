@@ -159,6 +159,37 @@ def test_scratch_base_setting_persists_and_drives_provisioning(tmp_path, monkeyp
     assert Path(scratch) == (base / "sess-xyz").resolve() and Path(scratch).is_dir()
 
 
+def test_default_roots_rest_roundtrip_and_persistence(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from coworker.server.app import create_app
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    data_dir = tmp_path / "data"
+    client = TestClient(create_app(SessionManager(data_dir=data_dir)))
+    shared = tmp_path / "shared"
+    shared.mkdir()
+
+    assert client.get("/v1/settings").json()["default_roots"] == []
+    response = client.post(
+        "/v1/settings/default-roots",
+        json={"roots": [{"path": str(shared), "writable": False}]},
+    ).json()
+    assert response["ok"] is True
+    assert response["default_roots"][0]["path"] == str(shared.resolve())
+    assert response["default_roots"][0]["writable"] is False
+
+    reborn = SessionManager(data_dir=data_dir)
+    assert reborn.get_settings()["default_roots"] == response["default_roots"]
+
+    rejected = client.post(
+        "/v1/settings/default-roots", json={"roots": "not-a-list"}
+    ).json()
+    assert rejected["ok"] is False
+    assert client.get("/v1/settings").json()["default_roots"] == response["default_roots"]
+
+
 def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):
     """`ollama:*` entries show only while a local Ollama answers — keyless must not mean
     always-present (a stray ollama:<junk> pref would otherwise render forever)."""

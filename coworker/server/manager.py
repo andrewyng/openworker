@@ -361,6 +361,54 @@ class SessionManager:
         base = self._prefs.get("scratch_base") or self.DEFAULT_SCRATCH_BASE
         return Path(base).expanduser()
 
+    def _default_root_entries(self, *, existing_only: bool = False) -> list[dict[str, Any]]:
+        """Sanitized account defaults in the same persisted shape as session extra_roots.
+
+        Preferences are user-editable JSON, so reads remain defensive. Paths are stored
+        canonically by ``set_default_roots``; resolving again also safely handles older or
+        hand-written values. Missing defaults stay visible in Settings but are never granted
+        to a newly built engine.
+        """
+        raw = self._prefs.get("default_roots")
+        if not isinstance(raw, list):
+            return []
+        out: list[dict[str, Any]] = []
+        seen: set[Path] = set()
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            value = item.get("path")
+            if not isinstance(value, str) or not value.strip():
+                continue
+            try:
+                path = Path(value).expanduser().resolve()
+            except OSError:
+                continue
+            if existing_only and not path.is_dir():
+                continue
+            if path in seen:
+                continue
+            seen.add(path)
+            out.append(
+                {
+                    "path": str(path),
+                    "writable": bool(item.get("writable", False)),
+                    "label": path.name or str(path),
+                }
+            )
+        return out
+
+    def default_roots(self) -> list[dict[str, Any]]:
+        """Account defaults as the RootInfo-shaped payload consumed by Settings."""
+        return [
+            {
+                **root,
+                "primary": False,
+                "exists": Path(root["path"]).is_dir(),
+            }
+            for root in self._default_root_entries()
+        ]
+
     def _provision_scratch(self, session_id: str) -> str:
         """Create (idempotently) and return this conversation's scratch directory."""
         d = self.scratch_base() / session_id
@@ -437,9 +485,14 @@ class SessionManager:
         # folders the user added (persisted per session). Code/Chat stay single-root (roots=None).
         roots = None
         if ag.family == "knowledge" and ws:
+            inherited = (
+                (record.extra_roots or [])
+                if record
+                else self._default_root_entries(existing_only=True)
+            )
             extra = [
                 r
-                for r in ((record.extra_roots if record else []) or [])
+                for r in inherited
                 if Path(str(r.get("path", ""))).is_dir()
             ]
             roots = [{"path": ws, "writable": True, "label": "scratch"}, *extra]
@@ -1930,6 +1983,7 @@ class SessionManager:
             "context_bar": self.context_bar(),
             "scratch_base": self._prefs.get("scratch_base")
             or self.DEFAULT_SCRATCH_BASE,
+            "default_roots": self.default_roots(),
             # Real on-disk secrets location, so the UI shows the OS-native path instead of a
             # hardcoded POSIX one (Windows -> %APPDATA%\coworker, macOS/Linux -> ~/.config).
             "secrets_path": str(self.secrets.path),
@@ -2151,6 +2205,39 @@ class SessionManager:
         self._prefs["scratch_base"] = path
         self._save_prefs()
         return {"ok": True, **self.get_settings()}
+
+    def set_default_roots(self, roots: Any) -> dict[str, Any]:
+        """Replace the folders inherited by future Cowork sessions.
+
+        Every entry must name a directory that exists at save time. Canonical paths
+        deduplicate aliases and the last entry wins, which makes access toggles an upsert.
+        Existing sessions keep their own persisted snapshot.
+        """
+        if not isinstance(roots, list):
+            return {"ok": False, "error": "roots must be a list"}
+
+        normalized: dict[Path, dict[str, Any]] = {}
+        for item in roots:
+            if not isinstance(item, dict):
+                return {"ok": False, "error": "each root must be an object"}
+            value = item.get("path")
+            if not isinstance(value, str) or not value.strip():
+                return {"ok": False, "error": "each root needs a path"}
+            try:
+                path = Path(value).expanduser().resolve()
+            except OSError as exc:
+                return {"ok": False, "error": str(exc)}
+            if not path.is_dir():
+                return {"ok": False, "error": f"not a directory: {value}"}
+            normalized[path] = {
+                "path": str(path),
+                "writable": bool(item.get("writable", False)),
+                "label": path.name or str(path),
+            }
+
+        self._prefs["default_roots"] = list(normalized.values())
+        self._save_prefs()
+        return {"ok": True, "default_roots": self.default_roots()}
 
     # -- gateway + connector allow-list (inbound messaging) ---------------------
     def allow_user(
@@ -3634,7 +3721,11 @@ class SessionManager:
             if record and record.workspace
             else self._provision_scratch(session_id)
         )
-        extra = (record.extra_roots if record else []) or []
+        extra = (
+            (record.extra_roots or [])
+            if record
+            else self._default_root_entries(existing_only=True)
+        )
         out = [
             {
                 "path": primary,
@@ -3689,6 +3780,7 @@ class SessionManager:
                         mode=self.mode.value,
                         messages=[],
                         agent="cowork",  # folder access is a Cowork affordance
+                        extra_roots=self._default_root_entries(existing_only=True),
                     )
                 )
             extra = [r for r in self.get_roots(session_id) if not r["primary"]]
@@ -3727,6 +3819,18 @@ class SessionManager:
             engine.roots[:] = [r for r in engine.roots if r.path != resolved]
             self.session_store.set_extra_roots(session_id, self._extra_roots_of(engine))
         else:
+            if self.session_store.load(session_id) is None:
+                self.session_store.save(
+                    SessionRecord(
+                        session_id=session_id,
+                        workspace=self._provision_scratch(session_id),
+                        model=self.model,
+                        mode=self.mode.value,
+                        messages=[],
+                        agent="cowork",
+                        extra_roots=self._default_root_entries(existing_only=True),
+                    )
+                )
             current = self.get_roots(session_id)
             if (
                 current
