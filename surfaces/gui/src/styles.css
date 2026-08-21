@@ -822,6 +822,8 @@ button.btn.danger { color: var(--accent); }
 .gate-input input:focus { border-color: var(--accent); }
 .gate-error { color: var(--accent); font-size: 12.5px; margin-top: 8px; }
 .gate-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); margin: 18px 0 6px; }
+/* Diagnostic paths on the server-fault screen: long absolute paths must wrap inside the card. */
+.gate-path { word-break: break-all; margin: 0; }
 .gate-recents { display: flex; flex-direction: column; max-height: 200px; overflow-y: auto; }
 .gate-recent { display: flex; flex-direction: column; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
 .gate-recent:hover { background: var(--panel); }

@@ -32,6 +32,18 @@ use uuid::Uuid;
 
 /// The sidecar server child — killed on exit (orphaned servers have bitten us before).
 struct ServerProcess(Mutex<Option<Child>>);
+/// What the shell knows about its sidecar's startup, queryable from the SPA via
+/// `get_server_status`. "starting" flips to "listening" once the port accepts, or to
+/// "spawn_failed"/"exited" if the launch failed — so a backend that never came up is
+/// reported instead of the UI hanging on requests that can never answer (#382).
+#[derive(Clone, Serialize)]
+struct ServerStatusPayload {
+    status: &'static str, // "starting" | "listening" | "spawn_failed" | "exited"
+    detail: Option<String>,
+    bin_path: String,
+    log_path: String,
+}
+struct ServerStatus(Mutex<ServerStatusPayload>);
 /// The active keep-awake guard while keep-awake is on (None when off). Dropping the guard
 /// releases the hold (kills `caffeinate` on macOS, clears the execution state on Windows).
 struct KeepAwake(Mutex<Option<KeepAwakeGuard>>);
@@ -110,13 +122,17 @@ fn desktop_prefs_path() -> PathBuf {
     state_dir().join("desktop.json")
 }
 
+fn server_log_path() -> PathBuf {
+    state_dir().join("logs").join("openworker-server.log")
+}
+
 /// The sidecar's log file: `<state_dir>/logs/openworker-server.log`, fresh per
 /// launch with the previous run kept as `.old`. None (→ /dev/null) only if the
 /// directory can't be created — logging must never block startup.
 fn server_log_file() -> Option<std::fs::File> {
-    let dir = state_dir().join("logs");
+    let path = server_log_path();
+    let dir = path.parent()?.to_path_buf();
     std::fs::create_dir_all(&dir).ok()?;
-    let path = dir.join("openworker-server.log");
     if path.exists() {
         let _ = std::fs::rename(&path, dir.join("openworker-server.log.old"));
     }
@@ -274,6 +290,14 @@ fn set_keep_awake(state: tauri::State<KeepAwake>, enabled: bool) -> bool {
 #[tauri::command]
 fn start_window_drag(window: tauri::WebviewWindow) -> bool {
     window.start_dragging().is_ok()
+}
+
+/// The SPA polls this when its health checks fail: a sidecar that failed to launch or
+/// exited during startup can't be polled away, so the GUI shows a fault screen with the
+/// log path instead of hanging forever (#382).
+#[tauri::command]
+fn get_server_status(state: tauri::State<ServerStatus>) -> ServerStatusPayload {
+    state.0.lock().unwrap().clone()
 }
 
 // -- local dictation ---------------------------------------------------------------------------
@@ -609,6 +633,7 @@ pub fn run() {
             get_keep_awake,
             set_keep_awake,
             start_window_drag,
+            get_server_status,
             get_dictation_status,
             start_dictation,
             stop_dictation,
@@ -626,7 +651,8 @@ pub fn run() {
         ])
         .setup(move |app| {
             // 1. Start the Python server sidecar on the chosen port (inherits our env).
-            let mut server_cmd = Command::new(server_bin());
+            let server_bin_path = server_bin();
+            let mut server_cmd = Command::new(&server_bin_path);
             server_cmd
                 .args(["--host", "127.0.0.1", "--port", &port.to_string()])
                 // The sidecar self-exits if we die abruptly (dev-watcher restart, crash) —
@@ -665,14 +691,70 @@ pub fn run() {
                 use std::os::windows::process::CommandExt;
                 server_cmd.creation_flags(0x0800_0000);
             }
+            let mut status_seed = ServerStatusPayload {
+                status: "starting",
+                detail: None,
+                bin_path: server_bin_path.display().to_string(),
+                log_path: server_log_path().display().to_string(),
+            };
             let child = match server_cmd.spawn() {
                 Ok(child) => Some(child),
                 Err(e) => {
+                    // A Finder-launched app has no visible stderr, so this alone left the
+                    // packaged app hanging silently when the sidecar was missing (#382) —
+                    // hence the status record the SPA can query.
                     eprintln!("[coworker] failed to start server sidecar: {e}");
+                    status_seed.status = "spawn_failed";
+                    status_seed.detail = Some(e.to_string());
                     None
                 }
             };
+            let monitor = child.is_some();
             app.manage(ServerProcess(Mutex::new(child)));
+            app.manage(ServerStatus(Mutex::new(status_seed)));
+
+            // Watch the launch resolve: "starting" → "listening" once the port accepts,
+            // or → "exited" if the process dies first (bad interpreter, missing dylib,
+            // crashed bootloader… — the log has the specifics). Either outcome ends the
+            // thread; steady-state cost is zero.
+            if monitor {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        if let Some(proc_state) = handle.try_state::<ServerProcess>() {
+                            let exited = {
+                                let mut guard = proc_state.0.lock().unwrap();
+                                match guard.as_mut() {
+                                    // Taken by the exit path — the app is quitting.
+                                    None => return,
+                                    Some(child) => child.try_wait().ok().flatten(),
+                                }
+                            };
+                            if let Some(code) = exited {
+                                if let Some(st) = handle.try_state::<ServerStatus>() {
+                                    let mut p = st.0.lock().unwrap();
+                                    p.status = "exited";
+                                    p.detail = Some(code.to_string());
+                                }
+                                return;
+                            }
+                        }
+                        let up = std::net::TcpStream::connect_timeout(
+                            &addr,
+                            std::time::Duration::from_millis(400),
+                        )
+                        .is_ok();
+                        if up {
+                            if let Some(st) = handle.try_state::<ServerStatus>() {
+                                st.0.lock().unwrap().status = "listening";
+                            }
+                            return;
+                        }
+                    }
+                });
+            }
 
             // Restore keep-awake from the last session.
             let ka = if read_keep_awake_pref() {
