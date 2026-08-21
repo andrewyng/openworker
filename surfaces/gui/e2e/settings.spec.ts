@@ -26,6 +26,19 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   await expect(page.getByTestId("set-provider-openai")).toBeVisible();
 });
 
+test("Models explains when the agent server cannot be reached", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("account-row").click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+
+  await page.route("**/v1/settings", (route) => route.abort("failed"));
+  await page.getByRole("button", { name: "Models", exact: true }).click();
+
+  await expect(page.getByText("Couldn't reach the agent server")).toBeVisible();
+  await expect(page.getByText("Make sure OpenWorker is running, then try again.")).toBeVisible();
+  await expect(page.getByTestId("settings-retry")).toBeVisible();
+});
+
 // The launch flag brings the Personas tab back (the gallery/persona suites rely on it).
 test("Settings: Personas tab returns behind the launch flag", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("ocw.flag.personas", "1"));
