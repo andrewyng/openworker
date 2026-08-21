@@ -1477,34 +1477,40 @@ export function App() {
               </span>
             )}
           </div>
-          {/* Right: session-settings icon (§23) + panel toggle. Model/mode/persona chrome is
-              gone — the facts live in the subtitle, the controls in the composer (§22). */}
+          {/* Right: artifacts chip + panel toggle. Model/mode/persona chrome is gone — the
+              facts live in the subtitle, the controls in the composer (§22). Clicks must not
+              start a window drag: stop pointerdown (not mousedown) so beginWindowDrag never
+              runs — onMouseDown alone left the button dead in the desktop app (#342). */}
           <div className="main-topbar-side main-topbar-actions" onPointerDown={beginWindowDrag}>
-            {agent === "cowork" && railHidden && artifactCount > 0 && (
-              <button
-                className="topbar-artifacts-btn"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setRailHidden(false)}
-                title="Show files this conversation produced"
-              >
-                <Icon name="file" size={14} />
-                <span>Artifacts</span>
-                <span className="topbar-artifacts-count">{artifactCount}</span>
-              </button>
-            )}
-            {/* §32: the panel toggle is the ONE session-panel entry, for every non-chat persona
-                (the rail now carries Access, so code-family gets it too). */}
-            {agent !== "chat" && (
-              <button
-                className="topbar-icon-btn"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setRailHidden((h) => !h)}
-                aria-label={railHidden ? "Show side panel" : "Hide side panel"}
-                title={railHidden ? "Show side panel" : "Hide side panel"}
-              >
-                <Icon name="sidebarRight" size={16} />
-              </button>
-            )}
+            <div
+              className="flex items-center gap-1"
+              data-testid="topbar-rail-actions"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              {agent === "cowork" && railHidden && artifactCount > 0 && (
+                <button
+                  className="topbar-artifacts-btn"
+                  onClick={() => setRailHidden(false)}
+                  title="Show files this conversation produced"
+                >
+                  <Icon name="file" size={14} />
+                  <span>Artifacts</span>
+                  <span className="topbar-artifacts-count">{artifactCount}</span>
+                </button>
+              )}
+              {/* §32: the panel toggle is the ONE session-panel entry, for every non-chat persona
+                  (the rail now carries Access, so code-family gets it too). */}
+              {agent !== "chat" && (
+                <button
+                  className="topbar-icon-btn"
+                  onClick={() => setRailHidden((h) => !h)}
+                  aria-label={railHidden ? "Show side panel" : "Hide side panel"}
+                  title={railHidden ? "Show side panel" : "Hide side panel"}
+                >
+                  <Icon name="sidebarRight" size={16} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
         <div className={"main-workspace" + (railHidden ? " rail-hidden" : "")}>
