@@ -1302,15 +1302,51 @@ class SessionManager:
     def browser_close(self) -> dict[str, Any]:
         return browser_close_session()
 
+    def _artifact_roots(self, session_id: str) -> list[tuple[Path, bool]]:
+        """Return the session's granted directories in resolution order.
+
+        The live engine is authoritative because ``request_directory`` mutates its shared
+        roots list immediately.  Without a live engine, reconstruct the same list from the
+        persisted conversation.  Unknown sessions retain the historical standalone-server
+        behaviour of using ``default_workspace``.
+        """
+        engine = self._engines.get(session_id)
+        if engine is not None and getattr(engine, "roots", None):
+            raw = [(Path(r.path), bool(r.writable)) for r in engine.roots]
+        else:
+            record = self.session_store.load(session_id)
+            if record and record.workspace:
+                raw = [(Path(record.workspace), True)]
+                raw.extend(
+                    (Path(str(r.get("path", ""))), bool(r.get("writable", False)))
+                    for r in (record.extra_roots or [])
+                    if str(r.get("path", "")).strip()
+                )
+            elif self.default_workspace:
+                raw = [(Path(self.default_workspace), True)]
+            else:
+                raw = []
+
+        out: list[tuple[Path, bool]] = []
+        seen: set[Path] = set()
+        for path, writable in raw:
+            root = path.expanduser().resolve()
+            if root in seen:
+                continue
+            seen.add(root)
+            out.append((root, writable))
+        return out
+
     def list_artifacts(self, session_id: str) -> list[dict[str, Any]]:
-        record = self.session_store.load(session_id)
-        workspace = record.workspace if record else self.default_workspace
-        if not workspace:
-            return []
-        root = Path(workspace).expanduser().resolve()
-        if not root.is_dir():
+        roots = [
+            root
+            for root, writable in self._artifact_roots(session_id)
+            if writable and root.is_dir()
+        ]
+        if not roots:
             return []
         out: list[dict[str, Any]] = []
+        seen_files: set[Path] = set()
         suffixes = {
             ".md",
             ".markdown",
@@ -1347,33 +1383,40 @@ class SessionManager:
         from ..tools.search import OS_DATA_DIRS
 
         skip = {"node_modules", "target", "dist", "__pycache__"} | OS_DATA_DIRS
-        for dirpath, dirs, files in os.walk(root):
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in skip]
-            for name in files:
-                if name.startswith("."):
-                    continue
-                path = Path(dirpath) / name
-                if path.suffix.lower() not in suffixes:
-                    continue
-                try:
-                    st = path.stat()
-                    if not path.is_file():
+        for index, root in enumerate(roots):
+            for dirpath, dirs, files in os.walk(root):
+                dirs[:] = [d for d in dirs if not d.startswith(".") and d not in skip]
+                for name in files:
+                    if name.startswith("."):
                         continue
-                    out.append(
-                        {
-                            "path": str(path.relative_to(root)),
-                            # Absolute path for "Copy path" — the relative one is useless
-                            # outside the app (tester catch 2026-07-12: it copied just the
-                            # filename).
-                            "abs_path": str(path),
-                            "name": path.name,
-                            "kind": _artifact_kind(path),
-                            "size": st.st_size,
-                            "modified_at": st.st_mtime,
-                        }
-                    )
-                except OSError:
-                    continue
+                    path = Path(dirpath) / name
+                    if path.suffix.lower() not in suffixes:
+                        continue
+                    try:
+                        resolved = path.resolve()
+                        if not resolved.is_file() or not _path_is_under(resolved, root):
+                            continue
+                        if resolved in seen_files:
+                            continue
+                        seen_files.add(resolved)
+                        st = resolved.stat()
+                        rel = path.relative_to(root)
+                        out.append(
+                            {
+                                # Preserve workspace-relative identifiers for the primary root.
+                                # Extra-root artifacts use their absolute path so duplicate
+                                # relative names remain unambiguous when the viewer calls
+                                # read/reveal.
+                                "path": str(rel) if index == 0 else str(resolved),
+                                "abs_path": str(resolved),
+                                "name": resolved.name,
+                                "kind": _artifact_kind(resolved),
+                                "size": st.st_size,
+                                "modified_at": st.st_mtime,
+                            }
+                        )
+                    except (OSError, ValueError):
+                        continue
         out.sort(key=lambda a: a["modified_at"], reverse=True)
         return out[:80]
 
@@ -1382,25 +1425,32 @@ class SessionManager:
     def _artifact_target(
         self, session_id: str, path: str, *, allow_dir: bool = False
     ) -> tuple[Optional[Path], Optional[str]]:
-        """Resolve an artifact path under the session's workspace, or (None, error)."""
-        record = self.session_store.load(session_id)
-        workspace = record.workspace if record else self.default_workspace
-        if not workspace:
+        """Resolve an artifact inside any directory granted to this session."""
+        roots = [root for root, _writable in self._artifact_roots(session_id)]
+        if not roots:
             return None, "no workspace"
-        root = Path(workspace).expanduser().resolve()
-        target = (root / path).expanduser().resolve()
-        try:
-            target.relative_to(root)
-        except ValueError:
-            return None, "path escapes workspace"
-        if allow_dir and target.is_dir():
-            return target, None
-        if not target.is_file():
-            return None, (
+        requested = Path(path).expanduser()
+        candidates = (
+            [requested.resolve()]
+            if requested.is_absolute()
+            else [(root / requested).resolve() for root in roots]
+        )
+        confined = False
+        for target in candidates:
+            if not any(_path_is_under(target, root) for root in roots):
+                continue
+            confined = True
+            if target.is_file() or (allow_dir and target.is_dir()):
+                return target, None
+        return (
+            (
+                None,
                 "This isn't in the conversation's folder anymore — it may have been "
-                "moved or deleted."
+                "moved or deleted.",
             )
-        return target, None
+            if confined
+            else (None, "path escapes session directories")
+        )
 
     def read_artifact(self, session_id: str, path: str) -> dict[str, Any]:
         # Folders are readable too (a model sometimes links a whole package, e.g. a skill
@@ -4193,6 +4243,14 @@ def _recent_files(workspace: str, *, since: float, limit: int = 20) -> list[str]
         if len(out) >= limit:
             break
     return out
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 def _artifact_kind(path: Path) -> str:

@@ -239,6 +239,25 @@ def test_add_and_remove_roots_live_and_persisted(tmp_path):
     assert str(ro.resolve()) not in persisted
 
 
+def test_artifacts_follow_live_root_grants(tmp_path):
+    mgr = _cowork_manager(tmp_path)
+    shared = tmp_path / "shared_artifacts"
+    shared.mkdir()
+    artifact = shared / "实时摘要.md"
+    artifact.write_text("live", encoding="utf-8")
+    sid = "live-artifacts"
+    mgr.get_engine(sid, agent="cowork")
+
+    assert not mgr.list_artifacts(sid)
+
+    mgr.add_root(sid, str(shared), writable=True)
+    listed = mgr.list_artifacts(sid)
+    assert [item["path"] for item in listed] == [str(artifact.resolve())]
+
+    mgr.remove_root(sid, str(shared))
+    assert not mgr.list_artifacts(sid)
+
+
 def test_add_root_before_first_turn_persists(tmp_path):
     """Adding a folder on a brand-new conversation (no record, no engine yet) must survive:
     the manager creates a minimal cowork record so the grant isn't lost (GUI start panel).

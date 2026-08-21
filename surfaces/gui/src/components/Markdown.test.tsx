@@ -35,4 +35,16 @@ describe("Markdown artifact links", () => {
     render(<Markdown text="[](artifact:out/report.pdf)" />);
     expect(screen.getByTestId("artifact-chip").textContent).toContain("report.pdf");
   });
+
+  it("dispatches a decoded Unicode filename", () => {
+    const seen: string[] = [];
+    const listener = (e: Event) => seen.push((e as CustomEvent).detail.path);
+    window.addEventListener(OPEN_ARTIFACT_EVENT, listener);
+
+    render(<Markdown text="[News](artifact:%E6%96%B0%E9%97%BB%E6%91%98%E8%A6%81.md)" />);
+    fireEvent.click(screen.getByTestId("artifact-chip"));
+    expect(seen).toEqual(["新闻摘要.md"]);
+
+    window.removeEventListener(OPEN_ARTIFACT_EVENT, listener);
+  });
 });
