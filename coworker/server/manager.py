@@ -922,6 +922,28 @@ class SessionManager:
         ws = self.engine_workspace(session_id, workspace=workspace, agent=agent)
         loop = asyncio.get_running_loop()
         effective: Optional[set[str]] = None  # computed lazily, once
+        # Persona profiles scope the MCP surface. `PersonaManifest.mcp` has always been
+        # parsed and serialized (personas/loading.py) but nothing ever READ it: the
+        # connector-gate below only covers connector-backed servers, so a plain server
+        # from mcp.json loaded into every session regardless of the persona.
+        #
+        # With 12 gateway servers configured that made the fixed preamble 21,001 tokens —
+        # 90s of prompt processing at 234 tok/s before a new chat emits its first token,
+        # paid again on every session and every automation run.
+        #
+        # A persona that declares `mcp:` now gets exactly those servers. A persona that
+        # declares none keeps the previous behaviour (all enabled servers), so this can
+        # only ever shrink the surface, never widen it.
+        # `mcp: [none]` is the explicit empty profile — this persona gets NO MCP servers.
+        # A dataclass default of [] cannot be told apart from an absent key, so the
+        # sentinel is what distinguishes "I want none" from "I did not say".
+        persona_mcp: Optional[set[str]] = None
+        _entry = self.personas.get(self._persona_of(session_id, agent))
+        _manifest = _entry.manifest if _entry else None
+        _declared = list(getattr(_manifest, "mcp", None) or []) if _manifest else []
+        if _declared:
+            names = {n.strip().lower() for n in _declared}
+            persona_mcp = set() if names == {"none"} else set(_declared)
         out: list[Any] = []
         for server in load_mcp_servers(
             ws,
@@ -941,6 +963,10 @@ class SessionManager:
                 continue
             descriptor = get_descriptor(server.name)
             backed = descriptor is not None and bool(descriptor.mcp_url)
+            if not backed and persona_mcp is not None and server.name not in persona_mcp:
+                # Plain (non-connector-backed) server outside this persona's declared
+                # profile — its tool schemas never reach the prompt.
+                continue
             if backed:
                 # Connector-backed server: obey the same gates as connector tools —
                 # the session's effective connector set and the per-tool toggles.
