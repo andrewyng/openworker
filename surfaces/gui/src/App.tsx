@@ -269,16 +269,24 @@ export function App() {
   }, [navCollapsed, setNavCollapsedPersist]);
   // #3: collapse the nav while a full artifact preview is open, restore it on close (unless the
   // user manually toggled meanwhile). The collapse is transient — it never overwrites the pref.
+  // Read through a ref, so this callback's IDENTITY never changes. It used to depend on
+  // `navCollapsed`, and RightRail's effect lists it as a dependency — so expanding the nav
+  // changed the callback, re-ran that effect, and it called back with "preview is still
+  // open", which collapsed the nav again. The nav flashed open and shut on every click and
+  // could not be opened at all while an artifact preview was up; starting a new session
+  // cleared the preview and was the only way out.
+  const navCollapsedRef = useRef(navCollapsed);
+  navCollapsedRef.current = navCollapsed;
   const onArtifactPreview = useCallback((open: boolean) => {
     if (open) {
-      if (navBeforePreview.current === null) navBeforePreview.current = navCollapsed;
+      if (navBeforePreview.current === null) navBeforePreview.current = navCollapsedRef.current;
       setNavPeek(false);
       setNavCollapsed(true);
     } else if (navBeforePreview.current !== null) {
       setNavCollapsed(navBeforePreview.current);
       navBeforePreview.current = null;
     }
-  }, [navCollapsed]);
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
