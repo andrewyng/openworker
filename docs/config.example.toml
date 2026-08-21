@@ -22,3 +22,8 @@ auto_allow = ["write_file", "replace_in_file", "apply_patch", "apply_unified_dif
 # Server (openworker-server) bind address.
 host = "127.0.0.1"
 port = 8765
+
+# Public GitHub OAuth App identifier for brokerless Device Flow sign-in.
+# The app owner must enable Device Flow. Never put a client secret here.
+github_oauth_client_id = ""
+github_oauth_scopes = "repo"

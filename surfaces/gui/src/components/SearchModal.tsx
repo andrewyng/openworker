@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Persona } from "../api";
 import type { SessionInfo } from "../types";
 import { isProjectScoped, shortPersonaName } from "../personaScope";
@@ -8,6 +9,10 @@ import { baseName } from "../paths";
 // Command-palette search (Codex-style): clicking Search opens this overlay over the whole app
 // rather than filtering the sidebar in place (which made the grouped list collapse). It searches
 // ALL sessions, split into Pinned + Recent, filters as you type, and supports ↑/↓ + Enter + ⌘1–9.
+//
+// Portaled to document.body so `position: fixed` is always viewport-relative. The collapsed
+// sidebar uses `transform` for peek/slide (#282), which would otherwise become the containing
+// block for any fixed descendant mounted inside `.sidebar`.
 
 const byRecent = (a: SessionInfo, b: SessionInfo) =>
   (b.updated_at || "").localeCompare(a.updated_at || "");
@@ -109,10 +114,14 @@ export function SearchModal({
     );
   };
 
-  return (
-    <div className="fixed inset-0 z-50" onKeyDown={onKey}>
+  // z-[70] sits above the collapsed sidebar peek (z-60) so the palette is never covered.
+  return createPortal(
+    <div className="fixed inset-0 z-[70]" data-testid="search-modal" onKeyDown={onKey}>
       <div className="absolute inset-0 bg-black/30 backdrop-blur-[1px]" onClick={onClose} />
-      <div className="absolute left-1/2 top-[14vh] -translate-x-1/2 w-[640px] max-w-[92vw] rounded-xl2 border border-line bg-panel shadow-2xl overflow-hidden">
+      <div
+        data-testid="search-modal-panel"
+        className="absolute left-1/2 top-[14vh] -translate-x-1/2 w-[640px] max-w-[92vw] rounded-xl2 border border-line bg-panel shadow-2xl overflow-hidden"
+      >
         <div className="px-4 pt-3.5 pb-2.5 border-b border-line flex items-center gap-2.5">
           <Icon name="search" size={16} className="text-faint shrink-0" />
           <input
@@ -151,6 +160,7 @@ export function SearchModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -88,6 +88,67 @@ test("modal has ONE connect button and sends no flow — authorize-first lives i
   await expect.poll(() => flowSent).toBe("");
 });
 
+test("manual pane completes brokerless device sign-in without disturbing relay installs", async ({
+  page,
+}) => {
+  let polls = 0;
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          (globalThis as any).__githubCopiedCode = text;
+        },
+      },
+    });
+    window.open = ((url?: string | URL) => {
+      (globalThis as any).__githubOpenedUrl = String(url || "");
+      return null;
+    }) as typeof window.open;
+  });
+  await page.route("**/v1/connectors/github/device/start", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        flow_id: "e2e-opaque-flow",
+        user_code: "WDJB-MJHT",
+        verification_uri: "https://github.com/login/device",
+        expires_in: 900,
+        interval: 1,
+      }),
+    }),
+  );
+  await page.route("**/v1/connectors/github/device/e2e-opaque-flow/poll", (route) => {
+    polls += 1;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(
+        polls === 1
+          ? { ok: true, state: "pending", retry_after: 1 }
+          : { ok: true, state: "complete", account: "rohit-dev" },
+      ),
+    });
+  });
+
+  await openGithubPage(page);
+  await page.getByTestId("add-installation-btn").click();
+  const modal = page.getByTestId("add-connection-modal");
+  await modal.getByTestId("modal-pane-manual").click();
+  await modal.getByTestId("github-device-start").click();
+  await expect(modal.getByTestId("github-user-code")).toHaveText("WDJB-MJHT");
+  await modal.getByTestId("github-device-copy-open").click();
+  await expect
+    .poll(() => page.evaluate(() => (globalThis as any).__githubCopiedCode))
+    .toBe("WDJB-MJHT");
+  await expect
+    .poll(() => page.evaluate(() => (globalThis as any).__githubOpenedUrl))
+    .toBe("https://github.com/login/device");
+
+  await expect(modal).toHaveCount(0, { timeout: 10_000 });
+  await expect(page.getByTestId("github-install-101")).toBeVisible();
+});
+
 test("disconnect removes one installation and keeps the rest", async ({ page }) => {
   await openGithubPage(page);
   // add a second installation first (signed-in one-click)
