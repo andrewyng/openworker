@@ -9,6 +9,11 @@ The shell is OS-native: `/bin/bash` on POSIX, `powershell.exe` (`-Command -` REP
 Windows. Each backend has its own marker/exit-code protocol and interrupt mechanism, but
 the `Executor` contract (and the parsed `{marker} {exit_code} {cwd}` trailer) is identical.
 
+On POSIX the persistent shell is non-interactive and never sources the user's rc files, so
+one login+interactive probe runs at startup to fold the user's real PATH/toolchain
+(pyenv/nvm/sdkman/conda) into its environment (#362); per-command execution stays
+non-interactive. See `_login_shell_env` / `_build_env`.
+
 Safety here is permission-gating (high-risk tool → approval) + per-command timeout +
 best-effort non-interactive enforcement. A timed-out command is interrupted (SIGINT to the
 foreground child on POSIX, Ctrl-Break to the child group on Windows); the shell survives so
@@ -24,6 +29,7 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import signal
 import subprocess
 import sys
@@ -50,6 +56,89 @@ _NONINTERACTIVE_ENV = {
     "PYTHONUNBUFFERED": "1",
     "PIP_NO_INPUT": "1",
 }
+
+# Login-shell environment probe (#362). A GUI-launched server (and a plain non-interactive
+# /bin/bash) never sources the user's rc files, so pyenv/nvm/sdkman/conda shims configured
+# there are invisible to run_shell — the agent then sees a different toolchain than the user
+# (wrong interpreter, wrong versions, misreported system state). We run the user's login
+# shell ONCE at startup and fold its PATH/vars into the persistent shell's environment. The
+# per-command shell stays non-interactive; only this one-time probe is interactive.
+_ENV_PROBE_START = "__COWORKER_ENV_START__"
+_ENV_PROBE_END = "__COWORKER_ENV_END__"
+_ENV_PROBE_TIMEOUT = 5.0
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _parse_env_dump(text: str) -> dict[str, str]:
+    """Pull `KEY=VALUE` pairs from the fenced region of an `env` dump. Only lines inside the
+    marker fence that look like a shell assignment are kept, so rc-file banners/echoes are
+    ignored and a rare multi-line value contributes just its first line (fine for PATH and
+    the shim vars this exists for)."""
+    env: dict[str, str] = {}
+    capturing = False
+    for line in text.splitlines():
+        if line == _ENV_PROBE_START:
+            capturing = True
+            continue
+        if line == _ENV_PROBE_END:
+            break
+        if not capturing:
+            continue
+        key, sep, value = line.partition("=")
+        if sep and _ENV_NAME_RE.match(key):
+            env[key] = value
+    return env
+
+
+def _login_shell_env(
+    shell: Optional[str] = None, *, timeout: float = _ENV_PROBE_TIMEOUT
+) -> dict[str, str]:
+    """Best-effort snapshot of the user's login+interactive shell environment (#362).
+
+    POSIX only. Returns `{}` on any failure — no `$SHELL`, Windows, spawn error, timeout, or
+    unparseable output — so the caller falls straight back to today's behavior. Running the
+    user's own rc here is the same code that runs in every terminal they open (the server
+    already runs as the user); the safeguards are operational, not a trust boundary: the dump
+    is fenced between markers so rc chatter isn't parsed as vars, stdin is closed so an rc
+    that reads it can't hang, and the probe is timeout-bounded so a slow rc can't wedge
+    startup.
+    """
+    if _IS_WINDOWS:
+        return {}
+    shell = shell or os.environ.get("SHELL")
+    if not shell:
+        return {}
+    # `-l -i` so BOTH login files (.zprofile/.bash_profile) and interactive files
+    # (.zshrc/.bashrc) run — pyenv/nvm/sdkman init lives in one or the other, and which
+    # one differs across bash and zsh.
+    dump = f'printf "%s\\n" "{_ENV_PROBE_START}"; env; printf "%s\\n" "{_ENV_PROBE_END}"'
+    try:
+        proc = subprocess.run(
+            [shell, "-l", "-i", "-c", dump],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    return _parse_env_dump(proc.stdout)
+
+
+def _merge_paths(primary: Optional[str], secondary: Optional[str]) -> Optional[str]:
+    """Concatenate two PATH strings, primary first, dropping duplicates and empty entries.
+    Keeps the user's shim directories ahead of the server's own PATH without discarding
+    server entries (e.g. an activated venv's bin)."""
+    parts: list[str] = []
+    seen: set[str] = set()
+    for chunk in (primary, secondary):
+        if not chunk:
+            continue
+        for entry in chunk.split(os.pathsep):
+            if entry and entry not in seen:
+                seen.add(entry)
+                parts.append(entry)
+    return os.pathsep.join(parts) if parts else None
 
 
 class Executor(ABC):
@@ -143,6 +232,7 @@ class LocalExecutor(Executor):
         shell_path: Optional[str] = None,
         default_timeout: float = _DEFAULT_TIMEOUT,
         max_output_chars: int = 20_000,
+        probe_login_env: bool = True,
     ) -> None:
         self.cwd = str(Path(cwd).expanduser().resolve())
         self.default_timeout = default_timeout
@@ -161,8 +251,32 @@ class LocalExecutor(Executor):
         if shell_path is None:
             shell_path = "powershell.exe" if self._is_windows else "/bin/bash"
         self._shell_path = shell_path
-        self._env = {**os.environ, **_NONINTERACTIVE_ENV, **(env or {})}
+        self._env = self._build_env(env, probe_login_env)
         self._spawn()
+
+    def _build_env(
+        self, extra: Optional[dict[str, str]], probe_login_env: bool
+    ) -> dict[str, str]:
+        """Assemble the persistent shell's environment (#362).
+
+        Layered so each source overrides the ones before it:
+          1. the user's login-shell env (pyenv/nvm/sdkman shims etc.), best-effort;
+          2. this process's own environment — server-set vars are authoritative, so they win
+             on conflicts, EXCEPT PATH, which is merged (user shims first, then server
+             entries) so neither the user's toolchain nor an activated venv is lost;
+          3. the non-interactive defaults;
+          4. any explicit `env` passed by the caller.
+        A failed or disabled probe collapses layer 1 to `{}`, leaving today's behavior.
+        """
+        probed = _login_shell_env() if probe_login_env else {}
+        merged = {**probed, **os.environ}
+        merged_path = _merge_paths(probed.get("PATH"), os.environ.get("PATH"))
+        if merged_path:
+            merged["PATH"] = merged_path
+        merged.update(_NONINTERACTIVE_ENV)
+        if extra:
+            merged.update(extra)
+        return merged
 
     def _spawn(self) -> None:
         """Start (or restart) the shell process and its reader. Reused for self-healing:
