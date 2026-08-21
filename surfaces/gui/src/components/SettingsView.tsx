@@ -36,6 +36,8 @@ import {
   type DictationStatus,
 } from "../tauri";
 import { useThemePref } from "../theme";
+import { useI18n, SUPPORTED_LOCALES } from "../i18n";
+import type { TranslationKey } from "../locales";
 import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { ModelsTab } from "./ManageTabs";
@@ -65,15 +67,15 @@ const BTN_BORDERED =
 
 const SET_TABS: {
   key: SetTab;
-  label: string;
+  labelKey: TranslationKey;
   icon: "sliders" | "code" | "mic" | "archive" | "sparkle" | "book";
 }[] = [
-  { key: "appearance", label: "General", icon: "sliders" },
-  { key: "models", label: "Models", icon: "code" },
-  { key: "skills", label: "Skills", icon: "book" },
-  { key: "voice", label: "Voice input", icon: "mic" },
-  { key: "memory", label: "Memory", icon: "archive" },
-  { key: "personas", label: "Personas", icon: "sparkle" },
+  { key: "appearance", labelKey: "settings.tab.general", icon: "sliders" },
+  { key: "models", labelKey: "settings.tab.models", icon: "code" },
+  { key: "skills", labelKey: "settings.tab.skills", icon: "book" },
+  { key: "voice", labelKey: "settings.tab.voice", icon: "mic" },
+  { key: "memory", labelKey: "settings.tab.memory", icon: "archive" },
+  { key: "personas", labelKey: "settings.tab.personas", icon: "sparkle" },
 ];
 
 export function SettingsView({
@@ -90,6 +92,7 @@ export function SettingsView({
   // Personas is flag-gated (hidden for launch) — filter the tab AND coerce a stale
   // deep-link to it (openSettings("personas") callers) so the page never opens on a
   // section with no nav entry.
+  const { t } = useI18n();
   const personas = showPersonas();
   const tabs = personas ? SET_TABS : SET_TABS.filter((t) => t.key !== "personas");
   const wanted = initialTab && (personas || initialTab !== "personas") ? initialTab : "appearance";
@@ -99,20 +102,20 @@ export function SettingsView({
     <main className="flex-1 min-w-0 flex bg-paper">
       <nav className="page-subnav w-[208px] shrink-0 border-r border-line bg-panel/40 px-3 py-4">
         <div className="px-2 text-[13.5px] font-semibold mb-3 flex items-center gap-2">
-          <Icon name="gear" size={16} /> Settings
+          <Icon name="gear" size={16} /> {t("settings.title")}
         </div>
-        {tabs.map((t) => {
-          const active = tab === t.key;
+        {tabs.map((tab2) => {
+          const active = tab === tab2.key;
           return (
             <button
-              key={t.key}
+              key={tab2.key}
               className={
                 "w-full text-left px-2.5 py-2 rounded-lg text-[13px] flex items-center gap-2 " +
                 (active ? "bg-paper text-accent font-medium" : "text-muted hover:bg-paper hover:text-ink")
               }
-              onClick={() => setTab(t.key)}
+              onClick={() => setTab(tab2.key)}
             >
-              <Icon name={t.icon} size={15} /> {t.label}
+              <Icon name={tab2.icon} size={15} /> {t(tab2.labelKey)}
             </button>
           );
         })}
@@ -407,7 +410,29 @@ function PersonasSection({ onOpenPersona }: { onOpenPersona?: (id: string) => vo
 }
 
 // -- Appearance + app behaviour ------------------------------------------------
+function LanguageCard() {
+  const { locale, setLocale, t } = useI18n();
+  return (
+    <div className={CARD + " p-4 mb-4"}>
+      <div className={FIELD_LABEL}>{t("settings.general.language")}</div>
+      <div className="seg mt-2.5" role="radiogroup" aria-label="Language">
+        {SUPPORTED_LOCALES.map((l) => (
+          <button
+            key={l.value}
+            className={l.value === locale ? "active" : ""}
+            onClick={() => setLocale(l.value)}
+          >
+            {l.native}
+          </button>
+        ))}
+      </div>
+      <div className={FIELD_HELP}>{t("settings.general.language.help")}</div>
+    </div>
+  );
+}
+
 function AppearanceSection() {
+  const { t } = useI18n();
   const [theme, setTheme] = useThemePref();
   const [autostart, setAuto] = useState(false);
   const [keepAwake, setKeep] = useState(false);
@@ -429,19 +454,21 @@ function AppearanceSection() {
 
   return (
     <section>
-      <PanelHead title="General" sub="How OpenWorker looks and behaves on this machine." />
+      <PanelHead title={t("settings.general.title")} sub={t("settings.general.sub")} />
 
       <div className={CARD + " p-4 mb-4"}>
-        <div className={FIELD_LABEL}>Theme</div>
+        <div className={FIELD_LABEL}>{t("settings.general.theme")}</div>
         <div className="seg mt-2.5" role="radiogroup" aria-label="Appearance">
           {(["light", "dark", "auto"] as const).map((p) => (
             <button key={p} className={p === theme ? "active" : ""} onClick={() => setTheme(p)}>
-              {p === "light" ? "Light" : p === "dark" ? "Dark" : "Auto"}
+              {p === "light" ? t("settings.general.theme.light") : p === "dark" ? t("settings.general.theme.dark") : t("settings.general.theme.auto")}
             </button>
           ))}
         </div>
-        <div className={FIELD_HELP}>Auto follows your Mac&rsquo;s appearance.</div>
+        <div className={FIELD_HELP}>{t("settings.general.theme.help")}</div>
       </div>
+
+      <LanguageCard />
 
       <SidebarCard />
 
@@ -453,18 +480,18 @@ function AppearanceSection() {
 
       {desktop && (
         <div className={CARD + " p-4"}>
-          <div className={FIELD_LABEL + " mb-2.5"}>Always-on</div>
+          <div className={FIELD_LABEL + " mb-2.5"}>{t("settings.general.alwaysOn")}</div>
           <label className="flex items-start gap-3 py-2">
             <input type="checkbox" className="mt-0.5" checked={autostart} onChange={(e) => toggleAuto(e.target.checked)} />
             <span>
-              <span className="block text-[13px] text-ink">Open at login</span>
+              <span className="block text-[13px] text-ink">{t("settings.general.autostart")}</span>
               <span className="block text-[12px] text-muted">Launch OpenWorker automatically when you sign in.</span>
             </span>
           </label>
           <label className="flex items-start gap-3 py-2">
             <input type="checkbox" className="mt-0.5" checked={keepAwake} onChange={(e) => toggleKeep(e.target.checked)} />
             <span>
-              <span className="block text-[13px] text-ink">Keep this system awake</span>
+              <span className="block text-[13px] text-ink">{t("settings.general.keepAwake")}</span>
               <span className="block text-[12px] text-muted">Prevent idle sleep so scheduled tasks fire on time.</span>
             </span>
           </label>
@@ -475,7 +502,7 @@ function AppearanceSection() {
           every build, the browser dev shell runs the same first-run flow) and, on
           desktop, the manual update check (launch also checks automatically). */}
       <div className={CARD + " p-4 mt-4"}>
-        <div className={FIELD_LABEL + " mb-2"}>Setup &amp; updates</div>
+        <div className={FIELD_LABEL + " mb-2"}>{t("settings.general.setup")}</div>
         <div className="flex items-center gap-2">
           <button className={BTN_BORDERED} onClick={runSetupAgain}>
             Run setup again
@@ -489,6 +516,7 @@ function AppearanceSection() {
 }
 
 function TrustedWorkspacesCard() {
+  const { t } = useI18n();
   const [workspaces, setWorkspaces] = useState<WorkspaceCommandTrust[] | null>(null);
 
   const refresh = () =>
@@ -508,14 +536,14 @@ function TrustedWorkspacesCard() {
 
   return (
     <div className={CARD + " p-4 mb-4"} data-testid="trusted-workspaces-card">
-      <div className={FIELD_LABEL}>Trusted workspaces</div>
+      <div className={FIELD_LABEL}>{t("settings.general.trusted")}</div>
       <div className={FIELD_HELP}>
         Trusted projects may manage their command allowances in .coworker/config.toml.
       </div>
       {workspaces === null ? (
         <div className="text-[12px] text-muted mt-3">Loading…</div>
       ) : workspaces.length === 0 ? (
-        <div className="text-[12px] text-muted mt-3">No workspaces are trusted.</div>
+        <div className="text-[12px] text-muted mt-3">{t("settings.general.trusted.empty")}</div>
       ) : (
         <div className="mt-3 divide-y divide-line">
           {workspaces.map((workspace) => (
@@ -544,6 +572,7 @@ function TrustedWorkspacesCard() {
 }
 
 function UpdateInline() {
+  const { t } = useI18n();
   const [state, setState] = useState<"idle" | "checking" | "none" | "found" | "installing" | "error">("idle");
   const [version, setVersion] = useState("");
 
@@ -584,7 +613,7 @@ function UpdateInline() {
           disabled={state === "checking" || state === "installing"}
           data-testid="settings-update-check"
         >
-          {state === "checking" ? "Checking…" : "Check for updates"}
+          {state === "checking" ? "Checking…" : t("settings.general.setup.checkUpdates")}
         </button>
       )}
       {(state === "none" || state === "error" || state === "installing") && (
@@ -813,6 +842,7 @@ function CompactionCard() {
 // The chip's bar is context-window occupancy; the session total (unbounded) lives in
 // the popover. Some people would rather not watch a meter at all, hence the toggle.
 function ContextBarCard() {
+  const { t } = useI18n();
   const [shown, setShown] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -829,7 +859,7 @@ function ContextBarCard() {
   if (shown === null) return null;
   return (
     <div className={CARD + " p-4 mb-4"} data-testid="context-bar-card">
-      <div className={FIELD_LABEL}>Composer</div>
+      <div className={FIELD_LABEL}>{t("settings.general.composer")}</div>
       <label className="flex items-start gap-3 py-2">
         <input
           type="checkbox"
@@ -852,6 +882,7 @@ function ContextBarCard() {
 }
 
 function SidebarCard() {
+  const { t } = useI18n();
   const [peek, setPeek] = useState<number | null>(null);
 
   useEffect(() => {
@@ -869,7 +900,7 @@ function SidebarCard() {
   if (peek === null) return null;
   return (
     <div className={CARD + " p-4 mb-4"}>
-      <div className={FIELD_LABEL}>Sidebar</div>
+      <div className={FIELD_LABEL}>{t("settings.general.sidebar")}</div>
       <label className="flex items-center gap-3 mt-2.5">
         <span className="text-[13px] text-ink">Conversations shown per coworker</span>
         <input
@@ -891,6 +922,7 @@ function SidebarCard() {
 // -- Files (scratch location) — one card inside General (UX-021: a single option
 // doesn't earn its own tab) -----------------------------------------------------
 function FilesCard() {
+  const { t } = useI18n();
   const [settings, setSettings] = useState<ModelSettings | null>(null);
   const [scratchDraft, setScratchDraft] = useState("");
   const [scratchMsg, setScratchMsg] = useState<string | null>(null);
@@ -926,7 +958,7 @@ function FilesCard() {
 
   return (
     <div className={CARD + " p-4 mb-4"}>
-      <div className={FIELD_LABEL}>Files</div>
+      <div className={FIELD_LABEL}>{t("settings.general.files")}</div>
         <div className="flex items-center gap-2 mt-2.5">
           <input
             className={INPUT}
