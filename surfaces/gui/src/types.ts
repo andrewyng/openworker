@@ -117,6 +117,8 @@ export type Item =
       // context, the card offers "Allow every time" (§25).
       standingTarget?: string;
       resolved?: ApprovalDecision;
+      // AI-generated consequence summary (from PERMISSION_REQUIRED event's d.intent).
+      intent?: string;
     }
   | {
       kind: "dirreq";

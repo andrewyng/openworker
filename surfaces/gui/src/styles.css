@@ -432,6 +432,13 @@ body {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .approval-reason { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+/* AI intent analysis: a restrained annotation — transparent background, a small
+   CSS dot (not a • glyph), and secondary-grey text. It reads as supporting copy
+   inside the card rather than a separate panel. Bold spans pick up the body ink. */
+.approval-intent { margin-top: 12px; display: flex; flex-direction: column; gap: 2px; list-style: none; padding: 0; }
+.approval-intent > li { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 22px; color: var(--muted); }
+.approval-intent-dot { margin-top: 9px; width: 4px; height: 4px; flex: none; border-radius: 9999px; background: var(--faint); }
+.approval-intent-em { color: var(--ink); font-weight: 600; }
 /* Standing-approval consent lines (§25): reads = quiet disclosure, writes = the grants. */
 .approval-grants {
   margin-top: 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper);

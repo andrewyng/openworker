@@ -443,6 +443,11 @@ class SessionManager:
                 if Path(str(r.get("path", ""))).is_dir()
             ]
             roots = [{"path": ws, "writable": True, "label": "scratch"}, *extra]
+        # AI intent analysis: inject when the pref is on (opt-in; default off).
+        from ..intent_analysis.analyzer import analyze
+        intent_analyzer = None
+        if self._prefs.get("intent_analysis", False):
+            intent_analyzer = analyze
         engine = build_engine(
             agent=ag,
             workspace=ws,
@@ -487,6 +492,7 @@ class SessionManager:
             # Per-session skill menu, LIVE (SKILLS-SPEC §3): a callable so load_skill sees
             # disables/new skills immediately; the catalog snapshot is taken at build.
             skill_filter=lambda sid=session_id, w=ws: self.effective_skill_names(sid, w),
+            intent_analyzer=intent_analyzer,
         )
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
@@ -1928,6 +1934,7 @@ class SessionManager:
             "nav_layout": self._nav_layout(),
             "sessions_peek": self.sessions_peek(),
             "context_bar": self.context_bar(),
+            "intent_analysis": self._prefs.get("intent_analysis", False),
             "scratch_base": self._prefs.get("scratch_base")
             or self.DEFAULT_SCRATCH_BASE,
             # Real on-disk secrets location, so the UI shows the OS-native path instead of a
@@ -1996,6 +2003,11 @@ class SessionManager:
         self._prefs["context_bar"] = bool(shown)
         self._save_prefs()
         return {"ok": True, "context_bar": self.context_bar()}
+
+    def set_intent_analysis(self, enabled: bool) -> dict[str, Any]:
+        self._prefs["intent_analysis"] = bool(enabled)
+        self._save_prefs()
+        return {"ok": True, "intent_analysis": bool(enabled)}
 
     # -- PDF attachments / token savings (owner ask, 2026-07-17) ----------------
     DEFAULT_PDF_MAX_PAGES = 20
@@ -2681,6 +2693,9 @@ class SessionManager:
             "tool": request.tool_name,
             "arguments": getattr(request, "arguments", None) or {},
         }
+        # Carry the AI intent annotation into the Inbox snapshot.
+        if getattr(request, "intent", None):
+            data["intent"] = request.intent
         task = self.task_store.task_for_run_session(session_id)
         if task is None:
             return data
@@ -2796,6 +2811,11 @@ class SessionManager:
     def _build_task_engine(self, task, *, session_id: str) -> TurnEngine:
         ag = get_agent(task.agent)
         Path(task.workspace).mkdir(parents=True, exist_ok=True)
+        # AI intent analysis: inject when the pref is on (opt-in; default off).
+        from ..intent_analysis.analyzer import analyze
+        intent_analyzer = None
+        if self._prefs.get("intent_analysis", False):
+            intent_analyzer = analyze
         engine = build_engine(
             agent=ag,
             workspace=task.workspace,
@@ -2823,6 +2843,7 @@ class SessionManager:
             skill_filter=lambda sid=session_id, w=task.workspace: (
                 self.effective_skill_names(sid, w)
             ),
+            intent_analyzer=intent_analyzer,
         )
         self._seed_task_permissions(engine, task)
         return engine
