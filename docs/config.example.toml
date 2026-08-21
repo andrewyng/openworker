@@ -3,17 +3,25 @@
 #   <your-project>/.coworker/config.toml    (per-workspace, overrides global)
 #
 # All keys are optional; unset keys fall back to built-in defaults.
+# Note: auto_allow is global-only (a repo cannot grant it). allowed_commands from a
+# repo's .coworker/config.toml are ignored until that workspace path is trusted.
 
 model = "gpt-5.5"            # default model id (override per session in the UI/CLI)
 mode = "interactive"         # plan | interactive | auto | custom
 max_iterations = 12          # max model<->tool iterations per turn before stopping
 
-# Commands auto-allowed without an approval prompt (prefix match).
-allowed_commands = [
-  "ls", "cat", "pwd", "grep", "find",
-  "git status", "git diff", "git log",
-  "python3", "pytest", "node", "npm",
-]
+# Commands auto-allowed without an approval prompt (exact argv-prefix match; shell
+# operators rejected). Built-in default is empty: there is no generally safe
+# executable — even "read-only" tools can read secrets outside the workspace or
+# run helpers. Prefer narrow prefixes over bare binaries.
+#
+# Safe-ish inspection examples:
+#   allowed_commands = ["git status", "git diff", "git log", "ls", "pwd"]
+#
+# Do NOT bare-allowlist interpreters or package managers (python3, node, npm) —
+# that auto-approves arbitrary code. Bare `find` allows name searches but not
+# `-exec`/`-execdir`/`-ok`/`-okdir` unless your entry itself names that flag.
+allowed_commands = []
 
 # In "custom" permission mode, these tools are auto-approved (everything else still
 # asks). e.g. auto-accept file edits but keep asking before running shell commands.
