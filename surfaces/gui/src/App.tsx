@@ -600,6 +600,11 @@ export function App() {
           if (d.command_trust?.required) setWorkspaceTrustRequest(d.command_trust);
           // Cowork: adopt the server-provisioned scratch dir (only when we don't already have one).
           if (d.workspace) setWorkspace((cur) => cur || d.workspace);
+          // (Re)connecting mid-turn — e.g. switching back to a conversation whose turn is
+          // still running server-side — needs this to restore the Stop control. Without it,
+          // `running` stays at the optimistic `false` selectSession() set on switch, so the
+          // composer shows Send even though the turn is still live.
+          if (d.running) setRunning(true);
           break;
         case "turn_start":
           setRunning(true);
