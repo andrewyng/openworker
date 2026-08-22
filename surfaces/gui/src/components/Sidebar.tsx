@@ -172,7 +172,7 @@ const compactAge = (iso?: string | null): string => {
 export function Sidebar(props: Props) {
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
-  // The account row (§26): cloud sign-in status drives the avatar/name/dot; refreshed on
+  // The account row (§26): cloud sign-in status drives the avatar/name/status label; refreshed on
   // focus and whenever the menu opens (sign-in completes out-of-band in the browser).
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
   // Inbox chip sticky unlock (§26): absent until the product first parks an item (or a
@@ -1228,7 +1228,11 @@ export function Sidebar(props: Props) {
             }}
             aria-haspopup="menu"
             aria-expanded={appMenuOpen}
-            aria-label={cloud?.signed_in ? `Account: ${accountEmail}` : "Account: not signed in"}
+            aria-label={
+              cloud?.signed_in
+                ? `Account: ${accountEmail}, signed in to OpenWorker Cloud`
+                : "Account: not signed in"
+            }
           >
             <span
               className={
@@ -1246,10 +1250,12 @@ export function Sidebar(props: Props) {
             </span>
             {cloud?.signed_in && (
               <span
-                className="w-[7px] h-[7px] rounded-full bg-ok shrink-0"
+                className="text-[11px] text-muted shrink-0"
+                data-testid="cloud-status"
                 title="Signed in to OpenWorker Cloud"
-                aria-hidden
-              />
+              >
+                Signed in
+              </span>
             )}
             <span className="flex-1" />
             {inboxUnlocked && (
