@@ -1805,6 +1805,23 @@ export async function verifyProvider(
   return res.json();
 }
 
+export interface ProviderModelInfo {
+  id: string;
+  owned_by?: string;
+}
+
+export async function fetchProviderModels(
+  name: string,
+  fields: Record<string, string>,
+): Promise<{ ok: boolean; error?: string; models?: ProviderModelInfo[] }> {
+  const res = await fetch(`${httpBase()}/v1/providers/${name}/models`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, fields }),
+  });
+  return res.json();
+}
+
 /** Client-side provider guess from an API key's shape (mirrors the server's detect_provider). */
 export function detectProvider(apiKey: string): string | null {
   const key = (apiKey || "").trim();
