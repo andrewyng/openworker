@@ -328,16 +328,22 @@ def test_sessions_can_be_pinned_and_archived(tmp_path):
 # -- WebSocket ------------------------------------------------------------------
 
 
-def _drain(ws, on_permission=None):
-    """Collect event types until turn_done; optionally answer permission_required."""
+def _drain(ws, on_permission=None, keep=False):
+    """Collect event types until turn_done; optionally answer permission_required.
+
+    `keep=True` returns the whole frames instead of their types, for assertions about a
+    frame's payload rather than its presence.
+    """
     types = []
+    frames = []
     while True:
         event = ws.receive_json()
         types.append(event["type"])
+        frames.append(event)
         if event["type"] == "permission_required" and on_permission:
             ws.send_json({"type": "approval", "decision": on_permission})
         if event["type"] == "turn_done":
-            return types
+            return frames if keep else types
 
 
 def test_ws_simple_turn(tmp_path):
@@ -916,7 +922,12 @@ def test_ws_first_message_binds_then_midsession_switch_persists_notice(tmp_path)
     """The FIRST user_message's model binds the session silently (race-proof across
     reconnects — found 2026-07-04). Mid-session rebinds are ALLOWED (roadmap item 3,
     2026-07-22, supersedes the 07-04 lock): the switch lands as a persisted model_switch
-    notice and a model_changed broadcast, and the next turn runs on the new model."""
+    notice and a model_changed broadcast, and the next turn runs on the new model.
+
+    A first bind now DOES broadcast — text-less — because the frame also carries the session's
+    context window, and gating it on the notice left the client dividing by the previous model's
+    window for the rest of the session. Silent means "no notice, nothing in the transcript", not
+    "no frame"."""
     # 4 turns: 3 user turns + the autotitle's fire-and-forget complete() after turn 1.
     client = _client(
         tmp_path, [_text("ok"), _text("Session title"), _text("ok again"), _text("still ok")]
@@ -925,7 +936,12 @@ def test_ws_first_message_binds_then_midsession_switch_persists_notice(tmp_path)
         ready = ws.receive_json()
         assert ready["type"] == "ready"
         ws.send_json({"type": "user_message", "text": "hi", "model": "zai:glm-5.2"})
-        assert "model_changed" not in _drain(ws)  # first bind is silent
+        first = _drain(ws, keep=True)
+        bind = next(f for f in first if f["type"] == "model_changed")
+        # Text-less: the client refreshes its denominator, the user sees nothing.
+        assert bind["data"]["text"] is None
+        assert bind["data"]["model"] == "zai:glm-5.2"
+        assert "context_window" in bind["data"]
         # message WITHOUT a model keeps the bound one (no silent reset to default)
         ws.send_json({"type": "user_message", "text": "again"})
         _drain(ws)

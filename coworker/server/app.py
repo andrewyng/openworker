@@ -1573,6 +1573,14 @@ def create_app(manager: SessionManager) -> FastAPI:
     def automation_run_finalize(task_id: str, run_id: str) -> dict[str, Any]:
         return manager.finalize_manual_run(task_id, run_id)
 
+    async def _resolve_context_window(engine) -> Optional[int]:
+        """`engine.context_window()` without blocking the loop, and never fatal: an unknown
+        window costs a progress bar, a raised exception costs the session."""
+        try:
+            return await asyncio.to_thread(engine.context_window)
+        except Exception:  # pragma: no cover - a probe fault must not break connect
+            return None
+
     @app.websocket("/ws/session/{session_id}")
     async def ws_session(ws: WebSocket, session_id: str) -> None:
         if not _websocket_authenticated(ws):
@@ -1756,13 +1764,30 @@ def create_app(manager: SessionManager) -> FastAPI:
             # old lock existed to prevent.
             if not model or manager.is_running(session_id):
                 return
+            before = engine.model
             notice = engine.switch_model(model)
-            if notice is None:  # same model, or first bind on a fresh session
-                return
-            manager.persist_session(session_id)
+            if notice is None and engine.model == before:
+                return  # same model — nothing changed, nothing to say
+            # A FIRST bind on a fresh session rebinds the model but produces no notice, and
+            # gating the broadcast on the notice left the client holding the previous model's
+            # context window for the rest of the session — a 200k denominator against an 8k
+            # local model, reading 3% while the engine was about to truncate. The notice stays
+            # silent; the window does not.
+            if notice is not None:
+                manager.persist_session(session_id)
             await manager.broadcast_session(
                 session_id,
-                {"type": "model_changed", "data": {"model": model, "text": notice}},
+                {
+                    "type": "model_changed",
+                    "data": {
+                        "model": model,
+                        "text": notice,
+                        # Carried here too: a mid-session switch changes the window, and a
+                        # denominator sent only on `ready` would silently go stale — the bar
+                        # would keep reporting against the previous model's size.
+                        "context_window": await _resolve_context_window(engine),
+                    },
+                },
             )
 
         def _resolve_pending(resolution: str) -> None:
@@ -1816,6 +1841,11 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "command_trust": manager.workspace_command_trust(
                         str(getattr(engine, "audit_context", {}).get("workspace", ""))
                     ),
+                    # The denominator for "how full is the context". Resolved off the event
+                    # loop: for a local model this can fall through to a live ollama probe
+                    # (0.75s timeout, 300s cache), and blocking here would stall every other
+                    # session's socket, not just this one.
+                    "context_window": await _resolve_context_window(engine),
                 },
             }
         )

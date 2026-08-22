@@ -459,6 +459,17 @@ class TurnEngine:
         cfg.setdefault("cap_tokens", _compaction.DEFAULT_CAP_TOKENS)
         return cfg
 
+    def context_window(self) -> Optional[int]:
+        """The window this session is actually being served with, resolved the same way
+        compaction resolves it (settings override → hosted matrix → live ollama probe).
+
+        Public because the GUI needs the denominator to show how full the context is, and the
+        hosted matrix alone cannot supply it: every `ollama:*` id misses the matrix, so a
+        client-side lookup silently has no answer for exactly the models where filling the
+        window is the routine failure.
+        """
+        return self._compaction_config().get("context_window")
+
     def _tools_tokens(self) -> int:
         """Tokens the tool schemas add to EVERY request.
 

@@ -96,7 +96,14 @@ def brain_tools(base: Optional[Path] = None) -> list:
 
     def brain_recall(query: str, limit: int = 6) -> dict[str, Any]:
         n = limit if isinstance(limit, int) and 0 < limit <= 25 else 6
-        return do_recall(query, base=root, limit=n).as_dict()
+        out = do_recall(query, base=root, limit=n).as_dict()
+        # `_display` is the engine's GUI sidecar: it is lifted onto the event and the stored
+        # message and stripped from every provider feed, so the model never sees it and it costs
+        # no tokens. The rail needs it because the live tool_finished event carries only a
+        # 300-character preview of the result — enough to show one thread id out of three — while
+        # a recall over this corpus returns ~9KB.
+        out["_display"] = {"threads": [t["id"] for t in out.get("threads", [])], "mode": "read"}
+        return out
 
     def brain_note(
         thread: str,
@@ -139,6 +146,10 @@ def brain_tools(base: Optional[Path] = None) -> list:
             "state": found.state,
             "entries": len(found.history),
             "path": str(path),
+            # The CANONICAL id, which the `thread` argument is not: callers pass an id or a
+            # title, and slugifying a title ("OpenScienceLab / openEvolve — Phase 2") produces
+            # something that matches no file. A rail keyed on the argument would invent threads.
+            "_display": {"threads": [found.id], "mode": "written", "created": created},
         }
 
     brain_recall.__name__ = "brain_recall"

@@ -63,16 +63,35 @@ def readiness() -> dict[str, Any]:
     chromium = any(
         c.is_dir() and any(c.glob("chromium*")) for c in candidates
     )
+    # The browser launches HEADED (`headless=False` in page()), so on a box with no display the
+    # package and the binary can both be present and every launch still fail. Reporting "ready"
+    # off the install alone would move the lie one step later instead of removing it.
+    display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    if not chromium:
+        return {
+            "ready": False,
+            "playwright": True,
+            "browsers": False,
+            "detail": "Playwright is installed but no Chromium build is downloaded yet.",
+            "fix": ["python -m playwright install chromium"],
+        }
+    if not display:
+        return {
+            "ready": False,
+            "playwright": True,
+            "browsers": True,
+            "detail": (
+                "Chromium is installed but no display is reachable from the server process, and "
+                "the browser opens headed — launches would fail."
+            ),
+            "fix": ["set DISPLAY (or WAYLAND_DISPLAY) for openworker-server"],
+        }
     return {
-        "ready": bool(chromium),
+        "ready": True,
         "playwright": True,
-        "browsers": bool(chromium),
-        "detail": (
-            "Ready — agents can open pages, read them, and act with approval."
-            if chromium
-            else "Playwright is installed but no Chromium build is downloaded yet."
-        ),
-        "fix": [] if chromium else ["python -m playwright install chromium"],
+        "browsers": True,
+        "detail": "Ready — agents can open pages, read them, and act with approval.",
+        "fix": [],
     }
 
 

@@ -62,9 +62,9 @@ describe("itemsFromMessages notices", () => {
     expect(items).toEqual([
       { kind: "user", text: "hi" },
       { kind: "assistant", text: "partial ans" },
-      { kind: "notice", tone: "warn", text: "Interrupted." },
+      { kind: "notice", tone: "warn", text: "Interrupted.", notice: "interrupted" },
       { kind: "user", text: "again" },
-      { kind: "notice", tone: "warn", text: "Error: model down", retriable: true },
+      { kind: "notice", tone: "warn", text: "Error: model down", retriable: true, notice: "error" },
     ]);
   });
 });
@@ -79,6 +79,7 @@ describe("itemsFromMessages model switch", () => {
       kind: "notice",
       tone: "info",
       text: "Model switched to Kimi K2.6 · Moonshot",
+      notice: "model_switch",
     });
   });
 });
@@ -93,6 +94,9 @@ describe("itemsFromMessages compaction", () => {
       kind: "notice",
       tone: "info",
       text: "Context compacted — earlier turns were summarized",
+      // The engine's marker kind, carried through so counting compactions never means matching
+      // their prose — the rail's "compacted 3x" reads this, not the text.
+      notice: "compacted",
     });
   });
 });

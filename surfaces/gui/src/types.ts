@@ -106,7 +106,21 @@ export type Item =
   // `hidden` = results the user's privacy filters removed before the agent saw them
   // (from the tool message's `_display` sidecar; the agent-visible content has no trace).
   // `standingRule` = the task-scoped rule that auto-allowed this call ("tool → target").
-  | { kind: "tool"; id: string; name: string; args: any; status: string; preview?: string; hidden?: number; standingRule?: string }
+  | {
+      kind: "tool";
+      id: string;
+      name: string;
+      args: any;
+      status: string;
+      preview?: string;
+      hidden?: number;
+      standingRule?: string;
+      // The engine's `_display` sidecar (engine.py `_record_result`): user-facing metadata the
+      // MODEL never sees. Carried whole rather than field-by-field — the result preview it
+      // accompanies is capped at 300 chars, so for a large result this is the only complete
+      // record of what the call touched.
+      display?: { threads?: string[]; mode?: string; hidden_by_filters?: number; [k: string]: any };
+    }
   | {
       kind: "approval";
       name: string;
@@ -141,7 +155,15 @@ export type Item =
       questions?: GroupedQuestion[];
       resolved?: string;
     }
-  | { kind: "notice"; tone: "info" | "warn"; text: string; retriable?: boolean }
+  | {
+      kind: "notice";
+      tone: "info" | "warn";
+      text: string;
+      retriable?: boolean;
+      // The engine's notice kind ("compacted" | "model_switch" | "interrupted" | "error").
+      // Preserved so counting a marker never means matching its prose.
+      notice?: string;
+    }
   // MEMORY-SPEC §5.1: the save notice, inline in the conversation where the user is
   // already looking (a corner toast vanished before it could be read or undone —
   // owner-hit 2026-07-28). Stays put. `previous` is set when an existing memory was
