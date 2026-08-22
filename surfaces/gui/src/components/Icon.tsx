@@ -20,6 +20,9 @@ export type IconName =
   | "inbox"
   | "code"
   | "wrench"
+  | "hammer"
+  | "bolt"
+  | "newspaper"
   | "pencil"
   | "branch"
   | "arrowLeft"
@@ -243,6 +246,31 @@ export function Icon({
       return (
         <svg {...s}>
           <path d="M14.6 6.4a3.8 3.8 0 0 0-5 4.9l-6 6a1.6 1.6 0 0 0 2.3 2.3l6-6a3.8 3.8 0 0 0 4.9-5l-2.4 2.4-2-.5-.5-2 2.7-2.1z" />
+        </svg>
+      );
+    case "hammer":
+      // Claw hammer, head up-left — the "build it" persona mark.
+      return (
+        <svg {...s}>
+          <path d="M13.4 8.2 6.1 15.5a1.9 1.9 0 0 0 2.7 2.7l7.3-7.3" />
+          <path d="M11.6 6.4 15.2 2.8l6 6-3.6 3.6z" />
+          <path d="m14.2 5.4-3 3" />
+        </svg>
+      );
+    case "bolt":
+      // Lightning bolt — filled, so it stays a solid shape at 14px.
+      return (
+        <svg {...s} fill="currentColor" stroke="none">
+          <path d="M13.6 2 5.4 13.1h5.1L10 22l8.6-11.5h-5.4z" />
+        </svg>
+      );
+    case "newspaper":
+      // Folded broadsheet — the briefing/report persona mark.
+      return (
+        <svg {...s}>
+          <path d="M4 5.5h12.5v13H5.6A1.6 1.6 0 0 1 4 16.9z" />
+          <path d="M16.5 8.5H20v8.4a1.6 1.6 0 0 1-3.5 1.1" />
+          <path d="M6.6 8.6h7.3M6.6 11.6h7.3M6.6 14.6h4.6" />
         </svg>
       );
     case "search":

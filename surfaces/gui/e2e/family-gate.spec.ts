@@ -19,7 +19,9 @@ test("knowledge persona: new session starts instantly, no folder gate", async ({
 
   await startAs(page, /Ops/);
   await expect(page.locator(".gate-overlay")).toHaveCount(0);
-  await expect(page.getByPlaceholder(/Ask the coworker/)).toBeVisible();
+  // The composer is live — matched by role, not by copy: each persona now writes its own
+  // placeholder, so "Ask the coworker" is Coworker's line, not every session's.
+  await expect(page.getByRole("textbox")).toBeVisible();
 });
 
 test("code persona: the folder gate blocks until a project is chosen", async ({ page }) => {

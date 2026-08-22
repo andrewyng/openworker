@@ -6,6 +6,7 @@ import { formatTokens, totalTokens } from "../usage";
 import { Dropdown, type Option } from "./Dropdown";
 import { Icon } from "./Icon";
 import { Toggle } from "./Toggle";
+import { PersonaGlyph } from "./personaIcon";
 import {
   cancelDictation,
   getDictationLevel,
@@ -89,6 +90,14 @@ interface Props {
   contextWindow?: number;
   // Settings toggle (default off): true shows the fill bar instead of the session total.
   contextBar?: boolean;
+  // The persona this composer is talking to, named on the control row. Sessions used to be
+  // visually identical whichever coworker was answering, so nothing here said which one you had
+  // picked — the chip (glyph + short name, in the persona's accent) is that answer, and clicking
+  // it opens the persona's page.
+  persona?: { icon?: string; family?: string };
+  personaId?: string;
+  personaLabel?: string;
+  onOpenPersona?: () => void;
 }
 
 export function Composer(props: Props) {
@@ -572,14 +581,30 @@ export function Composer(props: Props) {
               </span>
               <span className="text-[12px] text-muted tabular-nums">{recordingTime}</span>
             </div>
-          ) : props.workspace !== undefined ? (
-            <ModeMenu
-              mode={props.mode}
-              onModeChange={props.onModeChange}
-              unattended={props.unattended}
-              onUnattendedChange={props.onUnattendedChange}
-            />
-          ) : null}
+          ) : (
+            <>
+              {props.personaLabel && (
+                <button
+                  className="pill chip persona-chip"
+                  data-testid="composer-persona"
+                  onClick={props.onOpenPersona}
+                  title={`Talking to ${props.personaLabel} — open its page`}
+                  aria-label={`Persona: ${props.personaLabel}`}
+                >
+                  <PersonaGlyph icon={props.persona?.icon} family={props.persona?.family} size={13} />
+                  <span className="pill-label">{props.personaLabel}</span>
+                </button>
+              )}
+              {props.workspace !== undefined && (
+                <ModeMenu
+                  mode={props.mode}
+                  onModeChange={props.onModeChange}
+                  unattended={props.unattended}
+                  onUnattendedChange={props.onUnattendedChange}
+                />
+              )}
+            </>
+          )}
 
           {dictationBusy === "Transcribing…" && <span className="text-[11.5px] text-accent">Transcribing…</span>}
 

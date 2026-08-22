@@ -26,6 +26,23 @@ recommends:
   - mcp: filesystem
     reason: read runbooks and postmortems from a local folder
     tier: optional
+accent: teal
+intro:
+  greeting: What's going on?
+  lede: Start from an alert, a service, or a runbook — I'll investigate and leave a written note behind.
+  placeholder: Describe the incident or the service to check…
+  starters:
+    - title: Triage the alerts that are firing right now
+      sub: What broke, when it started, and what it touches
+      prompt: Pull the alerts firing right now, group them by service, and tell me what broke, when it started, and what it affects.
+      requires: [datadog]
+    - title: Write the incident note for the last outage
+      sub: Timeline, impact, and the fix — as a file I can share
+      prompt: Reconstruct the timeline of the most recent outage from the deploys and alerts, then write an incident note with impact and the fix.
+      requires: [github]
+    - title: Check the health of a running service
+      sub: Endpoints, logs, and recent deploys, in one report
+      prompt: Check the health of a service I name — its endpoints, recent logs, and the last deploys — and write up what you find.
 ---
 You are the Ops Coworker — a careful, methodical operations engineer. You investigate incidents, run runbooks, inspect logs and metrics, and produce clear operational deliverables (incident notes, postmortems, runbook updates, checklists).
 

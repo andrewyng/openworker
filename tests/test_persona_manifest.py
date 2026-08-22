@@ -165,3 +165,77 @@ def test_invalid_recommends_rejected(text, needle):
     with pytest.raises(ManifestError) as e:
         parse_manifest(text)
     assert needle in str(e.value).lower()
+
+
+# -- intro + accent (the persona's own start screen and colour) ----------------------------
+
+INTRO = """---
+id: briefer
+name: Briefer
+family: knowledge
+tools: [files]
+accent: Violet
+intro:
+  greeting: What should I brief you on?
+  lede: I read the sources, then write the brief.
+  placeholder: Describe the brief…
+  starters:
+    - title: Brief me on a topic
+      sub: Every claim carries its URL
+      prompt: Research the topic and write the brief.
+    - title: Post the digest to the team
+      prompt: Summarize the week and post it.
+      requires: [slack, github]
+    - key: pinned
+      title: Pick up the folder I shared
+      prompt: Read the shared folder.
+      requires: [folder]
+---
+You are a briefer.
+"""
+
+
+def test_parse_intro_and_accent():
+    m = parse_manifest(INTRO)
+    assert m.accent == "violet"  # case-normalized
+    assert m.intro.greeting == "What should I brief you on?"
+    assert m.intro.placeholder == "Describe the brief…"
+    first, second, third = m.intro.starters
+    # Keys are derived from the title on whole-word boundaries, or taken verbatim when declared.
+    assert first.key == "brief-me-on-a-topic" and first.sub == "Every claim carries its URL"
+    assert second.requires == ["slack", "github"] and second.sub == ""
+    assert third.key == "pinned" and third.requires == ["folder"]
+
+
+def test_no_intro_block_is_empty_not_an_error():
+    m = parse_manifest(VALID)
+    assert not m.intro and m.intro.starters == [] and m.accent == ""
+
+
+def test_intro_serializes_for_the_api():
+    row = parse_manifest(INTRO).intro.as_dict()
+    assert row["greeting"] == "What should I brief you on?"
+    assert row["starters"][1]["requires"] == ["slack", "github"]
+
+
+@pytest.mark.parametrize(
+    "block, message",
+    [
+        ("accent: chartreuse\n", "accent must be one of"),
+        ("intro: nope\n", "`intro` must be a mapping"),
+        ("intro:\n  starters: nope\n", "`intro.starters` must be a list"),
+        ("intro:\n  starters:\n    - title: No prompt\n", "needs a `title` and a `prompt`"),
+        ("intro:\n  starters:\n    - prompt: No title\n", "needs a `title` and a `prompt`"),
+        ("intro:\n  starters:\n    - just a string\n", "must be a mapping"),
+    ],
+)
+def test_invalid_presentation_fails_loudly(block, message):
+    # A malformed manifest must raise, not silently ship a persona with a broken start screen.
+    with pytest.raises(ManifestError, match=message):
+        parse_manifest(VALID.replace("---\nYou are", block + "---\nYou are"))
+
+
+def test_too_many_starters_rejected():
+    rows = "".join(f"    - title: Task {i}\n      prompt: Do {i}\n" for i in range(5))
+    with pytest.raises(ManifestError, match="at most 4"):
+        parse_manifest(VALID.replace("---\nYou are", f"intro:\n  starters:\n{rows}---\nYou are"))

@@ -844,6 +844,27 @@ function announcePersonasChanged() {
   window.dispatchEvent(new CustomEvent(PERSONAS_CHANGED));
 }
 
+// One start-screen template task a persona ships with itself (manifest `intro.starters`).
+// `requires` names what has to be live before the row can run — "folder" for a shared
+// directory, otherwise a connector id; unmet requirements render the row gated.
+export interface PersonaStarter {
+  key: string;
+  title: string;
+  sub: string;
+  prompt: string;
+  requires: string[];
+}
+
+// A persona's own empty state + composer voice (manifest `intro:`). Every field is optional;
+// personaStyle.ts fills the gaps from the persona's family so a minimal manifest still gets a
+// coherent start screen rather than the default coworker's.
+export interface PersonaIntro {
+  greeting: string;
+  lede: string;
+  placeholder: string;
+  starters: PersonaStarter[];
+}
+
 export interface Persona {
   id: string;
   name: string;
@@ -854,6 +875,8 @@ export interface Persona {
   family: string;
   workspace: string; // "git" | "project" | "deliverable" | "none" — drives project-scoping
   tools: string[];
+  accent?: string; // a curated accent name (see personaStyle.ts); absent → derived from the id
+  intro?: PersonaIntro | null; // declared intro; absent → family defaults
   enabled: boolean;
   surfaced: boolean;
   default: boolean;

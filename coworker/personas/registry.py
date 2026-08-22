@@ -22,7 +22,7 @@ from ..agents.base import Agent
 from ..agents.chat import chat_agent
 from ..agents.code import CODE_CAPABILITIES, code_agent
 from ..agents.cowork import COWORK_CAPABILITIES, cowork_agent
-from .manifest import PersonaManifest, load_manifest_file
+from .manifest import PersonaIntro, PersonaManifest, load_manifest_file
 
 DEFAULT_PERSONA_ID = "cowork"
 
@@ -50,6 +50,11 @@ class PersonaEntry:
     default_surfaced: bool = (
         True  # whether it shows in the picker before any user choice
     )
+    # Presentation: the accent the GUI tints the persona's session with (a VALID_ACCENTS name;
+    # empty → derived from the id) and its own start screen + composer voice. Manifest-backed
+    # personas carry both verbatim; builtins leave them empty and the GUI supplies its own.
+    accent: str = ""
+    intro: PersonaIntro = field(default_factory=PersonaIntro)
     _builder: Optional[Callable[[], Agent]] = None
     manifest: Optional[PersonaManifest] = None
 
@@ -178,6 +183,8 @@ class PersonaRegistry:
             family=m.family,
             workspace=m.workspace,
             tools=list(m.tools),
+            accent=m.accent,
+            intro=m.intro,
             manifest=m,
         )
 
@@ -284,6 +291,10 @@ class PersonaRegistry:
                 "family": e.family,
                 "workspace": e.workspace,
                 "tools": e.tools,
+                "accent": e.accent,
+                # Only a persona that actually declares an intro sends one — an empty block would
+                # override the GUI's family defaults with nothing.
+                "intro": e.intro.as_dict() if e.intro else None,
                 "enabled": self.is_enabled(e.id),
                 "surfaced": self.is_surfaced(e.id),
                 "default": e.id == self.default_id(),

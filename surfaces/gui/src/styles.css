@@ -266,22 +266,10 @@ body {
 .main.rail-open .main-chat { margin-right: 332px; }
 .main-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 24px 8% 24px; }
 
-/* idle hero */
-.hero { max-width: 720px; margin: 6vh auto 0; }
+/* Idle greeting. The generic hero + its three hardcoded "Try a task" suggestions are gone: the
+   start screen is .intro for every persona now, built from that persona's own starters. */
 .greeting { font-family: var(--serif); font-size: 40px; line-height: 1.1; margin: 0 0 18px; }
 .greeting .mark { color: var(--accent); margin-right: 10px; }
-.suggestions { margin-top: 40px; display: flex; flex-direction: column; }
-.suggest-head { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-.suggest {
-  display: flex; align-items: center; gap: 11px; padding: 11px 6px;
-  border-top: 1px solid var(--line); cursor: pointer; color: var(--ink); font-size: 14.5px;
-}
-.suggest:hover { color: var(--accent); }
-.suggest .ico {
-  width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 7px;
-  display: grid; place-items: center; background: var(--panel); font-size: 13.5px;
-  color: var(--muted); flex: none;
-}
 
 /* transcript */
 /* Conversation column — mock's `max-w-3xl mx-auto space-y-5` (the px-6/py-6 gutter is supplied by
@@ -491,6 +479,16 @@ button.btn.danger { color: var(--accent); }
 /* Bordered chip variant (composer-head model selector) — mock's `bg-paper border border-line`. */
 .pill.chip { background: var(--paper); border: 1px solid var(--line); }
 .pill.chip:hover { border-color: var(--line-strong); background: var(--paper); }
+/* The persona chip: who is answering, stated on the composer's control row in the persona's own
+   accent. It is the identity the session was missing — the placeholder said "coworker" whichever
+   coworker you had picked. Tinted (not neutral like the model chip) so it reads as identity
+   rather than a setting. */
+.pill.chip.persona-chip {
+  gap: 6px; color: var(--accent);
+  background: var(--accent-soft); border-color: transparent;
+}
+.pill.chip.persona-chip:hover { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
+.pill.chip.persona-chip .pill-label { font-weight: 500; }
 
 /* dropdown popover */
 .dd { position: relative; }
@@ -720,10 +718,41 @@ button.btn.danger { color: var(--accent); }
 .addfolder-write { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; }
 .addfolder-actions .spacer { flex: 1; }
 
-/* Cowork session start panel */
+/* ---- Persona accents -------------------------------------------------------------------
+   Each persona tints its session with one colour (App.tsx sets data-accent on .main from the
+   manifest's `accent:`, or derives a stable one from the id). Only --accent/--accent-soft are
+   overridden, so every accent-coloured element inside — the greeting mark, task-row hover, the
+   persona chip, the send button — follows without knowing personas exist. Curated light/dark
+   pairs rather than computed hues: contrast on both themes is a property of the pair, not
+   something a hue rotation preserves. */
+[data-accent="cobalt"]  { --accent: #2563eb; --accent-soft: #e9f0fd; }
+[data-accent="indigo"]  { --accent: #4338ca; --accent-soft: #ebeafc; }
+[data-accent="violet"]  { --accent: #6d28d9; --accent-soft: #f0eafd; }
+[data-accent="magenta"] { --accent: #a21caf; --accent-soft: #fbeafc; }
+[data-accent="rose"]    { --accent: #be123c; --accent-soft: #fdeaee; }
+[data-accent="amber"]   { --accent: #a45309; --accent-soft: #fdf0dd; }
+[data-accent="lime"]    { --accent: #4d7c0f; --accent-soft: #eff5e1; }
+[data-accent="green"]   { --accent: #15803d; --accent-soft: #e6f4ea; }
+[data-accent="teal"]    { --accent: #0f766e; --accent-soft: #e2f5f3; }
+[data-accent="cyan"]    { --accent: #0e7490; --accent-soft: #e2f2f8; }
+[data-accent="slate"]   { --accent: #475569; --accent-soft: #edf0f4; }
+html[data-theme="dark"] [data-accent="cobalt"]  { --accent: #4c8dff; --accent-soft: #1c2a44; }
+html[data-theme="dark"] [data-accent="indigo"]  { --accent: #a5b4fc; --accent-soft: #232449; }
+html[data-theme="dark"] [data-accent="violet"]  { --accent: #a78bfa; --accent-soft: #2a2140; }
+html[data-theme="dark"] [data-accent="magenta"] { --accent: #e879f9; --accent-soft: #37173a; }
+html[data-theme="dark"] [data-accent="rose"]    { --accent: #fb7185; --accent-soft: #3d1f27; }
+html[data-theme="dark"] [data-accent="amber"]   { --accent: #e8b04b; --accent-soft: #36280f; }
+html[data-theme="dark"] [data-accent="lime"]    { --accent: #a3c94a; --accent-soft: #26300f; }
+html[data-theme="dark"] [data-accent="green"]   { --accent: #5cc47f; --accent-soft: #16301f; }
+html[data-theme="dark"] [data-accent="teal"]    { --accent: #46c0b2; --accent-soft: #11302d; }
+html[data-theme="dark"] [data-accent="cyan"]    { --accent: #38bdf8; --accent-soft: #102c3a; }
+html[data-theme="dark"] [data-accent="slate"]   { --accent: #94a3b8; --accent-soft: #262b33; }
+
+/* Session start panel — one per persona (its greeting, lede and template tasks) */
 .intro { max-width: 640px; margin: 0 auto; padding: 40px 20px 24px; }
 .intro .greeting { font-size: 26px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
-.intro .greeting .mark { color: var(--accent); }
+/* margin-right: 0 — the flex row's gap already spaces the glyph off the greeting. */
+.intro .greeting .mark { color: var(--accent); display: inline-flex; align-items: center; margin-right: 0; }
 .intro-lede { color: var(--muted); font-size: 14px; line-height: 1.5; margin: 8px 0 0; }
 
 /* Template tasks on the Cowork start screen (§27): flat hairline rows, no icon tiles — the

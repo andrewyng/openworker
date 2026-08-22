@@ -21,6 +21,7 @@ import {
 } from "../api";
 import type { SessionInfo } from "../types";
 import { isProjectScoped, shortPersonaName } from "../personaScope";
+import { accentFor, accentMap, type AccentName } from "../personaStyle";
 import { ConnectorIcon } from "../connectors/ConnectorIcon";
 import { Icon, type IconName } from "./Icon";
 import { PersonaGlyph, personaGlyph } from "./personaIcon";
@@ -30,16 +31,31 @@ import { showPersonas } from "../flags";
 
 // Session surfaces shown as accordions, in display order. The surfaced personas drive this list
 // (so third-party / Ops personas appear); the hardcoded set is the fallback before personas load.
-const SURFACES: { key: string; label: string; icon: IconName; cls: string }[] = [
-  { key: "cowork", label: "Coworker", icon: "diamond", cls: "ico-cowork" },
-  { key: "chat", label: "Chat", icon: "chat", cls: "ico-chat" },
-  { key: "code", label: "Code", icon: "code", cls: "ico-code" },
+// `rawIcon` + `family` are what PersonaGlyph resolves (an emoji stays an emoji); `accent` tints
+// that glyph, so the picker row and the session it opens wear the same colour.
+type Surface = {
+  key: string;
+  label: string;
+  icon: IconName;
+  rawIcon: string;
+  family: string;
+  accent: AccentName;
+  cls: string;
+};
+
+const SURFACES: Surface[] = [
+  { key: "cowork", label: "Coworker", icon: "diamond", rawIcon: "cowork", family: "knowledge", accent: accentFor({ id: "cowork" }), cls: "ico-cowork" },
+  { key: "chat", label: "Chat", icon: "chat", rawIcon: "chat", family: "knowledge", accent: accentFor({ id: "chat" }), cls: "ico-chat" },
+  { key: "code", label: "Code", icon: "code", rawIcon: "code", family: "code", accent: accentFor({ id: "code" }), cls: "ico-code" },
 ];
 
-const surfaceFromPersona = (p: Persona) => ({
+const surfaceFromPersona = (p: Persona, accents: Record<string, AccentName>): Surface => ({
   key: p.id,
   label: shortPersonaName(p.name, p.id),
   icon: personaGlyph(p.icon, p.family),
+  rawIcon: p.icon,
+  family: p.family,
+  accent: accents[p.id] ?? accentFor(p),
   cls: `ico-${p.icon || "cowork"}`,
 });
 
@@ -275,6 +291,9 @@ export function Sidebar(props: Props) {
     return () => window.removeEventListener(PERSONAS_CHANGED, load);
   }, []);
   const personaOf = (id: string) => personas?.find((p) => p.id === id);
+  // One colour per installed persona, resolved across the whole set (App.tsx tints the session
+  // from the same map, so the picker row matches the session it opens).
+  const accents = useMemo(() => accentMap(personas), [personas]);
 
   // Sidebar layout (§7): "grouped" = the per-persona accordion; "flat" = a single ungrouped list
   // (Pinned + Recent). Read the persisted preference on load; ABSENT falls back by the
@@ -833,7 +852,7 @@ export function Sidebar(props: Props) {
       ? personas
           .filter((p) => (p.enabled && p.surfaced) || agentsWithSessions.has(p.id))
           .sort((a, b) => Number(b.default) - Number(a.default)) // default leads
-          .map(surfaceFromPersona)
+          .map((p) => surfaceFromPersona(p, accents))
       : SURFACES.filter(
           (s) => s.key === "cowork" || props.surfaces[s.key as keyof SurfaceVisibility],
         )
@@ -1070,6 +1089,16 @@ export function Sidebar(props: Props) {
                       }
                       onClick={() => onHeaderClick(s.key)}
                     >
+                      {/* The persona's own glyph in its own accent — the picker row looks like
+                          the session it opens, so "which coworker am I in" is answerable from
+                          either end. data-accent scopes --accent to this span alone. */}
+                      <span
+                        className="shrink-0 grid place-items-center text-accent"
+                        data-accent={s.accent}
+                        aria-hidden
+                      >
+                        <PersonaGlyph icon={s.rawIcon} family={s.family} size={14} />
+                      </span>
                       <span
                         className={
                           "min-w-0 flex-1 truncate text-[13px] " +
@@ -1301,6 +1330,9 @@ function NewSessionSplit({
 }) {
   const [open, setOpen] = useState(false);
   const enabled = (personas || []).filter((p) => p.enabled);
+  // Resolved over ALL installed personas, not just the enabled ones, so a persona's tile keeps
+  // its colour when a disabled sibling is switched back on.
+  const accents = useMemo(() => accentMap(personas), [personas]);
   // With a single enabled persona there is nothing to pick — the split collapses to a plain
   // button (owner ask 2026-07-09). `personas === null` (still loading) keeps the split so the
   // control doesn't visibly change shape once the list arrives with 2+.
@@ -1344,7 +1376,12 @@ function NewSessionSplit({
                   onNew(p.id);
                 }}
               >
-                <span className="w-6 h-6 rounded-md bg-paper border border-line grid place-items-center text-muted shrink-0">
+                {/* The tile wears the persona's accent, so the row you pick looks like the
+                    session it opens (data-accent scopes --accent to this tile alone). */}
+                <span
+                  className="w-6 h-6 rounded-md bg-accentSoft grid place-items-center text-accent shrink-0"
+                  data-accent={accents[p.id] ?? accentFor(p)}
+                >
                   <PersonaGlyph icon={p.icon} family={p.family} size={12} />
                 </span>
                 <span className="min-w-0">

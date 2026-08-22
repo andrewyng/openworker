@@ -40,7 +40,8 @@ import type {
   TodoItem,
   WsEvent,
 } from "./types";
-import { isProjectScoped } from "./personaScope";
+import { isProjectScoped, shortPersonaName } from "./personaScope";
+import { accentFor, accentMap, placeholderFor } from "./personaStyle";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
 import { addTurnUsage, emptyUsage, usageFromMessages } from "./usage";
@@ -71,12 +72,6 @@ import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
 
 const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
-
-const SUGGESTIONS = [
-  { ico: "⚙", text: "Run the test suite and summarize any failures." },
-  { ico: "✦", text: "Read the project and give me a 5-bullet overview." },
-  { ico: "↻", text: "Find and fix the failing build." },
-];
 
 // Tools whose success means a new/changed file should show up under Artifacts right away.
 const FILE_WRITE_TOOLS = new Set(["write_file", "apply_patch", "apply_unified_diff", "replace_in_file"]);
@@ -324,6 +319,14 @@ export function App() {
     getPersonas().then(setPersonas).catch(() => {});
   }, []);
   const personaOf = (a: string) => personas?.find((p) => p.id === a);
+  // The persona the session is running as. Everything persona-shaped — the start screen's tasks,
+  // the composer's placeholder + chip, the accent the whole session is tinted with, the facts
+  // line — reads from this one record, so they can never disagree about who is answering.
+  const activePersona = personaOf(agent);
+  const personaLabel = shortPersonaName(activePersona?.name, agent);
+  // From the set-wide map so no two installed personas share a colour; accentFor is the
+  // stand-in for the moment before the persona list has loaded.
+  const personaAccent = accentMap(personas)[agent] ?? accentFor(activePersona ?? { id: agent });
 
   // Pending Inbox items for the ACTIVE session — surfaced inline above the composer so an
   // unattended session's blocking question/approval can be answered in context (resolving the
@@ -1201,10 +1204,11 @@ export function App() {
   const modelDisplay =
     modelLabels[model]?.split(" · ")[0] ||
     (model.includes(":") ? model.split(":").slice(1).join(":") : model);
-  // Persona name dropped for this release (owner ask 2026-07-22): personas are hidden,
-  // so "Coworker" read as noise. The model (+ project folder) are the real fixed facts.
-  const subtitleParts = [modelDisplay];
-  if (isProjectScoped(personaOf(agent)) && workspace) subtitleParts.push(baseName(workspace));
+  // The persona LEADS the facts line again (reverting the 2026-07-22 drop): with several
+  // personas installed, "which coworker is answering" is the fact the session is missing —
+  // it read as noise only back when Coworker was the only one you could be in.
+  const subtitleParts = [personaLabel, modelDisplay];
+  if (isProjectScoped(activePersona) && workspace) subtitleParts.push(baseName(workspace));
   const activeInfo = sessions.find((s) => s.session_id === sessionId);
   const activeTitle = activeInfo?.title || "New session";
 
@@ -1425,7 +1429,11 @@ export function App() {
           onOpenIntegrations={() => setSurface("integrations")}
         />
       ) : (
-      <div className={"main" + (surface === "session" && agent !== "chat" && !railHidden ? " rail-open" : "")}>
+      <div
+        className={"main" + (surface === "session" && agent !== "chat" && !railHidden ? " rail-open" : "")}
+        data-accent={personaAccent}
+        data-persona={agent}
+      >
         <div className="main-topbar">
           {/* Left: the contextual cluster — [sidebar] [+ new session] [search] — rendered ONLY
               while the sidebar is collapsed (§22; the expanded sidebar already owns those
@@ -1550,31 +1558,13 @@ export function App() {
             )}
             <div className="main-scroll" ref={scrollRef} onScroll={handleScroll}>
               {idle ? (
-                agent === "cowork" ? (
-                  <SessionIntro
-                    sessionId={sessionId}
-                    onOpenSessionSettings={openAccess}
-                    onPrefill={prefillComposer}
-                  />
-                ) : (
-                  <div className="hero">
-                    <h1 className="greeting">
-                      <span className="mark">✦</span>
-                      {agent === "chat" ? "How can I help?" : "Let's build something."}
-                    </h1>
-                    {needsWorkspace(agent) && (
-                      <div className="suggestions">
-                        <div className="suggest-head">Try a task</div>
-                        {SUGGESTIONS.map((s, i) => (
-                          <div className="suggest" key={i} onClick={() => workspace && send(s.text)}>
-                            <span className="ico">{s.ico}</span>
-                            {s.text}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )
+                <SessionIntro
+                  sessionId={sessionId}
+                  persona={activePersona}
+                  personaId={agent}
+                  onOpenSessionSettings={openAccess}
+                  onPrefill={prefillComposer}
+                />
               ) : (
                 <>
                   <Transcript
@@ -1656,13 +1646,11 @@ export function App() {
               usage={usage}
               contextWindow={modelContextWindows[model]}
               contextBar={contextBar}
-              placeholder={
-                agent === "code"
-                  ? "Ask the coder to build, fix, or explain…  (drop or paste files)"
-                  : agent === "chat"
-                    ? "Ask anything…  (drop or paste files)"
-                    : "Ask the coworker…  (drop or paste files)"
-              }
+              placeholder={placeholderFor(activePersona, agent)}
+              persona={activePersona}
+              personaId={agent}
+              personaLabel={personaLabel}
+              onOpenPersona={() => openPersona(agent)}
               approvalSlot={
                 // Live inline cards are for ATTENDED sessions only; when Unattended the prompt is
                 // parked in the Inbox and surfaced via the answer-in-context card below.

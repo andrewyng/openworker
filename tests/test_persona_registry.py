@@ -100,3 +100,16 @@ def test_set_unknown_persona_raises(tmp_path):
     reg = _reg(tmp_path)
     with pytest.raises(KeyError):
         reg.set_enabled("ghost", False)
+
+
+def test_list_all_carries_presentation(tmp_path):
+    # A manifest-backed persona's accent + start screen reach the GUI through list_all; the
+    # builder-registered builtins declare none, and the GUI fills those from its own defaults.
+    reg = _reg(tmp_path)
+    rows = {p["id"]: p for p in reg.list_all()}
+    assert rows["ops"]["accent"] == "teal"
+    starters = rows["ops"]["intro"]["starters"]
+    assert rows["ops"]["intro"]["greeting"] and len(starters) == 3
+    assert starters[0]["requires"] == ["datadog"]
+    # An undeclared intro is None, not an empty block that would blank the GUI's defaults.
+    assert rows["cowork"]["intro"] is None and rows["cowork"]["accent"] == ""

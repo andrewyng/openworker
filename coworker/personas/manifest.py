@@ -25,6 +25,28 @@ VALID_WORKSPACES = {"git", "project", "deliverable", "none"}
 VALID_MODES = {"discuss", "plan", "interactive", "custom", "auto"}
 VALID_REC_KINDS = {"connector", "mcp"}
 VALID_REC_TIERS = {"core", "optional"}
+# A persona's accent — the one colour the whole session is tinted with (start screen, composer
+# chip, hover states). A closed set rather than a free hex: each name is a curated light/dark
+# pair in the GUI's stylesheet, so a persona can never pick something illegible on either theme.
+# Undeclared is fine: the GUI derives a stable accent from the persona id instead. Nothing here
+# enforces uniqueness across personas — two manifests can name the same accent, and the GUI
+# resolves the clash across the installed set (personaStyle.ts accentMap).
+VALID_ACCENTS = {
+    "cobalt",
+    "indigo",
+    "violet",
+    "magenta",
+    "rose",
+    "amber",
+    "lime",
+    "green",
+    "teal",
+    "cyan",
+    "slate",
+}
+# Start-screen rows are the persona's own suggestions; more than this and the empty state stops
+# reading as "pick one" and starts reading as a menu.
+MAX_STARTERS = 4
 
 
 class ManifestError(ValueError):
@@ -42,6 +64,56 @@ class Recommendation:
     ref: str
     reason: str = ""
     tier: str = "optional"  # "core" | "optional"
+
+
+@dataclass
+class Starter:
+    """One start-screen template task. ``title`` is the row, ``sub`` states the OUTCOME (never
+    connection state), ``prompt`` is what clicking prefills into the composer, and ``requires``
+    lists what must be live first — ``folder`` for a shared directory, otherwise a connector id.
+    A row whose requirements are unmet renders gated, offering setup instead of the prompt.
+    """
+
+    title: str
+    prompt: str
+    sub: str = ""
+    requires: list[str] = field(default_factory=list)
+    # Stable handle for the row (test ids, React keys). Derived from the title when unset.
+    key: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "title": self.title,
+            "sub": self.sub,
+            "prompt": self.prompt,
+            "requires": list(self.requires),
+        }
+
+
+@dataclass
+class PersonaIntro:
+    """How a persona introduces itself: the empty-state greeting + lede, the composer's
+    placeholder, and its own template tasks. Every field is optional — whatever a manifest
+    leaves out, the GUI fills from the persona's family, so a minimal manifest still gets a
+    coherent start screen instead of another persona's.
+    """
+
+    greeting: str = ""
+    lede: str = ""
+    placeholder: str = ""
+    starters: list[Starter] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "greeting": self.greeting,
+            "lede": self.lede,
+            "placeholder": self.placeholder,
+            "starters": [s.as_dict() for s in self.starters],
+        }
+
+    def __bool__(self) -> bool:
+        return bool(self.greeting or self.lede or self.placeholder or self.starters)
 
 
 @dataclass
@@ -64,6 +136,8 @@ class PersonaManifest:
     skills: list[str] = field(default_factory=list)
     mcp: list[str] = field(default_factory=list)
     recommends: list[Recommendation] = field(default_factory=list)
+    accent: str = ""  # one of VALID_ACCENTS; empty → the GUI derives one from the id
+    intro: PersonaIntro = field(default_factory=PersonaIntro)
     builtin: bool = False
     source: Optional[str] = (
         None  # where it was loaded from (path / url), for provenance
@@ -167,6 +241,63 @@ def _recommends(persona_id: str, meta: dict) -> list[Recommendation]:
     return out
 
 
+def _starter_key(title: str, index: int) -> str:
+    """A stable handle for a starter row (React key, test id). Whole words only — a hard
+    character cut leaves a truncated word in the DOM, which reads as a bug in a test id."""
+    words = [w for w in re.split(r"[^a-z0-9]+", title.strip().lower()) if w]
+    slug = ""
+    for w in words:
+        candidate = f"{slug}-{w}" if slug else w
+        if len(candidate) > 32:
+            break
+        slug = candidate
+    return slug or f"task-{index + 1}"
+
+
+def _intro(persona_id: str, meta: dict) -> PersonaIntro:
+    raw = meta.get("intro")
+    if raw is None:
+        return PersonaIntro()
+    if not isinstance(raw, dict):
+        raise ManifestError(f"persona {persona_id!r}: `intro` must be a mapping")
+    starters_raw = raw.get("starters") or []
+    if not isinstance(starters_raw, list):
+        raise ManifestError(f"persona {persona_id!r}: `intro.starters` must be a list")
+    if len(starters_raw) > MAX_STARTERS:
+        raise ManifestError(
+            f"persona {persona_id!r}: at most {MAX_STARTERS} `intro.starters` (got {len(starters_raw)})"
+        )
+    starters: list[Starter] = []
+    for i, item in enumerate(starters_raw):
+        if not isinstance(item, dict):
+            raise ManifestError(
+                f"persona {persona_id!r}: each `intro.starters` item must be a mapping"
+            )
+        title = str(item.get("title", "")).strip()
+        prompt = str(item.get("prompt", "")).strip()
+        if not title or not prompt:
+            raise ManifestError(
+                f"persona {persona_id!r}: each `intro.starters` item needs a `title` and a `prompt`"
+            )
+        requires = _strlist(item, "requires")
+        key = str(item.get("key", "")).strip() or _starter_key(title, i)
+        starters.append(
+            Starter(
+                title=title,
+                prompt=prompt,
+                sub=str(item.get("sub", "")).strip(),
+                requires=requires,
+                key=key,
+            )
+        )
+    return PersonaIntro(
+        greeting=str(raw.get("greeting", "")).strip(),
+        lede=str(raw.get("lede", "")).strip(),
+        placeholder=str(raw.get("placeholder", "")).strip(),
+        starters=starters,
+    )
+
+
 def parse_manifest(
     text: str,
     *,
@@ -221,6 +352,12 @@ def parse_manifest(
     tools = _strlist(meta, "tools")
     _validate_tools(persona_id, tools)
 
+    accent = str(meta.get("accent", "")).strip().lower()
+    if accent and accent not in VALID_ACCENTS:
+        raise ManifestError(
+            f"persona {persona_id!r}: accent must be one of {sorted(VALID_ACCENTS)}"
+        )
+
     return PersonaManifest(
         id=persona_id,
         name=str(meta.get("name") or persona_id).strip(),
@@ -238,6 +375,8 @@ def parse_manifest(
         skills=_strlist(meta, "skills"),
         mcp=_strlist(meta, "mcp"),
         recommends=_recommends(persona_id, meta),
+        accent=accent,
+        intro=_intro(persona_id, meta),
         builtin=builtin,
         source=source,
     )
