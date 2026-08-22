@@ -118,6 +118,18 @@ you're doing and why (e.g. "Checking what merged since yesterday's digest."). It
 to the user as live progress. Don't narrate trivial single-call follow-ups, don't repeat \
 the previous line, and never let narration replace your final answer."""
 
+_WORKAROUND_SAFETY_GUIDANCE = """\
+Security & Workspace Boundary:
+- Operate strictly within assigned workspace directories and authorized tools.
+- If a tool call, file operation, or shell command is denied or restricted by permissions or \
+sandbox rules, you MUST NOT attempt workarounds (such as writing script files, compiling \
+binaries, using base64/hex encoding, or exploiting sub-shells) to access or write outside \
+allowed directories.
+- Deny restricted requests immediately, explain the policy clearly to the user, and ask for \
+permission or alternative instructions within allowed paths."""
+
+
+
 
 def _enabled_connector_tools(secrets: SecretStore) -> tuple[set[str], set[str]]:
     connectors = {c["name"]: c for c in connector_list(secrets)}
@@ -340,7 +352,10 @@ def build_engine(
     if wake_store is not None and session_id and agent.scheduling:
         registry.register_all(selfwake_tools(wake_store, session_id))
 
-    instructions = f"{agent.system_prompt}\n\n{_NARRATION_GUIDANCE}"
+    instructions = (
+        f"{agent.system_prompt}\n\n{_NARRATION_GUIDANCE}\n\n{_WORKAROUND_SAFETY_GUIDANCE}"
+    )
+
     if ws is not None:
         instructions = f"{instructions}\n\n{environment_context(ws)}"
         conventions = load_agents_md(ws)
