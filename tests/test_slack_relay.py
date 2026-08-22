@@ -223,6 +223,18 @@ async def test_relay_ignores_own_bot_echo():
     assert events == []
 
 
+async def test_wait_dispatched_timeout_preserves_exception_chain():
+    """A timed-out wait must chain the original asyncio.TimeoutError, not swallow it."""
+    adapter = _adapter([], close_after=False)  # no frames ever arrive
+    await adapter.connect()
+    try:
+        with pytest.raises(TimeoutError) as excinfo:
+            await adapter.wait_dispatched(1, timeout=0.05)
+        assert isinstance(excinfo.value.__cause__, asyncio.TimeoutError)
+    finally:
+        await adapter.disconnect()
+
+
 # --- reconnect --------------------------------------------------------------
 
 
