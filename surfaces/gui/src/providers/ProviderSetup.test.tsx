@@ -43,7 +43,7 @@ function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): Provid
   return {
     providers: [BEDROCK],
     ordered: [BEDROCK],
-    refreshProviders: async () => {},
+    refreshProviders: async () => [],
     sel: "bedrock",
     info: BEDROCK,
     fields,

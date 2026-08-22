@@ -8,6 +8,7 @@ import {
   type ProviderInfo,
 } from "../api";
 import { openExternal } from "../tauri";
+import { OllamaEndpoints } from "./OllamaEndpoints";
 import { PROVIDER_LOGOS, providerRank } from "./logos";
 
 // The provider gallery ⇄ key form, shared by Onboarding step 1 (§39) and
@@ -70,7 +71,7 @@ export function relTime(epoch?: number | null): string | null {
 export interface ProviderSetupState {
   providers: ProviderInfo[];
   ordered: ProviderInfo[];
-  refreshProviders: () => Promise<void>;
+  refreshProviders: () => Promise<ProviderInfo[]>;
   sel: string | null;
   info: ProviderInfo | undefined;
   fields: Record<string, string>;
@@ -114,11 +115,15 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   const [fieldSaved, setFieldSaved] = useState<string | null>(null);
   const fieldSavedTimer = useRef<number | null>(null);
 
-  const refreshProviders = () =>
-    getProviders()
-      .then(setProviders)
-      .catch(() => {});
-  useEffect(() => {
+  const refreshProviders = async () => {
+    try {
+      const list = await getProviders();
+      setProviders(list);
+      return list;
+    } catch {
+      return [] as ProviderInfo[];
+    }
+  };  useEffect(() => {
     refreshProviders();
     return () => {
       if (backTimer.current) window.clearTimeout(backTimer.current);
@@ -405,12 +410,29 @@ export function ProviderForm({
       </div>
       {info?.blurb && <p className="text-[11.5px] text-faint mt-1">{info.blurb}</p>}
 
+      {sel === "ollama" && info && (
+        <OllamaEndpoints
+          info={info}
+          tp={tp}
+          detecting={ps.verify.state === "testing"}
+          detected={ps.savedState}
+          onDetect={() => void ps.runTestAndSave()}
+          onChanged={async () => {
+            const list = await ps.refreshProviders();
+            const latest = list.find((p) => p.name === "ollama");
+            const url = latest?.values?.base_url || "";
+            if (url) ps.setFieldValue("base_url", url);
+          }}
+        />
+      )}
+
       {fieldsAll
         .filter(
           (f) =>
             !f.show_when &&
             !(f.choices && f.choices.length) &&
-            !(f.key === "base_url" && keyed),
+            !(f.key === "base_url" && keyed) &&
+            !(sel === "ollama" && f.key === "base_url"),
         )
         .map((f) => fieldRow(f, !choice && f.key === testKey))}
 

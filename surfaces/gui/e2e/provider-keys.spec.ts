@@ -53,21 +53,30 @@ test("a configured provider's form opens with the saved state, no plaintext key"
   await expect(page.getByTestId("set-field-api_key")).toHaveAttribute("placeholder", "••••••••");
 });
 
-test("non-secret fields blur-save on a configured provider (ollama endpoint)", async ({
-  page,
-}) => {
-  // Owner-hit 2026-07-23 (as the thinking-budget field, since folded into a default):
-  // the Test button was the form's only save path — typing into a non-secret field and
-  // leaving Settings silently discarded it. Blur now saves.
+test("ollama endpoints: add, select, and persist a local URL", async ({ page }) => {
+  // Multi-endpoint manager replaces the single base_url blur-save field. Adding an
+  // endpoint selects it and mirrors the URL onto the legacy base_url for the client.
   await openModels(page);
   await page.getByTestId("set-provider-ollama").click();
-  const endpoint = page.getByTestId("set-field-base_url");
-  await endpoint.fill("http://127.0.0.1:9999");
-  await endpoint.blur();
-  await expect(page.getByTestId("set-field-saved-base_url")).toBeVisible();
+  await expect(page.getByTestId("set-ollama-endpoints")).toBeVisible();
 
-  // Leave and come back: the value survived (served from the provider's stored values).
+  // Fresh install may already show the add form (no endpoints yet).
+  const addBtn = page.getByTestId("set-ollama-add");
+  if (await addBtn.isVisible()) {
+    await addBtn.click();
+  }
+  await page.getByTestId("set-ollama-add-label").fill("Workstation");
+  await page.getByTestId("set-ollama-add-url").fill("http://127.0.0.1:9999");
+  await page.getByTestId("set-ollama-add-save").click();
+
+  await expect(page.getByTestId("set-ollama-selected-badge")).toBeVisible();
+  await expect(page.getByText("Workstation")).toBeVisible();
+  await expect(page.getByText("http://127.0.0.1:9999")).toBeVisible();
+
+  // Leave and come back: endpoints survived.
   await page.getByTestId("set-back").click();
   await page.getByTestId("set-provider-ollama").click();
-  await expect(page.getByTestId("set-field-base_url")).toHaveValue("http://127.0.0.1:9999");
+  await expect(page.getByText("Workstation")).toBeVisible();
+  await expect(page.getByText("http://127.0.0.1:9999")).toBeVisible();
+  await expect(page.getByTestId("set-ollama-selected-badge")).toBeVisible();
 });
