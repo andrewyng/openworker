@@ -130,14 +130,14 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "github",
         "github_clone",
         "Clone a repo",
-        "read",
+        "write",
         "Clone a repository into a session folder to explore the code.",
     ),
     ConnectorToolDef(
         "github",
         "github_pull",
         "Update a clone",
-        "read",
+        "write",
         "Fast-forward an existing clone to the latest commits.",
     ),
     ConnectorToolDef(

@@ -36,6 +36,10 @@ def test_integration_tools_reads_are_free_writes_gate(tmp_path):
     assert (
         tools["github_create_issue"].__aisuite_tool_metadata__.requires_approval is True
     )
+    # github_clone and github_pull write to disk (clone creates a directory, pull
+    # fast-forwards an existing repo), so they must gate despite being GitHub tools.
+    assert tools["github_clone"].__aisuite_tool_metadata__.requires_approval is True
+    assert tools["github_pull"].__aisuite_tool_metadata__.requires_approval is True
 
 
 def test_browser_automation_reads_are_free_interactions_gate():
