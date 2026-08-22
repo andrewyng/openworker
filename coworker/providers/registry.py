@@ -129,15 +129,21 @@ def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # deferred to first call so the provider can be built before a key exists.
     # thinking_budget: hidden profile override — absent/invalid → the default (ON),
     # explicit 0 → off (see DEFAULT_THINKING_BUDGET).
+    # base_url (optional): points the same Anthropic SDK at any Anthropic-protocol gateway
+    # (e.g. a third-party Claude/MiniMax endpoint). None → stock api.anthropic.com.
     from .anthropic_provider import DEFAULT_THINKING_BUDGET
 
     api_key = ((profile or {}).get("api_key") or "").strip() or None
+    base_url = ((profile or {}).get("base_url") or "").strip() or None
     try:
         thinking_budget = int(str((profile or {}).get("thinking_budget") or "").strip())
     except ValueError:
         thinking_budget = DEFAULT_THINKING_BUDGET
     return AnthropicProvider(
-        api_key=api_key, secrets=secrets, thinking_budget=thinking_budget
+        api_key=api_key,
+        base_url=base_url,
+        secrets=secrets,
+        thinking_budget=thinking_budget,
     )
 
 
@@ -357,6 +363,14 @@ DESCRIPTORS: list[ProviderDescriptor] = [
                 "Anthropic API key",
                 secret=True,
                 placeholder="sk-ant-…",
+            ),
+            ProviderField(
+                "base_url",
+                "Endpoint (optional)",
+                secret=False,
+                required=False,
+                placeholder="https://api.anthropic.com",
+                help="Leave blank for api.anthropic.com, or point at any Anthropic-protocol-compatible gateway (e.g. a third-party Claude/MiniMax endpoint).",
             ),
             # No thinking_budget field (owner call 2026-07-23): extended thinking is
             # on by default; the profile key stays a hidden override (0 = off).
@@ -914,8 +928,13 @@ def verify_provider_key(
         return _verify_vertex(fields or {}, timeout)
     try:
         if name == "anthropic":
+            # Honor a custom `base_url` so Settings → Test can probe third-party
+            # Anthropic-protocol gateways (e.g. a MiniMax-Claude endpoint). Strip a
+            # trailing slash and rely on the SDK's /v1 path default; fall back to
+            # stock api.anthropic.com when no override is set.
+            base = ((base_url or "").strip().rstrip("/") or "https://api.anthropic.com")
             resp = httpx.get(
-                "https://api.anthropic.com/v1/models",
+                base + "/v1/models",
                 headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
                 timeout=timeout,
             )
