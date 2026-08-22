@@ -176,10 +176,20 @@ MATRIX: dict[str, ModelEntry] = {
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
     # Converse) plus AWS's own `-v<n>:<m>` version suffix. Some regions require the
     # `us.`/`eu.` cross-region inference-profile prefix — custom add-model accepts those.
-    "bedrock:claude/anthropic.claude-sonnet-4-6-v1:0": ModelEntry(
+    # Claude 5 generation (GA on Bedrock; ids from vendor catalog 2026-08-01):
+    "bedrock:claude/us.anthropic.claude-fable-5": ModelEntry(
+        "Claude Fable 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
+    ),
+    "bedrock:claude/us.anthropic.claude-opus-5": ModelEntry(
+        "Claude Opus 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
+    ),
+    "bedrock:claude/us.anthropic.claude-sonnet-5": ModelEntry(
+        "Claude Sonnet 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
+    ),
+    "bedrock:claude/us.anthropic.claude-sonnet-4-6": ModelEntry(
         "Claude Sonnet 4.6 · AWS Bedrock", _AGENTIC_VISION, 200_000
     ),
-    "bedrock:claude/anthropic.claude-haiku-4-5-v1:0": ModelEntry(
+    "bedrock:claude/us.anthropic.claude-haiku-4-5-20251001-v1:0": ModelEntry(
         "Claude Haiku 4.5 · AWS Bedrock", _AGENTIC_VISION, 200_000
     ),
     "bedrock:other/amazon.nova-2-pro-v1:0": ModelEntry(
