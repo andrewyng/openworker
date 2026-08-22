@@ -1,7 +1,7 @@
 """Tests for web search — provider abstraction, the tool, and config resolution.
 
 No network: a FakeProvider is injected; third-party key handling and the REST config path
-are exercised without hitting DuckDuckGo/Tavily/Brave.
+are exercised without hitting DuckDuckGo/Tavily/Brave/Firecrawl.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from coworker.web import (
 from coworker.web.providers import (
     BraveProvider,
     DuckDuckGoProvider,
+    FirecrawlProvider,
     TavilyProvider,
     WebSearchProvider,
 )
@@ -79,6 +80,42 @@ def test_build_provider_third_party_requires_key():
         build_provider("tavily")  # no key
     assert isinstance(build_provider("tavily", "tvly-x"), TavilyProvider)
     assert isinstance(build_provider("brave", "brv-x"), BraveProvider)
+    with pytest.raises(ValueError):
+        build_provider("firecrawl")  # no key
+    assert isinstance(build_provider("firecrawl", "fc-x"), FirecrawlProvider)
+
+
+def test_firecrawl_maps_v2_search_response(monkeypatch):
+    import httpx
+
+    captured = {}
+
+    class _Resp:
+        def json(self):
+            return {
+                "success": True,
+                "data": {
+                    "web": [
+                        {"title": "t0", "url": "https://x/0", "description": "d0"},
+                        {"title": "t1", "url": "https://x/1", "description": "d1"},
+                    ]
+                },
+            }
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured.update(url=url, headers=headers, json=json)
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    results = FirecrawlProvider("fc-key").search("claude api", max_results=2)
+
+    assert captured["url"] == "https://api.firecrawl.dev/v2/search"
+    assert captured["headers"]["Authorization"] == "Bearer fc-key"
+    assert captured["json"] == {"query": "claude api", "limit": 2}
+    assert [(r.title, r.url, r.snippet) for r in results] == [
+        ("t0", "https://x/0", "d0"),
+        ("t1", "https://x/1", "d1"),
+    ]
 
 
 def test_tool_surfaces_missing_key_error(tmp_path):
