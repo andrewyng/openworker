@@ -3116,6 +3116,13 @@ class SessionManager:
             return self._provider_configured(provider)
 
         selectable = [m for m in self._curated_models() if _selectable(m)]
+        # Ollama has no curated matrix — its models are whatever the user has pulled locally.
+        # Surface that live `/api/tags` list directly (gated by the cached liveness probe), else
+        # a connected Ollama's models never appear in the picker and can't be selected or run.
+        if self._ollama_alive():
+            for m in self._ollama_models():
+                if m not in selectable:
+                    selectable.append(m)
         if self.model not in selectable:
             selectable.insert(0, self.model)
         from ..providers.matrix import model_context_windows, model_labels
