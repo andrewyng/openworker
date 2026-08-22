@@ -13,7 +13,7 @@ import pytest
 
 from coworker.tools.files import file_tools
 from coworker.tools.git import git_tools
-from coworker.tools.search import _py_grep, search_tools
+from coworker.tools.search import _parse_rg, _py_grep, search_tools
 from coworker.web.fetch import _html_to_text, make_web_fetch_tool
 
 
@@ -59,6 +59,23 @@ def test_ripgrep_uses_the_same_ignored_dirs_as_the_python_fallback(tmp_path, mon
     user_glob = commands[0].index("*.py")
     for ignored in search._IGNORE_DIRS:
         assert commands[0].index(f"!**/{ignored}/**") > user_glob
+
+
+def test_parse_rg_handles_windows_drive_letter_and_colons_in_text():
+    # ripgrep prints absolute paths; on Windows they begin with a drive letter
+    # ("C:\\..."), whose colon must not be mistaken for the path:line:text
+    # separator. The matched text can also contain colons. Hardcode a Windows
+    # line so this guards the parser on every platform, not just Windows CI.
+    from pathlib import Path
+
+    stdout = "C:\\Users\\me\\ws\\a.py:12:x = {'k': 'v'}\n"
+    out = _parse_rg(stdout, Path("C:\\Users\\me\\ws"), 100)
+
+    assert out["count"] == 1
+    m = out["matches"][0]
+    assert m["line"] == 12  # was 0 with the old split(":", 2)
+    assert m["text"] == "x = {'k': 'v'}"  # line number not leaked, colons kept
+    assert m["file"] != "C"  # the drive letter is not the filename
 
 
 def test_grep_rejects_path_escape(tmp_path):
