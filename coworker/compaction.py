@@ -40,21 +40,54 @@ _SPAN_BUDGET_CHARS = 400_000
 _USER_MESSAGE_CLIP = 600
 _USER_MESSAGES_MAX = 40
 _TRIM_FRACTION = 0.10
+# Flat token estimates for non-text content parts, whose base64 length is unrelated to what
+# the provider bills. Order-of-magnitude figures for a full-resolution image / a short PDF —
+# the point is not to be exact but to stop a data URL from dominating the whole signal.
+_IMAGE_PART_TOKENS = 1_500
+_FILE_PART_TOKENS = 3_000
 
 
 # -- token math ---------------------------------------------------------------
 
 
+def _serialized_len(value: Any) -> int:
+    try:
+        return len(json.dumps(value, default=str))
+    except (TypeError, ValueError):
+        return len(str(value))
+
+
+def _message_chars(msg: Any) -> int:
+    """Serialized size of one message, with attachment parts charged at their real
+    token cost rather than their base64 length.
+
+    Images and PDFs ride in `content` as `data:` URLs (attachments.py caps them at 12 M
+    and 15 M characters). chars/4 reads a 1.5 MB screenshot as ~375 k tokens when a vision
+    model charges it closer to 1.5 k — enough, on its own, to sit permanently above
+    `cap_tokens` and re-trigger compaction on every iteration of the turn loop.
+    """
+    if not isinstance(msg, dict):
+        return _serialized_len(msg)
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return _serialized_len(msg)
+    chars = _serialized_len({k: v for k, v in msg.items() if k != "content"})
+    for part in content:
+        kind = part.get("type") if isinstance(part, dict) else None
+        if kind == "image_url":
+            chars += _IMAGE_PART_TOKENS * 4
+        elif kind == "file":
+            chars += _FILE_PART_TOKENS * 4
+        else:
+            chars += _serialized_len(part)
+    return chars
+
+
 def estimate_tokens(messages: list[dict[str, Any]]) -> int:
     """chars/4 over the serialized messages — the fallback signal for providers that
-    never report usage (documented in the metering code)."""
-    total = 0
-    for msg in messages:
-        try:
-            total += len(json.dumps(msg, default=str))
-        except (TypeError, ValueError):
-            total += len(str(msg))
-    return total // 4
+    never report usage (documented in the metering code). Attachment parts are charged a
+    flat per-part estimate; see `_message_chars`."""
+    return sum(_message_chars(msg) for msg in messages) // 4
 
 
 def trigger_tokens(
@@ -152,9 +185,17 @@ def pick_boundary(messages: list[dict[str, Any]], *, keep_tokens: int) -> Option
     start = 1 if messages and messages[0].get("role") == "system" else 0
     users, assistants = _turn_starts(messages, start=start)
 
+    # suffix[i] = serialized chars of messages[i:], built in one backward pass. Measuring
+    # each candidate with `estimate_tokens(messages[i:])` instead re-serializes the whole
+    # tail per candidate — O(n²), and ~1 s of blocking CPU on a 1 200-message session,
+    # paid on the turn loop every time the trigger fires.
+    suffix = [0] * (len(messages) + 1)
+    for i in range(len(messages) - 1, -1, -1):
+        suffix[i] = suffix[i + 1] + _message_chars(messages[i])
+
     def _fit(candidates: list[int]) -> Optional[int]:
         for i in candidates:  # earliest-first: keep as much verbatim as fits
-            if estimate_tokens(messages[i:]) <= keep_tokens:
+            if suffix[i] // 4 <= keep_tokens:
                 return i
         return None
 
@@ -167,7 +208,10 @@ def pick_boundary(messages: list[dict[str, Any]], *, keep_tokens: int) -> Option
         if boundary is None:
             boundary = inside[-1] if inside else users[-1]
     if boundary is None:
-        boundary = _fit(assistants) or (assistants[-1] if assistants else None)
+        fitted = _fit(assistants)
+        # `or` here would discard a legitimate index 0 (a history with no system message
+        # that opens on an assistant turn); it is filtered by the `<= start` check below.
+        boundary = fitted if fitted is not None else (assistants[-1] if assistants else None)
     # A boundary at (or before) the first real message summarizes nothing — skip.
     if boundary is None or boundary <= start:
         return None
