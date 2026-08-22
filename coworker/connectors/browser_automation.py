@@ -20,6 +20,62 @@ import aisuite as ai
 from ..web.guard import check_url
 
 
+def readiness() -> dict[str, Any]:
+    """Can computer use actually run right now?
+
+    The browser connector declares `auth: "none"`, and `_profile_connected` reports every
+    such connector as connected — so the session rail advertised "Browser" on a machine where
+    Playwright was never installed and the first tool call would have returned a setup error.
+    A capability the UI shows as live has to be one that runs, so the rail asks this instead of
+    inferring from the connector list.
+
+    Cheap by construction: an import check and a look at the browser cache. No process is
+    launched — starting Chromium to answer "is Chromium installed" would make opening a rail
+    section cost a browser launch.
+    """
+    import importlib.util
+    import os
+
+    spec = importlib.util.find_spec("playwright")
+    if spec is None:
+        return {
+            "ready": False,
+            "playwright": False,
+            "browsers": False,
+            "detail": "Playwright is not installed, so browser tools would fail on first use.",
+            "fix": [
+                "pip install playwright",
+                "python -m playwright install chromium",
+            ],
+        }
+
+    # Playwright keeps downloaded browsers in a per-user cache; an env var can move it.
+    override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    candidates = (
+        [Path(override)]
+        if override and override != "0"
+        else [
+            Path.home() / ".cache/ms-playwright",  # Linux
+            Path.home() / "Library/Caches/ms-playwright",  # macOS
+            Path.home() / "AppData/Local/ms-playwright",  # Windows
+        ]
+    )
+    chromium = any(
+        c.is_dir() and any(c.glob("chromium*")) for c in candidates
+    )
+    return {
+        "ready": bool(chromium),
+        "playwright": True,
+        "browsers": bool(chromium),
+        "detail": (
+            "Ready — agents can open pages, read them, and act with approval."
+            if chromium
+            else "Playwright is installed but no Chromium build is downloaded yet."
+        ),
+        "fix": [] if chromium else ["python -m playwright install chromium"],
+    }
+
+
 def _meta(
     name: str, *, approval: bool = False, capabilities: Optional[list[str]] = None
 ):

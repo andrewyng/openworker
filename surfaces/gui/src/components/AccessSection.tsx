@@ -25,6 +25,8 @@ import {
   type RecentChannel,
   type SessionConnections,
   type Subscription,
+  getComputerUse,
+  type ComputerUse,
 } from "../api";
 import { ConnectorBadge } from "../connectors/ConnectorIcon";
 import { indexConnectors, labelFor, visualFor, type ConnectorMap } from "../connectors/visuals";
@@ -107,6 +109,17 @@ export function AccessSection({
     setOpen(true);
     setTimeout(() => rootEl.current?.scrollIntoView({ block: "nearest" }), 30);
   }, [openKey]);
+
+  // Computer use: what the session can do BEYOND reading sources — drive a browser. Fetched
+  // when the section opens rather than on mount, since the section is collapsed most of the time.
+  const [computer, setComputer] = useState<ComputerUse | null>(null);
+  useEffect(() => {
+    if (computer) return;
+    // On mount, not on open: the collapsed header is the always-visible glance, and it must
+    // not name a capability that cannot run. The probe is an import check and a directory
+    // glob — no browser is launched to answer it.
+    getComputerUse().then(setComputer).catch(() => setComputer(null));
+  }, [computer]);
 
   // Child views (connect-in-context / channels drill-down) replace the section body inline.
   const [channelsFor, setChannelsFor] = useState<string | null>(null);
@@ -208,8 +221,18 @@ export function AccessSection({
     )
     .sort((a, b) => a.title.localeCompare(b.title));
 
+  // Browser is a capability the session drives, not a source it reads: it renders in Computer
+  // use (with its readiness and its per-session mute) and is kept out of Sources so the two
+  // groups cannot state different things about it.
+  const browserSource = connected.find((c) => c.connector === "browser");
+  const sources = connected.filter((c) => c.connector !== "browser");
+
   // The header summary — the §23 glance, permanent: live source names + the folder fact.
-  const names = live.map((c) => labelFor(c.connector, byName));
+  // Browser is named in the glance only when it would actually work. Advertising a capability
+  // that errors on first use is the thing this section exists to stop doing.
+  const names = live
+    .filter((c) => c.connector !== "browser" || computer?.ready)
+    .map((c) => labelFor(c.connector, byName));
   const sourcesPart =
     names.length === 0
       ? "no sources"
@@ -280,16 +303,76 @@ export function AccessSection({
             />
           ) : (
             <div className="space-y-4">
+              {/* Computer use — what this session can DO, not just read. The browser connector
+                  reports itself connected whether or not Playwright is installed (auth:"none"),
+                  so this group asks the runtime instead of the connector list: a capability
+                  shown as live has to be one that runs. */}
+              {computer && (
+                <div data-testid="computer-use">
+                  <div className={`${SEC_H} mb-1.5`}>Computer use</div>
+                  <div className="flex items-start gap-2 py-1">
+                    <span className="shrink-0 mt-0.5 text-faint">
+                      <Icon name="search" size={16} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[12.5px] font-medium leading-tight">
+                        Browser automation
+                        <span className={computer.ready ? "text-ok font-normal" : "text-warnInk font-normal"}>
+                          {computer.ready ? " · ready" : " · needs setup"}
+                        </span>
+                      </div>
+                      <div className="text-[11.5px] text-faint leading-relaxed">{computer.detail}</div>
+                      {browserSource && (
+                        <div className="mt-1">
+                          <Toggle
+                            checked={browserSource.enabled}
+                            onChange={(next) => toggleSession(browserSource.connector, next)}
+                            title="Enabled for this session — tap to mute here"
+                          />
+                        </div>
+                      )}
+                      {browserSource && (
+                        <p className="text-[10.5px] text-faint mt-1 leading-snug">
+                          Off mutes it for <b>this session only</b> — the connector stays connected.
+                        </p>
+                      )}
+                      {computer.fix.length > 0 && (
+                        <div className="mt-1 space-y-0.5">
+                          {computer.fix.map((cmd) => (
+                            <code
+                              key={cmd}
+                              className="block text-[11px] font-mono bg-paper border border-line rounded px-1.5 py-0.5 cursor-pointer hover:border-lineStrong"
+                              title="Copy"
+                              onClick={() => void navigator.clipboard?.writeText(cmd)}
+                            >
+                              {cmd}
+                            </code>
+                          ))}
+                          <button
+                            className="text-[11.5px] text-accent hover:underline"
+                            onClick={() => {
+                              setComputer(null); // refetch after you have run the commands
+                            }}
+                          >
+                            Re-check
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Sources — each toggle is a per-session override (mute for THIS session only). */}
               <div>
                 <div className={`${SEC_H} mb-1.5`}>Sources</div>
-                {connected.length === 0 && (
+                {sources.length === 0 && (
                   <div className="text-[12px] text-faint py-0.5">
                     No connectors enabled for this session.
                   </div>
                 )}
                 <div className="space-y-1">
-                  {connected.map((c) => (
+                  {sources.map((c) => (
                     <div className="flex items-center gap-2 py-1" key={c.connector}>
                       <ConnectorBadge connector={visualFor(c.connector, "connector", byName)} size={24} />
                       <div className="min-w-0 flex-1">
@@ -318,7 +401,7 @@ export function AccessSection({
                     </div>
                   ))}
                 </div>
-                {connected.length > 0 && (
+                {sources.length > 0 && (
                   <p className="text-[10.5px] text-faint mt-1 leading-snug">
                     Off mutes it for <b>this session only</b> — the connector stays connected.
                   </p>

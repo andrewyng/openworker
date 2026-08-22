@@ -1464,6 +1464,17 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // automations: one scheduled task with a running run (drives the Automations detail page
     // and the run-session banner + Back-to-runs flow). Mutable: Run now appends a run and opens
     // its live session; the enable toggle (PATCH) and delete (DELETE) round-trip through the UI.
+    if (p.endsWith("/v1/computer-use")) {
+      // Not ready by default: the interesting state is the one the rail used to get wrong —
+      // a browser connector reporting "connected" with no Playwright behind it.
+      return json({
+        ready: false,
+        playwright: false,
+        browsers: false,
+        detail: "Playwright is not installed, so browser tools would fail on first use.",
+        fix: ["pip install playwright", "python -m playwright install chromium"],
+      });
+    }
     if (p.endsWith("/v1/automations/suggestions")) {
       // Server-derived suggestions (coworker/automation/suggestions.py). Anything already
       // scheduled is filtered server-side, so accepting one must remove it from this list.

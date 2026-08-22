@@ -51,6 +51,11 @@ interface Props {
   // section (the former Session-settings drawer) renders for all.
   showArtifacts?: boolean;
   personaId?: string;
+  // The persona's family shapes the Progress panel: a code persona's work is reads/edits/
+  // commands, a knowledge persona's is pages/searches/deliverables. Counting the same way for
+  // both made the panel a generic "3 tool calls" that said nothing about the work.
+  personaFamily?: string;
+  personaName?: string;
   projectScoped?: boolean;
   workspace?: string;
   branch?: string | null;
@@ -69,6 +74,8 @@ export function RightRail({
   onPreviewChange,
   showArtifacts = true,
   personaId,
+  personaFamily,
+  personaName,
   projectScoped,
   workspace,
   branch,
@@ -172,7 +179,13 @@ export function RightRail({
       ) : (
         <>
           <RailSection title="Progress" open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
-            <ProgressSummary running={running} toolNames={toolNames} todo={todo} />
+            <ProgressSummary
+              running={running}
+              toolNames={toolNames}
+              todo={todo}
+              family={personaFamily}
+              personaName={personaName}
+            />
           </RailSection>
 
           {showArtifacts && (
@@ -235,7 +248,88 @@ export function RightRail({
   );
 }
 
-function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolNames: string[]; todo: TodoItem[] }) {
+// What a session has actually DONE so far, counted in the vocabulary of the persona doing it.
+// A code persona's work is reads, edits and commands; a research persona's is pages opened and
+// searches run; every persona's is what it recalled and recorded. Counting them all as "N tool
+// calls" was true and useless — it never told you whether the run was reading, writing, or stuck.
+type Bucket = { key: string; label: (n: number) => string; tools: string[] };
+
+const BUCKETS: Record<string, Bucket> = {
+  edited: {
+    key: "edited",
+    label: (n) => `${n} file${n === 1 ? "" : "s"} edited`,
+    tools: ["write_file", "apply_patch", "apply_unified_diff", "replace_in_file", "create_file", "edit_file"],
+  },
+  read: {
+    key: "read",
+    label: (n) => `${n} file${n === 1 ? "" : "s"} read`,
+    tools: ["read_file", "read_file_lines", "list_files"],
+  },
+  searched: { key: "searched", label: (n) => `${n} search${n === 1 ? "" : "es"}`, tools: ["grep", "search_files"] },
+  commands: { key: "commands", label: (n) => `${n} command${n === 1 ? "" : "s"}`, tools: ["run_shell", "shell_task_output", "shell_task_kill"] },
+  git: { key: "git", label: (n) => `${n} git check${n === 1 ? "" : "s"}`, tools: ["git_status", "git_diff", "git_log"] },
+  pages: { key: "pages", label: (n) => `${n} page${n === 1 ? "" : "s"} opened`, tools: ["web_fetch"] },
+  web: { key: "web", label: (n) => `${n} web search${n === 1 ? "" : "es"}`, tools: ["web_search"] },
+  recalled: { key: "recalled", label: (n) => `${n} recall${n === 1 ? "" : "s"}`, tools: ["brain_recall"] },
+  noted: { key: "noted", label: (n) => `${n} note${n === 1 ? "" : "s"} to memory`, tools: ["brain_note"] },
+  asked: { key: "asked", label: (n) => `${n} question${n === 1 ? "" : "s"} to you`, tools: ["ask_user"] },
+};
+
+// Order matters: the first bucket is the headline, so each family leads with the thing that
+// means "the work is happening" for it — edits for code, pages read for research.
+const FAMILY_ORDER: Record<string, string[]> = {
+  code: ["edited", "read", "commands", "searched", "git", "recalled", "noted", "asked"],
+  knowledge: ["pages", "web", "edited", "read", "searched", "commands", "recalled", "noted", "asked"],
+};
+
+function countBuckets(toolNames: string[], family?: string): { key: string; text: string }[] {
+  const counts: Record<string, number> = {};
+  let mcp = 0;
+  for (const name of toolNames) {
+    if (name.startsWith("mcp__")) {
+      mcp += 1;
+      continue;
+    }
+    for (const b of Object.values(BUCKETS)) {
+      if (b.tools.includes(name)) counts[b.key] = (counts[b.key] || 0) + 1;
+    }
+  }
+  const order = FAMILY_ORDER[family || "knowledge"] || FAMILY_ORDER.knowledge;
+  const out = order
+    .filter((k) => counts[k])
+    .map((k) => ({ key: k, text: BUCKETS[k].label(counts[k]) }));
+  // MCP calls are a persona's declared servers doing work; they belong in the count even
+  // though no static bucket can name them.
+  if (mcp) out.push({ key: "mcp", text: `${mcp} MCP call${mcp === 1 ? "" : "s"}` });
+  return out;
+}
+
+function ProgressSummary({
+  running,
+  toolNames,
+  todo,
+  family,
+  personaName,
+}: {
+  running: boolean;
+  toolNames: string[];
+  todo: TodoItem[];
+  family?: string;
+  personaName?: string;
+}) {
+  const activity = countBuckets(toolNames, family);
+  const done = todo.filter((t) => t.status === "done").length;
+
+  const activityLine = activity.length > 0 && (
+    <div className="rail-activity" data-testid="rail-activity">
+      {activity.map((a) => (
+        <span className="rail-activity-item" key={a.key}>
+          {a.text}
+        </span>
+      ))}
+    </div>
+  );
+
   if (todo.length) {
     return (
       <div className="rail-todo-list">
@@ -245,24 +339,36 @@ function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolN
             <span>{item.content}</span>
           </div>
         ))}
-        {running && (
-          <div className="rail-muted">
-            {toolNames.length ? `${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"} so far.` : "Working..."}
-          </div>
-        )}
+        <div className="rail-muted">
+          {done}/{todo.length} done
+          {running ? " · working" : ""}
+        </div>
+        {activityLine}
       </div>
     );
   }
   if (running) {
     return (
-      <div className="rail-muted">
-        Working on this task{toolNames.length ? ` with ${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"} so far.` : "."}
+      <div>
+        <div className="rail-muted">Working on this task.</div>
+        {activityLine}
+      </div>
+    );
+  }
+  if (activity.length) {
+    // Finished, no todo list: the activity IS the record of what the turn did.
+    return (
+      <div>
+        <div className="rail-muted">Last turn:</div>
+        {activityLine}
       </div>
     );
   }
   return (
     <div className="rail-muted">
-      For longer multi-step tasks, progress will appear here while OpenWorker plans, uses tools, waits for approval, and produces artifacts.
+      {personaName
+        ? `${personaName}'s progress appears here — the plan it is working through, and what it has read, changed or produced.`
+        : "For longer multi-step tasks, progress will appear here while OpenWorker plans, uses tools, waits for approval, and produces artifacts."}
     </div>
   );
 }

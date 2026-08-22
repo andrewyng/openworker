@@ -1531,6 +1531,13 @@ def create_app(manager: SessionManager) -> FastAPI:
     def automations_list() -> dict[str, Any]:
         return manager.list_automations()
 
+    @app.get("/v1/computer-use")
+    def computer_use() -> dict[str, Any]:
+        """Whether browser automation can actually run — see browser_automation.readiness()."""
+        from ..connectors.browser_automation import readiness
+
+        return readiness()
+
     @app.get("/v1/automations/suggestions")
     def automations_suggestions() -> dict[str, Any]:
         # Declared BEFORE /v1/automations/{task_id}: Starlette matches in order, so the

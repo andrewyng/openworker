@@ -1665,6 +1665,31 @@ export interface Automation {
 // A suggestion the server derived from THIS machine's activity (see
 // coworker/automation/suggestions.py). `reason` is the evidence — the numbers that make it a
 // suggestion rather than a template — and is the whole point of showing it.
+// Whether browser automation can actually run. The browser connector declares auth:"none", so
+// the connector list reports it connected on a machine where Playwright was never installed —
+// this is the probe that tells the rail the truth (see connectors/browser_automation.py).
+export interface ComputerUse {
+  ready: boolean;
+  playwright: boolean;
+  browsers: boolean;
+  detail: string;
+  fix: string[];
+}
+
+export async function getComputerUse(): Promise<ComputerUse | null> {
+  try {
+    const res = await fetch(`${httpBase()}/v1/computer-use`);
+    if (!res.ok) return null;
+    const body = await res.json();
+    // Shape-check rather than trust: a sidecar without this route can answer 200 `{}`, and a
+    // truthy object with no fields renders as a capability whose `fix` list is undefined.
+    if (!body || typeof body.ready !== "boolean") return null;
+    return { ...body, fix: Array.isArray(body.fix) ? body.fix : [] };
+  } catch {
+    return null; // no such route; the section simply omits the group
+  }
+}
+
 export interface AutomationSuggestion {
   key: string;
   title: string;

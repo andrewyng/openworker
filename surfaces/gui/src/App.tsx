@@ -870,9 +870,10 @@ export function App() {
   }, [items, streaming]);
 
   // Track produced-file count for the topbar "Artifacts" affordance (works even when the rail is
-  // hidden, where the rail itself doesn't fetch). Cowork only; refreshes on file writes/turn end.
+  // hidden, where the rail itself doesn't fetch). Every workspace-backed persona; refreshes on
+  // file writes/turn end.
   useEffect(() => {
-    if (agent !== "cowork" || surface !== "session") {
+    if (agent === "chat" || surface !== "session") {
       setArtifactCount(0);
       return;
     }
@@ -1492,7 +1493,7 @@ export function App() {
           {/* Right: session-settings icon (§23) + panel toggle. Model/mode/persona chrome is
               gone — the facts live in the subtitle, the controls in the composer (§22). */}
           <div className="main-topbar-side main-topbar-actions" onPointerDown={beginWindowDrag}>
-            {agent === "cowork" && railHidden && artifactCount > 0 && (
+            {agent !== "chat" && railHidden && artifactCount > 0 && (
               <button
                 className="topbar-artifacts-btn"
                 onMouseDown={(e) => e.stopPropagation()}
@@ -1694,8 +1695,12 @@ export function App() {
             todo={todo}
             running={running}
             onPreviewChange={onArtifactPreview}
-            showArtifacts={agent === "cowork"}
+            // Every persona that has a workspace produces files; the rail lists whatever the
+            // session actually wrote. Chat has no workspace, so it has nothing to list.
+            showArtifacts={agent !== "chat"}
             personaId={agent}
+            personaFamily={activePersona?.family}
+            personaName={personaLabel}
             projectScoped={isProjectScoped(personaOf(agent))}
             workspace={workspace || undefined}
             branch={branch}

@@ -3,7 +3,9 @@
 // the session can touch; expanding edits inline at rail width (no overlay, no dialog).
 // Fixture state: browser + slack + github connected/enabled (github is two_way WITHOUT
 // channels — relay mentions, no subscriptions), gmail recommended-not-connected, one
-// primary root → summary "Browser, Slack +1 · 1 folder".
+// primary root → summary "Slack, GitHub · 1 folder". Browser is connected in the fixture but
+// its runtime is not installed, so the glance leaves it out: naming a capability that errors on
+// first use is exactly what the Computer use group exists to stop (see rail-progress-access).
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
@@ -20,7 +22,7 @@ test("no topbar opener; the Access header IS the ambient glance; expanding edits
   // The trust surface is ambient: the collapsed header always shows the summary — and no
   // nudge text ever renders at rest (§23's rule carried over).
   const section = page.getByTestId("access-section");
-  await expect(section.getByTestId("access-summary")).toHaveText("Browser, Slack +1 · 1 folder");
+  await expect(section.getByTestId("access-summary")).toHaveText("Slack, GitHub · 1 folder");
   await expect(section.getByText(/recommended/i)).toHaveCount(0);
 
   // Expand → Sources (per-session toggles), Recommended (with its reason), Folders — all
@@ -92,5 +94,5 @@ test("per-session mute round-trips; the summary follows", async ({ page }) => {
   // Muting Slack for this session drops it from the live summary (the fixture flips
   // enabled on POST and the section reloads).
   await body.getByTitle("Enabled for this session — tap to mute here").nth(1).click();
-  await expect(section.getByTestId("access-summary")).toHaveText("Browser, GitHub · 1 folder");
+  await expect(section.getByTestId("access-summary")).toHaveText("GitHub · 1 folder");
 });
