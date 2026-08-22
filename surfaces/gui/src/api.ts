@@ -2258,7 +2258,13 @@ export class Session {
   constructor(sessionId: string, workspace: string, agent: string, handlers: Handlers) {
     const q = `?workspace=${encodeURIComponent(workspace)}&agent=${encodeURIComponent(agent)}`;
     this.ws = openWebSocket(`${wsBase()}/ws/session/${sessionId}${q}`);
-    this.ws.onmessage = (e) => handlers.onEvent(JSON.parse(e.data));
+    this.ws.onmessage = (e) => {
+      try {
+        handlers.onEvent(JSON.parse(e.data));
+      } catch {
+        /* malformed frame — ignore */
+      }
+    };
     this.ws.onopen = () => {
       this.flush();
       handlers.onOpen?.();
