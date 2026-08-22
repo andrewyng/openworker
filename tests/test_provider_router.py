@@ -567,3 +567,44 @@ def test_manager_key_hygiene_stamps(tmp_path, monkeypatch):
     mgr2 = SessionManager(data_dir=tmp_path)
     provs2 = {p["name"]: p for p in mgr2.get_providers()}
     assert provs2["deepseek"]["last_used_at"] == first
+
+
+def test_remove_provider_falls_back_to_another_usable_default(tmp_path, monkeypatch):
+    """Removing the provider backing the active default must not strand the composer on a
+    dead model id (issue #105: "impossible to change models" after disconnecting OpenAI
+    while Ollama was already usable). It should fall back to another already-selectable
+    model instead of leaving model_ready false with nothing else offered."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
+    mgr = SessionManager(data_dir=tmp_path)
+
+    mgr.set_provider("openai", {"api_key": "sk-x"})
+    mgr.add_model("ollama:llama3.3")  # as if the user had already pulled + connected it
+    assert mgr.model == "gpt-5.6-sol"  # openai was configured first, so it stayed default
+    before = mgr.get_settings()
+    assert before["model_ready"] is True
+    assert "ollama:llama3.3" in before["models"]
+
+    mgr.remove_provider("openai")
+    assert mgr.model == "ollama:llama3.3"  # fell back instead of staying pinned to a dead id
+    after = mgr.get_settings()
+    assert after["model"] == "ollama:llama3.3"
+    assert after["model_ready"] is True
+
+
+def test_remove_provider_with_no_fallback_leaves_honest_not_ready_state(tmp_path, monkeypatch):
+    """When nothing else is usable, removal must still succeed and just report the honest
+    'no model connected' state — no crash, no phantom fallback."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    mgr.set_provider("openai", {"api_key": "sk-x"})
+    assert mgr.get_settings()["model_ready"] is True
+
+    res = mgr.remove_provider("openai")
+    assert res["ok"] is True
+    assert mgr.model == "gpt-5.6-sol"  # nothing else configured — nowhere to fall back to
+    assert mgr.get_settings()["model_ready"] is False

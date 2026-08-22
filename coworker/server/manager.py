@@ -2917,7 +2917,31 @@ class SessionManager:
             return {"ok": False, "error": f"unknown provider: {name}"}
         self.secrets.delete(f"provider:{name}")
         self._refresh_provider(name)
+        # The removed provider was backing the active default: pinning `self.model` to a now-dead
+        # id left `model_ready` false and the composer stuck on "No model" even with another
+        # provider already usable (owner-hit #105). Fall back to whatever the picker already
+        # offers, same as it would show up if the user opened the dropdown themselves.
+        if self._model_provider(self.model) == name:
+            fallback = next(
+                (
+                    m
+                    for m in self._curated_models()
+                    if m != self.model and self._model_selectable(m)
+                ),
+                None,
+            )
+            if fallback:
+                self.set_default_model(fallback)
         return {"ok": True, "provider": name}
+
+    def _model_selectable(self, model: str) -> bool:
+        """Whether a model id is actually usable right now — its provider is configured
+        (or, for keyless Ollama, actually answering). Shared by `get_settings`'s picker
+        filter and `remove_provider`'s default-fallback search so both agree."""
+        provider = self._model_provider(model)
+        if provider == "ollama":
+            return self._ollama_alive()
+        return self._provider_configured(provider)
 
     def verify_provider(
         self, name: str, fields: Optional[dict[str, Any]]
@@ -3109,13 +3133,7 @@ class SessionManager:
         # (it's hidden behind the "No model" state until a provider is connected anyway).
         # Ollama is keyless, so "configured" is meaningless there — its models show only
         # while a local Ollama answers (cached liveness probe).
-        def _selectable(m: str) -> bool:
-            provider = self._model_provider(m)
-            if provider == "ollama":
-                return self._ollama_alive()
-            return self._provider_configured(provider)
-
-        selectable = [m for m in self._curated_models() if _selectable(m)]
+        selectable = [m for m in self._curated_models() if self._model_selectable(m)]
         if self.model not in selectable:
             selectable.insert(0, self.model)
         from ..providers.matrix import model_context_windows, model_labels
