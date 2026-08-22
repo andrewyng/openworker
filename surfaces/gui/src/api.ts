@@ -1662,6 +1662,28 @@ export interface Automation {
   always_allowed: { entry: string; tool: string; target: string | null }[];
 }
 
+// A suggestion the server derived from THIS machine's activity (see
+// coworker/automation/suggestions.py). `reason` is the evidence — the numbers that make it a
+// suggestion rather than a template — and is the whole point of showing it.
+export interface AutomationSuggestion {
+  key: string;
+  title: string;
+  blurb: string;
+  reason: string;
+  cadence: string;
+  cron: string;
+  agent: string;
+  instructions: string;
+  requires: string[];
+  score: number;
+}
+
+export async function getAutomationSuggestions(): Promise<AutomationSuggestion[]> {
+  const res = await fetch(`${httpBase()}/v1/automations/suggestions`);
+  if (!res.ok) return [];
+  return (await res.json()).suggestions || [];
+}
+
 export interface AutomationRun {
   run_id: string;
   task_id: string;

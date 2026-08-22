@@ -11,17 +11,25 @@ async function openAutomations(page) {
   await expect(page.getByText("Recurring tasks OpenWorker runs on a schedule.")).toBeVisible();
 }
 
-test("lists a scheduled task with its schedule and run count", async ({ page }) => {
+test("lists automations as tiles, grouped by cadence", async ({ page }) => {
   await openAutomations(page);
-  const card = page.locator(".sched-card", { hasText: "Daily AI News" });
-  await expect(card).toBeVisible();
-  await expect(card).toContainText("Every day at ~5:40 PM");
-  await expect(card).toContainText("last running");
+  // The tile states the fire time and the outcome; the GROUP states the cadence, so the tile
+  // no longer repeats "Every day at".
+  const tile = page.locator(".sched-tile", { hasText: "Daily AI News" });
+  await expect(tile).toBeVisible();
+  await expect(tile).toContainText("5:40 PM");
+  await expect(tile).toContainText("running");
+
+  const groups = page.getByTestId("automation-groups");
+  await expect(groups.getByRole("heading", { name: "Daily" })).toBeVisible();
+  await expect(groups.getByRole("heading", { name: "Weekly" })).toBeVisible();
+  // Each automation appears once, under exactly one cadence.
+  await expect(page.locator(".sched-tile")).toHaveCount(2);
 });
 
 test("Run now triggers a manual run and opens its live session", async ({ page }) => {
   await openAutomations(page);
-  await page.locator(".sched-card", { hasText: "Daily AI News" }).click();
+  await page.locator(".sched-tile", { hasText: "Daily AI News" }).click();
   await page.getByRole("button", { name: /Run now/ }).click();
   // The manual run opens as a session with the automation-context banner.
   const banner = page.getByTestId("run-banner");
@@ -31,7 +39,7 @@ test("Run now triggers a manual run and opens its live session", async ({ page }
 
 test("enable toggle pauses the task", async ({ page }) => {
   await openAutomations(page);
-  await page.locator(".sched-card", { hasText: "Daily AI News" }).click();
+  await page.locator(".sched-tile", { hasText: "Daily AI News" }).click();
   await expect(page.getByText(/Active · next/)).toBeVisible();
   // The checkbox is visually hidden behind a styled slider — click the label wrapper.
   await page.locator("label.switch").click();
@@ -40,13 +48,13 @@ test("enable toggle pauses the task", async ({ page }) => {
 
 test("delete removes the task; deleting the last one shows the empty state", async ({ page }) => {
   await openAutomations(page);
-  await page.locator(".sched-card", { hasText: "Daily AI News" }).click();
+  await page.locator(".sched-tile", { hasText: "Daily AI News" }).click();
   await page.getByRole("button", { name: /Delete/ }).click();
   // Back on the list, the deleted task is gone; the other seeded task remains.
-  await expect(page.locator(".sched-card", { hasText: "Daily AI News" })).toHaveCount(0);
-  await expect(page.locator(".sched-card", { hasText: "Weekly CRM digest" })).toHaveCount(1);
+  await expect(page.locator(".sched-tile", { hasText: "Daily AI News" })).toHaveCount(0);
+  await expect(page.locator(".sched-tile", { hasText: "Weekly CRM digest" })).toHaveCount(1);
 
-  await page.locator(".sched-card", { hasText: "Weekly CRM digest" }).click();
+  await page.locator(".sched-tile", { hasText: "Weekly CRM digest" }).click();
   await page.getByRole("button", { name: /Delete/ }).click();
   await expect(page.getByText(/No scheduled tasks yet/)).toBeVisible();
 });

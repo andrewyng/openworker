@@ -3,12 +3,14 @@ import {
   createAutomation,
   deleteAutomation,
   getAutomation,
+  getAutomationSuggestions,
   getAutomations,
   markAutomationSeen,
   announceAutomationsChanged,
   updateAutomation,
   type Automation,
   type AutomationRun,
+  type AutomationSuggestion,
 } from "../api";
 import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
@@ -27,6 +29,54 @@ function fromCron(cron?: string | null): { time: string; freq: string } {
   const mm = String(Math.min(59, Math.max(0, parseInt(m, 10) || 0))).padStart(2, "0");
   const freq = dow === "1-5" ? "weekdays" : dow === "0,6" || dow === "6,0" ? "weekends" : "daily";
   return { time: `${hh}:${mm}`, freq };
+}
+
+// Which rung of the ladder a cron sits on. Mirrors cadence_of() in
+// coworker/automation/suggestions.py — the page groups by the same vocabulary the suggestion
+// engine reasons in, so "you have no weekly review" lines up with a visibly empty group.
+function cadenceOf(cron?: string | null): string {
+  const parts = (cron || "").trim().split(/\s+/);
+  if (parts.length !== 5) return "other";
+  const [, , dom, month, dow] = parts;
+  if (dom === "*" && dow === "*") return "daily";
+  if (dom === "*" && dow !== "*") return "weekly";
+  if (dom !== "*" && month === "*") return "monthly";
+  if (dom !== "*" && month.includes(",")) return "quarterly";
+  if (dom !== "*" && /^\d+$/.test(month)) return "yearly";
+  return "other";
+}
+
+const CADENCE_ORDER = ["daily", "weekly", "monthly", "quarterly", "yearly", "other"] as const;
+const CADENCE_LABEL: Record<string, string> = {
+  daily: "Daily",
+  weekly: "Weekly",
+  monthly: "Monthly",
+  quarterly: "Quarterly",
+  yearly: "Yearly",
+  other: "Custom schedule",
+  paused: "Paused",
+};
+
+// "in 4h" / "in 3d" — a tile has room for when it next fires, not a full timestamp.
+function untilLabel(t: number | null): string {
+  if (!t) return "—";
+  const secs = t - Date.now() / 1000;
+  if (secs < 0) return "due";
+  if (secs < 3600) return `in ${Math.max(1, Math.round(secs / 60))}m`;
+  if (secs < 86400) return `in ${Math.round(secs / 3600)}h`;
+  return `in ${Math.round(secs / 86400)}d`;
+}
+
+// The clock time a cron fires at. The group header states the cadence, so repeating
+// "Every day at" on every tile would only cost width.
+function timeLabel(cron?: string | null): string {
+  const parts = (cron || "").trim().split(/\s+/);
+  if (parts.length !== 5) return "";
+  const h = parseInt(parts[1], 10);
+  const m = parseInt(parts[0], 10);
+  if (Number.isNaN(h) || Number.isNaN(m)) return "";
+  const ampm = h < 12 ? "AM" : "PM";
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
 const fmt = (t: number | null) =>
@@ -68,6 +118,12 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
   const [openId, setOpenId] = useState<string | null>(initialOpenId ?? null);
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  // Suggestions are derived server-side from this machine's own activity; templates are the
+  // same for everyone. Both live on the page, but only the suggestions are shown by default —
+  // a generic template grid under a full schedule is noise.
+  const [suggestions, setSuggestions] = useState<AutomationSuggestion[]>([]);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
   // The sidebar's Scheduled band can retarget an ALREADY-open Automations surface —
   // initial state alone would ignore the change (UX-023).
@@ -82,6 +138,14 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
     return () => clearInterval(h);
   }, []);
 
+  // Suggestions shell out to git behind a server-side cache, so they are fetched once per
+  // visit and after each mutation — never on the 5s task poll.
+  const refreshSuggestions = () =>
+    getAutomationSuggestions().then(setSuggestions).catch(() => setSuggestions([]));
+  useEffect(() => {
+    refreshSuggestions();
+  }, []);
+
   // Create from a payload, refresh the list, and open the new task's detail. `permissions`
   // rides through for quickstart recipes (§25 write grants).
   const create = async (payload: {
@@ -93,8 +157,9 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
     setBusy(payload.title);
     try {
       const res = await createAutomation(payload);
-      announceAutomationsChanged(); // new entry shows in the sidebar band right away
+      announceAutomationsChanged(); // the sidebar count updates right away
       await refresh();
+      void refreshSuggestions(); // an accepted suggestion must stop being suggested
       if (res.ok && res.task) {
         setShowForm(false);
         setOpenId(res.task.id);
@@ -118,6 +183,15 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
   }
 
   const empty = tasks.length === 0;
+  // Grouped by cadence, paused last — a disabled automation is not part of any rhythm, and
+  // mixing it into Daily makes the schedule read as busier than it is.
+  const groups: [string, Automation[]][] = [];
+  for (const cadence of [...CADENCE_ORDER, "paused"]) {
+    const list = tasks.filter((t) =>
+      cadence === "paused" ? !t.enabled : t.enabled && cadenceOf(t.schedule_raw?.cron) === cadence,
+    );
+    if (list.length) groups.push([cadence, list]);
+  }
 
   return (
     <Shell>
@@ -149,50 +223,218 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
         />
       )}
 
-      {/* The quickstart (§29): ONE template system — role recipes + generic templates, each
-          card with §27 connector dots; picking one expands the configure card. */}
-      {(empty || showForm) && <AutomationQuickstart busy={busy !== null} onCreate={create} />}
+      {/* Suggestions first, templates behind a disclosure: a suggestion states the evidence
+          for itself ("19 commits to workstation-stack, nothing watches it"), a template is the
+          same card for everybody. Under a full schedule the generic grid is noise. */}
+      <SuggestionShelf
+        suggestions={suggestions.filter((x) => !dismissed.has(x.key))}
+        busy={busy}
+        onDismiss={(key) => setDismissed((d) => new Set(d).add(key))}
+        onAdd={(x) =>
+          create({ title: x.title, instructions: x.instructions, cron: x.cron })
+        }
+        onBrowseTemplates={() => setShowTemplates((v) => !v)}
+        templatesOpen={showTemplates}
+      />
+
+      {(empty || showForm || showTemplates) && (
+        <AutomationQuickstart busy={busy !== null} onCreate={create} />
+      )}
 
       {empty ? (
         !showForm && (
           <div className={CARD + " p-4 text-[12.5px] text-muted"}>
-            No scheduled tasks yet — use a template above, click <strong>+ New automation</strong>,
-            or just ask OpenWorker in a session.
+            No scheduled tasks yet — take a suggestion above, click{" "}
+            <strong>+ New automation</strong>, or just ask OpenWorker in a session.
           </div>
         )
       ) : (
-        <div className="flex flex-col gap-2.5">
-          {tasks.map((t) => (
-            <div
-              className={CARD + " sched-card px-4 py-3 cursor-pointer hover:border-lineStrong transition-colors"}
-              key={t.id}
-              onClick={() => setOpenId(t.id)}
-            >
-              <div className="flex items-center justify-between gap-2.5 mb-1">
-                <span className="text-[13.5px] font-semibold truncate">{t.title}</span>
-                <button
-                  className="sched-card-del"
-                  title="Delete automation"
-                  aria-label={`Delete ${t.title}`}
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    await deleteAutomation(t.id);
-                    refresh();
-                  }}
-                >
-                  <Icon name="trash" size={14} />
-                </button>
+        <div className="flex flex-col gap-6" data-testid="automation-groups">
+          {groups.map(([cadence, list]) => (
+            <section key={cadence}>
+              <div className="flex items-baseline gap-2 mb-2">
+                <h2 className="text-[11px] uppercase tracking-[0.07em] text-faint font-semibold">
+                  {CADENCE_LABEL[cadence] || cadence}
+                </h2>
+                <span className="text-[11px] text-faint tabular-nums">{list.length}</span>
               </div>
-              <div className="flex items-center gap-1.5 text-[12px] text-muted">
-                <Icon name="clock" size={13} className="text-faint shrink-0" />
-                {t.enabled ? t.schedule : "Paused"} · next {fmt(t.next_run)} · {t.run_count} run{t.run_count === 1 ? "" : "s"}
-                {t.last_status ? ` · last ${t.last_status}` : ""}
+              {/* auto-rows-fr keeps a row's tiles equal height however long a title wraps. */}
+              <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3 auto-rows-fr">
+                {list.map((t) => (
+                  <TaskTile
+                    key={t.id}
+                    task={t}
+                    onOpen={() => setOpenId(t.id)}
+                    onDelete={async () => {
+                      await deleteAutomation(t.id);
+                      announceAutomationsChanged();
+                      refresh();
+                      void refreshSuggestions();
+                    }}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+    </Shell>
+  );
+}
+
+// One automation as a tile. The old page listed these full-width, one per row, which at
+// fifteen automations was a column of near-identical bars you had to read linearly. A tile
+// states the four things worth glancing at — name, when it fires, how it last went, whether
+// there is anything unread — and the grid lets you compare them at once.
+function TaskTile({
+  task,
+  onOpen,
+  onDelete,
+}: {
+  task: Automation;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const unseen = task.unseen_runs || 0;
+  const bad = task.last_status === "error" || task.last_status === "incomplete";
+  return (
+    <div
+      className={
+        CARD +
+        " sched-tile relative h-full flex flex-col gap-2 px-3.5 py-3 cursor-pointer" +
+        " hover:border-lineStrong transition-colors"
+      }
+      data-testid={`scheduled-${task.id}`}
+      onClick={onOpen}
+    >
+      <div className="flex items-start gap-2">
+        <span className="flex-1 min-w-0 text-[13.5px] font-semibold leading-snug line-clamp-2">
+          {task.title}
+        </span>
+        {unseen > 0 && (
+          <span
+            className="text-[10px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
+            title={
+              task.unseen_failed
+                ? `${unseen} new run${unseen > 1 ? "s" : ""} — the latest failed`
+                : `${unseen} new run${unseen > 1 ? "s" : ""}`
+            }
+          >
+            {unseen}
+          </span>
+        )}
+      </div>
+
+      <div className="mt-auto flex items-center gap-1.5 text-[11.5px] text-faint">
+        <Icon name="clock" size={12} className="shrink-0" />
+        {task.enabled ? (
+          <>
+            <span className="tabular-nums">{timeLabel(task.schedule_raw?.cron) || task.schedule}</span>
+            <span aria-hidden>·</span>
+            <span className="tabular-nums">{untilLabel(task.next_run)}</span>
+          </>
+        ) : (
+          <span>Paused</span>
+        )}
+        <span className="ml-auto flex items-center gap-1.5">
+          {/* Last outcome as a word, not a colour: the sidebar deliberately has no status
+              colour, and a red dot here would be the page's loudest element. */}
+          {task.last_status && (
+            <span className={bad ? "text-warnInk" : ""}>{task.last_status}</span>
+          )}
+          <button
+            className="sched-card-del"
+            title="Delete automation"
+            aria-label={`Delete ${task.title}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              void onDelete();
+            }}
+          >
+            <Icon name="trash" size={13} />
+          </button>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// Suggestions derived from what this machine is actually doing (server-side; see
+// coworker/automation/suggestions.py). Each card leads with its EVIDENCE — that line is the
+// difference between a marketplace that knows your work and a list of templates.
+function SuggestionShelf({
+  suggestions,
+  busy,
+  onAdd,
+  onDismiss,
+  onBrowseTemplates,
+  templatesOpen,
+}: {
+  suggestions: AutomationSuggestion[];
+  busy: string | null;
+  onAdd: (s: AutomationSuggestion) => void;
+  onDismiss: (key: string) => void;
+  onBrowseTemplates: () => void;
+  templatesOpen: boolean;
+}) {
+  return (
+    <div className="mb-6" data-testid="suggestion-shelf">
+      <div className="flex items-baseline gap-2 mb-2">
+        <h2 className="text-[11px] uppercase tracking-[0.07em] text-faint font-semibold">
+          Suggested for you
+        </h2>
+        <button
+          className="ml-auto text-[12px] text-muted hover:text-accent"
+          data-testid="browse-templates"
+          onClick={onBrowseTemplates}
+        >
+          {templatesOpen ? "Hide templates" : "Browse templates"}
+        </button>
+      </div>
+      {suggestions.length === 0 ? (
+        <div className={CARD + " p-3.5 text-[12.5px] text-muted"}>
+          Nothing to suggest — every pattern this machine can see is already scheduled. New
+          suggestions appear as your work changes.
+        </div>
+      ) : (
+        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3 auto-rows-fr">
+          {suggestions.map((s) => (
+            <div
+              key={s.key}
+              className={CARD + " h-full flex flex-col gap-1.5 px-3.5 py-3"}
+              data-testid={`suggestion-${s.key}`}
+            >
+              <div className="flex items-start gap-2">
+                <span className="flex-1 text-[13.5px] font-semibold leading-snug">{s.title}</span>
+                <span className="text-[10.5px] uppercase tracking-[0.05em] text-faint shrink-0 mt-0.5">
+                  {s.cadence}
+                </span>
+              </div>
+              <span className="text-[12px] text-muted leading-relaxed">{s.blurb}</span>
+              <span className="text-[11.5px] text-accent leading-relaxed">{s.reason}</span>
+              <div className="mt-auto pt-1.5 flex items-center gap-2">
+                <button
+                  className="btn-primary sm"
+                  disabled={busy !== null}
+                  data-testid={`add-${s.key}`}
+                  onClick={() => onAdd(s)}
+                >
+                  {busy === s.title ? "Adding…" : "Add"}
+                </button>
+                <button className="link text-[12px]" onClick={() => onDismiss(s.key)}>
+                  not now
+                </button>
+                {s.requires.length > 0 && (
+                  <span className="ml-auto text-[11px] text-faint">
+                    needs {s.requires.join(", ")}
+                  </span>
+                )}
               </div>
             </div>
           ))}
         </div>
       )}
-    </Shell>
+    </div>
   );
 }
 

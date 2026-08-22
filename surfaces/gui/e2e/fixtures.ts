@@ -309,11 +309,41 @@ const AUTOMATION_CLEAN = {
   id: "task-2",
   title: "Weekly CRM digest",
   schedule: "Every Monday at ~9:00 AM",
+  // Its own cron, not the daily one inherited from the spread — the page groups by cadence.
+  schedule_raw: { kind: "cron", cron: "0 9 * * 1", fire_at: null, timezone: "local" },
   last_status: "ok",
   unseen_runs: 0,
   unseen_failed: false,
   always_allowed: [],
 };
+// Two suggestions with the shape the engine emits: the evidence line is the point of them.
+const SUGGESTIONS = [
+  {
+    key: "repo-health-acme",
+    title: "Repo health — acme",
+    blurb: "What landed, what is uncommitted, what looks stale — as a written report.",
+    reason: "19 of your commits to acme in the last 21 days, and no automation mentions it.",
+    cadence: "weekly",
+    cron: "0 6 * * 1",
+    agent: "cowork",
+    instructions: "Inspect the acme repository and write a report.",
+    requires: [],
+    score: 59,
+  },
+  {
+    key: "connector-slack",
+    title: "Weekly Slack digest",
+    blurb: "What changed in Slack this week, summarised into one report.",
+    reason: "Slack is connected but no automation uses it.",
+    cadence: "weekly",
+    cron: "0 7 * * 1",
+    agent: "cowork",
+    instructions: "Summarise the week's Slack activity.",
+    requires: ["slack"],
+    score: 30,
+  },
+];
+
 const AUTOMATION_RUNS = [
   {
     run_id: "r1",
@@ -1434,6 +1464,15 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // automations: one scheduled task with a running run (drives the Automations detail page
     // and the run-session banner + Back-to-runs flow). Mutable: Run now appends a run and opens
     // its live session; the enable toggle (PATCH) and delete (DELETE) round-trip through the UI.
+    if (p.endsWith("/v1/automations/suggestions")) {
+      // Server-derived suggestions (coworker/automation/suggestions.py). Anything already
+      // scheduled is filtered server-side, so accepting one must remove it from this list.
+      return json({
+        suggestions: SUGGESTIONS.filter(
+          (s) => !automations.some((t) => t.title === s.title),
+        ),
+      });
+    }
     if (/\/v1\/automations\/[^/]+\/seen$/.test(p) && m === "POST") {
       const id = p.split("/").slice(-2)[0];
       const task = automations.find((t) => t.id === id);

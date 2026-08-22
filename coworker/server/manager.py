@@ -30,6 +30,7 @@ from ..inbox import InboxStore, args_preview
 from ..inbox_routing import InboxRouting
 from ..personas import PersonaRegistry
 from ..personas.registry import set_registry as set_persona_registry
+from ..automation.suggestions import SuggestionCache
 from ..selfwake import WakeStore
 from ..mentions import MentionSessionStore
 from ..subscriptions import ChannelBuffer, SubscriptionStore
@@ -198,6 +199,9 @@ class SessionManager:
         # Inbox (cross-session human-attention queue), routing (named inboxes + Slack/Telegram
         # bindings), the Unattended toggle, and self-wake records.
         self.inbox = InboxStore(base / "inbox.json")
+        # Suggestions read git logs; the page polls. Cached, and invalidated whenever the
+        # automation set changes so an accepted suggestion stops being suggested at once.
+        self._suggestion_cache = SuggestionCache()
         self.inbox_routing = InboxRouting(base / "inbox_routing.json")
         self.unattended = UnattendedRegistry(base / "unattended.json")
         self.wakes = WakeStore(base / "wakes.json")
@@ -3306,6 +3310,63 @@ class SessionManager:
                 pass
 
     # -- automation REST --------------------------------------------------------
+    def automation_suggestions(self) -> dict[str, Any]:
+        """What this machine's own activity says is worth scheduling (see
+        automation/suggestions.py). Cached — the repo scan shells out to git and the page polls."""
+        from ..automation.suggestions import (
+            Signals,
+            cadence_of,
+            scan_repos,
+            subject_text,
+            suggest,
+        )
+
+        def build() -> list[dict[str, Any]]:
+            tasks = self.task_store.list()
+            text = subject_text(tasks)
+            try:
+                servers = {
+                    s.name
+                    for s in load_mcp_servers(
+                        self.default_workspace,
+                        secrets=self.secrets,
+                        workspace_trusted=self._mcp_workspace_trusted(self.default_workspace),
+                    )
+                }
+            except Exception:  # pragma: no cover - a broken mcp.json must not break the page
+                servers = set()
+            knowledge = next(
+                (
+                    w
+                    for w in self.session_store.recent_workspaces(40)
+                    if Path(w).name == "knowledge" and Path(w).is_dir()
+                ),
+                None,
+            )
+            signals = Signals(
+                repos=scan_repos(
+                    Path.home(),
+                    extra=[
+                        w
+                        for w in self.session_store.recent_workspaces(20)
+                        if "__task__" not in w
+                    ],
+                ),
+                mcp=servers,
+                connectors=self._connected_connectors(),
+                personas={
+                    p["id"] for p in self.personas.list_all() if p["enabled"]
+                },
+                cadences={cadence_of(t.schedule.cron) for t in tasks if t.enabled},
+                task_text=text,
+                task_count=len([t for t in tasks if t.enabled]),
+                inbox_pending=len(self.inbox.pending()),
+                knowledge_dir=knowledge,
+            )
+            return [s.as_dict() for s in suggest(signals)]
+
+        return {"suggestions": self._suggestion_cache.get(build)}
+
     def list_automations(self) -> dict[str, Any]:
         # Unseen = runs started after the task's seen mark (UX-023 sidebar badges).
         # `unseen_failed` tints the badge when the NEWEST unseen run errored.
@@ -3389,6 +3450,7 @@ class SessionManager:
         )
         task.workspace = self._provision_scratch(task.task_session_id)
         self.task_store.save(task)
+        self._suggestion_cache.invalidate()
         return {"ok": True, "task": task.public()}
 
     def update_automation(
@@ -3423,7 +3485,12 @@ class SessionManager:
         return {"ok": True, "task": task.public()}
 
     def delete_automation(self, task_id: str) -> dict[str, Any]:
-        return {"ok": self.task_store.delete(task_id), "id": task_id}
+        ok = self.task_store.delete(task_id)
+        if ok:
+            # Deleting is also a signal change: what the task covered is now uncovered, and
+            # should be suggestible again without waiting out the cache.
+            self._suggestion_cache.invalidate()
+        return {"ok": ok, "id": task_id}
 
     def prepare_manual_run(self, task_id: str) -> dict[str, Any]:
         """Create a 'running' manual run and return its session, so the GUI can open it and

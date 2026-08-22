@@ -965,7 +965,11 @@ button.btn.sm { padding: 5px 13px; font-size: 12.5px; }
   background: transparent; color: var(--faint); cursor: pointer;
   opacity: 0; transition: opacity 0.12s, color 0.12s, background 0.12s;
 }
-.sched-card:hover .sched-card-del { opacity: 1; }
+.sched-card:hover .sched-card-del,
+.sched-tile:hover .sched-card-del { opacity: 1; }
+/* Tile grid on the Automations page: a fixed min-height keeps a one-line title and a
+   two-line title on the same baseline grid, so a row of tiles reads as a row. */
+.sched-tile { min-height: 84px; }
 .sched-card-del:hover { color: var(--danger); background: var(--paper); }
 /* Detail "Delete" button — danger-tinted line button with the trash glyph. */
 button.btn.sm.danger-btn { display: inline-flex; align-items: center; gap: 5px; color: var(--danger); border-color: var(--line-strong); }

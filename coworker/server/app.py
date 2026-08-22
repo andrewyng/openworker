@@ -1531,6 +1531,12 @@ def create_app(manager: SessionManager) -> FastAPI:
     def automations_list() -> dict[str, Any]:
         return manager.list_automations()
 
+    @app.get("/v1/automations/suggestions")
+    def automations_suggestions() -> dict[str, Any]:
+        # Declared BEFORE /v1/automations/{task_id}: Starlette matches in order, so the
+        # dynamic route would otherwise swallow "suggestions" as a task id.
+        return manager.automation_suggestions()
+
     @app.post("/v1/automations")
     def automations_create(body: dict) -> dict[str, Any]:
         return manager.create_automation(body or {})
