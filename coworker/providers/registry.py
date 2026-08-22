@@ -595,7 +595,12 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         recommended_model="qwen3-max",
         env_key="DASHSCOPE_API_KEY",
-        endpoint_help="Prefilled with Alibaba Model Studio's international endpoint. China (Beijing): https://dashscope.aliyuncs.com/compatible-mode/v1",
+        endpoint_help=(
+            "Prefilled with the international endpoint. If your key was issued on the "
+            "China mainland portal (qwencloud.com), switch to "
+            "https://dashscope.aliyuncs.com/compatible-mode/v1 — keys only work against "
+            "the endpoint in the region where they were created."
+        ),
     ),
     _compat(
         "xai",
