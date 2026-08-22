@@ -1392,7 +1392,9 @@ class SessionManager:
     async def mcp_connect_connector(self, name: str) -> dict[str, Any]:
         """One-click connect for an MCP-BACKED connector (descriptor.mcp_url): seed
         the global server entry pinned to the curated allowlist, run the browser
-        OAuth flow, and mark the connector profile `mode: "mcp"` on success."""
+        OAuth flow (descriptors with auth="none" — local no-auth servers like
+        inwise — just connect), and mark the connector profile `mode: "mcp"` on
+        success."""
         from ..connectors.descriptors import get_descriptor
         from ..connectors.tool_defs import mcp_pinned_tools
 
@@ -1403,7 +1405,7 @@ class SessionManager:
             name,
             {
                 "url": d.mcp_url,
-                "auth": "oauth",
+                "auth": d.auth if d.auth == "oauth" else None,
                 # Server-level approval off: writes gate per-tool via the pinned
                 # read/write classification (prepare_mcp_tools); unknown vendor
                 # tools never load at all (include_tools).

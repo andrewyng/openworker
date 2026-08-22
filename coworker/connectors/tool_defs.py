@@ -413,6 +413,82 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "write",
         "Post a comment or reply on an item.",
     ),
+    # -- Inwise (MCP-backed only; the open-source desktop app's local server —
+    # loopback, no auth. This pin mirrors the server's full 10-tool surface,
+    # which its own CI asserts, so the two can't drift apart silently.
+    # get_transcript is deliberately its own entry: everything else is derived
+    # or summarized, that one is the verbatim record of what people said, so it
+    # gets its own approval rather than riding along with the meeting. --
+    ConnectorToolDef(
+        "inwise",
+        "mcp__inwise__search_meetings",
+        "Search meetings",
+        "read",
+        "Search your meetings by title, summary, or transcript text.",
+    ),
+    ConnectorToolDef(
+        "inwise",
+        "mcp__inwise__get_meeting",
+        "Read meeting",
+        "read",
+        "Read a meeting's summary, decisions, blockers, commitments, and a short excerpt.",
+    ),
+    ConnectorToolDef(
+        "inwise",
+        "mcp__inwise__get_transcript",
+        "Read full transcript",
+        "read",
+        "Read a meeting's verbatim transcript — the raw record, sent to your AI provider.",
+    ),
+    ConnectorToolDef(
+        "inwise",
+        "mcp__inwise__list_action_items",
+        "List action items",
+        "read",
+        "List action items, filtered by status or the meeting they came from.",
+    ),
+    ConnectorToolDef(
+        "inwise",
+        "mcp__inwise__get_action_item",
+        "Read action item",
+        "read",
+        "Read one action item: description, owner when known, due date, and source.",
+    ),
+    ConnectorToolDef(
+        "inwise",
+        "mcp__inwise__list_people",
+        "List people",
+        "read",
+        "List the people you meet with and how long since you last spoke.",
+    ),
+    ConnectorToolDef(
+        "inwise",
+        "mcp__inwise__get_person",
+        "Read person",
+        "read",
+        "Read one person: history, unresolved action items, commitments, and follow-ups.",
+    ),
+    ConnectorToolDef(
+        "inwise",
+        "mcp__inwise__list_upcoming_meetings",
+        "List upcoming meetings",
+        "read",
+        "List meetings coming up on the calendars connected in the app.",
+    ),
+    ConnectorToolDef(
+        "inwise",
+        "mcp__inwise__prepare_meeting",
+        "Prepare for a meeting",
+        "read",
+        "Build a source-linked agenda for a 1:1 or a meeting from your history with its attendees.",
+    ),
+    ConnectorToolDef(
+        "inwise",
+        "mcp__inwise__get_connection_status",
+        "Check connection",
+        "read",
+        "Confirm the local Inwise app is running and report its version and capabilities.",
+    ),
     # -- asana via their hosted V2 MCP server (one-click path; the asana_* REST
     # tools below stay the manual-token set — profile mode picks, as with jira) ---
     ConnectorToolDef(
