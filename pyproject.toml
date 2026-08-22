@@ -53,6 +53,8 @@ bedrock = ["boto3>=1.34"]
 openworker = "coworker.cli:main"
 openworker-server = "coworker.server.run:main"
 openworker-connectors = "coworker.connectors.cli:main"
+# Reached over SSH from another machine (`ssh host openworker-mcp`); speaks stdio, opens no port.
+openworker-mcp = "coworker.mcp_server.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]
