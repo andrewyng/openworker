@@ -102,6 +102,79 @@ def test_git_log_errors_outside_repo(tmp_path):
     assert "error" in git_log()
 
 
+# -- git_blame / git_show --------------------------------------------------------
+def _two_author_repo(tmp_path):
+    """A repo where line 1 was written by T and line 2 rewritten by U."""
+    ws = tmp_path / "repo"
+    ws.mkdir()
+    run = lambda *a: subprocess.run(
+        ["git", "-C", str(ws), *a], capture_output=True, check=True
+    )
+    run("init", "-q")
+    run("config", "user.email", "t@t.io")
+    run("config", "user.name", "T")
+    (ws / "f.txt").write_text("one\ntwo\n", encoding="utf-8")
+    run("add", "-A")
+    run("commit", "-qm", "first")
+    run("config", "user.email", "u@u.io")
+    run("config", "user.name", "U")
+    (ws / "f.txt").write_text("one\nTWO\n", encoding="utf-8")
+    run("add", "-A")
+    run("commit", "-qm", "second")
+    return ws
+
+
+def _by_name(ws):
+    return {t.__name__: t for t in git_tools(str(ws))}
+
+
+def test_git_blame_attributes_lines(tmp_path):
+    ws = _two_author_repo(tmp_path)
+    out = _by_name(ws)["git_blame"](path="f.txt")
+    assert out["count"] == 2
+    assert [ln["line"] for ln in out["lines"]] == [1, 2]
+    assert out["lines"][0]["author"] == "T" and out["lines"][0]["content"] == "one"
+    assert out["lines"][1]["author"] == "U" and out["lines"][1]["content"] == "TWO"
+    assert set(out["lines"][0]) == {"line", "hash", "author", "date", "content"}
+
+
+def test_git_blame_scopes_to_range(tmp_path):
+    ws = _two_author_repo(tmp_path)
+    out = _by_name(ws)["git_blame"](path="f.txt", start_line=2, end_line=2)
+    assert out["count"] == 1 and out["lines"][0]["line"] == 2
+
+
+def test_git_blame_errors(tmp_path):
+    assert "error" in _by_name(tmp_path)["git_blame"](path="f.txt")  # not a repo
+    ws = _two_author_repo(tmp_path)
+    assert "error" in _by_name(ws)["git_blame"](path="missing.txt")
+    assert "error" in _by_name(ws)["git_blame"](path="")
+
+
+def test_git_show_head_has_message_and_patch(tmp_path):
+    ws = _two_author_repo(tmp_path)
+    out = _by_name(ws)["git_show"]()
+    assert out["ref"] == "HEAD"
+    assert "second" in out["output"]  # commit subject
+    assert "+TWO" in out["output"]  # the patch itself
+    assert "f.txt" in out["output"]  # the diffstat
+
+
+def test_git_show_accepts_relative_refs_and_paths(tmp_path):
+    ws = _two_author_repo(tmp_path)
+    out = _by_name(ws)["git_show"](ref="HEAD~1", path="f.txt")
+    assert "first" in out["output"] and "+two" in out["output"]
+
+
+def test_git_show_rejects_option_injection(tmp_path):
+    ws = _two_author_repo(tmp_path)
+    git_show = _by_name(ws)["git_show"]
+    # A leading "-" would be parsed as a git option (e.g. --output writes files).
+    assert "error" in git_show(ref="--output=/tmp/pwn")
+    assert "error" in git_show(ref="HEAD; rm -rf /")  # whitespace/metachars
+    assert "error" in git_show(ref="bogus-ref-does-not-exist")
+
+
 # -- read_file -----------------------------------------------------------------
 def test_read_file_numbers_lines(tmp_path):
     (tmp_path / "a.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
