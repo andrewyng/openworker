@@ -1,48 +1,48 @@
-// UX-023: automations get sidebar presence — an "Automations" nav row under Search
-// (aggregate unseen badge) and a "Scheduled" band with ONE entry per automation
-// (name + cadence + unseen-runs badge). Opening an automation's detail marks it
-// seen: the badge clears immediately via the AUTOMATIONS_CHANGED broadcast, and
-// runs newer than the pre-open mark wear a "new" pill inside the detail.
+// UX-023, revised: automations get exactly ONE row of sidebar presence — the "Automations" nav
+// row under Search, carrying the enabled count and the aggregate unseen-run badge. The old
+// per-automation "Scheduled" band is gone: at fifteen automations it was thirty lines of
+// two-line entries that pushed Recent off the screen, and every entry duplicated the Automations
+// page. The badge's tooltip names the automations behind it, so "which one is unhappy?" is still
+// answerable without leaving the sidebar.
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
-test("nav row + Scheduled band render with unseen badges; runs stay out of Recent", async ({
+test("the nav row carries the count and the aggregate unseen badge; no per-automation band", async ({
   page,
 }) => {
   await page.goto("/");
 
-  // Nav row sits right under Search — no badge of its own (owner call: the
-  // Scheduled entry alone carries the count).
   const nav = page.getByTestId("nav-automations");
   await expect(nav).toBeVisible();
   await expect(nav).toContainText("Automations");
-  await expect(nav).not.toContainText("2");
+  // Two enabled fixtures; two unseen runs, both on the noisy one.
+  await expect(nav).toContainText("2");
+  const badge = page.getByTestId("automations-unseen");
+  await expect(badge).toHaveText("2");
+  // The tooltip is where the per-automation detail went.
+  await expect(badge).toHaveAttribute("title", /Daily AI News — 2 new, latest failed/);
 
-  // Scheduled band: one entry PER AUTOMATION — never per run. The noisy task wears
-  // its badge; the quiet one shows none.
-  const band = page.getByTestId("scheduled-band");
-  await expect(band.getByTestId("scheduled-task-1")).toContainText("Daily AI News");
-  await expect(band.getByTestId("scheduled-task-1")).toContainText("2");
-  await expect(band.getByTestId("scheduled-task-2")).toContainText("Weekly CRM digest");
-  await expect(band.getByTestId("scheduled-task-2")).not.toContainText("2");
+  // No band, and no per-automation rows anywhere in the sidebar.
+  await expect(page.getByTestId("scheduled-band")).toHaveCount(0);
+  await expect(page.getByTestId("scheduled-task-1")).toHaveCount(0);
 
-  // Runs never appear as session rows (their sessions are __run__-prefixed and the
-  // server hides them) — the band's entries are the only automation presence.
+  // Runs still never appear as session rows (their sessions are __run__-prefixed and hidden).
   await expect(page.getByTitle("__run__r1")).toHaveCount(0);
 });
 
-test("opening a Scheduled entry lands on the detail, marks seen, clears the badge", async ({
+test("opening an automation from the page marks it seen and clears the sidebar badge", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByTestId("scheduled-task-1").click();
+  await page.getByTestId("nav-automations").click();
 
-  // The Automations surface opens ON that automation's detail…
+  // The overview lists them; opening one lands on its detail…
+  await page.getByText("Daily AI News").first().click();
   await expect(page.getByRole("heading", { name: "Daily AI News" })).toBeVisible();
   // …runs newer than the pre-open seen mark wear the "new" pill…
   await expect(page.getByTestId("run-new").first()).toBeVisible();
-  // …and the entry's badge clears without waiting for any poll (mark-seen broadcast).
-  await expect(page.getByTestId("scheduled-task-1")).not.toContainText("2");
+  // …and the sidebar badge clears without waiting for the 15s poll (mark-seen broadcast).
+  await expect(page.getByTestId("automations-unseen")).toHaveCount(0);
 });
 
 test("the nav row opens the Automations overview", async ({ page }) => {
@@ -51,22 +51,25 @@ test("the nav row opens the Automations overview", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Automations" })).toBeVisible();
 });
 
-test("deleting an automation clears the band at once; nav re-entry lands on the list", async ({
+test("deleting an automation drops the sidebar count at once; re-entry lands on the list", async ({
   page,
 }) => {
   await page.goto("/");
-  // Open the automation from the band, delete it from the detail.
-  await page.getByTestId("scheduled-task-2").click();
+  const nav = page.getByTestId("nav-automations");
+  await expect(nav).toContainText("2");
+
+  await nav.click();
+  await page.getByText("Weekly CRM digest").first().click();
   await expect(page.getByRole("heading", { name: "Weekly CRM digest" })).toBeVisible();
   await page.getByRole("button", { name: /Delete/ }).click();
 
-  // The Scheduled band drops the entry immediately (broadcast, not the 15s poll)…
-  await expect(page.getByTestId("scheduled-task-2")).toHaveCount(0);
+  // The count drops immediately (broadcast, not the poll).
+  await expect(nav).toContainText("1");
 
-  // …and after visiting a session, the nav row must land on the OVERVIEW — the
-  // remembered detail target for a deleted automation once left "Loading…" forever.
+  // After visiting a session, the nav row must land on the OVERVIEW — the remembered detail
+  // target for a deleted automation once left "Loading…" forever.
   await page.getByTitle("Weekly plan 1").click();
-  await page.getByTestId("nav-automations").click();
+  await nav.click();
   await expect(page.getByRole("heading", { name: "Automations" })).toBeVisible();
   await expect(page.getByText("Loading…")).toHaveCount(0);
 });

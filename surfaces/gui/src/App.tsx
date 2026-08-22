@@ -1376,10 +1376,6 @@ export function App() {
         }}
         onManagePersonas={() => openSettings("personas")}
         onOpenScheduled={() => setSurface("scheduled")}
-        onOpenAutomation={(id) => {
-          setScheduledOpenId(id);
-          setSurface("scheduled");
-        }}
         onOpenIntegrations={() => setSurface("integrations")}
         onOpenAudit={() => setSurface("audit")}
         onOpenInbox={() => setSurface("inbox")}

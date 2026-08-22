@@ -76,12 +76,16 @@ function AttnBadge({ n }: { n: number }) {
 // UX-023: unseen-run count on a Scheduled entry. Deliberately QUIET — same neutral
 // treatment as the attention badge; failure only colors the tooltip's words, not the
 // sidebar (owner call 2026-07-20: no color, and the entry alone carries the count).
-function UnseenBadge({ n, failed }: { n: number; failed?: boolean }) {
+function UnseenBadge({ n, failed, label }: { n: number; failed?: boolean; label?: string }) {
   if (!n) return null;
   return (
     <span
       className="text-[10px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
-      title={failed ? `${n} new run${n > 1 ? "s" : ""} — the latest failed` : `${n} new run${n > 1 ? "s" : ""}`}
+      data-testid="automations-unseen"
+      title={
+        label ||
+        (failed ? `${n} new run${n > 1 ? "s" : ""} — the latest failed` : `${n} new run${n > 1 ? "s" : ""}`)
+      }
     >
       {n > 99 ? "99+" : n}
     </span>
@@ -148,8 +152,6 @@ interface Props {
   onOpenPersona: (id: string) => void;
   onManagePersonas: () => void;
   onOpenScheduled: () => void;
-  // Scheduled-band row click: open the Automations surface ON that automation (UX-023).
-  onOpenAutomation: (id: string) => void;
   onOpenIntegrations: () => void;
   onOpenAudit: () => void;
   onOpenInbox: () => void;
@@ -228,6 +230,26 @@ export function Sidebar(props: Props) {
       window.removeEventListener(AUTOMATIONS_CHANGED, load);
     };
   }, []);
+  // Nav-row aggregates. The count is the ENABLED automations — a disabled job is not running,
+  // so counting it would overstate what the schedule is doing. The badge sums unseen runs, and
+  // its tooltip names them: with no per-automation rows left, that tooltip is the only place
+  // "which one failed?" can be answered without opening the page.
+  const enabledAutomations = automations.filter((a) => a.enabled);
+  const scheduledCount = enabledAutomations.length;
+  const disabledCount = automations.length - scheduledCount;
+  const scheduledTitle =
+    `${scheduledCount} automation${scheduledCount === 1 ? "" : "s"} scheduled` +
+    (disabledCount > 0 ? ` (${disabledCount} disabled)` : "");
+  const unseenList = automations.filter((a) => (a.unseen_runs || 0) > 0);
+  const unseenTotal = unseenList.reduce((n, a) => n + (a.unseen_runs || 0), 0);
+  const unseenFailed = unseenList.some((a) => a.unseen_failed);
+  const unseenTitle = unseenList.length
+    ? unseenList
+        .slice(0, 5)
+        .map((a) => `${a.title} — ${a.unseen_runs} new${a.unseen_failed ? ", latest failed" : ""}`)
+        .join("\n") + (unseenList.length > 5 ? `\n+${unseenList.length - 5} more` : "")
+    : "";
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   // Two-step delete inside the row's ⋮ menu: Delete arms ("Delete?"), a second click deletes.
@@ -687,35 +709,6 @@ export function Sidebar(props: Props) {
       </div>
     ) : null;
 
-  // UX-023: the Scheduled band — ONE entry per automation (never per run): name +
-  // cadence, with the unseen-runs badge. Runs themselves never enter Recent (run
-  // sessions are __run__-prefixed and hidden from the sessions list).
-  const scheduledBand = () =>
-    automations.length > 0 ? (
-      <div data-testid="scheduled-band">
-        <div className="px-1.5 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">
-          Scheduled
-        </div>
-        <div className="space-y-0.5">
-          {automations.map((a) => (
-            <button
-              key={a.id}
-              className="w-full flex items-center gap-2 px-1.5 py-1 rounded-lg text-left hover:bg-paper"
-              data-testid={`scheduled-${a.id}`}
-              title={a.title}
-              onClick={() => props.onOpenAutomation(a.id)}
-            >
-              <div className="flex-1 min-w-0">
-                <div className="text-[13px] text-ink truncate">{a.title}</div>
-                <div className="text-[11px] text-faint truncate">{a.schedule}</div>
-              </div>
-              <UnseenBadge n={a.unseen_runs || 0} failed={a.unseen_failed} />
-            </button>
-          ))}
-        </div>
-      </div>
-    ) : null;
-
   // RECENT header with the group/filter control (§20) — the group toggle moved off the brand bar.
   // "Group by" flips the persona accordion ↔ chronological list; "Filter by coworker" narrows to
   // the checked personas (none checked = all shown).
@@ -1044,7 +1037,11 @@ export function Sidebar(props: Props) {
       </div>
 
       {/* Automations: a first-class nav row (UX-023) — the account menu keeps its entry.
-          The badge is the cross-automation unseen-run total. */}
+          This row is now the WHOLE sidebar presence for automations: the per-automation
+          "Scheduled" band below it grew to fifteen two-line entries and crowded Recent off
+          the screen, and every one of them was already listed on the Automations page. What
+          the band was actually for — "is anything unhappy?" — survives as the count plus the
+          unseen badge, whose tooltip names the automations behind it. */}
       <div className="px-2.5 mt-1">
         <button
           className={
@@ -1056,6 +1053,12 @@ export function Sidebar(props: Props) {
         >
           <Icon name="clock" size={15} className="shrink-0" />
           <span className="flex-1">Automations</span>
+          {scheduledCount > 0 && (
+            <span className="text-[11px] text-faint tabular-nums shrink-0" title={scheduledTitle}>
+              {scheduledCount}
+            </span>
+          )}
+          <UnseenBadge n={unseenTotal} failed={unseenFailed} label={unseenTitle} />
         </button>
       </div>
 
@@ -1064,7 +1067,6 @@ export function Sidebar(props: Props) {
       <div className="flex-1 overflow-y-auto px-2.5 mt-3 pb-2">
         <div className="space-y-4">
           {pinnedBand()}
-          {scheduledBand()}
           <div>
             {recentHeader()}
             {layout === "grouped" ? (
