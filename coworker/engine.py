@@ -877,6 +877,16 @@ class TurnEngine:
     def _execute_sync(self, tool_call: ToolCall) -> tuple[Any, str]:
         """Execute one authorized call (runs in a worker thread)."""
         try:
+            # Re-validate write paths immediately before the toolkit runs — closes the
+            # TOCTOU window between evaluate()/approval and the actual write.
+            spec = self.registry.get(tool_call.name)
+            denied = self.permissions.revalidate_write(
+                tool_call.name,
+                tool_call.arguments,
+                spec.metadata if spec else None,
+            )
+            if denied is not None:
+                return {"error": denied, "error_type": "PermissionError"}, "error"
             return self.registry.execute(tool_call.name, tool_call.arguments), "ok"
         except Exception as exc:
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"

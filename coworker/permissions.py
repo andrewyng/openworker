@@ -197,6 +197,20 @@ class PermissionEngine:
         self.session_readonly = True
 
     # -- helpers ----------------------------------------------------------------
+    def revalidate_write(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        metadata: Any = None,
+    ) -> Optional[str]:
+        """Re-check path scoping immediately before a write (closes evaluate→execute TOCTOU)."""
+        if classify(tool_name, metadata, self.risk_overrides) is not RiskClass.WRITE_LOCAL:
+            return None
+        path = (arguments or {}).get("path")
+        if path is not None and not self._under_writable_root(path):
+            return f"path is not in a writable directory: {path}"
+        return None
+
     def _candidate(self, path: str) -> Path:
         # Relative paths resolve against the primary (workspace_root); absolute/`~` taken as-is.
         p = Path(path).expanduser()
