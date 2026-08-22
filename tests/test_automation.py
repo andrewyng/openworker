@@ -34,7 +34,8 @@ def _task(**kw) -> ScheduledTask:
 # -- model / schedule ----------------------------------------------------------
 def test_schedule_human():
     assert Schedule("cron", cron="10 19 * * *").human() == "Every day at ~7:10 PM"
-    assert "Monday" in Schedule("cron", cron="0 9 * * 0").human()
+    assert "Sunday" in Schedule("cron", cron="0 9 * * 0").human()
+    assert "Monday" in Schedule("cron", cron="0 9 * * 1").human()
     assert Schedule("cron", cron="0 9 5 * *").human() == "Monthly on day 5 at ~9:00 AM"
     assert Schedule("once", fire_at="2026-07-01T09:00:00").human().startswith("Once at")
 
