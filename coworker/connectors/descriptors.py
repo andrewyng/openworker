@@ -48,7 +48,7 @@ class ConnectorDescriptor:
     title: str
     icon: str
     blurb: str
-    auth: str  # "bot_token" | "socket_app" | "oauth" | "token" | "api_token" | "none"
+    auth: str  # "bot_token" | "socket_app" | "oauth" | "token" | "api_token" | "none" | "qrcode"
     two_way: bool
     fields: list[Field]
     instructions: list[str]
@@ -109,6 +109,15 @@ def _validate_telegram(creds: dict) -> ValidationResult:
             True, identity="@" + str(data["result"].get("username", "bot"))
         )
     return ValidationResult(False, error=data.get("description") or "invalid bot token")
+
+
+def _validate_weixin(creds: dict) -> ValidationResult:
+    """ClawBot tokens are minted via QR — presence of bot_token is enough to connect."""
+    token = (creds.get("bot_token") or "").strip()
+    if not token:
+        return ValidationResult(False, error="missing bot_token — scan the ClawBot QR code")
+    identity = (creds.get("ilink_bot_id") or creds.get("account") or "weixin").strip()
+    return ValidationResult(True, identity=identity)
 
 
 def _validate_email(creds: dict) -> ValidationResult:
@@ -445,6 +454,26 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
             "After connecting, DM your new bot once, then use Capture to grab your user ID.",
         ],
         validate=_validate_telegram,
+    ),
+    ConnectorDescriptor(
+        name="weixin",
+        title="WeChat",
+        icon="💬",
+        blurb="Two-way DM with WeChat ClawBot (iLink) — scan a QR code on your phone.",
+        auth="qrcode",
+        two_way=True,
+        channels=False,
+        brand_color="#07c160",
+        logo="weixin",
+        aliases=("wechat", "clawbot", "ilink"),
+        fields=[_ALLOWED_FIELD],
+        instructions=[
+            "Use the WeChat mobile app (iOS ≈8.0.70+ / Android ≈8.0.69+) to scan the QR code.",
+            "Confirm authorization — a ClawBot chat appears in WeChat.",
+            "The account that scans is allow-listed automatically; other senders need Capture.",
+            "Message the bot once so replies can carry a context_token.",
+        ],
+        validate=_validate_weixin,
     ),
     ConnectorDescriptor(
         name="slack",

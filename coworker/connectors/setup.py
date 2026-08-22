@@ -32,6 +32,9 @@ def _profile_connected(descriptor, profile: dict[str, Any]) -> bool:
         return False
     if descriptor.auth == "none":
         return True
+    # ClawBot / iLink: credentials arrive via QR scan, not descriptor fields.
+    if descriptor.auth == "qrcode":
+        return bool(profile.get("bot_token"))
     # Managed relay (e.g. Slack cloud relay) carries no manual credential in the
     # :default profile — the tokens live per-team (slack:team:*). The relay-mode
     # flag is what marks it connected, so don't require the manual fields.
@@ -512,6 +515,10 @@ def disconnect_connector(secrets: SecretStore, name: str) -> dict[str, Any]:
                 secrets.delete(github_installs.PREFIX + installation_id)
                 or dropped_accounts
             )
+    if name == "weixin":
+        from .weixin_ilink import context_token_store
+
+        context_token_store().clear()
     profile = secrets.get(f"{name}:default") or {}
     if profile.get("mode") == "mcp":
         # MCP-backed connect: forget the OAuth tokens + DCR registration and remove
@@ -522,3 +529,39 @@ def disconnect_connector(secrets: SecretStore, name: str) -> dict[str, Any]:
         dropped_accounts = mcp_oauth.sign_out(name, secrets) or dropped_accounts
         mcp_config.delete_global_server(name)
     return {"ok": secrets.delete(f"{name}:default") or dropped_accounts}
+
+
+def save_weixin_qr_credentials(
+    secrets: SecretStore,
+    *,
+    bot_token: str,
+    ilink_bot_id: str = "",
+    ilink_user_id: str = "",
+    baseurl: str = "",
+) -> dict[str, Any]:
+    """Persist ClawBot credentials from a confirmed QR scan and mark the connector connected.
+
+    Pre-adds `ilink_user_id` to the allow-list (same idea as Slack's installer pre-allow):
+    scanning the QR is consent to talk to your own ClawBot — without this, the first DM parks.
+    """
+    if not (bot_token or "").strip():
+        return {"ok": False, "error": "missing bot_token"}
+    existing = secrets.get("weixin:default") or {}
+    allowed = {str(u).strip() for u in (existing.get("allowed_users") or []) if str(u).strip()}
+    scanner = (ilink_user_id or "").strip()
+    if scanner:
+        allowed.add(scanner)
+    profile = {
+        "bot_token": bot_token.strip(),
+        "ilink_bot_id": (ilink_bot_id or "").strip(),
+        "ilink_user_id": scanner,
+        "baseurl": (baseurl or "").rstrip("/"),
+        "account": (ilink_bot_id or ilink_user_id or "weixin").strip(),
+        "enabled": True,
+        "mode": "qrcode",
+        "allowed_users": sorted(allowed),
+    }
+    if existing.get("allow_all"):
+        profile["allow_all"] = True
+    secrets.put("weixin:default", profile)
+    return {"ok": True, "account": profile["account"]}
