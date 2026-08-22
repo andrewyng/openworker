@@ -21,6 +21,7 @@ import {
   getAutostart,
   getDictationStatus,
   getKeepAwake,
+  appVersion,
   checkForUpdate,
   installUpdate,
   isTauri,
@@ -34,6 +35,7 @@ import {
   verifyDictationModel,
   type DictationDownloadProgress,
   type DictationStatus,
+  type UpdateInfo,
 } from "../tauri";
 import { useThemePref } from "../theme";
 import { Icon } from "./Icon";
@@ -465,9 +467,9 @@ function AppearanceSection() {
           <button className={BTN_BORDERED} onClick={runSetupAgain}>
             Run setup again
           </button>
-          {desktop && <UpdateInline />}
         </div>
         <div className={FIELD_HELP}>Replays the first-run setup: model, first automation, tips.</div>
+        {desktop && <UpdateInline />}
       </div>
     </section>
   );
@@ -528,16 +530,28 @@ function TrustedWorkspacesCard() {
   );
 }
 
+// The manual update control (desktop only). The app also checks on its own — see
+// UpdateBanner — but this lets the user check on demand, see the version they're on,
+// and, when a release is offered, read exactly what it contains (the changelog the
+// release manifest ships) before choosing to install.
 function UpdateInline() {
   const [state, setState] = useState<"idle" | "checking" | "none" | "found" | "installing" | "error">("idle");
-  const [version, setVersion] = useState("");
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [current, setCurrent] = useState("");
+
+  // The version we're running now — the baseline "you're on vX" line.
+  useEffect(() => {
+    appVersion()
+      .then((v) => v && setCurrent(v))
+      .catch(() => {});
+  }, []);
 
   const check = async () => {
     setState("checking");
     try {
       const u = await checkForUpdate();
       if (u) {
-        setVersion(u.version);
+        setUpdate(u);
         setState("found");
       } else {
         setState("none");
@@ -556,32 +570,65 @@ function UpdateInline() {
     }
   };
 
+  const notes = update?.notes.trim() ?? "";
+
   return (
-    <span className="inline-flex items-center gap-2.5">
-      {state === "found" ? (
-        <button className={BTN_BORDERED} onClick={install} data-testid="settings-update-install">
-          Update to v{version} and restart
-        </button>
-      ) : (
-        <button
-          className={BTN_BORDERED}
-          onClick={check}
-          disabled={state === "checking" || state === "installing"}
-          data-testid="settings-update-check"
-        >
-          {state === "checking" ? "Checking…" : "Check for updates"}
-        </button>
+    <div className="mt-4 pt-4 border-t border-line" data-testid="settings-update">
+      <div className={FIELD_LABEL}>Software updates</div>
+      {current && (
+        <div className="text-[12px] text-muted mt-1" data-testid="settings-update-current">
+          You're on OpenWorker v{current}.
+        </div>
       )}
-      {(state === "none" || state === "error" || state === "installing") && (
-        <span className="text-[12px] text-muted">
-          {state === "none"
-            ? "You're on the latest version."
-            : state === "error"
-              ? "Couldn't check right now — try again later."
-              : "Downloading — OpenWorker restarts by itself when it's ready."}
-        </span>
+      <div className="flex items-center gap-2.5 mt-2.5">
+        {state === "found" && update ? (
+          <button className={BTN_BORDERED} onClick={install} data-testid="settings-update-install">
+            Update to v{update.version} and restart
+          </button>
+        ) : (
+          <button
+            className={BTN_BORDERED}
+            onClick={check}
+            disabled={state === "checking" || state === "installing"}
+            data-testid="settings-update-check"
+          >
+            {state === "checking" ? "Checking…" : "Check for updates"}
+          </button>
+        )}
+        {(state === "none" || state === "error" || state === "installing") && (
+          <span className="text-[12px] text-muted">
+            {state === "none"
+              ? "You're on the latest version."
+              : state === "error"
+                ? "Couldn't check right now — try again later."
+                : "Downloading — OpenWorker restarts by itself when it's ready."}
+          </span>
+        )}
+      </div>
+      {state === "found" && update && (
+        <div className="mt-3" data-testid="settings-update-notes">
+          <div className="text-[12px] font-medium text-ink">What's new in v{update.version}</div>
+          {notes ? (
+            <div className="mt-1.5 max-h-48 overflow-auto rounded-lg border border-line bg-paper px-3 py-2 text-[12px] text-muted whitespace-pre-wrap leading-relaxed">
+              {notes}
+            </div>
+          ) : (
+            <div className="text-[12px] text-muted mt-1">
+              This release doesn't list detailed notes — see it on{" "}
+              <a
+                className="text-accent hover:underline"
+                href="https://github.com/andrewyng/openworker/releases/latest"
+                target="_blank"
+                rel="noreferrer"
+              >
+                GitHub Releases
+              </a>
+              .
+            </div>
+          )}
+        </div>
       )}
-    </span>
+    </div>
   );
 }
 
