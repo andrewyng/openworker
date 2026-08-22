@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "coworker"
 version = "0.0.0"
 description = "Agent coworker platform — provider-agnostic agentic coworker runtime"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "openai>=1.0",
     "anthropic>=0.40",  # native Claude Messages API provider
