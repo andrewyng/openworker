@@ -354,3 +354,19 @@ def test_model_context_windows_covers_verified_entries_only():
     assert windows["anthropic:claude-fable-5"] == 1_000_000
     assert "together:thinkingmachines/Inkling" not in windows  # unverified stays absent
     assert all(isinstance(v, int) and v > 0 for v in windows.values())
+
+
+def test_deepseek_v4_context_windows():
+    """DeepSeek V4 Pro and V4 Flash carry a 1M-token window across every routed id
+    (direct, OpenRouter, Together, Fireworks) — the matrix must not under-report it."""
+    from coworker.providers.matrix import model_context_windows
+
+    windows = model_context_windows()
+    for mid in (
+        "deepseek:deepseek-v4-flash",
+        "deepseek:deepseek-v4-pro",
+        "openrouter:deepseek/deepseek-v4-pro",
+        "together:deepseek-ai/DeepSeek-V4-Pro",
+        "fireworks:accounts/fireworks/models/deepseek-v4-pro",
+    ):
+        assert windows[mid] == 1_000_000, mid
