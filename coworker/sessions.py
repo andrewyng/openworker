@@ -37,3 +37,7 @@ class SessionRecord:
     # Auto-compaction state (OPE-27): CompactionState.as_dict(), {} when never compacted.
     # Persisted so a reloaded session keeps its compacted outbound view.
     compaction: dict[str, Any] = field(default_factory=dict)
+    # Agent teams: {} for plain sessions. Workers: {team_id, role: "worker", actor,
+    # lead_session, space}. Leads gain their entry when the staffing gate creates the
+    # team. Drives tool binding (board actor identity) + the sidebar's expandable entry.
+    team: dict[str, Any] = field(default_factory=dict)

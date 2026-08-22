@@ -216,8 +216,12 @@ export function AccessSection({
       : names.length <= 2
         ? names.join(", ")
         : `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  // A temporary dir's raw name (the session id) never shows — say "Temporary folder"; a
+  // draft with no folder picked yet shows none at all (UX-029).
   const folderPart = projectScoped
-    ? baseName(workspace || roots.find((r) => r.primary)?.path || "") || null
+    ? scratchPrimary
+      ? "Temporary folder"
+      : baseName(workspace || "") || null
     : roots.length > 0
       ? `${roots.length} folder${roots.length === 1 ? "" : "s"}`
       : null;
@@ -313,16 +317,11 @@ export function AccessSection({
                       <Toggle
                         checked={c.enabled}
                         onChange={(next) => toggleSession(c.connector, next)}
-                        title="Enabled for this session — tap to mute here"
+                        title="On for this session. Off mutes it for this session only — the connector stays connected."
                       />
                     </div>
                   ))}
                 </div>
-                {connected.length > 0 && (
-                  <p className="text-[10.5px] text-faint mt-1 leading-snug">
-                    Off mutes it for <b>this session only</b> — the connector stays connected.
-                  </p>
-                )}
                 {/* §32 addendum (owner ask 2026-07-13; FB-012): the catalog's long tail,
                     in-session. A quiet row that becomes a typeahead: full list on focus,
                     filter as you type. */}
@@ -375,22 +374,27 @@ export function AccessSection({
                     </div>
                   </div>
                 ) : (
-                  <button
-                    className="mt-1 text-[12px] text-accent hover:underline text-left"
-                    onClick={() => setAdding(true)}
-                    data-testid="access-add-source"
-                  >
-                    + Add a source…
-                  </button>
+                  /* UX-038 (owner ruling: option C): ONE footer row, both verbs — the
+                     in-session add flow (with its lands-enabled-here guarantee) and the
+                     global-page jump. The mute explainer lives on the toggles' tooltip. */
+                  <div className="mt-1.5 flex items-center gap-1.5 text-[12px]">
+                    <button
+                      className="text-accent hover:underline text-left"
+                      onClick={() => setAdding(true)}
+                      data-testid="access-add-source"
+                    >
+                      + Add a source
+                    </button>
+                    <span className="text-faint">·</span>
+                    <button
+                      className="text-accent font-medium hover:underline text-left"
+                      data-testid="access-manage"
+                      onClick={() => onOpenIntegrations?.()}
+                    >
+                      Manage →
+                    </button>
+                  </div>
                 )}
-                {/* Lives with its list (tester ask 2026-07-26): each group's manage link sits
-                    directly under that group, not pooled at the section's bottom. */}
-                <button
-                  className="mt-1.5 block text-[12px] text-accent font-medium hover:underline text-left"
-                  onClick={() => onOpenIntegrations?.()}
-                >
-                  Manage all connectors (global) →
-                </button>
               </div>
 
               {recommended.length > 0 && (

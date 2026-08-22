@@ -210,6 +210,37 @@ def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = 
     return build
 
 
+def _openai_responses_compat(
+    vendor: str,
+    default_base_url: str,
+    env_key: Optional[str] = None,
+    *,
+    reasoning_summary: bool = True,
+):
+    """Builder factory for vendors that explicitly implement the OpenAI Responses API.
+
+    Credentials stay isolated to the vendor's own profile/environment variable, matching the
+    Chat Completions compat path above. In particular, an OpenAI key is never sent to Ark.
+    """
+
+    def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+        base_url = ((profile or {}).get("base_url") or "").strip() or default_base_url
+        api_key = ((profile or {}).get("api_key") or "").strip() or (
+            os.environ.get(env_key, "").strip() if env_key else ""
+        )
+        if not api_key:
+            raise RuntimeError(
+                f"No {vendor} API key configured — add it in Settings ▸ Models."
+            )
+        return OpenAIResponsesProvider(
+            api_key=api_key,
+            base_url=base_url,
+            reasoning_summary=reasoning_summary,
+        )
+
+    return build
+
+
 def _compat(
     name: str,
     title: str,
@@ -245,6 +276,49 @@ def _compat(
         recommended_model=recommended_model,
         env_key=env_key,
         blurb=f"Uses {vendor}'s OpenAI-compatible API — the endpoint is prefilled, just add your key.",
+    )
+
+
+def _responses_compat(
+    name: str,
+    title: str,
+    *,
+    base_url: str,
+    recommended_model: str,
+    env_key: str,
+    endpoint_help: str = "",
+    reasoning_summary: bool = True,
+) -> ProviderDescriptor:
+    """Descriptor for a vendor exposing the OpenAI Responses API."""
+    return ProviderDescriptor(
+        name=name,
+        title=title,
+        needs_key=True,
+        fields=[
+            ProviderField(
+                "api_key",
+                f"{title} API key",
+                secret=True,
+            ),
+            ProviderField(
+                "base_url",
+                "Endpoint",
+                required=False,
+                default=base_url,
+                placeholder=base_url,
+                help=endpoint_help
+                or f"Prefilled with {title}'s official Responses endpoint.",
+            ),
+        ],
+        build=_openai_responses_compat(
+            title,
+            base_url,
+            env_key,
+            reasoning_summary=reasoning_summary,
+        ),
+        recommended_model=recommended_model,
+        env_key=env_key,
+        blurb=f"Uses {title}'s OpenAI-compatible Responses API — the endpoint is prefilled, just add your key.",
     )
 
 
@@ -461,6 +535,26 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="gemini/gemini-3.6-flash",
         blurb="Runs models inside your own Google Cloud project. Gemini and Claude use "
         "their native APIs; open-weight models go through the Vertex MaaS endpoint.",
+    ),
+    # Ark has two intentionally separate provider identities. BytePlus pay-as-you-go and
+    # Volcengine Agent Plan use different regions, endpoints, credentials, and model catalogs;
+    # combining them would let one provider profile route a model to the wrong service.
+    _responses_compat(
+        "ark",
+        "BytePlus Ark",
+        base_url="https://ark.ap-southeast.bytepluses.com/api/v3",
+        recommended_model="dola-seed-evolving-latest-version",
+        env_key="ARK_API_KEY",
+        endpoint_help="BytePlus Ark's Asia Pacific endpoint. This provider is separate from Volcengine Ark Agent Plan.",
+        reasoning_summary=False,
+    ),
+    _responses_compat(
+        "ark-agent-plan-cn",
+        "Volcengine Ark Agent Plan",
+        base_url="https://ark.cn-beijing.volces.com/api/plan/v3",
+        recommended_model="doubao-seed-evolving",
+        env_key="ARK_AGENT_PLAN_CN_API_KEY",
+        endpoint_help="Volcengine Ark Agent Plan's China (Beijing) endpoint. It requires an Agent Plan API key.",
     ),
     # OpenAI-compatible vendors, listed as first-class providers so users don't need to know the
     # "point the OpenAI slot at a different endpoint" trick (owner call, 2026-07-04). Each keeps
@@ -803,9 +897,11 @@ def verify_provider_key(
     fields: Optional[dict[str, Any]] = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
-    """Validate a provider's credentials with one cheap, read-only call (list models) — the same
-    pattern connectors use to validate tokens. Transient: callers pass the key directly so a user
-    can Test before saving. Never raises; returns {ok, error?}. Multi-field cloud providers
+    """Validate a provider's credentials with one cheap call — usually list models.
+
+    Ark's Responses-compatible data plane does not document a `/models` probe, so its Test button
+    sends a non-persisted one-token Responses request instead. Callers pass the key directly so a
+    user can Test before saving. Never raises; returns {ok, error?}. Multi-field cloud providers
     (Bedrock, Vertex) take their whole form via `fields`; everyone else uses api_key/base_url.
     """
     import httpx
@@ -832,6 +928,22 @@ def verify_provider_key(
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
+        elif name in ("ark", "ark-agent-plan-cn"):
+            default_base = next(
+                (f.default for f in d.fields if f.key == "base_url" and f.default), ""
+            )
+            base = (base_url or "").strip().rstrip("/") or default_base.rstrip("/")
+            resp = httpx.post(
+                base + "/responses",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": d.recommended_model,
+                    "input": "Reply with OK.",
+                    "max_output_tokens": 1,
+                    "store": False,
+                },
+                timeout=timeout,
+            )
         else:  # openai + any OpenAI-compatible endpoint (Azure, OpenRouter, vendors, vLLM…)
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""

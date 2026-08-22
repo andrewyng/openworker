@@ -210,6 +210,20 @@ function Buttons({
           Always allow this command
         </button>
       )}
+      {/* Session-wide read-only grant (owner ask 2026-08-11): offered only when the
+          server's conservative classifier accepted THIS command — one click, then every
+          local-read command in the session runs without a card. Network, writes, and
+          anything doubtful keep asking. */}
+      {item.name === "run_shell" && item.readonlyOk && !item.resolved && (
+        <button
+          className="btn"
+          data-testid="allow-readonly-session"
+          title="Auto-allow read-only commands (local reads and pipelines only — no network, writes, or interpreters) for the rest of this session"
+          onClick={() => onApprove("readonly_session")}
+        >
+          Allow read-only commands
+        </button>
+      )}
       <span className="spacer" />
       <button className="btn quiet-deny" onClick={() => onApprove("deny")}>
         {denyLabel}

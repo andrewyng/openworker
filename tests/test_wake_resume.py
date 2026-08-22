@@ -49,7 +49,7 @@ def test_selfwake_tools_registered_for_knowledge(tmp_path):
         session_id="s1",
     )
     names = set(engine.registry.names())
-    assert {"sleep_for", "wake_on", "wake_on_event"} <= names
+    assert {"sleep_until", "wake_on", "wake_on_event"} <= names
 
 
 def test_selfwake_tools_absent_for_code(tmp_path):
@@ -59,4 +59,4 @@ def test_selfwake_tools_absent_for_code(tmp_path):
         wake_store=WakeStore(tmp_path / "wakes.json"),
         session_id="s1",
     )
-    assert "sleep_for" not in set(engine.registry.names())
+    assert "sleep_until" not in set(engine.registry.names())

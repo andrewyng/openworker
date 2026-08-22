@@ -27,13 +27,6 @@ class ConnectorToolDef:
 TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
     ConnectorToolDef(
         "browser",
-        "browser_read_url",
-        "Read public URL",
-        "read",
-        "Fetch readable text from a public URL.",
-    ),
-    ConnectorToolDef(
-        "browser",
         "browser_open_url",
         "Open URL",
         "read",
@@ -41,17 +34,10 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
     ),
     ConnectorToolDef(
         "browser",
-        "browser_snapshot",
-        "Snapshot page",
+        "browser_read_page",
+        "Read page",
         "read",
         "Read page text and visible controls.",
-    ),
-    ConnectorToolDef(
-        "browser",
-        "browser_get_text",
-        "Read page text",
-        "read",
-        "Read visible text from the current browser page.",
     ),
     ConnectorToolDef(
         "browser",

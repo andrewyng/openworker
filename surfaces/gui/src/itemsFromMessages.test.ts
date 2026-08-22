@@ -108,3 +108,17 @@ describe("itemsFromMessages reasoning", () => {
     expect(items[2]).toEqual({ kind: "assistant", text: "", reasoning: "stopped mid-thought" });
   });
 });
+
+describe("itemsFromMessages mcp failure", () => {
+  it("replays the persisted mcp_error marker as a warn notice WITHOUT retry", () => {
+    const items = itemsFromMessages([
+      { role: "user", content: "hi" },
+      { role: "notice", kind: "mcp_error", text: "MCP server “sales-db” failed to start — see Settings ▸ Connectors" },
+    ] as any);
+    expect(items[1]).toEqual({
+      kind: "notice",
+      tone: "warn",
+      text: "MCP server “sales-db” failed to start — see Settings ▸ Connectors",
+    });
+  });
+});

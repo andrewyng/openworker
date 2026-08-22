@@ -304,3 +304,33 @@ describe("InboxItemCard — parked save_skill proposals (SKILLS-SPEC §5.2)", ()
     expect(onResolve).toHaveBeenCalledWith("i9", "deny");
   });
 });
+
+describe("ApprovalCard — session read-only grant", () => {
+  const shellApproval = (extra: Partial<ApprovalItem> = {}): ApprovalItem => ({
+    kind: "approval",
+    name: "run_shell",
+    args: { command: "ls -la" },
+    reason: "requires approval",
+    ...extra,
+  });
+
+  it("offers the read-only session grant only when the server classified the command read-only", () => {
+    const onApprove = vi.fn();
+    render(<ApprovalCard item={shellApproval({ readonlyOk: true })} onApprove={onApprove} />);
+    fireEvent.click(screen.getByTestId("allow-readonly-session"));
+    expect(onApprove).toHaveBeenCalledWith("readonly_session");
+    // The command-scoped grant stays alongside — different scopes, both legitimate.
+    expect(screen.getByText("Always allow this command")).toBeTruthy();
+    cleanup();
+
+    // Not classified read-only (a write) → the button never renders.
+    const onApprove2 = vi.fn();
+    render(
+      <ApprovalCard
+        item={shellApproval({ args: { command: "rm -rf x" }, readonlyOk: false })}
+        onApprove={onApprove2}
+      />,
+    );
+    expect(screen.queryByTestId("allow-readonly-session")).toBeNull();
+  });
+});

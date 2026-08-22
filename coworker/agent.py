@@ -6,6 +6,7 @@ the skill catalog (progressive disclosure) + load_skill into a TurnEngine.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -41,6 +42,7 @@ from .tools import ToolRegistry
 from .tools.ask import ask_user_tool
 from .tools.directories import request_directory_tool
 from .tools.plan import propose_plan_tool
+from .tools.toolreq import request_tool_tool
 from .tools.subagent import explorer_tools
 from .web import make_web_fetch_tool, make_web_search_tool
 from .workspace_trust import WorkspaceTrustStore
@@ -211,15 +213,21 @@ def build_engine(
     directory_requester: Optional[Any] = None,
     plan_approver: Optional[Any] = None,
     question_asker: Optional[Any] = None,
+    tool_requester: Optional[Any] = None,
+    team_approver: Optional[Any] = None,
+    items_approver: Optional[Any] = None,
     subscription_store: Optional[Any] = None,
     channel_buffer: Optional[Any] = None,
     routing_targets: Optional[list[str]] = None,
     connector_filter: Optional[set[str]] = None,
     # A set (static snapshot) or a zero-arg callable (live, re-evaluated per load_skill).
     skill_filter: Optional[set[str] | Callable[[], set[str]]] = None,
+    # Persona-carried skill folders (OPE-58): the bundle's skills/ dir joins the loader so
+    # its skills are readable by load_skill, not just listed by the filter.
+    extra_skill_dirs: Optional[list[str | Path]] = None,
 ) -> TurnEngine:
     ws = Path(workspace).expanduser().resolve() if workspace else None
-    if agent.needs_workspace and ws is None:
+    if agent.requires_folder and ws is None:
         raise ValueError(f"agent '{agent.name}' requires a workspace")
 
     # The session's directories. Explicit `roots` (orphan Cowork: scratch + added folders) wins;
@@ -234,9 +242,7 @@ def build_engine(
 
     workspace_trusted = bool(ws and WorkspaceTrustStore().is_trusted(ws))
     config = load_config(ws, workspace_trusted=workspace_trusted)
-    executor = (
-        LocalExecutor(cwd=ws) if (agent.needs_workspace and ws is not None) else None
-    )
+    executor = LocalExecutor(cwd=ws) if ws is not None else None
     todo = TodoList()
     context = AgentContext(
         workspace=ws, executor=executor, todo=todo, roots=root_list or None
@@ -268,11 +274,21 @@ def build_engine(
                     routing_targets=routing_targets,
                 )
             )
-    # Knowledge surfaces with a multi-root workspace can ask the user mid-task for another folder.
-    if agent.family == "knowledge" and root_list:
+    # Surfaces with a multi-root workspace can ask the user mid-task for another folder.
+    if root_list:
         registry.register(request_directory_tool())
+    # Anything with a shell can hit a missing CLI (a scanner, aws, kubectl). Give it a way to
+    # ask instead of silently dropping the check that needed it (OPE-85).
+    if executor is not None:
+        registry.register(request_tool_tool())
     if agent.connectors:
         enabled_connectors, enabled_tools = _enabled_connector_tools(secrets)
+        # Least-privilege grant (OPE-93): a persona with an allowlist gets ONLY the
+        # connectors it declared — an undeclared connector's tools never enter the
+        # session, no matter what the user has connected. True = general personas
+        # (Cowork) that legitimately drive whatever is connected.
+        if agent.connectors is not True:
+            enabled_connectors = enabled_connectors & set(agent.connectors)
         # Per-session connection hierarchy (UI-REFRESH §4.3): when the caller supplies the session's
         # effective connector set, intersect it so only effective-enabled connectors expose tools.
         # Default None preserves CLI / direct callers (no per-session restriction).
@@ -296,9 +312,9 @@ def build_engine(
     # passes its shared router; this fallback covers the TUI / direct build_engine() callers.
     # Resolved here (not at engine construction) because the explorer subagent captures it.
     provider = provider or ProviderRouter(secrets, default_provider="openai")
-    # Code-family personas can fan broad research out to read-only explorer subagents, keeping
+    # Repo-focused personas can fan broad research out to read-only explorer subagents, keeping
     # their own context for the actual change.
-    if agent.family == "code" and ws is not None:
+    if agent.subagents and ws is not None:
         registry.register_all(
             explorer_tools(
                 workspace=ws,
@@ -307,9 +323,9 @@ def build_engine(
                 model_settings=model_settings,
             )
         )
-    # Scheduling: knowledge surfaces with a workspace can set up scheduled tasks (origin = this
+    # Scheduling: opted-in surfaces with a workspace can set up scheduled tasks (origin = this
     # session). Code stays out (it fans out to explorers instead).
-    if task_store is not None and ws is not None and agent.family == "knowledge":
+    if task_store is not None and ws is not None and agent.scheduling:
         origin = {
             "surface": agent.name,
             "session_id": session_id or "",
@@ -319,9 +335,9 @@ def build_engine(
         registry.register_all(
             scheduling_tools(task_store, origin=origin, default_workspace=str(ws))
         )
-    # Self-wake: knowledge surfaces can suspend + schedule their own resumption (timer /
+    # Self-wake: scheduling surfaces can suspend + schedule their own resumption (timer /
     # on-completion / on-event). The scheduler tick resumes due wakes.
-    if wake_store is not None and session_id and agent.family == "knowledge":
+    if wake_store is not None and session_id and agent.scheduling:
         registry.register_all(selfwake_tools(wake_store, session_id))
 
     instructions = f"{agent.system_prompt}\n\n{_NARRATION_GUIDANCE}"
@@ -374,7 +390,9 @@ def build_engine(
         if block:
             instructions = f"{instructions}\n\n{block}"
 
-    skill_loader = SkillLoader(_skill_dirs(ws))
+    # Persona dirs come FIRST so a user's global/workspace copy of the same name shadows
+    # the bundle's (later dirs overwrite earlier in the loader).
+    skill_loader = SkillLoader([Path(d) for d in (extra_skill_dirs or [])] + _skill_dirs(ws))
     # Per-session effective menu (SKILLS-SPEC §3). The manager passes a CALLABLE so
     # load_skill consults the LIVE state per call (a Settings disable applies to running
     # sessions; a skill created after this build is still loadable). The catalog itself
@@ -406,30 +424,43 @@ def build_engine(
         roots=root_list or None,
         risk_overrides=risk_overrides,
     )
-    # The plan-mode exit door. Always registered (surfaces can flip a live session into
-    # plan mode via set_mode, and the registry is fixed at build); the engine rejects the
-    # call whenever the session isn't actually in plan mode.
-    registry.register(propose_plan_tool())
+    # The plan-mode exit door — mutually exclusive with the board's decomposition
+    # gate, DERIVED from the team trait (owner call 2026-08-16): a lead never
+    # implements, so plan mode is meaningless for it, and shipping both tools made
+    # the lead pick the wrong one (dogfood-hit: propose_plan denied outside plan
+    # mode). Solo/worker personas keep propose_plan as always (mode can flip
+    # mid-session; the engine rejects the call outside plan mode).
+    if agent.team != "lead":
+        registry.register(propose_plan_tool())
+
+    # The lead's gates: propose_work_items (decomposition → items on approval, any
+    # mode) and propose_team (staffing → pre-spawn on approval).
+    if agent.team == "lead":
+        from .teams.tools import propose_team_tool, propose_work_items_tool
+
+        registry.register(propose_work_items_tool())
+        registry.register(propose_team_tool())
 
     # Per-turn ephemeral context, appended to the latest user message since mid-thread system
     # messages aren't reliable across providers. Three producers: the plan-mode reminder (mode can
     # flip mid-session, so it's checked each turn, not baked into the instructions), the live
-    # directory list (orphan Cowork can gain folders mid-session; Cowork/MyHelper only), and the
+    # directory list (any multi-root session can gain folders mid-session), and the
     # memory-SAVING notice (same reason as plan mode — the switch flips either way mid-chat).
     # Note what is NOT here: the memories and the user's rules. Those are knowledge, fixed at
     # session start (§7.1).
-    roots_context = (
-        (lambda: render_context(root_list))
-        if root_list and agent.family == "knowledge"
-        else None
-    )
+    roots_context = (lambda: render_context(root_list)) if root_list else None
 
     # Late-bound engine ref: the closure needs the conversation history (for the disable
     # countermand) but the engine is constructed after the closure. Filled below.
     _engine_box: list = []
 
     def context_provider() -> str:
-        parts = []
+        # Live clock, every turn (owner ruling 2026-08-20): the environment block's
+        # "Today's date" is a session-START snapshot — stale for long-lived/self-waking
+        # sessions — and carries no time of day, which absolute scheduling
+        # (sleep_until, scheduled tasks) needs to compute wake times.
+        now = datetime.now().astimezone()
+        parts = [f"Now: {now.strftime('%Y-%m-%d %H:%M')} ({now.tzname()})"]
         if permissions.mode is Mode.PLAN:
             parts.append(_PLAN_MODE_CONTEXT)
         elif permissions.mode is Mode.DISCUSS:
@@ -484,6 +515,9 @@ def build_engine(
         directory_requester=directory_requester,
         plan_approver=plan_approver,
         question_asker=question_asker,
+        tool_requester=tool_requester,
+        team_approver=team_approver,
+        items_approver=items_approver,
     )
     engine.executor = executor  # type: ignore[attr-defined]
     engine.todo = todo  # type: ignore[attr-defined]

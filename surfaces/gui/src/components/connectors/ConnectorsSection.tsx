@@ -3,11 +3,14 @@ import {
   disconnectConnector,
   getCloudStatus,
   getConnectors,
+  getMcpServers,
   getSlackStatus,
   type CloudStatus,
   type Connector,
+  type McpServer,
   type SlackStatus,
 } from "../../api";
+import { McpServerDetail } from "./CustomMcp";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AllowlistBlock, ConnectorTools, ListeningSessionsBlock, UnauthorizedBlock } from "../ManageTabs";
 import { AccountsDetail } from "./AccountsDetail";
@@ -52,11 +55,13 @@ const DETAIL_PAGES: Record<string, (p: DetailProps) => JSX.Element> = {
 export function ConnectorsSection() {
   const [detail, setDetail] = useState<string | null>(null);
   const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
   const [slack, setSlack] = useState<SlackStatus | null>(null);
 
   const refresh = () => {
     getConnectors().then(setConnectors).catch(() => setConnectors([]));
+    getMcpServers().then(setMcpServers).catch(() => setMcpServers([]));
     getCloudStatus().then(setCloud).catch(() => setCloud(null));
     getSlackStatus().then(setSlack).catch(() => setSlack(null));
   };
@@ -67,6 +72,37 @@ export function ConnectorsSection() {
     const t = setInterval(refresh, 5000);
     return () => clearInterval(t);
   }, []);
+
+  // While an MCP test/sign-in is in flight, poll fast so the chip flips to its
+  // result (Live / Error / Needs sign-in) without the user touching anything.
+  const mcpBusy = mcpServers.some((s) => s.status === "authorizing");
+  useEffect(() => {
+    if (!mcpBusy) return;
+    const t = setInterval(refresh, 2000);
+    return () => clearInterval(t);
+  }, [mcpBusy]);
+
+  // Custom MCP entries route as "mcp:<name>" so they can never collide with a
+  // connector detail page of the same name.
+  if (detail?.startsWith("mcp:")) {
+    const s = mcpServers.find((x) => "mcp:" + x.name === detail);
+    return (
+      <div>
+        <button
+          className="text-[13px] text-accent mb-3"
+          data-testid="connectors-breadcrumb"
+          onClick={() => setDetail(null)}
+        >
+          ‹ Connectors
+        </button>
+        {!s ? (
+          <div className="text-[13px] text-muted">Loading…</div>
+        ) : (
+          <McpServerDetail server={s} onChanged={refresh} onGone={() => setDetail(null)} />
+        )}
+      </div>
+    );
+  }
 
   if (detail) {
     const c = connectors.find((x) => x.name === detail);
@@ -104,6 +140,7 @@ export function ConnectorsSection() {
   return (
     <ConnectorsList
       connectors={connectors}
+      mcpServers={mcpServers}
       cloud={cloud}
       slack={slack}
       onOpen={setDetail}

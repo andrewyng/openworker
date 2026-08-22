@@ -20,6 +20,7 @@ from enum import Enum
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from . import compaction as _compaction
+from . import toolchain as _toolchain
 from .events import Event, EventType
 from .permissions import Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
@@ -31,7 +32,18 @@ class ApprovalOutcome(str, Enum):
     ONCE = "once"
     ALWAYS_TOOL = "always_tool"
     ALWAYS_COMMAND = "always_command"
+    # Session-wide grant for classifier-approved read-only shell commands (readonly.py).
+    READONLY_SESSION = "readonly_session"
     DENY = "deny"
+
+
+def _readonly_ok(arguments: dict) -> bool:
+    command = str((arguments or {}).get("command", "") or "")
+    if not command:
+        return False
+    from .readonly import is_readonly_command
+
+    return is_readonly_command(command)
 
 
 @dataclass
@@ -74,6 +86,15 @@ class TurnEngine:
         question_asker: Optional[
             Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
         ] = None,
+        tool_requester: Optional[
+            Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
+        ] = None,
+        team_approver: Optional[
+            Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
+        ] = None,
+        items_approver: Optional[
+            Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
+        ] = None,
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
         interrupt_hooks: Optional[list[Callable[[], None]]] = None,
@@ -96,10 +117,24 @@ class TurnEngine:
         # user to grant/decline a folder out-of-band, applies the grant to this live session, and
         # returns the outcome. None on surfaces that can't prompt (the tool then no-ops).
         self.directory_requester = directory_requester
+        # Handles the `request_tool` tool: emits TOOL_REQUESTED, waits for the user to install
+        # the pinned build or decline. None on surfaces that can't prompt (the tool then
+        # no-ops, and the agent is told so it can fall back openly rather than skip silently).
+        self.tool_requester = tool_requester
         # Handles the `propose_plan` tool: emits PLAN_PROPOSED, waits for the user's decision.
         # An approving result flips the live PermissionEngine out of plan mode (same session,
         # context kept). None on surfaces that can't prompt (the tool then no-ops).
         self.plan_approver = plan_approver
+        # Handles the `propose_team` tool (the staffing gate): emits TEAM_PROPOSED, waits
+        # for the user's decision; approval pre-spawns the worker sessions and the result
+        # carries the roster (actor ids). None on surfaces that can't prompt.
+        self.team_approver = team_approver
+        # Handles `propose_work_items` (the decomposition gate): emits ITEMS_PROPOSED,
+        # waits; approval creates the items on the board. Mode-independent by design —
+        # unlike propose_plan it carries no permission-mode semantics: propose_plan is
+        # an IMPLEMENTATION plan (steps/files, plan-mode exit); this is a team
+        # decomposition onto the board.
+        self.items_approver = items_approver
         # Handles the `ask_user` tool: turns a question into an Inbox item and waits for the answer
         # (answerable inline in a live session or from the Inbox when unattended). None on surfaces
         # that can't ask (the tool then no-ops).
@@ -118,6 +153,9 @@ class TurnEngine:
         ):
             self.messages.insert(0, {"role": "system", "content": instructions})
         self._cancel = asyncio.Event()
+        # Whether the latest assistant turn hit the output-token limit — decides which
+        # diagnosis a mangled (unparseable-args) tool call gets answered with.
+        self._turn_truncated = False
         # Each pending steering message: (text, optional MessageSource sidecar dict).
         self._steering: list[tuple[str, Optional[dict[str, Any]]]] = []
         # tool_call.id → the standing rule that auto-allowed it ("tool → target"), so the
@@ -400,6 +438,8 @@ class TurnEngine:
                 # window on this round-trip (estimate fallback when never reported).
                 self._last_context_tokens = turn.usage.context_tokens
 
+            self._turn_truncated = turn.finish_reason == "length"
+            _sanitize_mangled_calls(turn)
             self.messages.append(_assistant_message(turn, model=self.model))
             payload: dict[str, Any] = {
                 "text": turn.text,
@@ -598,6 +638,13 @@ class TurnEngine:
                 {"name": tool_call.name, "arguments": tool_call.arguments},
             )
             self._audit(tool_call, stage="proposed")
+            if _is_mangled(tool_call):
+                # The arguments never parsed as JSON (a `{"_raw": …}` fallback from the
+                # provider). Executing would produce a bare parameter error the model
+                # misreads — seen in the field as an endless "wrong parameter" retry
+                # loop. Answer with the ACTUAL diagnosis instead.
+                yield self._mangled_tool(tool_call)
+                continue
             # `request_directory` and `propose_plan` are interactive: the user decides
             # out-of-band and that decision IS the consent, so they skip the
             # permission/registry path.
@@ -605,8 +652,20 @@ class TurnEngine:
                 async for event in self._handle_directory_request(tool_call):
                     yield event
                 continue
+            if tool_call.name == "request_tool":
+                async for event in self._handle_tool_request(tool_call):
+                    yield event
+                continue
             if tool_call.name == "propose_plan":
                 async for event in self._handle_plan_proposal(tool_call):
+                    yield event
+                continue
+            if tool_call.name == "propose_team":
+                async for event in self._handle_team_proposal(tool_call):
+                    yield event
+                continue
+            if tool_call.name == "propose_work_items":
+                async for event in self._handle_items_proposal(tool_call):
                     yield event
                 continue
             if tool_call.name == "ask_user":
@@ -647,6 +706,37 @@ class TurnEngine:
             self._audit(tool_call, stage="started")
             result, status = await asyncio.to_thread(self._execute_sync, tool_call)
             yield self._record_result(tool_call, result, status)
+
+    def _mangled_tool(self, tool_call: ToolCall) -> Event:
+        """Answer a tool call whose arguments never parsed, with the real diagnosis.
+
+        Two causes, two different cures — and the model can only pick the right one if
+        the error says which happened. Truncation (`finish_reason == "length"`) means
+        "same content, smaller pieces"; plain bad JSON means "re-send with the declared
+        parameters". Either way the raw text is NOT replayed into history: a stored
+        `{"_raw": …}` call reads as a worked example and teaches the model to emit
+        `_raw` on purpose (observed 2026-08-15), on top of re-sending the junk tokens
+        every turn."""
+        if self._turn_truncated:
+            reason = (
+                "your tool-call arguments were cut off by the output-token limit before "
+                "they finished streaming — the tool never received them. Produce the same "
+                "content in smaller pieces: several calls that each write or append a "
+                "section, keeping each call's content well under the limit. Do not retry "
+                "the identical oversized call."
+            )
+        else:
+            reason = (
+                "your tool-call arguments did not parse as a JSON object, so the tool "
+                "received nothing. `_raw` is not a parameter — it is the unparsed text of "
+                "the failed call. Re-issue the call using the tool's declared parameters."
+            )
+        self.messages.append(_tool_error_message(tool_call, reason))
+        self._audit(tool_call, stage="finished", status="error", reason=reason)
+        return Event(
+            EventType.TOOL_FINISHED,
+            {"name": tool_call.name, "status": "error", "reason": reason},
+        )
 
     def _interrupted_tool(self, tool_call: ToolCall) -> Event:
         """The stop-path answer for a call that will not run: a tool-error result in the
@@ -711,6 +801,9 @@ class TurnEngine:
                         metadata,
                         self.permissions.risk_overrides,
                     ),
+                    # True when this shell command classifies as read-only — the card
+                    # offers "Allow read-only commands for this session" only then.
+                    "readonly_ok": _readonly_ok(tool_call.arguments),
                 },
             )
             self._audit(tool_call, stage="approval_requested", reason=decision.reason)
@@ -745,6 +838,8 @@ class TurnEngine:
                     self.permissions.allow_command_for_session(
                         str(tool_call.arguments.get("command", ""))
                     )
+                elif outcome is ApprovalOutcome.READONLY_SESSION:
+                    self.permissions.allow_readonly_for_session()
                 allowed, reason = True, "approved by user"
                 self._audit(
                     tool_call,
@@ -848,6 +943,108 @@ class TurnEngine:
         except Exception:
             pass
 
+    async def _handle_items_proposal(self, tool_call: ToolCall) -> AsyncIterator[Event]:
+        """The decomposition gate: emit the proposed items, await the user's decision.
+        Approval creates them on the board (server-side, inside the approver) and the
+        result carries their ids; rejection returns feedback for a revised split."""
+        args = tool_call.arguments or {}
+        items = args.get("items") or []
+        valid = [
+            i
+            for i in items
+            if isinstance(i, dict)
+            and str(i.get("title", "")).strip()
+            and str(i.get("criteria", "")).strip()
+        ]
+        if not valid or len(valid) != len(items):
+            result: dict[str, Any] = {
+                "approved": False,
+                "error": "every proposed item needs a title and acceptance criteria",
+            }
+        elif self.items_approver is None:
+            result = {
+                "approved": False,
+                "error": "item proposals aren't available in this surface",
+            }
+        else:
+            yield Event(
+                EventType.ITEMS_PROPOSED,
+                {"items": valid, "note": str(args.get("note", ""))},
+            )
+            self._audit(tool_call, stage="items_proposed")
+            result = await self._interruptible(
+                self.items_approver(dict(args), tool_call.id),
+                interrupted={"approved": False, "error": "interrupted by user"},
+            ) or {"approved": False, "error": "no response"}
+
+        status = "ok" if result.get("approved") else "denied"
+        self.messages.append(_tool_result_message(tool_call, result))
+        self._audit(
+            tool_call,
+            stage="finished",
+            status=status,
+            result=result,
+            result_preview=_preview(result),
+        )
+        yield Event(
+            EventType.TOOL_FINISHED,
+            {
+                "name": tool_call.name,
+                "status": status,
+                "result_preview": _preview(result),
+            },
+        )
+
+    async def _handle_team_proposal(self, tool_call: ToolCall) -> AsyncIterator[Event]:
+        """The staffing gate: emit the proposed roster, await the user's out-of-band
+        decision. Approval PRE-SPAWNS the worker sessions (server-side, inside the
+        approver) and the result carries the roster with actor ids so the lead can
+        assign; rejection returns the user's feedback for a revised proposal."""
+        args = tool_call.arguments or {}
+        members = args.get("members") or []
+        if not isinstance(members, list) or not members:
+            result: dict[str, Any] = {
+                "approved": False,
+                "error": "propose at least one member ({persona, model?, reason?})",
+            }
+        elif self.team_approver is None:
+            result = {
+                "approved": False,
+                "error": "team staffing isn't available in this surface",
+            }
+        else:
+            yield Event(
+                EventType.TEAM_PROPOSED,
+                {
+                    "members": members,
+                    "enable_chat": bool(args.get("enable_chat", False)),
+                    "note": str(args.get("note", "")),
+                },
+            )
+            self._audit(tool_call, stage="team_proposed")
+            result = await self._interruptible(
+                self.team_approver(dict(args), tool_call.id),
+                interrupted={"approved": False, "error": "interrupted by user"},
+            ) or {"approved": False, "error": "no response"}
+
+        status = "ok" if result.get("approved") else "denied"
+        self.messages.append(_tool_result_message(tool_call, result))
+        self._audit(
+            tool_call,
+            stage="finished",
+            status=status,
+            result=result,
+            result_preview=_preview(result),
+        )
+        yield Event(
+            EventType.TOOL_FINISHED,
+            {
+                "name": tool_call.name,
+                "status": status,
+                "result_preview": _preview(result),
+            },
+        )
+
     async def _handle_plan_proposal(self, tool_call: ToolCall) -> AsyncIterator[Event]:
         """Emit the plan for review, await the user's out-of-band decision, and apply it:
         approval flips the live PermissionEngine out of plan mode (the same session keeps
@@ -915,6 +1112,103 @@ class TurnEngine:
             },
         )
 
+    async def _handle_tool_request(self, tool_call: ToolCall) -> AsyncIterator[Event]:
+        """Emit the install prompt, await the user's decision, hand the outcome back.
+
+        Declining is a normal outcome, not an error: the result tells the agent to fall back
+        and disclose the gap, because a security report that quietly loses a check is worse
+        than one that says which checks it couldn't run.
+        """
+        args = tool_call.arguments or {}
+        name = str(args.get("name", "")).strip()
+        reason = str(args.get("reason", ""))
+
+        if self.tool_requester is None or not name:
+            result: dict[str, Any] = {
+                "installed": False,
+                "error": "tool requests aren't available here",
+                "guidance": (
+                    "Continue without it: use a fallback check if you have one, and say in "
+                    "your report which checks were degraded."
+                ),
+            }
+        elif _toolchain.describe(name) is None:
+            # Not in the pinned catalog: no card at all (owner-hit 2026-08-20 — agents
+            # routed ordinary brew/pip installs through the install card, which could
+            # only fail after approval). The agent has a shell with its own approval
+            # flow; steer it there instead of at the user.
+            catalog = ", ".join(sorted(_toolchain.MANAGED))
+            result = {
+                "installed": False,
+                "error": (
+                    f"'{name}' is not in the pinned tool catalog ({catalog})."
+                ),
+                "guidance": (
+                    "Install it yourself with the shell (brew/pip/…, subject to the "
+                    "normal command approval), or continue without it and say in your "
+                    "report which checks were degraded."
+                ),
+            }
+        else:
+            # The prompt must say up front whether WE can install this (pinned build for
+            # this platform) — a card that offers Install for a tool we can't fetch turns
+            # the user's approval into a guaranteed error. Absence of metadata means NO.
+            info = _toolchain.describe(name)
+            yield Event(
+                EventType.TOOL_REQUESTED,
+                {
+                    "name": name,
+                    "reason": reason,
+                    "installable": info is not None,
+                    "version": (info or {}).get("version", ""),
+                    "summary": (info or {}).get("summary", ""),
+                    "source": (info or {}).get("source", ""),
+                },
+            )
+            self._audit(tool_call, stage="tool_requested", reason=reason)
+            result = await self._interruptible(
+                self.tool_requester(dict(args), tool_call.id),
+                interrupted={"installed": False, "error": "interrupted by user"},
+            ) or {"installed": False, "error": "no response"}
+            if not result.get("installed"):
+                # The card says "or install it yourself and continue" — honor it. A user
+                # who brewed the tool mid-prompt and clicked Continue has PROVIDED it,
+                # not declined it; find their copy before treating this as a refusal.
+                found = _toolchain.resolve(name)
+                if found:
+                    result = {
+                        "installed": True,
+                        "path": found,
+                        "note": (
+                            "the user provided their own copy instead of the managed "
+                            "install — use it from this path"
+                        ),
+                    }
+            if not result.get("installed"):
+                result.setdefault(
+                    "guidance",
+                    "Continue without it: use a fallback check if you have one, and say in "
+                    "your report which checks were degraded.",
+                )
+
+        status = "ok" if result.get("installed") else "denied"
+        self.messages.append(_tool_result_message(tool_call, result))
+        self._audit(
+            tool_call,
+            stage="finished",
+            status=status,
+            result=result,
+            result_preview=_preview(result),
+        )
+        yield Event(
+            EventType.TOOL_FINISHED,
+            {
+                "name": tool_call.name,
+                "status": status,
+                "result_preview": _preview(result),
+            },
+        )
+
     async def _handle_directory_request(
         self, tool_call: ToolCall
     ) -> AsyncIterator[Event]:
@@ -933,6 +1227,10 @@ class TurnEngine:
                     "reason": str(args.get("reason", "")),
                     "path": str(args.get("path", "")),
                     "writable": bool(args.get("writable", False)),
+                    # Root promotion (workspace-scratch-design.md §5): the agent asks for
+                    # the folder to become the session's primary workspace — the consent
+                    # card must say so, it's a different grant than a plain extra root.
+                    "primary": bool(args.get("primary", False)),
                 },
             )
             self._audit(
@@ -1172,6 +1470,30 @@ def _assistant_message(turn: AssistantTurn, model: Optional[str] = None) -> dict
             for tc in turn.tool_calls
         ]
     return message
+
+
+_MANGLED_PREVIEW_CHARS = 200
+
+
+def _is_mangled(tool_call: ToolCall) -> bool:
+    """Provider arg-parsers fall back to `{"_raw": <unparsed text>}` when a tool call's
+    arguments aren't a JSON object (typically a stream truncated mid-arguments)."""
+    return set(tool_call.arguments or {}) == {"_raw"}
+
+
+def _sanitize_mangled_calls(turn: AssistantTurn) -> None:
+    """Shrink each mangled call's stored raw text to a short preview BEFORE the turn
+    enters history. The full text is junk (half a JSON document): replaying it costs
+    thousands of tokens per turn and, worse, teaches the model that `_raw` is a real
+    parameter shape it should imitate."""
+    for tc in turn.tool_calls:
+        if _is_mangled(tc):
+            raw = str(tc.arguments.get("_raw") or "")
+            if len(raw) > _MANGLED_PREVIEW_CHARS:
+                tc.arguments = {
+                    "_raw": raw[:_MANGLED_PREVIEW_CHARS]
+                    + f"… [unparsed tool-call text, {len(raw)} chars, truncated in history]"
+                }
 
 
 def _tool_result_message(tool_call: ToolCall, result: Any) -> dict[str, Any]:

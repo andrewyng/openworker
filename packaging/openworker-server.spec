@@ -23,7 +23,7 @@ hides the window while keeping stdio intact.
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 # SPECPATH is injected by PyInstaller and points at this file's directory
 # (<repo>/packaging). Derive everything else from it — no hardcoded paths.
@@ -43,6 +43,14 @@ binaries = []
 
 for pkg in ("coworker", "aisuite", "mcp", "ddgs", "croniter", "docstring_parser"):
     hiddenimports += collect_submodules(pkg)
+
+# Builtin personas ship as DATA, not code: personas/builtin/<id>/manifest.md plus their
+# skills/<name>/SKILL.md. collect_submodules only takes .py files, so without this the
+# packaged sidecar starts with NO builtin coworkers — the picker comes up empty and every
+# persona-scoped skill silently disappears. (pyproject's package-data covers pip installs;
+# PyInstaller needs its own instruction.) Keep this even if the persona set changes — it
+# collects whatever non-.py files the package carries.
+datas += collect_data_files("coworker")
 
 if not INCLUDE_EXPERIMENTAL:
     hiddenimports = [

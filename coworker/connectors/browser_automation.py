@@ -362,45 +362,18 @@ def make_browser_automation_tools() -> list[Callable[..., Any]]:
         )
     )
 
-    def browser_snapshot(max_chars: int = 20000) -> dict[str, Any]:
+    def browser_read_page(max_chars: int = 20000) -> dict[str, Any]:
         return _BROWSER.call("snapshot", lambda page: _snapshot(page, max_chars))
 
-    browser_snapshot.__name__ = "browser_snapshot"
+    browser_read_page.__name__ = "browser_read_page"
     tools.append(
         _attach(
-            browser_snapshot,
+            browser_read_page,
             _schema(
-                "browser_snapshot",
-                "Return the current page text plus visible controls and selector hints.",
-                {"max_chars": {"type": "integer"}},
-                [],
-            ),
-            approval=True,
-        )
-    )
-
-    def browser_get_text(max_chars: int = 20000) -> dict[str, Any]:
-        def run(page):
-            text = re.sub(
-                r"\n{3,}", "\n\n", page.locator("body").inner_text(timeout=5000)
-            )
-            cap = _cap(max_chars)
-            return {
-                "url": page.url,
-                "title": page.title(),
-                "text": text[:cap],
-                "truncated": len(text) > cap,
-            }
-
-        return _BROWSER.call("get_text", run)
-
-    browser_get_text.__name__ = "browser_get_text"
-    tools.append(
-        _attach(
-            browser_get_text,
-            _schema(
-                "browser_get_text",
-                "Read visible text from the current browser page.",
+                "browser_read_page",
+                "Read the current page: its text plus visible controls and selector "
+                "hints (for browser_click/browser_type). Not an image — use "
+                "browser_screenshot for pixels.",
                 {"max_chars": {"type": "integer"}},
                 [],
             ),

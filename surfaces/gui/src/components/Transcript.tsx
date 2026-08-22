@@ -3,6 +3,7 @@ import type { ApprovalDecision, Item } from "../types";
 import { shortArgs } from "./ApprovalCard";
 import { humanizeAsk, humanizeTool, type HumanLine } from "../humanize";
 import { Markdown } from "./Markdown";
+import { BoardWakeCard } from "./BoardWakeCard";
 import { ConnectorMessageCard } from "./ConnectorMessageCard";
 import { Icon } from "./Icon";
 
@@ -415,7 +416,13 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
         const { item } = block;
         switch (item.kind) {
           case "connector":
-            return <ConnectorMessageCard source={item.source} key={bi} />;
+            // Board wakes get their own collapsed-by-default card — a report,
+            // not a foreign message (owner ask 2026-08-16).
+            return item.source.connector === "board" ? (
+              <BoardWakeCard source={item.source} key={bi} />
+            ) : (
+              <ConnectorMessageCard source={item.source} key={bi} />
+            );
           case "user":
             return (
               <div className="group self-end max-w-[78%] flex flex-col items-end" key={bi}>

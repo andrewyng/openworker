@@ -2,7 +2,7 @@
 // only the selected method's fields render, and clicking a segment switches them.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { ProviderForm, type ProviderSetupState } from "./ProviderSetup";
+import { KEY_HELP, ProviderForm, ProviderMark, type ProviderSetupState } from "./ProviderSetup";
 import type { ProviderInfo } from "../api";
 
 vi.mock("../tauri", () => ({ openExternal: vi.fn() }));
@@ -92,5 +92,31 @@ describe("ProviderForm auth-method choice", () => {
     render(<ProviderForm ps={makePs({ auth_method: "iam" })} tp="t" />);
     expect(screen.getByTestId("t-field-aws_secret_access_key")).toBeTruthy();
     expect(screen.queryByTestId("t-field-bedrock_api_key")).toBeNull();
+  });
+});
+
+describe("Ark provider presentation", () => {
+  it("uses separate BytePlus and Volcengine brand marks", () => {
+    const { container, rerender } = render(
+      <ProviderMark name="ark" title="BytePlus Ark" />,
+    );
+    expect(container.querySelector("img")).toBeTruthy();
+
+    rerender(
+      <ProviderMark
+        name="ark-agent-plan-cn"
+        title="Volcengine Ark Agent Plan"
+      />,
+    );
+    expect(container.querySelector("img")).toBeTruthy();
+  });
+
+  it("links each provider to its own API key console", () => {
+    expect(KEY_HELP.ark.url).toBe(
+      "https://console.byteplus.com/ark/region:ark+ap-southeast-1/apiKey",
+    );
+    expect(KEY_HELP["ark-agent-plan-cn"].url).toContain(
+      "advancedActiveKey=agentPlan",
+    );
   });
 });

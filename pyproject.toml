@@ -53,13 +53,20 @@ bedrock = ["boto3>=1.34"]
 openworker = "coworker.cli:main"
 openworker-server = "coworker.server.run:main"
 openworker-connectors = "coworker.connectors.cli:main"
+# The board as an open surface (OPE-100): `ocw board …` / `ocw journal …`,
+# including `ocw board mcp` — the stdio MCP server external harnesses attach to.
+ocw = "coworker.teams.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["coworker*"]
 
 [tool.setuptools.package-data]
-coworker = ["personas/builtin/*.md"]
+coworker = [
+    "personas/builtin/*.md",
+    "personas/builtin/*/manifest.md",
+    "personas/builtin/*/skills/*/SKILL.md",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -9,7 +9,7 @@ the agent how to continue reading. Read-only, workspace-scoped.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import aisuite as ai
 
@@ -47,8 +47,12 @@ _SCHEMA = {
 }
 
 
-def file_tools(workspace: str) -> list:
+def file_tools(workspace: str, roots: Optional[list] = None) -> list:
+    """Windowed read_file rooted at `workspace`. With `roots` (RootDir list), absolute
+    paths inside ANY root also resolve — multi-root sessions (universal scratch) address
+    their scratch/extra dirs by the absolute paths the roots context advertises."""
     root = Path(workspace).resolve()
+    extra_roots = [Path(str(r.path)).resolve() for r in (roots or [])]
 
     def read_file(
         path: str,
@@ -63,10 +67,19 @@ def file_tools(workspace: str) -> list:
         )
         n = min(n, _DEFAULT_MAX_LINES)
         target = (root / path).resolve()
+        home = root
         try:
             target.relative_to(root)  # keep reads inside the workspace
         except ValueError:
-            return {"error": "path escapes the workspace"}
+            for r in extra_roots:
+                try:
+                    target.relative_to(r)
+                    home = r
+                    break
+                except ValueError:
+                    continue
+            else:
+                return {"error": "path escapes the session's directories"}
         if not target.is_file():
             return {"error": f"not a file: {path}"}
 
@@ -87,7 +100,7 @@ def file_tools(workspace: str) -> list:
 
         end = start + len(selected) - 1 if selected else start - 1
         result: dict[str, Any] = {
-            "path": str(target.relative_to(root)),
+            "path": str(target.relative_to(home)) if home == root else str(target),
             "start_line": start,
             "end_line": end,
             "total_lines": total,

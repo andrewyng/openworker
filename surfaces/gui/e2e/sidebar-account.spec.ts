@@ -33,7 +33,8 @@ test("the account menu: Inbox + Connectors always listed; Settings carries the s
   await expect(menu.getByRole("button", { name: "Inbox" })).toBeVisible();
   await expect(menu.getByRole("button", { name: "Connectors", exact: true })).toBeVisible();
   await expect(menu.getByRole("button", { name: /Settings/ })).toContainText("⌘");
-  await expect(menu.getByRole("button", { name: "Automations", exact: true })).toBeVisible();
+  // Automations left the menu (owner 2026-08-21) — the sidebar nav row carries it.
+  await expect(menu.getByRole("button", { name: "Automations", exact: true })).toHaveCount(0);
   await expect(menu.getByRole("button", { name: "Activity", exact: true })).toBeVisible();
 });
 
@@ -45,10 +46,12 @@ test("Activity in the menu is the audit log; Unrouted lives under Inbox ▸ Conf
   await page.getByTestId("account-menu").getByRole("button", { name: "Activity", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Activity" })).toBeVisible();
 
-  // §28: Messaging routing left the Connectors sub-nav entirely (Connectors · MCP only)…
+  // §28: Messaging routing left the Connectors sub-nav entirely — and the MCP tab
+  // retired into the Connectors page itself (UX-034), so one sub-nav item remains.
   await page.getByTestId("account-row").click();
   await page.getByTestId("account-menu").getByRole("button", { name: "Connectors", exact: true }).click();
-  await expect(page.getByRole("button", { name: "MCP servers" })).toBeVisible();
+  await expect(page.getByTestId("add-custom-server")).toBeVisible();
+  await expect(page.getByRole("button", { name: "MCP servers" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Messaging routing/ })).toHaveCount(0);
   // The old fourth sub-nav tab is gone — exactly one page is named Activity now.
   await expect(page.getByRole("button", { name: "Activity", exact: true })).toHaveCount(0);

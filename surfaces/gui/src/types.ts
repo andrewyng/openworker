@@ -8,8 +8,11 @@ export type EventType =
   | "tool_proposed"
   | "permission_required"
   | "directory_requested"
+  | "tool_requested"
   | "question_requested"
   | "plan_proposed"
+  | "team_proposed"
+  | "items_proposed"
   | "tool_started"
   | "tool_finished"
   | "iteration_end"
@@ -34,7 +37,7 @@ import type { MessageSource } from "./api";
 
 // "always_task" persists to the owning automation's task record (standing scoped
 // approval, UX-DECISIONS §25) — offered only on automation-run approval cards, in-app.
-export type ApprovalDecision = "once" | "deny" | "always_tool" | "always_command" | "always_task";
+export type ApprovalDecision = "once" | "deny" | "always_tool" | "always_command" | "always_task" | "readonly_session";
 
 export interface TodoItem {
   content: string;
@@ -75,6 +78,8 @@ export interface SessionInfo {
   attention?: number;
   // working = in-flight turn; sleeping = a self-wake is pending; idle = neither. A count-less dot.
   liveness?: "working" | "sleeping" | "idle";
+  // When sleeping: the next timer fire (ISO) — drives the "sleeping until…" strip.
+  sleeping_until?: string | null;
   // Channels this session listens to (inbound subscriptions).
   subscriptions?: string[];
   // §31: set when the session was spawned by a platform mention rather than the user —
@@ -82,6 +87,19 @@ export interface SessionInfo {
   // "From Slack" group and the row's platform icon.
   origin?: string;
   origin_label?: string;
+  // Agent teams: {} / absent for plain sessions. Workers carry role/lead_session
+  // (+ a computed current-item line); leads carry role/team_id. Drives the sidebar's
+  // ONE expandable team entry (workers nest under their lead; plain rows never expand).
+  team?: {
+    role?: "lead" | "worker" | string;
+    team_id?: string;
+    lead_session?: string;
+    actor?: string;
+    current_item?: string;
+    status?: string;
+    chat_enabled?: boolean;
+    chat_unread?: number;
+  };
 }
 
 // Attachments (images, PDFs, text files) sent with a user message.
@@ -116,6 +134,9 @@ export type Item =
       // The exact target a standing rule could pin (server-computed) — with a run
       // context, the card offers "Allow every time" (§25).
       standingTarget?: string;
+      // Server-classified: this shell command only reads locally, so the card may offer
+      // the session-wide "Allow read-only commands" grant.
+      readonlyOk?: boolean;
       resolved?: ApprovalDecision;
     }
   | {
@@ -123,11 +144,37 @@ export type Item =
       reason: string;
       path?: string;
       writable?: boolean;
+      primary?: boolean; // root promotion: the folder becomes the session's workspace
       resolved?: "granted" | "denied";
+    }
+  | {
+      kind: "toolreq";
+      tool: string;
+      reason: string;
+      installable?: boolean;
+      version?: string;
+      summary?: string;
+      source?: string;
+      resolved?: "installed" | "skipped";
     }
   | {
       kind: "planreq";
       plan: string;
+      resolved?: "approved" | "rejected";
+    }
+  | {
+      // The staffing gate (agent teams): a lead proposes its worker roster.
+      kind: "teamreq";
+      members: { persona: string; name?: string; model?: string; reason?: string }[];
+      enable_chat?: boolean;
+      note?: string;
+      resolved?: "approved" | "rejected";
+    }
+  | {
+      // The decomposition gate: a lead proposes work items; approval creates them.
+      kind: "itemsreq";
+      items: { title: string; criteria: string; description?: string }[];
+      note?: string;
       resolved?: "approved" | "rejected";
     }
   | {

@@ -1,4 +1,4 @@
-"""OpenAI Responses provider — native OpenAI models via `/v1/responses`.
+"""OpenAI Responses provider — native and compatible models via `/responses`.
 
 Chat Completions rejects function tools combined with any `reasoning_effort` other than
 `none` on GPT-5.6+ ("use /v1/responses"), which had reasoning pinned OFF for native OpenAI
@@ -8,9 +8,10 @@ reasoning + tools at real effort levels, streamed reasoning summaries (→ the s
 chain-of-thought continuity across tool round-trips via `store: false` +
 `include: ["reasoning.encrypted_content"]` — nothing retained server-side.
 
-Routing: the `openai` provider entry with NO custom base_url builds this class; a custom
-endpoint (Azure, vLLM, any OpenAI-compatible gateway) and every compat vendor keep the
-Chat Completions `OpenAIProvider` (registry.py).
+Routing: the `openai` provider entry with NO custom base_url builds this class. Most custom
+endpoints (Azure, vLLM, and the existing compat vendors) keep the Chat Completions
+`OpenAIProvider`; vendors that explicitly implement the Responses wire can opt into this
+class with their own base URL (registry.py).
 
 Like the other native providers, this is mostly a pair of pure converters from the
 canonical OpenAI-chat-shaped history to Responses `input` items. What the converters
@@ -289,14 +290,20 @@ class OpenAIResponsesProvider(ProviderClient):
         default_model: str = "gpt-5.6-sol",
         api_key: Optional[str] = None,
         secrets: Any = None,
+        base_url: Optional[str] = None,
+        reasoning_summary: bool = True,
     ):
         # Same deferred-client contract as OpenAIProvider: built lazily so an engine can be
         # assembled before any key exists; key resolves at call time (explicit → env →
-        # SecretStore). Tests inject a `client` directly. No base_url — a custom endpoint
-        # routes to the Chat Completions provider instead (registry.py).
+        # SecretStore). Tests inject a `client` directly. `base_url` is opt-in: stock OpenAI
+        # leaves it unset, while Responses-compatible vendors can supply their own endpoint.
         self._client = client
         self._api_key = api_key
         self._secrets = secrets
+        self._base_url = (base_url or "").strip().rstrip("/") or None
+        if not isinstance(reasoning_summary, bool):
+            raise TypeError("reasoning_summary must be a bool")
+        self._reasoning_summary = reasoning_summary
         self.default_model = default_model
 
     def _ensure_client(self) -> Any:
@@ -310,7 +317,10 @@ class OpenAIResponsesProvider(ProviderClient):
                     "No model API key configured. Set OPENAI_API_KEY in the environment, "
                     "or add your key in Manage → Settings."
                 )
-            self._client = OpenAI(api_key=key)
+            kwargs = {"api_key": key}
+            if self._base_url:
+                kwargs["base_url"] = self._base_url
+            self._client = OpenAI(**kwargs)
         return self._client
 
     def _request_kwargs(
@@ -331,9 +341,10 @@ class OpenAIResponsesProvider(ProviderClient):
             # `_openai` sidecar instead, and summaries feed the GUI's thinking display.
             "store": False,
             "include": ["reasoning.encrypted_content"],
-            "reasoning": {"summary": "auto"},
             **{k: v for k, v in settings.items() if k in _SETTINGS_WHITELIST},
         }
+        if self._reasoning_summary:
+            kwargs["reasoning"] = {"summary": "auto"}
         if instructions:
             kwargs["instructions"] = instructions
         if tools:

@@ -219,7 +219,7 @@ def test_engine_connector_tools_are_cowork_scoped(tmp_path):
     secrets = SecretStore(tmp_path / "secrets.json")
     eng = build_engine(agent=chat_agent(), provider=_StubProvider(), secrets=secrets)
     assert "send_message" not in eng.registry.names()  # no connector yet
-    assert "browser_read_url" not in eng.registry.names()
+    assert "browser_read_page" not in eng.registry.names()
 
     secrets.put("telegram:default", {"bot_token": "T"})
     chat = build_engine(agent=chat_agent(), provider=_StubProvider(), secrets=secrets)
@@ -244,22 +244,22 @@ def test_engine_connector_tools_are_cowork_scoped(tmp_path):
 
     assert "send_message" not in chat.registry.names()
     assert "send_message" not in code.registry.names()
-    assert "browser_read_url" not in chat.registry.names()
-    assert "browser_read_url" not in code.registry.names()
+    assert "browser_read_page" not in chat.registry.names()
+    assert "browser_read_page" not in code.registry.names()
 
     assert "send_message" in cowork.registry.names()
-    assert "browser_read_url" in cowork.registry.names()
+    assert "browser_read_page" in cowork.registry.names()
     assert "browser_open_url" in cowork.registry.names()
     assert "browser_click" in cowork.registry.names()
     assert "browser_type" in cowork.registry.names()
     assert "github_search" not in cowork.registry.names()
     assert "send_message" in helper.registry.names()
-    assert "browser_read_url" not in helper.registry.names()
+    assert "browser_read_page" not in helper.registry.names()
     assert "browser_open_url" not in helper.registry.names()
 
     # §36: browser READS (registry kind) are free; interactions still gate.
     assert cowork.registry.get("browser_open_url").metadata.requires_approval is False
-    assert cowork.registry.get("browser_snapshot").metadata.requires_approval is False
+    assert cowork.registry.get("browser_read_page").metadata.requires_approval is False
     assert cowork.registry.get("browser_click").metadata.requires_approval is True
     assert cowork.registry.get("browser_type").metadata.requires_approval is True
     cowork.permissions.allow_tool_for_session("browser_click")

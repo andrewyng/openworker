@@ -45,6 +45,10 @@ const SETTINGS = {
   model_labels: {
     "anthropic:claude-opus-4-8": "Claude Opus 4.8 · Anthropic",
     "zai:glm-5.2": "GLM-5.2 · Z AI",
+    "ark:dola-seed-evolving-latest-version": "Dola Seed Evolving · BytePlus Ark",
+    "ark:dola-seed-2-1-turbo-260628": "Dola Seed 2.1 Turbo · BytePlus Ark",
+    "ark-agent-plan-cn:doubao-seed-evolving": "Doubao Seed Evolving · Volcengine Agent Plan",
+    "ark-agent-plan-cn:doubao-seed-2.1-turbo": "Doubao Seed 2.1 Turbo · Volcengine Agent Plan",
   },
   // Context windows (subset — mirrors /v1/settings.model_context_windows); drives the
   // composer usage chip's context-fill meter.
@@ -53,15 +57,18 @@ const SETTINGS = {
   },
 };
 
+// UX-035 lineup: Chat is gone; Code ships disabled; the security bundles group under
+// "Security"; ops is ships:false (visible here because the mock plays an internal build).
 const PERSONAS = {
+  internal: true,
   personas: [
-    { id: "cowork", name: "OpenWorker", icon: "cowork", tagline: "Produce a deliverable — research, analysis, scripts", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", tools: ["files", "search"], enabled: true, surfaced: true, default: true },
-    { id: "code", name: "Code", icon: "code", tagline: "Work in a codebase — files, git, shell", needs_workspace: true, builtin: true, family: "code", workspace: "git", tools: ["code_files", "git"], enabled: true, surfaced: true, default: false },
-    { id: "chat", name: "Chat", icon: "chat", tagline: "Quick questions — no workspace", needs_workspace: false, builtin: true, family: "knowledge", workspace: "none", tools: [], enabled: true, surfaced: false, default: false },
-    { id: "ops", name: "Ops Coworker", icon: "wrench", tagline: "Operate and investigate — runbooks, logs, infrastructure", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", tools: ["files", "shell"], enabled: true, surfaced: true, default: false },
+    { id: "cowork", name: "OpenWorker", icon: "cowork", tagline: "Produce a deliverable — research, analysis, scripts", requires_folder: false, builtin: true, tools: ["files", "search"], enabled: true, surfaced: true, default: true, ships: true, group: "general" },
+    { id: "code", name: "Code", icon: "code", tagline: "Work in a codebase — files, git, shell", requires_folder: true, builtin: true, tools: ["code_files", "git"], enabled: false, surfaced: false, default: false, ships: true, group: "general" },
+    { id: "security", name: "Security Coworker", icon: "shield", tagline: "Find and fix security issues — scan, triage, PR", requires_folder: true, builtin: true, tools: ["code_files", "git", "shell"], enabled: true, surfaced: true, default: false, ships: true, group: "security" },
+    { id: "ops", name: "Ops Coworker", icon: "wrench", tagline: "Operate and investigate — runbooks, logs, infrastructure", requires_folder: false, builtin: true, tools: ["files", "shell"], enabled: true, surfaced: true, default: false, ships: false, group: "general" },
     // A non-builtin install (disabled pending consent — invisible to picker specs) so the
     // Personas page's delete/enable affordances have a target.
-    { id: "acme-notes", name: "Acme Notes", icon: "pencil", tagline: "Acme's note-taking coworker", needs_workspace: true, builtin: false, family: "knowledge", workspace: "deliverable", tools: ["files"], enabled: false, surfaced: false, default: false },
+    { id: "acme-notes", name: "Acme Notes", icon: "pencil", tagline: "Acme's note-taking coworker", requires_folder: false, builtin: false, tools: ["files"], enabled: false, surfaced: false, default: false, ships: true, group: "general" },
   ],
 };
 
@@ -336,6 +343,10 @@ const PROVIDERS = [
   { name: "anthropic", title: "Claude (Anthropic)", needs_key: true, fields: [{ key: "api_key", label: "API key", secret: true, required: true, help: "", placeholder: "sk-…" }], configured: true, values: {}, suggested_models: ["claude-opus-4-8"], key_set_at: null, last_used_at: null },
   // zai: an OpenAI-compatible vendor — unconfigured, with a prefilled editable endpoint + blurb.
   { name: "zai", title: "Z AI (GLM)", needs_key: true, blurb: "Uses Z AI's OpenAI-compatible API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "Z AI API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Prefilled with Z AI's international endpoint.", placeholder: "https://api.z.ai/api/paas/v4", default: "https://api.z.ai/api/paas/v4" }], configured: false, values: {}, suggested_models: ["glm-5.2"], key_set_at: null, last_used_at: null },
+  // Ark uses two provider identities: BytePlus pay-as-you-go and Volcengine Agent Plan CN
+  // have independent credentials, endpoints, and strict curated model lists.
+  { name: "ark", title: "BytePlus Ark", needs_key: true, blurb: "Uses BytePlus Ark's OpenAI-compatible Responses API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "BytePlus Ark API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "BytePlus Ark's Asia Pacific endpoint.", placeholder: "https://ark.ap-southeast.bytepluses.com/api/v3", default: "https://ark.ap-southeast.bytepluses.com/api/v3" }], configured: false, values: {}, suggested_models: ["dola-seed-evolving-latest-version", "dola-seed-2-1-turbo-260628"], key_set_at: null, last_used_at: null },
+  { name: "ark-agent-plan-cn", title: "Volcengine Ark Agent Plan", needs_key: true, blurb: "Uses Volcengine Ark Agent Plan's OpenAI-compatible Responses API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "Volcengine Ark Agent Plan API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Volcengine Ark Agent Plan's China (Beijing) endpoint.", placeholder: "https://ark.cn-beijing.volces.com/api/plan/v3", default: "https://ark.cn-beijing.volces.com/api/plan/v3" }], configured: false, values: {}, suggested_models: ["doubao-seed-evolving", "doubao-seed-2.1-turbo"], key_set_at: null, last_used_at: null },
   // ollama: keyless local provider — "configured" without proving anything runs; the
   // onboarding gallery shows "No key needed" and its form is endpoint + Detect (§39).
   { name: "ollama", title: "Ollama (local models)", needs_key: false, fields: [{ key: "base_url", label: "Endpoint", secret: false, required: false, help: "", placeholder: "http://127.0.0.1:11434", default: "http://127.0.0.1:11434" }], configured: true, values: {}, suggested_models: ["qwen3-coder:30b"], key_set_at: null, last_used_at: null },
@@ -343,6 +354,16 @@ const PROVIDERS = [
 
 /** Install the API + WebSocket mocks on a page. Returns handles for assertions/seed data. */
 export async function mockApi(page: import("@playwright/test").Page) {
+  // The rail defaults to HIDDEN (UX-038 follow-up). Existing specs were written
+  // against a visible rail, so run them in the "user opened it" state; the
+  // default + persistence themselves are pinned by rail-default.spec.ts.
+  await page.addInitScript(() => {
+    try {
+      if (!localStorage.getItem("ocw-e2e-rail-default")) {
+        localStorage.setItem("coworker:rail-hidden:v1", "0");
+      }
+    } catch { /* ignore */ }
+  });
   const subscriptions: any[] = [
     // One existing subscription (a non-pinned session) so the Slack page's per-workspace
     // "Listening" row has an entry. Relay-mode channels are team-qualified (slack:T…/C…).
@@ -561,6 +582,39 @@ export async function mockApi(page: import("@playwright/test").Page) {
   ];
   let stagedSkill: any = null;
 
+  // Agent teams (OPE-96): the session's board — empty until a test opts in by sending
+  // "plan the work" (the fake agent then files items; no draft state — the board only
+  // holds accepted work). Mutable so transitions round-trip through the real endpoints.
+  const boardItems: any[] = [];
+  // # team chat log — seeded with one lead question so mention highlighting renders.
+  const chatMessages: any[] = [
+    {
+      seq: 1,
+      ts: new Date().toISOString(),
+      author: "lead",
+      author_role: "lead",
+      text: "@nia does the api assume the assets bucket is public? quick check before you write it up.",
+      mentions: ["nia"],
+    },
+  ];
+  // Pure notes added from the detail pane (never change state) — appended to
+  // the item's timeline so the pane reflects them after reload.
+  const itemNotes: Record<number, any[]> = {};
+  const seedBoard = () => {
+    if (boardItems.length) return;
+    boardItems.push(
+      { id: 1, title: "Code security review — api", description: "", criteria: "every finding triaged with file:line evidence", state: "open", assignee: "", creator: "lead", refs: [], links: [] },
+      { id: 2, title: "Secrets — git history, both repos", description: "", criteria: "every hit dismissed-with-reason or rotation-instructed", state: "open", assignee: "", creator: "lead", refs: [], links: [] },
+      { id: 3, title: "Dependency audit — lockfiles", description: "", criteria: "reachable vs theoretical separated; upgrade branch green", state: "in_progress", assignee: "dep-audit", creator: "lead", refs: [], links: [] },
+      { id: 4, title: "Cloud posture — infra", description: "", criteria: "trivy config clean or findings triaged", state: "blocked", assignee: "cloud-posture", creator: "lead", refs: [], links: [], blocker: "need tfvars for staging" },
+      { id: 5, title: "Report rollup", description: "", criteria: "one report, all sections", state: "review", assignee: "security", creator: "lead", refs: [`attachment://${"a".repeat(64)}.png#rendered-page.png`], links: [] },
+    );
+  };
+  const boardPayload = () =>
+    boardItems.length
+      ? { space: "/Users/test/OpenWorker/launch-note", name: "launch-note", items: boardItems }
+      : { space: null, name: "", items: [] };
+
   // Fresh cloud sign-in state per test (module state outlives a page).
   Object.assign(CLOUD_STATE, {
     signed_in: false,
@@ -585,6 +639,9 @@ export async function mockApi(page: import("@playwright/test").Page) {
   await page.routeWebSocket(/\/ws\/session\//, (ws) => {
     const send = (type: string, data: Record<string, unknown> = {}) =>
       ws.send(JSON.stringify({ type, data }));
+    // The page's session id, from the socket URL — team approval stamps THIS session
+    // as the lead (the active conversation IS the lead; workers hang off it).
+    const sid = ws.url().split("/ws/session/")[1]?.split("?")[0] || "sess-lead";
     send("ready");
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
@@ -606,8 +663,110 @@ export async function mockApi(page: import("@playwright/test").Page) {
             name: "run_shell",
             arguments: { command: "ls" },
             reason: "The coworker wants to run a command.",
+            readonly_ok: true, // `ls` classifies read-only server-side
           });
           return; // suspended on the approval
+        }
+        // Agent teams: the decomposition gate — the lead proposes work items and
+        // SUSPENDS until the items_response verdict arrives (approval creates them).
+        // A board wake arriving on this session: the digest rides `source` with
+        // structured rows — the BoardWakeCard renders collapsed by default.
+        if (/board wake/i.test(msg.text)) {
+          send("turn_start", {
+            source: {
+              connector: "board",
+              kind: "channel",
+              channel_id: "/Users/test/OpenWorker/launch-note",
+              channel_name: "Team board",
+              sender_id: "board",
+              sender_name: "Board",
+              ts: Date.now() / 1000,
+              text: "⏰ Board wake — your team needs decisions:\n- #2 moved to review by webb",
+              board: {
+                rows: [
+                  {
+                    kind: "moved",
+                    item: 2,
+                    title: "Statements page",
+                    actor: "webb",
+                    to: "review",
+                    note: "Ready for review on feat/customer-statements, commit 029f9f7. Build verified; final verdict stays with the tester.",
+                  },
+                  { kind: "filed", item: 5, title: "Follow-up: rate limit", actor: "nia" },
+                ],
+              },
+            },
+          });
+          send("assistant_message", { text: "Reviewing the hand-off now." });
+          send("turn_done");
+          return;
+        }
+        if (/propose the split/i.test(msg.text)) {
+          send("items_proposed", {
+            items: [
+              { title: "Statement API endpoint", criteria: "returns opening/closing balances over the chosen range; 8 endpoint tests green; malformed, missing, and reversed date ranges return 400; draft invoices are excluded from issued totals; inclusive boundaries verified end to end" },
+              { title: "Statements dashboard page", criteria: "renders seeded data for Ada / Northgate; empty + error states covered" },
+              { title: "Statement totals reconcile", criteria: "running balance matches invoices minus payments for the range" },
+              { title: "Verification pass", criteria: "tester confirms page renders with live API data" },
+            ],
+            note: "Shared journal case: statements.",
+          });
+          return; // suspended on the items decision
+        }
+        // Agent teams (OPE-97): the staffing gate — the lead proposes a roster and
+        // SUSPENDS until the team_response verdict arrives.
+        if (/staff the team/i.test(msg.text)) {
+          send("team_proposed", {
+            members: [
+              { persona: "swe-worker", name: "nia", model: "anthropic:claude-opus-4-8", reason: "implementation" },
+              { persona: "design-worker", name: "webb", reason: "UI polish" },
+              { persona: "test-worker", name: "checks", reason: "verifies against acceptance criteria" },
+            ],
+            enable_chat: false,
+            note: "Three workers cover the plan; checks verifies before anything closes.",
+          });
+          return; // suspended on the staffing decision
+        }
+        // Agent teams (OPE-96): a decomposition turn — the plan was approved in
+        // conversation (plan-approval flow); the agent files the items and the
+        // board rail appears on the next board fetch.
+        if (/plan the work/i.test(msg.text)) {
+          seedBoard();
+          send("assistant_message", {
+            text: "Plan approved — filed 5 work items on the board.",
+          });
+          send("turn_done");
+          return;
+        }
+        // A deliverable turn ending in an artifact chip (§34) — for the chip-open flow.
+        if (/show the report/i.test(msg.text)) {
+          send("assistant_message", {
+            text: "Done — [Security review](artifact:reports/security-review.html)",
+          });
+          send("turn_done");
+          return;
+        }
+        // The pre-fix payload shape (owner-hit 2026-08-14): no installable/version/summary
+        // — an older sidecar, or any surface that forgets the field. Must render NOT
+        // installable, never a guessed Install offer.
+        if (/request an unpinned tool/i.test(msg.text)) {
+          send("tool_requested", {
+            name: "somescanner",
+            reason: "scan the Terraform for misconfigurations",
+          });
+          return; // suspended on the tool request
+        }
+        // OPE-85: the agent hits a missing scanner and asks instead of skipping the check.
+        if (/scan for secrets/i.test(msg.text)) {
+          send("tool_requested", {
+            name: "gitleaks",
+            reason: "scan the git history for committed secrets",
+            installable: true,
+            version: "8.30.1",
+            summary: "scans git history and the working tree for committed secrets",
+            source: "github.com/gitleaks",
+          });
+          return; // suspended on the tool request
         }
         // §35 compact row: a routine workspace write (content rides in the args).
         if (/write a file/i.test(msg.text)) {
@@ -766,6 +925,88 @@ export async function mockApi(page: import("@playwright/test").Page) {
           send("assistant_message", { text: `Done via ${pendingTool} [decision=${msg.decision}]` });
         }
         send("turn_done");
+      } else if (msg.type === "items_response") {
+        if (msg.approved) {
+          seedBoard(); // "created on the board" — the board fetch now shows them
+          send("assistant_message", {
+            text: "Items created on the board — [Board · 5 items](board:) if you want to watch. Staffing next.",
+          });
+        } else {
+          send("assistant_message", { text: "Understood — reworking the split." });
+        }
+        send("turn_done");
+      } else if (msg.type === "team_response") {
+        if (msg.approved) {
+          // Server-side create_team pre-spawned the workers. The ACTIVE session IS
+          // the lead (seventeenth pass): stamp it in the sessions list — RECENT keeps
+          // this ONE entry — and hang the workers off it for the drawer's Team panel.
+          let lead = sessions.find((s) => s.session_id === sid);
+          if (!lead) {
+            lead = {
+              session_id: sid,
+              workspace: "/Users/test/OpenWorker/launch-note",
+              agent: "cowork",
+              model: "m",
+              mode: "interactive",
+              messages: 2,
+            };
+            sessions.unshift(lead);
+          }
+          lead.title = "Build the statements page";
+          lead.updated_at = new Date().toISOString();
+          lead.team = {
+            role: "lead",
+            team_id: "t1",
+            chat_enabled: !!msg.enable_chat,
+            chat_unread: msg.enable_chat ? 1 : 0,
+          };
+          // The lead sets its check-in timer after staffing — it shows as sleeping.
+          lead.liveness = "sleeping";
+          lead.sleeping_until = new Date(Date.now() + 4 * 60_000).toISOString();
+          for (const [actor, persona, status, item] of [
+            ["nia", "swe-worker", "in_progress", "#1 in progress"],
+            ["webb", "design-worker", "idle", "idle"],
+            ["checks", "test-worker", "blocked", "#4 blocked"],
+          ] as const) {
+            sessions.push({
+              session_id: `sess-${actor}`,
+              title: actor,
+              workspace: "/Users/test/OpenWorker/launch-note",
+              agent: persona,
+              model: "m",
+              mode: "interactive",
+              updated_at: new Date().toISOString(),
+              messages: 0,
+              team: {
+                role: "worker",
+                team_id: "t1",
+                lead_session: sid,
+                actor,
+                status,
+                current_item: item,
+              },
+            });
+          }
+          send("assistant_message", {
+            text: "Team created — nia, webb and checks are standing by. Assigning items now.",
+          });
+        } else {
+          send("assistant_message", { text: "Understood — tell me how to change the roster." });
+        }
+        send("turn_done");
+      } else if (msg.type === "tool_response") {
+        // Either way the turn continues — the point of the contract is that declining
+        // degrades the report openly instead of dropping the check.
+        if (msg.approved) {
+          send("assistant_message", {
+            text: "Installed gitleaks 8.30.1 — scanned history, no secrets found.",
+          });
+        } else {
+          send("assistant_message", {
+            text: "Skipped gitleaks. Coverage: history secret sweep done by hand instead.",
+          });
+        }
+        send("turn_done");
       } else if (msg.type === "interrupt") {
         // Stop mid-stream: like the real engine, end the turn with `interrupted` and
         // NO assistant_message — the client owns promoting the partial into the transcript.
@@ -826,6 +1067,173 @@ export async function mockApi(page: import("@playwright/test").Page) {
         return json({ ok: true, roots });
       }
       return json({ roots });
+    }
+    // Artifacts (OPE-91): one HTML report whose content actively probes the sandbox —
+    // an inline script that renders proof-of-execution, a parent-window escape attempt,
+    // and an external subresource that must be CSP-blocked.
+    if (/\/v1\/sessions\/[^/]+\/artifacts\/read$/.test(p)) {
+      const reqPath = new URL(req.url()).searchParams.get("path") || "";
+      // UX-037 Files: a session root (or subfolder) reads as a folder listing.
+      const rootHit = roots.find((r) => reqPath === r.path);
+      if (rootHit) {
+        return json({
+          ok: true,
+          path: reqPath,
+          kind: "folder",
+          entries: [
+            { name: "reports", dir: true, size: 0 },
+            { name: "notes.md", dir: false, size: 128 },
+          ],
+        });
+      }
+      if (reqPath.endsWith("/reports")) {
+        return json({
+          ok: true,
+          path: reqPath,
+          kind: "folder",
+          entries: [{ name: "security-review.html", dir: false, size: 2048 }],
+        });
+      }
+      if (reqPath.endsWith("notes.md")) {
+        return json({ ok: true, path: reqPath, kind: "markdown", content: "# Notes\n\nhello from the explorer" });
+      }
+      return json({
+        ok: true,
+        path: "reports/security-review.html",
+        kind: "html",
+        content: [
+          "<h1>Security review</h1>",
+          '<div id="probe">script did not run</div>',
+          "<script>",
+          '  document.getElementById("probe").textContent = "script ran in sandbox";',
+          "  try { window.parent.document.title = 'ESCAPED'; } catch (e) {",
+          '    document.getElementById("probe").textContent += " · parent blocked";',
+          "  }",
+          "</script>",
+          '<img src="https://evil.example/exfil.png" onerror="document.getElementById(\'probe\').textContent += \' · network blocked\'">',
+        ].join("\n"),
+      });
+    }
+    if (/\/v1\/sessions\/[^/]+\/artifacts\/reveal$/.test(p)) return json({ ok: true });
+    // Item detail (merged event timeline + attachments) for the detail pane.
+    if (/\/v1\/sessions\/[^/]+\/board\/item$/.test(p)) {
+      const id = Number(new URL(req.url()).searchParams.get("id"));
+      const item = boardItems.find((i) => i.id === id);
+      if (!item) return json({ error: "no such item" });
+      const at = new Date().toISOString();
+      const timeline =
+        id === 5
+          ? [
+              { seq: 30, ts: at, actor: "lead", kind: "created" },
+              { seq: 31, ts: at, actor: "lead", kind: "assigned", assignee: "security" },
+              { seq: 32, ts: at, actor: "security", kind: "moved", to: "in_progress" },
+              {
+                seq: 41,
+                ts: at,
+                actor: "security",
+                kind: "comment",
+                body: "Rolled all four sections into report.md — balances reconcile against the seeded rows.",
+              },
+              {
+                seq: 42,
+                ts: at,
+                actor: "security",
+                kind: "comment",
+                body: "attached the rendered page",
+                refs: [`attachment://${"a".repeat(64)}.png#rendered-page.png`],
+              },
+              {
+                seq: 43,
+                ts: at,
+                actor: "security",
+                kind: "moved",
+                to: "review",
+                body: "Ready — balances verified against seeded rows.",
+              },
+            ]
+          : [{ seq: 30, ts: at, actor: "lead", kind: "created" }];
+      return json({ ...item, timeline: timeline.concat(itemNotes[id] || []) });
+    }
+    if (/\/v1\/sessions\/[^/]+\/board\/comment$/.test(p) && m === "POST") {
+      const b = req.postDataJSON() || {};
+      const id = Number(b.item);
+      (itemNotes[id] = itemNotes[id] || []).push({
+        seq: 90 + (itemNotes[id]?.length || 0),
+        ts: new Date().toISOString(),
+        actor: "user",
+        kind: "comment",
+        body: String(b.body || ""),
+      });
+      return json({ ok: true });
+    }
+    if (/\/v1\/sessions\/[^/]+\/board\/attachment$/.test(p)) {
+      // A real 1x1 PNG so the <img> actually loads (the spec asserts it renders).
+      return route.fulfill({
+        status: 200,
+        contentType: "image/png",
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+          "base64",
+        ),
+      });
+    }
+    // Agent teams (OPE-96): board reads + the user-side mutations.
+    if (/\/v1\/sessions\/[^/]+\/board\/transition$/.test(p)) {
+      const b = req.postDataJSON() || {};
+      const item = boardItems.find((i) => i.id === Number(b.item));
+      if (!item) return json({ error: "no such item" });
+      item.state = String(b.to);
+      return json(item);
+    }
+    if (/\/v1\/sessions\/[^/]+\/board$/.test(p)) return json(boardPayload());
+    // # team chat (OPE-99): one group, message log, user posts append.
+    if (/\/v1\/teams\/[^/]+\/chat$/.test(p)) {
+      if (m === "POST") {
+        const b = req.postDataJSON() || {};
+        chatMessages.push({
+          seq: chatMessages.length + 1,
+          ts: new Date().toISOString(),
+          author: "user",
+          author_role: "user",
+          text: String(b.text || ""),
+          mentions: ["nia", "webb", "checks", "lead"].filter((h) =>
+            String(b.text || "").includes(`@${h}`),
+          ),
+        });
+        return json(chatMessages[chatMessages.length - 1]);
+      }
+      return json({
+        enabled: true,
+        team_id: "t1",
+        members: [
+          { name: "nia", persona: "swe-worker", role: "worker" },
+          { name: "webb", persona: "design-worker", role: "worker" },
+          { name: "checks", persona: "test-worker", role: "worker" },
+          { name: "lead", persona: "swe-lead", role: "lead" },
+        ],
+        messages: chatMessages,
+      });
+    }
+    if (p.endsWith("/v1/teams/journal")) {
+      return json({
+        cases: boardItems.length
+          ? [{ case: "findings", entries: 12, last_ts: new Date().toISOString() }]
+          : [],
+      });
+    }
+    if (/\/v1\/sessions\/[^/]+\/artifacts$/.test(p)) {
+      return json({
+        artifacts: [
+          {
+            path: "reports/security-review.html",
+            abs_path: "/Users/test/OpenWorker/launch-note/reports/security-review.html",
+            name: "security-review.html",
+            kind: "html",
+            size: 2048,
+            modified_at: Math.floor(Date.now() / 1000) - 60,
+          },
+        ],
+      });
     }
     if (/\/v1\/sessions\/[^/]+\/messages$/.test(p)) return json({ messages: [] });
     if (/\/v1\/sessions\/[^/]+\/unattended$/.test(p)) {
@@ -947,9 +1355,50 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const b = req.postDataJSON();
       return json({ ok: true, path: b.path, git_branch: "main" });
     }
+    if (p.endsWith("/v1/workspaces/temp") && m === "POST") {
+      // UX-029: "Start in a temporary folder" — created at send time, git-ready.
+      const b = req.postDataJSON();
+      return json({ ok: true, path: `/tmp/ow-temp/${b.session_id}`, git: b.git !== false });
+    }
+    if (/\/v1\/sessions\/[^/]+\/save-as-project$/.test(p) && m === "POST") {
+      const b = req.postDataJSON();
+      return json({ ok: true, path: b.path });
+    }
+    if (/\/v1\/personas\/[^/]+\/export$/.test(p) && m === "POST") {
+      // Sharing v1: export the bundle zip into the chosen folder.
+      const id = p.split("/").slice(-2)[0];
+      const b = req.postDataJSON();
+      return json({ ok: true, path: `${b.dir}/${id}-coworker-v1.zip` });
+    }
     // must precede the /v1/personas/{id} catch-all (install matches it too)
     if (p.endsWith("/v1/personas/install") && m === "POST") {
       const b = req.postDataJSON();
+      if (b.zip_b64) {
+        // Sharing v1: a bundle zip import — consent with version + replaces + recommends.
+        const imported = {
+          id: "team-sec", name: "Team Security Coworker", icon: "shield",
+          tagline: "Our security playbook", requires_folder: true, builtin: false,
+          tools: ["code_files", "search", "shell"],
+          enabled: false, surfaced: false, default: false, version: "2",
+        };
+        if (!personas.some((x) => x.id === "team-sec")) personas.push(imported);
+        return json({
+          ok: true,
+          personas,
+          consent: [{
+            id: "team-sec", name: "Team Security Coworker",
+            description: "Reviews code the way our team does.",
+            tools: ["code_files", "search", "shell"],
+            risk: ["read", "write_local", "exec"],
+            connectors: true, mcp: [], messaging: false,
+            recommended_mode: "interactive", recommended_models: [],
+            recommends: [{ kind: "connector", ref: "github", reason: "open fix PRs", tier: "core" }],
+            version: "2",
+            replaces: { version: "1", installed_at: "2026-08-01", capabilities_grew: true },
+            source: "/tmp/team-sec.zip", builtin: false,
+          }],
+        });
+      }
       if (b.gallery_slug) {
         return json(
           CLOUD_STATE.signed_in
@@ -992,8 +1441,24 @@ export async function mockApi(page: import("@playwright/test").Page) {
       personas.splice(i, 1);
       return json({ ok: true, personas });
     }
-    if (/\/v1\/personas\/[^/]+$/.test(p)) return json(PERSONA_DETAIL);
-    if (p.endsWith("/v1/personas")) return json({ personas });
+    if (/\/v1\/personas\/[^/]+$/.test(p)) {
+      // Detail merges the live list row over the static shape, so enable/surface/default
+      // state and builtin-ness track the same mutable array the list serves.
+      const id = decodeURIComponent(p.split("/").pop() || "");
+      const base = personas.find((x) => x.id === id);
+      return json({
+        ...PERSONA_DETAIL,
+        media: [],
+        surfaced: true,
+        default: false,
+        builtin: true,
+        group: "general",
+        ...(base || {}),
+        recommends: PERSONA_DETAIL.recommends,
+        default_connections: PERSONA_DETAIL.default_connections,
+      });
+    }
+    if (p.endsWith("/v1/personas")) return json({ internal: PERSONAS.internal, personas });
     if (p.endsWith("/v1/sessions")) return json({ sessions });
     if (/\/v1\/connectors\/slack\/unauthorized\/[^/]+$/.test(p) && m === "POST") {
       const id = p.split("/").pop();
@@ -1523,8 +1988,17 @@ export async function mockApi(page: import("@playwright/test").Page) {
     if (p.endsWith("/v1/mcp") && m === "GET") {
       for (const s2 of mcpServers) {
         if (s2.status === "authorizing" && s2._flip) {
-          s2.status = "connected";
-          s2.tool_count = 6;
+          // Servers named locked-* simulate a guarded remote: the anonymous
+          // probe 401s (→ needs sign-in) until the entry is switched to oauth.
+          if (s2.name.startsWith("locked") && s2.auth !== "oauth") {
+            s2.status = "error";
+            s2.auth_hint = true;
+            s2.last_error = "authentication required — sign in to connect";
+          } else {
+            s2.status = "connected";
+            s2.tool_count = 6;
+            s2.last_test_at = 1700000000; // the successful probe stamps the row
+          }
         }
         if (s2.status === "authorizing") s2._flip = true;
       }
@@ -1539,6 +2013,8 @@ export async function mockApi(page: import("@playwright/test").Page) {
         requires_approval: true,
         auth: b.config?.auth === "oauth" ? "oauth" : null,
         status: b.config?.auth === "oauth" ? "needs_auth" : "configured",
+        auth_hint: false,
+        last_test_at: null,
         last_error: null,
         tool_count: null,
         config: b.config || {},
@@ -1549,7 +2025,12 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const mc = p.match(/\/v1\/mcp\/([^/]+)\/connect$/);
       if (mc && m === "POST") {
         const s2 = mcpServers.find((x) => x.name === decodeURIComponent(mc[1]));
-        if (s2) s2.status = "authorizing";
+        if (s2) {
+          s2.status = "authorizing";
+          s2.auth_hint = false;
+          s2.last_error = null;
+          s2._flip = false;
+        }
         return json({ ok: true, started: true });
       }
       const ms = p.match(/\/v1\/mcp\/([^/]+)\/signout$/);
@@ -1561,6 +2042,29 @@ export async function mockApi(page: import("@playwright/test").Page) {
           s2._flip = false;
         }
         return json({ ok: true });
+      }
+      const mp = p.match(/\/v1\/mcp\/([^/]+)$/);
+      if (mp && m === "PATCH") {
+        const s2 = mcpServers.find((x) => x.name === decodeURIComponent(mp[1]));
+        const b = req.postDataJSON() || {};
+        if (s2) {
+          if (b.enabled !== undefined) s2.enabled = b.enabled;
+          if (b.auth === "oauth") {
+            // The needs-sign-in fix: entry switches to oauth; the follow-up
+            // connect runs the browser flow.
+            s2.auth = "oauth";
+            s2.auth_hint = false;
+            s2.status = "needs_auth";
+          }
+          s2.config = { ...s2.config, ...b };
+        }
+        return json({ ok: !!s2, name: mp[1] });
+      }
+      const md = p.match(/\/v1\/mcp\/([^/]+)$/);
+      if (md && m === "DELETE") {
+        const i = mcpServers.findIndex((x) => x.name === decodeURIComponent(md[1]));
+        if (i >= 0) mcpServers.splice(i, 1);
+        return json({ ok: i >= 0 });
       }
     }
     if (p.endsWith("/v1/unrouted")) return json([]);

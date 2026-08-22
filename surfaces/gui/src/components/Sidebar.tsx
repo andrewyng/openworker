@@ -23,10 +23,9 @@ import type { SessionInfo } from "../types";
 import { isProjectScoped, shortPersonaName } from "../personaScope";
 import { ConnectorIcon } from "../connectors/ConnectorIcon";
 import { Icon, type IconName } from "./Icon";
-import { PersonaGlyph, personaGlyph } from "./personaIcon";
+import { personaGlyph } from "./personaIcon";
 import { SearchModal } from "./SearchModal";
 import { baseName } from "../paths";
-import { showPersonas } from "../flags";
 
 // Session surfaces shown as accordions, in display order. The surfaced personas drive this list
 // (so third-party / Ops personas appear); the hardcoded set is the fallback before personas load.
@@ -39,7 +38,7 @@ const SURFACES: { key: string; label: string; icon: IconName; cls: string }[] = 
 const surfaceFromPersona = (p: Persona) => ({
   key: p.id,
   label: shortPersonaName(p.name, p.id),
-  icon: personaGlyph(p.icon, p.family),
+  icon: personaGlyph(p.icon, p.requires_folder),
   cls: `ico-${p.icon || "cowork"}`,
 });
 
@@ -128,9 +127,9 @@ interface Props {
   onArchiveSession: (id: string, archived: boolean) => void;
   onTogglePin: (id: string, pinned: boolean) => void;
   onManage: () => void;
-  // Grouped-nav gear + New-session menu's "Manage personas…" entry points (§7).
+  // Grouped-nav gear entry point (§7). "Manage coworkers…" moved to the composer's
+  // setup-row picker (UX-029).
   onOpenPersona: (id: string) => void;
-  onManagePersonas: () => void;
   onOpenScheduled: () => void;
   // Scheduled-band row click: open the Automations surface ON that automation (UX-023).
   onOpenAutomation: (id: string) => void;
@@ -276,12 +275,11 @@ export function Sidebar(props: Props) {
   }, []);
   const personaOf = (id: string) => personas?.find((p) => p.id === id);
 
-  // Sidebar layout (§7): "grouped" = the per-persona accordion; "flat" = a single ungrouped list
-  // (Pinned + Recent). Read the persisted preference on load; ABSENT falls back by the
-  // Personas flag — with personas hidden for launch, a per-persona accordion groups by
-  // a concept the user can't see, so the default is the flat chronological list
-  // (owner call 2026-07-20). An explicit stored choice always wins.
-  const defaultLayout: "flat" | "grouped" = showPersonas() ? "grouped" : "flat";
+  // Sidebar layout (§7): "grouped" = the per-coworker accordion; "flat" = a single
+  // ungrouped list (Pinned + Recent). Flat stays the default even with Coworkers shipped
+  // (UX-029 flips the flag for the picker, not the nav shape — the flat chronological
+  // list default is the 2026-07-20 owner call). An explicit stored choice always wins.
+  const defaultLayout: "flat" | "grouped" = "flat";
   const [layout, setLayout] = useState<"flat" | "grouped">(defaultLayout);
   // Sessions shown per group before "Show more" — Settings ▸ Appearance ▸ Sidebar.
   const [peek, setPeek] = useState(5);
@@ -404,7 +402,12 @@ export function Sidebar(props: Props) {
   // Body data is keyed to the BROWSED persona (only one body renders at a time). Pinned sessions are
   // EXCLUDED here: they live in the cross-persona Pinned band only, so they don't repeat inside the
   // persona group / project list (matching the flat layout's Recent, which also drops pinned).
-  const all = props.sessions.filter((s) => s.agent === browseKey && !s.session_id.startsWith("__"));
+  const all = props.sessions.filter(
+    (s) =>
+      s.agent === browseKey &&
+      !s.session_id.startsWith("__") &&
+      s.team?.role !== "worker", // workers nest under their lead, never top-level
+  );
   const mine = all.filter((s) => !s.archived && !s.pinned);
   const archived = all.filter((s) => s.archived);
   // Only PROJECT-SCOPED personas group sessions by project (git-bound Code, project-bound Ops).
@@ -420,8 +423,10 @@ export function Sidebar(props: Props) {
 
   // Recent = every non-pinned, non-archived, real session across ALL personas, newest first
   // (by updated_at; missing timestamps keep store order), search-filtered. Drives the flat layout.
+  // Team workers never appear top-level: they nest under their lead's ONE expandable entry.
   const recentSessions = [...props.sessions]
     .filter((s) => !s.archived && !s.session_id.startsWith("__") && !s.pinned)
+    .filter((s) => s.team?.role !== "worker")
     .filter((s) => personaVisible(s.agent))
     .filter(matches)
     .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
@@ -616,7 +621,8 @@ export function Sidebar(props: Props) {
         }}
       >
         {/* No leading glyph on session rows (Rohit's call 2026-07-07: the per-session icon
-            read as noise in both grouped and chronological). */}
+            read as noise in both grouped and chronological). Team leads are plain rows too —
+            worker rows live in the drawer's Team panel (seventeenth pass). */}
         {editing ? (
           <input
             className="flex-1 min-w-0 px-1.5 py-0.5 rounded-md bg-panel border border-accent text-[13px] text-ink outline-none"
@@ -728,7 +734,7 @@ export function Sidebar(props: Props) {
             <div className="px-2 pt-1 pb-1 text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
               Group by
             </div>
-            {([["grouped", "Persona"], ["flat", "Chronological"]] as ["flat" | "grouped", string][]).map(
+            {([["grouped", "Coworker"], ["flat", "Chronological"]] as ["flat" | "grouped", string][]).map(
               ([key, label]) => (
                 <button
                   key={key}
@@ -825,7 +831,12 @@ export function Sidebar(props: Props) {
   // persona from New Session, never orphan its conversations).
   const agentsWithSessions = new Set(
     props.sessions
-      .filter((s) => !s.archived && !s.session_id.startsWith("__"))
+      .filter(
+        (s) =>
+          !s.archived &&
+          !s.session_id.startsWith("__") &&
+          s.team?.role !== "worker",
+      )
       .map((s) => s.agent),
   );
   const visibleSurfaces = (
@@ -1005,13 +1016,17 @@ export function Sidebar(props: Props) {
         <div className="brand-wordmark text-[15px]">OpenWorker<span className="beta-tag">BETA</span></div>
       </div>
 
-      {/* New session: split button — primary starts the last-used persona; ▾ picks a specific one. */}
-      <NewSessionSplit
-        personas={personas}
-        current={props.agent}
-        onNew={props.onNewSession}
-        onManage={props.onManagePersonas}
-      />
+      {/* New session: a plain button — the coworker pick moved to the composer's setup
+          row (UX-029), so the old ▾ persona menu is gone. Starts the last-used persona;
+          the setup row re-targets the draft in place. */}
+      <div className="px-3 pt-2">
+        <button
+          className="w-full text-left px-3 py-2 rounded-lg bg-accent text-white text-[13px] font-medium hover:opacity-95 flex items-center gap-2"
+          onClick={() => props.onNewSession(props.agent)}
+        >
+          <Icon name="plus" size={15} className="shrink-0" /> New session
+        </button>
+      </div>
 
       {/* Search: a borderless nav-style entry (not a boxed input) that opens the command-palette
           SearchModal over the whole app. Matches the bottom-nav rows to reduce the boxy look. */}
@@ -1137,11 +1152,12 @@ export function Sidebar(props: Props) {
                 role="menu"
               >
                 {cloud?.signed_in ? (
+                  /* Just the email — being signed in to OpenWorker Cloud is implicit. */
                   <div
                     className="px-3 py-1.5 mb-1 text-[11px] text-faint truncate border-b border-line"
-                    title={`${accountEmail} · OpenWorker Cloud`}
+                    title={accountEmail}
                   >
-                    {accountEmail} · OpenWorker Cloud
+                    {accountEmail}
                   </div>
                 ) : (
                   <>
@@ -1185,7 +1201,7 @@ export function Sidebar(props: Props) {
                   false,
                   <span className="text-[11px] text-faint">⌘ ,</span>,
                 )}
-                {appMenuItem("clock", "Automations", props.onOpenScheduled, props.scheduledActive)}
+                {/* No Automations here — the sidebar's top nav already carries it. */}
                 {appMenuItem("audit", "Activity", props.onOpenAudit, props.auditActive)}
                 {cloud?.signed_in && (
                   <>
@@ -1280,98 +1296,6 @@ export function Sidebar(props: Props) {
           }}
           onClose={() => setSearchModalOpen(false)}
         />
-      )}
-    </div>
-  );
-}
-
-// New-session split button (§8): the primary action starts a session with the last-used persona
-// (`current`); the ▾ opens a menu of the enabled personas (from /v1/personas) plus a "Manage
-// personas…" entry. A plain custom split control — the pill-shaped Dropdown doesn't fit this shape.
-function NewSessionSplit({
-  personas,
-  current,
-  onNew,
-  onManage,
-}: {
-  personas: Persona[] | null;
-  current: string;
-  onNew: (agent: string) => void;
-  onManage: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const enabled = (personas || []).filter((p) => p.enabled);
-  // With a single enabled persona there is nothing to pick — the split collapses to a plain
-  // button (owner ask 2026-07-09). `personas === null` (still loading) keeps the split so the
-  // control doesn't visibly change shape once the list arrives with 2+.
-  const solo = personas !== null && enabled.length <= 1;
-  return (
-    <div className="px-3 pt-2 relative">
-      <div className="flex">
-        <button
-          className={
-            "newsplit-primary flex-1 text-left px-3 py-2 bg-accent text-white text-[13px] font-medium hover:opacity-95 flex items-center gap-2 " +
-            (solo ? "rounded-lg" : "rounded-l-lg")
-          }
-          onClick={() => onNew(solo && enabled.length === 1 ? enabled[0].id : current)}
-        >
-          <Icon name="plus" size={15} className="shrink-0" /> New session
-        </button>
-        {!solo && (
-          <button
-            className="px-2.5 rounded-r-lg bg-accent text-white border-l border-white/25 hover:opacity-95 flex items-center"
-            title="Start with a specific persona"
-            aria-label="Choose a persona"
-            onClick={() => setOpen((v) => !v)}
-          >
-            <Icon name="chevronDown" size={13} />
-          </button>
-        )}
-      </div>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="newsplit-menu absolute left-3 right-3 mt-1 z-30 bg-panel border border-line rounded-xl2 shadow-xl p-1">
-            <div className="px-2 py-1 text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-              Start a session as
-            </div>
-            {enabled.map((p) => (
-              <button
-                key={p.id}
-                className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-paper text-left"
-                onClick={() => {
-                  setOpen(false);
-                  onNew(p.id);
-                }}
-              >
-                <span className="w-6 h-6 rounded-md bg-paper border border-line grid place-items-center text-muted shrink-0">
-                  <PersonaGlyph icon={p.icon} family={p.family} size={12} />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-[13px] font-medium truncate">
-                    {shortPersonaName(p.name, p.id)}
-                  </span>
-                  {p.tagline && (
-                    <span className="block text-[11px] text-muted truncate">{p.tagline}</span>
-                  )}
-                </span>
-              </button>
-            ))}
-            {showPersonas() && (
-              <div className="border-t border-line mt-1 pt-1">
-                <button
-                  className="w-full px-2 py-1.5 rounded-lg hover:bg-paper text-left text-[12.5px] text-muted"
-                  onClick={() => {
-                    setOpen(false);
-                    onManage();
-                  }}
-                >
-                  Manage personas…
-                </button>
-              </div>
-            )}
-          </div>
-        </>
       )}
     </div>
   );

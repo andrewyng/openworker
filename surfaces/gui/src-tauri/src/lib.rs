@@ -47,6 +47,126 @@ fn launch_token() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
 
+/// Directories where user-installed CLIs live but launchd's PATH never looks. Used to
+/// repair PATH when the login-shell probe can't run (broken profile, exotic shell).
+#[cfg(not(target_os = "windows"))]
+const KNOWN_TOOL_DIRS: &[&str] = &[
+    "/opt/homebrew/bin", // Apple Silicon Homebrew
+    "/opt/homebrew/sbin",
+    "/usr/local/bin", // Intel Homebrew, most installers
+    "/usr/local/sbin",
+    "/opt/local/bin", // MacPorts
+];
+
+/// The environment the sidecar should run with (OPE-83).
+///
+/// A Finder/Dock-launched app inherits launchd's minimal PATH — `/usr/bin:/bin:/usr/sbin:/sbin`
+/// — so every tool the user installed via Homebrew/nvm/pyenv/asdf is invisible to the agent:
+/// semgrep, gitleaks, gh, node, aws, kubectl, terraform. That silently guts the security
+/// coworkers (they drive those scanners) and every ops workflow. Fix, same as VS Code and
+/// friends: ask the user's login shell for its environment once at spawn and merge it in, so
+/// the coworker gets the user's REAL toolchain. Credentials follow for free — aws/kubectl read
+/// ~/.aws and ~/.kube via HOME, which a Finder launch already has.
+///
+/// Guards: `-i` (not just `-l`) because brew/nvm/pyenv init usually lives in .zshrc; markers so
+/// a chatty profile's own output can't be parsed as variables; a 5s timeout with the child
+/// killed, so a hanging profile can never block app launch; and a well-known-dirs PATH repair as
+/// the fallback. Skipped entirely when we were launched FROM a shell (SHLVL set) — we already
+/// inherit the real thing, and `npm run tauri dev` should behave exactly as before.
+#[cfg(not(target_os = "windows"))]
+fn sidecar_env() -> std::collections::HashMap<String, String> {
+    use std::collections::HashMap;
+    use std::io::Read;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    const START: &str = "__OCW_ENV_START__";
+    const END: &str = "__OCW_ENV_END__";
+
+    let mut out: HashMap<String, String> = HashMap::new();
+
+    // Launched from a shell (dev run, `open` from a terminal): the env is already real.
+    if std::env::var_os("SHLVL").is_some() {
+        return out;
+    }
+
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let script = format!("echo {START}; env; echo {END}");
+    let spawned = Command::new(&shell)
+        .args(["-ilc", &script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
+
+    if let Ok(mut child) = spawned {
+        if let Some(mut stdout) = child.stdout.take() {
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let mut buf = String::new();
+                let _ = stdout.read_to_string(&mut buf);
+                let _ = tx.send(buf);
+            });
+            match rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(text) => {
+                    let _ = child.wait();
+                    let mut inside = false;
+                    for line in text.lines() {
+                        if line.trim_end() == START {
+                            inside = true;
+                            continue;
+                        }
+                        if line.trim_end() == END {
+                            break;
+                        }
+                        if !inside {
+                            continue;
+                        }
+                        // `env` prints KEY=value; continuation lines of a multi-line value
+                        // have no '=' before whitespace and are skipped rather than guessed at.
+                        if let Some((k, v)) = line.split_once('=') {
+                            if !k.is_empty() && !k.contains(char::is_whitespace) {
+                                out.insert(k.to_string(), v.to_string());
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Hung profile — never let it hold up launch.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+    }
+
+    // These describe the probe shell, not the user's environment.
+    for k in ["SHLVL", "PWD", "OLDPWD", "_"] {
+        out.remove(k);
+    }
+
+    // Whether the probe worked or not, make sure the usual install dirs are reachable.
+    let base = out
+        .get("PATH")
+        .cloned()
+        .or_else(|| std::env::var("PATH").ok())
+        .unwrap_or_default();
+    let mut parts: Vec<String> = base.split(':').filter(|s| !s.is_empty()).map(String::from).collect();
+    for dir in KNOWN_TOOL_DIRS {
+        if !parts.iter().any(|p| p == dir) && std::path::Path::new(dir).is_dir() {
+            parts.push((*dir).to_string());
+        }
+    }
+    out.insert("PATH".to_string(), parts.join(":"));
+    out
+}
+
+/// Windows GUI apps inherit the user's full environment already.
+#[cfg(target_os = "windows")]
+fn sidecar_env() -> std::collections::HashMap<String, String> {
+    std::collections::HashMap::new()
+}
+
 /// Path to the server entrypoint. Resolution order:
 ///   1. `COWORKER_SERVER_BIN` env override.
 ///   2. The bundled onedir sidecar shipped via Tauri `resources` (production): the
@@ -629,6 +749,10 @@ pub fn run() {
             let mut server_cmd = Command::new(server_bin());
             server_cmd
                 .args(["--host", "127.0.0.1", "--port", &port.to_string()])
+                // The user's real shell environment (PATH to their tools, AWS_PROFILE,
+                // KUBECONFIG, …) — see sidecar_env(). Applied FIRST so the explicit COWORKER_*
+                // vars below always win over anything a profile happens to export.
+                .envs(sidecar_env())
                 // The sidecar self-exits if we die abruptly (dev-watcher restart, crash) —
                 // belt-and-suspenders alongside the RunEvent::ExitRequested kill below.
                 // The explicit PID matters: under PyInstaller onefile the python process is a

@@ -41,6 +41,18 @@ def _patch_get(monkeypatch, status=200, capture=None, raise_exc=None):
     monkeypatch.setattr("httpx.get", fake_get)
 
 
+def _patch_post(monkeypatch, status=200, capture=None, raise_exc=None):
+    def fake_post(url, **kwargs):
+        if capture is not None:
+            capture["url"] = url
+            capture.update(kwargs)
+        if raise_exc is not None:
+            raise raise_exc
+        return SimpleNamespace(status_code=status)
+
+    monkeypatch.setattr("httpx.post", fake_post)
+
+
 def test_verify_openai_ok(monkeypatch):
     cap: dict = {}
     _patch_get(monkeypatch, status=200, capture=cap)
@@ -89,6 +101,52 @@ def test_verify_ollama_uses_v1_models_no_key(monkeypatch):
     verify_provider_key("ollama", base_url="http://localhost:11434")
     assert cap["url"] == "http://localhost:11434/v1/models"
     assert "headers" not in cap  # keyless
+
+
+@pytest.mark.parametrize(
+    "name,base_url,model",
+    [
+        (
+            "ark",
+            "https://ark.ap-southeast.bytepluses.com/api/v3",
+            "dola-seed-evolving-latest-version",
+        ),
+        (
+            "ark-agent-plan-cn",
+            "https://ark.cn-beijing.volces.com/api/plan/v3",
+            "doubao-seed-evolving",
+        ),
+    ],
+)
+def test_verify_ark_uses_non_persisted_responses_probe(
+    monkeypatch, name, base_url, model
+):
+    """Reverse-verified probe: the captured fixture must be non-empty and provider-specific."""
+    cap: dict = {}
+    _patch_post(monkeypatch, status=200, capture=cap)
+
+    assert verify_provider_key(name, api_key="ark-key") == {"ok": True}
+    assert cap["url"] == base_url + "/responses"
+    assert cap["headers"]["Authorization"] == "Bearer ark-key"
+    assert cap["json"] == {
+        "model": model,
+        "input": "Reply with OK.",
+        "max_output_tokens": 1,
+        "store": False,
+    }
+
+
+def test_verify_ark_profile_endpoint_override(monkeypatch):
+    cap: dict = {}
+    _patch_post(monkeypatch, status=200, capture=cap)
+
+    verify_provider_key(
+        "ark",
+        api_key="ark-key",
+        base_url="https://gateway.example/ark/v3/",
+    )
+
+    assert cap["url"] == "https://gateway.example/ark/v3/responses"
 
 
 def test_verify_network_error_is_clean(monkeypatch):

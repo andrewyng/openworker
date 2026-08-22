@@ -40,7 +40,6 @@ import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { ModelsTab } from "./ManageTabs";
 import { MemorySection } from "./MemorySection";
-import { GalleryModal } from "./GalleryModal";
 import { PersonasTab } from "./PersonasTab";
 import { SkillsTab } from "./SkillsTab";
 import { showPersonas } from "../flags";
@@ -52,7 +51,7 @@ import { showPersonas } from "../flags";
 // Models + Personas host the existing tab components inside the page shell (field re-skin to follow).
 // "appearance" is the General tab's stable key — callers deep-link with it, so the
 // rename (UX-021) changed only the label. "files" folded into General as a card.
-type SetTab = "appearance" | "models" | "skills" | "voice" | "memory" | "personas";
+type SetTab = "appearance" | "models" | "context" | "skills" | "voice" | "memory" | "personas";
 
 const CARD = "rounded-xl2 border border-line bg-panel";
 const FIELD_LABEL = "text-[12.5px] font-medium text-ink";
@@ -66,14 +65,15 @@ const BTN_BORDERED =
 const SET_TABS: {
   key: SetTab;
   label: string;
-  icon: "sliders" | "code" | "mic" | "archive" | "sparkle" | "book";
+  icon: "sliders" | "code" | "mic" | "archive" | "sparkle" | "book" | "refresh";
 }[] = [
   { key: "appearance", label: "General", icon: "sliders" },
   { key: "models", label: "Models", icon: "code" },
+  { key: "context", label: "Context optimization", icon: "refresh" },
   { key: "skills", label: "Skills", icon: "book" },
   { key: "voice", label: "Voice input", icon: "mic" },
   { key: "memory", label: "Memory", icon: "archive" },
-  { key: "personas", label: "Personas", icon: "sparkle" },
+  { key: "personas", label: "Coworkers", icon: "sparkle" },
 ];
 
 export function SettingsView({
@@ -129,12 +129,15 @@ export function SettingsView({
                 sub="Providers and the models offered in the composer's picker. Keys are stored only on this computer."
               />
               <ModelsTab />
-              {/* Token savings is model-spend behavior, so it lives here (UX-021),
-                  not under General. */}
-              <div className="mt-6">
-                <TokenSavingsCard />
-                <CompactionCard />
-              </div>
+            </section>
+          ) : tab === "context" ? (
+            <section>
+              <PanelHead
+                title="Context optimization"
+                sub="How sessions spend tokens — attachment handling and long-history compaction."
+              />
+              <TokenSavingsCard />
+              <CompactionCard />
             </section>
           ) : tab === "skills" ? (
             <SkillsTab onCreateSkill={onCreateSkill} />
@@ -371,37 +374,19 @@ function VoiceInputSection() {
 // -- Personas: installed/enabled/delete management, the dir/Git importer, and the
 // entry point to the Persona Gallery (a screen-sized modal — installs finish back
 // here, disabled pending consent; a gallery install re-mounts the list in place).
+// The Gallery entry point is GONE (owner 2026-08-21) — coworkers install from
+// GitHub / folder / zip only. GalleryModal stays in the tree for the gallery's
+// possible return as a first-class distribution surface, but nothing mounts it.
 function PersonasSection({ onOpenPersona }: { onOpenPersona?: (id: string) => void }) {
-  const [galleryBump, setGalleryBump] = useState(0);
-  const [galleryOpen, setGalleryOpen] = useState(false);
-
   return (
     <section>
-      <PanelHead
-        title="Personas"
-        sub="Which coworkers are enabled and shown in the picker, plus installing new persona bundles."
-      />
-      <PersonasTab key={galleryBump} onOpenPersona={onOpenPersona} />
-      <button
-        className="mt-6 w-full rounded-xl2 border border-line bg-panel px-4 py-3.5 flex items-center gap-3 text-left hover:border-lineStrong"
-        data-testid="gallery-link"
-        onClick={() => setGalleryOpen(true)}
-      >
-        <Icon name="sparkle" size={16} className="text-accent shrink-0" />
-        <span className="min-w-0 flex-1">
-          <span className="block text-[13.5px] font-medium">Browse the Persona Gallery</span>
-          <span className="block text-[12px] text-muted">
-            Curated coworkers from the OpenWorker team — see what each can do before installing.
-          </span>
-        </span>
-        <span className="text-[12.5px] text-accent shrink-0">Open →</span>
-      </button>
-      {galleryOpen && (
-        <GalleryModal
-          onClose={() => setGalleryOpen(false)}
-          onInstalled={() => setGalleryBump((b) => b + 1)}
-        />
-      )}
+      <PanelHead title="Coworkers" sub="Manage your coworkers and add new ones." />
+      <p className="text-[13px] text-muted leading-relaxed max-w-[560px] mt-5 mb-1">
+        Coworkers are agents specialized for a particular role or task. They come equipped
+        with the tools and skills to be successful in that role. Enabling a coworker lets
+        you pick it when starting a conversation.
+      </p>
+      <PersonasTab onOpenPersona={onOpenPersona} />
     </section>
   );
 }

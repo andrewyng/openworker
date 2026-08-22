@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { McpTab } from "./ManageTabs";
+import { CustomMcpGroup } from "./CustomMcp";
 
 type Call = { url: string; method: string; body: unknown };
 
@@ -28,10 +28,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("McpTab presets", () => {
+describe("CustomMcpGroup presets", () => {
   it("adds Parallel Search through the existing no-auth MCP connection path", async () => {
     const calls = stubMcpApi();
-    render(<McpTab />);
+    const onChanged = vi.fn();
+    render(<CustomMcpGroup servers={[]} onOpen={vi.fn()} onChanged={onChanged} />);
 
     expect(await screen.findByText("Granola")).toBeTruthy();
     const preset = screen.getByTestId("mcp-preset-parallel-search");
@@ -54,6 +55,7 @@ describe("McpTab presets", () => {
         name: "parallel-search",
         config: { type: "http", url: "https://search.parallel.ai/mcp" },
       });
+      expect(onChanged).toHaveBeenCalledOnce();
     });
   });
 });

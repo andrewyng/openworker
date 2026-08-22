@@ -97,6 +97,37 @@ export async function openWorkspace(
   return res.json();
 }
 
+/** UX-029 "Start in a temporary folder": create the conversation's temp dir at send time
+ * (git-init'd for code-family work). Idempotent. */
+export async function createTempWorkspace(
+  sessionId: string,
+  git = true,
+): Promise<{ ok: boolean; path?: string; git?: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/workspaces/temp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, git }),
+  });
+  return res.json();
+}
+
+/** UX-029 "Save as project…": move a session's temporary folder to a real location.
+ * Callers reconnect afterwards so the engine rebinds to the new path. */
+export async function saveSessionAsProject(
+  sessionId: string,
+  path: string,
+): Promise<{ ok: boolean; path?: string; error?: string }> {
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/save-as-project`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    },
+  );
+  return res.json();
+}
+
 export async function getTrustedWorkspaces(): Promise<WorkspaceCommandTrust[]> {
   const res = await fetch(`${httpBase()}/v1/workspaces/trusted`);
   return (await res.json()).workspaces ?? [];
@@ -131,6 +162,20 @@ export interface MessageSource {
   sender_name: string; // resolved; may equal the id
   ts: number; // epoch seconds
   text: string; // the RAW message (what the card shows)
+  // Board wakes only (connector === "board"): the digest as structured rows, so
+  // the BoardWakeCard renders collapsed summaries instead of re-parsing prose.
+  board?: { rows: BoardWakeRow[] };
+}
+
+// One digest event on a board wake. `note` is a UI-clamped excerpt of a hand-off
+// comment (the full text lives on the board).
+export interface BoardWakeRow {
+  kind: "assigned" | "claimed" | "moved" | "filed" | "comment" | "chat" | string;
+  item?: number | null;
+  title?: string;
+  actor?: string;
+  to?: string;
+  note?: string;
 }
 
 // A transcript message from GET /v1/sessions/{id}/messages. Kept permissive (open shape) because
@@ -178,6 +223,142 @@ export async function deleteSession(sessionId: string): Promise<{ ok: boolean; e
   return res.json();
 }
 
+// Agent teams (OPE-96): the session's board — items on the workspace-keyed space.
+export interface BoardItem {
+  id: number;
+  title: string;
+  description: string;
+  criteria: string;
+  state: "open" | "in_progress" | "blocked" | "review" | "done" | "canceled" | string;
+  assignee: string;
+  creator: string;
+  refs: string[];
+  links: { kind: string; item: number }[];
+  // Blocked rows only: the latest blocker comment, clamped ("need tfvars…").
+  blocker?: string;
+}
+
+export interface Board {
+  space: string | null;
+  name: string;
+  items: BoardItem[];
+}
+
+export interface JournalCase {
+  case: string;
+  entries: number;
+  last_ts: string;
+}
+
+export async function getBoard(sessionId: string): Promise<Board> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/board`);
+  return res.json();
+}
+
+// One event in an item's merged timeline (the detail pane renders the item's
+// whole story: filed → assigned/claimed → moves → comments, with attachments).
+export interface BoardTimelineEvent {
+  seq: number;
+  ts: string;
+  actor: string;
+  kind: "created" | "assigned" | "claimed" | "moved" | "comment" | string;
+  to?: string;
+  assignee?: string;
+  body?: string;
+  refs?: string[];
+}
+
+export type BoardItemDetail = BoardItem & { timeline?: BoardTimelineEvent[] };
+
+export async function getBoardItem(
+  sessionId: string,
+  id: number,
+): Promise<BoardItemDetail | { error: string }> {
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/board/item?id=${id}`,
+  );
+  return res.json();
+}
+
+// Attachment bytes → an object URL for <img>. The module fetch wrapper carries
+// the sidecar token, which a bare <img src> cannot.
+export async function fetchBoardAttachment(
+  sessionId: string,
+  stored: string,
+): Promise<string | null> {
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/board/attachment?name=${encodeURIComponent(stored)}`,
+  );
+  if (!res.ok) return null;
+  return URL.createObjectURL(await res.blob());
+}
+
+// A pure note on an item — never changes state; the assignee hears it via its feed.
+export async function boardComment(
+  sessionId: string,
+  item: number,
+  body: string,
+): Promise<{ ok?: boolean; error?: string }> {
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/board/comment`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item, body }),
+    },
+  );
+  return res.json();
+}
+
+export async function boardTransition(
+  sessionId: string,
+  item: number,
+  to: string,
+  comment = "",
+): Promise<BoardItem | { error: string }> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/board/transition`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ item, to, comment }),
+  });
+  return res.json();
+}
+
+export interface ChatMessage {
+  seq: number;
+  ts: string;
+  author: string;
+  author_role: "user" | "lead" | "worker" | string;
+  text: string;
+  mentions: string[];
+}
+
+export interface TeamChat {
+  enabled: boolean;
+  team_id?: string;
+  members: { name: string; persona: string; role: string }[];
+  messages: ChatMessage[];
+}
+
+export async function getTeamChat(teamId: string): Promise<TeamChat> {
+  const res = await fetch(`${httpBase()}/v1/teams/${encodeURIComponent(teamId)}/chat`);
+  return res.json();
+}
+
+export async function postTeamChat(teamId: string, text: string): Promise<ChatMessage | { error: string }> {
+  const res = await fetch(`${httpBase()}/v1/teams/${encodeURIComponent(teamId)}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  return res.json();
+}
+
+export async function getJournalCases(): Promise<JournalCase[]> {
+  const res = await fetch(`${httpBase()}/v1/teams/journal`);
+  return (await res.json()).cases ?? [];
+}
+
 export interface ArtifactInfo {
   path: string; // workspace-relative (the display/API identifier)
   abs_path?: string; // absolute — what "Copy path" copies
@@ -185,6 +366,9 @@ export interface ArtifactInfo {
   kind: "markdown" | "html" | "image" | "code" | "text" | string;
   size: number;
   modified_at: number;
+  // Which rail surface opened it — drives the viewer's breadcrumb ("Artifacts" vs
+  // "Files"). Absent = artifacts (UX-037).
+  origin?: "artifacts" | "files";
 }
 
 export interface ArtifactContent {
@@ -273,6 +457,10 @@ export interface McpServer {
   // "needs_auth" (no tokens yet) | "authorizing" (browser sign-in in flight)
   status: string;
   auth?: "oauth" | null;
+  // http server whose anonymous connect hit a 401/403 — offer OAuth sign-in.
+  auth_hint?: boolean;
+  // Epoch seconds of the last successful explicit Test (persisted server-side).
+  last_test_at?: number | null;
   last_error?: string | null;
   tool_count: number | null;
   config: Record<string, any>;
@@ -849,14 +1037,17 @@ export interface Persona {
   name: string;
   icon: string;
   tagline: string;
-  needs_workspace: boolean;
+  requires_folder: boolean; // folder gate — drives project-scoping
   builtin: boolean;
-  family: string;
-  workspace: string; // "git" | "project" | "deliverable" | "none" — drives project-scoping
   tools: string[];
   enabled: boolean;
   surfaced: boolean;
   default: boolean;
+  // Distribution flag (ships:false = internal builds only) + settings-page group.
+  ships?: boolean;
+  group?: string; // "general" | "security"
+  version?: string;
+  installed_at?: string;
 }
 
 export interface PersonaConsent {
@@ -865,11 +1056,15 @@ export interface PersonaConsent {
   description: string;
   tools: string[];
   risk: string[];
-  connectors: boolean;
+  // "all" (general builtins) or the declared allowlist — [] means no connector access.
+  connectors: "all" | string[];
   mcp: string[];
   messaging: boolean;
   recommended_mode: string;
   recommended_models: string[];
+  recommends?: { kind: string; ref: string; reason: string; tier: string }[];
+  version?: string;
+  replaces?: { version: string; installed_at: string; capabilities_grew: boolean } | null;
   source: string | null;
   builtin: boolean;
 }
@@ -877,6 +1072,13 @@ export interface PersonaConsent {
 export async function getPersonas(): Promise<Persona[]> {
   const res = await fetch(`${httpBase()}/v1/personas`);
   return (await res.json()).personas;
+}
+
+/** Personas plus the build flag: `internal` builds may show unshipped coworkers + the Gallery. */
+export async function getPersonasIndex(): Promise<{ personas: Persona[]; internal: boolean }> {
+  const res = await fetch(`${httpBase()}/v1/personas`);
+  const body = await res.json();
+  return { personas: body.personas ?? [], internal: !!body.internal };
 }
 
 export async function updatePersona(
@@ -955,8 +1157,21 @@ export async function getCloudGalleryDetail(slug: string): Promise<GalleryDetail
   return res.json();
 }
 
+/** Sharing v1 (OPE-7): zip a coworker's bundle into `dir`; the zip is the import format. */
+export async function exportPersona(
+  id: string,
+  dir: string,
+): Promise<{ ok: boolean; path?: string; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/personas/${encodeURIComponent(id)}/export`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dir }),
+  });
+  return res.json();
+}
+
 export async function installPersona(
-  body: { dir?: string; git_url?: string; gallery_slug?: string },
+  body: { dir?: string; git_url?: string; gallery_slug?: string; zip_b64?: string; filename?: string },
 ): Promise<{ ok: boolean; consent?: PersonaConsent[]; personas?: Persona[]; error?: string }> {
   const res = await fetch(`${httpBase()}/v1/personas/install`, {
     method: "POST",
@@ -994,13 +1209,27 @@ export interface PersonaDetail {
   icon: string;
   tagline: string;
   description: string;
+  media: string[]; // bundle media/ screenshots, served via /v1/personas/{id}/media/{name}
+  builtin: boolean;
+  group: string;
   enabled: boolean; // persona on/off (shown in the picker)
+  surfaced: boolean;
+  default: boolean;
   tools: string[];
   recommended_models: string[];
   default_permission_mode: string;
-  workspace: string;
+  requires_folder: boolean; // folder gate (workspace-scratch-design.md)
   recommends: PersonaRecommendation[];
   default_connections: PersonaDefaultConnection[];
+}
+
+/** Fetch one bundle screenshot with launch auth and hand back an object URL. */
+export async function getPersonaMediaUrl(id: string, name: string): Promise<string> {
+  const res = await fetch(
+    `${httpBase()}/v1/personas/${encodeURIComponent(id)}/media/${encodeURIComponent(name)}`,
+  );
+  if (!res.ok) throw new Error(`media ${name}: ${res.status}`);
+  return URL.createObjectURL(await res.blob());
 }
 
 export async function getPersonaDetail(id: string): Promise<PersonaDetail> {
@@ -2075,12 +2304,34 @@ export class Session {
     this.send({ type: "directory_response", granted, ...(path ? { path } : {}), writable: !!writable });
   }
 
+  // Reply to a `request_tool` prompt: install the pinned build, or skip the check.
+  respondTool(approved: boolean) {
+    this.send({ type: "tool_response", approved });
+  }
+
   // Reply to a `propose_plan` prompt: approve (choosing the execution mode) or reject with feedback.
   respondPlan(approved: boolean, mode?: string, feedback?: string) {
     this.send({
       type: "plan_response",
       approved,
       ...(mode ? { mode } : {}),
+      ...(feedback ? { feedback } : {}),
+    });
+  }
+
+  respondTeam(approved: boolean, feedback?: string, enableChat?: boolean) {
+    this.send({
+      type: "team_response",
+      approved,
+      ...(feedback ? { feedback } : {}),
+      ...(enableChat !== undefined ? { enable_chat: enableChat } : {}),
+    });
+  }
+
+  respondItems(approved: boolean, feedback?: string) {
+    this.send({
+      type: "items_response",
+      approved,
       ...(feedback ? { feedback } : {}),
     });
   }

@@ -456,7 +456,9 @@ button.btn.danger { color: var(--accent); }
    (Composer.tsx); only the textarea reset + drag-ring remain in CSS. */
 .composer textarea {
   width: 100%; border: none; outline: none; resize: none; font: inherit; font-size: 14.5px; line-height: 1.45;
-  background: transparent; color: var(--ink); min-height: 24px; max-height: 88px; overflow: hidden;
+  background: transparent; color: var(--ink); min-height: 24px; overflow: hidden;
+  /* Height (incl. the cap) is owned by the autogrow effect in Composer.tsx — a
+     CSS max-height here fought it and re-created the OPE-106 clipping. */
 }
 .composer textarea::placeholder { color: var(--faint); }
 .voice-wave-line { flex: 1; min-width: 28px; border-top: 1px dashed var(--line-strong); }
@@ -556,6 +558,22 @@ button.btn.danger { color: var(--accent); }
 .rail-mini-btn { width: 24px; height: 24px; display: grid; place-items: center; color: var(--muted); border: 0; border-radius: 7px; background: transparent; cursor: pointer; }
 .rail-mini-btn:hover { color: var(--ink); background: var(--paper); }
 .rail-section-body { padding-top: 10px; }
+/* Seventeenth pass: a section header's maximum signal — a small count chip, amber only
+   when it carries attention states (blocked/review). */
+.rail-count { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--muted); background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; flex: none; }
+.rail-count.attention { background: var(--warn-soft); border-color: transparent; color: var(--warn-ink); }
+/* Journal + Access fold behind this quiet row (three primary sections max). */
+.rail-more-row { display: flex; gap: 8px; align-items: center; width: 100%; padding: 11px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; cursor: pointer; font: inherit; font-size: 12px; color: var(--faint); text-align: left; }
+.rail-more-row:hover { color: var(--muted); }
+/* The Team panel — member rows; click = the altitude-3 escape hatch into that worker's session. */
+.rail-team { display: flex; flex-direction: column; gap: 1px; }
+.rail-team-row { display: flex; gap: 9px; align-items: center; width: 100%; padding: 6px 6px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; font: inherit; text-align: left; }
+.rail-team-row:hover { background: var(--paper); }
+.rail-team-row:hover .rail-team-open { opacity: 1; }
+.rail-team-name { font-size: 13px; font-weight: 550; color: var(--ink); flex: none; }
+.rail-team-item { font-size: 11.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.rail-team-open { font-size: 11px; color: var(--accent); opacity: 0; flex: none; }
+.rail-chat-row .rail-team-name { font-weight: 500; color: var(--muted); }
 .rail-muted { font-size: 12px; color: var(--faint); line-height: 1.45; overflow-wrap: anywhere; }
 .rail-error { font-size: 12px; color: var(--accent); overflow-wrap: anywhere; }
 .rail-todo-list { display: flex; flex-direction: column; gap: 9px; }
@@ -789,11 +807,31 @@ button.btn.danger { color: var(--accent); }
 /* request_directory prompt (agent-initiated) */
 .dirreq-card {
   background: var(--panel); border: 1px solid var(--accent); border-radius: 12px;
-  padding: 12px 14px; margin-bottom: 9px; box-shadow: 0 0 0 3px var(--accent-soft);
+  padding: 12px 14px; box-shadow: 0 0 0 3px var(--accent-soft);
+  /* Same column as the composer/approval dock — full-bleed on wide monitors read
+     broken (owner catch 2026-08-15 on the tool-request card). */
+  max-width: 760px; margin: 0 auto 9px;
 }
 .dirreq-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; color: var(--ink); }
 .dirreq-head .ico { color: var(--accent); }
 .dirreq-reason { font-size: 13px; color: var(--muted); font-style: italic; margin: 6px 0 10px; }
+/* the coworker's justification gets an explicit label — the quote alone made readers
+   work out what the italic line was */
+.toolreq-label { font-style: normal; font-weight: 600; color: var(--ink); }
+/* request_tool fact strip — the product's own metadata (version, publisher, checksum),
+   deliberately NOT italic so it can't be misread as the coworker still talking */
+.toolreq-facts {
+  font-size: 12.5px; color: var(--muted); font-style: normal;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
+  padding: 7px 10px; margin: 2px 0 10px;
+}
+.toolreq-facts code { color: var(--ink); font-size: 12.5px; }
+.toolreq-factrow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.toolreq-factrow code + .toolreq-fact::before { content: "· "; color: var(--muted); }
+.toolreq-explain { margin-top: 4px; }
+.toolreq-factrow + .toolreq-explain { margin-top: 5px; }
+/* a disabled Install must LOOK disabled — the whole card exists to not oversell */
+.dirreq-actions .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .dirreq-pathrow { display: flex; gap: 8px; align-items: center; }
 .dirreq-path {
   flex: 1; font: inherit; font-size: 13px; color: var(--ink);
@@ -1364,6 +1402,15 @@ html[data-theme="dark"] :not(.connector-badge) > .connector-icon[data-dark-mark]
 .art-chip-meta span { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .art-chip-open { margin-left: 8px; flex: none; font-size: 11.5px; color: var(--accent); font-weight: 500; }
 
+/* Seventeenth pass: [Board · N items](board:) — the lead's one-time board mention, an
+   inline pill (smaller than the artifact chip: it opens a panel, not a document). */
+.boardlink-chip {
+  display: inline-flex; align-items: center; gap: 6px; vertical-align: baseline;
+  padding: 2px 10px 2px 8px; border: 1px solid var(--line-strong); border-radius: 999px;
+  background: var(--panel); cursor: pointer; font: inherit; font-size: 12.5px; color: var(--ink);
+}
+.boardlink-chip:hover { border-color: var(--accent); color: var(--accent); }
+
 /* ---- UX-027: Slack post-connect "how mentions reach you" card ----
    Split-scene carousel: the Slack window is PINNED to modern light-Slack (aubergine
    chrome, white pill for the active channel, purple top toolbar with the search
@@ -1617,3 +1664,289 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
 .artifact-folder-row:hover { background: var(--paper); }
 .artifact-folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .artifact-folder-size { font-size: 11px; color: var(--faint); }
+
+/* ── Agent teams (OPE-96): board rail, expanded overlay, plan gate ─────────── */
+.board-rail { display: flex; flex-direction: column; gap: 2px; }
+.board-rail-quiet { font-size: 12px; color: var(--faint); padding: 2px 0 4px; }
+.board-finished-toggle {
+  align-self: flex-start; border: none; background: none; padding: 4px 0 0; cursor: pointer;
+  font-size: 11.5px; color: var(--faint);
+}
+.board-finished-toggle:hover { color: var(--muted); text-decoration: underline; }
+
+/* -- BoardWakeCard: a board wake collapsed to one line (click to expand) ------- */
+.boardwake {
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+  margin: 2px 0; overflow: hidden;
+}
+.boardwake.attention { border-color: color-mix(in srgb, var(--warn, #b98a2f) 45%, var(--line)); }
+.boardwake-head {
+  display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
+  border: none; background: none; cursor: pointer; padding: 7px 10px;
+  font-size: 12.5px; color: var(--muted);
+}
+.boardwake-head:hover { background: var(--paper); }
+.boardwake-title { font-weight: 600; color: var(--ink); }
+.boardwake-chevron { display: inline-flex; transition: transform 0.15s; }
+.boardwake-chevron.open { transform: rotate(180deg); }
+.boardwake-summary { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.boardwake-body { border-top: 1px solid var(--line); padding: 6px 10px 8px; max-height: 260px; overflow-y: auto; }
+.boardwake-row { display: flex; align-items: baseline; gap: 8px; padding: 4px 0; }
+.boardwake-row-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.boardwake-row-text { font-size: 12px; color: var(--ink); }
+.boardwake-note {
+  font-size: 11.5px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere;
+  border-left: 2px solid var(--line); padding-left: 8px;
+}
+.boardwake-note-toggle {
+  align-self: flex-start; border: none; background: none; padding: 0; cursor: pointer;
+  font-size: 11px; color: var(--accent);
+}
+.boardwake-note-toggle:hover { text-decoration: underline; }
+.board-group {
+  font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--faint); font-weight: 700; margin: 8px 0 3px;
+}
+.board-rail > div:first-child .board-group { margin-top: 0; }
+.board-row {
+  display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left;
+  padding: 5px 6px; border: 0; border-radius: 7px; background: transparent;
+  cursor: pointer; color: var(--muted); font-size: 12.5px;
+}
+.board-row:hover { background: var(--paper); }
+.board-row-main { display: flex; flex-direction: column; min-width: 0; }
+.board-row-title { color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
+.board-row-id { color: var(--faint); font-weight: 600; font-size: 11.5px; }
+.board-row-who { font-size: 11px; color: var(--faint); }
+.board-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; background: var(--faint); }
+.board-dot.work { background: var(--ok-dot); }
+.board-dot.blocked { background: var(--danger); }
+.board-dot.review { background: var(--warn-ink); }
+.board-dot.done { background: var(--ok); opacity: 0.55; }
+.board-dot.idle { background: var(--faint); }
+
+/* Expanded board: covers the session area — the roomy, Linear-shaped view. */
+.board-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  background: color-mix(in srgb, var(--paper) 55%, transparent);
+  display: flex; align-items: stretch; justify-content: center; padding: 26px 28px;
+}
+.board-overlay-panel {
+  flex: 1; max-width: 1280px; display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28); overflow: hidden;
+}
+.board-overlay-head {
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.board-overlay-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; color: var(--ink); flex: 1; }
+.board-overlay-space { color: var(--faint); font-weight: 400; font-size: 12px; }
+.board-overlay-body { flex: 1; display: flex; min-height: 0; }
+
+/* -- Overlay list (quiet, Apple-leaning: raw-state sections, no row buttons) -- */
+.board-list { flex: 1; min-width: 0; overflow-y: auto; padding: 2px 10px 16px; }
+.board-lsec {
+  padding: 16px 14px 5px; font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--faint);
+}
+.board-lrow {
+  display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  border: none; background: none; cursor: pointer; padding: 8px 14px;
+  border-radius: 10px; font: inherit; color: var(--ink);
+}
+.board-lrow:hover { background: var(--paper); }
+.board-lrow.sel { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.board-lrow .board-dot { margin-top: 0; flex: none; }
+.board-lrow-id { color: var(--faint); font-size: 11.5px; width: 26px; flex: none; }
+.board-lrow-title {
+  flex: 1; min-width: 0; font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.board-lrow-end {
+  flex: none; max-width: 320px; font-size: 12px; color: var(--faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* -- Detail pane: airy, de-boxed; the item's timeline is the centerpiece ------ */
+.board-detail {
+  width: 400px; flex: none; border-left: 1px solid var(--line);
+  padding: 20px 24px; overflow-y: auto; min-height: 0;
+}
+.board-detail-title { font-size: 15.5px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+.board-detail-id { color: var(--faint); font-weight: 400; font-size: 13px; margin-right: 2px; }
+.board-detail-meta { font-size: 12.5px; color: var(--muted); margin-top: 5px; }
+.board-detail-st { font-weight: 500; }
+.st-review { color: var(--warn, #b45309); }
+.st-blocked { color: var(--danger, #dc2626); }
+.st-in_progress { color: var(--accent); }
+.board-detail-worker {
+  border: none; background: none; padding: 0; font: inherit; font-size: 12.5px;
+  color: var(--accent); cursor: pointer;
+}
+.board-detail-worker:hover { text-decoration: underline; }
+.board-detail-desc { margin-top: 12px; font-size: 12.5px; color: var(--muted); white-space: pre-wrap; }
+.board-detail-crit {
+  margin-top: 12px; font-size: 12.5px; color: var(--ink);
+  max-height: 84px; overflow-y: auto; padding-right: 8px;
+}
+.board-detail-label { color: var(--faint); font-weight: 600; }
+
+.board-tl { margin-top: 18px; position: relative; padding-left: 18px; display: flex; flex-direction: column; gap: 14px; }
+.board-tl::before { content: ""; position: absolute; left: 3px; top: 6px; bottom: 6px; width: 1px; background: var(--line); }
+.board-tl-ev { position: relative; }
+.board-tl-ev::before {
+  content: ""; position: absolute; left: -18px; top: 6px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--line-strong);
+}
+.board-tl-ev.review::before { background: var(--warn, #b45309); }
+.board-tl-ev.blocked::before { background: var(--danger, #dc2626); }
+.board-tl-ev.work::before { background: var(--accent); }
+.board-tl-line { font-size: 12px; color: var(--faint); }
+.board-tl-line b { color: var(--ink); font-weight: 600; font-size: 12.5px; }
+.board-tl-body { font-size: 12.5px; color: var(--muted); margin-top: 3px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.board-shot { display: block; width: 170px; margin-top: 8px; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.14); text-decoration: none; }
+.board-shot img { display: block; width: 100%; max-height: 120px; object-fit: cover; background: var(--paper); }
+.board-shot-cap { display: block; font-size: 10.5px; color: var(--faint); padding: 4px 8px; background: var(--panel); }
+
+.board-note-input {
+  width: 100%; margin-top: 14px; font: inherit; font-size: 12.5px; color: var(--ink);
+  background: var(--paper); border: 1px solid var(--line); border-radius: 999px;
+  padding: 7px 14px; outline: none;
+}
+.board-note-input::placeholder { color: var(--faint); }
+.board-note-input:focus { border-color: var(--accent); background: var(--panel); }
+.board-detail-actions { display: flex; gap: 14px; align-items: center; margin-top: 20px; }
+.board-btn { font-size: 12.5px; cursor: pointer; font-family: inherit; }
+.board-btn.primary {
+  color: #fff; background: var(--accent); border: none; border-radius: 999px; padding: 6px 16px;
+}
+.board-btn.primary:disabled { opacity: 0.5; cursor: default; }
+.board-btn.ghost { color: var(--muted); background: none; border: none; padding: 6px 0; }
+.board-btn.ghost:hover { color: var(--ink); }
+.board-changes { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.board-changes textarea {
+  width: 100%; min-height: 64px; resize: vertical; font: inherit; font-size: 12.5px;
+  color: var(--ink); background: var(--paper); border: 1px solid var(--line);
+  border-radius: 10px; padding: 8px 10px; outline: none;
+}
+.board-changes textarea:focus { border-color: var(--accent); }
+.board-changes-row { display: flex; gap: 12px; align-items: center; }
+
+/* Journal rail section */
+.journal-list { display: flex; flex-direction: column; gap: 3px; }
+.journal-row { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); padding: 3px 4px; }
+.journal-case { color: var(--ink); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.journal-count { font-size: 11px; color: var(--faint); }
+
+
+
+/* Staffing gate (agent teams) */
+.teamreq-card { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.teamreq-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.teamreq-title { font-weight: 600; font-size: 13px; color: var(--ink); }
+.teamreq-note { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.teamreq-row { display: flex; gap: 9px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+.teamreq-diamond { color: var(--faint); font-size: 11px; padding-top: 1px; }
+.teamreq-body code { background: var(--paper); border-radius: 5px; padding: 1px 6px; font-size: 12px; }
+.teamreq-model { color: var(--muted); }
+.teamreq-reason { color: var(--faint); }
+.teamreq-grant { font-size: 11.5px; color: var(--faint); }
+
+/* Sidebar: the expandable team entry (workers nest under their lead) */
+.team-child { margin-left: 18px; }
+.team-child .team-item { font-size: 11px; color: var(--faint); margin-left: 4px; }
+.team-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--faint); }
+.team-dot.in_progress { background: var(--ok-dot); }
+.team-dot.blocked { background: var(--danger); }
+.team-dot.review { background: var(--warn-ink); }
+
+/* Decomposition gate (proposed work items) */
+.itemsreq-card { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.itemsreq-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.itemsreq-title { font-weight: 600; font-size: 13px; color: var(--ink); }
+.itemsreq-note { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.itemsreq-item { display: flex; gap: 9px; padding: 7px 0; border-top: 1px solid var(--line); }
+.itemsreq-num { color: var(--faint); font-size: 12px; padding-top: 1px; }
+.itemsreq-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.itemsreq-item-title { font-size: 12.5px; color: var(--ink); }
+.itemsreq-ac { font-size: 11.5px; color: var(--muted); }
+.itemsreq-ac b { font-weight: 600; }
+/* Essay-length criteria clamp to two lines; the expander reveals the rest. The
+   list itself caps so a big proposal never occupies two screens of chat. */
+.itemsreq-ac.clamped {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.itemsreq-ac-toggle {
+  align-self: flex-start; border: none; background: none; padding: 0; cursor: pointer;
+  font-size: 11px; color: var(--accent);
+}
+.itemsreq-ac-toggle:hover { text-decoration: underline; }
+.itemsreq-list { max-height: 320px; overflow-y: auto; }
+.itemsreq-more { display: flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--accent); font-size: 12px; cursor: pointer; padding: 6px 0; }
+.itemsreq-grant { font-size: 11.5px; color: var(--faint); }
+
+/* # team chat */
+.teamreq-name { color: var(--ink); font-weight: 600; }
+.teamreq-chat { display: flex; align-items: center; gap: 8px; padding: 9px 0 2px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--ink); cursor: pointer; }
+.teamreq-info { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--faint); font-size: 9px; cursor: help; }
+.chat-panel { max-width: 860px; }
+.chat-hash { color: var(--faint); font-weight: 700; }
+.chat-scroll { flex: 1; overflow: auto; padding: 14px 18px; display: flex; flex-direction: column; }
+.chat-empty { color: var(--faint); font-size: 12.5px; margin: auto; max-width: 420px; text-align: center; }
+.chat-msg { margin-top: 12px; }
+.chat-msg.grouped { margin-top: 2px; padding-left: 34px; }
+.chat-who { display: flex; align-items: baseline; gap: 8px; }
+.chat-avatar { width: 26px; height: 26px; border-radius: 7px; background: var(--paper); border: 1px solid var(--line-strong); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; align-self: center; }
+.chat-avatar.lead { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.chat-avatar.user { background: var(--ok-soft); border-color: var(--ok-line); color: var(--ok); }
+.chat-name { font-size: 12.5px; font-weight: 700; color: var(--ink); }
+.chat-role { font-size: 11px; color: var(--faint); }
+.chat-ts { font-size: 10.5px; color: var(--faint); }
+.chat-text { font-size: 13px; color: var(--ink); margin-top: 1px; padding-left: 34px; }
+.chat-msg.grouped .chat-text { padding-left: 0; }
+.chat-mention { color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 0 3px; }
+.chat-composer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.chat-input { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; font-size: 13px; background: var(--paper); color: var(--ink); outline: none; }
+.chat-input:focus { border-color: var(--accent); }
+
+/* Sidebar chat row */
+.team-hash { color: var(--faint); font-weight: 700; font-size: 12px; width: 10px; text-align: center; }
+.team-chat-badge { margin-left: auto; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; border-radius: 8px; padding: 0 6px; }
+
+/* # team chat as an in-place view (not a modal): fills .main, sidebar stays live. */
+.chat-view { position: absolute; inset: 0; z-index: 40; background: var(--paper); display: flex; flex-direction: column; }
+.chat-view-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.chat-view-body { flex: 1; display: flex; flex-direction: column; min-height: 0; max-width: 860px; width: 100%; margin: 0 auto; }
+
+/* Sleeping strip — a scheduled agent never reads as a dead one. */
+.sleep-strip {
+  max-width: 760px; margin: 0 auto 8px; display: flex; align-items: center; gap: 9px;
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel); font-size: 12.5px; color: var(--muted);
+}
+.sleep-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn-ink); opacity: 0.7; flex-shrink: 0; animation: sleep-pulse 2.4s ease-in-out infinite; }
+@keyframes sleep-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.85; } }
+.sleep-text { flex: 1; }
+.sleep-strip .btn.sm { padding: 4px 10px; font-size: 12px; }
+
+/* UX-038: viewer header — breadcrumb-as-back, ✕ close, one labeled ⋯ menu. */
+.artifact-crumb-link {
+  border: 0; background: none; padding: 1px 5px; margin-left: -5px; border-radius: 6px;
+  font: inherit; font-weight: 600; color: var(--muted); cursor: pointer;
+}
+.artifact-crumb-link:hover { color: var(--accent); background: var(--paper); }
+.artifact-menu-wrap { position: relative; }
+.artifact-menu {
+  position: absolute; right: 0; top: 34px; z-index: 30; width: 190px; padding: 5px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+}
+.artifact-menu-item {
+  display: flex; width: 100%; align-items: center; gap: 9px; padding: 7px 9px;
+  border: 0; background: none; border-radius: 7px; text-align: left;
+  font-size: 12.5px; color: var(--ink); cursor: pointer;
+}
+.artifact-menu-item:hover { background: var(--paper); }
+.artifact-menu-item svg { color: var(--muted); flex: none; }
+.artifact-menu-div { height: 1px; margin: 5px 4px; background: var(--line); }

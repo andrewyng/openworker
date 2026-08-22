@@ -17,6 +17,5 @@ def chat_agent() -> Agent:
         name="chat",
         title="Chat",
         system_prompt=CHAT_INSTRUCTIONS,
-        needs_workspace=False,
         tool_factory=None,
     )

@@ -85,6 +85,21 @@ MATRIX: dict[str, ModelEntry] = {
     "gemini:gemini-2.5-flash": ModelEntry(
         "Gemini 2.5 Flash · Google", _AGENTIC_VISION, 1_048_576
     ),
+    # Ark Responses API providers (verified 2026-08-14). BytePlus pay-as-you-go and
+    # Volcengine Agent Plan intentionally use separate provider prefixes because their
+    # endpoints, credentials, regions, and model catalogs are not interchangeable.
+    "ark:dola-seed-evolving-latest-version": ModelEntry(
+        "Dola Seed Evolving · BytePlus Ark", context_window=256_000
+    ),
+    "ark:dola-seed-2-1-turbo-260628": ModelEntry(
+        "Dola Seed 2.1 Turbo · BytePlus Ark", context_window=256_000
+    ),
+    "ark-agent-plan-cn:doubao-seed-evolving": ModelEntry(
+        "Doubao Seed Evolving · Volcengine Agent Plan", context_window=256_000
+    ),
+    "ark-agent-plan-cn:doubao-seed-2.1-turbo": ModelEntry(
+        "Doubao Seed 2.1 Turbo · Volcengine Agent Plan", context_window=256_000
+    ),
     # -- direct OpenAI-compatible vendors ----------------------------------------
     # Muse Spark (Meta Model API, public preview 2026-07-09): multimodal + tools via
     # their OpenAI-compat surface. Vision yes; PDFs unverified over compat — falls
