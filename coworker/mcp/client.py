@@ -19,7 +19,13 @@ from typing import Any, IO, Optional
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+
+try:  # mcp >= 2.0
+    from mcp.client.streamable_http import streamable_http_client
+except ImportError:  # mcp < 2.0
+    from mcp.client.streamable_http import (  # type: ignore[no-redef]
+        streamablehttp_client as streamable_http_client,
+    )
 
 from .config import MCPServerDef
 
@@ -158,7 +164,7 @@ class MCPManager:
                             interactive=interactive,
                         )
                     read, write, *_ = await stack.enter_async_context(
-                        streamablehttp_client(
+                        streamable_http_client(
                             server.url, headers=server.headers or None, auth=auth
                         )
                     )
