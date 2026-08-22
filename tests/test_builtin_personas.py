@@ -39,8 +39,13 @@ def test_cowork_persona_matches_builder(tmp_path):
 def test_ops_persona_composes_knowledge_toolset(tmp_path):
     reg = PersonaRegistry()
     ctx = _ctx(tmp_path)
-    # Ops uses the same capability list as Cowork (files/search/shell/todo).
-    assert _names(reg.agent("ops"), ctx) == _names(cowork_agent(), ctx)
+    # Ops uses Cowork's capability list (files/search/shell/todo) plus `brain`: it is the
+    # manifest-backed builtin, so it dogfoods the memory capability that the builder-registered
+    # personas do not carry.
+    assert _names(reg.agent("ops"), ctx) == _names(cowork_agent(), ctx) | {
+        "brain_recall",
+        "brain_note",
+    }
     a = reg.agent("ops")
     assert a.family == "knowledge" and a.messaging and a.connectors
     assert "read_file_lines" in _names(a, ctx)  # multi-root knowledge files

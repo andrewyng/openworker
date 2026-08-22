@@ -71,7 +71,7 @@ def test_persona_detail_endpoint(tmp_path, monkeypatch):
     )  # §16 collapse: ops is a scratch persona now
     assert detail["default_permission_mode"] == "interactive"
     assert "anthropic:claude-opus-4-8" in detail["recommended_models"]
-    assert set(detail["tools"]) == {"files", "search", "shell", "todo"}
+    assert set(detail["tools"]) == {"files", "search", "shell", "todo", "brain"}
     assert detail["description"]  # the manifest description is surfaced
 
     # recommends annotated with `connected` (github connected; slack/datadog not)

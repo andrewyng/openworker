@@ -21,6 +21,7 @@ import aisuite as ai
 
 from .agents.base import AgentContext
 from .risk import RiskClass
+from .tools.brain import brain_tools
 from .tools.files import file_tools
 from .tools.git import git_tools
 from .tools.search import search_tools
@@ -94,6 +95,12 @@ def _shell(context: AgentContext) -> list:
     return shell_tools(context.executor)  # run_shell + background task tools
 
 
+def _brain(context: AgentContext) -> list:
+    # No workspace requirement: the brain is machine-scoped, not session-scoped — that is the
+    # point of it. A Chat session with no folder can still recall what was learned last month.
+    return brain_tools()  # brain_recall + brain_note
+
+
 def _todo(context: AgentContext) -> list:
     return todo_tools(context.todo)  # todo_write (drives the Progress panel)
 
@@ -138,6 +145,13 @@ _CAPS: list[Capability] = [
         build=_shell,
         requires=("executor",),
         risk=(RiskClass.EXEC,),
+    ),
+    Capability(
+        id="brain",
+        name="Memory",
+        description="Recall what this machine has learned before, and record durable findings.",
+        build=_brain,
+        risk=(RiskClass.READ, RiskClass.WRITE_LOCAL),
     ),
     Capability(
         id="todo",
