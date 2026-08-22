@@ -34,9 +34,26 @@ def _task(**kw) -> ScheduledTask:
 # -- model / schedule ----------------------------------------------------------
 def test_schedule_human():
     assert Schedule("cron", cron="10 19 * * *").human() == "Every day at ~7:10 PM"
-    assert "Monday" in Schedule("cron", cron="0 9 * * 0").human()
+    # cron's day-of-week starts at SUNDAY (0 and 7 both mean Sunday). This assertion used to
+    # read "Monday", which matched a Monday-first lookup table and mislabelled every weekly
+    # automation by a day in the UI.
+    assert "Sunday" in Schedule("cron", cron="0 9 * * 0").human()
+    assert "Monday" in Schedule("cron", cron="0 9 * * 1").human()
+    assert "Sunday" in Schedule("cron", cron="0 9 * * 7").human()
     assert Schedule("cron", cron="0 9 5 * *").human() == "Monthly on day 5 at ~9:00 AM"
     assert Schedule("once", fire_at="2026-07-01T09:00:00").human().startswith("Once at")
+
+
+def test_schedule_human_month_lists():
+    # A restricted month field is what makes a schedule quarterly or yearly; labelling those
+    # "Monthly" hid the difference in the one place a user checks it.
+    assert (
+        Schedule("cron", cron="30 7 1 1,4,7,10 *").human()
+        == "Every Jan, Apr, Jul, Oct on day 1 at ~7:30 AM"
+    )
+    assert Schedule("cron", cron="0 8 1 1 *").human() == "Every January 1 at ~8:00 AM"
+    # Anything this vocabulary cannot state honestly falls back to the raw cron.
+    assert Schedule("cron", cron="30 7 * * 1-5").human() == "30 7 * * 1-5"
 
 
 def test_task_gets_own_thread_id():

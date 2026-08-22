@@ -10,7 +10,12 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-_DOW = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+# Indexed by cron's day-of-week, which starts at SUNDAY (0 and 7 both mean Sunday). A
+# Monday-first list here silently shifted every weekly label by a day — "Spec drift check"
+# advertised Monday while running Sundays.
+_DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+_MONTH = ["", "January", "February", "March", "April", "May", "June", "July", "August",
+          "September", "October", "November", "December"]
 
 
 def _now() -> float:
@@ -85,12 +90,20 @@ class Schedule:
             t = _human_time(int(hour), int(minute))
         except ValueError:
             return self.cron  # non-trivial cron (ranges/steps) — show as-is
-        if dom == "*" and dow == "*":
+        if dom == "*" and dow == "*" and month == "*":
             return f"Every day at ~{t}"
-        if dom == "*" and dow.isdigit():
+        if dom == "*" and dow.isdigit() and month == "*":
             return f"Every {_DOW[int(dow) % 7]} at ~{t}"
         if dom.isdigit() and dow == "*":
-            return f"Monthly on day {dom} at ~{t}"
+            if month == "*":
+                return f"Monthly on day {dom} at ~{t}"
+            # A month list is what makes a schedule quarterly or yearly; calling those
+            # "Monthly" was wrong in the one place the difference matters.
+            months = [m for m in month.split(",") if m.isdigit()]
+            if len(months) == 1:
+                return f"Every {_MONTH[int(months[0])]} {dom} at ~{t}"
+            if months:
+                return f"Every {', '.join(_MONTH[int(m)][:3] for m in months)} on day {dom} at ~{t}"
         return self.cron
 
     def to_dict(self) -> dict:
