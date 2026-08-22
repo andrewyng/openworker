@@ -60,7 +60,11 @@ A curated model list marks what we've verified for tool-calling work. Adding any
 
 ## Privacy
 
-OpenWorker is local-first. Everything lives on your machine: the agent loop, your conversations, connector tokens, and model keys - all in the app's local secret store. The only cloud piece is a small service that brokers OAuth handshakes for connectors. You can always use the App without signing-in - use the connectors via manually-created credentials/API-keys.
+OpenWorker is local-first. The agent loop, conversations, connector tokens, and model keys remain on your machine in the local secret store. Work data leaves your machine only through the models and integrations you choose.
+
+OpenWorker Cloud is optional. It provides sign-in and brokered OAuth for managed connectors. Managed Slack and GitHub connections route inbound events through OpenWorker Cloud; manual credentials remain available, and Slack Socket Mode connects directly to Slack. The desktop updater also checks OpenWorker's update endpoints for new releases.
+
+Product telemetry is disabled by default. If enabled, it sends content-free product metadata to `api.openworker.com`: a random installation ID, app version, platform, session persona and workspace category, and the slug of a gallery persona that was installed. It never sends prompts, outputs, tool arguments, file paths, or connector content. You can use the app without signing in and configure connectors with manual credentials or API keys.
 
 ## Run from source
 
