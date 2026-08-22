@@ -21,6 +21,9 @@ class Field:
     required: bool = True
     help: str = ""
     placeholder: str = ""
+    # Rendering hint: "" = text input; "folder" = the GUI offers the native folder
+    # picker (desktop) and fills the field with the chosen path.
+    kind: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -29,6 +32,7 @@ class Field:
             "secret": self.secret,
             "required": self.required,
             "help": self.help,
+            "kind": self.kind,
             "placeholder": self.placeholder,
         }
 
@@ -164,6 +168,26 @@ def _validate_whoami(
         return ValidationResult(True, identity=str(identity(data)))
     except Exception:
         return ValidationResult(False, error="unexpected response from API")
+
+
+def _validate_obsidian(creds: dict) -> ValidationResult:
+    """Local check, no network: the folder exists and is an Obsidian vault (has the
+    .obsidian config dir the app creates). Identity = the vault's folder name."""
+    from pathlib import Path
+
+    raw = str(creds.get("vault_path") or "").strip()
+    if not raw:
+        return ValidationResult(False, error="pick your vault folder")
+    path = Path(raw).expanduser()
+    if not path.is_dir():
+        return ValidationResult(False, error=f"folder not found: {path}")
+    if not (path / ".obsidian").is_dir():
+        return ValidationResult(
+            False,
+            error="that folder isn't an Obsidian vault — pick the folder that holds "
+            "your notes (it contains a hidden .obsidian folder)",
+        )
+    return ValidationResult(True, identity=path.name)
 
 
 def _validate_notion(creds: dict) -> ValidationResult:
@@ -1268,6 +1292,35 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         # (account_id); a manual integration token falls back to the
         # validator's workspace name.
         account_field="account_id",
+    ),
+    ConnectorDescriptor(
+        name="obsidian",
+        title="Obsidian",
+        icon="◈",
+        blurb="Search, read, and write notes in your local vault — no account needed.",
+        # "folder": the credential is a local directory grant, not a secret. Connected
+        # = a vault_path is stored (auth="none" would read as always-connected).
+        auth="folder",
+        two_way=False,
+        fields=[
+            Field(
+                "vault_path",
+                "Vault folder",
+                secret=False,
+                kind="folder",
+                help="The folder holding your notes — it contains a hidden .obsidian "
+                "folder. Everything stays on this Mac.",
+                placeholder="~/Documents/MyVault",
+            ),
+        ],
+        instructions=[
+            "Pick your vault folder — no account, no keys.",
+            "Notes are read directly from disk; nothing leaves this Mac.",
+        ],
+        validate=_validate_obsidian,
+        brand_color="#7c3aed",
+        logo="obsidian",
+        aliases=("notes", "markdown", "vault", "pkm", "second brain", "knowledge base"),
     ),
     ConnectorDescriptor(
         name="attio",
