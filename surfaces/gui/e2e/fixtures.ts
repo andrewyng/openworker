@@ -55,16 +55,25 @@ const SETTINGS = {
 
 const PERSONAS = {
   personas: [
-    { id: "cowork", name: "OpenWorker", icon: "cowork", tagline: "Produce a deliverable — research, analysis, scripts", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", tools: ["files", "search"], enabled: true, surfaced: true, default: true },
-    { id: "code", name: "Code", icon: "code", tagline: "Work in a codebase — files, git, shell", needs_workspace: true, builtin: true, family: "code", workspace: "git", tools: ["code_files", "git"], enabled: true, surfaced: true, default: false },
-    { id: "chat", name: "Chat", icon: "chat", tagline: "Quick questions — no workspace", needs_workspace: false, builtin: true, family: "knowledge", workspace: "none", tools: [], enabled: true, surfaced: false, default: false },
+    { id: "cowork", name: "OpenWorker", icon: "cowork", tagline: "Produce a deliverable — research, analysis, scripts", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", projects: true, tools: ["files", "search"], enabled: true, surfaced: true, default: true,
+      checkpoints: [
+        { id: "plan", label: "Plan", evidence: ["todo_write"] },
+        { id: "gather", label: "Gather", evidence: ["read_file", "web_search"] },
+        { id: "produce", label: "Produce the deliverable", evidence: ["write_file"] },
+      ],
+      budgets: [
+        { id: "searches", label: "searches", limit: 4, tools: ["web_search"] },
+        { id: "calls", label: "tool calls", limit: 12, tools: ["*"] },
+      ] },
+    { id: "code", name: "Code", icon: "code", tagline: "Work in a codebase — files, git, shell", needs_workspace: true, builtin: true, family: "code", workspace: "git", projects: true, tools: ["code_files", "git"], enabled: true, surfaced: true, default: false },
+    { id: "chat", name: "Chat", icon: "chat", tagline: "Quick questions — no workspace", needs_workspace: false, builtin: true, family: "knowledge", workspace: "none", projects: false, tools: [], enabled: true, surfaced: false, default: false },
     // Ops carries the presentation a manifest can declare (`accent:` + `intro:`) — the start
     // screen, composer placeholder and accent all come from the persona, so switching to it
     // must change all three.
-    { id: "ops", name: "Ops Coworker", icon: "wrench", tagline: "Operate and investigate — runbooks, logs, infrastructure", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", tools: ["files", "shell"], accent: "teal", intro: { greeting: "What's going on?", lede: "Start from an alert or a service — I'll investigate and leave a written note.", placeholder: "Describe the incident or the service to check…", starters: [{ key: "health", title: "Check the health of a running service", sub: "Endpoints, logs, and recent deploys", prompt: "Check the health of the service I name, then write up what you find.", requires: [] }, { key: "alerts", title: "Triage the alerts firing right now", sub: "What broke, when it started, what it touches", prompt: "Pull the alerts firing right now and tell me what broke.", requires: ["datadog"] }] }, enabled: true, surfaced: true, default: false },
+    { id: "ops", name: "Ops Coworker", icon: "wrench", tagline: "Operate and investigate — runbooks, logs, infrastructure", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", projects: true, tools: ["files", "shell"], accent: "teal", intro: { greeting: "What's going on?", lede: "Start from an alert or a service — I'll investigate and leave a written note.", placeholder: "Describe the incident or the service to check…", starters: [{ key: "health", title: "Check the health of a running service", sub: "Endpoints, logs, and recent deploys", prompt: "Check the health of the service I name, then write up what you find.", requires: [] }, { key: "alerts", title: "Triage the alerts firing right now", sub: "What broke, when it started, what it touches", prompt: "Pull the alerts firing right now and tell me what broke.", requires: ["datadog"] }] }, enabled: true, surfaced: true, default: false },
     // A non-builtin install (disabled pending consent — invisible to picker specs) so the
     // Personas page's delete/enable affordances have a target.
-    { id: "acme-notes", name: "Acme Notes", icon: "pencil", tagline: "Acme's note-taking coworker", needs_workspace: true, builtin: false, family: "knowledge", workspace: "deliverable", tools: ["files"], enabled: false, surfaced: false, default: false },
+    { id: "acme-notes", name: "Acme Notes", icon: "pencil", tagline: "Acme's note-taking coworker", needs_workspace: true, builtin: false, family: "knowledge", workspace: "deliverable", projects: true, tools: ["files"], enabled: false, surfaced: false, default: false },
   ],
 };
 
@@ -91,7 +100,7 @@ const PINNED_SESSION = {
 const EXTRA_SESSIONS = Array.from({ length: 7 }, (_, i) => ({
   session_id: `wp-${i + 1}`,
   title: `Weekly plan ${i + 1}`,
-  workspace: "",
+  workspace: "/Users/test/OpenWorker/launch-note",
   agent: "cowork",
   model: "anthropic:claude-opus-4-8",
   mode: "interactive",
@@ -618,13 +627,27 @@ export async function mockApi(page: import("@playwright/test").Page) {
   await page.routeWebSocket(/\/ws\/session\//, (ws) => {
     const send = (type: string, data: Record<string, unknown> = {}) =>
       ws.send(JSON.stringify({ type, data }));
-    send("ready");
+    // The window the engine resolves for the session. The client-side matrix is
+    // hosted-models-only, so this frame is the only source for a local model.
+    send("ready", { context_window: 40000 });
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
     let hadTurn = false; // a user_message landed — set_model is now a mid-session switch
     ws.onMessage((raw) => {
       const msg = JSON.parse(String(raw));
-      if (msg.type === "user_message") {
+      if (msg.type === "user_message" && String(msg.text || "").includes("recall memory")) {
+        // brain_recall: a ~9KB result truncated to a 300-char preview, plus the untruncated
+        // `display` sidecar the engine attaches for the GUI (invisible to the model).
+        send("tool_proposed", { name: "brain_recall", arguments: { query: "phase 2" } });
+        send("tool_finished", {
+          name: "brain_recall",
+          status: "done",
+          result_preview: '{"query": "phase 2", "threads": [{"id": "openevolve-phase-2", "now": "Step 1 of 4 ship',
+          display: { threads: ["openevolve-phase-2", "local-model-reliability"], mode: "read" },
+        });
+        send("assistant_message", { text: "Recalled two threads." });
+        send("turn_done");
+      } else if (msg.type === "user_message") {
         hadTurn = true;
         // Force-run (SKILLS-SPEC §6): like the real server, TURN_START ships the user's
         // literal "/name …" line as `display` so the client dedupes on what the user sees.
@@ -1464,6 +1487,17 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // automations: one scheduled task with a running run (drives the Automations detail page
     // and the run-session banner + Back-to-runs flow). Mutable: Run now appends a run and opens
     // its live session; the enable toggle (PATCH) and delete (DELETE) round-trip through the UI.
+    if (p.endsWith("/v1/remote-access")) {
+      return json({
+        ready: true,
+        mcp_installed: true,
+        command: "/usr/local/bin/openworker-mcp",
+        ssh_listening: true,
+        host: "worker-1",
+        detail: "Another machine can drive this one over SSH as worker-1.",
+        snippet: '{\n  "mcpServers": {\n    "openworker": {\n      "command": "ssh"\n    }\n  }\n}',
+      });
+    }
     if (p.endsWith("/v1/computer-use")) {
       // Not ready by default: the interesting state is the one the rail used to get wrong —
       // a browser connector reporting "connected" with no Playwright behind it.

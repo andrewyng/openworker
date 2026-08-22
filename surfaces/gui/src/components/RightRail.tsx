@@ -7,13 +7,15 @@ import {
   revealArtifact,
   type ArtifactContent,
   type ArtifactInfo,
+  type Persona,
 } from "../api";
 import type { TodoItem } from "../types";
+import { budgetUse, checkpointProgress, checkpointsFor } from "../personaStyle";
 import { AccessSection } from "./AccessSection";
 import { Icon } from "./Icon";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
 
-type Panel = "progress" | "artifacts";
+type Panel = "progress" | "artifacts" | "memory";
 
 // Quiet file-type icons for the artifact list (the colored kind pills read as noisy).
 function kindIcon(kind: string): "file" | "fileCode" | "image" | "table" {
@@ -56,6 +58,16 @@ interface Props {
   // both made the panel a generic "3 tool calls" that said nothing about the work.
   personaFamily?: string;
   personaName?: string;
+  // The persona record itself, for the checkpoint strip: its declared job shape.
+  persona?: Persona;
+  /** Prompt-side tokens in the CURRENT round-trip (usage.context) — not a cumulative total. */
+  contextUsed?: number;
+  /** The window the ENGINE resolved for this session, sent on `ready`. */
+  contextWindow?: number | null;
+  /** Compaction markers in the transcript — how many times history was summarized to fit. */
+  compactions?: number;
+  /** Brain threads this session read from / wrote to. */
+  threadsTouched?: { id: string; read: boolean; written: boolean }[];
   projectScoped?: boolean;
   workspace?: string;
   branch?: string | null;
@@ -76,6 +88,11 @@ export function RightRail({
   personaId,
   personaFamily,
   personaName,
+  persona,
+  contextUsed,
+  contextWindow,
+  compactions,
+  threadsTouched,
   projectScoped,
   workspace,
   branch,
@@ -86,8 +103,12 @@ export function RightRail({
   const [open, setOpen] = useState<Record<Panel, boolean>>({
     progress: true,
     artifacts: true,
+    memory: false,
   });
   const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
+  // A long deliverable list pushed Access sixteen rows down the scroll. The header's count now
+  // carries the total, so the list can start short and open on request.
+  const [allArtifacts, setAllArtifacts] = useState(false);
   const [selected, setSelected] = useState<ArtifactInfo | null>(null);
   const [content, setContent] = useState<ArtifactContent | null>(null);
 
@@ -178,19 +199,51 @@ export function RightRail({
         />
       ) : (
         <>
-          <RailSection title="Progress" open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
+          <RailSection
+            title="Progress"
+            summary={progressGlance({ todo, running, contextUsed, contextWindow })}
+            open={open.progress}
+            onToggle={() => setOpen({ ...open, progress: !open.progress })}
+          >
             <ProgressSummary
               running={running}
               toolNames={toolNames}
               todo={todo}
               family={personaFamily}
               personaName={personaName}
+              persona={persona}
+              personaId={personaId}
+              contextUsed={contextUsed}
+              contextWindow={contextWindow}
+              compactions={compactions}
             />
           </RailSection>
 
+          {/* Memory — which durable threads this session pulled from and which it changed.
+              Collapsed by default: it matters when you ask, not while you work. */}
+          {!!threadsTouched?.length && (
+            <RailSection
+              title="Memory"
+              summary={threadGlance(threadsTouched)}
+              open={open.memory}
+              onToggle={() => setOpen({ ...open, memory: !open.memory })}
+            >
+              <ul className="rail-threads" data-testid="rail-threads" role="list">
+                {threadsTouched.map((t) => (
+                  <li className="rail-thread" key={t.id} role="listitem">
+                    <span className="rail-thread-id">{t.id}</span>
+                    {t.written && <span className="rail-thread-tag written">updated</span>}
+                    {t.read && <span className="rail-thread-tag">read</span>}
+                  </li>
+                ))}
+              </ul>
+            </RailSection>
+          )}
+
           {showArtifacts && (
           <RailSection
-            title={`Artifacts${artifacts.length ? ` (${artifacts.length})` : ""}`}
+            title="Artifacts"
+            summary={artifacts.length ? `${artifacts.length} file${artifacts.length === 1 ? "" : "s"}` : "none yet"}
             open={open.artifacts}
             onToggle={() => setOpen({ ...open, artifacts: !open.artifacts })}
             action={
@@ -212,7 +265,7 @@ export function RightRail({
               <div className="rail-muted">No previewable files yet.</div>
             ) : (
               <div className="artifact-list">
-                {artifacts.slice(0, 16).map((a) => (
+                {artifacts.slice(0, allArtifacts ? 40 : 8).map((a) => (
                   <button className="artifact-row" key={a.path} onClick={() => setSelected(a)}>
                     <span className="artifact-ico" title={a.kind}>
                       <Icon name={kindIcon(a.kind)} size={17} />
@@ -224,6 +277,15 @@ export function RightRail({
                     <span className="artifact-open">Open</span>
                   </button>
                 ))}
+                {artifacts.length > 8 && (
+                  <button
+                    className="artifact-more"
+                    onClick={() => setAllArtifacts((v) => !v)}
+                    aria-expanded={allArtifacts}
+                  >
+                    {allArtifacts ? "Show fewer" : `Show all ${artifacts.length}`}
+                  </button>
+                )}
               </div>
             )}
           </RailSection>
@@ -304,21 +366,175 @@ function countBuckets(toolNames: string[], family?: string): { key: string; text
   return out;
 }
 
+// The persona's job shape with the run's position in it. A todo list says what the model chose
+// to do; this says how far through the work this persona is SUPPOSED to do the run has got —
+// and, crucially, what comes next. Without it the panel could show five ticked items and still
+// not answer "is this nearly finished?".
+function CheckpointStrip({
+  persona,
+  personaId,
+  toolNames,
+}: {
+  persona?: Persona;
+  personaId?: string;
+  toolNames: string[];
+}) {
+  const steps = checkpointProgress(checkpointsFor(persona, personaId), toolNames);
+  return (
+    <ol className="rail-steps" data-testid="rail-checkpoints" aria-label="Job steps" role="list">
+      {steps.map(({ checkpoint, state }) => (
+        <li
+          className={"rail-step " + state}
+          key={checkpoint.id}
+          data-state={state}
+          // Explicit: `list-style: none` removes list semantics in Safari/VoiceOver, and the
+          // list's aria-label goes with them.
+          role="listitem"
+          // The shape and colour say this to sighted users; aria-current says it to everyone
+          // else, and the visually-hidden word carries the other three states.
+          aria-current={state === "current" ? "step" : undefined}
+        >
+          <span className="rail-step-mark" aria-hidden />
+          <span className="rail-step-label">{checkpoint.label}</span>
+          <span className="sr-only">
+            {state === "current"
+              ? " — current step"
+              : state === "done"
+                ? " — done"
+                : state === "skipped"
+                  ? " — skipped"
+                  : " — not started"}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** One meter: a label, an n/N value and a bar. Budgets and context share the form because they
+ *  answer the same question — how close is this run to a wall it cannot see. */
+function Meter({
+  label,
+  value,
+  used,
+  limit,
+  state,
+  title,
+}: {
+  label: string;
+  value: string;
+  used: number;
+  limit: number;
+  state: string;
+  title?: string;
+}) {
+  const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  return (
+    <div className={"rail-meter " + state} title={title}>
+      <div className="rail-meter-head">
+        <span className="rail-meter-label">{label}</span>
+        <span className="rail-meter-value">{value}</span>
+      </div>
+      <div
+        className="rail-meter-track"
+        role="meter"
+        aria-valuenow={used}
+        aria-valuemin={0}
+        aria-valuemax={limit}
+        aria-label={`${label}: ${value}`}
+      >
+        <span className="rail-meter-fill" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/** Budget consumption and context headroom, counted from what actually happened. */
+function Meters({
+  persona,
+  toolNames,
+  contextUsed,
+  contextWindow,
+  compactions,
+}: {
+  persona?: Persona;
+  toolNames: string[];
+  contextUsed?: number;
+  contextWindow?: number | null;
+  compactions?: number;
+}) {
+  const budgets = budgetUse(persona, toolNames);
+  // Only when BOTH numbers are real: a percentage against a guessed window is worse than none,
+  // and a provider that reports no usage would otherwise render a confident 0%.
+  const showContext = !!contextWindow && contextWindow > 0 && !!contextUsed && contextUsed > 0;
+  if (!budgets.length && !showContext && !compactions) return null;
+
+  const pct = showContext ? Math.min(100, Math.round((contextUsed! / contextWindow!) * 100)) : 0;
+  return (
+    <div className="rail-meters" data-testid="rail-meters">
+      {budgets.map(({ budget, used, state }) => (
+        <Meter
+          key={budget.id}
+          label={budget.label}
+          value={`${used}/${budget.limit}`}
+          used={used}
+          limit={budget.limit}
+          state={state}
+          title={
+            budget.tools[0] === "*"
+              ? "Every tool call this run"
+              : `Counts: ${budget.tools.join(", ")}`
+          }
+        />
+      ))}
+      {showContext && (
+        <Meter
+          label="context"
+          value={`${pct}%`}
+          used={contextUsed!}
+          limit={contextWindow!}
+          state={pct >= 90 ? "at" : pct >= 75 ? "near" : "ok"}
+          title={`${contextUsed!.toLocaleString()} of ${contextWindow!.toLocaleString()} tokens`}
+        />
+      )}
+      {!!compactions && (
+        <div className="rail-muted" data-testid="rail-compactions">
+          Compacted {compactions}×{" "}
+          <span className="rail-thread-tag">history summarized to fit</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProgressSummary({
   running,
   toolNames,
   todo,
   family,
   personaName,
+  persona,
+  personaId,
+  contextUsed,
+  contextWindow,
+  compactions,
 }: {
   running: boolean;
   toolNames: string[];
   todo: TodoItem[];
   family?: string;
   personaName?: string;
+  persona?: Persona;
+  personaId?: string;
+  contextUsed?: number;
+  contextWindow?: number | null;
+  compactions?: number;
 }) {
   const activity = countBuckets(toolNames, family);
   const done = todo.filter((t) => t.status === "done").length;
+  const current = todo.find((t) => t.status === "in_progress");
+  const next = todo.find((t) => t.status === "pending" && t !== current);
+  const started = toolNames.length > 0 || todo.length > 0;
 
   const activityLine = activity.length > 0 && (
     <div className="rail-activity" data-testid="rail-activity">
@@ -330,9 +546,29 @@ function ProgressSummary({
     </div>
   );
 
+  // "Now" and "Next" first: the two things the panel was never answering. A plan of five items
+  // with one in_progress buried in the middle made you read the list to find your place.
+  const nowNext = (current || next) && (
+    <div className="rail-nownext">
+      {current && (
+        <div className="rail-now">
+          <span className="rail-nownext-key">Now</span>
+          <span>{current.content}</span>
+        </div>
+      )}
+      {next && (
+        <div className="rail-next">
+          <span className="rail-nownext-key">Next</span>
+          <span>{next.content}</span>
+        </div>
+      )}
+    </div>
+  );
+
   if (todo.length) {
     return (
       <div className="rail-todo-list">
+        {nowNext}
         {todo.map((item, index) => (
           <div className={"rail-todo " + item.status} key={index}>
             <span className="rail-todo-mark" />
@@ -343,23 +579,30 @@ function ProgressSummary({
           {done}/{todo.length} done
           {running ? " · working" : ""}
         </div>
+        <CheckpointStrip persona={persona} personaId={personaId} toolNames={toolNames} />
+        <Meters
+          persona={persona}
+          toolNames={toolNames}
+          contextUsed={contextUsed}
+          contextWindow={contextWindow}
+          compactions={compactions}
+        />
         {activityLine}
       </div>
     );
   }
-  if (running) {
+  if (running || started) {
     return (
       <div>
-        <div className="rail-muted">Working on this task.</div>
-        {activityLine}
-      </div>
-    );
-  }
-  if (activity.length) {
-    // Finished, no todo list: the activity IS the record of what the turn did.
-    return (
-      <div>
-        <div className="rail-muted">Last turn:</div>
+        <div className="rail-muted">{running ? "Working on this task." : "Last turn:"}</div>
+        <CheckpointStrip persona={persona} personaId={personaId} toolNames={toolNames} />
+        <Meters
+          persona={persona}
+          toolNames={toolNames}
+          contextUsed={contextUsed}
+          contextWindow={contextWindow}
+          compactions={compactions}
+        />
         {activityLine}
       </div>
     );
@@ -373,29 +616,81 @@ function ProgressSummary({
   );
 }
 
+/** The Progress header's glance: how far through the plan, and how full the context is. */
+function progressGlance({
+  todo,
+  running,
+  contextUsed,
+  contextWindow,
+}: {
+  todo: TodoItem[];
+  running: boolean;
+  contextUsed?: number;
+  contextWindow?: number | null;
+}): string {
+  const parts: string[] = [];
+  if (todo.length) parts.push(`${todo.filter((t) => t.status === "done").length}/${todo.length}`);
+  else if (running) parts.push("working");
+  if (contextWindow && contextUsed) {
+    parts.push(`${Math.min(100, Math.round((contextUsed / contextWindow) * 100))}% context`);
+  }
+  return parts.join(" · ");
+}
+
+function threadGlance(threads: { read: boolean; written: boolean }[]): string {
+  const written = threads.filter((t) => t.written).length;
+  const read = threads.filter((t) => t.read && !t.written).length;
+  return [read ? `${read} read` : "", written ? `${written} updated` : ""].filter(Boolean).join(" · ");
+}
+
+let railSectionSeq = 0;
+
+/**
+ * A collapsible rail section.
+ *
+ * `summary` is the one-line glance shown in the header — the thing that makes a COLLAPSED
+ * section still worth having. Access had this and the others did not, so shutting Progress or
+ * Artifacts turned them into two words and a chevron.
+ *
+ * Disclosure semantics are explicit (`aria-expanded` + `aria-controls`) and the heading is a
+ * real `h2`, so the rail is navigable by heading rather than being one undifferentiated region.
+ */
 function RailSection({
   title,
+  summary,
   open,
   onToggle,
   children,
   action,
 }: {
   title: string;
+  summary?: ReactNode;
   open: boolean;
   onToggle: () => void;
   children: ReactNode;
   action?: ReactNode;
 }) {
+  const id = useRef(`rail-sect-${++railSectionSeq}`).current;
   return (
-    <section className="rail-section">
+    <section className="rail-section" aria-labelledby={`${id}-title`}>
       <div className="rail-section-head">
-        <button className="rail-section-toggle" onClick={onToggle}>
-          <Icon name={open ? "chevronDown" : "chevronRight"} size={14} className="rail-chev" />
-          <span>{title}</span>
-        </button>
+        <h2 id={`${id}-title`} className="contents">
+          <button
+            className="rail-section-toggle"
+            onClick={onToggle}
+            aria-expanded={open}
+            aria-controls={`${id}-body`}
+          >
+            <Icon name={open ? "chevronDown" : "chevronRight"} size={14} className="rail-chev" />
+            <span>{title}</span>
+            {summary != null && <span className="rail-section-sum">{summary}</span>}
+          </button>
+        </h2>
         {action}
       </div>
-      {open && <div className="rail-section-body">{children}</div>}
+      <div id={`${id}-body`} className="rail-section-body" hidden={!open}>
+        {open && children}
+      </div>
     </section>
   );
 }

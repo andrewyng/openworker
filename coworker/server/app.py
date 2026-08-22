@@ -1531,6 +1531,74 @@ def create_app(manager: SessionManager) -> FastAPI:
     def automations_list() -> dict[str, Any]:
         return manager.list_automations()
 
+    @app.get("/v1/remote-access")
+    def remote_access() -> dict[str, Any]:
+        """Whether another machine can drive this one, and the exact command to do it.
+
+        The MCP bridge is invisible from the desktop by construction — it is a thing OTHER
+        machines use — so without this the only way to learn it exists is to read the source.
+        """
+        import shutil
+        import socket
+
+        binary = shutil.which("openworker-mcp") or ""
+        host = socket.gethostname()
+
+        def _lan_address() -> str:
+            """The address a peer would route to. No packets are sent — connecting a UDP socket
+            only asks the kernel which source address it would use."""
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                    probe.settimeout(0.2)
+                    probe.connect(("192.0.2.1", 9))  # TEST-NET-1: routable, never answers
+                    return probe.getsockname()[0]
+            except OSError:
+                return ""
+
+        # Probing 127.0.0.1:22 says nothing about whether ANOTHER machine can reach this one:
+        # sshd bound to loopback only, or a firewall dropping 22, both answer yes on loopback
+        # and no from the network. Probe the address a peer would actually use.
+        reach_addr = _lan_address()
+        listening = False
+        try:
+            with socket.socket() as probe:
+                probe.settimeout(0.3)
+                listening = probe.connect_ex((reach_addr or "127.0.0.1", 22)) == 0
+        except OSError:
+            listening = False
+        return {
+            "ready": bool(binary) and listening,
+            "mcp_installed": bool(binary),
+            "command": binary or "openworker-mcp",
+            "ssh_listening": listening,
+            "host": host,
+            "address": reach_addr,
+            "detail": (
+                (
+                    f"Another machine can drive this one over SSH as {host}"
+                    + (f" ({reach_addr})." if reach_addr else ".")
+                )
+                if binary and listening
+                else "SSH is not reachable from the network, so nothing can connect yet."
+                if binary
+                else "openworker-mcp is not on PATH — reinstall the package to create it."
+            ),
+            # Ready to paste into the other machine's MCP config.
+            "snippet": json.dumps(
+                {
+                    "mcpServers": {
+                        "openworker": {
+                            "command": "ssh",
+                            # The routable address, not just the hostname: a peer with no
+                            # mDNS or DNS entry for this box cannot resolve the latter.
+                            "args": [reach_addr or host, binary or "openworker-mcp"],
+                        }
+                    }
+                },
+                indent=2,
+            ),
+        }
+
     @app.get("/v1/computer-use")
     def computer_use() -> dict[str, Any]:
         """Whether browser automation can actually run — see browser_automation.readiness()."""

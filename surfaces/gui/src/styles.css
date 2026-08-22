@@ -22,6 +22,9 @@
   --faint: #9aa1aa;
   --line: #e8eaed;
   --line-strong: #d8dce1;
+  /* 3.48:1 on --panel and 3.21:1 on --paper: control edges appear on both surfaces (chips and
+     the meter track sit on paper), so it has to clear 3:1 against the darker of the two. */
+  --control-line: #848a93;
   --accent: #2563eb; /* cobalt — our signature, distinct from the coral-leaning tools */
   --accent-soft: #e9f0fd;
   --ok: #2f7d57;
@@ -62,6 +65,7 @@ html[data-theme="dark"] {
   --faint: #62686f;
   --line: #2a2d33;
   --line-strong: #3a3e46;
+  --control-line: #6e757e;   /* 3.58:1 on the dark --panel, 3.95:1 on --paper */
   --accent: #4c8dff;          /* lifted cobalt — keeps contrast on dark panels */
   --accent-soft: #1c2a44;
   --ok: #58b07f;
@@ -549,27 +553,114 @@ button.btn.danger { color: var(--accent); }
 .artifact-head { display: flex; justify-content: space-between; gap: 14px; align-items: center; }
 .rail-section { border-bottom: 1px solid var(--line); padding: 11px 0; }
 .rail-section-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; min-height: 24px; }
-.rail-section-toggle { flex: 1; display: flex; gap: 8px; align-items: center; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600; color: var(--ink); user-select: none; border: 0; background: transparent; padding: 0; text-align: left; }
-.rail-chev { color: var(--faint); flex: none; }
-.rail-mini-btn { width: 24px; height: 24px; display: grid; place-items: center; color: var(--muted); border: 0; border-radius: 7px; background: transparent; cursor: pointer; }
+.rail-section-toggle { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: baseline; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600; color: var(--ink); user-select: none; border: 0; background: transparent; padding: 0; text-align: left; }
+.rail-section-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.rail-chev { color: var(--muted); flex: none; align-self: center; }
+/* The one-line glance in a collapsed header. Every section carries one, so a shut rail is still
+   worth reading — the pattern Access already used, generalized. */
+.rail-section-sum { margin-left: auto; min-width: 0; font-size: 12px; font-weight: 400; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-mini-btn { width: 26px; height: 26px; display: grid; place-items: center; color: var(--muted); border: 0; border-radius: 7px; background: transparent; cursor: pointer; }
 .rail-mini-btn:hover { color: var(--ink); background: var(--paper); }
+.rail-mini-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .rail-section-body { padding-top: 10px; }
-.rail-muted { font-size: 12px; color: var(--faint); line-height: 1.45; overflow-wrap: anywhere; }
-/* What the turn actually did, in the active persona's vocabulary — quiet chips under the plan,
-   never louder than the todo list they annotate. */
-.rail-activity { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
+/* --muted, never --faint: --faint is 2.6:1 on this background and fails WCAG at any size. It is
+   a divider colour; nothing in the rail sets text in it any more. */
+.rail-muted { font-size: 12.5px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+
+/* "Now" and "Next" — the two lines the panel exists to answer, above the full plan. */
+.rail-nownext { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+.rail-nownext > div { display: flex; gap: 8px; font-size: 13px; line-height: 1.4; }
+.rail-nownext-key {
+  flex: none; width: 38px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted); padding-top: 2px;
+}
+.rail-now { color: var(--ink); font-weight: 500; }
+.rail-next { color: var(--muted); }
+
+/* The persona's job shape, with the run's position in it. A left rule threads the steps so it
+   reads as one sequence rather than several unrelated rows.
+
+   Each state carries a distinct SHAPE as well as a colour — tick, filled ring, hollow, slash —
+   because done-vs-pending was previously a 1.38:1 fill difference on a 7px dot, which is a
+   WCAG 1.4.1 failure and unreadable besides. The label repeats the state for screen readers. */
+.rail-steps { list-style: none; margin: 12px 0 0; padding: 0; }
+.rail-step {
+  position: relative; display: flex; align-items: center; gap: 9px;
+  padding: 3px 0 3px 20px; font-size: 12.5px; line-height: 1.4; color: var(--muted);
+}
+.rail-step::before {
+  content: ""; position: absolute; left: 6px; top: 0; bottom: 0; width: 1px; background: var(--line);
+}
+.rail-step:first-child::before { top: 50%; }
+.rail-step:last-child::before { bottom: 50%; }
+.rail-step-mark {
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 13px; height: 13px; border-radius: 50%;
+  background: var(--panel); border: 1.5px solid var(--control-line);
+  display: grid; place-items: center; font-size: 9px; line-height: 1; color: var(--panel);
+}
+.rail-step.pending { color: var(--muted); }
+.rail-step.done .rail-step-mark {
+  background: var(--muted); border-color: var(--muted);
+}
+.rail-step.done .rail-step-mark::after { content: "✓"; font-size: 8.5px; font-weight: 700; }
+/* Skipped: the run went past this without doing it. Struck through AND slashed — the gap is the
+   finding, so it must not be the quietest thing on screen. */
+.rail-step.skipped .rail-step-mark { border-style: dashed; }
+.rail-step.skipped .rail-step-mark::after {
+  content: ""; width: 9px; height: 1.5px; background: var(--control-line); transform: rotate(-45deg);
+}
+.rail-step.skipped .rail-step-label { text-decoration: line-through; text-decoration-color: var(--muted); }
+.rail-step.current { color: var(--ink); font-weight: 600; }
+.rail-step.current .rail-step-mark {
+  border-color: var(--accent); background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.rail-step.current .rail-step-mark::after {
+  content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--panel);
+}
+
+/* Meters: budget consumption and context headroom. One visual form for both, because they
+   answer the same question — how close is this run to a wall it cannot see. */
+.rail-meters { display: flex; flex-direction: column; gap: 7px; margin-top: 12px; }
+.rail-meter-head { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.rail-meter-label { color: var(--ink); }
+.rail-meter-value { margin-left: auto; font-variant-numeric: tabular-nums; }
+.rail-meter-track {
+  height: 5px; margin-top: 3px; border-radius: 999px; background: var(--paper);
+  border: 1px solid var(--line); overflow: hidden;
+}
+.rail-meter-fill { height: 100%; background: var(--muted); border-radius: 999px; }
+.rail-meter.near .rail-meter-fill { background: var(--warn-ink); }
+.rail-meter.near .rail-meter-value { color: var(--warn-ink); }
+.rail-meter.at .rail-meter-fill,
+.rail-meter.over .rail-meter-fill { background: var(--danger); }
+.rail-meter.at .rail-meter-value,
+.rail-meter.over .rail-meter-value { color: var(--danger); font-weight: 600; }
+
+/* Threads this session read from or wrote to. */
+.rail-threads { display: flex; flex-direction: column; gap: 7px; }
+.rail-thread { display: flex; align-items: baseline; gap: 7px; font-size: 12.5px; line-height: 1.4; }
+.rail-thread-id { color: var(--ink); overflow-wrap: anywhere; }
+.rail-thread-tag {
+  flex: none; font-size: 11px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--control-line); color: var(--muted);
+}
+.rail-thread-tag.written { border-color: var(--accent); color: var(--accent); }
+
+.rail-activity { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
 .rail-activity-item {
-  font-size: 11px; color: var(--muted); background: var(--paper);
-  border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; white-space: nowrap;
+  font-size: 12px; color: var(--muted); background: var(--paper);
+  border: 1px solid var(--control-line); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
 }
 .rail-error { font-size: 12px; color: var(--accent); overflow-wrap: anywhere; }
 .rail-todo-list { display: flex; flex-direction: column; gap: 9px; }
 .rail-todo {
   display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; align-items: flex-start;
-  font-size: 12.5px; line-height: 1.35; color: var(--muted);
+  font-size: 12.5px; line-height: 1.45; color: var(--muted);
 }
 .rail-todo-mark {
-  width: 12px; height: 12px; margin-top: 2px; border: 1.6px solid var(--line-strong);
+  width: 13px; height: 13px; margin-top: 2px; border: 1.6px solid var(--control-line);
   border-radius: 3px; background: transparent;
 }
 .rail-todo.in_progress { color: var(--ink); }
@@ -577,7 +668,7 @@ button.btn.danger { color: var(--accent); }
   border-radius: 999px; border-color: var(--accent);
   box-shadow: inset 0 0 0 3px var(--panel); background: var(--accent);
 }
-.rail-todo.done { color: var(--faint); text-decoration: line-through; text-decoration-thickness: 1px; }
+.rail-todo.done { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
 .rail-todo.done .rail-todo-mark {
   border-color: var(--accent); background: var(--accent);
 }
@@ -598,8 +689,8 @@ button.btn.danger { color: var(--accent); }
 .artifact-row:hover { border-color: var(--line); background: var(--panel); }
 .artifact-ico { display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
 .artifact-name { display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.artifact-row-meta { font-size: 11px; color: var(--faint); font-weight: 400; }
-.artifact-open { font-size: 11.5px; color: var(--faint); }
+.artifact-row-meta { font-size: 12px; color: var(--muted); font-weight: 400; }
+.artifact-open { font-size: 12px; color: var(--muted); }
 .artifact-viewer { display: flex; flex-direction: column; min-height: 0; height: 100%; }
 .artifact-head {
   flex: none; min-height: 58px; padding: 10px 18px; border-bottom: 1px solid var(--line);
@@ -614,8 +705,15 @@ button.btn.danger { color: var(--accent); }
 .artifact-heading { flex: 1; min-width: 0; }
 .artifact-title { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; color: var(--ink); overflow: hidden; white-space: nowrap; }
 .artifact-title span:last-child { overflow: hidden; text-overflow: ellipsis; }
-.artifact-sep { color: var(--faint); font-weight: 400; }
-.artifact-path { font-size: 11.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+.artifact-sep { color: var(--muted); font-weight: 400; }
+.artifact-more {
+  align-self: flex-start; margin-top: 2px; padding: 4px 2px;
+  font: inherit; font-size: 12px; color: var(--accent);
+  background: none; border: 0; cursor: pointer;
+}
+.artifact-more:hover { text-decoration: underline; }
+.artifact-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.artifact-path { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
 .artifact-preview { min-height: 0; flex: 1; overflow: auto; background: var(--panel); }
 .artifact-frame { width: 100%; height: 100%; min-height: calc(100vh - 86px); border: 0; background: #fff; }
 /* Checkerboard backdrop so white/transparent images still read as an image, not a blank pane. */
@@ -672,7 +770,7 @@ button.btn.danger { color: var(--accent); }
    no border/background — sits inline with the other borderless row controls. */
 .wschip-icon { gap: 3px; padding: 5px; border: none; background: none; color: var(--muted); max-width: none; }
 .wschip-icon:hover { background: var(--paper); color: var(--ink); border: none; }
-.wschip .edit { color: var(--faint); flex: none; }
+.wschip .edit { color: var(--muted); flex: none; }
 .wschip:hover .edit { color: var(--muted); }
 .wsbranch { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--faint); }
 
@@ -685,14 +783,14 @@ button.btn.danger { color: var(--accent); }
   background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
 }
-.roots-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint); padding: 2px 6px 8px; }
+.roots-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 2px 6px 8px; }
 .root-row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 8px; }
 .root-row:hover { background: var(--paper); }
 .root-row.missing { opacity: 0.6; }
 .root-ico { color: var(--muted); flex: none; }
 .root-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .root-label { font-size: 13px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.root-path { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.root-path { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
 .root-tag { font-size: 10.5px; color: var(--muted); background: var(--line); border-radius: 5px; padding: 1px 5px; flex: none; }
 .root-tag.warn { color: var(--warn-ink); background: var(--warn-soft); }
 .root-access {
@@ -701,7 +799,7 @@ button.btn.danger { color: var(--accent); }
 }
 .root-access.rw { color: var(--ok); border-color: var(--ok-line); background: var(--ok-soft); }
 .root-access:disabled { cursor: default; opacity: 0.7; }
-.root-x { font: inherit; font-size: 15px; line-height: 1; color: var(--faint); background: none; border: none; cursor: pointer; padding: 0 4px; flex: none; }
+.root-x { font: inherit; font-size: 15px; line-height: 1; color: var(--muted); background: none; border: none; cursor: pointer; padding: 0 4px; flex: none; }
 .root-x:hover { color: var(--ink); }
 .roots-add { padding: 8px 2px 2px; border-top: 1px solid var(--line); margin-top: 6px; }
 .roots-err { color: var(--danger); font-size: 12px; padding: 6px 6px 2px; }
@@ -927,7 +1025,7 @@ button.link:disabled { color: var(--faint); cursor: default; }
 
 /* -- Connectors tab --------------------------------------------------------- */
 .conn-name { font-size: 14px; color: var(--ink); display: flex; align-items: center; gap: 8px; }
-.conn-meta { font-size: 11.5px; color: var(--faint); margin-top: 2px; display: flex; align-items: center; gap: 5px; }
+.conn-meta { font-size: 12px; color: var(--muted); margin-top: 2px; display: flex; align-items: center; gap: 5px; }
 .conn-meta.ok, .conn-meta .ok { color: var(--ok); }
 .conn-meta.danger, .conn-meta .danger { color: var(--danger); }
 button.btn-primary.sm { padding: 5px 13px; font-size: 12.5px; }
@@ -935,7 +1033,7 @@ button.btn.sm { padding: 5px 13px; font-size: 12.5px; }
 
 .conn-field { display: flex; flex-direction: column; gap: 4px; }
 .conn-field-label { font-size: 12.5px; color: var(--ink); }
-.conn-field-label em { color: var(--faint); font-style: normal; }
+.conn-field-label em { color: var(--muted); font-style: normal; }
 .conn-field input { font: inherit; font-size: 13px; padding: 8px 11px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--paper); color: var(--ink); outline: none; }
 .conn-field input:focus { border-color: var(--accent); }
 /* Match the <select> (provider picker) to the text inputs: same box + a custom chevron so it
@@ -949,7 +1047,7 @@ button.btn.sm { padding: 5px 13px; font-size: 12.5px; }
   background-repeat: no-repeat; background-position: right 11px center; background-size: 12px;
 }
 .conn-field select:focus { border-color: var(--accent); }
-.conn-field-help { font-size: 11.5px; color: var(--faint); }
+.conn-field-help { font-size: 12px; color: var(--muted); }
 
 .sa-sub { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); margin-top: 4px; }
 .dim { color: var(--faint); }
@@ -1659,4 +1757,4 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
 }
 .artifact-folder-row:hover { background: var(--paper); }
 .artifact-folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.artifact-folder-size { font-size: 11px; color: var(--faint); }
+.artifact-folder-size { font-size: 12px; color: var(--muted); }

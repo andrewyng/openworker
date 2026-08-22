@@ -26,7 +26,9 @@ import {
   type SessionConnections,
   type Subscription,
   getComputerUse,
+  getRemoteAccess,
   type ComputerUse,
+  type RemoteAccess,
 } from "../api";
 import { ConnectorBadge } from "../connectors/ConnectorIcon";
 import { indexConnectors, labelFor, visualFor, type ConnectorMap } from "../connectors/visuals";
@@ -43,9 +45,11 @@ import { Toggle } from "./Toggle";
 // slack (the backend's own default when no platform prefix is given).
 const platformOf = (channel: string) => (channel.includes(":") ? channel.split(":")[0] : "slack");
 
-const SEC_H = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
+// Eyebrow headings: 11px is acceptable ONLY because uppercase + tracking + semibold carry
+// it, and never in --faint (2.6:1). Body copy in this section has a 12px floor.
+const SEC_H = "text-[11px] uppercase tracking-[0.05em] text-muted font-semibold";
 const TAG_CORE =
-  "text-[10px] px-1.5 py-0.5 rounded-full bg-warnSoft/70 text-warnInk border border-warnInk/15";
+  "text-[11px] px-1.5 py-0.5 rounded-full bg-warnSoft/70 text-warnInk border border-warnInk/15";
 const BTN_ACCENT = "text-[12px] px-2.5 py-1.5 rounded-lg bg-accent text-white shrink-0";
 const BTN_BORDERED =
   "text-[12px] px-2.5 py-1.5 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
@@ -112,6 +116,15 @@ export function AccessSection({
 
   // Computer use: what the session can do BEYOND reading sources — drive a browser. Fetched
   // when the section opens rather than on mount, since the section is collapsed most of the time.
+  const [remote, setRemote] = useState<RemoteAccess | null>(null);
+  const [snippetShown, setSnippetShown] = useState(false);
+  useEffect(() => {
+    if (!open || remote) return;
+    // Only once the section opens: unlike computer use, this never affects the collapsed
+    // glance — being reachable is not something the session can touch.
+    getRemoteAccess().then(setRemote).catch(() => setRemote(null));
+  }, [open, remote]);
+
   const [computer, setComputer] = useState<ComputerUse | null>(null);
   useEffect(() => {
     if (computer) return;
@@ -247,22 +260,32 @@ export function AccessSection({
   const summary = [sourcesPart, folderPart].filter(Boolean).join(" · ");
 
   return (
-    <section className="rail-section" ref={rootEl} data-testid="access-section">
+    <section className="rail-section" aria-labelledby="access-title" ref={rootEl} data-testid="access-section">
       <div className="rail-section-head">
-        <button className="rail-section-toggle" onClick={() => setOpen((v) => !v)} data-testid="access-toggle">
-          <Icon name={open ? "chevronDown" : "chevronRight"} size={14} className="rail-chev" />
-          <span>Access</span>
-          <span
-            className="ml-auto min-w-0 truncate text-[11px] font-normal text-faint"
-            data-testid="access-summary"
-            title={summary}
+        {/* Same disclosure semantics as RailSection: a real heading so the rail is navigable by
+            heading, and aria-expanded/aria-controls so the control announces its own state. */}
+        <h2 id="access-title" className="contents">
+          <button
+            className="rail-section-toggle"
+            onClick={() => setOpen((v) => !v)}
+            data-testid="access-toggle"
+            aria-expanded={open}
+            aria-controls="access-body"
           >
-            {summary}
-          </span>
-        </button>
+            <Icon name={open ? "chevronDown" : "chevronRight"} size={14} className="rail-chev" />
+            <span>Access</span>
+            <span
+              className="ml-auto min-w-0 truncate text-[12px] font-normal text-muted"
+              data-testid="access-summary"
+              title={summary}
+            >
+              {summary}
+            </span>
+          </button>
+        </h2>
       </div>
       {open && (
-        <div className="rail-section-body" role="region" aria-label="Session access">
+        <div id="access-body" className="rail-section-body" role="region" aria-label="Session access">
           {connectFor ? (
             <ConnectInline
               c={connectFor}
@@ -311,7 +334,7 @@ export function AccessSection({
                 <div data-testid="computer-use">
                   <div className={`${SEC_H} mb-1.5`}>Computer use</div>
                   <div className="flex items-start gap-2 py-1">
-                    <span className="shrink-0 mt-0.5 text-faint">
+                    <span className="shrink-0 mt-0.5 text-muted">
                       <Icon name="search" size={16} />
                     </span>
                     <div className="min-w-0 flex-1">
@@ -321,7 +344,7 @@ export function AccessSection({
                           {computer.ready ? " · ready" : " · needs setup"}
                         </span>
                       </div>
-                      <div className="text-[11.5px] text-faint leading-relaxed">{computer.detail}</div>
+                      <div className="text-[12px] text-muted leading-relaxed">{computer.detail}</div>
                       {browserSource && (
                         <div className="mt-1">
                           <Toggle
@@ -332,24 +355,26 @@ export function AccessSection({
                         </div>
                       )}
                       {browserSource && (
-                        <p className="text-[10.5px] text-faint mt-1 leading-snug">
+                        <p className="text-[12px] text-muted mt-1 leading-snug">
                           Off mutes it for <b>this session only</b> — the connector stays connected.
                         </p>
                       )}
                       {computer.fix.length > 0 && (
                         <div className="mt-1 space-y-0.5">
                           {computer.fix.map((cmd) => (
-                            <code
+                            <button
+                              type="button"
                               key={cmd}
-                              className="block text-[11px] font-mono bg-paper border border-line rounded px-1.5 py-0.5 cursor-pointer hover:border-lineStrong"
+                              className="block w-full text-left text-[12px] font-mono bg-paper border border-line rounded px-1.5 py-0.5 cursor-pointer hover:border-lineStrong focus:border-accent"
+                              aria-label={`Copy: ${cmd}`}
                               title="Copy"
                               onClick={() => void navigator.clipboard?.writeText(cmd)}
                             >
-                              {cmd}
-                            </code>
+                              <code>{cmd}</code>
+                            </button>
                           ))}
                           <button
-                            className="text-[11.5px] text-accent hover:underline"
+                            className="text-[12px] text-accent hover:underline"
                             onClick={() => {
                               setComputer(null); // refetch after you have run the commands
                             }}
@@ -363,11 +388,52 @@ export function AccessSection({
                 </div>
               )}
 
+              {/* Remote access — the SSH bridge (coworker/mcp_server/). It belongs here because
+                  "what can reach this session's machine" is the same question as "what can this
+                  session reach", asked from the other side. */}
+              {remote && (
+                <div data-testid="remote-access">
+                  <div className={`${SEC_H} mb-1.5`}>Remote access</div>
+                  <div className="flex items-start gap-2 py-1">
+                    <span className="shrink-0 mt-0.5 text-muted">
+                      <Icon name="plug" size={16} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[12.5px] font-medium leading-tight">
+                        Drive this machine over SSH
+                        <span className={remote.ready ? "text-ok font-normal" : "text-warnInk font-normal"}>
+                          {remote.ready ? " · reachable" : " · unavailable"}
+                        </span>
+                      </div>
+                      <div className="text-[12px] text-muted leading-relaxed">{remote.detail}</div>
+                      <button
+                        className="mt-1 text-[12px] text-accent hover:underline"
+                        data-testid="remote-snippet-toggle"
+                        onClick={() => setSnippetShown((v) => !v)}
+                      >
+                        {snippetShown ? "Hide config" : "Show the config for the other machine"}
+                      </button>
+                      {snippetShown && (
+                        <button
+                          type="button"
+                          className="mt-1 block w-full text-left text-[12px] font-mono bg-paper border border-line rounded p-1.5 overflow-x-auto cursor-pointer hover:border-lineStrong focus:border-accent"
+                          aria-label="Copy the config for the other machine"
+                          title="Copy"
+                          onClick={() => void navigator.clipboard?.writeText(remote.snippet)}
+                        >
+                          <pre>{remote.snippet}</pre>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Sources — each toggle is a per-session override (mute for THIS session only). */}
               <div>
                 <div className={`${SEC_H} mb-1.5`}>Sources</div>
                 {sources.length === 0 && (
-                  <div className="text-[12px] text-faint py-0.5">
+                  <div className="text-[12px] text-muted py-0.5">
                     No connectors enabled for this session.
                   </div>
                 )}
@@ -378,11 +444,11 @@ export function AccessSection({
                       <div className="min-w-0 flex-1">
                         <div className="text-[12.5px] font-medium leading-tight truncate">
                           <span>{labelFor(c.connector, byName)}</span>
-                          {c.detail && <span className="text-faint font-normal"> · {c.detail}</span>}
+                          {c.detail && <span className="text-muted font-normal"> · {c.detail}</span>}
                         </div>
                         {byName[c.connector]?.channels && (
                           <button
-                            className="inline-flex items-center gap-0.5 text-[11px] text-accent hover:underline"
+                            className="inline-flex items-center gap-0.5 text-[12px] text-accent hover:underline"
                             onClick={() => {
                               setDraft("");
                               setChannelsFor(c.connector);
@@ -402,7 +468,7 @@ export function AccessSection({
                   ))}
                 </div>
                 {sources.length > 0 && (
-                  <p className="text-[10.5px] text-faint mt-1 leading-snug">
+                  <p className="text-[12px] text-muted mt-1 leading-snug">
                     Off mutes it for <b>this session only</b> — the connector stays connected.
                   </p>
                 )}
@@ -428,7 +494,7 @@ export function AccessSection({
                     {results.length === 0 && (
                       // Also covers a failed/empty catalog fetch: an open picker must never
                       // be silently blank — point at the Connectors page either way.
-                      <div className="text-[11.5px] text-faint mt-1.5 px-0.5">
+                      <div className="text-[12px] text-muted mt-1.5 px-0.5">
                         No match — see all on the Connectors page below.
                       </div>
                     )}
@@ -450,9 +516,9 @@ export function AccessSection({
                             <span className="block text-[12.5px] font-medium leading-tight">
                               {c.title}
                             </span>
-                            <span className="block text-[11px] text-faint truncate">{c.blurb}</span>
+                            <span className="block text-[12px] text-muted truncate">{c.blurb}</span>
                           </span>
-                          <Icon name="chevronRight" size={11} className="text-faint shrink-0" />
+                          <Icon name="chevronRight" size={11} className="text-muted shrink-0" />
                         </button>
                       ))}
                     </div>
@@ -488,7 +554,7 @@ export function AccessSection({
                             <span className="truncate">{labelFor(r.connector, byName)}</span>
                             {r.tier === "core" && <span className={TAG_CORE}>core</span>}
                           </div>
-                          <div className="text-[11px] text-faint truncate" title={r.reason}>
+                          <div className="text-[12px] text-muted truncate" title={r.reason}>
                             {r.reason}
                           </div>
                         </div>
@@ -584,7 +650,7 @@ function ConnectInline({
   return (
     <div>
       <button
-        className="inline-flex items-center gap-1 text-[12px] text-faint hover:text-ink mb-2"
+        className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink mb-2"
         onClick={onBack}
         aria-label="Back to sources"
       >
@@ -596,7 +662,7 @@ function ConnectInline({
       </div>
       {/* Scope semantics, stated once (owner ask 2026-07-13): connecting is account-level,
           the toggle above is what scopes it to a session. */}
-      <p className="text-[10.5px] text-faint mt-2 leading-snug">
+      <p className="text-[12px] text-muted mt-2 leading-snug">
         Connecting makes {c.title} available to all your coworkers — the toggle in this list
         controls just this session.
       </p>
@@ -630,7 +696,7 @@ function ChannelsInline({
   return (
     <div>
       <button
-        className="inline-flex items-center gap-1 text-[12px] text-faint hover:text-ink mb-2"
+        className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink mb-2"
         onClick={onBack}
         aria-label="Back to sources"
       >
@@ -638,7 +704,7 @@ function ChannelsInline({
       </button>
       <div className={`${SEC_H} mb-1.5`}>Subscribed channels · {channels.length}</div>
       {channels.length === 0 ? (
-        <div className="text-[12px] text-faint py-0.5">
+        <div className="text-[12px] text-muted py-0.5">
           Not listening to any {label} channel yet.
         </div>
       ) : (
@@ -651,14 +717,14 @@ function ChannelsInline({
               </span>
               {s.collision && (
                 <span
-                  className="text-[10.5px] text-warnInk bg-warnSoft/70 border border-warnInk/15 rounded px-1 shrink-0"
+                  className="text-[12px] text-warnInk bg-warnSoft/70 border border-warnInk/15 rounded px-1 shrink-0"
                   title="This channel is also this session's Inbox-routing target — inbound and outbound collide."
                 >
                   ⚠
                 </span>
               )}
               <button
-                className="w-5 h-5 grid place-items-center text-faint hover:text-danger shrink-0"
+                className="w-5 h-5 grid place-items-center text-muted hover:text-danger shrink-0"
                 title="Stop listening"
                 onClick={() => onRemove(s.channel)}
               >
@@ -676,11 +742,11 @@ function ChannelsInline({
         </button>
       </div>
       {error && (
-        <p className="text-[11px] text-warnInk mt-1.5 leading-snug" data-testid="channel-add-error">
+        <p className="text-[12px] text-warnInk mt-1.5 leading-snug" data-testid="channel-add-error">
           {error}
         </p>
       )}
-      <p className="text-[10.5px] text-faint mt-1.5 leading-snug">
+      <p className="text-[12px] text-muted mt-1.5 leading-snug">
         The agent receives messages posted to these channels. Removing one stops this session
         from listening — the connector stays connected.
       </p>

@@ -1710,6 +1710,30 @@ export async function getComputerUse(): Promise<ComputerUse | null> {
   }
 }
 
+// Whether another machine can drive this one over SSH (see coworker/mcp_server/). Invisible
+// from the desktop otherwise — the bridge is something OTHER machines use.
+export interface RemoteAccess {
+  ready: boolean;
+  mcp_installed: boolean;
+  command: string;
+  ssh_listening: boolean;
+  host: string;
+  detail: string;
+  snippet: string;
+}
+
+export async function getRemoteAccess(): Promise<RemoteAccess | null> {
+  try {
+    const res = await fetch(`${httpBase()}/v1/remote-access`);
+    if (!res.ok) return null;
+    const body = await res.json();
+    if (!body || typeof body.ready !== "boolean") return null;
+    return body;
+  } catch {
+    return null;
+  }
+}
+
 export interface AutomationSuggestion {
   key: string;
   title: string;

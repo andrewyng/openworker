@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import {
   announceInboxUnlock,
   finalizeAutomationRun,
@@ -72,6 +72,53 @@ import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
 
 const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
+
+/** Which brain threads this session read from and wrote to.
+ *
+ * Keyed on the tool RESULT, not its argument: `brain_note(thread=...)` accepts an id OR a title,
+ * and slugifying a title ("OpenScienceLab / openEvolve — Phase 2") yields an id that matches no
+ * file on disk — an argument-keyed list would show threads that do not exist and split one real
+ * thread across two spellings.
+ *
+ * The result arrives two ways and both are handled: `_display.threads` (the engine's GUI
+ * sidecar, exact and never truncated, invisible to the model) and, failing that, a parse of the
+ * result preview. The preview is capped at 300 characters server-side, which is enough for a
+ * note but truncates a recall after its first thread — so the sidecar is what makes the live
+ * view as complete as the replayed one.
+ */
+export function threadsFromItems(items: any[]): { id: string; read: boolean; written: boolean }[] {
+  const seen = new Map<string, { id: string; read: boolean; written: boolean }>();
+  for (const item of items) {
+    if (item?.kind !== "tool") continue;
+    if (item.name !== "brain_recall" && item.name !== "brain_note") continue;
+    const written = item.name === "brain_note";
+
+    let ids: string[] = [];
+    const display = item.display || item.args?._display;
+    if (Array.isArray(display?.threads)) {
+      ids = display.threads;
+    } else if (typeof item.preview === "string") {
+      try {
+        const parsed = JSON.parse(item.preview);
+        if (parsed?._display?.threads) ids = parsed._display.threads;
+        else if (written && parsed?.ok && parsed?.thread) ids = [parsed.thread];
+        else if (Array.isArray(parsed?.threads)) ids = parsed.threads.map((t: any) => t.id);
+      } catch {
+        // A truncated or in-flight preview is not an error — the row simply contributes nothing
+        // until its result lands.
+      }
+    }
+    for (const id of ids) {
+      if (typeof id !== "string" || !id) continue;
+      const cur = seen.get(id) || { id, read: false, written: false };
+      // A thread recalled and then noted is one entry showing both.
+      if (written) cur.written = true;
+      else cur.read = true;
+      seen.set(id, cur);
+    }
+  }
+  return [...seen.values()];
+}
 
 // Tools whose success means a new/changed file should show up under Artifacts right away.
 const FILE_WRITE_TOOLS = new Set(["write_file", "apply_patch", "apply_unified_diff", "replace_in_file"]);
@@ -292,6 +339,9 @@ export function App() {
   // Count of files this Cowork conversation has produced — surfaces an "Artifacts (N)" button in
   // the topbar when the side panel is hidden, so produced files are never buried.
   const [artifactCount, setArtifactCount] = useState(0);
+  // The context window the ENGINE resolved for this session (ready / model_changed). Preferred
+  // over the client-side matrix, which is hosted-models-only and therefore blank for ollama.
+  const [sessionWindow, setSessionWindow] = useState<{ sid: string; n: number | null } | null>(null);
   // §32 deep link into the rail's Access section (the former Session-settings drawer): bumping
   // the key expands the section and scrolls it into view. Callers also un-hide the rail.
   const [accessKey, setAccessKey] = useState(0);
@@ -327,6 +377,15 @@ export function App() {
   // From the set-wide map so no two installed personas share a colour; accentFor is the
   // stand-in for the moment before the persona list has loaded.
   const personaAccent = accentMap(personas)[agent] ?? accentFor(activePersona ?? { id: agent });
+
+  // Rail inputs derived from the transcript rather than from live events, so a reload does not
+  // erase them. `notice` carries the engine's marker kind, so counting compactions never means
+  // matching their prose.
+  const compactions = useMemo(
+    () => items.filter((i: any) => i.kind === "notice" && i.notice === "compacted").length,
+    [items],
+  );
+  const threadsTouched = useMemo(() => threadsFromItems(items), [items]);
 
   // Pending Inbox items for the ACTIVE session — surfaced inline above the composer so an
   // unattended session's blocking question/approval can be answered in context (resolving the
@@ -598,6 +657,13 @@ export function App() {
       switch (ev.type) {
         case "ready":
           setConnected(true);
+          // The window the ENGINE resolved for this session. The client-side matrix is
+          // hosted-models-only, so for every ollama model it has no answer — which is exactly
+          // where filling the context is the routine failure.
+          setSessionWindow({
+            sid: sessionId,
+            n: typeof d.context_window === "number" ? d.context_window : null,
+          });
           if (d.model) setModel(d.model);
           if (d.mode) setMode(d.mode);
           if (d.command_trust?.required) setWorkspaceTrustRequest(d.command_trust);
@@ -715,6 +781,10 @@ export function App() {
               d.result_preview || d.reason,
               d.display?.hidden_by_filters,
               d.standing_rule,
+              // The WHOLE sidecar, not just the one field this handler used to read: the
+              // Memory panel needs `display.threads`, and the preview it would otherwise have
+              // to parse is truncated at 300 characters.
+              d.display,
             ),
           );
           // Refresh the right rail when something it shows may have changed: browser state, or a
@@ -728,10 +798,21 @@ export function App() {
             setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Stopped: max iterations reached." }]);
           break;
         case "model_changed":
+          if (typeof d.context_window === "number") {
+            setSessionWindow({ sid: sessionId, n: d.context_window });
+          }
           // Mid-session switch (server-applied): update the header fact and drop the
           // persisted marker into the live transcript (replay renders it from history).
           if (d.model) setModel(d.model);
-          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || "Model switched" }]);
+          // A text-less frame is a SILENT rebind (first bind on a fresh session), sent only to
+          // refresh the context window. Rendering "Model switched" for it would announce
+          // something the user did not do.
+          if (d.text) {
+            setItems((p) => [
+              ...p,
+              { kind: "notice", tone: "info", text: d.text, notice: "model_switch" },
+            ]);
+          }
           break;
         case "memory_saved":
           // §5.1 save notice — inline in the transcript, where the user is already
@@ -757,7 +838,10 @@ export function App() {
         case "compacted":
           // Auto-compaction marker (OPE-27): outbound-only — the transcript stays intact,
           // this divider just shows where the model's memory was summarized.
-          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || "Context compacted" }]);
+          setItems((p) => [
+            ...p,
+            { kind: "notice", tone: "info", text: d.text || "Context compacted", notice: "compacted" },
+          ]);
           break;
         case "interrupted":
           flushPartialStream();
@@ -1701,6 +1785,19 @@ export function App() {
             personaId={agent}
             personaFamily={activePersona?.family}
             personaName={personaLabel}
+            persona={activePersona}
+            contextUsed={usage.context}
+            // Prefer the window the ENGINE resolved for this session: the client matrix is
+            // hosted-models-only, so it is blank for every local model.
+            // Tied to the session it was resolved for: a bare number would survive a session
+            // switch and divide this session's usage by the previous one's window.
+            contextWindow={
+              (sessionWindow?.sid === sessionId ? sessionWindow.n : null) ??
+              modelContextWindows[model] ??
+              null
+            }
+            compactions={compactions}
+            threadsTouched={threadsTouched}
             projectScoped={isProjectScoped(personaOf(agent))}
             workspace={workspace || undefined}
             branch={branch}
@@ -1777,6 +1874,7 @@ function updateLastTool(
   preview?: string,
   hidden?: number,
   standingRule?: string,
+  display?: Record<string, any>,
 ): Item[] {
   const copy = [...items];
   for (let i = copy.length - 1; i >= 0; i--) {
@@ -1788,6 +1886,7 @@ function updateLastTool(
         preview,
         ...(hidden ? { hidden } : {}),
         ...(standingRule ? { standingRule } : {}),
+        ...(display ? { display } : {}),
       };
       break;
     }
