@@ -3118,7 +3118,7 @@ class SessionManager:
         selectable = [m for m in self._curated_models() if _selectable(m)]
         if self.model not in selectable:
             selectable.insert(0, self.model)
-        from ..providers.matrix import model_context_windows, model_labels
+        from ..providers.matrix import model_labels
 
         return {
             "provider": "openai",
@@ -3127,9 +3127,9 @@ class SessionManager:
             # Curated-matrix display names ({full id → "GLM-5.2 · via Together"}) so every
             # picker shows human labels; custom models absent here render their raw id.
             "model_labels": model_labels(),
-            # {full id → context window in tokens}, verified matrix entries only —
-            # drives the composer's context-fill meter (absent id → meter hides).
-            "model_context_windows": model_context_windows(),
+            # {full id → effective context window in tokens}. User overrides are merged
+            # over the curated matrix so the meter and compaction use one source of truth.
+            "model_context_windows": self.model_context_windows(),
             "has_key": env_key or stored,
             # Provider-agnostic "can this default model actually run?" — true when the default
             # model's provider is configured (any provider, not just OpenAI). Drives the GUI's
@@ -3211,6 +3211,65 @@ class SessionManager:
         self._save_prefs()
         return {"ok": True, "context_bar": self.context_bar()}
 
+    def model_context_windows(self) -> dict[str, int]:
+        """Effective per-model context windows: curated values plus user overrides.
+
+        Custom model ids have no matrix entry, while proxy/local deployments can expose
+        a different limit for a curated id. Keeping the override in prefs makes both
+        cases explicit and gives the GUI meter and engine compaction identical metadata.
+        """
+        from ..providers.matrix import model_context_windows
+
+        windows = model_context_windows()
+        overrides = self._prefs.get("model_context_windows")
+        if not isinstance(overrides, dict):
+            return windows
+        for model, value in overrides.items():
+            try:
+                tokens = int(value)
+            except (TypeError, ValueError):
+                continue
+            if model and 4_096 <= tokens <= 10_000_000:
+                windows[str(model)] = tokens
+        return windows
+
+    def set_model_context_window(self, model: Any, tokens: Any = None) -> dict[str, Any]:
+        """Persist or clear one model's context-window override.
+
+        ``tokens=None`` (or an empty string) removes only the user override, revealing a
+        curated value again when one exists. The generous ceiling accommodates emerging
+        long-context models without letting malformed values enter compaction math.
+        """
+        model_id = str(model or "").strip()
+        if not model_id:
+            return {"ok": False, "error": "model is required"}
+        overrides = self._prefs.get("model_context_windows")
+        overrides = dict(overrides) if isinstance(overrides, dict) else {}
+        if tokens is None or tokens == "":
+            overrides.pop(model_id, None)
+        else:
+            try:
+                value = int(tokens)
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "context_window must be a number"}
+            if not 4_096 <= value <= 10_000_000:
+                return {
+                    "ok": False,
+                    "error": "context_window must be between 4096 and 10000000 tokens",
+                }
+            overrides[model_id] = value
+        if overrides:
+            self._prefs["model_context_windows"] = overrides
+        else:
+            self._prefs.pop("model_context_windows", None)
+        self._save_prefs()
+        return {
+            "ok": True,
+            "model": model_id,
+            "context_window": self.model_context_windows().get(model_id),
+            "model_context_windows": self.model_context_windows(),
+        }
+
     # -- PDF attachments / token savings (owner ask, 2026-07-17) ----------------
     DEFAULT_PDF_MAX_PAGES = 20
     DEFAULT_PDF_MAX_MB = 10
@@ -3250,6 +3309,9 @@ class SessionManager:
             ),
             # "" → the session's own model (engine falls back to self.model).
             "model": str(self._prefs.get("compaction_model") or ""),
+            # Resolved by TurnEngine against its active model on every check, so edits
+            # apply immediately to already-open sessions.
+            "model_context_windows": self.model_context_windows(),
         }
 
     def compaction_settings_payload(self) -> dict[str, Any]:

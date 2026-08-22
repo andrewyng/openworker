@@ -68,6 +68,41 @@ def test_settings_rest_roundtrip(tmp_path, monkeypatch):
     )
 
 
+def test_model_context_window_override_rest_roundtrip(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from coworker.server.app import create_app
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    data_dir = tmp_path / "data"
+    client = TestClient(create_app(SessionManager(data_dir=data_dir)))
+
+    saved = client.post(
+        "/v1/settings/model-context-window",
+        json={"model": "openai:qwen36-35b", "context_window": 32_768},
+    ).json()
+    assert saved["ok"] is True
+    assert saved["model_context_windows"]["openai:qwen36-35b"] == 32_768
+    assert client.get("/v1/settings").json()["model_context_windows"][
+        "openai:qwen36-35b"
+    ] == 32_768
+
+    # Overrides survive a manager rebuild and take precedence over curated metadata.
+    rebuilt = SessionManager(data_dir=data_dir)
+    assert rebuilt.model_context_windows()["openai:qwen36-35b"] == 32_768
+    curated = rebuilt.model_context_windows()["anthropic:claude-fable-5"]
+    assert rebuilt.set_model_context_window("anthropic:claude-fable-5", 65_536)[
+        "context_window"
+    ] == 65_536
+    assert rebuilt.set_model_context_window("anthropic:claude-fable-5", None)[
+        "context_window"
+    ] == curated
+
+    invalid = rebuilt.set_model_context_window("openai:qwen36-35b", 1_000)
+    assert invalid["ok"] is False and "4096" in invalid["error"]
+
+
 def test_default_model_and_onboarding_persist(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 

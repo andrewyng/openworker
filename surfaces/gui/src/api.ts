@@ -887,8 +887,8 @@ export interface ModelSettings {
   context_bar?: boolean;
   // Curated-matrix display names ({full id → "GLM-5.2 · via Together"}); custom models absent.
   model_labels?: Record<string, string>;
-  // {full id → context window in tokens}, verified matrix entries only — drives the
-  // composer's context-fill meter (absent id → the meter hides). Optional for older backends.
+  // {full id → effective context window in tokens}. Curated values are merged with
+  // user overrides for custom/proxied models; drives both meter and compaction.
   model_context_windows?: Record<string, number>;
   // Token savings (PDF attachments): fallback for models without native PDF support,
   // and attach-time thresholds. Optional so the GUI is robust to an older backend.
@@ -935,6 +935,24 @@ export async function setCompactionSettings(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
+/** Set one model's context-window override; null restores its curated/default value. */
+export async function setModelContextWindow(
+  model: string,
+  contextWindow: number | null,
+): Promise<{
+  ok: boolean;
+  error?: string;
+  context_window?: number;
+  model_context_windows?: Record<string, number>;
+}> {
+  const res = await fetch(`${httpBase()}/v1/settings/model-context-window`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, context_window: contextWindow }),
   });
   return res.json();
 }

@@ -477,9 +477,12 @@ class TurnEngine:
     def _compaction_config(self) -> dict[str, Any]:
         cfg = dict(self.compaction_settings() or {}) if self.compaction_settings else {}
         if not cfg.get("context_window"):
-            from .providers.matrix import model_context_windows
+            windows = cfg.get("model_context_windows")
+            if not isinstance(windows, dict):
+                from .providers.matrix import model_context_windows
 
-            cfg["context_window"] = model_context_windows().get(self.model)
+                windows = model_context_windows()
+            cfg["context_window"] = windows.get(self.model)
         cfg.setdefault("threshold_pct", _compaction.DEFAULT_THRESHOLD_PCT)
         cfg.setdefault("cap_tokens", _compaction.DEFAULT_CAP_TOKENS)
         return cfg
@@ -510,11 +513,14 @@ class TurnEngine:
         pct = float(cfg["threshold_pct"])
         cap = int(cfg["cap_tokens"])
         window = cfg.get("context_window")
-        keep = int(
-            _compaction.KEEP_RECENT_FRACTION
-            * _compaction.trigger_tokens(window, threshold_pct=pct, cap_tokens=cap)
+        keep = _compaction.retained_history_budget(
+            window, threshold_pct=pct, cap_tokens=cap
         )
         model = str(cfg.get("model") or "") or self.model
+        windows = cfg.get("model_context_windows")
+        summary_window = windows.get(model) if isinstance(windows, dict) else None
+        if summary_window is None and model == self.model:
+            summary_window = window
 
         def _build() -> Optional[_compaction.CompactionState]:
             return _compaction.build_state(
@@ -523,6 +529,7 @@ class TurnEngine:
                 model=model,
                 keep_tokens=keep,
                 prior=self.compaction_state,
+                context_window=summary_window,
             )
 
         state: Optional[_compaction.CompactionState] = None

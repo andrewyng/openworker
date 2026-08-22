@@ -17,7 +17,9 @@ from coworker.compaction import (
     extract_working_state,
     is_context_overflow,
     pick_boundary,
+    retained_history_budget,
     should_compact,
+    summary_call_budget,
     summarize_span,
     summarizer_messages,
     trigger_tokens,
@@ -114,6 +116,14 @@ def test_should_compact_crosses_threshold():
     assert should_compact(80_000, 100_000)
 
 
+def test_retained_history_budget_reserves_small_window_headroom():
+    # Even with an aggressive user threshold, a 32k model retains space for system/tool
+    # context, the compacted summary, a normal response, and a safety margin.
+    keep = retained_history_budget(32_768, threshold_pct=0.95, cap_tokens=250_000)
+    assert keep == 6_656
+    assert keep < int(0.25 * 0.95 * 32_768)
+
+
 def test_estimate_tokens_is_chars_over_four():
     msgs = [user("a" * 400)]
     est = estimate_tokens(msgs)
@@ -205,6 +215,23 @@ def test_summarize_span_passes_model_and_raises_on_empty():
 
     with pytest.raises(RuntimeError):
         summarize_span(FakeSummarizer(text="  "), "m", [user("hi")])
+
+
+def test_recovery_summarizer_is_bounded_by_small_model_window():
+    fake = FakeSummarizer()
+    span = [user("oldest request " + "x" * 200_000)]
+    for i in range(20):
+        span += [assistant(f"answer {i} " + "y" * 20_000), user(f"request {i}")]
+
+    summarize_span(fake, "openai:qwen36-35b", span, context_window=32_768)
+
+    call = fake.calls[0]
+    input_budget, output_budget = summary_call_budget(32_768)
+    assert estimate_tokens(call["messages"]) <= input_budget
+    assert call["max_tokens"] == output_budget
+    assert estimate_tokens(call["messages"]) + output_budget < 32_768
+    # Budget clipping keeps the newest recovery context, not the huge oldest paste.
+    assert "request 19" in call["messages"][1]["content"]
 
 
 # -- build + repeated compaction ----------------------------------------------
