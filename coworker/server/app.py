@@ -2430,6 +2430,12 @@ def create_app(manager: SessionManager) -> FastAPI:
                     )
                     if event.type.value in _CHECKPOINTS:
                         manager.save(session_id, engine)
+            except Exception as exc:
+                # An unexpected raise out of the engine must not be swallowed — the
+                # background-turn path (deliver_to_session) does the same.
+                await manager.broadcast_session(
+                    session_id, {"type": "error", "data": {"error": str(exc)}}
+                )
             finally:
                 manager.mark_idle(session_id)
                 manager.save(session_id, engine)
