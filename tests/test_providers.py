@@ -186,6 +186,145 @@ def test_effort_400_from_an_unpinned_model_retries_once_at_none():
     assert out[-1].turn.text == "ok" and len(client.chat.completions.calls) == 4
 
 
+_RESPONSES_REQUIRED_ERROR = (
+    "Error code: 400 - {'error': {'message': \"Function tools with reasoning_effort "
+    "are not supported for gpt-5.6-terra in /v1/chat/completions. Please use "
+    "/v1/responses instead.\", 'type': 'invalid_request_error'}}"
+)
+
+
+def _responses_result(text: str):
+    return SimpleNamespace(
+        output=[
+            SimpleNamespace(
+                type="message",
+                content=[SimpleNamespace(type="output_text", text=text)],
+            )
+        ]
+    )
+
+
+def _responses_tool_result():
+    return SimpleNamespace(
+        output=[
+            SimpleNamespace(
+                type="function_call",
+                call_id="response-call-1",
+                name="read_file",
+                arguments='{"path": "a.py"}',
+            )
+        ]
+    )
+
+
+class _ResponsesRequiredCompletions:
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        raise RuntimeError(_RESPONSES_REQUIRED_ERROR)
+
+
+class _FallbackResponses:
+    def __init__(self, response, events=()):
+        self._response = response
+        self._events = events
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return iter(self._events) if kwargs.get("stream") else self._response
+
+
+class _FallbackClient:
+    def __init__(self, response, events=()):
+        self.chat = SimpleNamespace(completions=_ResponsesRequiredCompletions())
+        self.responses = _FallbackResponses(response, events)
+
+
+def test_custom_endpoint_falls_back_to_responses_and_caches_the_model():
+    client = _FallbackClient(_responses_result("from responses"))
+    provider = OpenAIProvider(client=client)
+
+    turn = provider.complete(
+        model="gpt-5.6-terra",
+        messages=[{"role": "user", "content": "read the file"}],
+        tools=_TOOLS,
+        temperature=0.2,
+    )
+
+    assert turn.text == "from responses"
+    assert len(client.chat.completions.calls) == 1
+    request = client.responses.calls[0]
+    assert request["input"] == [{"role": "user", "content": "read the file"}]
+    assert request["tools"] == [{"type": "function", "name": "read_file"}]
+    assert request["temperature"] == 0.2
+    assert "reasoning_effort" not in request
+
+    # The negotiated protocol is per-model, so the next turn avoids a second 400.
+    provider.complete(model="gpt-5.6-terra", messages=[])
+    assert len(client.chat.completions.calls) == 1
+    assert len(client.responses.calls) == 2
+
+
+def test_custom_endpoint_fallback_preserves_response_call_ids():
+    client = _FallbackClient(_responses_tool_result())
+    provider = OpenAIProvider(client=client)
+
+    turn = provider.complete(model="gpt-5.6-terra", messages=[], tools=_TOOLS)
+
+    assert turn.tool_calls == [
+        ToolCall(
+            id="response-call-1", name="read_file", arguments={"path": "a.py"}
+        )
+    ]
+    assert turn.finish_reason == "tool_calls"
+
+
+def test_custom_endpoint_stream_falls_back_to_responses_before_emitting_deltas():
+    result = _responses_result("from responses")
+    events = [
+        SimpleNamespace(type="response.output_text.delta", delta="from responses"),
+        SimpleNamespace(type="response.completed", response=result),
+    ]
+    client = _FallbackClient(result, events)
+    provider = OpenAIProvider(client=client)
+
+    chunks = list(
+        provider.stream(model="gpt-5.6-terra", messages=[], tools=_TOOLS)
+    )
+
+    assert [chunk.text_delta for chunk in chunks if chunk.text_delta] == ["from responses"]
+    assert chunks[-1].turn.text == "from responses"
+    assert len(client.chat.completions.calls) == 1
+    assert client.responses.calls[0]["stream"] is True
+
+    list(provider.stream(model="gpt-5.6-terra", messages=[]))
+    assert len(client.chat.completions.calls) == 1
+    assert len(client.responses.calls) == 2
+
+
+def test_custom_endpoint_only_falls_back_when_it_advertises_responses():
+    client = _FallbackClient(_responses_result("unused"))
+
+    class _OtherCompletions:
+        def create(self, **kwargs):
+            raise RuntimeError(
+                "Function tools with reasoning_effort are not supported for this model"
+            )
+
+    client.chat.completions = _OtherCompletions()
+    provider = OpenAIProvider(client=client)
+
+    try:
+        provider.complete(model="gpt-5.6-terra", messages=[], tools=_TOOLS)
+        raise AssertionError("should have raised")
+    except RuntimeError as exc:
+        assert "reasoning_effort" in str(exc)
+    assert client.responses.calls == []
+
+
 def test_max_tokens_rejection_retries_as_max_completion_tokens():
     """Reasoning-routed models 400 on max_tokens (want max_completion_tokens); compat
     servers know only max_tokens — so the swap happens on rejection, never up front.
