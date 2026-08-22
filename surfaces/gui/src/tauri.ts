@@ -127,7 +127,7 @@ export const installUpdate = () => invokeStrict<void>("install_update");
 
 /** Best-effort open a URL in the user's browser. Uses the Tauri opener plugin if present, else
  * `window.open`. The caller should also render the raw URL so it stays copyable if both no-op
- * (the desktop webview has no opener plugin wired yet). */
+ * (in the browser build a popup blocker can still swallow window.open). */
 export function openExternal(url: string): void {
   const opener = (globalThis as any).__TAURI__?.opener;
   if (opener?.openUrl) {
