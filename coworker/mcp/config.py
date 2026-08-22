@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from ..secrets import SecretStore, state_dir
+from ..secrets import SecretStore, state_dir, write_private_text
 
 _HTTP_TYPES = {"http", "https", "sse", "streamable-http", "streamable_http"}
 
@@ -116,11 +116,11 @@ def read_global() -> dict[str, dict[str, Any]]:
 
 
 def _write_global(servers: dict[str, dict[str, Any]]) -> None:
-    path = global_mcp_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps({"mcpServers": servers}, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    # MCP configs are commonly pasted with literal API keys in headers/env. Keep the
+    # global, user-owned config private even when a SecretStore has not been created yet.
+    write_private_text(
+        global_mcp_path(), json.dumps({"mcpServers": servers}, indent=2)
+    )
 
 
 def put_global_server(name: str, config: dict[str, Any]) -> None:
