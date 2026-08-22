@@ -20,6 +20,8 @@ It runs on your machine and doesn't lock you into any model: bring your own API 
 [**⬇ Windows 10/11 (x64)**](https://download.openworker.com/windows)
 <sub>builds are not yet code-signed, so SmartScreen will warn; signing is in progress</sub>
 
+**Linux (x86_64)** — `.deb` + AppImage are buildable from source; see [Build a Linux package](#build-a-linux-package-deb--appimage) below. Signed release downloads are coming.
+
 Open the app, add a model key (or point it at Ollama), and ask for something real.
 
 ## How it works
@@ -91,7 +93,31 @@ desktop app uses an in-memory launch token instead and never writes it to disk.
 
 To run the full desktop app instead of the browser UI, replace step 3 with `npm run tauri dev` (from `surfaces/gui/`) - the Tauri shell launches the window and supervises the server itself.
 
-Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gui` (GUI unit + hermetic end-to-end). Desktop bundles are built with `packaging/build_dmg.sh` / `packaging/build_windows.ps1`.
+Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gui` (GUI unit + hermetic end-to-end). Desktop bundles are built with `packaging/build_dmg.sh` / `packaging/build_windows.ps1` / `packaging/build_linux.sh`.
+
+## Build a Linux package (.deb + AppImage)
+
+Produces a `.deb` (and an `.AppImage` when `linuxdeploy` fetches cleanly) for x86_64, built on `ubuntu-22.04` for broad glibc compatibility.
+
+```shell
+# 1. One-time: install the Tauri + STT-sidecar system libs (Debian/Ubuntu/Fedora/Arch aware)
+bash packaging/install_linux_deps.sh        # add -y to skip the confirm prompt
+
+# 2. One-time: create the build venv the bundler expects at .venv
+python3 -m venv .venv
+.venv/bin/pip install -e '.[bedrock]' pyinstaller typer
+
+# 3. Build the frontend + Rust shell + PyInstaller sidecar, then bundle
+cd surfaces/gui && npm ci && cd ../..
+./packaging/build_linux.sh
+```
+
+Output lands in `surfaces/gui/src-tauri/target/release/bundle/{deb,appimage}/`. Override the targets with `BUNDLES=` (e.g. `BUNDLES=deb` or `BUNDLES=rpm,appimage` — `rpm` needs `rpmbuild` installed).
+
+Notes:
+- The build is **unsigned**; Linux has no universal code-signing scheme. Verify release artifacts via the GitHub Release's GPG/signature if you need integrity guarantees.
+- **Voice Input** is not yet wired up on Linux — the STT crate compiles (cpal/whisper.cpp), but the shell marks dictation unsupported on Linux for now. Wiring a Linux audio backend is a natural follow-up.
+- **Auto-update** emits signed updater artifacts only when `TAURI_SIGNING_PRIVATE_KEY` is set; without it the build omits them (the app still runs, just no self-update).
 
 ## Repository layout
 
@@ -100,7 +126,7 @@ Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gu
 | `coworker/` | Python backend - agent engine, model providers, connectors, MCP client, memory, automations |
 | `surfaces/gui/` | Desktop app - React UI + Tauri shell that supervises the server |
 | `stt/` | Speech-to-text sidecar (Rust) for voice input |
-| `packaging/` | Installer builds (macOS DMG, Windows), auto-update manifest, dev bootstrap |
+| `packaging/` | Installer builds (macOS DMG, Windows, Linux deb/AppImage), auto-update manifest, dev bootstrap |
 | `docs/` | Design specs and decision logs |
 | `tests/` | Backend test suite |
 
