@@ -1619,7 +1619,6 @@ export function App() {
         <button
           className="nav-reveal-btn"
           onClick={toggleNav}
-          onMouseEnter={() => setNavPeek(true)}
           title="Show sidebar (⌘B)"
           aria-label="Show sidebar"
         >
