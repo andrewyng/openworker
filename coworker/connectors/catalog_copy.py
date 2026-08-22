@@ -51,6 +51,10 @@ ABOUT: dict[str, str] = {
     "aggregate board data, create items, and post updates. One-click sign-in "
     "runs entirely on this computer against monday.com's own agent service; agents "
     "get a small curated set of its tools, never the full catalog.",
+    "tinyfish": "Give your coworker live web access via TinyFish — search the "
+    "web, fetch clean page content, run web-agent automations, and drive remote "
+    "browsers. One-click OAuth sign-in runs on this Mac against TinyFish's hosted "
+    "service; agents get a small curated set of its tools, never the full catalog.",
     "asana": "Keep up with your Asana work — search and read tasks and "
     "projects, create tasks, and comment. Connects with a personal access "
     "token from the Asana developer console.",
@@ -107,6 +111,11 @@ ACCESS: dict[str, list[str]] = {
     "monday": [
         "Reads boards, items, and updates your account can see.",
         "Creates items, changes item values, and posts updates as you.",
+    ],
+    "tinyfish": [
+        "Searches the web and reads clean content from pages.",
+        "Runs web-agent automations — navigates sites, clicks, fills forms, and extracts data as you.",
+        "Opens and manages remote browser sessions for direct control.",
     ],
     "asana": [
         "Reads and searches tasks your account can see.",
