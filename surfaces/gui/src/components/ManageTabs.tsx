@@ -57,12 +57,20 @@ function initials(name: string): string {
 // per-provider ModelChecklist / read-only model preview (form view).
 export function ModelsTab() {
   const [settings, setSettings] = useState<ModelSettings | null>(null);
-  const refreshSettings = () => getSettings().then(setSettings).catch(() => setSettings(null));
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const refreshSettings = () => {
+    setSettingsError(null);
+    getSettings().then(setSettings).catch((e) => {
+      setSettings(null);
+      setSettingsError(e instanceof DOMException && e.name === "AbortError" ? "Request timed out — check that the server is running." : "Could not load settings.");
+    });
+  };
   const ps = useProviderSetup({ onSaved: refreshSettings });
   useEffect(() => {
     refreshSettings();
   }, []);
 
+  if (settingsError) return <div className="text-[13px] text-danger/80 p-4">{settingsError}</div>;
   if (!settings) return <div className="text-[13px] text-muted">Loading…</div>;
 
   const info = ps.info;

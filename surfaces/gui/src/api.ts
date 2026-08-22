@@ -1617,9 +1617,15 @@ export async function setUnattended(
   return res.json();
 }
 
-export async function getSettings(): Promise<ModelSettings> {
-  const res = await fetch(`${httpBase()}/v1/settings`);
-  return res.json();
+export async function getSettings(timeout = 8_000): Promise<ModelSettings> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout);
+  try {
+    const res = await fetch(`${httpBase()}/v1/settings`, { signal: ctrl.signal });
+    return res.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function setModelKey(
