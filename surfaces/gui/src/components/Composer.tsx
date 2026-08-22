@@ -627,7 +627,17 @@ export function Composer(props: Props) {
               <span className="model-warn-ico" aria-hidden>⚠</span>
             </button>
           ) : modelsLoaded ? (
-            <Dropdown value={props.model} options={modelOptions} onChange={props.onModelChange} align="right" />
+            <Dropdown
+              value={props.model}
+              options={modelOptions}
+              onChange={props.onModelChange}
+              align="right"
+              // The curated list is a shortlist, not an allow-list — the server accepts any
+              // model string, so let people type one (a freshly pulled Ollama tag, a preview
+              // id) without a round trip through Settings.
+              editable
+              editablePlaceholder="Filter or type a model id…"
+            />
           ) : (
             <button
               className="pill chip text-faint cursor-default"
