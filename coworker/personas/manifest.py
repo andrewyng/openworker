@@ -47,6 +47,12 @@ VALID_ACCENTS = {
 # Start-screen rows are the persona's own suggestions; more than this and the empty state stops
 # reading as "pick one" and starts reading as a menu.
 MAX_STARTERS = 4
+# Checkpoints are the shape of ONE job for this persona. More than six and the rail's progress
+# strip stops being a glance; fewer than two and there is no "next" to point at.
+MAX_CHECKPOINTS = 6
+# Budgets are a glance, not a dashboard: past four counters the rail stops being readable and
+# the numbers stop being acted on.
+MAX_BUDGETS = 4
 
 
 class ManifestError(ValueError):
@@ -89,6 +95,59 @@ class Starter:
             "prompt": self.prompt,
             "requires": list(self.requires),
         }
+
+
+@dataclass
+class Checkpoint:
+    """One step in the shape of this persona's job — what "done" looks like, in order.
+
+    The Progress panel could always show a todo list, but a todo list is what the MODEL decided
+    to do this run; it cannot say whether the run is halfway through the work this persona is
+    supposed to do. Checkpoints are that second axis: the persona's own definition of a
+    complete job, with each step evidenced by tool calls the session can actually observe.
+
+    `evidence` names the tools whose use means this step has happened. A step nothing can
+    evidence would sit "pending" forever and make a finished run look stuck, so an empty list
+    is rejected at parse time.
+    """
+
+    id: str
+    label: str
+    evidence: list[str] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"id": self.id, "label": self.label, "evidence": list(self.evidence)}
+
+
+@dataclass
+class Budget:
+    """A ceiling on one kind of tool call for a single run.
+
+    These exist in prose today — "AT MOST 4 arxiv searches", "at most 15 tool calls" — where
+    nothing can enforce or even display them, so an overrun only shows up afterwards as a long
+    transcript and a run marked incomplete. Structured, the rail can show `searches 6/8` while
+    the run is still happening.
+
+    The limit is ADVISORY: nothing here blocks a call. Blocking would turn a budget into a
+    failure mode of its own — a run halted at 8/8 with the deliverable unwritten is worse than
+    one that went to 9. The value is in seeing it.
+    """
+
+    id: str
+    label: str
+    limit: int
+    # Tool names to count, or the single entry "*" meaning EVERY tool call. A total-call ceiling
+    # is the most common budget the automations declare ("AT MOST 15 tool calls", seven of them),
+    # and enumerating a persona's whole toolset by hand to express it would rot the moment the
+    # catalog changes.
+    tools: list[str] = field(default_factory=list)
+
+    @property
+    def counts_everything(self) -> bool:
+        return self.tools == ["*"]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"id": self.id, "label": self.label, "limit": self.limit, "tools": list(self.tools)}
 
 
 @dataclass
@@ -138,6 +197,8 @@ class PersonaManifest:
     recommends: list[Recommendation] = field(default_factory=list)
     accent: str = ""  # one of VALID_ACCENTS; empty → the GUI derives one from the id
     intro: PersonaIntro = field(default_factory=PersonaIntro)
+    checkpoints: list[Checkpoint] = field(default_factory=list)
+    budgets: list[Budget] = field(default_factory=list)
     builtin: bool = False
     source: Optional[str] = (
         None  # where it was loaded from (path / url), for provenance
@@ -298,6 +359,80 @@ def _intro(persona_id: str, meta: dict) -> PersonaIntro:
     )
 
 
+def _checkpoints(persona_id: str, meta: dict) -> list[Checkpoint]:
+    raw = meta.get("checkpoints")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ManifestError(f"persona {persona_id!r}: `checkpoints` must be a list")
+    if len(raw) > MAX_CHECKPOINTS:
+        raise ManifestError(
+            f"persona {persona_id!r}: at most {MAX_CHECKPOINTS} checkpoints (got {len(raw)})"
+        )
+    out: list[Checkpoint] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ManifestError(
+                f"persona {persona_id!r}: each `checkpoints` item must be a mapping"
+            )
+        label = str(item.get("label", "")).strip()
+        if not label:
+            raise ManifestError(f"persona {persona_id!r}: a checkpoint needs a `label`")
+        evidence = _strlist(item, "evidence")
+        if not evidence:
+            raise ManifestError(
+                f"persona {persona_id!r}: checkpoint {label!r} needs `evidence` — a step no tool "
+                "call can satisfy stays pending forever and makes a finished run look stuck"
+            )
+        cid = str(item.get("id", "")).strip() or _starter_key(label, i)
+        out.append(Checkpoint(id=cid, label=label, evidence=evidence))
+    return out
+
+
+def _budgets(persona_id: str, meta: dict) -> list[Budget]:
+    raw = meta.get("budgets")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ManifestError(f"persona {persona_id!r}: `budgets` must be a list")
+    if len(raw) > MAX_BUDGETS:
+        raise ManifestError(
+            f"persona {persona_id!r}: at most {MAX_BUDGETS} budgets (got {len(raw)})"
+        )
+    out: list[Budget] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ManifestError(f"persona {persona_id!r}: each `budgets` item must be a mapping")
+        label = str(item.get("label", "")).strip()
+        if not label:
+            raise ManifestError(f"persona {persona_id!r}: a budget needs a `label`")
+        try:
+            limit = int(item.get("limit"))
+        except (TypeError, ValueError):
+            raise ManifestError(
+                f"persona {persona_id!r}: budget {label!r} needs a whole-number `limit`"
+            ) from None
+        if limit <= 0:
+            raise ManifestError(
+                f"persona {persona_id!r}: budget {label!r} has limit {limit} — a ceiling of zero "
+                "or less can only ever read as already exceeded"
+            )
+        tools = _strlist(item, "tools")
+        if not tools:
+            raise ManifestError(
+                f"persona {persona_id!r}: budget {label!r} needs `tools` — a budget with nothing "
+                "to count would sit at 0 forever and quietly reassure"
+            )
+        if "*" in tools and tools != ["*"]:
+            raise ManifestError(
+                f"persona {persona_id!r}: budget {label!r} mixes `*` with named tools; `*` already "
+                "counts every call, so the named ones would be counted twice"
+            )
+        bid = str(item.get("id", "")).strip() or _starter_key(label, i)
+        out.append(Budget(id=bid, label=label, limit=limit, tools=tools))
+    return out
+
+
 def parse_manifest(
     text: str,
     *,
@@ -377,6 +512,8 @@ def parse_manifest(
         recommends=_recommends(persona_id, meta),
         accent=accent,
         intro=_intro(persona_id, meta),
+        checkpoints=_checkpoints(persona_id, meta),
+        budgets=_budgets(persona_id, meta),
         builtin=builtin,
         source=source,
     )

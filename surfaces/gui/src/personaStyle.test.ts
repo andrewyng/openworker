@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Persona } from "./api";
-import { ACCENTS, accentFor, accentMap, introFor, placeholderFor } from "./personaStyle";
+import {
+  ACCENTS,
+  accentFor,
+  accentMap,
+  budgetUse,
+  checkpointProgress,
+  checkpointsFor,
+  introFor,
+  placeholderFor,
+} from "./personaStyle";
 
 const persona = (p: Partial<Persona>): Persona => ({
   id: "demo",
@@ -142,5 +151,159 @@ describe("accentMap", () => {
   it("is empty before the persona list loads, so callers fall back to accentFor", () => {
     expect(accentMap(null)).toEqual({});
     expect(accentMap([])).toEqual({});
+  });
+});
+
+describe("checkpoints", () => {
+  const steps = [
+    { id: "plan", label: "Plan", evidence: ["todo_write"] },
+    { id: "gather", label: "Gather", evidence: ["web_search", "read_file"] },
+    { id: "produce", label: "Produce", evidence: ["write_file"] },
+  ];
+
+  it("uses what the persona declared, else its family's shape", () => {
+    expect(checkpointsFor(persona({ id: "x", checkpoints: steps }))).toBe(steps);
+    expect(checkpointsFor(persona({ id: "builder", family: "code" })).map((c) => c.id)).toContain("implement");
+    expect(checkpointsFor(persona({ id: "research", family: "knowledge" })).map((c) => c.id)).toContain("produce");
+  });
+
+  it("marks steps the run went past but never did as skipped", () => {
+    // A run that produced a deliverable without planning or gathering did skip those. Calling
+    // the first gap "current" would claim the run is at step one while step three is finished.
+    const out = checkpointProgress(steps, ["write_file"]);
+    expect(out.map((s) => s.state)).toEqual(["skipped", "skipped", "done"]);
+  });
+
+  it("advances as evidence arrives", () => {
+    expect(checkpointProgress(steps, ["todo_write"]).map((s) => s.state)).toEqual([
+      "done", "current", "pending",
+    ]);
+    expect(checkpointProgress(steps, ["todo_write", "read_file"]).map((s) => s.state)).toEqual([
+      "done", "done", "current",
+    ]);
+  });
+
+  it("starts at step one when nothing has run", () => {
+    // Not "all pending": a run that has not started is AT the first step.
+    expect(checkpointProgress(steps, []).map((s) => s.state)).toEqual([
+      "current", "pending", "pending",
+    ]);
+  });
+
+  it("has no current step once every step is evidenced", () => {
+    const out = checkpointProgress(steps, ["todo_write", "web_search", "write_file"]);
+    expect(out.every((s) => s.state === "done")).toBe(true);
+  });
+});
+
+describe("checkpoints — skipped steps", () => {
+  const steps = [
+    { id: "recall", label: "Recall", evidence: ["brain_recall"] },
+    { id: "plan", label: "Plan", evidence: ["todo_write"] },
+    { id: "implement", label: "Implement", evidence: ["write_file"] },
+    { id: "verify", label: "Verify", evidence: ["run_shell"] },
+    { id: "record", label: "Record", evidence: ["brain_note"] },
+  ];
+
+  it("puts the run at the first gap AFTER the furthest step reached", () => {
+    // The real case this came from: a Builder run with five files edited and three commands
+    // run, which the first implementation labelled "current: Recall" — the panel contradicting
+    // its own activity line one row below.
+    const out = checkpointProgress(steps, ["write_file", "run_shell", "grep"]);
+    expect(out.map((s) => s.state)).toEqual([
+      "skipped", "skipped", "done", "done", "current",
+    ]);
+  });
+
+  it("never reports more than one current step", () => {
+    for (const tools of [[], ["todo_write"], ["write_file"], ["brain_recall", "brain_note"]]) {
+      const currents = checkpointProgress(steps, tools).filter((s) => s.state === "current");
+      expect(currents.length).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe("budgetUse", () => {
+  const p = (budgets: any[]) => persona({ id: "research", budgets });
+  const B = [
+    { id: "searches", label: "searches", limit: 4, tools: ["web_search", "mcp__tavily__tavily-search"] },
+    { id: "reads", label: "page reads", limit: 10, tools: ["web_fetch"] },
+  ];
+
+  it("counts real tool calls, not the model's account of them", () => {
+    const out = budgetUse(p(B), ["web_search", "web_search", "mcp__tavily__tavily-search", "web_fetch"]);
+    expect(out.map((b) => [b.budget.id, b.used])).toEqual([["searches", 3], ["reads", 1]]);
+  });
+
+  it("flags near, at and over distinctly", () => {
+    const one = [{ id: "s", label: "searches", limit: 4, tools: ["web_search"] }];
+    const at = (n: number) => budgetUse(p(one), Array(n).fill("web_search"))[0].state;
+    expect(at(0)).toBe("ok");
+    expect(at(2)).toBe("ok");
+    expect(at(3)).toBe("near"); // 75% — late enough to mean something, early enough to act on
+    expect(at(4)).toBe("at");
+    expect(at(9)).toBe("over");
+  });
+
+  it("is empty when the persona declares none, rather than inventing a ceiling", () => {
+    expect(budgetUse(persona({ id: "x" }), ["web_search"])).toEqual([]);
+    expect(budgetUse(undefined, ["web_search"])).toEqual([]);
+  });
+
+  it("ignores tools no budget names", () => {
+    expect(budgetUse(p(B), ["read_file", "grep", "todo_write"]).every((b) => b.used === 0)).toBe(true);
+  });
+});
+
+describe("budgetUse — the total-call sentinel", () => {
+  const starred = persona({
+    id: "repo-ops",
+    budgets: [{ id: "calls", label: "tool calls", limit: 5, tools: ["*"] }],
+  });
+
+  it("counts EVERY call, whatever the tool", () => {
+    // Seven automations declare a total-call ceiling; enumerating a persona's whole toolset to
+    // express it would rot as the catalog changes, so "*" is the escape hatch.
+    const out = budgetUse(starred, ["run_shell", "grep", "read_file", "write_file"]);
+    expect(out[0].used).toBe(4);
+    expect(out[0].state).toBe("near"); // 4/5
+  });
+
+  it("goes over rather than capping the count", () => {
+    const out = budgetUse(starred, Array(9).fill("run_shell"));
+    // The number keeps climbing: the value is in SEEING the overrun, and a counter pinned at
+    // 5/5 would hide how far past it went.
+    expect(out[0].used).toBe(9);
+    expect(out[0].state).toBe("over");
+  });
+});
+
+describe("checkpointsFor — steps the persona cannot take", () => {
+  it("drops a fallback step whose only tools the persona lacks", () => {
+    // The default Coworker has no `brain` capability, so a "Recall" step could never complete:
+    // it showed as permanently skipped and pushed the apparent position one step along.
+    const withoutBrain = persona({ id: "cowork", family: "knowledge", tools: ["files", "search"] });
+    expect(checkpointsFor(withoutBrain).map((c) => c.id)).not.toContain("recall");
+    const withBrain = persona({ id: "repo-ops", family: "knowledge", tools: ["files", "brain"] });
+    expect(checkpointsFor(withBrain).map((c) => c.id)).toContain("recall");
+  });
+
+  it("keeps a step that has any usable tool left", () => {
+    // "Gather" names web_search AND read_file; lacking one capability must not delete the step.
+    const p2 = persona({ id: "x", family: "knowledge", tools: ["files"] });
+    expect(checkpointsFor(p2).map((c) => c.id)).toContain("gather");
+  });
+
+  it("shows the full shape while the persona list is still loading", () => {
+    expect(checkpointsFor(undefined, "cowork").length).toBeGreaterThan(0);
+  });
+
+  it("never prunes what a persona declared for itself", () => {
+    const declared = persona({
+      id: "x",
+      tools: [],
+      checkpoints: [{ id: "recall", label: "Recall", evidence: ["brain_recall"] }],
+    });
+    expect(checkpointsFor(declared).map((c) => c.id)).toEqual(["recall"]);
   });
 });

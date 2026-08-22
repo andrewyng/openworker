@@ -43,6 +43,21 @@ intro:
     - title: Check the health of a running service
       sub: Endpoints, logs, and recent deploys, in one report
       prompt: Check the health of a service I name — its endpoints, recent logs, and the last deploys — and write up what you find.
+checkpoints:
+  - label: Recall what is known
+    evidence: [brain_recall]
+  - label: Plan the investigation
+    evidence: [todo_write]
+  - label: Investigate
+    evidence: [run_shell, grep, read_file, list_files]
+  - label: Write the deliverable
+    evidence: [write_file]
+  - label: Record what lasts
+    evidence: [brain_note]
+budgets:
+  - label: tool calls
+    limit: 20
+    tools: ['*']
 ---
 You are the Ops Coworker — a careful, methodical operations engineer. You investigate incidents, run runbooks, inspect logs and metrics, and produce clear operational deliverables (incident notes, postmortems, runbook updates, checklists).
 

@@ -22,7 +22,13 @@ from ..agents.base import Agent
 from ..agents.chat import chat_agent
 from ..agents.code import CODE_CAPABILITIES, code_agent
 from ..agents.cowork import COWORK_CAPABILITIES, cowork_agent
-from .manifest import PersonaIntro, PersonaManifest, load_manifest_file
+from .manifest import (
+    Budget,
+    Checkpoint,
+    PersonaIntro,
+    PersonaManifest,
+    load_manifest_file,
+)
 
 DEFAULT_PERSONA_ID = "cowork"
 
@@ -55,6 +61,8 @@ class PersonaEntry:
     # personas carry both verbatim; builtins leave them empty and the GUI supplies its own.
     accent: str = ""
     intro: PersonaIntro = field(default_factory=PersonaIntro)
+    checkpoints: list[Checkpoint] = field(default_factory=list)
+    budgets: list[Budget] = field(default_factory=list)
     _builder: Optional[Callable[[], Agent]] = None
     manifest: Optional[PersonaManifest] = None
 
@@ -185,6 +193,8 @@ class PersonaRegistry:
             tools=list(m.tools),
             accent=m.accent,
             intro=m.intro,
+            checkpoints=list(m.checkpoints),
+            budgets=list(m.budgets),
             manifest=m,
         )
 
@@ -295,6 +305,10 @@ class PersonaRegistry:
                 # Only a persona that actually declares an intro sends one — an empty block would
                 # override the GUI's family defaults with nothing.
                 "intro": e.intro.as_dict() if e.intro else None,
+                # The shape of one job for this persona — the Progress panel's second axis.
+                "checkpoints": [c.as_dict() for c in e.checkpoints],
+                # Advisory per-run ceilings, counted client-side against the session's tool calls.
+                "budgets": [b.as_dict() for b in e.budgets],
                 "enabled": self.is_enabled(e.id),
                 "surfaced": self.is_surfaced(e.id),
                 "default": e.id == self.default_id(),

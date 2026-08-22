@@ -11,7 +11,13 @@
 // the shipped personas → a family default. So a third-party persona that declares nothing still
 // gets a coherent screen in its own colour, and one that declares an `intro:` block owns it.
 
-import type { Persona, PersonaIntro, PersonaStarter } from "./api";
+import type {
+  Persona,
+  PersonaBudget,
+  PersonaCheckpoint,
+  PersonaIntro,
+  PersonaStarter,
+} from "./api";
 
 // The curated accents, ordered around the wheel so neighbours in the list are the ones most
 // likely to be confused — anything that has to pick several at once (accentMap) walks the list
@@ -237,4 +243,121 @@ export function introFor(persona?: Persona, personaId?: string): PersonaIntro {
 /** The composer placeholder for a persona — the one string that used to say "coworker" for all. */
 export function placeholderFor(persona?: Persona, personaId?: string): string {
   return introFor(persona, personaId).placeholder;
+}
+
+
+// The shape of ONE job, per family, for personas that declare no checkpoints of their own.
+// Deliberately coarse: a fallback must not pretend to know a persona's method, only whether its
+// work ends in a changed repo or a written deliverable.
+const cp = (id: string, label: string, evidence: string[]): PersonaCheckpoint => ({ id, label, evidence });
+
+const FAMILY_CHECKPOINTS: Record<string, PersonaCheckpoint[]> = {
+  code: [
+    cp("recall", "Recall", ["brain_recall"]),
+    cp("plan", "Plan", ["todo_write"]),
+    cp("locate", "Locate the change", ["grep", "read_file", "read_file_lines", "explore"]),
+    cp("implement", "Implement", ["write_file", "replace_in_file", "apply_patch", "apply_unified_diff"]),
+    cp("verify", "Verify", ["run_shell"]),
+  ],
+  knowledge: [
+    cp("recall", "Recall", ["brain_recall"]),
+    cp("plan", "Plan", ["todo_write"]),
+    cp("gather", "Gather", ["web_search", "web_fetch", "grep", "read_file", "read_file_lines", "run_shell"]),
+    cp("produce", "Produce the deliverable", ["write_file"]),
+    cp("record", "Record what lasts", ["brain_note"]),
+  ],
+};
+
+// Capability -> the tools it provides, for pruning fallback steps a persona could never take.
+// Only the ones a default checkpoint names; a persona that declares its own steps is trusted.
+const CAPABILITY_TOOLS: Record<string, string[]> = {
+  brain: ["brain_recall", "brain_note"],
+};
+
+/** A persona's job shape: what it declared, else its family's — minus any fallback step whose
+ *  evidence the persona cannot produce.
+ *
+ *  Without the pruning, the default Coworker (no `brain` capability) was shown a "Recall" step
+ *  it can never satisfy: permanently struck through as skipped, and permanently making the step
+ *  after it look like the run's position. A checkpoint nothing can complete is worse than none.
+ */
+export function checkpointsFor(persona?: Persona, personaId?: string): PersonaCheckpoint[] {
+  if (persona?.checkpoints?.length) return persona.checkpoints;
+  const family = persona?.family || (personaId === "code" ? "code" : "knowledge");
+  const steps = FAMILY_CHECKPOINTS[family] || FAMILY_CHECKPOINTS.knowledge;
+  // Unknown tool list (persona still loading) → show the shape rather than an empty strip.
+  if (!persona?.tools) return steps;
+  const missing = new Set(
+    Object.entries(CAPABILITY_TOOLS)
+      .filter(([cap]) => !persona.tools.includes(cap))
+      .flatMap(([, tools]) => tools),
+  );
+  return steps.filter((step) => step.evidence.some((t) => !missing.has(t)));
+}
+
+export type CheckpointState = "done" | "skipped" | "current" | "pending";
+
+/**
+ * Where the run has got to, judged from the tools it has actually called.
+ *
+ * A step is done once any of its evidence tools has been used. The CURRENT step is the first
+ * unevidenced one at or after the furthest step reached; anything unevidenced BEFORE that was
+ * skipped, and says so.
+ *
+ * Both halves matter. Calling the first gap "current" would have claimed a run with five files
+ * edited was still at "Recall" — the panel contradicting its own activity line. Quietly
+ * treating the furthest step as the position would hide that planning never happened, which is
+ * exactly the failure worth seeing. Nothing called yet means step one is current, not done.
+ */
+export function checkpointProgress(
+  checkpoints: PersonaCheckpoint[],
+  toolNames: string[],
+): { checkpoint: PersonaCheckpoint; state: CheckpointState }[] {
+  const used = new Set(toolNames);
+  const done = checkpoints.map((c) => c.evidence.some((t) => used.has(t)));
+  const furthest = done.lastIndexOf(true);
+  const currentIndex = done.findIndex((d, i) => !d && i > furthest);
+  return checkpoints.map((checkpoint, i) => ({
+    checkpoint,
+    state: done[i]
+      ? "done"
+      : i === currentIndex
+        ? "current"
+        : i < furthest
+          ? "skipped"
+          : "pending",
+  }));
+}
+
+
+export type BudgetUse = {
+  budget: PersonaBudget;
+  used: number;
+  /** at = spent, over = past the ceiling. "near" starts at 75%: late enough to mean something,
+   *  early enough to still change the run. */
+  state: "ok" | "near" | "at" | "over";
+};
+
+/**
+ * How much of each declared ceiling this run has spent.
+ *
+ * Counted from the session's tool calls, so it is what actually happened rather than what the
+ * model believes it did — a model asked to stay under eight searches is not a reliable narrator
+ * of how many it has run.
+ */
+export function budgetUse(persona: Persona | undefined, toolNames: string[]): BudgetUse[] {
+  const budgets = persona?.budgets || [];
+  if (!budgets.length) return [];
+  return budgets.map((budget) => {
+    // "*" is the total-call sentinel the manifest allows (seven automations declare a ceiling
+    // on ALL tool calls, and enumerating a persona's whole toolset to express it would rot as
+    // the catalog changes). Without this branch such a budget counts nothing and sits at 0/N
+    // forever — reassuring, and wrong.
+    const all = budget.tools.length === 1 && budget.tools[0] === "*";
+    const used = all ? toolNames.length : toolNames.filter((t) => budget.tools.includes(t)).length;
+    const ratio = used / budget.limit;
+    const state: BudgetUse["state"] =
+      used > budget.limit ? "over" : used === budget.limit ? "at" : ratio >= 0.75 ? "near" : "ok";
+    return { budget, used, state };
+  });
 }

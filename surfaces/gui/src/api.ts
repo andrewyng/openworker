@@ -865,6 +865,24 @@ export interface PersonaIntro {
   starters: PersonaStarter[];
 }
 
+// One step in the shape of a persona's job (manifest `checkpoints:`). `evidence` names the
+// tools whose use means the step has happened — that is how the rail knows where a run is
+// without the model having to narrate it.
+export interface PersonaCheckpoint {
+  id: string;
+  label: string;
+  evidence: string[];
+}
+
+// An advisory per-run ceiling on one kind of tool call (manifest `budgets:`). Counted
+// client-side against the session's tool calls; nothing blocks on it.
+export interface PersonaBudget {
+  id: string;
+  label: string;
+  limit: number;
+  tools: string[];
+}
+
 export interface Persona {
   id: string;
   name: string;
@@ -877,6 +895,8 @@ export interface Persona {
   tools: string[];
   accent?: string; // a curated accent name (see personaStyle.ts); absent → derived from the id
   intro?: PersonaIntro | null; // declared intro; absent → family defaults
+  checkpoints?: PersonaCheckpoint[]; // declared job shape; absent → family defaults
+  budgets?: PersonaBudget[]; // declared per-run ceilings; absent → none shown
   enabled: boolean;
   surfaced: boolean;
   default: boolean;
