@@ -213,7 +213,7 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "gcal_create_event",
         "Create event",
         "write",
-        "Create a Google Calendar event.",
+        "Create a Google Calendar event (optional indefinite or bounded recurrence).",
     ),
     ConnectorToolDef(
         "google_calendar",
@@ -256,7 +256,7 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "outlook_create_event",
         "Create event",
         "write",
-        "Create an Outlook calendar event.",
+        "Create an Outlook calendar event (optional indefinite or bounded recurrence).",
     ),
     ConnectorToolDef(
         "outlook",

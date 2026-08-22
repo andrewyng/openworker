@@ -21,6 +21,12 @@ import aisuite as ai
 from ..secrets import SecretStore
 from ..web.guard import get_checked
 from .browser_automation import make_browser_automation_tools
+from .calendar_recurrence import (
+    RECURRENCE_PROPS,
+    gcal_recurrence,
+    outlook_recurrence,
+    parse_recurrence,
+)
 from .email_tools import make_email_tools
 from .tool_defs import approval_for_tool, connector_for_tool
 
@@ -1167,17 +1173,42 @@ def make_integration_tools(
         calendar_id: str = "primary",
         timezone: str = "UTC",
         description: str = "",
+        freq: str = "",
+        interval: int = 1,
+        by_day: str = "",
+        until: str = "",
+        count: Optional[int] = None,
         account: str = "",
     ) -> dict[str, Any]:
         email, profile, err = _gcal_profile(secrets, account)
         if err:
             return err
+        spec, rec_err = parse_recurrence(
+            freq=freq,
+            interval=interval,
+            by_day=by_day,
+            until=until,
+            count=count,
+            start=start,
+        )
+        if rec_err:
+            return rec_err
         payload = {
             "summary": summary,
             "description": description,
             "start": {"dateTime": start, "timeZone": timezone},
             "end": {"dateTime": end, "timeZone": timezone},
         }
+        if spec:
+            # IANA timeZone is required for recurrence expansion / DST.
+            if not (timezone or "").strip():
+                return {
+                    "error": "timezone (IANA name) is required for recurring events"
+                }
+            try:
+                payload["recurrence"] = gcal_recurrence(spec, timezone)
+            except ValueError as exc:
+                return {"error": str(exc)}
         return _gcal_result(
             email,
             _request(
@@ -1194,14 +1225,25 @@ def make_integration_tools(
             gcal_create_event,
             _schema(
                 "gcal_create_event",
-                "Create a Google Calendar event. Requires user approval.",
+                "Create a Google Calendar event. Optional freq (daily/weekly/"
+                "monthly/yearly) makes a series; omit until and count for "
+                "indefinite recurrence. Use an IANA timezone for series. "
+                "Returns the series master id when recurring. Requires user "
+                "approval.",
                 {
                     "summary": {"type": "string"},
                     "start": {"type": "string"},
                     "end": {"type": "string"},
                     "calendar_id": {"type": "string"},
-                    "timezone": {"type": "string"},
+                    "timezone": {
+                        "type": "string",
+                        "description": (
+                            "IANA time zone (e.g. America/Los_Angeles). "
+                            "Required for correct recurring expansion."
+                        ),
+                    },
                     "description": {"type": "string"},
+                    **RECURRENCE_PROPS,
                     "account": _CAL_ACCOUNT_PROP,
                 },
                 ["summary", "start", "end"],
@@ -1448,6 +1490,11 @@ def make_integration_tools(
         attendees: str = "",
         location: str = "",
         teams_meeting: bool = False,
+        freq: str = "",
+        interval: int = 1,
+        by_day: str = "",
+        until: str = "",
+        count: Optional[int] = None,
         account: str = "",
     ) -> dict[str, Any]:
         aid, profile, err = _account_profile(
@@ -1455,12 +1502,32 @@ def make_integration_tools(
         )
         if err:
             return err
+        spec, rec_err = parse_recurrence(
+            freq=freq,
+            interval=interval,
+            by_day=by_day,
+            until=until,
+            count=count,
+            start=start,
+        )
+        if rec_err:
+            return rec_err
         payload: dict[str, Any] = {
             "subject": subject,
             "body": {"contentType": "Text", "content": body},
             "start": {"dateTime": start, "timeZone": timezone},
             "end": {"dateTime": end, "timeZone": timezone},
         }
+        if spec:
+            if not (timezone or "").strip():
+                return {
+                    "error": "timezone (IANA or Windows name) is required "
+                    "for recurring events"
+                }
+            try:
+                payload["recurrence"] = outlook_recurrence(spec, start, timezone)
+            except ValueError as exc:
+                return {"error": str(exc)}
         if attendees:
             payload["attendees"] = [
                 {"emailAddress": {"address": a.strip()}, "type": "required"}
@@ -1490,16 +1557,26 @@ def make_integration_tools(
                 "outlook_create_event",
                 "Create an Outlook calendar event; invites go to attendees "
                 "(comma-separated emails). teams_meeting adds a Teams link. "
-                "Requires user approval.",
+                "Optional freq (daily/weekly/monthly/yearly) makes a series; "
+                "omit until and count for indefinite recurrence. Returns the "
+                "series master id when recurring. Requires user approval.",
                 {
                     "subject": {"type": "string"},
                     "start": {"type": "string"},
                     "end": {"type": "string"},
-                    "timezone": {"type": "string"},
+                    "timezone": {
+                        "type": "string",
+                        "description": (
+                            "Time zone for the event (e.g. Pacific Standard "
+                            "Time or America/Los_Angeles). Required for "
+                            "correct recurring expansion."
+                        ),
+                    },
                     "body": {"type": "string"},
                     "attendees": {"type": "string"},
                     "location": {"type": "string"},
                     "teams_meeting": {"type": "boolean"},
+                    **RECURRENCE_PROPS,
                     "account": _GEN_ACCOUNT_PROP,
                 },
                 ["subject", "start", "end"],
