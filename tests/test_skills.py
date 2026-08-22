@@ -102,3 +102,35 @@ def test_build_engine_code_has_agents_md_and_skills(tmp_path):
         assert engine.agent_name == "code"
     finally:
         engine.executor.close()
+
+
+def test_build_engine_injects_wiki_index(tmp_path):
+    (tmp_path / "wiki").mkdir()
+    (tmp_path / "wiki" / "INDEX.md").write_text(
+        "# Home Wiki\n- [[adrian/heart-rate]] — baselines\n"
+    )
+    engine = build_engine(agent=code_agent(), workspace=tmp_path, provider=_Stub())
+    try:
+        sys_msg = engine.messages[0]["content"]
+        assert "knowledge wiki" in sys_msg
+        assert "[[adrian/heart-rate]]" in sys_msg
+        assert "revise that page in place" in sys_msg
+    finally:
+        engine.executor.close()
+
+
+def test_no_wiki_no_injection(tmp_path):
+    engine = build_engine(agent=code_agent(), workspace=tmp_path, provider=_Stub())
+    try:
+        assert "knowledge wiki" not in engine.messages[0]["content"]
+    finally:
+        engine.executor.close()
+
+
+def test_wiki_index_truncated_when_huge(tmp_path):
+    (tmp_path / "wiki").mkdir()
+    (tmp_path / "wiki" / "INDEX.md").write_text("x" * 10_000)
+    from coworker.project import load_wiki_index
+
+    block = load_wiki_index(tmp_path)
+    assert "index truncated" in block and len(block) < 7_000

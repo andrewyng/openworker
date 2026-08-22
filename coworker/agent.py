@@ -32,7 +32,7 @@ from .memory import (
     render_memory_block,
 )
 from .permissions import Mode, PermissionEngine
-from .project import load_agents_md
+from .project import load_agents_md, load_wiki_index
 from .roots import RootDir, normalize_roots, render_context
 from .providers import ProviderClient, ProviderRouter
 from .overrides import RiskOverrideStore
@@ -346,6 +346,9 @@ def build_engine(
         conventions = load_agents_md(ws)
         if conventions:
             instructions = f"{instructions}\n\n{conventions}"
+        wiki = load_wiki_index(ws)
+        if wiki:
+            instructions = f"{instructions}\n\n{wiki}"
 
     # The user's own standing instructions, read once here: like the memories below,
     # they're session-stable knowledge. Edits apply to NEW conversations (the Settings
