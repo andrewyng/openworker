@@ -260,6 +260,10 @@ async def test_ui_refresh_cross_cutting_e2e(fake_slack, tmp_path, monkeypatch):
         assert mgr.inbox.get(item_id).state == "resolved"
 
         # -- Step 4: mute Slack for the session -> a further post does NOT wake it, still buffered -
+        # The turn's mark_idle fired an auto-title completion (fire-and-forget, on a worker
+        # thread); let it settle so its provider call can't land between the snapshot below
+        # and the "provider not re-invoked" assertion.
+        assert await _wait_until(lambda: SID not in mgr._autotitle_inflight)
         msgcount_before = len(mgr.session_messages(SID))
         calls_before = len(provider.calls)
         resp = client.post(
