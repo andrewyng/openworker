@@ -891,7 +891,9 @@ export interface Persona {
   needs_workspace: boolean;
   builtin: boolean;
   family: string;
-  workspace: string; // "git" | "project" | "deliverable" | "none" — drives project-scoping
+  workspace: string; // "git" | "project" | "deliverable" | "none" (legacy; family superseded it)
+  // Sessions belong to a folder the user picks, and group under it in the sidebar.
+  projects?: boolean;
   tools: string[];
   accent?: string; // a curated accent name (see personaStyle.ts); absent → derived from the id
   intro?: PersonaIntro | null; // declared intro; absent → family defaults

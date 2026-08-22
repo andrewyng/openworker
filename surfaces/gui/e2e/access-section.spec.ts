@@ -22,7 +22,7 @@ test("no topbar opener; the Access header IS the ambient glance; expanding edits
   // The trust surface is ambient: the collapsed header always shows the summary — and no
   // nudge text ever renders at rest (§23's rule carried over).
   const section = page.getByTestId("access-section");
-  await expect(section.getByTestId("access-summary")).toHaveText("Slack, GitHub · 1 folder");
+  await expect(section.getByTestId("access-summary")).toHaveText("Slack, GitHub · launch-note");
   await expect(section.getByText(/recommended/i)).toHaveCount(0);
 
   // Expand → Sources (per-session toggles), Recommended (with its reason), Folders — all
@@ -32,7 +32,7 @@ test("no topbar opener; the Access header IS the ambient glance; expanding edits
   await expect(body.getByText("Sources")).toBeVisible();
   await expect(body.getByText("Slack", { exact: true })).toBeVisible();
   await expect(body.getByText("email context for morning summaries")).toBeVisible();
-  await expect(body.getByTestId("drawer-directories").getByText("Temporary space")).toBeVisible();
+  await expect(body.getByTestId("drawer-directories").locator(".root-label")).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
   // Channels is a chat capability, not a two_way one: Slack gets the drill-down, GitHub
@@ -94,5 +94,5 @@ test("per-session mute round-trips; the summary follows", async ({ page }) => {
   // Muting Slack for this session drops it from the live summary (the fixture flips
   // enabled on POST and the section reloads).
   await body.getByTitle("Enabled for this session — tap to mute here").nth(1).click();
-  await expect(section.getByTestId("access-summary")).toHaveText("GitHub · 1 folder");
+  await expect(section.getByTestId("access-summary")).toHaveText("GitHub · launch-note");
 });

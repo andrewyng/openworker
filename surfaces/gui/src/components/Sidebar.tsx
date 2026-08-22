@@ -49,6 +49,10 @@ const SURFACES: Surface[] = [
   { key: "code", label: "Code", icon: "code", rawIcon: "code", family: "code", accent: accentFor({ id: "code" }), cls: "ico-code" },
 ];
 
+// The group key for sessions with no folder. Empty string is what the session record actually
+// carries, so it doubles as the lookup into byProject.
+const NO_PROJECT = "";
+
 const surfaceFromPersona = (p: Persona, accents: Record<string, AccentName>): Surface => ({
   key: p.id,
   label: shortPersonaName(p.name, p.id),
@@ -830,6 +834,12 @@ export function Sidebar(props: Props) {
       projectOrder.push(s.workspace);
     }
   }
+  // Folderless sessions get a home too, listed last. Before every persona could have projects
+  // this never fired — code sessions always had a folder — but a persona that gains project
+  // grouping still owns the sessions it started before the gate existed, and dropping them from
+  // the sidebar would read as data loss. The same rule the persona grouping already states:
+  // every session must have a home.
+  if (mine.some((s) => !s.workspace)) projectOrder.push(NO_PROJECT);
 
   // Surfaced + enabled personas drive the surface list (default persona first); fall back to the
   // static set until loaded. A persona that has live sessions ALWAYS gets a section, surfaced or
@@ -908,15 +918,15 @@ export function Sidebar(props: Props) {
                         (isActive ? "text-ink" : "text-muted hover:text-ink")
                       }
                       onClick={() => setProjToggled((s) => toggleSet(s, proj))}
-                      title={proj}
+                      title={proj || "Sessions that were not started in a project folder"}
                     >
-                      <Icon name="folder" size={15} className="shrink-0" />
+                      <Icon name={proj ? "folder" : "chat"} size={15} className="shrink-0" />
                       <span
                         className={
                           "truncate min-w-0 text-[12.5px] " + (isActive ? "font-semibold" : "font-medium")
                         }
                       >
-                        {baseName(proj)}
+                        {proj ? baseName(proj) : "No project"}
                       </span>
                       {/* Disclosure chevron sits AFTER the name (Codex parity), not leading the row. */}
                       <Icon

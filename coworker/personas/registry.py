@@ -52,6 +52,8 @@ class PersonaEntry:
     # can detect project-scoped personas (git/project) uniformly. Manifest-backed personas carry it
     # verbatim; builtins set it at registration to match their family/needs_workspace.
     workspace: str = "deliverable"
+    # Sessions belong to a project folder: gated on choosing one, grouped by it in the sidebar.
+    projects: bool = True
     tools: list[str] = field(default_factory=list)
     default_surfaced: bool = (
         True  # whether it shows in the picker before any user choice
@@ -114,6 +116,7 @@ class PersonaRegistry:
         tools,
         workspace="deliverable",
         default_surfaced=True,
+        projects=True,
     ) -> None:
         self._entries[id] = PersonaEntry(
             id=id,
@@ -124,6 +127,7 @@ class PersonaRegistry:
             builtin=True,
             family=family,
             workspace=workspace,
+            projects=projects,
             tools=list(tools),
             default_surfaced=default_surfaced,
             _builder=builder,
@@ -166,6 +170,7 @@ class PersonaRegistry:
             [],
             workspace="none",
             default_surfaced=False,
+            projects=False,
         )
         # Markdown-backed built-ins (Ops, …) — dogfood the manifest path.
         d = Path(builtin_dir) if builtin_dir else Path(__file__).parent / "builtin"
@@ -190,6 +195,7 @@ class PersonaRegistry:
             builtin=builtin,
             family=m.family,
             workspace=m.workspace,
+            projects=m.has_projects,
             tools=list(m.tools),
             accent=m.accent,
             intro=m.intro,
@@ -300,6 +306,7 @@ class PersonaRegistry:
                 "builtin": e.builtin,
                 "family": e.family,
                 "workspace": e.workspace,
+                "projects": e.projects,
                 "tools": e.tools,
                 "accent": e.accent,
                 # Only a persona that actually declares an intro sends one — an empty block would

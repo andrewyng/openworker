@@ -195,6 +195,12 @@ class PersonaManifest:
     skills: list[str] = field(default_factory=list)
     mcp: list[str] = field(default_factory=list)
     recommends: list[Recommendation] = field(default_factory=list)
+    # Whether this persona's sessions belong to a PROJECT: the user picks a folder before
+    # starting, and the sidebar groups its sessions under that folder. `None` means "derive" —
+    # a persona that needs no workspace can never have projects. Declared separately from
+    # `family` on purpose: family still governs the multi-root engine behaviour that scheduled
+    # runs depend on, and conflating the two would change how automations see their workspace.
+    projects: Optional[bool] = None
     accent: str = ""  # one of VALID_ACCENTS; empty → the GUI derives one from the id
     intro: PersonaIntro = field(default_factory=PersonaIntro)
     checkpoints: list[Checkpoint] = field(default_factory=list)
@@ -207,6 +213,15 @@ class PersonaManifest:
     @property
     def needs_workspace(self) -> bool:
         return self.workspace != "none"
+
+    @property
+    def has_projects(self) -> bool:
+        """Declared value, else: any persona with a workspace groups its sessions by project.
+        A chat-shaped persona opts out with `projects: false` — grouping quick questions by
+        folder is noise, since they all land in whatever directory happened to be current."""
+        if self.projects is not None:
+            return self.projects
+        return self.needs_workspace
 
     def to_agent(self):
         """Materialize the runtime Agent (prompt + catalog-expanded tools + traits)."""
@@ -487,6 +502,12 @@ def parse_manifest(
     tools = _strlist(meta, "tools")
     _validate_tools(persona_id, tools)
 
+    projects = meta.get("projects")
+    if projects is not None and not isinstance(projects, bool):
+        raise ManifestError(
+            f"persona {persona_id!r}: `projects` must be true or false, got {projects!r}"
+        )
+
     accent = str(meta.get("accent", "")).strip().lower()
     if accent and accent not in VALID_ACCENTS:
         raise ManifestError(
@@ -510,6 +531,7 @@ def parse_manifest(
         skills=_strlist(meta, "skills"),
         mcp=_strlist(meta, "mcp"),
         recommends=_recommends(persona_id, meta),
+        projects=projects,
         accent=accent,
         intro=_intro(persona_id, meta),
         checkpoints=_checkpoints(persona_id, meta),

@@ -12,6 +12,14 @@ import { test, expect } from "./fixtures";
 async function startAs(page: import("@playwright/test").Page, persona: RegExp) {
   await page.getByLabel("Choose a persona").click();
   await page.locator(".newsplit-menu").getByRole("button", { name: persona }).click();
+  // A persona that belongs to a project opens the folder gate first, and its overlay swallows
+  // clicks on the session beneath. Choose a folder so the session is actually reachable.
+  const gate = page.locator(".gate-overlay");
+  if (await gate.isVisible().catch(() => false)) {
+    await gate.getByPlaceholder("/path/to/your/project").fill("/tmp/e2e-persona-project");
+    await gate.getByRole("button", { name: "Open", exact: true }).click();
+    await expect(gate).toHaveCount(0);
+  }
 }
 
 test("the session states which persona is answering, and switching changes all of it", async ({

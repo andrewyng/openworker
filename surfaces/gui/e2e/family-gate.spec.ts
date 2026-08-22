@@ -1,10 +1,15 @@
 import { test, expect } from "./fixtures";
 
-// §16 workspace collapse: the persona FAMILY alone decides the workspace behavior.
-//   code      → an explicit project folder, enforced by the FolderGate (no chat-behind-it escape)
-//   knowledge → starts orphan on a transparent scratch dir — never gated
-// (The mock's Ops persona is knowledge-family with zero sessions, so picking it exercises the
-// brand-new-session path, not a resume.)
+// Which personas belong to a PROJECT — a folder the user picks, enforced by the FolderGate, and
+// the grouping the sidebar files their sessions under.
+//
+// §16 (2026-07-03) tied this to family: code gated, knowledge never did. Reversed by owner ask —
+// with several personas installed, all of them except the chat-shaped Fast Chat do work that
+// belongs to a project, and only the code persona had the structure to show it. The persona now
+// DECLARES it (`projects:` in its manifest) instead of it being inferred from family, which also
+// governs unrelated engine behaviour.
+// (The mock's Ops persona has zero sessions, so picking it exercises the brand-new-session path
+// rather than a resume.)
 
 const personaMenu = (page: import("@playwright/test").Page) => page.locator(".newsplit-menu");
 
@@ -13,13 +18,19 @@ async function startAs(page: import("@playwright/test").Page, persona: RegExp) {
   await personaMenu(page).getByRole("button", { name: persona }).click();
 }
 
-test("knowledge persona: new session starts instantly, no folder gate", async ({ page }) => {
+test("a project persona gates, whatever its family", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByPlaceholder(/Ask the coworker/)).toBeVisible();
 
+  // Ops is knowledge-family but declares projects, so it gates exactly like Code does.
   await startAs(page, /Ops/);
+  const gate = page.locator(".gate-overlay");
+  await expect(gate).toBeVisible();
+  await gate.getByPlaceholder("/path/to/your/project").fill("/tmp/e2e-ops-project");
+  await gate.getByRole("button", { name: "Open", exact: true }).click();
+
   await expect(page.locator(".gate-overlay")).toHaveCount(0);
-  // The composer is live — matched by role, not by copy: each persona now writes its own
+  // The composer is live — matched by role, not by copy: each persona writes its own
   // placeholder, so "Ask the coworker" is Coworker's line, not every session's.
   await expect(page.getByRole("textbox")).toBeVisible();
 });

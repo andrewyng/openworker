@@ -1801,7 +1801,9 @@ export function App() {
             projectScoped={isProjectScoped(personaOf(agent))}
             workspace={workspace || undefined}
             branch={branch}
-            scratchPrimary={agent === "cowork"}
+            // "Temporary space" is only honest for a persona that never picks a folder; a
+            // project-scoped one shows the folder's own name.
+            scratchPrimary={!isProjectScoped(activePersona)}
             openAccessKey={accessKey}
             onOpenIntegrations={() => setSurface("integrations")}
           />
