@@ -45,7 +45,7 @@ from .tools.subagent import explorer_tools
 from .web import make_web_fetch_tool, make_web_search_tool
 from .workspace_trust import WorkspaceTrustStore
 from .tools.shell import LocalExecutor
-from .tools.todo import TodoList
+from .tools.todo import TodoList, stale_plan_notice
 
 # Appended each turn while discuss mode is active: enforcement-only read-only, with no
 # pressure toward a plan proposal (that's what distinguishes it from plan mode).
@@ -463,6 +463,12 @@ def build_engine(
                     f'Note: the skill "{name}" has been disabled by the user — stop '
                     "following its instructions from here on."
                 )
+            # Plan staleness (todo.py): the only thing in the loop that ever asks the model to
+            # rewrite a list it has left behind. Per-turn for the same reason plan mode is —
+            # it is about what is true right now, not what the session was told at the start.
+            stale = stale_plan_notice(todo, eng.messages)
+            if stale:
+                parts.append(stale)
         return "\n\n".join(parts)
 
     engine = TurnEngine(
