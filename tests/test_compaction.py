@@ -2,9 +2,11 @@
 extraction, summarizer seam, trim fallback, outbound view. No engine involved."""
 
 import json
+import time
 
 import pytest
 
+from coworker import compaction
 from coworker.compaction import (
     CompactionState,
     DEFAULT_CAP_TOKENS,
@@ -344,3 +346,190 @@ def test_user_messages_capped_across_repeated_compactions():
     assert restored is not None
     assert restored.user_messages_dropped == state.user_messages_dropped
     assert restored.user_messages == state.user_messages
+
+
+# -- attachments --------------------------------------------------------------
+
+
+def _image_turn(chars: int = 1_500_000, text: str = "what's in this screenshot?") -> dict:
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": text},
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64," + "A" * chars},
+            },
+        ],
+    }
+
+
+def _pdf_turn(chars: int = 2_000_000) -> dict:
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "summarize this"},
+            {
+                "type": "file",
+                "file": {
+                    "filename": "report.pdf",
+                    "file_data": "data:application/pdf;base64," + "B" * chars,
+                },
+            },
+        ],
+    }
+
+
+def test_image_part_is_not_charged_its_base64_length():
+    """A data-URL image must not dominate the signal: chars/4 read a 1.5 MB screenshot as
+    ~375k tokens, so a single attachment sat permanently above cap_tokens and re-triggered
+    compaction on every iteration of the turn loop.
+
+    Bracketed on both sides. The upper bound is the defect being fixed; the lower bound
+    guards the inverse defect, an attachment charged ~nothing, which would keep a history
+    that really is over the cap permanently under it. A one-sided `< 5_000` certifies an
+    estimate that collapsed to 26 just as readily as the correct ~1.5k.
+    """
+    msgs = [{"role": "system", "content": "s"}, _image_turn()]
+    est = estimate_tokens(msgs)
+    assert 1_000 < est < 5_000
+    assert not should_compact(est, 200_000)
+
+
+def test_pdf_part_is_not_charged_its_base64_length():
+    msgs = [{"role": "system", "content": "s"}, _pdf_turn()]
+    est = estimate_tokens(msgs)
+    assert 2_000 < est < 10_000  # bracketed both sides; see the image test
+
+
+def test_attachment_estimate_does_not_track_data_url_length():
+    """The property the fix establishes is *independence* from base64 length, so assert it
+    differentially rather than at one sampled size. The range spans what attachments.py
+    actually admits (MAX_IMAGE_CHARS 12 M, MAX_PDF_CHARS 15 M) — a bound checked only at
+    1.5 MB says nothing about the sizes the GUI's own picker allows through.
+    """
+    images = {estimate_tokens([_image_turn(n)]) for n in (100_000, 1_500_000, 12_000_000)}
+    assert len(images) == 1, f"image estimate varied with data-URL length: {sorted(images)}"
+    pdfs = {estimate_tokens([_pdf_turn(n)]) for n in (100_000, 2_000_000, 15_000_000)}
+    assert len(pdfs) == 1, f"file estimate varied with data-URL length: {sorted(pdfs)}"
+
+
+def test_text_alongside_an_attachment_is_still_counted():
+    """Only `image_url` and `file` parts get the flat charge; every other part falls to the
+    `else` branch and must still be measured. A long pasted prompt next to a screenshot is
+    the ordinary case, and charging it zero is the same under-count in a different place.
+    """
+    small = estimate_tokens([_image_turn(text="hi")])
+    large = estimate_tokens([_image_turn(text="x" * 40_000)])
+    assert large - small >= 9_000  # 40k chars / 4, less serialization slack
+
+
+def test_message_keys_outside_content_are_still_counted():
+    """`_message_chars` measures the non-content keys separately once it takes the list
+    branch. `tool_call_id`, `name` and friends are real tokens on the wire."""
+    base = {"role": "user", "content": [{"type": "text", "text": "hi"}]}
+    tagged = {**base, "name": "z" * 4_000}
+    assert estimate_tokens([tagged]) - estimate_tokens([base]) >= 900
+
+
+def test_text_only_estimate_is_unchanged_by_part_handling():
+    """Text-only histories must measure exactly as before — the whole trigger threshold is
+    calibrated against that number."""
+    msgs = convo(turns=6)
+    assert estimate_tokens(msgs) == sum(len(json.dumps(m, default=str)) for m in msgs) // 4
+
+
+def _long_history(turns: int = 300) -> list[dict]:
+    msgs = [{"role": "system", "content": "s"}]
+    for i in range(turns):
+        a = assistant("done " + "z" * 300, tool_calls=[("read_file", {"path": "a.py"})])
+        msgs += [
+            user(f"task {i} " + "x" * 400),
+            a,
+            tool(a["tool_calls"][0]["id"], {"exit_code": 0, "out": "y" * 4000}),
+        ]
+    return msgs
+
+
+def test_boundary_search_measures_each_message_a_bounded_number_of_times(monkeypatch):
+    """The complexity claim, asserted without a clock.
+
+    Measuring each candidate with `estimate_tokens(messages[i:])` re-serialized the whole
+    tail per candidate — ~1 s of blocking CPU on a 1 200-message session, on the turn loop.
+    Counting the per-message measurements separates O(n) from O(n²) exactly, on any
+    machine and under any CI load, where a wall-clock bound only does so probabilistically.
+    """
+    msgs = _long_history()
+    calls = 0
+    real = compaction._message_chars
+
+    def counting(msg):
+        nonlocal calls
+        calls += 1
+        return real(msg)
+
+    monkeypatch.setattr(compaction, "_message_chars", counting)
+    boundary = pick_boundary(msgs, keep_tokens=40_000)
+    assert boundary is not None
+    assert calls <= 3 * len(msgs)  # one backward pass; quadratic ran ~150x this
+
+
+def test_boundary_search_is_linear_in_history_length():
+    """Wall-clock companion to the call-count test above: catches a regression that keeps
+    the call count linear but makes each call expensive."""
+    msgs = _long_history()
+    started = time.perf_counter()
+    boundary = pick_boundary(msgs, keep_tokens=40_000)
+    elapsed = time.perf_counter() - started
+    assert boundary is not None
+    assert estimate_tokens(msgs[boundary:]) <= 40_000
+    assert elapsed < 0.25  # linear lands ~5 ms here; the quadratic version took ~700 ms
+
+
+def test_falls_back_to_the_last_assistant_when_no_candidate_fits():
+    """The `assistants[-1]` fallback, on the one path that reaches it: a history with no
+    user turns at all (the `if users:` block short-circuits every other route there).
+
+    Pins which end of the list the fallback takes. `assistants[0]` would cut at the very
+    front and summarize the whole history; the intent is the opposite — keep as little as
+    possible when even the newest turn will not fit.
+    """
+    msgs = [{"role": "system", "content": "s"}]
+    for i in range(6):
+        a = assistant("step " + "y" * 3000, tool_calls=[("run_shell", {"command": f"c{i}"})])
+        msgs += [a, tool(a["tool_calls"][0]["id"], {"exit_code": 0, "out": "z" * 3000})]
+    _, assistants = compaction._turn_starts(msgs, start=1)
+    assert len(assistants) > 2  # otherwise [-1] and [-2] coincide and the check is inert
+    boundary = pick_boundary(msgs, keep_tokens=10)  # nothing fits in 10 tokens
+    assert boundary == assistants[-1]
+    assert msgs[boundary]["role"] == "assistant"
+
+
+def test_history_that_wholly_fits_is_not_compacted():
+    """`_fit` returning a legitimate index 0 means the entire history fits inside
+    keep_tokens, so there is nothing to summarize. The `or` this replaced coerced that 0 to
+    the `assistants[-1]` fallback and compacted a history of a few dozen tokens.
+    """
+    msgs = [{"role": "assistant", "content": f"a{i}"} for i in range(3)]
+    assert estimate_tokens(msgs) < 100
+    assert pick_boundary(msgs, keep_tokens=10_000) is None
+
+
+# -- what these checks do NOT cover -------------------------------------------
+#
+# * **The absolute accuracy of the flat estimates.** 1_500 / 3_000 are bracketed to an
+#   order of magnitude, not anchored to a provider's published image-token formula. A
+#   systematically wrong-but-plausible constant (say 600, or 4_000) passes everything here.
+#   Anchoring to the documented formula for the vision models actually in use would turn
+#   this from a range check into a real oracle.
+# * **Multiple attachments in one message.** Every case above carries a single image or
+#   file; N-attachment accumulation is unexercised.
+# * **Providers that report real usage.** estimate_tokens is the fallback signal only, so
+#   none of this constrains behaviour on providers that meter properly.
+# * **Boundary quality, as opposed to boundary cost.** The complexity checks assert the
+#   search is linear and that the kept tail fits; they do not assert the boundary chosen is
+#   the *best* one, and the earliest-first preference is covered only by the pre-existing
+#   test_boundary_prefers_earliest_user_turn_that_fits.
+# * **The exact-threshold boundary.** Nothing pins `suffix[i] // 4 <= keep_tokens` at
+#   equality, so an off-by-one to `<` survives; every case here sits clear of the threshold.
+#   Known from a mutation pass rather than assumed.
