@@ -2760,7 +2760,9 @@ class SessionManager:
         for tool in task.name_allowed_tools():
             engine.permissions.allow_tool_for_session(tool)
 
-    def _build_task_engine(self, task, *, session_id: str) -> TurnEngine:
+    def _build_task_engine(
+        self, task, *, session_id: str, extra_tools: Optional[list[Any]] = None
+    ) -> TurnEngine:
         ag = get_agent(task.agent)
         Path(task.workspace).mkdir(parents=True, exist_ok=True)
         engine = build_engine(
@@ -2790,6 +2792,14 @@ class SessionManager:
             skill_filter=lambda sid=session_id, w=task.workspace: (
                 self.effective_skill_names(sid, w)
             ),
+            # MCP tools, scoped by the task's persona. A scheduled run never had these:
+            # `prepare_mcp_tools` was only ever called from the WebSocket handler, so an
+            # automation whose instructions say "use arxiv-search_papers" or
+            # "qdrant-qdrant-store" was naming tools it could not see, and silently fell
+            # back to shell and raw HTTP — the 2026-08-20 corpus run spent 74 minutes
+            # hand-rolling curl against Qdrant, and the spec-drift run logged
+            # "unknown tool: directory_tree".
+            extra_tools=extra_tools,
         )
         self._seed_task_permissions(engine, task)
         return engine
@@ -3316,7 +3326,15 @@ class SessionManager:
         # Each run is a real, persisted conversation thread: it runs the instructions under its
         # own session id, then saves the transcript. The user can reopen that session and ask a
         # follow-up — the scheduled agent is no longer fire-and-forget.
-        engine = self._build_task_engine(task, session_id=run.session_id)
+        # Persona-scoped MCP surface for this run (see _build_task_engine). Built before
+        # the engine so `prepare_mcp_tools` does not short-circuit on an already-registered
+        # engine id.
+        mcp_tools = await self.prepare_mcp_tools(
+            run.session_id, workspace=task.workspace, agent=task.agent
+        )
+        engine = self._build_task_engine(
+            task, session_id=run.session_id, extra_tools=mcp_tools
+        )
         # Register the live engine up-front: a parked approval persists the session
         # mid-run (durable suspend), and resolving from the Inbox must find this engine.
         self._engines[run.session_id] = engine
