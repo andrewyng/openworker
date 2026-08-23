@@ -888,8 +888,11 @@ mod tests {
     };
 
     use super::{
-        resample_mono, transcribe, write_verification_marker, Dictation, DEFAULT_MODEL_BYTES,
+        resample_mono, write_verification_marker, Dictation, DEFAULT_MODEL_BYTES,
     };
+
+    #[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+    use super::transcribe;
 
     #[cfg(feature = "whisper")]
     use super::DEFAULT_MODEL_FILE;
