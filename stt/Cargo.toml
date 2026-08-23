@@ -15,7 +15,7 @@ ureq = "2.12"
 # APIs. We can add an opt-in Metal build once the packaged app has a verified
 # minimum macOS target.
 whisper-rs = { version = "0.16", optional = true }
-moonshine-rs = { version = "0.1.2", optional = true }
+moonshine-rs = { version = "0.2.2", optional = true }
 
 [features]
 default = ["whisper"]
