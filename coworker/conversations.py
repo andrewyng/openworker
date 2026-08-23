@@ -14,6 +14,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -81,6 +82,17 @@ class ConversationStore:
             );
             CREATE TABLE IF NOT EXISTS workspaces (
                 path TEXT PRIMARY KEY, last_used TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            -- Turns that were in flight. Written when a session claims a turn, deleted when
+            -- it finishes — so a row that outlives its process is, by construction, a run
+            -- that died with it. Its own table rather than a `sessions` column: a brand-new
+            -- session has no row there until its first save, which is exactly the window a
+            -- restart is most likely to leave orphaned.
+            CREATE TABLE IF NOT EXISTS running_turns (
+                session_id TEXT PRIMARY KEY,
+                pid INTEGER,
+                started_at REAL,
+                label TEXT
             );
             """)
         for ddl in (
@@ -253,6 +265,48 @@ class ConversationStore:
             origin=row["origin"],
             origin_label=row["origin_label"],
         )
+
+    # -- in-flight turns --------------------------------------------------------
+    def mark_running(self, session_id: str, *, pid: int, label: str = "") -> None:
+        """Record that a turn is in flight, durably. The in-memory busy set cannot answer the
+        question that matters after a crash — *was* this session working when we died?"""
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO running_turns (session_id, pid, started_at, label)"
+                " VALUES (?, ?, ?, ?)",
+                (session_id, int(pid), time.time(), label or ""),
+            )
+            self._conn.commit()
+
+    def clear_running(self, session_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM running_turns WHERE session_id = ?", (session_id,)
+            )
+            self._conn.commit()
+
+    def running_turns(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, pid, started_at, label FROM running_turns"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def append_messages(self, session_id: str, messages: list[dict]) -> int:
+        """Append to a stored thread with no engine in memory — how a dead run gets its
+        closing marker. Returns the thread's new length."""
+        if not messages:
+            return self._count(session_id)
+        with self._lock:
+            self._append(session_id, messages)
+            total = self._count(session_id)
+            self._conn.execute(
+                "UPDATE sessions SET n_msgs = ?, updated_at = CURRENT_TIMESTAMP"
+                " WHERE session_id = ?",
+                (total, session_id),
+            )
+            self._conn.commit()
+        return total
 
     def set_extra_roots(self, session_id: str, extra_roots: list[dict]) -> None:
         """Persist just the session's added folders, independent of its message log — used when
