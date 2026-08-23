@@ -39,7 +39,7 @@ from ..unattended import UnattendedRegistry
 from ..audit import AuditStore
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
-from ..engine import ApprovalOutcome, Approver, TurnEngine
+from ..engine import ApprovalOutcome, Approver, TurnEngine, closing_messages
 from ..roots import RootDir
 from ..workspace_trust import WorkspaceTrustStore
 from ..automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
@@ -2920,16 +2920,35 @@ class SessionManager:
 
     def mark_running(self, session_id: str) -> None:
         self._running_sessions.add(session_id)
+        self._mark_running_durable(session_id)
 
     def try_mark_running(self, session_id: str) -> bool:
         """Atomically claim an idle session for one turn on the server event loop."""
         if session_id in self._running_sessions:
             return False
         self._running_sessions.add(session_id)
+        self._mark_running_durable(session_id)
         return True
+
+    def _mark_running_durable(self, session_id: str) -> None:
+        """The busy set, written down. It is the only thing that can tell the NEXT process
+        that this turn never finished — `_running_sessions` dies with this one."""
+        try:
+            engine = self._engines.get(session_id)
+            self.session_store.mark_running(
+                session_id,
+                pid=os.getpid(),
+                label=getattr(engine, "agent_name", "") if engine else "",
+            )
+        except Exception:  # bookkeeping must never take a turn down with it
+            pass
 
     def mark_idle(self, session_id: str) -> None:
         self._running_sessions.discard(session_id)
+        try:
+            self.session_store.clear_running(session_id)
+        except Exception:
+            pass
         # Every turn path (WS, background delivery, durable resume) marks idle when it
         # finishes — the one shared post-turn moment, so auto-titling hooks in here and
         # can never add latency to the response itself.
@@ -2937,6 +2956,104 @@ class SessionManager:
 
     def is_running(self, session_id: str) -> bool:
         return session_id in self._running_sessions
+
+    # -- runs that died with their process ----------------------------------------
+    _RESTART_REASON = (
+        "The agent server restarted while this run was working, so the step in progress "
+        "was lost. Nothing else is coming — resume to pick it up from here."
+    )
+
+    def reap_interrupted_runs(self) -> int:
+        """Close out every turn that was in flight when a previous process ended.
+
+        Called once at startup, before anything can serve. A row in `running_turns` can only
+        exist here if the process that wrote it is gone, so each one is a run that stopped
+        without saying so: the transcript ends mid-step and reads as a decision the agent
+        made. This is what writes the marker it never got to write — and, for a scheduled
+        run, what stops the row sitting at "running" forever.
+        """
+        reaped = 0
+        for row in self.session_store.running_turns():
+            session_id = str(row.get("session_id") or "")
+            if not session_id:
+                continue
+            try:
+                if self._close_out_dead_run(session_id):
+                    reaped += 1
+            except Exception:
+                logger.exception("could not close out interrupted run %s", session_id)
+            finally:
+                self.session_store.clear_running(session_id)
+        if reaped:
+            logger.info("marked %d interrupted run(s) from a previous process", reaped)
+            print(f"[coworker] closed out {reaped} run(s) interrupted by a restart")
+        return reaped
+
+    def _close_out_dead_run(self, session_id: str) -> bool:
+        record = self.session_store.load(session_id)
+        if record is None:  # claimed a turn but never persisted a message — nothing to mark
+            return False
+        closing = closing_messages(record.messages, self._RESTART_REASON)
+        if not closing:
+            return False
+        # Only ever called with no live engine for this session (startup, or a busy session
+        # whose engine was evicted) — so appending to the store IS the whole update.
+        self.session_store.append_messages(session_id, closing)
+        self._close_out_dead_task_run(session_id)
+        return True
+
+    def _close_out_dead_task_run(self, session_id: str) -> None:
+        """The automation half: a scheduled run whose process died keeps `status: running`,
+        which every surface reads as "still working" — the Scheduled badge, the MCP health
+        report, and the freshness exporter all count it as in-flight forever."""
+        if not session_id.startswith("__run__"):
+            return
+        run = self.task_store.find_run(session_id[len("__run__") :])
+        if run is None or run.status != "running":
+            return
+        run.status = "incomplete"  # not "error": nothing threw, it just never finished
+        run.error = "interrupted — the agent server restarted mid-run"
+        run.finished_at = _epoch()
+        self.task_store.add_run(run)
+
+    async def interrupt_running_sessions(self) -> int:
+        """Cut this process's in-flight turns short, on the way down.
+
+        Deliberately minimal: the engine is TOLD the reason and asked to stop, and then it is
+        left to write its own marker — one writer, so the transcript cannot end up with the
+        partial answer sandwiched between two of them. What guarantees the marker exists at
+        all is the durable row, which is left in place on purpose: if the loop never gets
+        another slice of the event loop before the process dies, the next boot's reap is what
+        closes the thread. A session with no live engine is closed out from the store here,
+        since nothing else will.
+        """
+        stopped = 0
+        for session_id in list(self._running_sessions):
+            engine = self._engines.get(session_id)
+            try:
+                if engine is not None:
+                    engine.mark_shutting_down(self._RESTART_REASON)
+                    engine.request_interrupt()  # may be blocked in the provider; best effort
+                else:
+                    self._close_out_dead_run(session_id)
+                self._close_out_dead_task_run(session_id)
+                stopped += 1
+            except Exception:
+                logger.exception("could not stop running session %s", session_id)
+            try:
+                # Usually too late — the server closes its sockets before shutdown hooks run —
+                # but free when it isn't, and the GUI treats a socket that dies mid-turn the
+                # same way regardless.
+                await self.broadcast_session(
+                    session_id,
+                    {
+                        "type": "run_interrupted",
+                        "data": {"reason": self._RESTART_REASON},
+                    },
+                )
+            except Exception:
+                pass
+        return stopped
 
     async def _resume_wake(self, wake) -> None:
         await self.deliver_to_session(wake.session_id, self._wake_message(wake))

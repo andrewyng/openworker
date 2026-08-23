@@ -167,6 +167,14 @@ from .manager import SessionManager
 def create_app(manager: SessionManager) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        # Before anything is served: any turn still marked in-flight belongs to a process
+        # that is gone. Mark those threads, or they read as runs that stopped by choice.
+        try:
+            manager.reap_interrupted_runs()
+        except Exception:  # a bad row must not stop the server from starting
+            import traceback
+
+            traceback.print_exc()
         try:
             live = (
                 await manager.start_gateway()
@@ -178,6 +186,15 @@ def create_app(manager: SessionManager) -> FastAPI:
 
             traceback.print_exc()
         yield
+        # On the way down, close out our OWN in-flight turns while their sockets are still
+        # open — a restart is the common case, but this is also the last chance if the
+        # server never comes back.
+        try:
+            await manager.interrupt_running_sessions()
+        except Exception:
+            import traceback
+
+            traceback.print_exc()
         await manager.aclose()  # stop gateway + close MCP connections on shutdown
 
     app = FastAPI(title="coworker", version="0.0.0", lifespan=lifespan)

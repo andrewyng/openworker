@@ -8,12 +8,11 @@ tell it apart from an agent that decided to stop, and nothing to resume from.
 
 import asyncio
 
+from coworker.automation.models import TaskRun
 from coworker.conversations import ConversationStore
 from coworker.engine import closing_messages
 from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
-
-
-# -- the helper ----------------------------------------------------------------
+from coworker.server.manager import SessionManager
 
 
 class ScriptedProvider(ProviderClient):
@@ -25,6 +24,10 @@ class ScriptedProvider(ProviderClient):
 
     def capabilities(self, model):
         return ModelCapabilities()
+
+
+def _mgr(tmp_path, turns=()):
+    return SessionManager(workspace=tmp_path, provider=ScriptedProvider(list(turns)))
 
 
 def _kinds(messages):
@@ -82,6 +85,161 @@ def test_the_store_remembers_which_turns_were_in_flight(tmp_path):
     assert row["session_id"] == "s1" and row["pid"] == 4242 and row["started_at"] > 0
     store.clear_running("s1")
     assert store.running_turns() == []
+
+
+def test_marking_a_turn_running_survives_the_manager_that_did_it(tmp_path):
+    mgr = _mgr(tmp_path)
+    mgr.get_engine("s-live", agent="cowork", workspace=str(tmp_path))
+    assert mgr.try_mark_running("s-live")
+    assert [r["session_id"] for r in mgr.session_store.running_turns()] == ["s-live"]
+    mgr.mark_idle("s-live")
+    assert mgr.session_store.running_turns() == []
+
+
+# -- the reap --------------------------------------------------------------------------
+
+
+def _dead_session(tmp_path, sid="dead", messages=None):
+    """A session that was mid-turn when its process vanished: thread on disk, marker set,
+    no live engine — exactly what the next process finds."""
+    mgr = _mgr(tmp_path)
+    engine = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+    engine.messages.extend(
+        messages
+        if messages is not None
+        else [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "tool_calls": [{"id": "t1", "function": {"name": "read_file"}}]},
+            {"role": "tool", "tool_call_id": "t1", "content": "{}"},
+        ]
+    )
+    mgr.save(sid, engine)
+    mgr.session_store.mark_running(sid, pid=999999, label="cowork")
+    return mgr
+
+
+def test_startup_marks_a_run_that_died_with_its_process(tmp_path):
+    mgr = _dead_session(tmp_path)
+    mgr._engines.clear()  # a fresh process has no engines
+
+    assert mgr.reap_interrupted_runs() == 1
+
+    tail = mgr.session_store.load("dead").messages[-1]
+    assert tail["role"] == "notice" and tail["kind"] == "server_restart"
+    assert "restarted" in tail["text"]
+    assert mgr.session_store.running_turns() == []  # and the marker is spent
+
+
+def test_a_session_that_finished_normally_is_not_marked(tmp_path):
+    mgr = _dead_session(
+        tmp_path,
+        messages=[{"role": "user", "content": "go"}, {"role": "assistant", "content": "done"}],
+    )
+    mgr._engines.clear()
+    assert mgr.reap_interrupted_runs() == 0
+    assert mgr.session_store.load("dead").messages[-1]["role"] == "assistant"
+    assert mgr.session_store.running_turns() == []
+
+
+def test_reaping_twice_marks_once(tmp_path):
+    mgr = _dead_session(tmp_path)
+    mgr._engines.clear()
+    mgr.reap_interrupted_runs()
+    mgr.session_store.mark_running("dead", pid=999999)  # a second crash, nothing new to close
+    assert mgr.reap_interrupted_runs() == 0
+    kinds = [m.get("kind") for m in mgr.session_store.load("dead").messages if m["role"] == "notice"]
+    assert kinds == ["server_restart"]
+
+
+def test_a_scheduled_run_does_not_sit_at_running_forever(tmp_path):
+    mgr = _dead_session(tmp_path, sid="__run__r1")
+    run = TaskRun(task_id="task-1", run_id="r1")
+    assert run.status == "running"
+    mgr.task_store.add_run(run)
+    mgr._engines.clear()
+
+    mgr.reap_interrupted_runs()
+
+    after = mgr.task_store.find_run("r1")
+    # Every surface — the Scheduled badge, the MCP health report, the freshness exporter —
+    # reads "running" as still working.
+    assert after.status == "incomplete"
+    assert "restarted" in (after.error or "") and after.finished_at
+
+
+def test_a_broken_row_does_not_stop_the_others(tmp_path):
+    mgr = _dead_session(tmp_path)
+    mgr._engines.clear()
+    mgr.session_store.mark_running("never-existed", pid=999999)
+    assert mgr.reap_interrupted_runs() == 1  # the ghost row is skipped, the real one is closed
+    assert mgr.session_store.running_turns() == []
+
+
+# -- shutdown --------------------------------------------------------------------------
+
+
+def test_shutdown_tells_the_engine_why_and_leaves_the_marker_for_the_next_boot(tmp_path):
+    """One writer. The engine's own cancel path writes the marker (so a partial answer lands
+    before it, not between two of them); shutdown's job is to say WHY and to leave the durable
+    row alone, because a loop that never runs again can only be cleaned up next boot."""
+    mgr = _mgr(tmp_path)
+    sid = "live"
+    engine = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+    engine.messages.extend(
+        [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "tool_calls": [{"id": "t1", "function": {"name": "shell"}}]},
+        ]
+    )
+    mgr.mark_running(sid)
+    seen = []
+
+    async def collect(payload):
+        seen.append(payload)
+
+    mgr.register_session_client(sid, collect)
+
+    assert asyncio.run(mgr.interrupt_running_sessions()) == 1
+
+    assert engine._shutdown_reason and "restarted" in engine._shutdown_reason
+    assert [p["type"] for p in seen] == ["run_interrupted"]
+    # The row survives us: it is the only thing that can tell the next process this turn
+    # never finished.
+    assert [r["session_id"] for r in mgr.session_store.running_turns()] == [sid]
+
+
+def test_a_turn_the_dying_loop_never_closed_is_closed_next_boot(tmp_path):
+    """The two halves together, in the order the real incident happened: the server goes down
+    mid-turn, the loop never gets another slice, and the next process finds the thread open."""
+    mgr = _mgr(tmp_path)
+    sid = "live"
+    engine = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+    engine.messages.extend([{"role": "user", "content": "go"}])
+    mgr.save(sid, engine)
+    mgr.mark_running(sid)
+    asyncio.run(mgr.interrupt_running_sessions())  # …and the process dies here
+
+    mgr._engines.clear()  # next boot
+    assert mgr.reap_interrupted_runs() == 1
+    kinds = [m.get("kind") for m in mgr.session_store.load(sid).messages if m["role"] == "notice"]
+    assert kinds == ["server_restart"]
+
+
+def test_a_running_session_with_no_engine_is_closed_out_at_shutdown(tmp_path):
+    mgr = _dead_session(tmp_path)  # thread + durable marker on disk
+    mgr._engines.clear()
+    mgr._running_sessions.add("dead")
+    asyncio.run(mgr.interrupt_running_sessions())
+    assert mgr.session_store.load("dead").messages[-1]["kind"] == "server_restart"
+
+
+def test_shutdown_does_not_mark_a_session_that_is_merely_idle(tmp_path):
+    mgr = _mgr(tmp_path)
+    engine = mgr.get_engine("idle", agent="cowork", workspace=str(tmp_path))
+    engine.messages.extend([{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hey"}])
+    mgr.save("idle", engine)
+    assert asyncio.run(mgr.interrupt_running_sessions()) == 0
+    assert mgr.session_store.load("idle").messages[-1]["role"] == "assistant"
 
 
 # -- the shutdown race -----------------------------------------------------------------
@@ -161,3 +319,24 @@ def test_a_user_stop_is_still_a_user_stop(tmp_path):
     engine.messages.append({"role": "user", "content": "go"})
     engine._append_interrupted()
     assert engine.messages[-1]["kind"] == "interrupted"
+
+
+# -- resume ----------------------------------------------------------------------------
+
+
+def test_the_user_can_resume_a_run_the_restart_cut_off(tmp_path):
+    mgr = _dead_session(tmp_path)
+    mgr._engines.clear()
+    mgr.reap_interrupted_runs()
+
+    # Same path the Resume button takes: rebuild from the persisted thread and retry.
+    mgr.provider = ScriptedProvider([AssistantTurn(text="picked it back up", finish_reason="stop")])
+    engine = mgr.get_engine("dead", agent="cowork", workspace=str(tmp_path))
+    engine.provider = mgr.provider
+
+    async def scenario():
+        async for _ in engine.retry():
+            pass
+
+    asyncio.run(scenario())
+    assert any(m.get("content") == "picked it back up" for m in engine.messages)
