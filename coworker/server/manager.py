@@ -2943,12 +2943,15 @@ class SessionManager:
         except Exception:  # bookkeeping must never take a turn down with it
             pass
 
-    def mark_idle(self, session_id: str) -> None:
-        self._running_sessions.discard(session_id)
+    def _clear_running_durable(self, session_id: str) -> None:
         try:
             self.session_store.clear_running(session_id)
         except Exception:
             pass
+
+    def mark_idle(self, session_id: str) -> None:
+        self._running_sessions.discard(session_id)
+        self._clear_running_durable(session_id)
         # Every turn path (WS, background delivery, durable resume) marks idle when it
         # finishes — the one shared post-turn moment, so auto-titling hooks in here and
         # can never add latency to the response itself.
@@ -3317,6 +3320,12 @@ class SessionManager:
         # Register the live engine up-front: a parked approval persists the session
         # mid-run (durable suspend), and resolving from the Inbox must find this engine.
         self._engines[run.session_id] = engine
+        # Claim the turn durably, so a restart mid-run is recoverable (reap_interrupted_runs).
+        # The durable row only — deliberately NOT mark_running(): that also joins the
+        # in-memory busy set, which gates how an Inbox resolution resumes a parked approval,
+        # and its mark_idle() counterpart fires an auto-title LLM call. A scheduled run wants
+        # neither; it wants the row that says "this was working when we died".
+        self._mark_running_durable(run.session_id)
         # The first turn is the task itself. The framing matters: instructions often restate the
         # schedule ("every day at 5:32pm…"), so make explicit that the schedule already fired and
         # the job now is to execute, not to (re)schedule.
@@ -3357,6 +3366,12 @@ class SessionManager:
             run.status, run.error = "error", str(exc)
         finally:
             run.finished_at = _epoch()
+            if run.status == "running":
+                # Left abnormally — cancelled on shutdown, or a BaseException that `except
+                # Exception` above does not catch. Nothing else will ever move this row off
+                # "running", and every surface reads that as still working.
+                run.status = "incomplete"
+                run.error = run.error or "interrupted — the run did not finish"
             # Persist the run as a continuable session + keep the live engine for an immediate
             # follow-up; record the run (now carrying its session_id).
             try:
@@ -3364,6 +3379,7 @@ class SessionManager:
                 self._engines[run.session_id] = engine
             except Exception:
                 pass
+            self._clear_running_durable(run.session_id)  # this run is accounted for
             self.task_store.add_run(run)
             # App-wide counterpart to `automation_run_started`. The completion notice in
             # `_notify_task_done` only reaches sockets already viewing this run's own

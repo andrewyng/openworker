@@ -7,6 +7,9 @@ tell it apart from an agent that decided to stop, and nothing to resume from.
 """
 
 import asyncio
+import threading
+
+import pytest
 
 from coworker.automation.models import TaskRun
 from coworker.conversations import ConversationStore
@@ -172,6 +175,91 @@ def test_a_broken_row_does_not_stop_the_others(tmp_path):
     mgr._engines.clear()
     mgr.session_store.mark_running("never-existed", pid=999999)
     assert mgr.reap_interrupted_runs() == 1  # the ghost row is skipped, the real one is closed
+    assert mgr.session_store.running_turns() == []
+
+
+# -- scheduled runs --------------------------------------------------------------------
+
+
+def _scheduled(tmp_path, provider):
+    """A real scheduled task, driven through the real path — the claim has to be made by
+    `_run_scheduled_task` itself, not by the test."""
+    from coworker.automation import Schedule, ScheduledTask
+
+    ws = tmp_path / "ws"
+    ws.mkdir(exist_ok=True)
+    mgr = SessionManager(data_dir=tmp_path / "data", provider=provider)
+    task = ScheduledTask(
+        title="Daily brief",
+        instructions="brief me",
+        schedule=Schedule(kind="cron", cron="10 19 * * *"),
+        workspace=str(ws),
+        agent="cowork",
+    )
+    mgr.task_store.save(task)
+    return mgr, task
+
+
+def test_a_scheduled_run_claims_the_turn_while_it_works(tmp_path):
+    """The gap this closes: `mark_running` is wired into the WebSocket path and the Inbox
+    resume path, but `_run_scheduled_task` called engine.run() directly — so four automations
+    could be mid-flight with nothing on disk saying so, and a restart would leave every one of
+    them reading as "still working" forever."""
+    seen = {}
+
+    class Recording(ProviderClient):
+        def complete(self, *, model, messages, tools=None, **settings):
+            seen["during"] = box["mgr"].session_store.running_turns()
+            return AssistantTurn(text="all quiet.", finish_reason="stop")
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    box = {}
+    mgr, task = _scheduled(tmp_path, Recording())
+    box["mgr"] = mgr
+
+    run = asyncio.run(mgr._run_scheduled_task(task, trigger="manual"))
+
+    assert run.status == "ok"
+    assert [r["session_id"] for r in seen["during"]] == [run.session_id]
+    assert mgr.session_store.running_turns() == []  # and released when it finished
+
+
+def test_a_scheduled_run_cancelled_on_shutdown_does_not_stay_running(tmp_path):
+    """Graceful shutdown cancels the task, so its `finally` DOES run: the row is accounted
+    for here rather than left for the reap. What must not happen is what used to — the run
+    keeping `status: "running"` with a finished_at beside it."""
+    started, release = threading.Event(), threading.Event()
+
+    class Blocking(ProviderClient):
+        def complete(self, *, model, messages, tools=None, **settings):
+            started.set()
+            release.wait(timeout=10)  # still "generating" when the process goes down
+            return AssistantTurn(text="too late", finish_reason="stop")
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    mgr, task = _scheduled(tmp_path, Blocking())
+
+    async def scenario():
+        job = asyncio.create_task(mgr._run_scheduled_task(task, trigger="manual"))
+        for _ in range(200):
+            if started.is_set():
+                break
+            await asyncio.sleep(0.02)
+        assert started.is_set(), "the run never reached the model"
+        assert len(mgr.session_store.running_turns()) == 1  # claimed while it works
+        job.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await job
+
+    asyncio.run(scenario())
+
+    (row,) = mgr.task_store.runs(task.id)
+    assert row.status == "incomplete" and "interrupted" in (row.error or "")
     assert mgr.session_store.running_turns() == []
 
 
