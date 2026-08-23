@@ -284,6 +284,43 @@ def test_a_checkpoint_without_a_label_is_rejected():
         parse_manifest(VALID.replace("---\nYou are", block + "---\nYou are"))
 
 
+def test_a_checkpoint_can_gate_its_evidence_on_an_earlier_step():
+    """`after` is how a step says its evidence only counts in sequence.
+
+    `run_shell` is the most-called tool in any code run — ls, wc, sed — so on its own it is not
+    evidence of verification. Ungated, Verify was satisfied in a run's first few calls, which
+    made every unfinished step before it (Implement, most of all) read as deliberately skipped.
+    """
+    block = (
+        "checkpoints:\n"
+        "  - label: Implement\n"
+        "    evidence: [write_file]\n"
+        "  - label: Verify\n"
+        "    evidence: [run_shell]\n"
+        "    after: implement\n"
+    )
+    m = parse_manifest(VALID.replace("---\nYou are", block + "---\nYou are"))
+    implement, verify = m.checkpoints
+    assert implement.after == "" and "after" not in implement.as_dict()
+    assert verify.after == "implement"
+    assert verify.as_dict()["after"] == "implement"
+
+
+def test_a_gate_naming_a_later_step_is_rejected():
+    # A gate that can never open pins the step pending for the whole run — the same failure the
+    # empty-`evidence` rule prevents, arriving by a different door.
+    block = (
+        "checkpoints:\n"
+        "  - label: Verify\n"
+        "    evidence: [run_shell]\n"
+        "    after: implement\n"
+        "  - label: Implement\n"
+        "    evidence: [write_file]\n"
+    )
+    with pytest.raises(ManifestError, match="not an earlier checkpoint"):
+        parse_manifest(VALID.replace("---\nYou are", block + "---\nYou are"))
+
+
 def test_too_many_checkpoints_rejected():
     rows = "".join(f"  - label: Step {i}\n    evidence: [todo_write]\n" for i in range(7))
     with pytest.raises(ManifestError, match="at most 6 checkpoints"):

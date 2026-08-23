@@ -318,3 +318,51 @@ describe("checkpointsFor — steps the persona cannot take", () => {
     expect(checkpointsFor(declared).map((c) => c.id)).toEqual(["recall"]);
   });
 });
+
+// The bug this closes: a code run shells out constantly to look around, so `run_shell` alone
+// satisfied "Verify" within the first few calls. That dragged the furthest-reached marker to the
+// end of the strip, and every unfinished step before it — Implement, most of all — was reported
+// as deliberately skipped while the run was still reading files.
+describe("checkpointProgress — evidence that only counts in sequence", () => {
+  const steps = [
+    { id: "locate", label: "Locate", evidence: ["read_file"] },
+    { id: "implement", label: "Implement", evidence: ["write_file"] },
+    { id: "verify", label: "Verify", evidence: ["run_shell"], after: "implement" },
+  ];
+
+  it("does not call a step skipped because a later step's tool fired early", () => {
+    // Read, then shell out to look around. Nothing has been implemented yet.
+    const out = checkpointProgress(steps, ["read_file", "run_shell", "run_shell"]);
+    expect(out.map((s) => s.state)).toEqual(["done", "current", "pending"]);
+  });
+
+  it("counts the gated step once its evidence lands after the gate", () => {
+    const out = checkpointProgress(steps, ["read_file", "run_shell", "write_file", "run_shell"]);
+    expect(out.map((s) => s.state)).toEqual(["done", "done", "done"]);
+  });
+
+  it("ignores evidence that arrived before the gate opened", () => {
+    // Shell calls only BEFORE the edit: looking around, not verifying.
+    const out = checkpointProgress(steps, ["run_shell", "read_file", "write_file"]);
+    expect(out.map((s) => s.state)).toEqual(["done", "done", "current"]);
+  });
+
+  it("never opens a gate that names a step which does not exist", () => {
+    const bad = [{ id: "verify", label: "Verify", evidence: ["run_shell"], after: "nope" }];
+    expect(checkpointProgress(bad, ["run_shell"]).map((s) => s.state)).toEqual(["current"]);
+  });
+
+  // The reason the gate is opt-in rather than a blanket forward scan: real runs interleave. The
+  // Builder plans, recalls, then plans again — and a strict per-step scan reported a finished
+  // run's "Record what lasts" as never done because its brain_note came earlier than declared.
+  it("still credits an ungated step whose evidence arrived out of declared order", () => {
+    const ungated = [
+      { id: "recall", label: "Recall", evidence: ["brain_recall"] },
+      { id: "plan", label: "Plan", evidence: ["todo_write"] },
+      { id: "record", label: "Record", evidence: ["brain_note"] },
+    ];
+    // Noted first, planned second, recalled last — every step did happen.
+    const out = checkpointProgress(ungated, ["brain_note", "todo_write", "brain_recall"]);
+    expect(out.every((s) => s.state === "done")).toBe(true);
+  });
+});

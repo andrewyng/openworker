@@ -249,7 +249,12 @@ export function placeholderFor(persona?: Persona, personaId?: string): string {
 // The shape of ONE job, per family, for personas that declare no checkpoints of their own.
 // Deliberately coarse: a fallback must not pretend to know a persona's method, only whether its
 // work ends in a changed repo or a written deliverable.
-const cp = (id: string, label: string, evidence: string[]): PersonaCheckpoint => ({ id, label, evidence });
+const cp = (
+  id: string,
+  label: string,
+  evidence: string[],
+  after?: string,
+): PersonaCheckpoint => ({ id, label, evidence, ...(after ? { after } : {}) });
 
 // `propose_plan` and `explore` are first-party tools (coworker/tools/plan.py, subagent.py) that
 // evidence their step as plainly as todo_write and grep do; leaving them out pinned a run that
@@ -260,7 +265,10 @@ const FAMILY_CHECKPOINTS: Record<string, PersonaCheckpoint[]> = {
     cp("plan", "Plan", ["todo_write", "propose_plan"]),
     cp("locate", "Locate the change", ["grep", "read_file", "read_file_lines", "explore"]),
     cp("implement", "Implement", ["write_file", "replace_in_file", "apply_patch", "apply_unified_diff"]),
-    cp("verify", "Verify", ["run_shell"]),
+    // Gated on the edit: a code run shells out constantly to look around, so `run_shell` by
+    // itself is not evidence of verification — it fired in the first few calls of every run and
+    // dragged the furthest-reached marker to the end of the strip.
+    cp("verify", "Verify", ["run_shell"], "implement"),
   ],
   knowledge: [
     cp("recall", "Recall", ["brain_recall"]),
@@ -316,8 +324,23 @@ export function checkpointProgress(
   checkpoints: PersonaCheckpoint[],
   toolNames: string[],
 ): { checkpoint: PersonaCheckpoint; state: CheckpointState }[] {
-  const used = new Set(toolNames);
-  const done = checkpoints.map((c) => c.evidence.some((t) => used.has(t)));
+  // Where each satisfied step's evidence first landed, so a gated step can ask "after what?".
+  const at = new Map<string, number>();
+  const found = checkpoints.map((c) => {
+    // Ungated steps match anywhere in the run. Deliberately NOT a strict forward scan per step:
+    // real runs interleave — the Builder plans, then recalls, then plans again — and requiring
+    // every step to land after the previous one reports a step that DID happen, out of declared
+    // order, as never having happened. Checked against two real sessions, a strict scan called a
+    // finished run's "Record what lasts" undone because its brain_note came early.
+    //
+    // Order is enforced only where a step declares it needs to be, via `after`.
+    const gate = c.after === undefined ? 0 : at.has(c.after) ? at.get(c.after)! + 1 : -1;
+    if (gate < 0) return -1;
+    const i = toolNames.findIndex((t, k) => k >= gate && c.evidence.includes(t));
+    if (i >= 0) at.set(c.id, i);
+    return i;
+  });
+  const done = found.map((i) => i >= 0);
   const furthest = done.lastIndexOf(true);
   const currentIndex = done.findIndex((d, i) => !d && i > furthest);
   return checkpoints.map((checkpoint, i) => ({

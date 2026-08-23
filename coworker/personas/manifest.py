@@ -109,14 +109,31 @@ class Checkpoint:
     `evidence` names the tools whose use means this step has happened. A step nothing can
     evidence would sit "pending" forever and make a finished run look stuck, so an empty list
     is rejected at parse time.
+
+    `after` names an EARLIER step that must already have happened for this one's evidence to
+    count. Some evidence only means something in sequence: `run_shell` is the most-called tool
+    in any code run — `ls`, `wc`, `sed` — so on its own it is not evidence of verification,
+    while the same call after an edit is. Ungated, Verify was satisfied within the first few
+    calls of every run, which dragged the furthest-reached marker to the end of the strip and
+    made every unfinished step before it read as deliberately skipped.
     """
 
     id: str
     label: str
     evidence: list[str] = field(default_factory=list)
+    after: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "label": self.label, "evidence": list(self.evidence)}
+        d: dict[str, Any] = {
+            "id": self.id,
+            "label": self.label,
+            "evidence": list(self.evidence),
+        }
+        # Omitted rather than sent empty: the panel treats "no gate" and "a gate naming nothing"
+        # differently, and an empty string is the second one.
+        if self.after:
+            d["after"] = self.after
+        return d
 
 
 @dataclass
@@ -400,7 +417,17 @@ def _checkpoints(persona_id: str, meta: dict) -> list[Checkpoint]:
                 "call can satisfy stays pending forever and makes a finished run look stuck"
             )
         cid = str(item.get("id", "")).strip() or _starter_key(label, i)
-        out.append(Checkpoint(id=cid, label=label, evidence=evidence))
+        after = str(item.get("after", "")).strip()
+        # Must name a step ALREADY parsed: a gate on a later step (or on itself) can never open,
+        # which would pin this step pending for the whole run — the exact failure the empty
+        # `evidence` check above exists to prevent, arriving by a different door.
+        if after and after not in {c.id for c in out}:
+            known = ", ".join(c.id for c in out) or "none yet"
+            raise ManifestError(
+                f"persona {persona_id!r}: checkpoint {label!r} has `after: {after}`, which is "
+                f"not an earlier checkpoint (earlier ids: {known})"
+            )
+        out.append(Checkpoint(id=cid, label=label, evidence=evidence, after=after))
     return out
 
 

@@ -872,6 +872,11 @@ export interface PersonaCheckpoint {
   id: string;
   label: string;
   evidence: string[];
+  /** Optional id of a step that must already have happened for this one's evidence to count.
+   *  Some evidence only means something in sequence: `run_shell` is the most-called tool in any
+   *  code run — `ls`, `wc`, `sed` — so on its own it says nothing about verification, while the
+   *  same call after an edit does. Without the gate the step lights up in the first few calls. */
+  after?: string;
 }
 
 // An advisory per-run ceiling on one kind of tool call (manifest `budgets:`). Counted
