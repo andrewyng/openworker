@@ -130,8 +130,17 @@ class TurnEngine:
         # TOOL_FINISHED event can carry the note to the tool card (§25).
         self._standing_notes: dict[str, str] = {}
         self._interrupt_hooks: list[Callable[[], None]] = list(interrupt_hooks or [])
+        # Set when the PROCESS is going away mid-turn, so the loop's own interrupt marker
+        # says a restart cut the run off instead of reading as a user pressing stop.
+        self._shutdown_reason = ""
 
     # -- external controls ------------------------------------------------------
+    def mark_shutting_down(self, reason: str) -> None:
+        """Announce that this turn is being cut off by the process ending, not by the user.
+        Whichever side gets there first — the loop's own cancel path or the server's
+        close-out — the thread ends with one marker, and it is the resumable one."""
+        self._shutdown_reason = reason
+
     def request_interrupt(self) -> None:
         """Stop the turn as soon as possible, from ANY state: mid-stream (the producer
         thread drops the stream between chunks), mid-tool (interrupt hooks kill the
@@ -248,13 +257,29 @@ class TurnEngine:
                 return False
             if message.get("kind") == "model_switch":
                 continue
-            return message.get("kind") == "error"
+            # "server_restart" too: a run the process killed has the same shape as a failed
+            # one — the input is still the tail of history and nothing answered it.
+            return message.get("kind") in ("error", "server_restart")
         return False
 
+    def _append_interrupted(self) -> None:
+        """The marker for a turn that stopped early. A user stop is "interrupted"; a turn the
+        server killed on its way down is a restart — different cause, different recovery."""
+        if self._shutdown_reason:
+            self._append_notice("server_restart", self._shutdown_reason)
+        else:
+            self._append_notice("interrupted")
+
     def _append_notice(self, kind: str, text: Optional[str] = None) -> None:
-        """Persist a turn-ending marker (error/interrupted) as a display-only `notice`
-        message: it survives reload like the transcript does, but `_outbound_messages`
-        drops the role so no provider ever sees it."""
+        """Persist a turn-ending marker (error/interrupted/server_restart) as a display-only
+        `notice` message: it survives reload like the transcript does, but
+        `_outbound_messages` drops the role so no provider ever sees it. At most one closing
+        marker per turn — on shutdown the loop's cancel path and the server's close-out both
+        fire, and two stacked markers leave a non-resumable one on the end."""
+        if kind in _CLOSING_NOTICES and self.messages:
+            tail = self.messages[-1]
+            if tail.get("role") == "notice" and tail.get("kind") in _CLOSING_NOTICES:
+                return  # already closed — a second marker would just be noise in the transcript
         notice: dict[str, Any] = {"role": "notice", "kind": kind, "ts": time.time()}
         if text:
             notice["text"] = text
@@ -295,27 +320,15 @@ class TurnEngine:
         """The tool-calls of the last assistant message that don't yet have a tool result —
         i.e. the prompt we suspended on (+ any after it). Reconstructed from the persisted thread.
         """
-        answered = {
-            m.get("tool_call_id") for m in self.messages if m.get("role") == "tool"
-        }
-        for msg in reversed(self.messages):
-            if msg.get("role") == "user":
-                return []
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
-                out: list[ToolCall] = []
-                for tc in msg["tool_calls"]:
-                    if tc.get("id") in answered:
-                        continue
-                    fn = tc.get("function") or {}
-                    try:
-                        args = json.loads(fn.get("arguments") or "{}")
-                    except Exception:
-                        args = {}
-                    out.append(
-                        ToolCall(id=tc.get("id"), name=fn.get("name"), arguments=args)
-                    )
-                return out
-        return []
+        out: list[ToolCall] = []
+        for tc in unanswered_tool_calls(self.messages):
+            fn = tc.get("function") or {}
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except Exception:
+                args = {}
+            out.append(ToolCall(id=tc.get("id"), name=fn.get("name"), arguments=args))
+        return out
 
     async def _loop(self) -> AsyncIterator[Event]:
         iterations = 0
@@ -396,7 +409,7 @@ class TurnEngine:
                 # Stopped mid-stream: persist exactly what the user watched arrive.
                 if streamed or streamed_reasoning:
                     self.messages.append(_assistant_message(_partial_turn()))
-                self._append_notice("interrupted")
+                self._append_interrupted()
                 yield Event(EventType.INTERRUPTED, {"iterations": iterations})
                 return
             if turn is None:
@@ -433,7 +446,7 @@ class TurnEngine:
             yield Event(EventType.ITERATION_END, {"iteration": iterations})
 
             if self._cancel.is_set():
-                self._append_notice("interrupted")
+                self._append_interrupted()
                 yield Event(EventType.INTERRUPTED, {"iterations": iterations})
                 return
             if self._steering:
@@ -1320,6 +1333,62 @@ def _tool_error_message(tool_call: ToolCall, reason: str) -> dict[str, Any]:
         "content": json.dumps({"error": "tool call not executed", "reason": reason}),
         "ts": time.time(),
     }
+
+
+def unanswered_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The trailing assistant message's tool_calls that have no result yet, as raw dicts.
+
+    Reads a persisted thread, so it works with no engine in memory — which is the case when
+    the process that owned the turn is gone and the next one is cleaning up after it.
+    """
+    answered = {m.get("tool_call_id") for m in messages if m.get("role") == "tool"}
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            return []
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            return [tc for tc in msg["tool_calls"] if tc.get("id") not in answered]
+    return []
+
+
+#: Notice kinds that already close a thread. Appending a second one would stack markers on a
+#: session every time the server restarts while it sits idle.
+_CLOSING_NOTICES = {"error", "interrupted", "server_restart"}
+
+
+def closing_messages(messages: list[dict[str, Any]], reason: str) -> list[dict[str, Any]]:
+    """What to append to a thread whose turn died with its process.
+
+    Two parts, and both matter. A tool-error for every unanswered call, because an assistant
+    message whose tool_calls have no results is invalid input to most chat templates — the
+    thread would refuse to continue at all. Then the notice, which is what the user sees:
+    without it the transcript simply stops mid-step and the run looks like a choice the agent
+    made. Returns [] when the thread is already closed or was never mid-turn.
+    """
+    if not messages:
+        return []
+    tail = messages[-1]
+    if tail.get("role") == "notice" and tail.get("kind") in _CLOSING_NOTICES:
+        return []
+    out: list[dict[str, Any]] = []
+    for tc in unanswered_tool_calls(messages):
+        out.append(
+            {
+                "role": "tool",
+                "tool_call_id": tc.get("id"),
+                "content": json.dumps(
+                    {"error": "tool call not executed", "reason": reason}
+                ),
+                "ts": time.time(),
+            }
+        )
+    # A turn is only "in flight" if the last thing in the thread is not already the answer.
+    # A thread whose tail is a plain assistant message with no tool calls had finished.
+    if not out and tail.get("role") == "assistant" and not tail.get("tool_calls"):
+        return []
+    out.append(
+        {"role": "notice", "kind": "server_restart", "text": reason, "ts": time.time()}
+    )
+    return out
 
 
 def _preview(value: Any, max_chars: int = 300) -> str:
