@@ -111,12 +111,13 @@ test("budgets and context headroom are visible while the run happens", async ({ 
 
 test("the Progress header still says something useful when collapsed", async ({ page }) => {
   await page.goto("/");
-  // A plain turn first: the fake agent reports usage on an ordinary reply, which is what the
-  // context percentage needs. (Its approval path sends none — adding usage there would shift
-  // the totals the usage-chip specs pin.)
-  await page.getByPlaceholder(/Ask the coworker/).fill("hello");
+  // A turn that CHANGED something: Progress's glance is the plan and the work now, so it needs a
+  // tool call to have anything to report. (The approval path sends no usage — which is why the
+  // context percentage is asserted in the Memory test below, on a plain turn, instead.)
+  await page.getByPlaceholder(/Ask the coworker/).fill("run a tool");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByText(/Echo: hello/)).toBeVisible();
+  await page.getByRole("button", { name: /Allow once/ }).click();
+  await expect(page.getByTestId("rail-checkpoints")).toBeVisible({ timeout: 10_000 });
 
   // Collapsing must not reduce the section to two words and a chevron.
   const toggle = page.getByRole("button", { name: /^Progress/ });
@@ -124,7 +125,7 @@ test("the Progress header still says something useful when collapsed", async ({ 
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByTestId("rail-checkpoints")).toHaveCount(0);
-  await expect(toggle).toContainText("%");
+  await expect(toggle).toContainText(/command/);
 });
 
 test("checkpoint state reaches assistive tech, not just the eye", async ({ page }) => {
@@ -151,6 +152,8 @@ test("Memory lists threads a live recall touched, from the untruncated sidecar",
   const memory = page.getByRole("button", { name: /^Memory/ });
   await expect(memory).toContainText("2 read");
   await memory.click();
+  // The recall itself is intake, so it is counted here too — beside the threads it touched.
+  await expect(page.getByTestId("rail-memory-activity")).toContainText("1 recall");
   const threads = page.getByTestId("rail-threads");
   await expect(threads).toContainText("openevolve-phase-2");
   await expect(threads).toContainText("local-model-reliability");
@@ -164,9 +167,13 @@ test("context headroom stays on screen after a turn that called no tool", async 
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText(/Echo: hello/)).toBeVisible();
 
-  // The header glance prints the percentage here; the body must not contradict it by
-  // claiming nothing has happened.
-  const meters = page.getByTestId("rail-meters");
+  // Memory is collapsed by default, so its header is where the percentage has to be readable
+  // without a click — a conversation-only session has no plan and no tools, and this is the
+  // number that tells you to compact or start fresh.
+  const memory = page.getByRole("button", { name: /^Memory/ });
+  await expect(memory).toContainText("%");
+  await memory.click();
+  const meters = page.getByTestId("rail-context-meters");
   await expect(meters).toBeVisible();
   await expect(meters.getByRole("meter", { name: /context/ })).toHaveAttribute(
     "aria-valuemax",
@@ -181,7 +188,8 @@ test("a model whose window the server cannot resolve stops the old window's mete
   await page.getByPlaceholder(/Ask the coworker/).fill("hello");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText(/Echo: hello/)).toBeVisible();
-  const meters = page.getByTestId("rail-meters");
+  await page.getByRole("button", { name: /^Memory/ }).click();
+  const meters = page.getByTestId("rail-context-meters");
   await expect(meters.getByRole("meter", { name: /context/ })).toHaveAttribute(
     "aria-valuemax",
     "40000",
@@ -194,8 +202,10 @@ test("a model whose window the server cannot resolve stops the old window's mete
   await expect(page.getByText(/Model switched to gpt-5.5/).first()).toBeVisible();
 
   // No window means no percentage — never the PREVIOUS model's window with this model's usage.
-  await expect(meters.getByRole("meter", { name: /context/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /^Progress/ })).not.toContainText("% context");
+  // This turn called no tool and touched no thread, so the meter was the only thing Memory had:
+  // the section goes with it rather than lingering as an empty header.
+  await expect(page.getByTestId("rail-context-meters")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Memory/ })).toHaveCount(0);
 });
 
 test("the plan is a list, and each row says its state out loud", async ({ page }) => {

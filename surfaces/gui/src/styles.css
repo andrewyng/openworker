@@ -648,7 +648,24 @@ button.btn.danger { color: var(--accent); }
 }
 .rail-thread-tag.written { border-color: var(--accent); color: var(--accent); }
 
+/* Memory: three groups — how full the window is, what came into it, and the durable threads it
+   touched. Each is a titled <section> so it reads as one thing and can be reached by heading,
+   rather than the three arriving as one undifferentiated run of text. */
+.rail-memory { display: flex; flex-direction: column; gap: 14px; }
+.rail-memory-group { display: flex; flex-direction: column; }
+.rail-memory-h {
+  margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--muted);
+}
+/* Both blocks carry their own top margin for the ungrouped case (Progress). Under a heading
+   that margin is a gap the heading already provides. */
+.rail-memory-group .rail-meters,
+.rail-memory-group .rail-activity { margin-top: 0; }
+
 .rail-activity { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+/* The intake tally is a real <ul> now, so it announces as a list with a count; it still has to
+   look like the row of pills it was. */
+ul.rail-activity { list-style: none; margin-left: 0; margin-right: 0; margin-bottom: 0; padding: 0; }
 .rail-activity-item {
   font-size: 12px; color: var(--muted); background: var(--paper);
   border: 1px solid var(--control-line); border-radius: 999px; padding: 2px 8px; white-space: nowrap;

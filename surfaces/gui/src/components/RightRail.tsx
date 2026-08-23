@@ -118,6 +118,15 @@ export function RightRail({
 
   const refreshArtifacts = () => getArtifacts(sessionId).then(setArtifacts).catch(() => setArtifacts([]));
 
+  // Counted once and split once, here, so that each section's header glance, the decision to
+  // render it at all, and its body are all reading the same list. Tallying in two places is how
+  // a section ends up summarising something it does not show.
+  const activity = countBuckets(toolNames, personaFamily);
+  const memoryActivity = activity.filter((a) => MEMORY_BUCKETS.has(a.key));
+  const workActivity = activity.filter((a) => !MEMORY_BUCKETS.has(a.key));
+  const showContextMeters =
+    (!!contextWindow && contextWindow > 0 && !!contextUsed && contextUsed > 0) || !!compactions;
+
   useEffect(() => {
     if (!active) return;
     if (showArtifacts) refreshArtifacts();
@@ -205,43 +214,114 @@ export function RightRail({
         <>
           <RailSection
             title="Progress"
-            summary={progressGlance({ todo, running, contextUsed, contextWindow })}
+            summary={progressGlance({ todo, running, activity: workActivity })}
             open={open.progress}
             onToggle={() => setOpen({ ...open, progress: !open.progress })}
           >
             <ProgressSummary
               running={running}
               toolNames={toolNames}
+              activity={workActivity}
               todo={todo}
               planStepsSince={planStepsSince}
-              family={personaFamily}
               personaName={personaName}
               persona={persona}
               personaId={personaId}
-              contextUsed={contextUsed}
-              contextWindow={contextWindow}
-              compactions={compactions}
             />
           </RailSection>
 
-          {/* Memory — which durable threads this session pulled from and which it changed.
-              Collapsed by default: it matters when you ask, not while you work. */}
-          {!!threadsTouched?.length && (
+          {/* Memory — what this session has taken in and kept: how full the window is, whether
+              history had to be summarized to fit, the reads and searches that filled it, and the
+              durable threads it pulled from or changed.
+
+              Rendered whenever ANY of those holds, not just when a brain thread was touched.
+              Gating the whole section on `threadsTouched` was right while it was only a thread
+              list; it would now hide the context meter on every run that never calls brain_* —
+              most of them, and exactly the runs where a filling window is the thing you need to
+              see. Still collapsed by default, because the glance carries the percentage: the one
+              number worth having at all times sits in the header, not the body. */}
+          {(!!threadsTouched?.length || !!memoryActivity.length || showContextMeters) && (
             <RailSection
               title="Memory"
-              summary={threadGlance(threadsTouched)}
+              summary={memoryGlance({
+                threads: threadsTouched || [],
+                activity: memoryActivity,
+                contextUsed,
+                contextWindow,
+              })}
               open={open.memory}
               onToggle={() => setOpen({ ...open, memory: !open.memory })}
             >
-              <ul className="rail-threads" data-testid="rail-threads" role="list">
-                {threadsTouched.map((t) => (
-                  <li className="rail-thread" key={t.id} role="listitem">
-                    <span className="rail-thread-id">{t.id}</span>
-                    {t.written && <span className="rail-thread-tag written">updated</span>}
-                    {t.read && <span className="rail-thread-tag">read</span>}
-                  </li>
-                ))}
-              </ul>
+              {/* Three groups, each a titled <section>. Before this the body ran the meter, a
+                  row of pills and a thread list together with nothing between them: to anything
+                  reading the page linearly it was one undifferentiated stretch of text, and the
+                  headings mean it can also be browsed by heading rather than only in order.
+                  The ids are static because the rail is a singleton — one per app. */}
+              <div className="rail-memory">
+                {showContextMeters && (
+                  <section className="rail-memory-group" aria-labelledby="rail-mem-window">
+                    <h3 className="rail-memory-h" id="rail-mem-window">
+                      Window
+                    </h3>
+                    <ContextMeters
+                      contextUsed={contextUsed}
+                      contextWindow={contextWindow}
+                      compactions={compactions}
+                    />
+                  </section>
+                )}
+                {!!memoryActivity.length && (
+                  <section className="rail-memory-group" aria-labelledby="rail-mem-intake">
+                    <h3 className="rail-memory-h" id="rail-mem-intake">
+                      Taken in
+                    </h3>
+                    {/* A real list: as a row of bare spans this announced as one run-on line
+                        ("3 files read 2 searches 1 recall") with no boundary between the counts
+                        and no total. Same idiom as the plan list and the checkpoint strip. */}
+                    <ul className="rail-activity" data-testid="rail-memory-activity" role="list">
+                      {memoryActivity.map((a) => (
+                        <li className="rail-activity-item" key={a.key} role="listitem">
+                          {a.text}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+                {!!threadsTouched?.length && (
+                  <section className="rail-memory-group" aria-labelledby="rail-mem-threads">
+                    <h3 className="rail-memory-h" id="rail-mem-threads">
+                      Threads
+                    </h3>
+                    <ul className="rail-threads" data-testid="rail-threads" role="list">
+                      {threadsTouched.map((t) => (
+                        <li className="rail-thread" key={t.id} role="listitem">
+                          <span className="rail-thread-id">{t.id}</span>
+                          {/* The pills are the sighted reading. Spoken, "openevolve-phase-2
+                              updated read" is three nouns in a row with no relation between
+                              them — so the pills are hidden and the row says what happened. */}
+                          {t.written && (
+                            <span className="rail-thread-tag written" aria-hidden>
+                              updated
+                            </span>
+                          )}
+                          {t.read && (
+                            <span className="rail-thread-tag" aria-hidden>
+                              read
+                            </span>
+                          )}
+                          <span className="sr-only">
+                            {t.written && t.read
+                              ? " — read from and updated"
+                              : t.written
+                                ? " — updated"
+                                : " — read from"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+              </div>
             </RailSection>
           )}
 
@@ -344,6 +424,16 @@ const BUCKETS: Record<string, Bucket> = {
   noted: { key: "noted", label: (n) => `${n} note${n === 1 ? "" : "s"} to memory`, tools: ["brain_note"] },
   asked: { key: "asked", label: (n) => `${n} question${n === 1 ? "" : "s"} to you`, tools: ["ask_user"] },
 };
+
+// The buckets that belong to Memory rather than Progress. Progress answers "is this run moving"
+// — what it changed: edits, commands, git checks, questions put to you. Memory answers "what has
+// this session taken in and kept" — the reads and searches that filled the window, and the brain
+// threads it recalled from or wrote to.
+//
+// `noted` sits here rather than with the other writes because the rows it produces (the "updated"
+// thread tags) are already in this section: counting it in Progress would put the same fact in
+// two places and make neither the whole story.
+const MEMORY_BUCKETS = new Set(["read", "searched", "pages", "web", "recalled", "noted"]);
 
 // Tools whose work the panel already renders in full, so counting them again would say the same
 // thing twice: the plan IS the todo list two elements up.
@@ -478,6 +568,9 @@ function Meter({
         aria-valuenow={used}
         aria-valuemin={0}
         aria-valuemax={limit}
+        // Without this a screen reader computes the announcement from valuenow/valuemax and
+        // says "47000 of 100000" — true, and not the number anyone is reading this bar for.
+        aria-valuetext={value}
         aria-label={`${label}: ${value}`}
       >
         <span className="rail-meter-fill" style={{ width: `${pct}%` }} />
@@ -486,33 +579,22 @@ function Meter({
   );
 }
 
-/** Budget consumption and context headroom, counted from what actually happened.
+/** Budget consumption for THIS run, counted from what actually happened.
  *
- *  `runStarted` splits the two: a budget is a ceiling on ONE run, so there is nothing to meter
- *  before the run has called anything, while context fill and compactions are facts about the
- *  whole session and hold whether a tool ran or not. */
+ *  `runStarted` gates it: a budget is a ceiling on one run, so there is nothing to meter before
+ *  the run has called anything. Context fill and compactions are facts about the whole session
+ *  rather than the run, which is why they are no longer here — see ContextMeters, in Memory. */
 function Meters({
   persona,
   toolNames,
   runStarted,
-  contextUsed,
-  contextWindow,
-  compactions,
 }: {
   persona?: Persona;
   toolNames: string[];
   runStarted: boolean;
-  contextUsed?: number;
-  contextWindow?: number | null;
-  compactions?: number;
 }) {
   const budgets = runStarted ? budgetUse(persona, toolNames) : [];
-  // Only when BOTH numbers are real: a percentage against a guessed window is worse than none,
-  // and a provider that reports no usage would otherwise render a confident 0%.
-  const showContext = !!contextWindow && contextWindow > 0 && !!contextUsed && contextUsed > 0;
-  if (!budgets.length && !showContext && !compactions) return null;
-
-  const pct = showContext ? Math.min(100, Math.round((contextUsed! / contextWindow!) * 100)) : 0;
+  if (!budgets.length) return null;
   return (
     <div className="rail-meters" data-testid="rail-meters">
       {budgets.map(({ budget, used, state }) => (
@@ -530,6 +612,33 @@ function Meters({
           }
         />
       ))}
+    </div>
+  );
+}
+
+/** How full the window is, and whether history has already been summarized to fit.
+ *
+ *  Deliberately NOT gated on a run having started: a session can fill its window by conversation
+ *  alone — no tool call, no plan — and that is exactly when the number matters. This is the pair
+ *  that used to sit under Progress; it belongs with the reads that filled the window, not with
+ *  the plan being worked through. */
+function ContextMeters({
+  contextUsed,
+  contextWindow,
+  compactions,
+}: {
+  contextUsed?: number;
+  contextWindow?: number | null;
+  compactions?: number;
+}) {
+  // Only when BOTH numbers are real: a percentage against a guessed window is worse than none,
+  // and a provider that reports no usage would otherwise render a confident 0%.
+  const showContext = !!contextWindow && contextWindow > 0 && !!contextUsed && contextUsed > 0;
+  if (!showContext && !compactions) return null;
+
+  const pct = showContext ? Math.min(100, Math.round((contextUsed! / contextWindow!) * 100)) : 0;
+  return (
+    <div className="rail-meters" data-testid="rail-context-meters">
       {showContext && (
         <Meter
           label="context"
@@ -541,10 +650,16 @@ function Meters({
         />
       )}
       {!!compactions && (
-        <div className="rail-muted" data-testid="rail-compactions">
-          Compacted {compactions}×{" "}
+        <p className="rail-muted" data-testid="rail-compactions">
+          {/* "1×" is a glyph, not a word. Screen readers vary on U+00D7 — some say "times",
+              some say nothing at all — so the spoken form is written out rather than left to
+              the reader's character table. */}
+          <span aria-hidden>Compacted {compactions}×</span>
+          <span className="sr-only">
+            History compacted {compactions} {compactions === 1 ? "time" : "times"} —
+          </span>{" "}
           <span className="rail-thread-tag">history summarized to fit</span>
-        </div>
+        </p>
       )}
     </div>
   );
@@ -553,29 +668,25 @@ function Meters({
 function ProgressSummary({
   running,
   toolNames,
+  activity,
   todo,
   planStepsSince = 0,
-  family,
   personaName,
   persona,
   personaId,
-  contextUsed,
-  contextWindow,
-  compactions,
 }: {
   running: boolean;
   toolNames: string[];
+  /** The work half of the tally — what the run CHANGED. The intake half (reads, searches,
+   *  recalls) is Memory's line now, so the two sections answer different questions instead of
+   *  splitting one sentence across both. See MEMORY_BUCKETS. */
+  activity: { key: string; text: string }[];
   todo: TodoItem[];
   planStepsSince?: number;
-  family?: string;
   personaName?: string;
   persona?: Persona;
   personaId?: string;
-  contextUsed?: number;
-  contextWindow?: number | null;
-  compactions?: number;
 }) {
-  const activity = countBuckets(toolNames, family);
   const done = todo.filter((t) => t.status === "done").length;
   const current = todo.find((t) => t.status === "in_progress");
   const next = todo.find((t) => t.status === "pending" && t !== current);
@@ -594,20 +705,11 @@ function ProgressSummary({
     </div>
   );
 
-  // Rendered in EVERY branch, idle included. Gating the meters on `started` meant a session
-  // filling its window by conversation alone — no tool call, no plan — showed no context meter
-  // at all, and the meter it did show mid-turn vanished again at turn_done. Meanwhile the
-  // section header went on printing "95% context" above a body that said nothing had happened
-  // yet: the panel contradicting itself exactly when the run was near the wall.
+  // Budget only. The context meter moved to Memory, where it renders in every branch including
+  // idle — a session can fill its window by conversation alone, and gating that number on a run
+  // having started is what used to hide it exactly when it mattered.
   const meters = (
-    <Meters
-      persona={persona}
-      toolNames={toolNames}
-      runStarted={running || started}
-      contextUsed={contextUsed}
-      contextWindow={contextWindow}
-      compactions={compactions}
-    />
+    <Meters persona={persona} toolNames={toolNames} runStarted={running || started} />
   );
 
   // "Now" and "Next" first: the two things the panel was never answering. A plan of five items
@@ -709,27 +811,54 @@ function ProgressSummary({
 function progressGlance({
   todo,
   running,
-  contextUsed,
-  contextWindow,
+  activity,
 }: {
   todo: TodoItem[];
   running: boolean;
-  contextUsed?: number;
-  contextWindow?: number | null;
+  activity: { key: string; text: string }[];
 }): string {
   const parts: string[] = [];
   if (todo.length) parts.push(`${todo.filter((t) => t.status === "done").length}/${todo.length}`);
   else if (running) parts.push("working");
-  if (contextWindow && contextUsed) {
-    parts.push(`${Math.min(100, Math.round((contextUsed / contextWindow) * 100))}% context`);
-  }
+  // The headline work bucket. Context percentage used to be this section's fallback glance, and
+  // it has moved to Memory — without something in its place a finished, plan-less run collapses
+  // to two words and a chevron, which is the thing these glances exist to prevent.
+  if (activity.length) parts.push(activity[0].text);
   return parts.join(" · ");
 }
 
-function threadGlance(threads: { read: boolean; written: boolean }[]): string {
-  const written = threads.filter((t) => t.written).length;
-  const read = threads.filter((t) => t.read && !t.written).length;
-  return [read ? `${read} read` : "", written ? `${written} updated` : ""].filter(Boolean).join(" · ");
+/** The collapsed Memory header.
+ *
+ *  Context percentage leads, and it is the reason this glance exists: the section is closed by
+ *  default, so the header is the only place that number can live and still be seen at a glance.
+ *  It is also the one figure here that changes what you do next — compact, or start fresh. */
+function memoryGlance({
+  threads,
+  activity,
+  contextUsed,
+  contextWindow,
+}: {
+  threads: { read: boolean; written: boolean }[];
+  activity: { key: string; text: string }[];
+  contextUsed?: number;
+  contextWindow?: number | null;
+}): string {
+  const parts: string[] = [];
+  if (contextWindow && contextUsed) {
+    parts.push(`${Math.min(100, Math.round((contextUsed / contextWindow) * 100))}% context`);
+  }
+  // Threads are the scarce, high-signal item, so they get the rest of the line when there are
+  // any. The intake tally stands in when there are none — never alongside them, because "3 files
+  // read · 2 read" is two different meanings of the same word in one glance.
+  if (threads.length) {
+    const written = threads.filter((t) => t.written).length;
+    const read = threads.filter((t) => t.read && !t.written).length;
+    if (read) parts.push(`${read} read`);
+    if (written) parts.push(`${written} updated`);
+  } else if (activity.length) {
+    parts.push(activity[0].text);
+  }
+  return parts.join(" · ");
 }
 
 let railSectionSeq = 0;
