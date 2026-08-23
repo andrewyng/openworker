@@ -220,6 +220,13 @@ export function App() {
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
+  // Ref mirror of `running`, for the same reason `streamingRef` exists: the socket's onClose
+  // closure is built once and cannot read fresh state, and it has to know whether the socket
+  // died mid-turn.
+  const runningRef = useRef(false);
+  useEffect(() => {
+    runningRef.current = running;
+  }, [running]);
   // Transient "Compacting context…" indicator (OPE-27): set by the `compacting` event,
   // cleared by whatever the engine emits next — the summarizer call is otherwise a
   // multi-second silent stall mid-turn.
@@ -854,6 +861,25 @@ export function App() {
             { kind: "notice", tone: "warn", text: "Error: " + (d.error || "unknown"), retriable: true },
           ]);
           break;
+        // The server is going down mid-turn (a restart, usually) and got a word out before
+        // its socket closed. No Resume button here: the socket dies with the server, so the
+        // frame would go nowhere. The same marker is written to the thread, and THAT one is
+        // resumable once the app reconnects to a live server.
+        case "run_interrupted":
+          flushPartialStream();
+          setRunning(false);
+          setItems((p) => [
+            ...p,
+            {
+              kind: "notice",
+              tone: "warn",
+              text:
+                (d.reason || "The agent server restarted — this run was cut off.") +
+                " Reload once it is back to pick it up.",
+              notice: "server_restart",
+            },
+          ]);
+          break;
         case "input_rejected":
           setItems((p) => [
             ...p,
@@ -890,7 +916,30 @@ export function App() {
           sessionRef.current?.userMessage(p);
         }
       },
-      onClose: () => setConnected(false),
+      onClose: () => {
+        setConnected(false);
+        // There is no reconnect: once this socket is gone nothing else will report on the
+        // turn. Leaving the spinner up is the visible half of a run dying silently — the
+        // server writes the durable marker, and this is the live view of the same event.
+        if (runningRef.current) {
+          setRunning(false);
+          setItems((p) =>
+            p.length && (p[p.length - 1] as any).notice === "server_restart"
+              ? p // the server got its message out first; don't say it twice
+              : [
+                  ...p,
+                  {
+                    kind: "notice",
+                    tone: "warn",
+                    text:
+                      "Lost the connection to the agent server — this run was cut off. " +
+                      "Reload once it is back to pick it up.",
+                    notice: "server_restart",
+                  },
+                ],
+          );
+        }
+      },
     });
     sessionRef.current = session;
     return () => session.close();

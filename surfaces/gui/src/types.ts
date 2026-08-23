@@ -17,6 +17,9 @@ export type EventType =
   | "error"
   | "input_rejected"
   | "interrupted"
+  // Sent on the way down when the server is stopping mid-turn (see manager
+  // .interrupt_running_sessions) — not an engine event; the run has no more steps coming.
+  | "run_interrupted"
   | "model_changed"
   | "memory_saved"
   | "compacting"
@@ -160,8 +163,11 @@ export type Item =
       tone: "info" | "warn";
       text: string;
       retriable?: boolean;
-      // The engine's notice kind ("compacted" | "model_switch" | "interrupted" | "error").
-      // Preserved so counting a marker never means matching its prose.
+      // Verb for the retry button. "Retry" is right for a failed call; a run the server
+      // killed was not wrong, it was cut off — the user resumes it.
+      retryLabel?: string;
+      // The engine's notice kind ("compacted" | "model_switch" | "interrupted" | "error" |
+      // "server_restart"). Preserved so counting a marker never means matching its prose.
       notice?: string;
     }
   // MEMORY-SPEC §5.1: the save notice, inline in the conversation where the user is

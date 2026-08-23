@@ -4,6 +4,18 @@ import { test as base, expect, type Page } from "@playwright/test";
 // push server events through it via sendAppEvent below.
 const eventSockets = new WeakMap<Page, { send: (data: string) => void }>();
 
+// The session socket each page opened. A spec needs it to simulate the ugly case: a server
+// that dies without a word, where all the client ever sees is the close.
+const sessionSockets = new WeakMap<Page, { close: () => void }>();
+
+/** Drop the session socket the way a SIGKILLed server does — no frame, just gone. */
+export async function killSessionSocket(page: Page): Promise<void> {
+  for (let i = 0; i < 50 && !sessionSockets.get(page); i++) await page.waitForTimeout(100);
+  const ws = sessionSockets.get(page);
+  if (!ws) throw new Error("the app never opened a session socket");
+  ws.close();
+}
+
 /** Push an app-wide event exactly as the server would over /ws/events. Waits for
  * the GUI to have connected its socket first. */
 export async function sendAppEvent(page: Page, obj: unknown): Promise<void> {
@@ -625,6 +637,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
   });
 
   await page.routeWebSocket(/\/ws\/session\//, (ws) => {
+    sessionSockets.set(page, ws);
     const send = (type: string, data: Record<string, unknown> = {}) =>
       ws.send(JSON.stringify({ type, data }));
     // The window the engine resolves for the session. The client-side matrix is
@@ -766,6 +779,21 @@ export async function mockApi(page: import("@playwright/test").Page) {
         if (/fail the turn/i.test(msg.text)) {
           send("error", { error: "model unreachable" });
           send("turn_done");
+          return;
+        }
+        // The server going down mid-turn: it gets `run_interrupted` out while the socket is
+        // still open and then stops. Note what does NOT follow — no turn_done, because the
+        // process that would have sent it is gone.
+        if (/kill the server/i.test(msg.text)) {
+          send("tool_proposed", { name: "read_file", arguments: { path: "a.py" } });
+          send("tool_finished", { name: "read_file", status: "done", result_preview: "{}" });
+          setTimeout(
+            () =>
+              send("run_interrupted", {
+                reason: "The agent server restarted while this run was working.",
+              }),
+            120,
+          );
           return;
         }
         // A deliberately SLOW multi-second stream (~40 ticks × 120ms) so specs can

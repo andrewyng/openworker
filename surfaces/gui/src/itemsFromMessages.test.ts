@@ -69,6 +69,43 @@ describe("itemsFromMessages notices", () => {
   });
 });
 
+describe("itemsFromMessages server restart", () => {
+  it("replays the restart marker as a resumable warning, and folds the orphan tool result", () => {
+    const items = itemsFromMessages([
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        tool_calls: [{ id: "t1", function: { name: "shell", arguments: "{}" } }],
+      },
+      {
+        role: "tool",
+        tool_call_id: "t1",
+        content: '{"error":"tool call not executed","reason":"the server restarted"}',
+      },
+      { role: "notice", kind: "server_restart", text: "The agent server restarted mid-run." },
+    ] as any);
+
+    // "Resume", not "Retry": the run was cut off, not wrong.
+    expect(items[items.length - 1]).toEqual({
+      kind: "notice",
+      tone: "warn",
+      text: "The agent server restarted mid-run.",
+      retriable: true,
+      retryLabel: "Resume",
+      notice: "server_restart",
+    });
+  });
+
+  it("falls back to its own wording when the marker carries no text", () => {
+    const items = itemsFromMessages([
+      { role: "user", content: "go" },
+      { role: "notice", kind: "server_restart" },
+    ] as any);
+    expect((items[1] as any).text).toMatch(/restarted/);
+    expect((items[1] as any).retriable).toBe(true);
+  });
+});
+
 describe("itemsFromMessages model switch", () => {
   it("replays the persisted model_switch marker as an info notice", () => {
     const items = itemsFromMessages([

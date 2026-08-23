@@ -73,6 +73,17 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
       items.push(
         m.kind === "interrupted"
           ? { kind: "notice", tone: "warn", text: "Interrupted.", notice: "interrupted" }
+          : m.kind === "server_restart"
+          ? // The server died mid-turn. Retriable for the same reason an error is: the input
+            // is still the tail of history and nothing has answered it.
+            {
+              kind: "notice",
+              tone: "warn",
+              text: m.text || "The agent server restarted — this run was cut off.",
+              retriable: true,
+              retryLabel: "Resume",
+              notice: "server_restart",
+            }
           : m.kind === "model_switch"
             ? { kind: "notice", tone: "info", text: m.text || "Model switched", notice: "model_switch" }
             : m.kind === "compacted"

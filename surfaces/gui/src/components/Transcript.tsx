@@ -483,7 +483,7 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
                 {item.text}
                 {item.retriable && !running && onRetry && block.i === retryAnchor(items) && (
                   <button className="btn ml-2" data-testid="notice-retry" onClick={onRetry}>
-                    Retry
+                    {item.retryLabel || "Retry"}
                   </button>
                 )}
               </div>
