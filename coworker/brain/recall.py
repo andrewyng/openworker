@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from .threads import Thread, brain_dir, load_all
+from .threads import Thread, brain_dir, load_all, threads_dir
 
 _STOP = {
     "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "is", "are", "was",
@@ -34,7 +34,28 @@ _MAX_EXCERPT = 240
 
 
 def terms(query: str) -> list[str]:
-    return [w for w in re.split(r"[^a-z0-9.+#-]+", (query or "").lower()) if w and w not in _STOP and len(w) > 2]
+    """The words worth searching for. A one- or two-character token is usually noise ("is",
+    "my") — but a bare version number is not, and dropping it made "Phase 2" and "Phase 3" the
+    identical query on a machine whose durable subjects are named exactly that. An agent asking
+    about Phase 3 was answered with the Phase 2 state line and re-derived shipped work.
+    """
+    return [
+        w
+        for w in re.split(r"[^a-z0-9.+#-]+", (query or "").lower())
+        if w and w not in _STOP and (len(w) > 2 or any(c.isdigit() for c in w))
+    ]
+
+
+def occurs(word: str, haystack: str) -> bool:
+    """Is `word` present in this (already lowercased) text?
+
+    Substring for a real word — "openevolve" should still find "openevolve_roadmap". A short
+    token has to match whole, or the "2" that makes Phase 2 distinct matches every 2026 date in
+    the history and scores every thread alike, which is the opposite of telling them apart.
+    """
+    if len(word) > 2:
+        return word in haystack
+    return re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", haystack) is not None
 
 
 @dataclass
@@ -69,13 +90,18 @@ class Recall:
     threads: list[ThreadHit] = field(default_factory=list)
     corpus: list[CorpusHit] = field(default_factory=list)
     searched: list[str] = field(default_factory=list)
+    base: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "query": self.query,
             "threads": [t.as_dict() for t in self.threads],
             "corpus": [c.as_dict() for c in self.corpus],
-            "searched": self.searched,
+            # The COUNT, not the list. Spelling out every root was 7KB — 55% of a payload whose
+            # whole purpose is to spend a local 27B's context on what was recalled — for 116
+            # task-workspace paths that are identical for every query, grow with every new
+            # automation, and answer no question the caller asked.
+            "searched": {"roots": len(self.searched), "brain": self.base},
             # Stated explicitly: "nothing found" and "nowhere to look" are different answers,
             # and a caller that cannot tell them apart will invent the difference.
             "note": (
@@ -92,15 +118,16 @@ def score_thread(t: Thread, words: list[str]) -> int:
     title = f"{t.title} {t.id}".lower()
     tags = " ".join(t.tags).lower()
     hist = " ".join(e.text for e in t.history[:10]).lower()
+    state = t.now.lower()
     score = 0
     for w in words:
-        if w in title:
+        if occurs(w, title):
             score += 10
-        if w in tags:
+        if occurs(w, tags):
             score += 6
-        if w in t.now.lower():
+        if occurs(w, state):
             score += 4
-        if w in hist:
+        if occurs(w, hist):
             score += 1
     if t.state == "active":
         score += 2  # a live thread outranks a resolved one at equal relevance
@@ -112,14 +139,14 @@ def matched_terms(t: Thread, words: list[str]) -> int:
     hay = " ".join(
         [t.title, t.id, " ".join(t.tags), t.now, " ".join(e.text for e in t.history[:10])]
     ).lower()
-    return sum(1 for w in set(words) if w in hay)
+    return sum(1 for w in set(words) if occurs(w, hay))
 
 
 def names_the_subject(t: Thread, words: list[str]) -> bool:
     """Does a query term hit the thread's title, id or tags? Those name the subject, so one is
     enough on its own — everything else is a passing mention."""
     hay = f"{t.title} {t.id} {' '.join(t.tags)}".lower()
-    return any(w in hay for w in words)
+    return any(occurs(w, hay) for w in words)
 
 
 def _date_of(path: Path) -> str:
@@ -134,12 +161,29 @@ def _date_of(path: Path) -> str:
         return ""
 
 
-def search_corpus(roots: list[Path], words: list[str], limit: int) -> list[CorpusHit]:
+def search_corpus(
+    roots: list[Path],
+    words: list[str],
+    limit: int,
+    *,
+    skip: Optional[Path] = None,
+) -> list[CorpusHit]:
     """Lexical search over the dated reports. ripgrep when present (it is what `grep` uses), a
-    bounded Python walk otherwise so recall still works on a machine without it."""
+    bounded Python walk otherwise so recall still works on a machine without it.
+
+    `skip` is the threads directory. It lives inside the brain dir, which is the first corpus
+    root, and thread files carry today's mtime — so the date sort put them first and the corpus
+    pass spent all six of its slots re-returning the same threads the thread pass had already
+    answered with, three of them as raw frontmatter ("id: opensciencelab-phase-2").
+    """
     if not words or not roots:
         return []
-    pattern = "|".join(re.escape(w) for w in words[:6])
+    # Bare version numbers earn their place in the THREAD pass, where they tell "Phase 2" from
+    # "Phase 3". In a full-text scan they earn nothing: a lone "2" matches three lines in every
+    # report on the machine and, sorted by date, crowds out the hits that mention the subject.
+    # They still search when there is nothing else to search on.
+    grep_words = [w for w in words if len(w) > 2] or words
+    pattern = "|".join(re.escape(w) for w in grep_words[:6])
     hits: list[CorpusHit] = []
     rg = shutil.which("rg")
     existing = [str(r) for r in roots if r.is_dir()]
@@ -175,10 +219,16 @@ def search_corpus(roots: list[Path], words: list[str], limit: int) -> list[Corpu
         p = Path(path)
         if p.name == "FOCUS.md":
             continue  # the focus file is always-loaded context, not a recall result
+        if skip is not None and p.parent == skip:
+            continue  # already answered by the thread pass, in a form that reads
         hits.append(CorpusHit(path=path, when=_date_of(p), text=text[:_MAX_EXCERPT]))
 
-    # Newest first: in a running record the recent statement supersedes the old one.
-    hits.sort(key=lambda h: h.when, reverse=True)
+    # Path then date, so the result is the same twice running. rg walks 116 roots in parallel
+    # and its emission order is not stable between invocations; sorting on the date alone left
+    # same-date hits in whatever order they arrived, and the limit cut picked arbitrary winners
+    # — the same query returned different evidence a minute apart, with the corpus unchanged.
+    hits.sort(key=lambda h: (h.path, h.text))
+    hits.sort(key=lambda h: h.when, reverse=True)  # newest first: recent supersedes old
     seen: set[str] = set()
     out: list[CorpusHit] = []
     for h in hits:
@@ -201,7 +251,7 @@ def recall(
 ) -> Recall:
     base = base or brain_dir()
     words = terms(query)
-    out = Recall(query=query)
+    out = Recall(query=query, base=str(base))
 
     # Keep a thread when the query NAMES it (title, id or tag) — that is the subject, and one
     # such term is enough. Otherwise the match is incidental and needs corroboration from a
@@ -220,7 +270,7 @@ def recall(
     out.searched = [str(r) for r in roots if r.is_dir()]
     if base.is_dir() and str(base) not in out.searched:
         out.searched.append(str(base))
-    out.corpus = search_corpus(roots, words, limit)
+    out.corpus = search_corpus(roots, words, limit, skip=threads_dir(base))
     return out
 
 

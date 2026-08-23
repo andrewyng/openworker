@@ -11,12 +11,31 @@ agent that has to think about a schema will not use them.
 
 from __future__ import annotations
 
+import threading
 from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
 from ..brain.recall import recall as do_recall
-from ..brain.threads import Thread, brain_dir, load, load_all, save, slugify
+from ..brain.threads import (
+    Thread,
+    brain_dir,
+    find_thread,
+    load,
+    load_all,
+    near_threads,
+    oneline,
+    save,
+    slugify,
+)
+
+# brain_note is a read-modify-write: load the thread, append, save it back. The engine runs
+# every tool through asyncio.to_thread and the scheduler starts each due task as its own task
+# (a run-once catch-up fires several in one tick), so two automations CAN be inside it at once
+# in one process. Unguarded, two concurrent notes against a one-entry thread produced 1 or 2
+# entries where 3 were expected — the 1 being the seed and a finding both gone. The critical
+# section is ~260us, so one lock for the whole brain costs nothing worth measuring.
+_WRITE_LOCK = threading.Lock()
 
 _RECALL_SCHEMA = {
     "type": "function",
@@ -119,38 +138,53 @@ def brain_tools(base: Optional[Path] = None) -> list:
         if not key:
             return {"error": "thread is required"}
 
-        # Match an existing thread by id or title before creating one: a brain that forks a new
-        # subject on every rephrasing loses exactly the continuity it exists to provide.
-        tid = slugify(key)
-        found = load(tid, base_dir)
-        if found is None:
-            found = next(
-                (t for t in load_all(base_dir) if t.title.strip().lower() == key.lower()), None
-            )
-        created = found is None
-        if found is None:
-            if not tid:
-                return {"error": f"cannot derive a thread id from {thread!r}"}
-            found = Thread(id=tid, title=key)
+        with _WRITE_LOCK:
+            # Match an existing thread by NAME before creating one: a brain that forks a
+            # new subject on every rephrasing loses exactly the continuity it exists to
+            # provide. threads.find_thread has how far the match reaches, and where it stops.
+            tid = slugify(key)
+            found = load(tid, base_dir)  # fast path: the caller passed the id
+            existing = [] if found is not None else load_all(base_dir)
+            if found is None:
+                found = find_thread(key, existing)
+            created = found is None
+            near: list[str] = []
+            if found is None:
+                if not tid:
+                    return {"error": f"cannot derive a thread id from {thread!r}"}
+                # The matcher declined to pick, so a fork is happening. Naming the
+                # neighbours makes it visible — silently is the only way this went wrong.
+                near = near_threads(key, existing)
+                found = Thread(id=tid, title=key)
 
-        found.add(entry, when=date.today().isoformat(), source=source or "")
-        if now.strip():
-            found.now = now.strip()
-        if state.strip().lower() in {"active", "quiet", "parked", "resolved"}:
-            found.state = state.strip().lower()
-        path = save(found, base_dir)
-        return {
-            "ok": True,
-            "thread": found.id,
-            "created": created,
-            "state": found.state,
-            "entries": len(found.history),
-            "path": str(path),
-            # The CANONICAL id, which the `thread` argument is not: callers pass an id or a
-            # title, and slugifying a title ("OpenScienceLab / openEvolve — Phase 2") produces
-            # something that matches no file. A rail keyed on the argument would invent threads.
-            "_display": {"threads": [found.id], "mode": "written", "created": created},
-        }
+            found.add(entry, when=date.today().isoformat(), source=source or "")
+            if now.strip():
+                # One line, like every other field: a newline here would write a second
+                # `**Now:**` (or a dated bullet) into the body and be read back as structure.
+                found.now = oneline(now)
+            if state.strip().lower() in {"active", "quiet", "parked", "resolved"}:
+                found.state = state.strip().lower()
+            path = save(found, base_dir)
+            out = {
+                "ok": True,
+                "thread": found.id,
+                "created": created,
+                "state": found.state,
+                "entries": len(found.history),
+                "path": str(path),
+                # The CANONICAL id, which the `thread` argument is not: callers pass an id
+                # or a title, and slugifying a title ("OpenScienceLab / openEvolve — Phase
+                # 2") produces something that matches no file. A rail keyed on the argument
+                # would invent threads.
+                "_display": {"threads": [found.id], "mode": "written", "created": created},
+            }
+            if near:
+                out["near"] = near
+                out["note"] = (
+                    "created a new thread next to " + ", ".join(near)
+                    + " — if it is the same subject, note it there instead"
+                )
+            return out
 
     brain_recall.__name__ = "brain_recall"
     brain_recall.__doc__ = _RECALL_SCHEMA["function"]["description"]

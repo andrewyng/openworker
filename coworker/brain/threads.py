@@ -49,6 +49,86 @@ def slugify(text: str) -> str:
     return slug if _ID_RE.match(slug) else ""
 
 
+# Words that name nothing on their own, dropped before two references are compared. Kept tiny
+# on purpose: this decides whether two strings are the SAME SUBJECT, not whether they are
+# relevant to each other.
+_FILLER = {"the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "at", "by"}
+# "OpenEvolve Phase Two" and "OpenEvolve Phase 2" are one subject, and on a machine whose
+# durable subjects are literally named "Phase 2" the difference is a spelling, not a meaning.
+_NUMBER_WORDS = {
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+}
+
+
+def identity_words(text: str) -> frozenset[str]:
+    """The words that NAME a subject, normalised so two spellings of one name come out equal:
+    case, punctuation, separators, word order, filler and "Two" vs "2" all stop mattering."""
+    words = [w for w in re.split(r"[^a-z0-9]+", (text or "").lower()) if w]
+    return frozenset(_NUMBER_WORDS.get(w, w) for w in words if w not in _FILLER)
+
+
+def find_thread(key: str, threads: list["Thread"]) -> Optional["Thread"]:
+    """The existing thread `key` names, or None if it names a new one.
+
+    A brain that forks a subject on every rephrasing loses exactly the continuity it exists to
+    provide. Matching on the id or the byte-exact title alone did that: "OpenScienceLab /
+    openEvolve — Phase 2", "opensciencelab Phase 2", "Phase 2 — OpenEvolve" and "OpenEvolve
+    Phase Two" produced four files with four state lines, and recall answered with whichever of
+    them happened to score highest — on this machine, the stalest one.
+
+    In falling confidence:
+      1. the id or the title, verbatim (or the id the title slugifies to);
+      2. the same identity words, in any order or spelling;
+      3. one name naming the subject with fewer (or more) words than the other, but ONLY when
+         exactly one thread fits and the shorter name is more than one word. Two candidates
+         means the reference is genuinely ambiguous, and merging two subjects is worse than
+         forking one — a thread that mixes subjects can no longer have a true state line.
+
+    Nothing here reads a thread's body: a thread IS its name, and a passing mention in the
+    history is not identity.
+    """
+    key = (key or "").strip()
+    if not key:
+        return None
+    lower = key.lower()
+    slug = slugify(key)
+    for t in threads:
+        if t.id == key or (slug and t.id == slug) or t.title.strip().lower() == lower:
+            return t
+
+    want = identity_words(key)
+    if not want:
+        return None
+    named = [(t, (identity_words(t.id), identity_words(t.title))) for t in threads]
+    exact = {t.id: t for t, names in named if want in names}
+    if exact:
+        return next(iter(exact.values())) if len(exact) == 1 else None
+    partial = {
+        t.id: t
+        for t, names in named
+        for n in names
+        if n and min(len(n), len(want)) > 1 and (n <= want or want <= n)
+    }
+    return next(iter(partial.values())) if len(partial) == 1 else None
+
+
+def near_threads(key: str, threads: list["Thread"]) -> list[str]:
+    """Ids of threads whose name overlaps `key` without being it. Returned when a note creates a
+    thread anyway, so a fork the matcher declined to resolve is visible instead of silent."""
+    want = identity_words(key)
+    if not want:
+        return []
+    out = []
+    for t in threads:
+        shared = (identity_words(t.id) | identity_words(t.title)) & want
+        # Two words in common, or the whole reference echoed — one shared word is a coincidence
+        # ("phase"), and a hint that fires on every thread is a hint nobody reads.
+        if len(shared) > 1 or shared == want:
+            out.append(t.id)
+    return out
+
+
 def brain_dir() -> Path:
     """Where the brain lives. Explicit env wins, then the `brain_dir` pref, then a default
     beside the state dir. Resolved standalone because the tool layer has no manager to ask."""
@@ -69,6 +149,19 @@ def brain_dir() -> Path:
     return state_dir() / "brain"
 
 
+def oneline(text: str) -> str:
+    """Collapse to a single line.
+
+    This file format is line-oriented: one entry per line, and a line starting `**Now:**` IS
+    the state line. So a newline inside an entry is not content, it is structure. Written
+    verbatim, everything after the first line vanished on read-back (while the reported entry
+    count counted it), and any line that happened to match the grammar was PROMOTED — an
+    automation summarising an untrusted page could enter a past-dated finding under a source of
+    its choosing and replace the state line, which `now` is meant to be the only way to change.
+    """
+    return " ".join((text or "").split())
+
+
 @dataclass
 class Entry:
     when: str  # YYYY-MM-DD
@@ -76,8 +169,8 @@ class Entry:
     source: str = ""
 
     def render(self) -> str:
-        tail = f" (source: {self.source})" if self.source else ""
-        return f"- {self.when} — {self.text}{tail}"
+        tail = f" (source: {oneline(self.source)})" if self.source else ""
+        return f"- {self.when} — {oneline(self.text)}{tail}"
 
 
 @dataclass
@@ -100,7 +193,7 @@ class Thread:
             "tags": list(self.tags),
         }
         head = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True).strip()
-        lines = [f"---\n{head}\n---", f"**Now:** {self.now}".rstrip(), "", "## History"]
+        lines = [f"---\n{head}\n---", f"**Now:** {oneline(self.now)}".rstrip(), "", "## History"]
         lines += [e.render() for e in self.history[:MAX_HISTORY]]
         return "\n".join(lines) + "\n"
 
@@ -113,9 +206,13 @@ class Thread:
         `updated` is the newest date the thread holds, not the last one written.
         """
         when = when or date.today().isoformat()
-        if any(e.when == when and e.text.strip() == text.strip() for e in self.history):
+        # Normalise BEFORE the duplicate check, or the guard compares the caller's multi-line
+        # text against the truncated line that was parsed back and never matches: three
+        # byte-identical calls produced three identical stubs.
+        text = oneline(text)
+        if any(e.when == when and e.text == text for e in self.history):
             return
-        entry = Entry(when=when, text=text.strip(), source=source)
+        entry = Entry(when=when, text=text, source=oneline(source))
         at = next((i for i, e in enumerate(self.history) if e.when < when), len(self.history))
         self.history.insert(at, entry)
         del self.history[MAX_HISTORY:]
@@ -208,6 +305,12 @@ def save(thread: Thread, base: Optional[Path] = None) -> Path:
     d = threads_dir(base)
     d.mkdir(parents=True, exist_ok=True)
     f = d / f"{thread.id}.md"
-    f.write_text(thread.render(), encoding="utf-8")
+    # Write-then-rename, not write_text: a reader that opens the file mid-write sees a
+    # truncated one. Measured 10,545 of 18,175 concurrent reads returning an EMPTY history
+    # against a stable 28-entry file — a thread that silently reads as blank is the worst
+    # outcome the brain has, because the caller then records against nothing.
+    tmp = d / f".{thread.id}.md.tmp"
+    tmp.write_text(thread.render(), encoding="utf-8")
+    os.replace(tmp, f)
     thread.path = f
     return f
