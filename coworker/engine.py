@@ -133,6 +133,10 @@ class TurnEngine:
         # Set when the PROCESS is going away mid-turn, so the loop's own interrupt marker
         # says a restart cut the run off instead of reading as a user pressing stop.
         self._shutdown_reason = ""
+        # …and the other way round: set when the STOP arrived before any shutdown reason did,
+        # so a user's deliberate stop keeps its own marker even if the shutdown hook lands in
+        # the same event-loop slice. Per-turn, reset wherever `_cancel` is.
+        self._stopped_by_user = False
 
     # -- external controls ------------------------------------------------------
     def mark_shutting_down(self, reason: str) -> None:
@@ -148,6 +152,12 @@ class TurnEngine:
         interrupted), or between iterations (the loop checkpoint). Every pending
         tool_call still gets a tool-error result so the history never carries orphans
         (hosted templates reject them, and durable-resume would re-prompt them)."""
+        # Whoever gets here first owns the reason. Branching on `_shutdown_reason` alone
+        # relabelled a user's Stop as "the agent server restarted" whenever the shutdown hook
+        # landed a beat later — telling the user the system failed on a run they ended, and
+        # offering Resume on it.
+        if not self._shutdown_reason:
+            self._stopped_by_user = True
         self._cancel.set()
         for hook in self._interrupt_hooks:
             try:
@@ -170,6 +180,17 @@ class TurnEngine:
             return interrupted
         finally:
             cancel_wait.cancel()
+
+    def _begin_turn(self) -> None:
+        """Clear the per-turn stop bookkeeping, at every entry point into the loop.
+
+        A new turn inherits neither the previous one's stop nor a shutdown reason that was
+        set and never cleared — `mark_shutting_down` has no counterpart, so without this the
+        field outlives the turn it was about.
+        """
+        self._cancel.clear()
+        self._stopped_by_user = False
+        self._shutdown_reason = ""
 
     def queue_steering(
         self, text: str, source: Optional[dict[str, Any]] = None
@@ -202,7 +223,7 @@ class TurnEngine:
         if display is not None:
             message["_display"] = display
         self.messages.append(message)
-        self._cancel.clear()
+        self._begin_turn()
         data: dict[str, Any] = {"input": user_input}
         if source is not None:
             data["source"] = source
@@ -265,7 +286,7 @@ class TurnEngine:
     def _append_interrupted(self) -> None:
         """The marker for a turn that stopped early. A user stop is "interrupted"; a turn the
         server killed on its way down is a restart — different cause, different recovery."""
-        if self._shutdown_reason:
+        if self._shutdown_reason and not self._stopped_by_user:
             self._append_notice("server_restart", self._shutdown_reason)
         else:
             self._append_notice("interrupted")
@@ -293,7 +314,7 @@ class TurnEngine:
         is the intended recovery path (owner-hit 2026-07-23)."""
         if not self._tail_is_retriable_error():
             return
-        self._cancel.clear()
+        self._begin_turn()
         yield Event(EventType.TURN_START, {"input": ""})
         async for event in self._loop():
             yield event
@@ -307,7 +328,7 @@ class TurnEngine:
         pending = self._unanswered_trailing_tool_calls()
         if not pending:
             return
-        self._cancel.clear()
+        self._begin_turn()
         yield Event(EventType.TURN_START, {"input": "(resumed)"})
         async for event in self._handle_tool_calls(pending):
             yield event
@@ -1341,11 +1362,23 @@ def unanswered_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]
     Reads a persisted thread, so it works with no engine in memory — which is the case when
     the process that owned the turn is gone and the next one is cleaning up after it.
     """
-    answered = {m.get("tool_call_id") for m in messages if m.get("role") == "tool"}
-    for msg in reversed(messages):
+    for idx in range(len(messages) - 1, -1, -1):
+        msg = messages[idx]
         if msg.get("role") == "user":
             return []
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            # Only a result that came AFTER this message can be answering it. Scanning the
+            # WHOLE thread for answered ids assumed ids are unique per thread, and two shipped
+            # providers mint them per response instead — gemini_provider restarts at `call_0`
+            # on every response, and the OpenAI text-salvage path at `call_salvaged_0` (the
+            # route local/ollama models take). There an earlier step's result masked the dead
+            # step's call, so the repair below was skipped and the thread kept the dangling
+            # tool_call this function exists to remove.
+            answered = {
+                m.get("tool_call_id")
+                for m in messages[idx + 1 :]
+                if m.get("role") == "tool"
+            }
             return [tc for tc in msg["tool_calls"] if tc.get("id") not in answered]
     return []
 
@@ -1353,6 +1386,22 @@ def unanswered_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]
 #: Notice kinds that already close a thread. Appending a second one would stack markers on a
 #: session every time the server restarts while it sits idle.
 _CLOSING_NOTICES = {"error", "interrupted", "server_restart"}
+
+
+def _closing_tail(messages: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """The message that decides whether a thread is still open, looking THROUGH trailing
+    model_switch notices — the same way `_tail_is_retriable_error` does.
+
+    Switching model is the supported step between a closed-out run and Resume, so it lands
+    AFTER the closing marker. Reading only `messages[-1]` made that thread look open again and
+    the next reap stacked a second `server_restart` on it — "restarted / model switched /
+    restarted" — which is exactly what the at-most-one-marker rule exists to prevent.
+    """
+    for message in reversed(messages):
+        if message.get("role") == "notice" and message.get("kind") == "model_switch":
+            continue
+        return message
+    return None
 
 
 def closing_messages(messages: list[dict[str, Any]], reason: str) -> list[dict[str, Any]]:
@@ -1366,7 +1415,9 @@ def closing_messages(messages: list[dict[str, Any]], reason: str) -> list[dict[s
     """
     if not messages:
         return []
-    tail = messages[-1]
+    tail = _closing_tail(messages)
+    if tail is None:
+        return []
     if tail.get("role") == "notice" and tail.get("kind") in _CLOSING_NOTICES:
         return []
     out: list[dict[str, Any]] = []

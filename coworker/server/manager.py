@@ -39,7 +39,13 @@ from ..unattended import UnattendedRegistry
 from ..audit import AuditStore
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
-from ..engine import ApprovalOutcome, Approver, TurnEngine, closing_messages
+from ..engine import (
+    ApprovalOutcome,
+    Approver,
+    TurnEngine,
+    closing_messages,
+    unanswered_tool_calls,
+)
 from ..roots import RootDir
 from ..workspace_trust import WorkspaceTrustStore
 from ..automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
@@ -2979,16 +2985,26 @@ class SessionManager:
     def reap_interrupted_runs(self) -> int:
         """Close out every turn that was in flight when a previous process ended.
 
-        Called once at startup, before anything can serve. A row in `running_turns` can only
-        exist here if the process that wrote it is gone, so each one is a run that stopped
-        without saying so: the transcript ends mid-step and reads as a decision the agent
-        made. This is what writes the marker it never got to write — and, for a scheduled
-        run, what stops the row sitting at "running" forever.
+        Called once at startup, before anything can serve. A row in `running_turns` whose
+        owner is gone is a run that stopped without saying so: the transcript ends mid-step
+        and reads as a decision the agent made. This is what writes the marker it never got
+        to write — and, for a scheduled run, what stops the row sitting at "running" forever.
+
+        Rows whose owner is still ALIVE are left completely alone, row included. The desktop
+        shell runs its sidecar on a random free port precisely so it can coexist with a
+        hand-run server on 8765, and both are pinned to the same `state_dir()` — so this used
+        to close out the other instance's live turns, and the corruption came right after:
+        `ConversationStore.save` appends by count, knows nothing about `append_messages`, and
+        the live engine's next save silently dropped its real tool result and answer.
         """
         reaped = 0
         for row in self.session_store.running_turns():
             session_id = str(row.get("session_id") or "")
             if not session_id:
+                continue
+            if self._claim_owner_alive(row):
+                # Not ours to close, and not ours to delete either: the process that owns it
+                # clears its own row when the turn ends.
                 continue
             try:
                 if self._close_out_dead_run(session_id):
@@ -3002,32 +3018,127 @@ class SessionManager:
             print(f"[coworker] closed out {reaped} run(s) interrupted by a restart")
         return reaped
 
+    def _claim_owner_alive(self, row: dict[str, Any]) -> bool:
+        """Is the process that claimed this turn still running it?
+
+        Answered conservatively in BOTH directions, because both mistakes cost something: say
+        "alive" about a dead owner and its thread never gets its marker; say "dead" about a
+        live one and we corrupt a running conversation. So:
+
+        * no pid (legacy row) → dead; there is nothing to protect.
+        * our own pid → alive. Rows we wrote are ours, and ours are closed out by
+          `interrupt_running_sessions` on the way down, never by the reap.
+        * claimed before this machine booted → dead, whatever the pid says now. This is what
+          keeps a reboot from being fooled by a recycled low pid.
+        * otherwise, ask the OS. A live pid we cannot account for is treated as a live owner:
+          leaving one dead thread unmarked until the next boot is recoverable, appending to a
+          conversation another instance is still writing is not.
+        """
+        try:
+            pid = int(row.get("pid") or 0)
+        except (TypeError, ValueError):
+            return False
+        if pid <= 0:
+            return False
+        if pid == os.getpid():
+            return True
+        started_at = float(row.get("started_at") or 0.0)
+        boot = _boot_time()
+        if boot and started_at and started_at < boot:
+            return False
+        try:
+            os.kill(pid, 0)
+        except PermissionError:
+            return True  # it exists, it just isn't ours to signal
+        except OSError:
+            return False
+        return True
+
     def _close_out_dead_run(self, session_id: str) -> bool:
+        """Mark one run that died with its process: the transcript half, then the automation
+        half. Both are attempted whatever the first decides — a scheduled run holds nothing on
+        disk until its `finally` (there are no mid-turn checkpoint saves on that path), so a
+        SIGKILL leaves a claim row and a TaskRun at "running" with no `sessions` row at all,
+        and returning early on "no transcript to mark" left that row at "running" forever.
+        """
+        marked = self._close_out_dead_thread(session_id)
+        closed = self._close_out_dead_task_run(session_id)
+        return marked or closed
+
+    def _close_out_dead_thread(self, session_id: str) -> bool:
         record = self.session_store.load(session_id)
         if record is None:  # claimed a turn but never persisted a message — nothing to mark
+            return False
+        if self._parked_on_inbox(session_id, record.messages):
             return False
         closing = closing_messages(record.messages, self._RESTART_REASON)
         if not closing:
             return False
-        # Only ever called with no live engine for this session (startup, or a busy session
-        # whose engine was evicted) — so appending to the store IS the whole update.
-        self.session_store.append_messages(session_id, closing)
-        self._close_out_dead_task_run(session_id)
+        engine = self._engines.get(session_id)
+        if engine is not None:
+            # Normally there is no engine here (startup, or a busy session whose engine was
+            # evicted). If there is, it — not the store — is the writer: `save` appends by
+            # count, so writing behind a live engine makes its next save skip exactly as many
+            # real messages as we added.
+            engine.messages.extend(closing)
+            self.save(session_id, engine)
+        else:
+            self.session_store.append_messages(session_id, closing)
         return True
 
-    def _close_out_dead_task_run(self, session_id: str) -> None:
+    def _parked_on_inbox(self, session_id: str, messages: list[dict[str, Any]]) -> bool:
+        """True when this turn is suspended on a pending Inbox prompt rather than dead mid-step.
+
+        Such a turn also ends on an unanswered tool call, so the reap used to answer it — and
+        that answer is what durable resume needs to re-execute. `TurnEngine.resume()` starts
+        from `_unanswered_trailing_tool_calls()`; with the call already answered it finds
+        nothing and returns, while `resolve_inbox` has already consumed the item. The user
+        clicks Allow, the item disappears, and the approved tool never runs.
+
+        The pending item IS this thread's durable marker — the user can see it and resolving it
+        resumes the turn — so leave the transcript exactly as it is.
+        """
+        try:
+            parked = {
+                item.tool_call_id
+                for item in self.inbox.pending(session_id)
+                if getattr(item, "tool_call_id", None)
+            }
+        except Exception:
+            return False
+        if not parked:
+            return False
+        return any(tc.get("id") in parked for tc in unanswered_tool_calls(messages))
+
+    def _close_out_dead_task_run(self, session_id: str) -> bool:
         """The automation half: a scheduled run whose process died keeps `status: running`,
-        which every surface reads as "still working" — the Scheduled badge, the MCP health
-        report, and the freshness exporter all count it as in-flight forever."""
+        which every surface reads as "still working" — the Scheduled badge counts it as
+        in-flight forever, and the run never tints its task as failed."""
         if not session_id.startswith("__run__"):
-            return
+            return False
         run = self.task_store.find_run(session_id[len("__run__") :])
         if run is None or run.status != "running":
-            return
+            return False
         run.status = "incomplete"  # not "error": nothing threw, it just never finished
         run.error = "interrupted — the agent server restarted mid-run"
         run.finished_at = _epoch()
         self.task_store.add_run(run)
+        return True
+
+    def _close_out_live_thread(self, engine) -> bool:
+        """Write the restart marker onto an engine still in memory, for the caller to save.
+
+        Same repair as the reap's, and the same one-writer rule: `closing_messages` returns []
+        when the loop's own cancel path already closed the thread, so the two cannot stack.
+        """
+        try:
+            closing = closing_messages(engine.messages, self._RESTART_REASON)
+        except Exception:
+            return False
+        if not closing:
+            return False
+        engine.messages.extend(closing)
+        return True
 
     async def interrupt_running_sessions(self) -> int:
         """Cut this process's in-flight turns short, on the way down.
@@ -3041,7 +3152,7 @@ class SessionManager:
         since nothing else will.
         """
         stopped = 0
-        for session_id in list(self._running_sessions):
+        for session_id in self._in_flight_session_ids():
             engine = self._engines.get(session_id)
             try:
                 if engine is not None:
@@ -3067,6 +3178,33 @@ class SessionManager:
             except Exception:
                 pass
         return stopped
+
+    def _in_flight_session_ids(self) -> list[str]:
+        """Every turn THIS process has in flight — the in-memory busy set plus our own durable
+        claims.
+
+        A scheduled run is deliberately kept out of `_running_sessions` (that set gates how an
+        Inbox resolution resumes a parked approval, and its `mark_idle` counterpart fires an
+        auto-title call), so its claim row is the only place it shows up. Iterating the set
+        alone meant a `systemctl restart` never told a running automation's engine why it was
+        dying — the shutdown skipped it, `scheduler.stop()` cancelled it, and its transcript
+        ended on a bare tool result.
+        """
+        ids = list(self._running_sessions)
+        seen = set(ids)
+        try:
+            mine = os.getpid()
+            for row in self.session_store.running_turns():
+                session_id = str(row.get("session_id") or "")
+                if not session_id or session_id in seen:
+                    continue
+                if int(row.get("pid") or 0) != mine:
+                    continue  # another instance's turn — never ours to interrupt
+                ids.append(session_id)
+                seen.add(session_id)
+        except Exception:  # bookkeeping must never block the shutdown path
+            logger.exception("could not list durable claims at shutdown")
+        return ids
 
     async def _resume_wake(self, wake) -> None:
         await self.deliver_to_session(wake.session_id, self._wake_message(wake))
@@ -3306,7 +3444,6 @@ class SessionManager:
         run = TaskRun(
             task_id=task.id, trigger=trigger
         )  # __post_init__ sets run.session_id
-        self.task_store.add_run(run)  # mark "running"
         # UX-026: tell every open app window a SCHEDULED run just started (the 5s
         # top-right toast). Manual runs never come through here — the user is
         # already watching those live.
@@ -3344,6 +3481,14 @@ class SessionManager:
         # and its mark_idle() counterpart fires an auto-title LLM call. A scheduled run wants
         # neither; it wants the row that says "this was working when we died".
         self._mark_running_durable(run.session_id)
+        # Only now file the row as "running" — after the setup above, and immediately before
+        # the try/finally that is the only thing that can ever move it off "running". Filed
+        # any earlier, a raise from the workspace/MCP/engine setup (a project folder deleted
+        # or gone read-only is the everyday trigger) orphaned one permanently-"running" row
+        # per tick: the finally was never entered, no durable claim existed yet, so the reap
+        # could not clean it either, and `Scheduler.run_task` filed a separate "error" row
+        # that hid the pile-up.
+        self.task_store.add_run(run)  # mark "running"
         # The first turn is the task itself. The framing matters: instructions often restate the
         # schedule ("every day at 5:32pm…"), so make explicit that the schedule already fired and
         # the job now is to execute, not to (re)schedule.
@@ -3390,6 +3535,14 @@ class SessionManager:
                 # "running", and every surface reads that as still working.
                 run.status = "incomplete"
                 run.error = run.error or "interrupted — the run did not finish"
+                # And the transcript needs the same news the row just got. On a graceful
+                # `systemctl restart` the engine is blocked in the model call when
+                # `scheduler.stop()` cancels this task, so it never reaches a cancel
+                # checkpoint and writes nothing: reopening the run showed a thread that just
+                # stops on a tool result — no marker, no explanation, and no Resume, because
+                # that tail is not retriable. The next boot's reap cannot cover for us either;
+                # `_clear_running_durable` below spends the one row it would have used.
+                self._close_out_live_thread(engine)
             # Persist the run as a continuable session + keep the live engine for an immediate
             # follow-up; record the run (now carrying its session_id).
             try:
@@ -4387,6 +4540,29 @@ def _epoch() -> float:
     import time
 
     return time.time()
+
+
+_BOOT_TIME: Optional[float] = None
+
+
+def _boot_time() -> float:
+    """When this machine last booted, epoch seconds — 0.0 when we cannot tell.
+
+    Used by the reap to age out claim rows: a turn claimed before the current boot cannot
+    still be running, whatever pid the row carries. Without it a reboot can be fooled into
+    sparing a dead run whose pid the new boot has already handed to something else.
+    """
+    global _BOOT_TIME
+    if _BOOT_TIME is None:
+        _BOOT_TIME = 0.0
+        try:
+            for line in Path("/proc/stat").read_text(encoding="utf-8").splitlines():
+                if line.startswith("btime "):
+                    _BOOT_TIME = float(line.split()[1])
+                    break
+        except Exception:  # not Linux, or /proc unreadable — fall back to the pid check alone
+            pass
+    return _BOOT_TIME
 
 
 # A Slack message ts looks like "1700000001.000001" (epoch seconds + microseconds). Other
