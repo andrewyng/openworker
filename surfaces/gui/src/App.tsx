@@ -37,13 +37,13 @@ import type {
   Item,
   SessionInfo,
   SessionUsage,
-  TodoItem,
   WsEvent,
 } from "./types";
 import { isProjectScoped, shortPersonaName } from "./personaScope";
 import { accentFor, accentMap, placeholderFor } from "./personaStyle";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
+import { planFromItems } from "./planFromItems";
 import { addTurnUsage, emptyUsage, usageFromMessages } from "./usage";
 import { streamMode } from "./streamGate";
 import { InboxItemCard } from "./components/InboxItemCard";
@@ -122,23 +122,6 @@ export function threadsFromItems(items: any[]): { id: string; read: boolean; wri
 
 // Tools whose success means a new/changed file should show up under Artifacts right away.
 const FILE_WRITE_TOOLS = new Set(["write_file", "apply_patch", "apply_unified_diff", "replace_in_file"]);
-
-// Models sometimes pass todo items as bare strings instead of {content, status} objects (the
-// backend tool normalizes them the same way; the GUI reads the raw proposal args, so mirror it).
-function normalizeTodos(raw: unknown): TodoItem[] {
-  if (!Array.isArray(raw)) return [];
-  const statuses = new Set(["pending", "in_progress", "done"]);
-  return raw.map((entry: any) => {
-    if (entry && typeof entry === "object") {
-      const status = entry.status === "completed" ? "done" : entry.status; // common model alias
-      return {
-        content: String(entry.content ?? ""),
-        status: statuses.has(status) ? status : "pending",
-      };
-    }
-    return { content: String(entry ?? ""), status: "pending" as const };
-  });
-}
 
 // Fallbacks used only before the persona list loads (the in-component, family-aware
 // needsWorkspace/gatesWorkspace consult the real persona once available).
@@ -248,7 +231,6 @@ export function App() {
     reasoningRef.current = value;
     setReasoningStreamState(value);
   };
-  const [todo, setTodo] = useState<TodoItem[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
@@ -393,6 +375,36 @@ export function App() {
     [items],
   );
   const threadsTouched = useMemo(() => threadsFromItems(items), [items]);
+  // The rail's checkpoints and budgets measure ONE run — a budget is "a ceiling on one kind of
+  // tool call for a single run" (manifest.py) and the strip answers "how far through is this".
+  // Handing them the whole transcript made both permanently wrong from the second request on:
+  // two turns of 9 and 19 calls read `28/20 over` and could never fall back to ok, and turn 2
+  // opened with turn 1's evidence already ticked and no step marked current. A run is everything
+  // after the last thing the user — or a connector — asked for.
+  const runToolNames = useMemo(() => {
+    let start = 0;
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].kind === "user" || items[i].kind === "connector") {
+        start = i;
+        break;
+      }
+    }
+    return items
+      .slice(start)
+      .filter((i) => i.kind === "tool")
+      .map((i: any) => i.name as string);
+  }, [items]);
+  // The plan, derived for the same reason the two above are. It used to be state written only by
+  // the live `tool_proposed` event, so opening a conversation from the sidebar replayed the
+  // checkpoints, meters and activity from the transcript but left the panel's headline content —
+  // Now/Next and the rows — blank. The last todo_write wins: a plan outlives the turn that wrote
+  // it, and the model rewrites the whole list every time it revises one item.
+  //
+  // With its age (planFromItems), because "the model rewrites the whole list every time" is a
+  // convention, not a guarantee: a plan the run has left 76 calls behind renders exactly like
+  // one written a second ago, and the panel has to be able to tell them apart.
+  const plan = useMemo(() => planFromItems(items), [items]);
+  const todo = plan.items;
 
   // Pending Inbox items for the ACTIVE session — surfaced inline above the composer so an
   // unattended session's blocking question/approval can be answered in context (resolving the
@@ -731,8 +743,6 @@ export function App() {
           break;
         }
         case "tool_proposed":
-          if (d.name === "todo_write" && (d.arguments?.todos || d.arguments?.items))
-            setTodo(normalizeTodos(d.arguments.todos ?? d.arguments.items));
           setItems((p) => [
             ...p,
             { kind: "tool", id: newId(), name: d.name, args: d.arguments, status: "…" },
@@ -805,8 +815,17 @@ export function App() {
             setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Stopped: max iterations reached." }]);
           break;
         case "model_changed":
-          if (typeof d.context_window === "number") {
-            setSessionWindow({ sid: sessionId, n: d.context_window });
+          // The server always sends this key, and sends null whenever it could not resolve a
+          // window for the model it just bound — an id outside the hosted matrix, or an ollama
+          // model that is not loaded, which is the routine case for local models. Ignoring the
+          // null left the rail dividing the NEW model's usage by the PREVIOUS model's window: a
+          // confident 38% while the engine is about to truncate. Clearing it falls through to
+          // the client matrix and, failing that, shows no percentage at all.
+          if ("context_window" in d) {
+            setSessionWindow({
+              sid: sessionId,
+              n: typeof d.context_window === "number" ? d.context_window : null,
+            });
           }
           // Mid-session switch (server-applied): update the header fact and drop the
           // persisted marker into the live transcript (replay renders it from history).
@@ -904,9 +923,19 @@ export function App() {
       }
     };
 
+    // `live` scopes both callbacks to THIS socket. `close()` fires `onclose`
+    // asynchronously, so a socket torn down by a sessionId change can land its close
+    // AFTER the replacement socket has already opened — and an unguarded
+    // `setConnected(false)` there leaves `connected` stuck false against a healthy,
+    // open socket. The Composer's send button is `disabled={!connected}`, so the
+    // symptom is a session that connects (server logs the WebSocket accepted) but
+    // whose composer silently refuses to send. That is exactly what picking a folder
+    // does: `chooseWorkspace` changes `sessionId`, which swaps the socket.
+    let live = true;
     const session = new Session(sessionId, workspace || "", agent, {
       onEvent: handleEvent,
       onOpen: () => {
+        if (!live) return;
         setConnected(true);
         // Auto-send the task prompt once a "Run now" session connects.
         const p = pendingPromptRef.current;
@@ -917,6 +946,7 @@ export function App() {
         }
       },
       onClose: () => {
+        if (!live) return;
         setConnected(false);
         // There is no reconnect: once this socket is gone nothing else will report on the
         // turn. Leaving the spinner up is the visible half of a run dying silently — the
@@ -942,7 +972,10 @@ export function App() {
       },
     });
     sessionRef.current = session;
-    return () => session.close();
+    return () => {
+      live = false;
+      session.close();
+    };
     // NOTE: `workspace` is intentionally NOT a dependency. Every real workspace change
     // (pick folder, select/switch session, new session) is paired with a `sessionId`
     // change, so the socket still reconnects when it should. The one workspace-only change
@@ -1087,7 +1120,6 @@ export function App() {
     setItems([]);
     setUsage(emptyUsage());
     setStreaming("");
-    setTodo([]);
     setRunning(false);
     // "New session" under a browsed persona switches to it (expand≠switch: the header alone
     // doesn't switch; this explicit action does).
@@ -1157,7 +1189,6 @@ export function App() {
   const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
   const selectSession = async (id: string, ws: string, ag: string) => {
     setSurface("session"); // selecting a conversation always returns to the conversation view
-    setTodo([]);
     setStreaming("");
     setRunning(false);
     if (ag) setAgent(ag);
@@ -1188,8 +1219,23 @@ export function App() {
     setItems([]);
     setUsage(emptyUsage());
     setStreaming("");
-    setTodo([]);
     setRunning(false);
+
+    // Picking a project-scoped persona from the nav ALWAYS asks which project to work in.
+    // Choosing the coworker and choosing its folder are one action; silently resuming the
+    // persona's last session — or inheriting whatever folder happens to be most recent via
+    // `fallbackWorkspace` — skips that choice and drops you into a session you did not pick,
+    // with no visible sign anything happened. Resuming a specific session is still one click
+    // away in the sidebar's session list, which goes through `selectSession` and is untouched.
+    if (gatesWorkspace(name)) {
+      const fresh = newId();
+      setWorkspace(null);
+      setBranch(null);
+      setSessionId(fresh);
+      setGateCreate(false);
+      setShowGate(true);
+      return;
+    }
 
     // The live workspace is only a valid fallback for a gated persona if it came from
     // another gated persona — a knowledge persona's workspace is a scratch dir, and a
@@ -1246,7 +1292,6 @@ export function App() {
     setItems([]);
     setUsage(emptyUsage());
     setStreaming("");
-    setTodo([]);
     setSessionId(newId());
     getRecentWorkspaces().then(setProjects).catch(() => {});
   };
@@ -1259,7 +1304,6 @@ export function App() {
     setItems([]);
     setUsage(emptyUsage());
     setStreaming("");
-    setTodo([]);
     setRunning(false);
     if (target !== agent) setAgent(target);
     setWorkspace(null);
@@ -1284,7 +1328,6 @@ export function App() {
       setItems([]);
       setUsage(emptyUsage());
       setStreaming("");
-      setTodo([]);
       setRunning(false);
       setSessionId(newId());
     }
@@ -1297,7 +1340,6 @@ export function App() {
       setItems([]);
       setUsage(emptyUsage());
       setStreaming("");
-      setTodo([]);
       setRunning(false);
       setSessionId(newId());
     }
@@ -1824,8 +1866,9 @@ export function App() {
             active={surface === "session" && agent !== "chat" && !railHidden}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}
-            toolNames={items.filter((i) => i.kind === "tool").map((i: any) => i.name)}
+            toolNames={runToolNames}
             todo={todo}
+            planStepsSince={plan.stepsSince}
             running={running}
             onPreviewChange={onArtifactPreview}
             // Every persona that has a workspace produces files; the rail lists whatever the

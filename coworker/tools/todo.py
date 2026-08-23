@@ -7,6 +7,7 @@ is held in a `TodoList` the surface can read; `todo_write` replaces it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 import aisuite as ai
 
@@ -85,3 +86,51 @@ def todo_tools(todo: TodoList) -> list:
     )
     wrapped.__coworker_schema__ = _TODO_SCHEMA
     return [wrapped]
+
+
+# How far a run may travel on a list nobody has rewritten before the model is asked to
+# refresh it. Measured against the failure below: eight tool calls is more than any single
+# plan item took in the runs this was sized on, and well short of the seventy-six that
+# produced it.
+_STALE_AFTER = 8
+
+_STALE_NOTICE = (
+    "Your task list is out of date: you have run several tools since you last wrote it and "
+    "it still shows unfinished items. Call todo_write now with the FULL list — mark "
+    "everything you have finished as done, and exactly one item as in_progress. The user's "
+    "progress panel renders the last list you wrote and nothing else, so a list you leave "
+    "behind is the run reporting itself as stalled."
+)
+
+
+def stale_plan_notice(todo: Optional[TodoList], messages: list[dict]) -> str:
+    """The per-turn nudge to rewrite a plan the run has moved past — "" when it is current.
+
+    Reaches the model through the engine's ephemeral `<system-context>` block (agent.py), so
+    it is never persisted, never replayed into the transcript, and disappears on the round
+    trip after the list is rewritten.
+
+    The failure it exists for: a five-item plan written at the top of a 101-call turn and
+    rewritten once, at call 24. The remaining 76 calls finished items 2-5 and committed them,
+    and the model never said so. The Progress panel can only render the last list it was
+    given, so it showed "item 2 in progress, 3-5 pending" for the rest of the run and after
+    it ended. Nothing in the loop had ever asked for an update: the persona instructions say
+    it once, at a point the model passed seventy calls ago.
+
+    Deliberately count-free. The block it lands in is appended to the last user message, so a
+    text that changed on every round trip would invalidate the prompt cache on every one;
+    this one changes twice per plan, when it appears and when it clears.
+    """
+    if todo is None or not todo.items:
+        return ""  # no plan at all — a persona without the tool, or a run that never planned
+    if all(item.get("status") == "done" for item in todo.items):
+        return ""  # nothing left to move; a finished list is not a stale one
+    calls = 0
+    for message in reversed(messages):
+        for call in reversed(message.get("tool_calls") or []):
+            if (call.get("function") or {}).get("name") == "todo_write":
+                return _STALE_NOTICE if calls >= _STALE_AFTER else ""
+            calls += 1
+    # No todo_write left in the visible history — compaction dropped it, or this is a resumed
+    # thread. The list still came from somewhere, so age it by everything that has run since.
+    return _STALE_NOTICE if calls >= _STALE_AFTER else ""

@@ -251,18 +251,21 @@ export function placeholderFor(persona?: Persona, personaId?: string): string {
 // work ends in a changed repo or a written deliverable.
 const cp = (id: string, label: string, evidence: string[]): PersonaCheckpoint => ({ id, label, evidence });
 
+// `propose_plan` and `explore` are first-party tools (coworker/tools/plan.py, subagent.py) that
+// evidence their step as plainly as todo_write and grep do; leaving them out pinned a run that
+// planned and gathered through them at step one forever.
 const FAMILY_CHECKPOINTS: Record<string, PersonaCheckpoint[]> = {
   code: [
     cp("recall", "Recall", ["brain_recall"]),
-    cp("plan", "Plan", ["todo_write"]),
+    cp("plan", "Plan", ["todo_write", "propose_plan"]),
     cp("locate", "Locate the change", ["grep", "read_file", "read_file_lines", "explore"]),
     cp("implement", "Implement", ["write_file", "replace_in_file", "apply_patch", "apply_unified_diff"]),
     cp("verify", "Verify", ["run_shell"]),
   ],
   knowledge: [
     cp("recall", "Recall", ["brain_recall"]),
-    cp("plan", "Plan", ["todo_write"]),
-    cp("gather", "Gather", ["web_search", "web_fetch", "grep", "read_file", "read_file_lines", "run_shell"]),
+    cp("plan", "Plan", ["todo_write", "propose_plan"]),
+    cp("gather", "Gather", ["web_search", "web_fetch", "grep", "read_file", "read_file_lines", "run_shell", "explore"]),
     cp("produce", "Produce the deliverable", ["write_file"]),
     cp("record", "Record what lasts", ["brain_note"]),
   ],

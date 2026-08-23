@@ -194,6 +194,17 @@ describe("checkpoints", () => {
     const out = checkpointProgress(steps, ["todo_write", "web_search", "write_file"]);
     expect(out.every((s) => s.state === "done")).toBe(true);
   });
+
+  it("accepts the first-party planning and exploring tools as evidence", () => {
+    // propose_plan (coworker/tools/plan.py) and explore (coworker/tools/subagent.py) are how a
+    // run plans and gathers when it does not use todo_write and grep. Naming only the latter
+    // pair pinned such a run at "Plan — current step" for its whole life.
+    const family = checkpointsFor(persona({ id: "x", family: "knowledge", tools: ["files", "search"] }));
+    const state = (tools: string[]) =>
+      Object.fromEntries(checkpointProgress(family, tools).map((s) => [s.checkpoint.id, s.state]));
+    expect(state(["propose_plan"]).plan).toBe("done");
+    expect(state(["explore"]).gather).toBe("done");
+  });
 });
 
 describe("checkpoints — skipped steps", () => {

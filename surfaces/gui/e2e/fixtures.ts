@@ -678,6 +678,55 @@ export async function mockApi(page: import("@playwright/test").Page) {
           });
           return; // suspended on the approval
         }
+        // A plan: the model's own todo list, which drives the rail's Now/Next and rows.
+        if (/plan the work/i.test(msg.text)) {
+          const todos = [
+            { content: "Read the spec", status: "done" },
+            { content: "Draft the patch", status: "in_progress" },
+            { content: "Run the tests", status: "pending" },
+          ];
+          send("tool_proposed", { name: "todo_write", arguments: { todos } });
+          send("tool_finished", { name: "todo_write", status: "done", result_preview: "ok" });
+          send("assistant_message", { text: "Planned three steps." });
+          send("turn_done");
+          return;
+        }
+        // A plan the run then leaves behind: the list is written once and never revised, while
+        // ten more calls do the work. This is the measured failure (a five-item plan revised at
+        // call 24 of 101, then never again) at a size a test can watch.
+        if (/plan then wander/i.test(msg.text)) {
+          const todos = [
+            { content: "Read the spec", status: "done" },
+            { content: "Draft the patch", status: "in_progress" },
+            { content: "Run the tests", status: "pending" },
+          ];
+          send("tool_proposed", { name: "todo_write", arguments: { todos } });
+          send("tool_finished", { name: "todo_write", status: "done", result_preview: "ok" });
+          for (let i = 0; i < 10; i++) {
+            send("tool_proposed", { name: "read_file", arguments: { path: `src/f${i}.py` } });
+            send("tool_finished", { name: "read_file", status: "done", result_preview: "ok" });
+          }
+          send("assistant_message", { text: "All three steps are finished." });
+          send("turn_done");
+          return;
+        }
+        // Native connector tools: real runtime names (gmail_*, hubspot_*, notion_*) that no
+        // static bucket in the rail can name. The turn is entirely connector work, which is
+        // what an ops-shaped session looks like.
+        if (/work the connectors/i.test(msg.text)) {
+          for (const name of [
+            "gmail_search_messages",
+            "gmail_search_messages",
+            "hubspot_search",
+            "notion_read_page",
+          ]) {
+            send("tool_proposed", { name, arguments: {} });
+            send("tool_finished", { name, status: "done", result_preview: "ok" });
+          }
+          send("assistant_message", { text: "Pulled the connector data." });
+          send("turn_done");
+          return;
+        }
         // §35 compact row: a routine workspace write (content rides in the args).
         if (/write a file/i.test(msg.text)) {
           pendingTool = "write_file";
@@ -862,10 +911,17 @@ export async function mockApi(page: import("@playwright/test").Page) {
       } else if (msg.type === "set_model") {
         // Mid-session switch: the server applies it and broadcasts the persisted marker.
         // Like the real server, the FIRST bind (fresh session) is silent.
+        //
+        // app.py ALWAYS sends `context_window` on this frame, and it is NULL whenever the
+        // engine cannot resolve a window for the model it just bound (an id outside the
+        // hosted matrix, or an ollama model that is not loaded). Mirroring that null is the
+        // point: it is the routine case for local models, and the client must not go on
+        // dividing by the previous model's window.
         if (hadTurn)
           send("model_changed", {
             model: msg.model,
             text: `Model switched to ${msg.model}`,
+            context_window: SETTINGS.model_context_windows[msg.model] ?? null,
           });
       } else if (msg.type === "retry") {
         // Like the real engine: re-runs with NO new user message (turn_start input is empty).

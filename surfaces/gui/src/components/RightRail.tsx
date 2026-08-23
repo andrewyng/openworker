@@ -44,6 +44,9 @@ interface Props {
   refreshKey: number;
   toolNames: string[];
   todo: TodoItem[];
+  // Tool calls run since the model last rewrote `todo` — see planFromItems.ts. The plan is a
+  // snapshot of what it last SAID it was doing, and this is how far the run has moved since.
+  planStepsSince?: number;
   running: boolean;
   // Fires when a full artifact preview opens/closes, so the app can auto-collapse the left nav
   // to give the preview (PDF/webpage/sheet) more room (#3).
@@ -82,6 +85,7 @@ export function RightRail({
   refreshKey,
   toolNames,
   todo,
+  planStepsSince = 0,
   running,
   onPreviewChange,
   showArtifacts = true,
@@ -209,6 +213,7 @@ export function RightRail({
               running={running}
               toolNames={toolNames}
               todo={todo}
+              planStepsSince={planStepsSince}
               family={personaFamily}
               personaName={personaName}
               persona={persona}
@@ -265,7 +270,10 @@ export function RightRail({
               <div className="rail-muted">No previewable files yet.</div>
             ) : (
               <div className="artifact-list">
-                {artifacts.slice(0, allArtifacts ? 40 : 8).map((a) => (
+                {/* All of them, once asked: the control's own label is "Show all 60", and the
+                    40-row cap that used to live here made that promise false for any workspace
+                    with more previewable files than that (the server returns up to 80). */}
+                {(allArtifacts ? artifacts : artifacts.slice(0, 8)).map((a) => (
                   <button className="artifact-row" key={a.path} onClick={() => setSelected(a)}>
                     <span className="artifact-ico" title={a.kind}>
                       <Icon name={kindIcon(a.kind)} size={17} />
@@ -337,6 +345,17 @@ const BUCKETS: Record<string, Bucket> = {
   asked: { key: "asked", label: (n) => `${n} question${n === 1 ? "" : "s"} to you`, tools: ["ask_user"] },
 };
 
+// Tools whose work the panel already renders in full, so counting them again would say the same
+// thing twice: the plan IS the todo list two elements up.
+const RENDERED_ELSEWHERE = new Set(["todo_write"]);
+
+// After this many tool calls with no rewrite, the plan stops being read as live state and says
+// how old it is instead. Matched to the engine's own threshold (coworker/tools/todo.py
+// `_STALE_AFTER`), which is what asks the model to refresh the list: past this point the panel
+// and the model have been told the same thing, so the note appearing means the nudge has not
+// landed yet — which is exactly when the reader needs to know not to trust the rows.
+const PLAN_STALE_AFTER = 8;
+
 // Order matters: the first bucket is the headline, so each family leads with the thing that
 // means "the work is happening" for it — edits for code, pages read for research.
 const FAMILY_ORDER: Record<string, string[]> = {
@@ -347,14 +366,21 @@ const FAMILY_ORDER: Record<string, string[]> = {
 function countBuckets(toolNames: string[], family?: string): { key: string; text: string }[] {
   const counts: Record<string, number> = {};
   let mcp = 0;
+  // Calls no bucket names, kept under the tool's own name in the order they first appeared.
+  const other = new Map<string, number>();
   for (const name of toolNames) {
     if (name.startsWith("mcp__")) {
       mcp += 1;
       continue;
     }
+    let matched = RENDERED_ELSEWHERE.has(name);
     for (const b of Object.values(BUCKETS)) {
-      if (b.tools.includes(name)) counts[b.key] = (counts[b.key] || 0) + 1;
+      if (b.tools.includes(name)) {
+        counts[b.key] = (counts[b.key] || 0) + 1;
+        matched = true;
+      }
     }
+    if (!matched) other.set(name, (other.get(name) || 0) + 1);
   }
   const order = FAMILY_ORDER[family || "knowledge"] || FAMILY_ORDER.knowledge;
   const out = order
@@ -363,6 +389,17 @@ function countBuckets(toolNames: string[], family?: string): { key: string; text
   // MCP calls are a persona's declared servers doing work; they belong in the count even
   // though no static bucket can name them.
   if (mcp) out.push({ key: "mcp", text: `${mcp} MCP call${mcp === 1 ? "" : "s"}` });
+  // The ~130 native connector tools (gmail_*, hubspot_*, notion_*, github_*, …) and anything the
+  // catalog gains after this file was written match no bucket. Dropping them silently meant a run
+  // done entirely through connectors rendered NO activity line at all, while the budget meter one
+  // element up counted the same calls as "8/12" — the panel contradicting itself. A tool's own
+  // name is not as good as a bucket's phrasing, but it is true.
+  for (const [name, n] of other) {
+    const label = name.replace(/_/g, " ");
+    // "×N" rather than a leading count: a bucket can pluralize its own phrase ("3 searches"),
+    // an arbitrary tool name cannot, and "3 gmail search messages" reads worse than the tally.
+    out.push({ key: name, text: n === 1 ? label : `${label} ×${n}` });
+  }
   return out;
 }
 
@@ -449,21 +486,27 @@ function Meter({
   );
 }
 
-/** Budget consumption and context headroom, counted from what actually happened. */
+/** Budget consumption and context headroom, counted from what actually happened.
+ *
+ *  `runStarted` splits the two: a budget is a ceiling on ONE run, so there is nothing to meter
+ *  before the run has called anything, while context fill and compactions are facts about the
+ *  whole session and hold whether a tool ran or not. */
 function Meters({
   persona,
   toolNames,
+  runStarted,
   contextUsed,
   contextWindow,
   compactions,
 }: {
   persona?: Persona;
   toolNames: string[];
+  runStarted: boolean;
   contextUsed?: number;
   contextWindow?: number | null;
   compactions?: number;
 }) {
-  const budgets = budgetUse(persona, toolNames);
+  const budgets = runStarted ? budgetUse(persona, toolNames) : [];
   // Only when BOTH numbers are real: a percentage against a guessed window is worse than none,
   // and a provider that reports no usage would otherwise render a confident 0%.
   const showContext = !!contextWindow && contextWindow > 0 && !!contextUsed && contextUsed > 0;
@@ -511,6 +554,7 @@ function ProgressSummary({
   running,
   toolNames,
   todo,
+  planStepsSince = 0,
   family,
   personaName,
   persona,
@@ -522,6 +566,7 @@ function ProgressSummary({
   running: boolean;
   toolNames: string[];
   todo: TodoItem[];
+  planStepsSince?: number;
   family?: string;
   personaName?: string;
   persona?: Persona;
@@ -535,6 +580,9 @@ function ProgressSummary({
   const current = todo.find((t) => t.status === "in_progress");
   const next = todo.find((t) => t.status === "pending" && t !== current);
   const started = toolNames.length > 0 || todo.length > 0;
+  // A plan the run has moved well past. It is still the best thing the panel has — the model
+  // never said what it did instead — but it is a snapshot with a date on it, not "Now".
+  const stale = planStepsSince >= PLAN_STALE_AFTER;
 
   const activityLine = activity.length > 0 && (
     <div className="rail-activity" data-testid="rail-activity">
@@ -546,19 +594,40 @@ function ProgressSummary({
     </div>
   );
 
+  // Rendered in EVERY branch, idle included. Gating the meters on `started` meant a session
+  // filling its window by conversation alone — no tool call, no plan — showed no context meter
+  // at all, and the meter it did show mid-turn vanished again at turn_done. Meanwhile the
+  // section header went on printing "95% context" above a body that said nothing had happened
+  // yet: the panel contradicting itself exactly when the run was near the wall.
+  const meters = (
+    <Meters
+      persona={persona}
+      toolNames={toolNames}
+      runStarted={running || started}
+      contextUsed={contextUsed}
+      contextWindow={contextWindow}
+      compactions={compactions}
+    />
+  );
+
   // "Now" and "Next" first: the two things the panel was never answering. A plan of five items
   // with one in_progress buried in the middle made you read the list to find your place.
+  //
+  // Both keys are claims about the present, and a plan the run has left behind cannot support
+  // either: "Now" over an item the model finished forty calls ago is the panel's loudest wrong
+  // sentence, and it is what made a working run read as a stuck one. Past the staleness line the
+  // keys say when instead of what — the rows are unchanged, only the tense is honest.
   const nowNext = (current || next) && (
     <div className="rail-nownext">
       {current && (
         <div className="rail-now">
-          <span className="rail-nownext-key">Now</span>
+          <span className="rail-nownext-key">{stale ? "Last on" : "Now"}</span>
           <span>{current.content}</span>
         </div>
       )}
       {next && (
         <div className="rail-next">
-          <span className="rail-nownext-key">Next</span>
+          <span className="rail-nownext-key">{stale ? "Then" : "Next"}</span>
           <span>{next.content}</span>
         </div>
       )}
@@ -569,24 +638,47 @@ function ProgressSummary({
     return (
       <div className="rail-todo-list">
         {nowNext}
-        {todo.map((item, index) => (
-          <div className={"rail-todo " + item.status} key={index}>
-            <span className="rail-todo-mark" />
-            <span>{item.content}</span>
-          </div>
-        ))}
+        {/* A real list with a per-row state, the same idiom as the checkpoint strip below.
+            The rows previously carried "done" as a colour, a strike-through and a tick glyph
+            drawn in CSS — none of which reaches a screen reader, so the panel's headline
+            content announced as one run-on line of item text with no states in it. */}
+        <ul className="rail-plan" data-testid="rail-plan" aria-label="Plan" role="list">
+          {todo.map((item, index) => (
+            <li
+              className={"rail-todo " + item.status}
+              key={index}
+              role="listitem"
+              aria-current={item.status === "in_progress" ? "step" : undefined}
+            >
+              <span className="rail-todo-mark" aria-hidden />
+              <span>{item.content}</span>
+              <span className="sr-only">
+                {item.status === "done"
+                  ? " — done"
+                  : item.status === "in_progress"
+                    ? " — current step"
+                    : " — not started"}
+              </span>
+            </li>
+          ))}
+        </ul>
         <div className="rail-muted">
           {done}/{todo.length} done
           {running ? " · working" : ""}
+          {/* The line that was missing. "1/5 done" is a true reading of the last list the model
+              wrote and a false reading of the run: a five-item plan revised once, 76 calls from
+              the end of a 101-call turn, said "1/5 · Now: item 2" while items 2-5 were finished
+              and committed — and went on saying it after the turn ended. The count is the whole
+              point: it is the difference between a plan being worked and a plan left behind. */}
+          {stale && (
+            <span className="rail-plan-stale" data-testid="rail-plan-age">
+              {" · plan unchanged for "}
+              {planStepsSince} {planStepsSince === 1 ? "call" : "calls"}
+            </span>
+          )}
         </div>
         <CheckpointStrip persona={persona} personaId={personaId} toolNames={toolNames} />
-        <Meters
-          persona={persona}
-          toolNames={toolNames}
-          contextUsed={contextUsed}
-          contextWindow={contextWindow}
-          compactions={compactions}
-        />
+        {meters}
         {activityLine}
       </div>
     );
@@ -596,22 +688,19 @@ function ProgressSummary({
       <div>
         <div className="rail-muted">{running ? "Working on this task." : "Last turn:"}</div>
         <CheckpointStrip persona={persona} personaId={personaId} toolNames={toolNames} />
-        <Meters
-          persona={persona}
-          toolNames={toolNames}
-          contextUsed={contextUsed}
-          contextWindow={contextWindow}
-          compactions={compactions}
-        />
+        {meters}
         {activityLine}
       </div>
     );
   }
   return (
-    <div className="rail-muted">
-      {personaName
-        ? `${personaName}'s progress appears here — the plan it is working through, and what it has read, changed or produced.`
-        : "For longer multi-step tasks, progress will appear here while OpenWorker plans, uses tools, waits for approval, and produces artifacts."}
+    <div>
+      <div className="rail-muted">
+        {personaName
+          ? `${personaName}'s progress appears here — the plan it is working through, and what it has read, changed or produced.`
+          : "For longer multi-step tasks, progress will appear here while OpenWorker plans, uses tools, waits for approval, and produces artifacts."}
+      </div>
+      {meters}
     </div>
   );
 }

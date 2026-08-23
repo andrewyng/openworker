@@ -655,6 +655,12 @@ button.btn.danger { color: var(--accent); }
 }
 .rail-error { font-size: 12px; color: var(--accent); overflow-wrap: anywhere; }
 .rail-todo-list { display: flex; flex-direction: column; gap: 9px; }
+/* The plan is a real <ul> so its rows announce as list items with a state; the list itself has
+   to carry the row rhythm that the flex parent used to give the bare rows. */
+.rail-plan { display: flex; flex-direction: column; gap: 9px; list-style: none; margin: 0; padding: 0; }
+/* The plan's age, when it has one worth saying. Warn rather than muted: it is not decoration on
+   the count, it is the reason the count cannot be taken at face value. */
+.rail-plan-stale { color: var(--warn-ink); }
 .rail-todo {
   display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; align-items: flex-start;
   font-size: 12.5px; line-height: 1.45; color: var(--muted);
@@ -791,10 +797,13 @@ button.btn.danger { color: var(--accent); }
 .root-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .root-label { font-size: 13px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .root-path { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
-.root-tag { font-size: 10.5px; color: var(--muted); background: var(--line); border-radius: 5px; padding: 1px 5px; flex: none; }
+/* 12px is the rail's body-copy floor (11px survives only for uppercase eyebrows, where tracking
+   and weight carry it). The Folders rows were never swept into it: the chip at 10.5px and the
+   access state at 11px were the two smallest strings anywhere in the panel. */
+.root-tag { font-size: 12px; color: var(--muted); background: var(--line); border-radius: 5px; padding: 1px 5px; flex: none; }
 .root-tag.warn { color: var(--warn-ink); background: var(--warn-soft); }
 .root-access {
-  font: inherit; font-size: 11px; cursor: pointer; flex: none;
+  font: inherit; font-size: 12px; cursor: pointer; flex: none;
   border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; background: var(--paper); color: var(--muted);
 }
 .root-access.rw { color: var(--ok); border-color: var(--ok-line); background: var(--ok-soft); }
