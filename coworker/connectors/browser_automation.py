@@ -20,6 +20,61 @@ import aisuite as ai
 from ..web.guard import check_url
 
 
+def _chromium_revision() -> str:
+    """The chromium build THIS playwright package expects, read from the driver's own manifest.
+    Offline and free — no driver process, which is the whole point of the probe below."""
+    import json
+
+    try:
+        import playwright
+
+        manifest = Path(playwright.__file__).parent / "driver/package/browsers.json"
+        for entry in json.loads(manifest.read_text(encoding="utf-8")).get("browsers", []):
+            if entry.get("name") == "chromium":
+                return str(entry.get("revision") or "")
+    except Exception:
+        pass
+    return ""
+
+
+# Where the headed executable sits inside a downloaded build, per platform. The headless shell
+# ships under its own name (chrome-headless-shell-*) and is not one of these, which is the
+# point: a shell-only install cannot launch headed no matter what the directory is called.
+_CHROME_BINARIES = (
+    "chrome-linux64/chrome",
+    "chrome-linux/chrome",  # builds from before the -64 rename
+    "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+    "chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium",
+    "chrome-win/chrome.exe",
+    "chrome-win64/chrome.exe",
+)
+
+
+def _headed_chromium(caches: list[Path], revision: str) -> Optional[Path]:
+    """The headed Chromium binary a launch would actually exec, or None.
+
+    Stat the file, do not glob the directory name. `any(cache.glob("chromium*"))` called two
+    broken installs ready: `playwright install --only-shell` leaves chromium_headless_shell-*,
+    which cannot launch headed, and upgrading the playwright package leaves the previous
+    chromium-<rev> behind while the driver now asks for a revision that was never downloaded.
+    Both answered ready:true and both died on the first tool call with "Executable doesn't
+    exist at .../chromium-<rev>/chrome-linux64/chrome" — the lie moved one step later, which
+    is exactly what this function exists to refuse.
+    """
+    for cache in caches:
+        if not cache.is_dir():
+            continue
+        # The revision is the contract between the package and the download. Without it (an
+        # unreadable manifest) fall back to any chromium-* build — still a real binary check.
+        builds = [cache / f"chromium-{revision}"] if revision else sorted(cache.glob("chromium-*"))
+        for build in builds:
+            for rel in _CHROME_BINARIES:
+                exe = build / rel
+                if exe.is_file():
+                    return exe
+    return None
+
+
 def readiness() -> dict[str, Any]:
     """Can computer use actually run right now?
 
@@ -60,19 +115,31 @@ def readiness() -> dict[str, Any]:
             Path.home() / "AppData/Local/ms-playwright",  # Windows
         ]
     )
-    chromium = any(
-        c.is_dir() and any(c.glob("chromium*")) for c in candidates
-    )
+    revision = _chromium_revision()
+    chromium = _headed_chromium(candidates, revision)
     # The browser launches HEADED (`headless=False` in page()), so on a box with no display the
     # package and the binary can both be present and every launch still fail. Reporting "ready"
     # off the install alone would move the lie one step later instead of removing it.
     display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
-    if not chromium:
+    if chromium is None:
+        # Downloaded-but-unlaunchable is the common failure, not the rare one, so say which it
+        # is: "install chromium" reads like a no-op to someone who can see a chromium directory.
+        present = sorted(
+            {p.name for c in candidates if c.is_dir() for p in c.glob("chromium*")}
+        )
         return {
             "ready": False,
             "playwright": True,
             "browsers": False,
-            "detail": "Playwright is installed but no Chromium build is downloaded yet.",
+            "detail": (
+                "Playwright is installed but no Chromium build is downloaded yet."
+                if not present
+                else (
+                    f"The Chromium in the cache ({', '.join(present[:4])}) is not a headed build "
+                    f"of chromium-{revision or '?'}, which is what this Playwright launches — "
+                    "either a --only-shell install or a build left behind by a package upgrade."
+                )
+            ),
             "fix": ["python -m playwright install chromium"],
         }
     if not display:
