@@ -72,6 +72,21 @@ class Sidecar:
             raise SidecarError(
                 f"cannot reach OpenWorker at {self.base} — is openworker-server running? ({exc.reason})"
             ) from exc
+        except (TimeoutError, OSError) as exc:
+            # A socket timeout is an OSError but NOT a URLError, so it escaped the branch above
+            # and surfaced as a bare MCP transport error ("timed out") with no hint of what had
+            # timed out. It is the likeliest failure of all: POST /v1/inbox/{id}/resolve holds
+            # the HTTP response for the whole remaining turn, so a resolution that lands
+            # correctly can still exceed the timeout — the caller must be told which.
+            hint = (
+                " The answer may still have landed — the resolution is recorded before the turn "
+                "resumes, so check inbox_pending before answering again."
+                if method == "POST"
+                else ""
+            )
+            raise SidecarError(
+                f"{method} {path} did not answer within {_TIMEOUT:g}s ({exc}).{hint}"
+            ) from exc
         return json.loads(body) if body else {}
 
     def get(self, path: str) -> Any:
