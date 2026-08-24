@@ -41,7 +41,7 @@ export function InboxConfigure() {
           the Inbox now (§28; previously with routing under Connectors, §26). */}
       <div className="mt-6" data-testid="unrouted-section">
         <h3 className="text-[14px] font-semibold mb-1">Unrouted</h3>
-        <p className="text-[12.5px] text-muted mb-3">
+        <p className="text-[13px] text-muted mb-3">
           Inbound messages and background-turn failures nothing claimed — nothing vanishes
           silently.
         </p>
@@ -123,7 +123,7 @@ function InboxRoutingCard() {
 
   return (
     <div className={CARD + " p-4"} data-testid="inbox-mirror-card">
-      <div className="font-semibold text-[13.5px] mb-1">Unattended approvals</div>
+      <div className="font-semibold text-[13px] mb-1">Unattended approvals</div>
       <p className="text-[12px] text-muted mb-3">
         Channel where an Unattended session posts Approve/Deny buttons. Currently mirroring to{" "}
         <strong className="text-ink font-medium" title={target || undefined}>
@@ -150,11 +150,11 @@ function InboxRoutingCard() {
         )}
       </div>
       {missingSlackOwner && (
-        <p className="text-[11.5px] text-warnInk mt-2">
+        <p className="text-[12px] text-warnInk mt-2">
           Choose an approval owner under Integrations → Slack before routing approvals here.
         </p>
       )}
-      {error && <p className="text-[11.5px] text-warnInk mt-2">{error}</p>}
+      {error && <p className="text-[12px] text-warnInk mt-2">{error}</p>}
     </div>
   );
 }
@@ -183,7 +183,7 @@ function DmRouteCard() {
 
   return (
     <div className={CARD + " p-4"}>
-      <div className="font-semibold text-[13.5px] mb-1">Direct messages</div>
+      <div className="font-semibold text-[13px] mb-1">Direct messages</div>
       <p className="text-[12px] text-muted mb-3">
         Session that handles DMs to the bot. With none, DMs park under Unrouted below.
       </p>
@@ -242,7 +242,7 @@ function SubscriptionsCard() {
         <span className="text-muted shrink-0">
           <Icon name="plug" size={15} />
         </span>
-        <span className="font-semibold text-[13.5px]">Channel subscriptions</span>
+        <span className="font-semibold text-[13px]">Channel subscriptions</span>
         <span className="text-[12px] text-muted">— sessions that listen to a channel (inbound)</span>
       </div>
 
@@ -296,7 +296,7 @@ function SubscriptionsCard() {
           </tbody>
         </table>
       ) : (
-        <div className="px-4 py-3 text-[12.5px] text-muted">
+        <div className="px-4 py-3 text-[13px] text-muted">
           No channel subscriptions yet — add one below or ask a coworker to watch a channel.
         </div>
       )}

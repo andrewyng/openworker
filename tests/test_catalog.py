@@ -35,8 +35,7 @@ CODE_TOOLS = {
 }
 COWORK_TOOLS = {
     "list_files",
-    "read_file",  # aisuite (multi-root)
-    "read_file_lines",
+    "read_file",  # numbered/windowed — one reader everywhere (owner ruling 2026-08-20)
     "write_file",
     "apply_unified_diff",
     "apply_patch",
@@ -81,11 +80,12 @@ def test_agents_use_catalog(tmp_path):
 
 
 def test_file_capability_distinction(tmp_path):
-    # Code drops read_file_lines (folded into the windowed reader); Cowork keeps it (multi-root).
+    # One reader everywhere: both capability sets fold read_file_lines into the
+    # windowed read_file (owner ruling 2026-08-20).
     code = _names(expand(["code_files"], _full_context(tmp_path)))
     cowork = _names(expand(["files"], _full_context(tmp_path)))
     assert "read_file_lines" not in code
-    assert "read_file_lines" in cowork
+    assert "read_file_lines" not in cowork
     assert "read_file" in code and "read_file" in cowork
 
 

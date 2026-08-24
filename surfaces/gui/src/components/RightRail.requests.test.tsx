@@ -7,6 +7,8 @@ import { RightRail } from "./RightRail";
 
 vi.mock("../api", () => ({
   getArtifacts: vi.fn(),
+  getJournalCases: vi.fn().mockResolvedValue([]),
+  getRoots: vi.fn().mockResolvedValue([]),
   readArtifact: vi.fn(),
   revealArtifact: vi.fn(),
 }));
@@ -47,6 +49,10 @@ const baseProps = {
   running: false,
 };
 
+function openArtifacts() {
+  fireEvent.click(screen.getByTestId("rail-toggle-artifacts"));
+}
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -60,6 +66,7 @@ describe("RightRail artifact request ownership", () => {
       .mockReturnValueOnce(currentRequest.promise);
 
     const { rerender } = render(<RightRail {...baseProps} />);
+    openArtifacts();
     expect(await screen.findByText("previous.md")).toBeTruthy();
 
     rerender(<RightRail {...baseProps} sessionId="session-b" />);
@@ -77,6 +84,7 @@ describe("RightRail artifact request ownership", () => {
       .mockReturnValueOnce(currentRequest.promise);
 
     const { rerender } = render(<RightRail {...baseProps} />);
+    openArtifacts();
     rerender(<RightRail {...baseProps} sessionId="session-b" />);
 
     await act(async () => currentRequest.resolve([artifact("current.md")]));
@@ -95,6 +103,7 @@ describe("RightRail artifact request ownership", () => {
       .mockReturnValueOnce(currentRequest.promise);
 
     const { rerender } = render(<RightRail {...baseProps} />);
+    openArtifacts();
     rerender(<RightRail {...baseProps} sessionId="session-b" />);
 
     await act(async () => currentRequest.resolve([artifact("current.md")]));
@@ -112,8 +121,9 @@ describe("RightRail artifact request ownership", () => {
     );
 
     render(<RightRail {...baseProps} />);
+    openArtifacts();
     fireEvent.click(await screen.findByText("first.md"));
-    fireEvent.click(screen.getByLabelText("Back to artifacts"));
+    fireEvent.click(screen.getByTestId("artifact-crumb-back"));
     fireEvent.click(screen.getByText("second.md"));
 
     await act(async () => secondRead.resolve(content("second.md", "Current content")));

@@ -45,8 +45,12 @@ def _usage_from(usage: Any) -> Optional[TokenUsage]:
         cache_write=int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
     )
 
-# Required by the Messages API; a ceiling, not a spend target.
-DEFAULT_MAX_TOKENS = 16000
+# Required by the Messages API; a ceiling, not a spend target. Sized for file
+# generation, not just chat: a coworker writing a self-contained HTML report ships the
+# whole file inside one tool call's arguments, and 16k proved too small in the field
+# (the call truncates mid-arguments and the write fails). Current Claude models all
+# accept ≥32k output.
+DEFAULT_MAX_TOKENS = 32000
 
 # Extended thinking is ON by default (owner call 2026-07-23: no user-facing setting —
 # most users wouldn't know what a budget is; a per-turn composer control is future work).

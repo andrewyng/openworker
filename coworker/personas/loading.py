@@ -26,14 +26,47 @@ def consent_summary(m: PersonaManifest) -> dict:
         "description": m.description,
         "tools": list(m.tools),
         "risk": sorted(rc.value for rc in risk_summary(m.tools)),
-        "connectors": m.connectors,
+        # "all" | [connector ids] | [] — the consent screen shows the actual names,
+        # never a bare "uses connectors" bit (OPE-93).
+        "connectors": "all" if m.connectors is True else list(m.connectors or ()),
         "mcp": list(m.mcp),
         "messaging": m.messaging,
+        # "lead" personas can create and direct worker coworkers — the consent
+        # screen says that plainly (capability firebreak as a manifest fact).
+        "team": m.team,
         "recommended_mode": m.default_permission_mode,
         "recommended_models": list(m.recommended_models),
+        # Recommended connectors/MCP with reasons + tiers — the consent screen shows
+        # these so the user knows what the coworker hopes to use (sharing v1).
+        "recommends": [
+            {"kind": r.kind, "ref": r.ref, "reason": r.reason, "tier": r.tier}
+            for r in m.recommends
+        ],
+        "version": m.version,
         "source": m.source,
         "builtin": m.builtin,
     }
+
+
+def capability_set(m: PersonaManifest) -> set[str]:
+    """The persona's capability surface as a flat comparable set — used to decide
+    whether an update GREW capabilities (which requires re-consent; a same-or-smaller
+    update keeps the user's enabled state)."""
+    caps = {f"tool:{t}" for t in m.tools}
+    caps |= {f"mcp:{s}" for s in m.mcp}
+    # Per-connector caps (OPE-93): an update that ADDS a connector must grow the set and
+    # re-trigger consent — the old single "connectors" bit hid exactly that change.
+    if m.connectors is True:
+        caps.add("connectors:all")
+    else:
+        caps |= {f"connector:{c}" for c in m.connectors or ()}
+    if m.messaging:
+        caps.add("messaging")
+    # An update that turns a solo persona into a lead/worker must re-consent —
+    # team capability changes who the coworker can direct or be directed by.
+    if m.team:
+        caps.add(f"team:{m.team}")
+    return caps
 
 
 def git_clone(

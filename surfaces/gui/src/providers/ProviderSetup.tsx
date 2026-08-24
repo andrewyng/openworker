@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  codexAuthStatus,
+  codexSignin,
+  codexSignout,
   getProviders,
   removeProvider,
   setProvider,
@@ -21,6 +24,8 @@ export const KEY_HELP: Record<string, { url: string; label: string }> = {
   anthropic: { url: "https://console.anthropic.com/settings/keys", label: "console.anthropic.com" },
   openai: { url: "https://platform.openai.com/api-keys", label: "platform.openai.com" },
   gemini: { url: "https://aistudio.google.com/apikey", label: "aistudio.google.com" },
+  ark: { url: "https://console.byteplus.com/ark/region:ark+ap-southeast-1/apiKey", label: "console.byteplus.com" },
+  "ark-agent-plan-cn": { url: "https://console.volcengine.com/ark/region:cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=agentPlan", label: "console.volcengine.com" },
   openrouter: { url: "https://openrouter.ai/keys", label: "openrouter.ai" },
   bedrock: { url: "https://console.aws.amazon.com/bedrock/home#/api-keys", label: "the AWS Bedrock console" },
   fireworks: { url: "https://fireworks.ai/account/api-keys", label: "fireworks.ai" },
@@ -215,26 +220,40 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   };
 
   const statusFor = (p: ProviderInfo, o?: { lastUsed?: boolean }) => {
+    if (p.auth === "oauth") {
+      // The card keeps just the state — the account email truncated badly at card
+      // width (owner-hit 2026-08-21); the detail pane shows who is signed in.
+      if (p.signed_in)
+        return <span className="block text-[12px] text-ok font-medium truncate">✓ Signed in</span>;
+      return <span className="block text-[12px] text-faint truncate">Sign in with your plan</span>;
+    }
     if (p.configured && p.needs_key) {
       const used = o?.lastUsed ? relTime(p.last_used_at) : null;
       return (
-        <span className="block text-[11.5px] text-ok font-medium truncate">
+        <span className="block text-[12px] text-ok font-medium truncate">
           ✓ Connected{used ? <span className="text-muted font-normal"> · used {used}</span> : ""}
         </span>
       );
     }
     if (!p.needs_key)
       return (
-        <span className="block text-[11.5px] text-faint truncate">
+        <span className="block text-[12px] text-faint truncate">
           {keylessOk.has(p.name) ? <span className="text-ok font-medium">✓ Running</span> : "No key needed"}
         </span>
       );
-    return <span className="block text-[11.5px] text-faint truncate">Not set up</span>;
+    return <span className="block text-[12px] text-faint truncate">Not set up</span>;
   };
 
   return {
     providers,
-    ordered: [...providers].sort((a, b) => providerRank(a.name) - providerRank(b.name)),
+    // Alphabetical by display title (owner ruling 2026-08-21: a curated order reads
+    // as vendor bias). The old providerRank curation stays only as the tiebreaker
+    // for identical titles.
+    ordered: [...providers].sort(
+      (a, b) =>
+        a.title.localeCompare(b.title, undefined, { sensitivity: "base" }) ||
+        providerRank(a.name) - providerRank(b.name),
+    ),
     refreshProviders,
     sel,
     info,
@@ -272,6 +291,101 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
 }
 
 /** The gallery: one card per provider, each wearing its own state. */
+/** OAuth provider pane (auth === "oauth"): browser sign-in instead of a key form.
+ * Signin runs server-side in the background; this polls the status route until the
+ * flow flips to signed-in or reports an error. Tokens never reach the GUI. */
+function OAuthSignIn({ info, tp, onChanged }: { info: ProviderInfo; tp: string; onChanged: () => Promise<void> }) {
+  const [busy, setBusy] = useState(!!info.authorizing);
+  const [error, setError] = useState<string | null>(info.last_error || null);
+  const [reopenUrl, setReopenUrl] = useState<string | null>(null);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true; // StrictMode double-mount: the cleanup below must not stick
+    return () => { alive.current = false; };
+  }, []);
+
+  const poll = async () => {
+    for (let i = 0; i < 150 && alive.current; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const s = await codexAuthStatus().catch(() => null);
+      if (!s) continue;
+      if (s.authorize_url) setReopenUrl(s.authorize_url);
+      if (s.signed_in || (!s.authorizing && s.last_error)) {
+        if (alive.current) {
+          setBusy(false);
+          setError(s.last_error || null);
+        }
+        await onChanged();
+        return;
+      }
+    }
+    if (alive.current) setBusy(false);
+  };
+
+  const start = async () => {
+    setBusy(true);
+    setError(null);
+    await codexSignin().catch(() => setError("Couldn't start the sign-in."));
+    void poll();
+  };
+
+  if (info.signed_in)
+    return (
+      <div className="mt-4">
+        <div className="flex items-center gap-2.5 rounded-xl border border-okLine bg-okSoft px-3 py-2.5">
+          <span className="text-[13px] text-ink min-w-0 flex-1 truncate" data-testid={`${tp}-oauth-account`}>
+            ✓ Signed in{info.account ? ` as ${info.account}` : ""}
+          </span>
+          <button
+            className="shrink-0 rounded-lg border border-line bg-panel px-3 py-1.5 text-[13px] text-ink hover:border-lineStrong"
+            data-testid={`${tp}-oauth-signout`}
+            onClick={async () => {
+              await codexSignout().catch(() => {});
+              await onChanged();
+            }}
+          >
+            Sign out
+          </button>
+        </div>
+        <p className="text-[12px] text-faint mt-2">
+          Usage draws on the plan's rolling window, not per-token billing. Sign-in stays on this computer.
+        </p>
+      </div>
+    );
+
+  return (
+    <div className="mt-4">
+      <button
+        className="rounded-lg border border-accent bg-accent px-4 py-2 text-[13px] font-medium text-white hover:brightness-105 disabled:opacity-40"
+        onClick={() => void start()}
+        disabled={busy}
+        data-testid={`${tp}-oauth-signin`}
+      >
+        {busy ? "Waiting for the browser…" : "Sign in with ChatGPT"}
+      </button>
+      {busy && (
+        <p className="text-[12px] text-faint mt-2">
+          Finish signing in in the browser window.
+          {reopenUrl && (
+            <>
+              {" "}
+              <button
+                className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
+                onClick={() => openExternal(reopenUrl)}
+              >
+                Reopen the sign-in page
+              </button>
+            </>
+          )}
+        </p>
+      )}
+      <div className="mt-2 min-h-[19px] text-[13px]">
+        {error && <span className="text-warnInk">{error}</span>}
+      </div>
+    </div>
+  );
+}
+
 export function ProviderCards({
   ps,
   tp,
@@ -321,7 +435,7 @@ export function ProviderForm({
   const { info, sel } = ps;
   const label = "block text-[12px] text-muted mt-3 mb-1";
   const input =
-    "w-full px-3 py-2 rounded-lg border bg-panel text-[13.5px] outline-none focus:border-accent";
+    "w-full px-3 py-2 rounded-lg border bg-panel text-[13px] outline-none focus:border-accent";
   const fieldsAll = info?.fields || [];
   const keyed = fieldsAll.some((x) => x.secret);
   // Cloud providers declare a segmented auth-method choice; the selected method's
@@ -385,23 +499,25 @@ export function ProviderForm({
           </button>
         )}
       </div>
-      {f.help && <p className="text-[11.5px] text-faint mt-1">{f.help}</p>}
+      {f.help && <p className="text-[12px] text-faint mt-1">{f.help}</p>}
     </div>
   );
 
   return (
     <div>
-      <button className="text-[12.5px] text-muted hover:text-ink" onClick={ps.backToGallery} data-testid={`${tp}-back`}>
+      <button className="text-[13px] text-muted hover:text-ink" onClick={ps.backToGallery} data-testid={`${tp}-back`}>
         ‹ All providers
       </button>
       <div className="flex items-center gap-3 mt-3 mb-1">
         <ProviderMark name={info?.name || ""} title={info?.title || ""} size={36} />
         <span className="min-w-0">
-          <span className="block text-[15px] font-semibold leading-tight">{info?.title}</span>
+          <span className="block text-[14px] font-semibold leading-tight">{info?.title}</span>
           {info ? ps.statusFor(info) : null}
         </span>
       </div>
-      {info?.blurb && <p className="text-[11.5px] text-faint mt-1">{info.blurb}</p>}
+      {info?.blurb && <p className="text-[12px] text-faint mt-1">{info.blurb}</p>}
+
+      {info?.auth === "oauth" && <OAuthSignIn info={info} tp={tp} onChanged={ps.refreshProviders} />}
 
       {fieldsAll
         .filter(
@@ -431,7 +547,7 @@ export function ProviderForm({
                   role="radio"
                   aria-checked={active}
                   className={
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] whitespace-nowrap transition-colors " +
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] whitespace-nowrap transition-colors " +
                     (active
                       ? "bg-panel text-ink font-medium shadow-sm ring-1 ring-line"
                       : "text-muted hover:text-ink")
@@ -466,11 +582,11 @@ export function ProviderForm({
             {methodFields.map((f) => fieldRow(f, false))}
             <div className="mt-3.5 flex items-center justify-between gap-3 border-t border-line pt-3">
               {ps.savedState ? (
-                <span className="text-[11.5px] font-medium text-ok" data-testid={`${tp}-saved-pill`}>
+                <span className="text-[12px] font-medium text-ok" data-testid={`${tp}-saved-pill`}>
                   ✓ Tested &amp; saved
                 </span>
               ) : (
-                <span className="text-[11.5px] text-faint">Runs one read-only check, then saves.</span>
+                <span className="text-[12px] text-faint">Runs one read-only check, then saves.</span>
               )}
               <button
                 className="shrink-0 rounded-lg border border-accent bg-accent px-4 py-1.5 text-[13px] font-medium text-white hover:brightness-105 disabled:opacity-40"
@@ -486,7 +602,7 @@ export function ProviderForm({
       )}
 
       {info?.needs_key && KEY_HELP[sel] && (
-        <p className="text-[11.5px] text-faint mt-2">
+        <p className="text-[12px] text-faint mt-2">
           No key yet?{" "}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
@@ -497,8 +613,8 @@ export function ProviderForm({
           — takes about a minute.
         </p>
       )}
-      {info && !info.needs_key && (
-        <p className="text-[11.5px] text-faint mt-2">
+      {info && !info.needs_key && info.auth !== "oauth" && (
+        <p className="text-[12px] text-faint mt-2">
           No API key needed — Ollama runs models on this computer.{" "}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
@@ -519,7 +635,7 @@ export function ProviderForm({
         if (!ps.showEndpoint)
           return (
             <button
-              className="block self-start text-[12.5px] text-muted hover:text-ink mt-4"
+              className="block self-start text-[13px] text-muted hover:text-ink mt-4"
               onClick={() => ps.setShowEndpoint(true)}
               data-testid={`${tp}-endpoint-link`}
             >
@@ -548,16 +664,16 @@ export function ProviderForm({
                 </span>
               )}
             </div>
-            {ep.help && <p className="text-[11.5px] text-faint mt-1">{ep.help}</p>}
+            {ep.help && <p className="text-[12px] text-faint mt-1">{ep.help}</p>}
           </div>
         );
       })()}
 
       {/* Error line: fixed height so failures never reflow the form. */}
-      <div className="mt-3 min-h-[19px] text-[12.5px]">
+      <div className="mt-3 min-h-[19px] text-[13px]">
         {ps.verify.state === "error" && <span className="text-warnInk">{ps.verify.msg}</span>}
       </div>
-      {footer}
+      {info?.auth === "oauth" ? null : footer}
     </div>
   );
 }

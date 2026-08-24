@@ -30,7 +30,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     parser.add_argument(
         "--mode",
         default=cfg.mode,
-        choices=["plan", "interactive", "auto"],
+        choices=["plan", "interactive", "auto", "bypass-approvals", "auto-approve"],
         help="permission mode",
     )
     parser.add_argument("--resume", default=None, help="resume a session id")

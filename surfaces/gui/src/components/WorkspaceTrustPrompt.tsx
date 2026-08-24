@@ -35,12 +35,12 @@ export function WorkspaceTrustPrompt({
         </p>
         <div className="rounded-lg border border-line bg-paper px-3 py-2.5 max-h-48 overflow-y-auto">
           {request.requested_commands.map((command) => (
-            <code key={command} className="block text-[12.5px] py-1 text-ink">
+            <code key={command} className="block text-[13px] py-1 text-ink">
               {command}
             </code>
           ))}
         </div>
-        <div className="text-[11.5px] text-muted mt-2 break-all">{request.workspace}</div>
+        <div className="text-[12px] text-muted mt-2 break-all">{request.workspace}</div>
         {error && <div className="gate-error">{error}</div>}
         <div className="gate-foot justify-end gap-2">
           <button className="btn" onClick={onClose} disabled={saving}>

@@ -140,7 +140,7 @@ def test_custom_mode_auto_allows_configured_tools(tmp_path):
 
 def test_auto_mode_allows_but_path_scopes(tmp_path):
     reg = _registry(tmp_path)
-    eng = PermissionEngine(workspace_root=tmp_path, mode=Mode.AUTO)
+    eng = PermissionEngine(workspace_root=tmp_path, mode=Mode.BYPASS_APPROVALS)
     ok = eng.evaluate(
         "write_file", {"path": "x.py", "content": "x"}, _meta(reg, "write_file")
     )

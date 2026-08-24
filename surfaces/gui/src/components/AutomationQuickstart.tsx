@@ -301,7 +301,7 @@ export function AutomationQuickstart({
 
   const label = "block text-[12px] text-muted mt-3 mb-1";
   const input =
-    "w-full px-3 py-2 rounded-lg border border-line bg-panel text-[13.5px] outline-none focus:border-accent";
+    "w-full px-3 py-2 rounded-lg border border-line bg-panel text-[13px] outline-none focus:border-accent";
 
   return (
     <div className="mb-4">
@@ -323,7 +323,7 @@ export function AutomationQuickstart({
             }
             onClick={() => pick(t)}
           >
-            <span className="text-[13.5px] font-semibold">{t.title}</span>
+            <span className="text-[13px] font-semibold">{t.title}</span>
             <span className="text-[12px] text-muted leading-relaxed flex-1">{t.blurb}</span>
             <span className="flex items-center gap-1.5 mt-1">
               {t.conns.map((c) => {
@@ -376,11 +376,11 @@ export function AutomationQuickstart({
                 <div className="flex items-center gap-3 py-2.5">
                   {c && <ConnectorBadge connector={c} size={26} title={c.title} />}
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[13.5px] font-medium">{c?.title || name}</span>
-                    <span className="block text-[11.5px] text-faint">{why}</span>
+                    <span className="block text-[13px] font-medium">{c?.title || name}</span>
+                    <span className="block text-[12px] text-faint">{why}</span>
                   </span>
                   {c?.connected ? (
-                    <span className="text-[12.5px] text-ok">✓ Connected</span>
+                    <span className="text-[13px] text-ok">✓ Connected</span>
                   ) : flow ? (
                     <span className="inline-flex items-center gap-2 text-[12px] text-muted">
                       <Spinner />
@@ -390,7 +390,7 @@ export function AutomationQuickstart({
                     </span>
                   ) : (
                     <button
-                      className="px-3.5 py-1 rounded-full border border-line text-[12.5px] hover:bg-paper"
+                      className="px-3.5 py-1 rounded-full border border-line text-[13px] hover:bg-paper"
                       onClick={() => startConnect(name)}
                       data-testid={`ob-connect-${name}`}
                     >
@@ -427,7 +427,7 @@ export function AutomationQuickstart({
 
           {pendingConn && !cloud?.signed_in && (
             <div
-              className="bg-accentSoft/50 rounded-xl px-4 py-3 mt-3 text-[12.5px] text-muted"
+              className="bg-accentSoft/50 rounded-xl px-4 py-3 mt-3 text-[13px] text-muted"
               data-testid="ob-cloudpane"
             >
               <span className="block text-[13px] text-ink font-medium">
@@ -442,7 +442,7 @@ export function AutomationQuickstart({
                       {signinPhase === "opening" ? "Opening browser…" : "Waiting for sign-in…"}
                     </span>
                     {signinPhase === "waiting" && (
-                      <span className="text-[11.5px] text-faint">
+                      <span className="text-[12px] text-faint">
                         Finish signing in in your browser — this page updates by itself.{" "}
                         <button
                           className="underline hover:text-muted"
@@ -456,7 +456,7 @@ export function AutomationQuickstart({
                   </>
                 ) : (
                   <button
-                    className="px-3.5 py-1 rounded-full border border-line text-[12.5px] text-accent hover:bg-panel"
+                    className="px-3.5 py-1 rounded-full border border-line text-[13px] text-accent hover:bg-panel"
                     onClick={signInThenConnect}
                     data-testid="ob-cloud-signin"
                   >
@@ -510,7 +510,7 @@ export function AutomationQuickstart({
                   />
                 </div>
                 <input
-                  className="w-28 px-3 py-2 rounded-lg border border-line bg-panel text-[13.5px] outline-none focus:border-accent"
+                  className="w-28 px-3 py-2 rounded-lg border border-line bg-panel text-[13px] outline-none focus:border-accent"
                   type="time"
                   aria-label="Time"
                   value={time}
@@ -532,7 +532,7 @@ export function AutomationQuickstart({
                 </>
               )}
               {picked.consent ? (
-                <label className="flex items-start gap-2.5 mt-3.5 text-[12.5px] text-muted select-none">
+                <label className="flex items-start gap-2.5 mt-3.5 text-[13px] text-muted select-none">
                   <input
                     type="checkbox"
                     className="mt-0.5"
@@ -550,7 +550,7 @@ export function AutomationQuickstart({
                   </span>
                 </label>
               ) : picked.conns.length > 0 ? (
-                <p className="text-[12.5px] text-muted mt-3">
+                <p className="text-[13px] text-muted mt-3">
                   This automation only <b className="text-ink">reads</b> on schedule — reading
                   never needs approval.
                 </p>
@@ -560,14 +560,14 @@ export function AutomationQuickstart({
 
           <div className="flex items-center gap-3 mt-4">
             <button
-              className="text-[12.5px] text-faint hover:text-muted"
+              className="text-[13px] text-faint hover:text-muted"
               onClick={() => setPickedKey(null)}
             >
               Cancel
             </button>
             {/* A silently-disabled primary reads as a bug — always name the missing piece. */}
             {gateHint && (
-              <span className="ml-auto text-[11.5px] text-faint" data-testid="ob-create-hint">
+              <span className="ml-auto text-[12px] text-faint" data-testid="ob-create-hint">
                 {gateHint}
               </span>
             )}

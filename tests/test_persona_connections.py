@@ -65,10 +65,8 @@ def test_persona_detail_endpoint(tmp_path, monkeypatch):
     # identity + capabilities (from the manifest/entry)
     assert detail["id"] == "ops"
     assert detail["name"] == "Ops Coworker"
-    assert detail["enabled"] is False  # non-default personas ship disabled (opt-in)
-    assert (
-        detail["workspace"] == "deliverable"
-    )  # §16 collapse: ops is a scratch persona now
+    assert detail["enabled"] is True  # builtins ship enabled (UX-029)
+    assert detail["requires_folder"] is False  # ops is a scratch persona
     assert detail["default_permission_mode"] == "interactive"
     assert "anthropic:claude-opus-4-8" in detail["recommended_models"]
     assert set(detail["tools"]) == {"files", "search", "shell", "todo"}
@@ -127,11 +125,12 @@ def test_persona_set_default_connection(tmp_path, monkeypatch):
 
 
 def test_persona_enable_toggle(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENWORKER_UNSHIPPED", "1")  # ops is ships:false now
     mgr = _mgr(tmp_path, monkeypatch)
     client = TestClient(create_app(mgr))
 
     before = {p["id"]: p for p in client.get("/v1/personas").json()["personas"]}
-    assert before["ops"]["enabled"] is False  # ships disabled; only cowork starts on
+    assert before["ops"]["enabled"] is True  # builtins ship enabled (UX-029)
     assert before["cowork"]["enabled"] is True
 
     resp = client.post("/v1/personas/ops/enable", json={"enabled": True}).json()
@@ -247,3 +246,77 @@ def test_session_set_override(tmp_path, monkeypatch):
     assert mgr.session_connections.get("s1") == {}
     assert "slack" in mgr.effective_connectors("s1", "ops")
     assert "slack" in {c["connector"] for c in resp2["connections"]["connected"]}
+
+
+def test_declared_connector_allowlist_gates_session_tools(tmp_path):
+    """OPE-93, owner-hit 2026-08-15: a security coworker declaring only [code tools]
+    had browser_read_page in-session, because `connectors: true` exposed EVERY connected
+    connector. The grant is now declared ∩ connected — an undeclared connector's tools
+    never enter the session, regardless of what the user has connected."""
+    from coworker.agent import build_engine
+    from coworker.agents.base import Agent
+    from coworker.connectors import connect_connector
+    from coworker.secrets import SecretStore
+
+    secrets = SecretStore(tmp_path / "secrets.json")
+    for name, fields in (
+        ("linear", {"api_key": "lin_api_x"}),
+        ("box", {"access_token": "boxtok"}),
+    ):
+        assert connect_connector(secrets, name, fields, validate=False)["ok"] is True
+
+    def names_for(connectors):
+        agent = Agent(
+            name="p", title="P", system_prompt="x", connectors=connectors
+        )
+        engine = build_engine(agent=agent, workspace=tmp_path, secrets=secrets)
+        return set(engine.registry.names())
+
+    scoped = names_for(("linear",))
+    assert any(n.startswith("linear_") for n in scoped)
+    assert not any(n.startswith("box_") for n in scoped)
+
+    general = names_for(True)  # the `all` sentinel: general builtins only
+    assert any(n.startswith("linear_") for n in general)
+    assert any(n.startswith("box_") for n in general)
+
+    none = names_for(False)
+    assert not any(n.startswith(("linear_", "box_")) for n in none)
+
+
+def test_allowlist_persona_drawer_and_effective_set_exclude_undeclared(
+    tmp_path, monkeypatch
+):
+    """OPE-93, owner-hit 2026-08-15: a fresh Cloud Posture session rendered Browser and
+    Slack as toggled-ON sources while the engine (correctly) refused their tools — the
+    drawer and the inbound gate read the pre-allowlist hierarchy. All three surfaces now
+    share the persona grant, so an undeclared connector neither renders nor delivers."""
+    mgr = _mgr(tmp_path, monkeypatch)
+    _connect_github(mgr)
+    _connect_slack(mgr)
+    mgr.session_store.save(
+        SessionRecord(
+            session_id="sp",
+            workspace=str(mgr.default_workspace),
+            model="m",
+            mode="interactive",
+            agent="security",  # manifest declares connectors: [github]
+        )
+    )
+
+    assert mgr.effective_connectors("sp", "security") <= {"github"}
+    assert mgr._inbound_connector_allowed("sp", "slack") is False
+
+    names = {
+        c["connector"]
+        for c in mgr.session_connections_view("sp", "security")["connected"]
+    }
+    assert names <= {"github"}  # browser (always connected) and slack are absent
+
+    # Builder-based personas keep the unrestricted view — their sessions use the
+    # drawer/inbound path (channel bindings) even though they expose no connector tools.
+    _ops_session(mgr, "sg")
+    ops_names = {
+        c["connector"] for c in mgr.session_connections_view("sg", "ops")["connected"]
+    }
+    assert "slack" in ops_names  # undeclared for security, present for ops

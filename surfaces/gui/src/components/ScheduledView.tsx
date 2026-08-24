@@ -126,7 +126,7 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
           <PanelHead title="Automations" sub="Recurring tasks OpenWorker runs on a schedule." />
         </div>
         <button
-          className="text-[12.5px] px-3 py-1.5 rounded-lg border border-lineStrong bg-panel hover:border-accent hover:text-accent shrink-0"
+          className="text-[13px] px-3 py-1.5 rounded-lg border border-lineStrong bg-panel hover:border-accent hover:text-accent shrink-0"
           onClick={() => setShowForm((v) => !v)}
         >
           + New automation
@@ -155,7 +155,7 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
 
       {empty ? (
         !showForm && (
-          <div className={CARD + " p-4 text-[12.5px] text-muted"}>
+          <div className={CARD + " p-4 text-[13px] text-muted"}>
             No scheduled tasks yet — use a template above, click <strong>+ New automation</strong>,
             or just ask OpenWorker in a session.
           </div>
@@ -169,7 +169,7 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
               onClick={() => setOpenId(t.id)}
             >
               <div className="flex items-center justify-between gap-2.5 mb-1">
-                <span className="text-[13.5px] font-semibold truncate">{t.title}</span>
+                <span className="text-[13px] font-semibold truncate">{t.title}</span>
                 <button
                   className="sched-card-del"
                   title="Delete automation"
@@ -379,7 +379,7 @@ function TaskDetail({
               placeholder="Title"
             />
           ) : (
-            <h2 className="text-[18px] font-semibold tracking-tight">{task.title}</h2>
+            <h2 className="text-[20px] font-semibold tracking-tight">{task.title}</h2>
           )}
           <div className="sched-actions">
             {editing ? (
