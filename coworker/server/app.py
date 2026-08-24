@@ -11,6 +11,7 @@ import asyncio
 import base64
 import binascii
 import json
+import logging
 import os
 import re
 import secrets
@@ -19,6 +20,8 @@ from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger("coworker.server.app")
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -2490,6 +2493,14 @@ def create_app(manager: SessionManager) -> FastAPI:
                     )
                     if event.type.value in _CHECKPOINTS:
                         manager.save(session_id, engine)
+            except Exception as exc:
+                # An unexpected raise out of the turn must not vanish: the task would otherwise
+                # die silently ("Task exception was never retrieved") and the GUI would only see
+                # turn_done. Surface it as an error event like the background-turn path does.
+                logger.warning("ws turn crashed for %s: %s", session_id, exc)
+                await manager.broadcast_session(
+                    session_id, {"type": "error", "data": {"error": str(exc)}}
+                )
             finally:
                 manager.mark_idle(session_id)
                 manager.save(session_id, engine)
