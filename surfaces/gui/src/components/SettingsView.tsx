@@ -38,6 +38,8 @@ import {
   type DictationStatus,
 } from "../tauri";
 import { useThemePref } from "../theme";
+import { useLanguage } from "../i18n";
+import { useTranslation } from "react-i18next";
 import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { ModelsTab } from "./ManageTabs";
@@ -288,7 +290,7 @@ function VoiceInputSection() {
       />
 
       {!desktop ? (
-        <div className={CARD + " p-4 text-[13px] text-muted"}>Voice Input setup is available in the OpenWorker desktop app.</div>
+        <div className={CARD + " p-4 text-[13px] text-muted"}>Voice Input setup is available in the Worker desktop app.</div>
       ) : (
         <div className="space-y-4">
           <div className="rounded-xl border border-green-200 bg-green-50/70 px-4 py-3 text-[13px] text-green-800">
@@ -396,9 +398,12 @@ function PersonasSection({ onOpenPersona }: { onOpenPersona?: (id: string) => vo
 // -- Appearance + app behaviour ------------------------------------------------
 function AppearanceSection() {
   const [theme, setTheme] = useThemePref();
+  const [language, setLanguage] = useLanguage();
+  const { t } = useTranslation();
   const [autostart, setAuto] = useState(false);
   const [keepAwake, setKeep] = useState(false);
   const desktop = isTauri();
+  const text = (en: string, pt: string, es: string) => (language === "pt-BR" ? pt : language === "es-ES" ? es : en);
 
   useEffect(() => {
     if (isTauri()) {
@@ -416,18 +421,36 @@ function AppearanceSection() {
 
   return (
     <section>
-      <PanelHead title="General" sub="How OpenWorker looks and behaves on this machine." />
+      <PanelHead title={t("settings.general", { lng: language })} sub={t("settings.generalDescription", { lng: language })} />
+
+      <div className={CARD + " p-4 mb-4"} data-testid="language-card">
+        <label className="block">
+          <span className={FIELD_LABEL}>{t("settings.language", { lng: language })}</span>
+          <select
+            value={language}
+            onChange={(event) => setLanguage(event.target.value as typeof language)}
+            aria-label={t("settings.language", { lng: language })}
+            data-testid="language-select"
+            className="mt-2.5 block w-full max-w-xs px-3 py-2 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent"
+          >
+            <option value="pt-BR">Português</option>
+            <option value="en-US">English</option>
+            <option value="es-ES">Español</option>
+          </select>
+          <span className={FIELD_HELP}>{t("settings.languageDescription", { lng: language })}</span>
+        </label>
+      </div>
 
       <div className={CARD + " p-4 mb-4"}>
-        <div className={FIELD_LABEL}>Theme</div>
-        <div className="seg mt-2.5" role="radiogroup" aria-label="Appearance">
+        <div className={FIELD_LABEL}>{t("settings.theme", { lng: language })}</div>
+        <div className="seg mt-2.5" role="radiogroup" aria-label={t("settings.appearance", { lng: language })}>
           {(["light", "dark", "auto"] as const).map((p) => (
             <button key={p} className={p === theme ? "active" : ""} onClick={() => setTheme(p)}>
-              {p === "light" ? "Light" : p === "dark" ? "Dark" : "Auto"}
+              {p === "light" ? t("settings.light", { lng: language }) : p === "dark" ? t("settings.dark", { lng: language }) : t("settings.auto", { lng: language })}
             </button>
           ))}
         </div>
-        <div className={FIELD_HELP}>Auto follows your Mac&rsquo;s appearance.</div>
+        <div className={FIELD_HELP}>{t("settings.autoDescription", { lng: language })}</div>
       </div>
 
       <SidebarCard />
@@ -447,7 +470,7 @@ function AppearanceSection() {
             <input type="checkbox" className="mt-0.5" checked={autostart} onChange={(e) => toggleAuto(e.target.checked)} />
             <span>
               <span className="block text-[13px] text-ink">Open at login</span>
-              <span className="block text-[12px] text-muted">Launch OpenWorker automatically when you sign in.</span>
+              <span className="block text-[12px] text-muted">Launch Worker automatically when you sign in.</span>
             </span>
           </label>
           <label className="flex items-start gap-3 py-2">
@@ -471,7 +494,7 @@ function AppearanceSection() {
           </button>
           {desktop && <UpdateInline />}
         </div>
-        <div className={FIELD_HELP}>Replays the first-run setup: model, first automation, tips.</div>
+        <div className={FIELD_HELP}>{text("Replays the first-run setup: model, first automation, tips.", "Repete a configuração inicial: modelo, primeira automação e dicas.", "Repite la configuración inicial: modelo, primera automatización y consejos.")}</div>
       </div>
     </section>
   );
@@ -582,7 +605,7 @@ function UpdateInline() {
             ? "You're on the latest version."
             : state === "error"
               ? "Couldn't check right now — try again later."
-              : "Downloading — OpenWorker restarts by itself when it's ready."}
+              : "Downloading — Worker restarts by itself when it's ready."}
         </span>
       )}
     </span>
@@ -845,6 +868,8 @@ function ContextBarCard() {
 // user-global (a cloned repo can't turn either on). Shadow is nested under the main flag — it
 // only makes sense to measure the reviewer once you know what it is.
 function AutoApproveCard() {
+  const [language] = useLanguage();
+  const text = (en: string, pt: string, es: string) => (language === "pt-BR" ? pt : language === "es-ES" ? es : en);
   const [on, setOn] = useState<boolean | null>(null);
   const [shadow, setShadow] = useState(false);
 
@@ -879,12 +904,9 @@ function AutoApproveCard() {
           onChange={(e) => saveOn(e.target.checked)}
         />
         <span>
-          <span className="block text-[13px] text-ink">Enable Auto-approve mode</span>
+          <span className="block text-[13px] text-ink">{text("Enable Auto-approve mode", "Ativar modo de aprovação automática", "Activar el modo de aprobación automática")}</span>
           <span className="block text-[12px] text-muted">
-            Adds an <em>Auto-approve</em> option to the mode picker. In that mode, your session
-            model reviews each action that would normally need approval and clears the routine
-            ones; anything doubtful still asks you. It can never allow something the rules
-            block. One extra model call per check, billed to your usage.
+            {text("Adds an Auto-approve option to the mode picker. In that mode, your session model reviews each action that would normally need approval and clears the routine ones; anything doubtful still asks you. It can never allow something the rules block. One extra model call per check, billed to your usage.", "Adiciona uma opção de aprovação automática ao seletor de modo. Nesse modo, o modelo da conversa revisa cada ação que normalmente exigiria aprovação e libera as rotineiras; qualquer dúvida ainda pede sua confirmação. Ele nunca permite algo bloqueado pelas regras. Há uma chamada extra ao modelo por verificação, cobrada do seu uso.", "Agrega una opción de aprobación automática al selector de modo. En ese modo, el modelo de la conversación revisa cada acción que normalmente requeriría aprobación y libera las rutinarias; cualquier duda aún pide confirmación. Nunca puede permitir algo bloqueado por las reglas. Hay una llamada adicional al modelo por verificación.")}
           </span>
         </span>
       </label>
@@ -898,12 +920,10 @@ function AutoApproveCard() {
         />
         <span>
           <span className="block text-[13px] text-ink">
-            Shadow evaluation <span className="text-faint">(for measuring)</span>
+            {text("Shadow evaluation", "Avaliação em sombra", "Evaluación en sombra")} <span className="text-faint">{text("(for measuring)", "(para medição)", "(para medir)")}</span>
           </span>
           <span className="block text-[12px] text-muted">
-            On any mode, the reviewer records what it <em>would</em> have decided next to your
-            own choice — without changing anything. Lets you see how it would behave before
-            trusting it. Also costs one model call per approval.
+            {text("On any mode, the reviewer records what it would have decided next to your own choice — without changing anything. Lets you see how it would behave before trusting it. Also costs one model call per approval.", "Em qualquer modo, o revisor registra o que teria decidido ao lado da sua escolha — sem alterar nada. Isso permite ver como ele se comportaria antes de confiar nele. Também consome uma chamada ao modelo por aprovação.", "En cualquier modo, el revisor registra lo que habría decidido junto a tu elección, sin cambiar nada. Permite ver cómo se comportaría antes de confiar en él. También consume una llamada al modelo por aprobación.")}
           </span>
         </span>
       </label>

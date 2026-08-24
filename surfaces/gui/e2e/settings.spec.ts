@@ -3,6 +3,24 @@ import { test, expect } from "./fixtures";
 // Guards the Settings-as-page refactor (§13, IA per UX-021): the ⚙ menu opens a full-page
 // surface with a left sub-nav — General · Models · Voice input — and each section renders.
 // Files is a card inside General; Coworkers ships on (flag "0" hides it).
+test("Settings: language changes immediately and persists per device", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("account-row").click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+
+  const language = page.getByTestId("language-select");
+  await expect(language).toHaveValue(/en-US|pt-BR|es-ES/);
+
+  await language.selectOption("pt-BR");
+  await expect(page.locator("html")).toHaveAttribute("lang", "pt-BR");
+  await expect(page.getByTestId("language-card")).toContainText("Escolha o idioma usado");
+
+  await language.selectOption("es-ES");
+  await expect(page.locator("html")).toHaveAttribute("lang", "es-ES");
+  await expect(page.getByTestId("language-card")).toContainText("Elige el idioma usado");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("openwork-language"))).toBe("es-ES");
+});
+
 test("Settings opens as a full page and navigates sections", async ({ page }) => {
   await page.goto("/");
 

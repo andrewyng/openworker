@@ -288,7 +288,10 @@ class TurnEngine:
         # everything else that turn to the human. A fresh user message is a fresh brief.
         self._reviewer_denials = 0
         self._reviewer_verdicts.clear()
-        data: dict[str, Any] = {"input": user_input}
+        # The canonical timestamp lets a local optimistic bubble become an
+        # addressable persisted turn. Branching uses it with the user ordinal as a
+        # stale-client guard rather than relying on display text.
+        data: dict[str, Any] = {"input": user_input, "ts": message["ts"]}
         if source is not None:
             data["source"] = source
         if display is not None:

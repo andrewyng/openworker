@@ -5402,6 +5402,30 @@ class SessionManager:
         record = self.session_store.load(session_id)
         return record.messages if record else []
 
+    def create_branch(self, session_id: str, *, user_ordinal: int, ts: Optional[float]) -> dict[str, Any]:
+        """Create an inactive sibling from the prefix before one user turn.
+
+        The GUI connects to the returned session and sends the edited message through
+        the normal WebSocket flow. This keeps provider execution and all existing
+        approval gates exactly the same as an ordinary new turn.
+        """
+        if self.is_running(session_id):
+            return {"ok": False, "error": "wait for the current turn to finish"}
+        result = self.session_store.create_branch(
+            session_id, user_ordinal=user_ordinal, ts=ts,
+        )
+        return result
+
+    def activate_branch(self, session_id: str) -> bool:
+        return self.session_store.activate_branch(session_id)
+
+    def branch_context(self, session_id: str) -> list[dict[str, Any]]:
+        return self.session_store.branch_context(session_id)
+
+    def discard_branch(self, session_id: str) -> bool:
+        self._engines.pop(session_id, None)
+        return self.session_store.discard_branch(session_id)
+
     def rename_session(self, session_id: str, title: str) -> dict[str, Any]:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal sessions cannot be renamed"}
@@ -5513,7 +5537,7 @@ class SessionManager:
                 # the sidebar's ONE expandable team entry.
                 "team": self._session_team_row(r),
             }
-            for r in self.session_store.list(workspace=ws)
+            for r in self.session_store.list_visible(workspace=ws)
             if not r.session_id.startswith("__")  # hide internal threads
         ]
 

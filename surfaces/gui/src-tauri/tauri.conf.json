@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenWorker",
+  "productName": "Worker",
   "version": "0.1.7",
   "identifier": "com.openworker.desktop",
   "build": {

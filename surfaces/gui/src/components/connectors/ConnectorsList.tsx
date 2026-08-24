@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { type CloudStatus, type Connector, type McpServer, type SlackStatus } from "../../api";
+import { useLanguage, type Language } from "../../i18n";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
 import { AddMcpModal, CustomMcpGroup } from "./CustomMcp";
@@ -12,6 +13,21 @@ import { CHIP_OK, CHIP_OFF, CHIP_WARN, GRP, GRP_H, FOOT, PILL_QUIET, ROW } from 
 // custom server" affordance sits at the top of the page (owner ruling: top).
 
 const AVAILABLE_FOLD = 8; // rows shown before "show all"
+
+const connectorBlurbs: Record<string, [string, string, string]> = {
+  telegram: ["Two-way messaging with a Telegram bot.", "Mensagens em duas vias com um bot do Telegram.", "Mensajería bidireccional con un bot de Telegram."],
+  slack: ["Two-way messaging — one-click via Worker Cloud, or a manual Slack app (Socket Mode).", "Mensagens em duas vias — com um clique pelo Worker Cloud ou por um app manual do Slack (modo Socket).", "Mensajería bidireccional: con un clic mediante Worker Cloud o con una aplicación manual de Slack (modo Socket)."],
+  email: ["Read, search, and send mail from any IMAP account — Gmail, iCloud, Fastmail, or custom.", "Leia, pesquise e envie e-mails de qualquer conta IMAP — Gmail, iCloud, Fastmail ou personalizada.", "Lee, busca y envía correos desde cualquier cuenta IMAP: Gmail, iCloud, Fastmail o personalizada."],
+  gmail: ["Search, summarize, draft, and send email.", "Pesquise, resuma, redija e envie e-mails.", "Busca, resume, redacta y envía correos."],
+  google_calendar: ["Read availability, summarize schedules, and create events.", "Consulte disponibilidade, resuma agendas e crie eventos.", "Consulta disponibilidad, resume agendas y crea eventos."],
+  github: ["Work with issues, pull requests, repository files, and CI status.", "Trabalhe com issues, pull requests, arquivos de repositório e status de CI.", "Trabaja con issues, pull requests, archivos de repositorio y estado de CI."],
+  outlook: ["Search, summarize, and send Microsoft 365 mail, and run your calendar.", "Pesquise, resuma e envie e-mails do Microsoft 365, além de gerenciar seu calendário.", "Busca, resume y envía correos de Microsoft 365, además de gestionar tu calendario."],
+};
+
+function connectorBlurb(connector: Connector, language: Language) {
+  const copy = connectorBlurbs[connector.name];
+  return copy ? copy[language === "pt-BR" ? 1 : language === "es-ES" ? 2 : 0] : connector.blurb;
+}
 
 export function ConnectorsList({
   connectors,
@@ -28,6 +44,9 @@ export function ConnectorsList({
   onOpen: (name: string) => void;
   onChanged: () => void;
 }) {
+  const [language] = useLanguage();
+  const text = (english: string, portuguese: string, spanish: string) =>
+    language === "pt-BR" ? portuguese : language === "es-ES" ? spanish : english;
   const [filter, setFilter] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
@@ -49,10 +68,10 @@ export function ConnectorsList({
           onClick={() => setAddingMcp(true)}
           data-testid="add-custom-server"
         >
-          + Add custom MCP server
+          {text("+ Add custom MCP server", "+ Adicionar servidor MCP personalizado", "+ Agregar servidor MCP personalizado")}
         </button>
         <input
-          placeholder="Search"
+          placeholder={text("Search", "Pesquisar", "Buscar")}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           className="w-44 px-3.5 py-1.5 rounded-full border border-line bg-panel text-[13px] outline-none focus:border-accent"
@@ -63,7 +82,7 @@ export function ConnectorsList({
           sign-in home, and the connect modals keep their inline sign-in panes. */}
       {connected.length > 0 && (
         <>
-          <div className={GRP_H + " !mt-0"}>Connected · {connected.length}</div>
+          <div className={GRP_H + " !mt-0"}>{text("Connected", "Conectados", "Conectados")} · {connected.length}</div>
           <div className={GRP}>
             {connected.map((c) => (
               <button
@@ -91,7 +110,7 @@ export function ConnectorsList({
         onChanged={onChanged}
       />
 
-      <div className={GRP_H}>Available</div>
+      <div className={GRP_H}>{text("Available", "Disponíveis", "Disponibles")}</div>
       <div className={GRP}>
         {shown.map((c) => (
           /* The row navigates to the pre-connect detail page (§38); the pill
@@ -105,7 +124,7 @@ export function ConnectorsList({
             <ConnectorBadge connector={c} size={34} title={c.title} />
             <span className="min-w-0 flex-1">
               <span className="font-medium text-[13px]">{c.title}</span>
-              <span className="block text-[12px] text-muted truncate">{c.blurb}</span>
+              <span className="block text-[12px] text-muted truncate">{connectorBlurb(c, language)}</span>
             </span>
             <span
               className={PILL_QUIET + " cursor-pointer"}
@@ -115,19 +134,19 @@ export function ConnectorsList({
                 setConnecting(c.name);
               }}
             >
-              Connect
+              {text("Connect", "Conectar", "Conectar")}
             </span>
           </button>
         ))}
         {shown.length === 0 && (
-          <div className={ROW + " text-[13px] text-muted"}>Nothing matches.</div>
+          <div className={ROW + " text-[13px] text-muted"}>{text("Nothing matches.", "Nenhum resultado encontrado.", "No hay coincidencias.")}</div>
         )}
       </div>
       {!showAll && !q && available.length > AVAILABLE_FOLD && (
         <div className={FOOT}>
           {available.length - AVAILABLE_FOLD} more ·{" "}
           <button className="text-muted hover:text-ink" onClick={() => setShowAll(true)}>
-            show all
+            {text("show all", "mostrar todos", "mostrar todos")}
           </button>
         </div>
       )}

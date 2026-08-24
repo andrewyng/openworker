@@ -29,6 +29,7 @@ import {
 import { ConnectorBadge } from "../connectors/ConnectorIcon";
 import { indexConnectors, labelFor, visualFor, type ConnectorMap } from "../connectors/visuals";
 import { baseName } from "../paths";
+import { useLanguage } from "../i18n";
 import { useRoots } from "../useRoots";
 import { AddFolderForm } from "./AddFolderForm";
 import { Icon } from "./Icon";
@@ -69,6 +70,9 @@ export function AccessSection({
   openKey?: number;
   onOpenIntegrations?: () => void;
 }) {
+  const [language] = useLanguage();
+  const text = (english: string, portuguese: string, spanish: string) =>
+    language === "pt-BR" ? portuguese : language === "es-ES" ? spanish : english;
   const [open, setOpen] = useState(false);
   const [conns, setConns] = useState<SessionConnections | null>(null);
   const [byName, setByName] = useState<ConnectorMap>({});
@@ -220,10 +224,14 @@ export function AccessSection({
   // draft with no folder picked yet shows none at all (UX-029).
   const folderPart = projectScoped
     ? scratchPrimary
-      ? "Temporary folder"
+      ? text("Temporary folder", "Pasta temporária", "Carpeta temporal")
       : baseName(workspace || "") || null
     : roots.length > 0
-      ? `${roots.length} folder${roots.length === 1 ? "" : "s"}`
+      ? language === "pt-BR"
+        ? `${roots.length} pasta${roots.length === 1 ? "" : "s"}`
+        : language === "es-ES"
+          ? `${roots.length} carpeta${roots.length === 1 ? "" : "s"}`
+          : `${roots.length} folder${roots.length === 1 ? "" : "s"}`
       : null;
   const summary = [sourcesPart, folderPart].filter(Boolean).join(" · ");
 
@@ -232,7 +240,7 @@ export function AccessSection({
       <div className="rail-section-head">
         <button className="rail-section-toggle" onClick={() => setOpen((v) => !v)} data-testid="access-toggle">
           <Icon name={open ? "chevronDown" : "chevronRight"} size={14} className="rail-chev" />
-          <span>Access</span>
+          <span>{text("Access", "Acesso", "Acceso")}</span>
           <span
             className="ml-auto min-w-0 truncate text-[11px] font-normal text-faint"
             data-testid="access-summary"
@@ -243,7 +251,7 @@ export function AccessSection({
         </button>
       </div>
       {open && (
-        <div className="rail-section-body" role="region" aria-label="Session access">
+        <div className="rail-section-body" role="region" aria-label={text("Session access", "Acesso da conversa", "Acceso de la conversación")}>
           {connectFor ? (
             <ConnectInline
               c={connectFor}
@@ -463,7 +471,7 @@ export function AccessSection({
                     className="mt-1 text-[12px] text-accent hover:underline text-left"
                     onClick={() => setAddingFolder(true)}
                   >
-                    + Give access to a folder…
+                    {text("+ Give access to a folder…", "+ Dar acesso a uma pasta…", "+ Dar acceso a una carpeta…")}
                   </button>
                 )}
                 {rootsError && <div className="roots-err">{rootsError}</div>}

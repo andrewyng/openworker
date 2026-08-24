@@ -14,12 +14,16 @@ import {
   type RootInfo,
 } from "../api";
 import type { SessionInfo, TodoItem } from "../types";
+import { useLanguage, type Language } from "../i18n";
 import { AccessSection } from "./AccessSection";
 import { BoardSection } from "./BoardPanel";
 import { Icon } from "./Icon";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
 
 type Panel = "progress" | "artifacts" | "board" | "journal" | "team" | "files";
+
+const localized = (language: Language, english: string, portuguese: string, spanish: string) =>
+  language === "pt-BR" ? portuguese : language === "es-ES" ? spanish : english;
 
 // Quiet file-type icons for the artifact list (the colored kind pills read as noisy).
 function kindIcon(kind: string): "file" | "fileCode" | "image" | "table" {
@@ -107,6 +111,7 @@ export function RightRail({
   onOpenWorker,
   openBoardKey = 0,
 }: Props) {
+  const [language] = useLanguage();
   // Seventeenth pass: every panel starts collapsed and nothing auto-expands — a count
   // chip is the maximum signal. One exception survives (solo sessions only): Progress
   // still auto-opens the first time a live turn has todos.
@@ -256,7 +261,7 @@ export function RightRail({
         <>
           {/* Leads carry no Progress panel — the board IS the lead's progress surface. */}
           {!isLead && (
-            <RailSection title="Progress" open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
+            <RailSection title={localized(language, "Progress", "Progresso", "Progreso")} open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
               <ProgressSummary running={running} toolNames={toolNames} todo={todo} />
             </RailSection>
           )}
@@ -330,7 +335,7 @@ export function RightRail({
 
           {showArtifacts && (
           <RailSection
-            title="Artifacts"
+            title={localized(language, "Artifacts", "Artefatos", "Artefactos")}
             count={artifacts.length ? String(artifacts.length) : undefined}
             open={open.artifacts}
             onToggle={() => setOpen({ ...open, artifacts: !open.artifacts })}
@@ -345,12 +350,12 @@ export function RightRail({
                     <Icon name="folder" size={13} />
                   </button>
                 )}
-                <button className="rail-mini-btn" onClick={(e) => { e.stopPropagation(); refreshArtifacts(); }} title="Refresh artifacts"><Icon name="refresh" size={13} /></button>
+                <button className="rail-mini-btn" onClick={(e) => { e.stopPropagation(); refreshArtifacts(); }} title={localized(language, "Refresh artifacts", "Atualizar artefatos", "Actualizar artefactos")}><Icon name="refresh" size={13} /></button>
               </>
             }
           >
             {artifacts.length === 0 ? (
-              <div className="rail-muted">No previewable files yet.</div>
+              <div className="rail-muted">{localized(language, "No previewable files yet.", "Ainda não há arquivos para visualizar.", "Aún no hay archivos para previsualizar.")}</div>
             ) : (
               <div className="artifact-list">
                 {artifacts.slice(0, 16).map((a) => (
@@ -396,7 +401,7 @@ export function RightRail({
               Artifacts section stays the curated scratch-only surface. */}
           {rootDirs.length > 0 && (
             <RailSection
-              title="Files"
+              title={localized(language, "Files", "Arquivos", "Archivos")}
               count={String(rootDirs.length)}
               open={open.files}
               onToggle={() => setOpen({ ...open, files: !open.files })}
@@ -472,6 +477,7 @@ function boardChip(board: Board): { text: string; attention: boolean } {
 }
 
 function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolNames: string[]; todo: TodoItem[] }) {
+  const [language] = useLanguage();
   if (todo.length) {
     return (
       <div className="rail-todo-list">
@@ -483,7 +489,14 @@ function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolN
         ))}
         {running && (
           <div className="rail-muted">
-            {toolNames.length ? `${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"} so far.` : "Working..."}
+            {toolNames.length
+              ? localized(
+                  language,
+                  `${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"} so far.`,
+                  `${toolNames.length} chamada${toolNames.length === 1 ? "" : "s"} de ferramenta até agora.`,
+                  `${toolNames.length} llamada${toolNames.length === 1 ? "" : "s"} de herramienta hasta ahora.`,
+                )
+              : localized(language, "Working...", "Trabalhando...", "Trabajando...")}
           </div>
         )}
       </div>
@@ -492,13 +505,25 @@ function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolN
   if (running) {
     return (
       <div className="rail-muted">
-        Working on this task{toolNames.length ? ` with ${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"} so far.` : "."}
+        {toolNames.length
+          ? localized(
+              language,
+              `Working on this task with ${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"} so far.`,
+              `Trabalhando nesta tarefa com ${toolNames.length} chamada${toolNames.length === 1 ? "" : "s"} de ferramenta até agora.`,
+              `Trabajando en esta tarea con ${toolNames.length} llamada${toolNames.length === 1 ? "" : "s"} de herramienta hasta ahora.`,
+            )
+          : localized(language, "Working on this task.", "Trabalhando nesta tarefa.", "Trabajando en esta tarea.")}
       </div>
     );
   }
   return (
     <div className="rail-muted">
-      For longer multi-step tasks, progress will appear here while OpenWorker plans, uses tools, waits for approval, and produces artifacts.
+      {localized(
+        language,
+        "For longer multi-step tasks, progress will appear here while Worker plans, uses tools, waits for approval, and produces artifacts.",
+        "Em tarefas longas com várias etapas, o progresso aparecerá aqui enquanto o Worker planeja, usa ferramentas, aguarda aprovação e produz artefatos.",
+        "En tareas largas de varios pasos, el progreso aparecerá aquí mientras Worker planifica, usa herramientas, espera aprobación y produce artefactos.",
+      )}
     </div>
   );
 }

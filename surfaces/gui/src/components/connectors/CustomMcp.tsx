@@ -8,6 +8,7 @@ import {
   signoutMcp,
   type McpServer,
 } from "../../api";
+import { useLanguage } from "../../i18n";
 import { relTime } from "../../providers/ProviderSetup";
 import { Icon } from "../Icon";
 import { Toggle } from "../Toggle";
@@ -96,6 +97,9 @@ export function CustomMcpGroup({
   onOpen: (name: string) => void;
   onChanged: () => void;
 }) {
+  const [language] = useLanguage();
+  const text = (english: string, portuguese: string, spanish: string) =>
+    language === "pt-BR" ? portuguese : language === "es-ES" ? spanish : english;
   const servers = serversProp;
   // A probe in flight ("Testing…" / "Signing in…") settles server-side within seconds,
   // but this page has no standing MCP poll — the chip froze on Testing forever
@@ -112,7 +116,7 @@ export function CustomMcpGroup({
 
   return (
     <>
-      <div className={GRP_H}>Custom · MCP</div>
+      <div className={GRP_H}>{text("Custom", "Personalizado", "Personalizado")} · MCP</div>
       <div className={GRP} data-testid="custom-mcp-group">
         {servers.map((s) => (
           <button
@@ -135,7 +139,15 @@ export function CustomMcpGroup({
             <McpGlyph />
             <span className="min-w-0 flex-1">
               <span className="font-medium text-[13px]">{p.label}</span>
-              <span className="block text-[12px] text-muted truncate">{p.blurb}</span>
+              <span className="block text-[12px] text-muted truncate">
+                {p.name === "granola"
+                  ? text(
+                      "Meeting notes & transcripts — sign in with your Granola account.",
+                      "Anotações e transcrições de reuniões — entre com sua conta Granola.",
+                      "Notas y transcripciones de reuniones: inicia sesión con tu cuenta de Granola.",
+                    )
+                  : p.blurb}
+              </span>
             </span>
             <span
               className={PILL_QUIET + " cursor-pointer"}
@@ -146,7 +158,7 @@ export function CustomMcpGroup({
                 onChanged();
               }}
             >
-              Connect
+              {text("Connect", "Conectar", "Conectar")}
             </span>
           </div>
         ))}

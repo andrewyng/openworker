@@ -77,8 +77,8 @@ export const setKeepAwake = (enabled: boolean) => invoke<boolean>("set_keep_awak
 /** Begin native window dragging from a custom title/header region. */
 export const startWindowDrag = () => invoke<boolean>("start_window_drag");
 
-// Local dictation is native-only. The browser build deliberately keeps this unavailable rather
-// than silently sending microphone audio to a server.
+// Desktop dictation stays local in the Tauri shell. The browser composer uses the browser's
+// own SpeechRecognition API when available; audio never passes through the Worker server.
 export const getDictationStatus = () => invoke<DictationStatus>("get_dictation_status");
 /** Instantaneous mic loudness 0..1 while recording (0 otherwise) — drives the composer's
  * live waveform. Cheap; poll at ~10Hz. */

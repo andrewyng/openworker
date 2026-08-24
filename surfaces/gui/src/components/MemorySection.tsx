@@ -13,6 +13,7 @@ import {
 import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { Toggle } from "./Toggle";
+import { useLanguage } from "../i18n";
 
 // MEMORY-SPEC §5.3: the one memory screen. A plain-language list of remembered facts
 // (edit/delete per row), the on/off toggle, delete-all, and the User Rules textarea —
@@ -25,6 +26,8 @@ const BTN_ACCENT =
   "text-[13px] px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
 
 export function MemorySection() {
+  const [language] = useLanguage();
+  const text = (en: string, pt: string, es: string) => (language === "pt-BR" ? pt : language === "es-ES" ? es : en);
   const [settings, setSettings] = useState<MemorySettings | null>(null);
   const [entries, setEntries] = useState<MemoryEntry[] | null>(null);
   // State-change copy (§5.3): shown under the toggle / list after an action.
@@ -84,7 +87,7 @@ export function MemorySection() {
     <section>
       <PanelHead
         title="Memory"
-        sub="Your coworkers can remember useful things about you between conversations. Everything they know is listed here."
+        sub={text("Your coworkers can remember useful things about you between conversations. Everything they know is listed here.", "Seus colegas podem lembrar informações úteis sobre você entre conversas. Tudo o que sabem está listado aqui.", "Tus compañeros pueden recordar información útil sobre ti entre conversaciones. Todo lo que saben aparece aquí.")}
       />
 
       {/* On/off — one switch, no other setup (§5.4). */}
@@ -93,11 +96,7 @@ export function MemorySection() {
           <Toggle checked={settings.enabled} onChange={toggleEnabled} title="Remember new things about you" />
           <div className="min-w-0 flex-1">
             <div className={FIELD_LABEL}>Remember new things about me</div>
-            <div className="text-[12px] text-muted mt-0.5">
-              Lasting preferences you mention in chat get saved and used in future conversations —
-              you'll see a small note each time, with one-tap Undo. Turning this off stops new
-              saves; anything already below is still used until you delete it.
-            </div>
+            <div className="text-[12px] text-muted mt-0.5">{text("Lasting preferences you mention in chat get saved and used in future conversations — you'll see a small note each time, with one-tap Undo. Turning this off stops new saves; anything already below is still used until you delete it.", "Preferências duradouras mencionadas no chat são salvas e usadas em conversas futuras — você verá uma pequena nota a cada vez, com Desfazer em um toque. Desativar isso impede novos salvamentos; o que já está abaixo continua sendo usado até você excluir.", "Las preferencias duraderas que mencionas en el chat se guardan y se usan en futuras conversaciones. Verás una nota pequeña cada vez, con Deshacer en un toque. Desactivarlo evita nuevos guardados; lo ya guardado se seguirá usando hasta que lo elimines.")}</div>
           </div>
         </div>
         {toggleMsg && (
@@ -122,11 +121,7 @@ export function MemorySection() {
             </button>
           )}
         </div>
-        <div className={FIELD_HELP}>
-          Saved automatically from your conversations. Fix anything that's wrong — or delete it.
-          Edits and deletions apply to new conversations; ones you already have open keep what
-          they knew when they started.
-        </div>
+        <div className={FIELD_HELP}>{text("Saved automatically from your conversations. Fix anything that's wrong — or delete it. Edits and deletions apply to new conversations; ones you already have open keep what they knew when they started.", "Salvo automaticamente das suas conversas. Corrija o que estiver errado — ou exclua. Edições e exclusões se aplicam a novas conversas; as que já estão abertas mantêm o que sabiam quando começaram.", "Guardado automáticamente desde tus conversaciones. Corrige lo que esté mal o elimínalo. Las ediciones y eliminaciones se aplican a conversaciones nuevas; las que ya están abiertas conservan lo que sabían al comenzar.")}</div>
         {listMsg && (
           <div className="text-[13px] text-muted mt-2.5" data-testid="memory-list-msg">
             {listMsg}
@@ -135,8 +130,7 @@ export function MemorySection() {
         {entries.length === 0 ? (
           !listMsg && (
             <div className="text-[12px] text-muted mt-3" data-testid="memory-empty">
-              Nothing yet. When you mention a lasting preference in chat — or say "remember
-              that…" — it will show up here.
+              {text("Nothing yet. When you mention a lasting preference in chat — or say \"remember that…\" — it will show up here.", "Nada ainda. Quando você mencionar uma preferência duradoura no chat — ou disser \"lembre-se disso…\" — ela aparecerá aqui.", "Aún no hay nada. Cuando menciones una preferencia duradera en el chat, o digas \"recuerda esto…\", aparecerá aquí.")}
             </div>
           )
         ) : (
@@ -150,7 +144,7 @@ export function MemorySection() {
 
       {/* Your instructions (§6): user-authored, toggle-independent — so it sits apart
           from the auto-memory pair above. The agent never edits these. */}
-      <UserRulesCard settings={settings} onSaved={setSettings} />
+      <UserRulesCard settings={settings} onSaved={setSettings} language={language} />
     </section>
   );
 }
@@ -158,10 +152,13 @@ export function MemorySection() {
 function UserRulesCard({
   settings,
   onSaved,
+  language,
 }: {
   settings: MemorySettings;
   onSaved: (s: MemorySettings) => void;
+  language: "pt-BR" | "en-US" | "es-ES";
 }) {
+  const text = (en: string, pt: string, es: string) => (language === "pt-BR" ? pt : language === "es-ES" ? es : en);
   const [draft, setDraft] = useState(settings.user_rules);
   const [savedMsg, setSavedMsg] = useState(false);
 
@@ -176,15 +173,14 @@ function UserRulesCard({
     <div className={CARD + " p-4"} data-testid="user-rules-card">
       <div className={FIELD_LABEL}>Your instructions</div>
       <div className={FIELD_HELP}>
-        Your coworkers follow these in every conversation.
+        {text("Your coworkers follow these in every conversation.", "Seus colegas seguem estas instruções em todas as conversas.", "Tus compañeros siguen estas instrucciones en todas las conversaciones.")}
       </div>
       <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         rows={4}
         placeholder={
-          "I use a screen reader — no tables, describe any image\n" +
-          "Use DD-MM-YYYY for dates"
+          text("I use a screen reader — no tables, describe any image\nUse DD-MM-YYYY for dates", "Uso um leitor de tela — sem tabelas, descreva qualquer imagem\nUse DD-MM-AAAA para datas", "Uso un lector de pantalla: sin tablas, describe cualquier imagen\nUsa DD-MM-AAAA para las fechas")
         }
         data-testid="user-rules-input"
         className="w-full mt-2.5 px-3 py-2.5 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent resize-y leading-relaxed"

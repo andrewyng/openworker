@@ -722,6 +722,29 @@ def create_app(manager: SessionManager) -> FastAPI:
     def session_messages(session_id: str) -> dict[str, Any]:
         return {"messages": manager.session_messages(session_id)}
 
+    @app.get("/v1/sessions/{session_id}/branches")
+    def session_branches(session_id: str) -> dict[str, Any]:
+        return {"groups": manager.branch_context(session_id)}
+
+    @app.post("/v1/sessions/{session_id}/branches")
+    def session_create_branch(session_id: str, body: dict) -> dict[str, Any]:
+        body = body or {}
+        ordinal = body.get("user_ordinal")
+        ts = body.get("ts")
+        if not isinstance(ordinal, int) or ordinal < 0:
+            return {"ok": False, "error": "invalid user message reference"}
+        if ts is not None and not isinstance(ts, (int, float)):
+            return {"ok": False, "error": "invalid user message timestamp"}
+        return manager.create_branch(session_id, user_ordinal=ordinal, ts=float(ts) if ts is not None else None)
+
+    @app.post("/v1/sessions/{session_id}/branches/activate")
+    def session_activate_branch(session_id: str) -> dict[str, Any]:
+        return {"ok": manager.activate_branch(session_id), "session_id": session_id}
+
+    @app.delete("/v1/sessions/{session_id}/branches/pending")
+    def session_discard_pending_branch(session_id: str) -> dict[str, Any]:
+        return {"ok": manager.discard_branch(session_id)}
+
     @app.patch("/v1/sessions/{session_id}")
     def session_patch(session_id: str, body: dict) -> dict[str, Any]:
         body = body or {}
@@ -2507,13 +2530,17 @@ def create_app(manager: SessionManager) -> FastAPI:
             # or flush an in-progress assistant stream in the GUI.
             await ws.send_json({"type": "input_rejected", "data": {"error": reason}})
 
-        async def claim_turn(*, retry: bool = False, content=None, display=None) -> None:
+        async def claim_turn(*, retry: bool = False, content=None, display=None) -> bool:
             if not manager.try_mark_running(session_id):
                 await reject_input(
                     "This session is already running a turn. Wait for it to finish or stop it."
                 )
-                return
+                return False
+            # A pending edit branch becomes visible only once the ordinary input path
+            # has accepted its replacement turn. Existing sessions are unchanged.
+            manager.activate_branch(session_id)
             asyncio.create_task(run_turn(content, retry=retry, display=display))
+            return True
 
         try:
             while True:

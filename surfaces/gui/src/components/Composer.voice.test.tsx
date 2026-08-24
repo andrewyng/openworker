@@ -1,5 +1,5 @@
-// §37 voice input — the composer's side of the contract, driven through a mocked
-// __TAURI__ global (the mic is native-only; the browser build renders no mic at all).
+// §37 voice input — the composer uses local Tauri dictation when present and falls back
+// to the browser's SpeechRecognition API without sending audio through the Worker server.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Composer } from "./Composer";
@@ -46,6 +46,8 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   delete (globalThis as any).__TAURI__;
+  delete (globalThis as any).SpeechRecognition;
+  delete (globalThis as any).webkitSpeechRecognition;
 });
 
 describe("Composer voice input (§37)", () => {
@@ -53,6 +55,32 @@ describe("Composer voice input (§37)", () => {
     delete (globalThis as any).__TAURI__;
     render(<Composer {...props()} />);
     expect(screen.queryByLabelText(/dictation|Voice Input/)).toBeNull();
+  });
+
+  it("uses browser speech recognition when the desktop shell is unavailable", async () => {
+    let instance: any;
+    class Recognition {
+      lang = "";
+      continuous = false;
+      interimResults = false;
+      onresult: any = null;
+      onerror: any = null;
+      onend: any = null;
+      start = vi.fn();
+      stop = vi.fn();
+      abort = vi.fn();
+      constructor() { instance = this; }
+    }
+    delete (globalThis as any).__TAURI__;
+    (globalThis as any).SpeechRecognition = Recognition;
+    render(<Composer {...props()} />);
+
+    fireEvent.click(screen.getByLabelText("Start dictation"));
+    expect(instance.start).toHaveBeenCalledOnce();
+    expect(screen.getByLabelText("Stop dictation")).toBeTruthy();
+    instance.onresult({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: "texto pelo microfone" } }] });
+    instance.onend();
+    await waitFor(() => expect((screen.getByPlaceholderText(/Ask the coworker/) as HTMLTextAreaElement).value).toBe("texto pelo microfone"));
   });
 
   it("not ready → muted mic deep-links to Settings instead of recording", async () => {

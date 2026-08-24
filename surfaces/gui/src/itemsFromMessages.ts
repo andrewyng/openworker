@@ -10,6 +10,7 @@ import type { Attachment, Item } from "./types";
 
 export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
   const items: Item[] = [];
+  let userOrdinal = 0;
   // Index tool results by tool_call_id so replayed tool rows can show their output
   // (the live view gets this from `tool_finished` events; on replay it's the `role:"tool"` msgs).
   const results: Record<string, string> = {};
@@ -38,7 +39,7 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
       if (typeof m._display === "string" && m._display) user.text = m._display;
       // `ts` (unix seconds) is the server's canonical-message stamp; older sessions have none.
       if (typeof m.ts === "number") user.ts = m.ts;
-      if (user.text || user.attachments?.length) items.push(user);
+      if (user.text || user.attachments?.length) items.push({ ...user, userOrdinal: userOrdinal++ });
     } else if (m.role === "assistant") {
       if (m.content || m.reasoning)
         items.push({

@@ -13,6 +13,10 @@ import {
   getHealth,
   getRecentWorkspaces,
   getSessionMessages,
+  getSessionBranches,
+  createSessionBranch,
+  activateSessionBranch,
+  discardPendingSessionBranch,
   getSessions,
   announceAutomationsChanged,
   announceMemoryChanged,
@@ -38,6 +42,7 @@ import {
   type RecentWorkspace,
   type SurfaceVisibility,
   type WorkspaceCommandTrust,
+  type BranchGroup,
 } from "./api";
 import type {
   ApprovalDecision,
@@ -87,6 +92,9 @@ import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
 
 const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
+
+const nextUserOrdinal = (items: Item[]) =>
+  items.reduce((count, item) => count + (item.kind === "user" ? 1 : 0), 0);
 
 const SUGGESTIONS = [
   { ico: "⚙", text: "Run the test suite and summarize any failures." },
@@ -213,6 +221,7 @@ export function App() {
   // multi-second silent stall mid-turn.
   const [compacting, setCompacting] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
+  const [branchGroups, setBranchGroups] = useState<BranchGroup[]>([]);
   const [streaming, setStreamingState] = useState("");
   // Ref mirror of `streaming`: the WS handler closure is built once per socket and can't read
   // fresh state — the interrupted/error flush below needs the live buffer at event time.
@@ -467,6 +476,17 @@ export function App() {
     model?: string;
     notice?: string; // e.g. "Temporary folder created · git initialized", shown after the message
   } | null>(null);
+  // A branch exists before its first socket connection so a failed reconnect can
+  // restore the original conversation and preserve the edited message in Composer.
+  const pendingBranchRef = useRef<{
+    sessionId: string;
+    originalSessionId: string;
+    workspace: string;
+    agent: string;
+    text: string;
+    attachments?: Attachment[];
+    connected: boolean;
+  } | null>(null);
   // The in-flight manual run to finalize after its first turn ({taskId, runId, sessionId}).
   const activeRunRef = useRef<{ taskId: string; runId: string; sessionId: string } | null>(null);
 
@@ -655,6 +675,10 @@ export function App() {
     if (surface === "session") rememberLastSession(agent, sessionId, workspace);
   }, [surface, agent, sessionId, workspace]);
 
+  useEffect(() => {
+    getSessionBranches(sessionId).then(setBranchGroups).catch(() => setBranchGroups([]));
+  }, [sessionId]);
+
   // (re)connect when workspace, session, or agent changes
   useEffect(() => {
     if (booting) return; // wait until boot/resume settles the session before connecting
@@ -699,6 +723,7 @@ export function App() {
           if (typeof d.temp_workspace === "boolean") setTempWorkspace(d.temp_workspace);
           break;
         case "turn_start":
+          if (pendingBranchRef.current?.sessionId === sessionId) pendingBranchRef.current = null;
           setRunning(true);
           setStreaming("");
           setReasoningStream("");
@@ -724,9 +749,14 @@ export function App() {
               let i = p.length - 1;
               while (i >= 0 && p[i].kind === "notice") i--;
               const last = p[i];
-              return last && last.kind === "user" && last.text === shown
-                ? p
-                : [...p, { kind: "user", text: shown, ts: Date.now() / 1000 }];
+              if (last && last.kind === "user" && last.text === shown) {
+                return p.map((item, index) =>
+                  index === i && item.kind === "user" && typeof d.ts === "number"
+                    ? { ...item, ts: d.ts }
+                    : item,
+                );
+              }
+              return [...p, { kind: "user", text: shown, ts: d.ts ?? Date.now() / 1000, userOrdinal: nextUserOrdinal(p) }];
             });
           }
           break;
@@ -942,6 +972,7 @@ export function App() {
       onEvent: handleEvent,
       onOpen: () => {
         setConnected(true);
+        if (pendingBranchRef.current?.sessionId === sessionId) pendingBranchRef.current.connected = true;
         // Auto-send the pending message once the session connects ("Run now" prompts and
         // UX-029's deferred first send).
         const p = pendingPromptRef.current;
@@ -950,7 +981,7 @@ export function App() {
           const shown = p.skill ? `/${p.skill}${p.text ? ` ${p.text}` : ""}` : p.text;
           setItems((prev) => [
             ...prev,
-            { kind: "user", text: shown, attachments: p.attachments, ts: Date.now() / 1000 },
+            { kind: "user", text: shown, attachments: p.attachments, ts: Date.now() / 1000, userOrdinal: nextUserOrdinal(prev) },
             ...(p.notice
               ? [{ kind: "notice", tone: "info", text: p.notice } as Item]
               : []),
@@ -958,7 +989,20 @@ export function App() {
           sessionRef.current?.userMessage(p.text, p.attachments, p.model, p.skill);
         }
       },
-      onClose: () => setConnected(false),
+      onClose: () => {
+        setConnected(false);
+        const failedBranch = pendingBranchRef.current;
+        if (!failedBranch || failedBranch.sessionId !== sessionId || failedBranch.connected) return;
+        pendingBranchRef.current = null;
+        pendingPromptRef.current = null;
+        void discardPendingSessionBranch(sessionId);
+        setComposerPrefill({
+          text: failedBranch.text,
+          attachments: failedBranch.attachments,
+          nonce: Date.now(),
+        });
+        void selectSession(failedBranch.originalSessionId, failedBranch.workspace, failedBranch.agent);
+      },
     });
     sessionRef.current = session;
     return () => session.close();
@@ -1089,7 +1133,7 @@ export function App() {
     // reaches the lead instead of bouncing off a blocked composer (owner-hit
     // 2026-08-16). The card buttons stay the approve/plain-decline paths.
     if (!unattended && pendingTeam?.kind === "teamreq" && !pendingTeam.resolved) {
-      setItems((p) => [...p, { kind: "user", text, ts: Date.now() / 1000 }]);
+      setItems((p) => [...p, { kind: "user", text, ts: Date.now() / 1000, userOrdinal: nextUserOrdinal(p) }]);
       respondTeam(false, text);
       return;
     }
@@ -1098,14 +1142,14 @@ export function App() {
       pendingItemsReq?.kind === "itemsreq" &&
       !pendingItemsReq.resolved
     ) {
-      setItems((p) => [...p, { kind: "user", text, ts: Date.now() / 1000 }]);
+      setItems((p) => [...p, { kind: "user", text, ts: Date.now() / 1000, userOrdinal: nextUserOrdinal(p) }]);
       respondItemsReq(false, text);
       return;
     }
     // Force-run shows exactly what the user typed: "/name rest". Must match the server's
     // `display` sidecar formula so the turn_start dedupe recognizes the local echo.
     const shown = skill ? `/${skill}${text ? ` ${text}` : ""}` : text;
-    setItems((p) => [...p, { kind: "user", text: shown, attachments, ts: Date.now() / 1000 }]);
+    setItems((p) => [...p, { kind: "user", text: shown, attachments, ts: Date.now() / 1000, userOrdinal: nextUserOrdinal(p) }]);
     // The visible model rides along with the message (single source of truth per turn).
     sessionRef.current?.userMessage(text, attachments, model, skill);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
@@ -1343,6 +1387,43 @@ export function App() {
   };
 
   const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
+  const resendEditedMessage = async (
+    target: Extract<Item, { kind: "user" }>,
+    text: string,
+  ): Promise<string | undefined> => {
+    if (running || target.userOrdinal === undefined || target.ts === undefined) {
+      return "This message is not ready to edit yet.";
+    }
+    const result: { ok: boolean; session_id?: string; error?: string } = await createSessionBranch(sessionId, {
+      userOrdinal: target.userOrdinal,
+      ts: target.ts,
+    }).catch(() => ({ ok: false, error: "Could not create a new version." }));
+    if (!result.ok || !result.session_id) return result.error || "Could not create a new version.";
+
+    // The branch is intentionally invisible in Recents until this normal send is
+    // accepted by its WebSocket. The original remains untouched if connection fails.
+    pendingBranchRef.current = {
+      sessionId: result.session_id,
+      originalSessionId: sessionId,
+      workspace: workspace || "",
+      agent,
+      text,
+      attachments: target.attachments,
+      connected: false,
+    };
+    pendingPromptRef.current = { text, attachments: target.attachments, model };
+    await selectSession(result.session_id, workspace || "", agent);
+    return undefined;
+  };
+
+  const selectBranchVariant = async (variantSessionId: string) => {
+    if (variantSessionId === sessionId) return;
+    const result = await activateSessionBranch(variantSessionId).catch(() => ({ ok: false }));
+    if (!result.ok) return;
+    await selectSession(variantSessionId, workspace || "", agent);
+    refreshSessions();
+  };
+
   const selectSession = async (id: string, ws: string, ag: string) => {
     setSurface("session"); // selecting a conversation always returns to the conversation view
     setTodo([]);
@@ -1561,7 +1642,7 @@ export function App() {
         {overlay && (
           <div className="titlebar-drag" data-tauri-drag-region>
             <span className="titlebar-brand brand-wordmark">
-              <Icon name="logo" size={13} className="mark" /> OpenWorker<span className="beta-tag">BETA</span>
+              <Icon name="logo" size={13} className="mark" /> Worker<span className="beta-tag">BETA</span>
             </span>
           </div>
         )}
@@ -1576,7 +1657,7 @@ export function App() {
           <Icon name="logo" size={38} />
         </div>
         <div className="boot-text">
-          {resumedExisting ? "Restoring your session…" : "Starting OpenWorker…"}
+          {resumedExisting ? "Restoring your session…" : "Starting Worker…"}
           <span className="beta-tag">BETA</span>
         </div>
       </div>
@@ -1933,6 +2014,10 @@ export function App() {
                     onOpenConnectors={() => setSurface("integrations")}
                     onAllowAnyway={allowAnyway}
                     onUndoMemory={(id, previous) => void undoMemorySave(id, previous)}
+                    branchGroups={branchGroups}
+                    currentSessionId={sessionId}
+                    onEditResend={resendEditedMessage}
+                    onSelectBranch={(variantSessionId) => void selectBranchVariant(variantSessionId)}
                     // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
                     // group (header when collapsed, quiet line when expanded) — never as a
                     // floating paragraph.

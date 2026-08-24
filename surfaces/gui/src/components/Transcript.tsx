@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ApprovalDecision, Item } from "../types";
+import { useLanguage, type Language } from "../i18n";
 import { shortArgs } from "./ApprovalCard";
 import { humanizeAsk, humanizeTool, type HumanLine } from "../humanize";
 import { Markdown } from "./Markdown";
@@ -33,7 +34,7 @@ function ClampedUserText({ text }: { text: string }) {
 // Lives in a ZERO-HEIGHT strip under the bubble (absolute, inside the transcript's 20px gap)
 // so revealing it on group-hover never shifts the layout. `ts` is unix seconds — canonical
 // messages carry it, pre-stamp history doesn't, so the time simply omits itself when absent.
-function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "left" | "right" }) {
+function BubbleMeta({ text, ts, align, onEdit, editLabel }: { text: string; ts?: number; align: "left" | "right"; onEdit?: () => void; editLabel?: string }) {
   const [copied, setCopied] = useState(false);
   const when = typeof ts === "number" ? new Date(ts * 1000) : null;
   const copy = () => {
@@ -55,6 +56,18 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
           (align === "right" ? "right-0" : "left-0")
         }
       >
+        {onEdit && (
+          <button
+            type="button"
+            className="flex items-center cursor-pointer hover:text-muted"
+            data-testid="bubble-edit"
+            title={editLabel || "Edit message"}
+            aria-label={editLabel || "Edit message"}
+            onClick={onEdit}
+          >
+            <Icon name="pencil" size={11} />
+          </button>
+        )}
         <button
           className="flex items-center cursor-pointer hover:text-muted"
           data-testid="bubble-copy"
@@ -69,6 +82,107 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+const editCopy: Record<Language, Record<"edit" | "cancel" | "resend" | "notice" | "error" | "previous" | "next", string>> = {
+  "en-US": {
+    edit: "Edit message", cancel: "Cancel", resend: "Send again",
+    notice: "Sending this creates a new version of the conversation. It does not undo actions already taken.",
+    error: "Could not create a new version.", previous: "Previous version", next: "Next version",
+  },
+  "pt-BR": {
+    edit: "Editar mensagem", cancel: "Cancelar", resend: "Enviar novamente",
+    notice: "O reenvio cria uma nova versão da conversa. Ações já executadas não são desfeitas.",
+    error: "Não foi possível criar uma nova versão.", previous: "Versão anterior", next: "Próxima versão",
+  },
+  "es-ES": {
+    edit: "Editar mensaje", cancel: "Cancelar", resend: "Enviar de nuevo",
+    notice: "El reenvío crea una nueva versión de la conversación. Las acciones ya realizadas no se deshacen.",
+    error: "No se pudo crear una nueva versión.", previous: "Versión anterior", next: "Siguiente versión",
+  },
+};
+
+type BranchGroup = { user_ordinal: number; variants: Array<{ session_id: string; position: number }> };
+
+function UserBubble({
+  item,
+  editable,
+  branch,
+  currentSessionId,
+  onEditResend,
+  onSelectBranch,
+}: {
+  item: Extract<Item, { kind: "user" }>;
+  editable: boolean;
+  branch?: BranchGroup;
+  currentSessionId?: string;
+  onEditResend?: (item: Extract<Item, { kind: "user" }>, text: string) => Promise<string | undefined>;
+  onSelectBranch?: (sessionId: string) => void;
+}) {
+  const [language] = useLanguage();
+  const copy = editCopy[language];
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(item.text);
+  const [error, setError] = useState("");
+  const currentIndex = branch?.variants.findIndex((variant) => variant.session_id === currentSessionId) ?? -1;
+  const submit = async () => {
+    const text = draft.trim();
+    if (!text || !onEditResend) return;
+    setError("");
+    const failure = await onEditResend(item, text);
+    if (failure) setError(copy.error);
+  };
+  const cancel = () => {
+    setDraft(item.text);
+    setError("");
+    setEditing(false);
+  };
+  return (
+    <div className="group self-end max-w-[78%] flex flex-col items-end">
+      {editing ? (
+        <div className="w-full min-w-[min(34rem,78vw)] rounded-[14px] border border-border bg-surface p-3 shadow-sm">
+          <textarea
+            autoFocus
+            data-testid="bubble-edit-input"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") { event.preventDefault(); cancel(); }
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void submit(); }
+            }}
+            className="w-full min-h-24 resize-y bg-transparent text-[14px] leading-relaxed outline-none"
+            aria-label={copy.edit}
+          />
+          {item.attachments?.length ? <div className="mt-2 text-xs text-muted">{item.attachments.map((a) => a.name).join(", ")}</div> : null}
+          <p className="mt-2 text-xs leading-relaxed text-muted">{copy.notice}</p>
+          {error && <p className="mt-2 text-xs text-danger" role="alert">{error}</p>}
+          <div className="mt-3 flex justify-end gap-2">
+            <button type="button" className="btn" data-testid="bubble-edit-cancel" onClick={cancel}>{copy.cancel}</button>
+            <button type="button" className="btn primary" data-testid="bubble-edit-resend" disabled={!draft.trim()} onClick={() => void submit()}>{copy.resend}</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="bubble-user px-3.5 py-2.5 rounded-[14px_14px_4px_14px] bg-solid text-onSolid text-[14px] leading-relaxed whitespace-pre-wrap">
+            {item.attachments && item.attachments.length > 0 && (
+              <div className="bubble-attachments">
+                {item.attachments.map((a, i) => a.kind === "image" ? <img key={i} className="msg-img" src={a.data_url} alt={a.name} /> : <span key={i} className="msg-file">📄 {a.name}</span>)}
+              </div>
+            )}
+            <ClampedUserText text={item.text} />
+          </div>
+          <BubbleMeta text={item.text} ts={item.ts} align="right" onEdit={editable ? () => setEditing(true) : undefined} editLabel={copy.edit} />
+        </>
+      )}
+      {branch && branch.variants.length > 1 && (
+        <div className="mt-3 flex items-center gap-1 text-xs text-muted" data-testid="branch-navigator">
+          <button type="button" className="btn px-1.5 py-0.5" disabled={currentIndex <= 0} onClick={() => currentIndex > 0 && onSelectBranch?.(branch.variants[currentIndex - 1].session_id)} aria-label={copy.previous}>‹</button>
+          <span>{currentIndex + 1} / {branch.variants.length}</span>
+          <button type="button" className="btn px-1.5 py-0.5" disabled={currentIndex < 0 || currentIndex >= branch.variants.length - 1} onClick={() => currentIndex >= 0 && currentIndex < branch.variants.length - 1 && onSelectBranch?.(branch.variants[currentIndex + 1].session_id)} aria-label={copy.next}>›</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -392,6 +506,10 @@ interface Props {
   onUndoMemory?: (id: number, previous?: string) => void;
   // §8.4 "Allow anyway" on a reviewer-denied tool: one-shot exact-action override.
   onAllowAnyway?: (name: string, args: any) => void;
+  branchGroups?: BranchGroup[];
+  currentSessionId?: string;
+  onEditResend?: (item: Extract<Item, { kind: "user" }>, text: string) => Promise<string | undefined>;
+  onSelectBranch?: (sessionId: string) => void;
 }
 
 // The transcript index whose notice gets the Retry button: the tail error notice, looking
@@ -450,7 +568,7 @@ function McpNotice({
 }
 
 
-export function Transcript({ items, running, streamingText, onRetry, onOpenConnectors, onUndoMemory, onAllowAnyway }: Props) {
+export function Transcript({ items, running, streamingText, onRetry, onOpenConnectors, onUndoMemory, onAllowAnyway, branchGroups, currentSessionId, onEditResend, onSelectBranch }: Props) {
   // §33 grouping: a turn = the maximal run of assistant/tool/resolved-approval items between
   // breakers (user, connector, notices, plan/dir requests…). Trailing assistant texts are the
   // ANSWER and render as bubbles after the group; interior assistant texts are narration and
@@ -516,23 +634,15 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
             );
           case "user":
             return (
-              <div className="group self-end max-w-[78%] flex flex-col items-end" key={bi}>
-                <div className="bubble-user px-3.5 py-2.5 rounded-[14px_14px_4px_14px] bg-solid text-onSolid text-[14px] leading-relaxed whitespace-pre-wrap">
-                  {item.attachments && item.attachments.length > 0 && (
-                    <div className="bubble-attachments">
-                      {item.attachments.map((a, i) =>
-                        a.kind === "image" ? (
-                          <img key={i} className="msg-img" src={a.data_url} alt={a.name} />
-                        ) : (
-                          <span key={i} className="msg-file">📄 {a.name}</span>
-                        ),
-                      )}
-                    </div>
-                  )}
-                  <ClampedUserText text={item.text} />
-                </div>
-                <BubbleMeta text={item.text} ts={item.ts} align="right" />
-              </div>
+              <UserBubble
+                key={bi}
+                item={item}
+                editable={!running && item.userOrdinal !== undefined && item.ts !== undefined && !!onEditResend}
+                branch={branchGroups?.find((group) => group.user_ordinal === item.userOrdinal)}
+                currentSessionId={currentSessionId}
+                onEditResend={onEditResend}
+                onSelectBranch={onSelectBranch}
+              />
             );
           case "assistant":
             // Thinking-only item (stopped mid-reasoning): just the disclosure, no bubble.

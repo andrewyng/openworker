@@ -197,6 +197,48 @@ export async function getSessionMessages(sessionId: string): Promise<Conversatio
   return (await res.json()).messages ?? [];
 }
 
+export interface BranchVariant {
+  session_id: string;
+  position: number;
+}
+
+export interface BranchGroup {
+  group_id: string;
+  user_ordinal: number;
+  variants: BranchVariant[];
+}
+
+export async function getSessionBranches(sessionId: string): Promise<BranchGroup[]> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/branches`);
+  return (await res.json()).groups ?? [];
+}
+
+export async function createSessionBranch(
+  sessionId: string,
+  target: { userOrdinal: number; ts?: number },
+): Promise<{ ok: boolean; session_id?: string; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/branches`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_ordinal: target.userOrdinal, ...(target.ts !== undefined ? { ts: target.ts } : {}) }),
+  });
+  return res.json();
+}
+
+export async function activateSessionBranch(sessionId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/branches/activate`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
+export async function discardPendingSessionBranch(sessionId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/branches/pending`, {
+    method: "DELETE",
+  });
+  return res.json();
+}
+
 export async function renameSession(sessionId: string, title: string): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}`, {
     method: "PATCH",

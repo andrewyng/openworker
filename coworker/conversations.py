@@ -14,6 +14,7 @@ import json
 import os
 import sqlite3
 import threading
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -82,6 +83,25 @@ class ConversationStore:
             CREATE TABLE IF NOT EXISTS workspaces (
                 path TEXT PRIMARY KEY, last_used TEXT DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS conversation_members (
+                session_id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                pending INTEGER NOT NULL DEFAULT 0,
+                parent_session_id TEXT
+            );
+            CREATE TABLE IF NOT EXISTS branch_groups (
+                group_id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                user_ordinal INTEGER NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS branch_variants (
+                group_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                PRIMARY KEY (group_id, session_id)
+            );
             """)
         for ddl in (
             "ALTER TABLE sessions ADD COLUMN title TEXT",
@@ -98,6 +118,7 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN compaction TEXT",
             "ALTER TABLE sessions ADD COLUMN team TEXT",
             "ALTER TABLE sessions ADD COLUMN bindings TEXT",
+            "ALTER TABLE conversation_members ADD COLUMN pending INTEGER NOT NULL DEFAULT 0",
         ):
             try:
                 self._conn.execute(ddl)
@@ -165,6 +186,25 @@ class ConversationStore:
                     (len(messages), row["title"] or title_from(messages), sid),
                 )
             self._conn.commit()
+
+    def _member(self, session_id: str) -> sqlite3.Row | None:
+        row = self._conn.execute(
+            "SELECT * FROM conversation_members WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        if row is None:
+            existing = self._conn.execute(
+                "SELECT 1 FROM sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            if existing is None:
+                return None
+            self._conn.execute(
+                "INSERT INTO conversation_members (session_id, conversation_id, active) VALUES (?, ?, 1)",
+                (session_id, session_id),
+            )
+            return self._conn.execute(
+                "SELECT * FROM conversation_members WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        return row
 
     # -- API --------------------------------------------------------------------
     def save(self, record: SessionRecord) -> None:
@@ -334,6 +374,156 @@ class ConversationStore:
             for r in rows
         ]
 
+    def list_visible(self, *, workspace: Optional[str] = None) -> list[SessionRecord]:
+        """One active leaf per user-visible conversation. Legacy rows join lazily."""
+        with self._lock:
+            rows = self._conn.execute("SELECT session_id FROM sessions").fetchall()
+            for row in rows:
+                self._member(row["session_id"])
+            where = "WHERE cm.active = 1"
+            params: tuple[object, ...] = ()
+            if workspace is not None:
+                where += " AND s.workspace = ?"
+                params = (workspace,)
+            visible = self._conn.execute(
+                f"SELECT s.* FROM sessions s JOIN conversation_members cm ON cm.session_id = s.session_id {where} ORDER BY s.pinned DESC, s.updated_at DESC",
+                params,
+            ).fetchall()
+            self._conn.commit()
+        return [self._record_from_row(r) for r in visible]
+
+    @staticmethod
+    def _record_from_row(row: sqlite3.Row) -> SessionRecord:
+        return SessionRecord(
+            session_id=row["session_id"], workspace=row["workspace"], model=row["model"],
+            mode=row["mode"], messages=[], title=_display_title(row),
+            agent=row["agent"] or "code", message_count=row["n_msgs"] or 0,
+            updated_at=row["updated_at"], pinned=bool(row["pinned"]),
+            archived=bool(row["archived"]), origin=row["origin"], origin_label=row["origin_label"],
+            team=_load_grants(row["team"] if "team" in row.keys() else None),
+        )
+
+    def create_branch(self, session_id: str, *, user_ordinal: int, ts: float | None) -> dict:
+        """Clone a completed prefix into an inactive sibling branch.
+
+        The caller sends the replacement turn only after its WebSocket has connected.
+        No prior transcript is changed, and a timestamp guard prevents a stale UI from
+        branching a different user message after a refresh.
+        """
+        with self._lock:
+            source = self.load(session_id)
+            if source is None:
+                return {"ok": False, "error": "session not found"}
+            member = self._member(session_id)
+            if member is None:
+                return {"ok": False, "error": "session not found"}
+            raw_index, ordinal = -1, -1
+            for i, message in enumerate(source.messages):
+                if message.get("role") == "user" and not message.get("source"):
+                    ordinal += 1
+                    if ordinal == user_ordinal:
+                        raw_index = i
+                        if ts is not None and message.get("ts") != ts:
+                            return {"ok": False, "error": "message changed; refresh and try again"}
+                        break
+            if raw_index < 0:
+                return {"ok": False, "error": "message not found"}
+
+            group = self._conn.execute(
+                """SELECT bg.group_id FROM branch_groups bg
+                   JOIN branch_variants bv ON bv.group_id = bg.group_id
+                   WHERE bg.conversation_id = ? AND bg.user_ordinal = ? AND bv.session_id = ?""",
+                (member["conversation_id"], user_ordinal, session_id),
+            ).fetchone()
+            if group is None:
+                group_id = uuid.uuid4().hex
+                self._conn.execute(
+                    "INSERT INTO branch_groups (group_id, conversation_id, user_ordinal) VALUES (?, ?, ?)",
+                    (group_id, member["conversation_id"], user_ordinal),
+                )
+                self._conn.execute(
+                    "INSERT INTO branch_variants (group_id, session_id, position) VALUES (?, ?, 1)",
+                    (group_id, session_id),
+                )
+            else:
+                group_id = group["group_id"]
+            child_id = uuid.uuid4().hex[:12]
+            prefix = source.messages[:raw_index]
+            child = SessionRecord(
+                session_id=child_id, workspace=source.workspace, model=source.model,
+                mode=source.mode, messages=prefix, title=source.title, agent=source.agent,
+                extra_roots=source.extra_roots, grants=source.grants, pinned=source.pinned,
+                archived=source.archived, origin=source.origin, origin_label=source.origin_label,
+                compaction={}, bindings=source.bindings, team=source.team,
+            )
+            self.save(child)
+            self._conn.execute(
+                "INSERT INTO conversation_members (session_id, conversation_id, active, pending, parent_session_id) VALUES (?, ?, 0, 1, ?)",
+                (child_id, member["conversation_id"], session_id),
+            )
+            position = self._conn.execute(
+                "SELECT COALESCE(MAX(position), 0) + 1 AS next_position FROM branch_variants WHERE group_id = ?",
+                (group_id,),
+            ).fetchone()["next_position"]
+            self._conn.execute(
+                "INSERT INTO branch_variants (group_id, session_id, position) VALUES (?, ?, ?)",
+                (group_id, child_id, position),
+            )
+            self._conn.commit()
+            return {"ok": True, "session_id": child_id, "conversation_id": member["conversation_id"], "group_id": group_id}
+
+    def activate_branch(self, session_id: str) -> bool:
+        with self._lock:
+            member = self._member(session_id)
+            if member is None:
+                return False
+            self._conn.execute(
+                "UPDATE conversation_members SET active = 0 WHERE conversation_id = ?",
+                (member["conversation_id"],),
+            )
+            self._conn.execute("UPDATE conversation_members SET active = 1, pending = 0 WHERE session_id = ?", (session_id,))
+            self._conn.commit()
+            return True
+
+    def branch_context(self, session_id: str) -> list[dict]:
+        with self._lock:
+            member = self._member(session_id)
+            if member is None:
+                return []
+            groups = self._conn.execute(
+                """SELECT bg.group_id, bg.user_ordinal FROM branch_groups bg
+                   JOIN branch_variants bv ON bv.group_id = bg.group_id
+                   WHERE bg.conversation_id = ? AND bv.session_id = ? ORDER BY bg.created_at""",
+                (member["conversation_id"], session_id),
+            ).fetchall()
+            result = []
+            for group in groups:
+                variants = self._conn.execute(
+                    "SELECT session_id, position FROM branch_variants WHERE group_id = ? ORDER BY position",
+                    (group["group_id"],),
+                ).fetchall()
+                result.append({
+                    "group_id": group["group_id"], "user_ordinal": group["user_ordinal"],
+                    "variants": [{"session_id": v["session_id"], "position": v["position"]} for v in variants],
+                })
+            self._conn.commit()
+            return result
+
+    def discard_branch(self, session_id: str) -> bool:
+        """Remove an inactive, still-empty clone after a client connection failure."""
+        with self._lock:
+            member = self._member(session_id)
+            if member is None or member["active"] or not member["pending"]:
+                return False
+            self._conn.execute("DELETE FROM branch_variants WHERE session_id = ?", (session_id,))
+            self._conn.execute("DELETE FROM conversation_members WHERE session_id = ?", (session_id,))
+            self._conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            self._conn.commit()
+        path = self._file(session_id)
+        if path.exists():
+            path.unlink()
+        return True
+
     def touch_workspace(self, path: str) -> None:
         with self._lock:
             self._conn.execute(
@@ -378,13 +568,27 @@ class ConversationStore:
 
     def delete(self, session_id: str) -> bool:
         with self._lock:
-            cur = self._conn.execute(
-                "DELETE FROM sessions WHERE session_id = ?", (session_id,)
-            )
+            member = self._member(session_id)
+            session_ids = [session_id]
+            if member is not None:
+                session_ids = [
+                    r["session_id"] for r in self._conn.execute(
+                        "SELECT session_id FROM conversation_members WHERE conversation_id = ?",
+                        (member["conversation_id"],),
+                    ).fetchall()
+                ]
+                marks = ",".join("?" for _ in session_ids)
+                self._conn.execute(f"DELETE FROM branch_variants WHERE session_id IN ({marks})", session_ids)
+                self._conn.execute(f"DELETE FROM conversation_members WHERE session_id IN ({marks})", session_ids)
+                self._conn.execute("DELETE FROM branch_groups WHERE conversation_id = ?", (member["conversation_id"],))
+                cur = self._conn.execute(f"DELETE FROM sessions WHERE session_id IN ({marks})", session_ids)
+            else:
+                cur = self._conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
             self._conn.commit()
-        path = self._file(session_id)
-        if path.exists():
-            path.unlink()
+        for sid in session_ids:
+            path = self._file(sid)
+            if path.exists():
+                path.unlink()
         return cur.rowcount > 0
 
     def rename(self, session_id: str, title: str) -> bool:
@@ -392,11 +596,15 @@ class ConversationStore:
         if not clean:
             return False
         with self._lock:
+            member = self._member(session_id)
+            target = member["conversation_id"] if member is not None else None
             # renamed=1 makes the manual title final: auto-titling skips the session and
             # `_display_title` ignores any auto_title already there.
             cur = self._conn.execute(
-                "UPDATE sessions SET title = ?, renamed = 1, updated_at = CURRENT_TIMESTAMP WHERE session_id = ?",
-                (clean, session_id),
+                """UPDATE sessions SET title = ?, renamed = 1, updated_at = CURRENT_TIMESTAMP
+                   WHERE session_id IN (SELECT session_id FROM conversation_members WHERE conversation_id = ?)
+                      OR (? IS NULL AND session_id = ?)""",
+                (clean, target, target, session_id),
             )
             self._conn.commit()
         return cur.rowcount > 0
@@ -446,9 +654,11 @@ class ConversationStore:
         if not sets:
             return False
         with self._lock:
+            member = self._member(session_id)
+            target = member["conversation_id"] if member is not None else None
             cur = self._conn.execute(
-                f"UPDATE sessions SET {', '.join(sets)} WHERE session_id = ?",
-                (*params, session_id),
+                f"UPDATE sessions SET {', '.join(sets)} WHERE session_id IN (SELECT session_id FROM conversation_members WHERE conversation_id = ?) OR (? IS NULL AND session_id = ?)",
+                (*params, target, target, session_id),
             )
             self._conn.commit()
         return cur.rowcount > 0

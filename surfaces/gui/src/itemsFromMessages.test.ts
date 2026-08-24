@@ -42,9 +42,9 @@ describe("itemsFromMessages timestamps", () => {
     ] as any);
 
     expect(items).toEqual([
-      { kind: "user", text: "hi", ts: 1752969720 },
+      { kind: "user", text: "hi", ts: 1752969720, userOrdinal: 0 },
       { kind: "assistant", text: "hello", ts: 1752969724 },
-      { kind: "user", text: "old message" },
+      { kind: "user", text: "old message", userOrdinal: 1 },
     ]);
   });
 });
@@ -60,10 +60,10 @@ describe("itemsFromMessages notices", () => {
     ] as any);
 
     expect(items).toEqual([
-      { kind: "user", text: "hi" },
+      { kind: "user", text: "hi", userOrdinal: 0 },
       { kind: "assistant", text: "partial ans" },
       { kind: "notice", tone: "warn", text: "Interrupted." },
-      { kind: "user", text: "again" },
+      { kind: "user", text: "again", userOrdinal: 1 },
       { kind: "notice", tone: "warn", text: "Error: model down", retriable: true },
     ]);
   });

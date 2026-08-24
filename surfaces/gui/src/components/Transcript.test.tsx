@@ -180,6 +180,37 @@ describe("bubble hover affordances (FB-005)", () => {
   });
 });
 
+describe("editing and resending user messages", () => {
+  const EDITABLE: Item[] = [
+    { kind: "user", text: "draft request", ts: 1752969720, userOrdinal: 0 },
+  ];
+
+  it("edits inline, preserves the user item, and re-sends the revised text", async () => {
+    const onEditResend = vi.fn().mockResolvedValue(undefined);
+    render(<Transcript items={EDITABLE} onApprove={vi.fn()} onEditResend={onEditResend} />);
+
+    fireEvent.click(screen.getByTestId("bubble-edit"));
+    const input = screen.getByTestId("bubble-edit-input") as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "revised request" } });
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+
+    await waitFor(() => expect(onEditResend).toHaveBeenCalledWith(EDITABLE[0], "revised request"));
+  });
+
+  it("cancels an edit and hides editing while the session is running", () => {
+    const onEditResend = vi.fn();
+    const idle = render(<Transcript items={EDITABLE} onApprove={vi.fn()} onEditResend={onEditResend} />);
+    fireEvent.click(screen.getByTestId("bubble-edit"));
+    fireEvent.change(screen.getByTestId("bubble-edit-input"), { target: { value: "changed" } });
+    fireEvent.click(screen.getByTestId("bubble-edit-cancel"));
+    expect(screen.queryByTestId("bubble-edit-input")).toBeNull();
+    idle.unmount();
+
+    render(<Transcript items={EDITABLE} onApprove={vi.fn()} onEditResend={onEditResend} running />);
+    expect(screen.queryByTestId("bubble-edit")).toBeNull();
+  });
+});
+
 // MEMORY-SPEC §5.1 — the save notice lives IN the conversation (a corner toast vanished
 // before it could be read or undone, owner-hit 2026-07-28) and stays until acted on.
 describe("memory save notice", () => {

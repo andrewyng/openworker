@@ -17,6 +17,23 @@ import {
   type DictationStatus,
 } from "../tauri";
 
+type BrowserSpeechRecognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+
+const browserSpeechRecognition = (): BrowserSpeechRecognitionConstructor | undefined =>
+  (globalThis as any).SpeechRecognition || (globalThis as any).webkitSpeechRecognition;
+
 // Plan + Custom hidden for this release (owner ask 2026-07-22): Plan's approval flow isn't
 // polished enough to ship, and Custom (config.toml auto-allow rules) is a power-user mode
 // with no in-app explanation. The server still honors both — a session already in one of
@@ -194,6 +211,7 @@ export function Composer(props: Props) {
     </button>
   );
   const [dictation, setDictation] = useState<DictationStatus | null>(null);
+  const [browserRecording, setBrowserRecording] = useState(false);
   const [dictationBusy, setDictationBusy] = useState<string | null>(null);
   const [dictationError, setDictationError] = useState<string | null>(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
@@ -201,6 +219,9 @@ export function Composer(props: Props) {
   const fileInput = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const noticeTimer = useRef<number | null>(null);
+  const browserRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const browserVoiceAvailable = !isTauri() && !!browserSpeechRecognition();
+  const recording = isTauri() ? !!dictation?.recording : browserRecording;
 
   // Rejected-attachment notice: visible ~8s, then clears (or on ✕).
   const showAttachNotice = (message: string) => {
@@ -269,7 +290,7 @@ export function Composer(props: Props) {
   }, []);
 
   useEffect(() => {
-    if (!dictation?.recording) {
+    if (!recording) {
       setRecordingSeconds(0);
       return;
     }
@@ -278,14 +299,14 @@ export function Composer(props: Props) {
       setRecordingSeconds(Math.floor((Date.now() - started) / 1000));
     }, 250);
     return () => window.clearInterval(timer);
-  }, [dictation?.recording]);
+  }, [recording]);
 
   // Live waveform: poll mic loudness at ~10Hz while recording; the bars scroll left so the
   // trace reads as a real input meter (owner catch on DMG #28 — the first cut's bars were
   // decorative constants and read as fake).
   const [levels, setLevels] = useState<number[]>([]);
   useEffect(() => {
-    if (!dictation?.recording) {
+    if (!isTauri() || !recording) {
       setLevels([]);
       return;
     }
@@ -295,24 +316,29 @@ export function Composer(props: Props) {
       });
     }, 100);
     return () => window.clearInterval(timer);
-  }, [dictation?.recording]);
+  }, [recording]);
 
   useEffect(() => {
-    if (!dictation?.recording) return;
+    if (!recording) return;
     const cancelOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      void cancelDictation()
-        .catch(() => undefined)
-        .finally(() => {
-          void getDictationStatus().then((status) => status && setDictation(status));
-        });
+      if (!isTauri()) {
+        browserRecognitionRef.current?.abort();
+        setBrowserRecording(false);
+        return;
+      }
+      void cancelDictation().catch(() => undefined).finally(() => {
+        void getDictationStatus().then((status) => status && setDictation(status));
+      });
     };
     window.addEventListener("keydown", cancelOnEscape);
     return () => window.removeEventListener("keydown", cancelOnEscape);
-  }, [dictation?.recording]);
+  }, [recording]);
 
-  const voiceReady = !!dictation?.supported && !!dictation?.model_verified && !!dictation?.test_passed;
+  const voiceReady = isTauri()
+    ? !!dictation?.supported && !!dictation?.model_verified && !!dictation?.test_passed
+    : browserVoiceAvailable;
   const recordingTime = `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`;
 
   // Attach-time PDF thresholds (Settings → Token savings): a PDF over the user's page or
@@ -383,7 +409,7 @@ export function Composer(props: Props) {
     if (
       (!t && attachments.length === 0 && !skill) ||
       (props.running && !props.gateOpen) ||
-      dictation?.recording ||
+      recording ||
       dictationBusy
     )
       return;
@@ -440,10 +466,53 @@ export function Composer(props: Props) {
   };
 
   const toggleDictation = async () => {
-    if (!isTauri() || dictationBusy) return;
+    if (dictationBusy) return;
     setDictationError(null);
+    if (!isTauri()) {
+      const Recognition = browserSpeechRecognition();
+      if (!Recognition) {
+        setDictationError("Voice input is not supported by this browser.");
+        return;
+      }
+      if (recording) {
+        browserRecognitionRef.current?.stop();
+        return;
+      }
+      try {
+        const recognition = new Recognition();
+        let transcript = "";
+        recognition.lang = document.documentElement.lang || navigator.language;
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.onresult = (event) => {
+          for (let index = event.resultIndex; index < event.results.length; index++) {
+            if (event.results[index].isFinal) transcript += event.results[index][0].transcript;
+          }
+        };
+        recognition.onerror = (event) => {
+          if (event.error !== "aborted" && event.error !== "no-speech") {
+            setDictationError(`Voice input failed: ${event.error}`);
+          }
+        };
+        recognition.onend = () => {
+          setBrowserRecording(false);
+          browserRecognitionRef.current = null;
+          if (transcript.trim()) {
+            setText((draft) => (draft.trim() ? `${draft.trimEnd()} ${transcript.trim()}` : transcript.trim()));
+            textareaRef.current?.focus();
+          }
+        };
+        browserRecognitionRef.current = recognition;
+        setBrowserRecording(true);
+        recognition.start();
+      } catch (error) {
+        setBrowserRecording(false);
+        setDictationError(error instanceof Error ? error.message : "Could not start voice input.");
+      }
+      return;
+    }
     try {
-      if (dictation?.recording) {
+      if (recording) {
         setDictationBusy("Transcribing…");
         const transcript = await stopDictation();
         if (transcript === null) throw new Error("Could not transcribe your recording.");
@@ -462,9 +531,9 @@ export function Composer(props: Props) {
         return;
       }
       setDictationBusy("Starting microphone…");
-      const recording = await startDictation();
-      if (!recording?.recording) throw new Error("Could not start the microphone.");
-      setDictation(recording);
+      const nextStatus = await startDictation();
+      if (!nextStatus?.recording) throw new Error("Could not start the microphone.");
+      setDictation(nextStatus);
     } catch (error) {
       setDictationError(error instanceof Error ? error.message : "Voice dictation is unavailable.");
       const status = await getDictationStatus();
@@ -661,7 +730,7 @@ export function Composer(props: Props) {
 
           {/* Listening replaces the quiet middle controls with a LIVE waveform (mic RMS,
               polled ~10Hz, scrolling left) + elapsed time (§37). */}
-          {dictation?.recording ? (
+          {recording ? (
             <div className="voice-wave-row flex-1 flex items-center gap-2 ml-1" aria-hidden="true">
               <span className="voice-wave-line" />
               <span className="voice-wave-bars">
@@ -688,7 +757,7 @@ export function Composer(props: Props) {
           {/* token usage (OPE-42) — a quiet chip; hidden until the server reports usage.
               Shows the context-window fill bar alone (the session total lives in the
               popover), or the session total when there's no window / the bar is off. */}
-          {!dictation?.recording && props.usage && totalTokens(props.usage) > 0 && (
+          {!recording && props.usage && totalTokens(props.usage) > 0 && (
             <UsageChip
               usage={props.usage}
               contextWindow={props.contextWindow}
@@ -701,7 +770,7 @@ export function Composer(props: Props) {
           {/* model — a quiet chip, now for the session's whole life (§17 rev 2026-07-22:
               mid-session switching shipped, so the picker stays actionable; the topbar
               subtitle still states the current model). */}
-          {!dictation?.recording && (needsModel ? (
+          {!recording && (needsModel ? (
             <button
               className="pill model-warn chip"
               onClick={() => props.onConnectModel?.()}
@@ -725,28 +794,28 @@ export function Composer(props: Props) {
           ))}
 
           {/* mic — immediately before send (owner call, DMG #28 walkthrough) */}
-          {isTauri() && (
+          {(isTauri() || browserVoiceAvailable) && (
             <button
               className={
                 iconBtn +
-                (dictation?.recording ? " bg-red-50 text-red-600 hover:bg-red-100" : "") +
+                (recording ? " bg-red-50 text-red-600 hover:bg-red-100" : "") +
                 (dictationBusy ? " opacity-60" : "") +
-                (!voiceReady && !dictation?.recording ? " opacity-40" : "")
+                (!voiceReady && !recording ? " opacity-40" : "")
               }
               onClick={() => void toggleDictation()}
               disabled={!!dictationBusy}
               title={
                 dictationBusy ||
-                (dictation?.recording
+                (recording
                   ? "Stop recording and transcribe"
                   : voiceReady
                     ? "Start local voice dictation"
                     : "Configure Voice Input in Settings")
               }
-              aria-label={dictation?.recording ? "Stop dictation" : voiceReady ? "Start dictation" : "Configure Voice Input in Settings"}
-              aria-disabled={!voiceReady && !dictation?.recording}
+              aria-label={recording ? "Stop dictation" : voiceReady ? "Start dictation" : "Configure Voice Input in Settings"}
+              aria-disabled={!voiceReady && !recording}
             >
-              <Icon name={dictation?.recording ? "stop" : "mic"} size={16} />
+              <Icon name={recording ? "stop" : "mic"} size={16} />
             </button>
           )}
 
@@ -759,12 +828,12 @@ export function Composer(props: Props) {
             <button
               className={
                 "w-7 h-7 rounded-full grid place-items-center shrink-0 transition-colors " +
-                (hasContent && props.connected && !dictation?.recording && !dictationBusy
+                (hasContent && props.connected && !recording && !dictationBusy
                   ? "bg-accent text-white hover:brightness-105"
                   : "bg-paper border border-line text-faint")
               }
               onClick={submit}
-              disabled={!props.connected || !!dictation?.recording || !!dictationBusy}
+              disabled={!props.connected || recording || !!dictationBusy}
               title={needsModel ? "Connect a model to send" : undefined}
               aria-label="Send"
             >
@@ -776,7 +845,7 @@ export function Composer(props: Props) {
         </div>
       </div>
       <span className="sr-only" role="status" aria-live="polite">
-        {dictation?.recording ? `Listening, ${recordingTime}` : dictationBusy || ""}
+        {recording ? `Listening, ${recordingTime}` : dictationBusy || ""}
       </span>
     </div>
   );

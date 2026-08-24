@@ -8,6 +8,7 @@ import {
   type PersonaConsent,
 } from "../api";
 import { chooseFolder } from "../tauri";
+import { useLanguage } from "../i18n";
 import type { SessionInfo } from "../types";
 import { Icon } from "./Icon";
 import { Toggle } from "./Toggle";
@@ -28,6 +29,9 @@ const QUIET_ROW =
   "w-full flex items-center gap-2 px-4 pt-2 mt-6 text-[13px] text-muted select-none";
 
 export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) => void }) {
+  const [language] = useLanguage();
+  const text = (english: string, portuguese: string, spanish: string) =>
+    language === "pt-BR" ? portuguese : language === "es-ES" ? spanish : english;
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [internal, setInternal] = useState(false);
   const [mode, setMode] = useState<"git" | "dir" | "zip">("git");
@@ -260,8 +264,8 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
           size={12}
           className={"transition-transform" + (showInstall ? " rotate-90" : "")}
         />
-        <span>Install a coworker</span>
-        <span className="ml-auto text-faint text-[12px]">GitHub · folder · .zip</span>
+        <span>{text("Install a coworker", "Instalar um colega de trabalho", "Instalar un compañero")}</span>
+        <span className="ml-auto text-faint text-[12px]">GitHub · {text("folder", "pasta", "carpeta")} · .zip</span>
       </button>
       {showInstall && (
         <div className={CARD + " mt-1.5 p-4"}>
@@ -271,9 +275,9 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
               value={mode}
               onChange={(e) => setMode(e.target.value as "git" | "dir" | "zip")}
             >
-              <option value="git">GitHub URL</option>
-              <option value="dir">Local folder</option>
-              <option value="zip">Bundle zip</option>
+              <option value="git">{text("GitHub URL", "URL do GitHub", "URL de GitHub")}</option>
+              <option value="dir">{text("Local folder", "Pasta local", "Carpeta local")}</option>
+              <option value="zip">{text("Bundle zip", "Pacote .zip", "Paquete .zip")}</option>
             </select>
             {mode === "git" ? (
               <>
@@ -285,7 +289,7 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
                   onKeyDown={(e) => e.key === "Enter" && install()}
                 />
                 <button className={BTN_ACCENT} disabled={busy || !src.trim()} onClick={install}>
-                  {busy ? "Installing…" : "Install"}
+                  {busy ? text("Installing…", "Instalando…", "Instalando…") : text("Install", "Instalar", "Instalar")}
                 </button>
               </>
             ) : mode === "dir" ? (
@@ -296,15 +300,15 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
                   data-testid="persona-dir-choose"
                   onClick={() => void installDir()}
                 >
-                  {busy ? "Installing…" : "Choose folder…"}
+                  {busy ? text("Installing…", "Instalando…", "Instalando…") : text("Choose folder…", "Escolher pasta…", "Elegir carpeta…")}
                 </button>
                 <span className="text-[12px] text-faint">
-                  Opens the system folder picker; installs on selection.
+                  {text("Opens the system folder picker; installs on selection.", "Abre o seletor de pastas do sistema; instala após a seleção.", "Abre el selector de carpetas del sistema; instala tras la selección.")}
                 </span>
               </>
             ) : (
               <label className={BTN_BORDERED + " cursor-pointer"}>
-                {busy ? "Installing…" : "Choose a .zip bundle…"}
+                {busy ? text("Installing…", "Instalando…", "Instalando…") : text("Choose a .zip bundle…", "Escolher um pacote .zip…", "Elegir un paquete .zip…")}
                 <input
                   type="file"
                   accept=".zip"
@@ -322,13 +326,11 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
           </div>
           <div className="flex items-start gap-2 mt-3 text-[12px] text-muted leading-relaxed">
             <span className="text-warnInk shrink-0">⚠</span>
-            <span>
-              Only install coworkers from sources you trust and can hold accountable — a
-              coworker runs with access to your system. Files are snapshotted into a managed
-              area; no third-party code runs, but the instructions steer the coworker. Best
-              used by teams whose lead builds and distributes coworkers through official
-              channels.
-            </span>
+            <span>{text(
+              "Only install coworkers from sources you trust and can hold accountable — a coworker runs with access to your system. Files are snapshotted into a managed area; no third-party code runs, but the instructions steer the coworker. Best used by teams whose lead builds and distributes coworkers through official channels.",
+              "Instale colegas de trabalho apenas de fontes em que você confia e que podem ser responsabilizadas — um colega de trabalho executa com acesso ao seu sistema. Os arquivos são copiados para uma área gerenciada; nenhum código de terceiros é executado, mas as instruções orientam o colega. É mais indicado para equipes cuja liderança cria e distribui colegas por canais oficiais.",
+              "Instala compañeros solo desde fuentes en las que confías y a las que puedes responsabilizar: un compañero se ejecuta con acceso a tu sistema. Los archivos se copian en un área administrada; no se ejecuta código de terceros, pero las instrucciones guían al compañero. Es mejor para equipos cuyo líder crea y distribuye compañeros mediante canales oficiales.",
+            )}</span>
           </div>
         </div>
       )}
