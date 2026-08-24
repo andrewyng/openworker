@@ -78,12 +78,40 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
             : m.kind === "compacted"
               ? // The subtle "compacted here" divider (OPE-27) — the transcript itself is intact.
                 { kind: "notice", tone: "info", text: m.text || "Context compacted" }
-              : { kind: "notice", tone: "warn", text: "Error: " + (m.text || "unknown"), retriable: true },
+              : m.kind === "mcp_error"
+                ? // A configured MCP server failed to start for this session — informational,
+                  // NOT retriable (retry re-runs the model turn, which can't fix a dead server).
+                  // Renders as one quiet line + disclosure. Legacy notices (persisted before
+                  // the `server` field existed) recover the name from their own text, so old
+                  // transcripts collapse too instead of keeping the wall of stderr.
+                  mcpNoticeItem(m)
+                : m.kind === "project_presence"
+                  ? // Grant-time pointer (pass 20): the granted folder already has
+                    // memory/board — informational, one quiet line.
+                    { kind: "notice", tone: "info", text: m.text || "" }
+                  : { kind: "notice", tone: "warn", text: "Error: " + (m.text || "unknown"), retriable: true },
       );
     }
     // system messages are omitted; tool-result messages are folded into the tool row above
   }
   return items;
+}
+
+function mcpNoticeItem(m: ConversationMessage): Item {
+  const text = typeof m.text === "string" ? m.text : "";
+  const server =
+    (m.server && String(m.server)) || (text.match(/MCP server [“"]([^”"]+)[”"]/) || [])[1];
+  if (!server)
+    return { kind: "notice", tone: "warn", text: text || "An MCP server failed to start" };
+  // The old format appended a plain-text Settings pointer — the button replaces it.
+  const detail = text.replace(/\s*—\s*see Settings ▸ Connectors\s*$/u, "");
+  return {
+    kind: "notice",
+    tone: "warn",
+    text: `MCP server “${server}” didn’t start — its tools are unavailable here`,
+    server,
+    detail: detail || undefined,
+  };
 }
 
 export function userItemFromContent(content: any): Extract<Item, { kind: "user" }> {

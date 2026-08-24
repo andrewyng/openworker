@@ -22,6 +22,7 @@ import asyncio
 import logging
 import os
 import secrets
+import time
 from typing import Any, Optional
 
 from mcp.client.auth import OAuthClientProvider, TokenStorage
@@ -64,16 +65,43 @@ class SecretStoreTokenStorage(TokenStorage):
         self._secrets.put(_profile(self._name), {**self._data(), **patch})
 
     async def get_tokens(self) -> Optional[OAuthToken]:
-        raw = self._data().get("tokens")
+        data = self._data()
+        raw = data.get("tokens")
         if not raw:
             return None
         try:
-            return OAuthToken.model_validate(raw)
+            tok = OAuthToken.model_validate(raw)
         except Exception:
             return None
+        # SDK flaw (mcp 1.29): `_initialize()` loads stored tokens but never computes
+        # `token_expiry_time`, and `is_token_valid()` treats None expiry as valid
+        # forever — so an hour-old access token is sent as-is, the server 401s, and
+        # the SDK's 401 branch goes straight to FULL re-authorization without trying
+        # the refresh token. Non-interactive contexts must refuse the browser, so
+        # every session said "sign-in required" while explicit connects appeared to
+        # work (owner-hit 2026-08-21, DLAI Redshift). Countermeasure lives here, in
+        # storage: when the stored token is past the lifetime we recorded at save
+        # time (unknown age = stale), return the token set WITHOUT the access token —
+        # `is_token_valid()` then fails on its own terms and the SDK runs the
+        # refresh-token grant FIRST, which self-heals silently (no browser).
+        if tok.expires_in is not None:
+            issued = data.get("tokens_issued_at")
+            if isinstance(issued, (int, float)):
+                remaining = int(issued + tok.expires_in - time.time())
+            else:
+                remaining = -1
+            tok = tok.model_copy(update={"expires_in": remaining})
+            if remaining <= 60 and tok.refresh_token:
+                tok = tok.model_copy(update={"access_token": ""})
+        return tok
 
     async def set_tokens(self, tokens: OAuthToken) -> None:
-        self._merge({"tokens": tokens.model_dump(mode="json", exclude_none=True)})
+        self._merge(
+            {
+                "tokens": tokens.model_dump(mode="json", exclude_none=True),
+                "tokens_issued_at": int(time.time()),
+            }
+        )
 
     async def get_client_info(self) -> Optional[OAuthClientInformationFull]:
         raw = self._data().get("client_info")
@@ -111,6 +139,21 @@ def is_auth_required(exc: BaseException) -> bool:
             return True
     cause = exc.__cause__ or exc.__context__
     return is_auth_required(cause) if cause is not None else False
+
+
+def is_http_auth_error(exc: BaseException) -> bool:
+    """True if an HTTP 401/403 is anywhere in the exception tree — an anonymous
+    connect hit a server that wants credentials, so the fix is sign-in (switch
+    the entry to `auth: oauth`), not a different config. Same tree walk as
+    is_auth_required: the transport's task groups wrap and chain freely."""
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status in (401, 403):
+        return True
+    for sub in getattr(exc, "exceptions", None) or []:  # ExceptionGroup
+        if is_http_auth_error(sub):
+            return True
+    cause = exc.__cause__ or exc.__context__
+    return is_http_auth_error(cause) if cause is not None else False
 
 
 # -- single-slot interactive flow ------------------------------------------------
@@ -199,6 +242,72 @@ async def _wait_for_callback() -> tuple[str, Optional[str]]:
         _expected_state = None  # don't let this flow's state gate the next one
 
 
+class _MetadataSeededProvider(OAuthClientProvider):
+    """OAuthClientProvider that persists the discovered authorization-server
+    metadata and re-seeds it on load. Without this the SDK's pre-request refresh
+    grant runs BEFORE discovery and falls back to <origin>/token — a 404 on
+    vendors whose real endpoint lives elsewhere (data.dlai.link uses
+    /api/auth/mcp/token), which turned every silent refresh into a full re-auth
+    demand (owner-hit 2026-08-21, with the stale-expiry flaw above)."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._ocw_storage: SecretStoreTokenStorage = kwargs.get("storage") or self.context.storage  # type: ignore[assignment]
+
+    async def _initialize(self) -> None:
+        await super()._initialize()
+        raw = self._ocw_storage._data().get("oauth_metadata")
+        if raw and self.context.oauth_metadata is None:
+            try:
+                from mcp.shared.auth import OAuthMetadata
+
+                self.context.oauth_metadata = OAuthMetadata.model_validate(raw)
+            except Exception:
+                pass  # stale/incompatible cache: discovery will refill it
+        if self.context.oauth_metadata is None and self._ocw_storage._data().get(
+            "tokens"
+        ):
+            # No cache yet (tokens predate this fix): one best-effort fetch from the
+            # standard well-known location, so the refresh grant can target the real
+            # token endpoint on the very next request. Cached on success; any failure
+            # falls back to the SDK's own (post-401) discovery.
+            try:
+                from urllib.parse import urlparse
+
+                import httpx
+                from mcp.shared.auth import OAuthMetadata
+
+                pr = urlparse(self.context.server_url)
+                url = f"{pr.scheme}://{pr.netloc}/.well-known/oauth-authorization-server"
+                async with httpx.AsyncClient(timeout=10) as c:
+                    r = await c.get(url, headers={"Accept": "application/json"})
+                if r.status_code == 200:
+                    self.context.oauth_metadata = OAuthMetadata.model_validate(r.json())
+                    self._persist_metadata()
+            except Exception:
+                pass
+
+    def _persist_metadata(self) -> None:
+        md = self.context.oauth_metadata
+        if md is not None:
+            try:
+                self._ocw_storage._merge(
+                    {"oauth_metadata": md.model_dump(mode="json", exclude_none=True)}
+                )
+            except Exception:
+                logger.debug("could not persist oauth metadata", exc_info=True)
+
+    async def _handle_token_response(self, response: Any) -> None:
+        await super()._handle_token_response(response)
+        self._persist_metadata()
+
+    async def _handle_refresh_response(self, response: Any) -> bool:
+        ok = await super()._handle_refresh_response(response)
+        if ok:
+            self._persist_metadata()
+        return ok
+
+
 def build_auth(
     server_name: str,
     server_url: str,
@@ -222,7 +331,7 @@ def build_auth(
             "token_endpoint_auth_method": "none",
         }
     )
-    return OAuthClientProvider(
+    return _MetadataSeededProvider(
         server_url=server_url,
         client_metadata=metadata,
         storage=SecretStoreTokenStorage(server_name, secrets),

@@ -42,3 +42,34 @@ test("model picker recovers when settings fetches die during sidecar boot", asyn
   });
   await expect(page.getByTestId("models-loading")).toHaveCount(0);
 });
+
+test("coworker picker recovers when the persona fetch dies during sidecar boot", async ({
+  page,
+}) => {
+  // Same cold-start shape as above, for /v1/personas (owner-hit 2026-08-13, packaged app):
+  // the mount-time fetch loses to the sidecar boot and its only other trigger is
+  // PERSONAS_CHANGED, so the composer's picker stayed empty for the WHOLE session — while
+  // Settings ▸ Coworkers (mounted later) listed everything and looked healthy.
+  let sidecarUp = false;
+  await page.route("**/v1/health", async (route) => {
+    await new Promise((r) => setTimeout(r, 700));
+    sidecarUp = true;
+    await route.fallback();
+  });
+  await page.route("**/v1/personas", async (route) => {
+    if (route.request().method() === "GET" && !sidecarUp) {
+      await route.abort();
+      return;
+    }
+    await route.fallback();
+  });
+
+  await page.goto("/");
+  await page.getByText("New session").first().click();
+  await page.getByTestId("coworker-chip").click();
+
+  // The menu must list real coworkers, not just its Import/Manage footer.
+  const menu = page.locator(".setup-menu");
+  await expect(menu.getByText("Security Coworker")).toBeVisible({ timeout: 10_000 });
+  await expect(menu.getByTestId("import-coworker")).toBeVisible();
+});

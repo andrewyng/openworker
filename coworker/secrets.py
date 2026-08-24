@@ -14,6 +14,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import sys
 import threading
 import time
@@ -88,19 +89,48 @@ def _restrict_to_user(path: Path, *, is_dir: bool) -> None:
     os.chmod(path, 0o700 if is_dir else 0o600)
 
 
-def write_private_text(path: str | Path, content: str) -> Path:
-    """Atomically write a user-only text file using the SecretStore's OS protections."""
-    target = Path(path).expanduser()
+def _atomic_private_write(target: Path, content: str) -> Path:
+    """Write `content` to `target` atomically, never exposing it through a readable temp.
+
+    The temp file used to be created by `Path.write_text` and only chmod-ed afterwards, so
+    the plaintext sat on disk at the umask default (0644 on a normal box) for the length of
+    the write — readable by every local process and by anything backing the directory up.
+    That is issue #143; the same pattern was in both writers here.
+
+    `tempfile.mkstemp` creates with 0600 and O_EXCL before a byte is written, which also
+    removes the fixed `<name>.tmp` filename. That name was predictable, so a local attacker
+    could pre-create it as a symlink and have the write land wherever the link pointed.
+
+    Windows gets no mode bits from mkstemp, so the ACL is applied to the still-empty file
+    before the content goes in.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
         _restrict_to_user(target.parent, is_dir=True)
     except OSError:
         pass
-    tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    _restrict_to_user(tmp, is_dir=False)
-    os.replace(tmp, target)
+
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+    )
+    tmp = Path(tmp_name)
+    try:
+        _restrict_to_user(tmp, is_dir=False)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
     return target
+
+
+def write_private_text(path: str | Path, content: str) -> Path:
+    """Atomically write a user-only text file using the SecretStore's OS protections."""
+    return _atomic_private_write(Path(path).expanduser(), content)
 
 
 class SecretStore:
@@ -182,12 +212,4 @@ class SecretStore:
             return {}
 
     def _write(self, store: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            _restrict_to_user(self.path.parent, is_dir=True)
-        except OSError:
-            pass
-        tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(store, indent=2), encoding="utf-8")
-        _restrict_to_user(tmp, is_dir=False)
-        os.replace(tmp, self.path)
+        _atomic_private_write(self.path, json.dumps(store, indent=2))

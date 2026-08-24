@@ -27,6 +27,7 @@ KIND_QUESTION = "question"
 KIND_NOTIFICATION = "notification"
 KIND_DIRECTORY = "directory"  # agent asks to be granted a folder
 KIND_PLAN = "plan"  # agent presents a plan for approval
+KIND_TOOL = "tool"  # agent asks for a missing CLI tool to be installed
 
 STATE_PENDING = "pending"
 STATE_RESOLVED = "resolved"
@@ -261,6 +262,28 @@ class InboxStore:
         return self.add(
             session_id,
             KIND_PLAN,
+            title,
+            body=body,
+            inbox=inbox,
+            visibility=visibility,
+            data=data,
+            tool_call_id=tool_call_id,
+        )
+
+    def add_tool_request(
+        self,
+        session_id,
+        title,
+        *,
+        body="",
+        inbox="default",
+        visibility=VIS_INBOX,
+        data=None,
+        tool_call_id=None,
+    ) -> InboxItem:
+        return self.add(
+            session_id,
+            KIND_TOOL,
             title,
             body=body,
             inbox=inbox,

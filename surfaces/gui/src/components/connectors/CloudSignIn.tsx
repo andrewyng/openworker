@@ -28,7 +28,7 @@ export function CloudSignInInline({ blurb }: { blurb?: string }) {
       >
         {waiting ? "Check your browser…" : "Sign in to OpenWorker Cloud"}
       </button>
-      <div className="text-[11.5px] text-faint">
+      <div className="text-[12px] text-faint">
         {blurb || "Sign-in unlocks one-click connects — or switch to Manual, which works without it."}
       </div>
     </div>

@@ -73,7 +73,7 @@ export function SlackHowItWorks({ workspaces }: { workspaces: SlackWorkspace[] }
     // the only boxes on screen are the two mini-windows, which own their frames.
     <div className="mb-5" data-testid="slack-howitworks">
       <div className="flex items-baseline gap-2.5">
-        <h3 className="text-[13.5px] font-semibold tracking-tight">
+        <h3 className="text-[13px] font-semibold tracking-tight">
           Getting started with Slack &amp; OpenWorker
         </h3>
         <button

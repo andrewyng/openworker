@@ -338,6 +338,121 @@ def test_compat_builder_never_leaks_the_openai_key(monkeypatch):
         build_provider_client("kimi", {}, None)
 
 
+ARK_RESPONSES_VENDORS = {
+    "ark": {
+        "base_url": "https://ark.ap-southeast.bytepluses.com/api/v3",
+        "env_key": "ARK_API_KEY",
+        "recommended_model": "dola-seed-evolving-latest-version",
+        "reasoning_summary": False,
+    },
+    "ark-agent-plan-cn": {
+        "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+        "env_key": "ARK_AGENT_PLAN_CN_API_KEY",
+        "recommended_model": "doubao-seed-evolving",
+        "reasoning_summary": True,
+    },
+}
+
+
+def test_ark_responses_descriptors_are_separate():
+    from coworker.providers.registry import get_descriptor
+
+    for name, expected in ARK_RESPONSES_VENDORS.items():
+        d = get_descriptor(name)
+        assert d is not None and d.needs_key, name
+        assert d.env_key == expected["env_key"]
+        assert d.recommended_model == expected["recommended_model"]
+        assert "Responses API" in d.blurb
+        base = next(f for f in d.fields if f.key == "base_url")
+        assert base.default == expected["base_url"]
+        assert not base.required
+
+
+def test_ark_responses_builder_capabilities_PathsUnchanged(monkeypatch):
+    from coworker.providers.openai_responses import OpenAIResponsesProvider
+    from coworker.providers.registry import build_provider_client
+
+    monkeypatch.setenv("ARK_AGENT_PLAN_CN_API_KEY", "plan-key")
+    bp = build_provider_client("ark", {"api_key": "bp-key"}, None)
+    plan = build_provider_client("ark-agent-plan-cn", {}, None)
+
+    assert isinstance(bp, OpenAIResponsesProvider)
+    assert (bp._api_key, bp._base_url) == (
+        "bp-key",
+        ARK_RESPONSES_VENDORS["ark"]["base_url"],
+    )
+    assert isinstance(plan, OpenAIResponsesProvider)
+    assert (plan._api_key, plan._base_url) == (
+        "plan-key",
+        ARK_RESPONSES_VENDORS["ark-agent-plan-cn"]["base_url"],
+    )
+    assert bp._reasoning_summary is ARK_RESPONSES_VENDORS["ark"]["reasoning_summary"]
+    assert plan._reasoning_summary is ARK_RESPONSES_VENDORS["ark-agent-plan-cn"][
+        "reasoning_summary"
+    ]
+
+
+def test_ark_responses_never_leak_the_openai_key(monkeypatch):
+    import pytest
+
+    from coworker.providers.registry import build_provider_client
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="BytePlus Ark"):
+        build_provider_client("ark", {}, None)
+
+
+def test_existing_chat_compat_paths_unchanged():
+    """Lockdown: adding Responses vendors must not migrate existing compat providers."""
+    from coworker.providers.registry import build_provider_client
+
+    provider = build_provider_client("deepseek", {"api_key": "ds-key"}, None)
+    assert isinstance(provider, OpenAIProvider)
+    assert provider._base_url == COMPAT_VENDORS["deepseek"]
+
+
+def test_ark_curated_models_are_strict_allowlists():
+    from coworker.providers.matrix import models_for_provider
+
+    assert models_for_provider("ark") == [
+        "dola-seed-evolving-latest-version",
+        "dola-seed-2-1-turbo-260628",
+    ]
+    assert models_for_provider("ark-agent-plan-cn") == [
+        "doubao-seed-evolving",
+        "doubao-seed-2.1-turbo",
+    ]
+
+
+def test_ark_models_route_and_get_verified_agent_capabilities():
+    from coworker.providers.router import ProviderRouter
+
+    models = (
+        "ark:dola-seed-evolving-latest-version",
+        "ark:dola-seed-2-1-turbo-260628",
+        "ark-agent-plan-cn:doubao-seed-evolving",
+        "ark-agent-plan-cn:doubao-seed-2.1-turbo",
+    )
+    router = ProviderRouter.__new__(ProviderRouter)
+    for model in models:
+        prefix, bare = model.split(":", 1)
+        assert router._provider_name(model) == prefix
+        assert ProviderRouter._bare(model) == bare
+        caps = capabilities_for(model)
+        assert caps.tools and caps.parallel_tool_calls and caps.streaming
+        assert not caps.vision
+
+
+def test_ark_recommended_models_are_curated():
+    from coworker.providers.matrix import models_for_provider
+    from coworker.providers.registry import get_descriptor
+
+    for name in ARK_RESPONSES_VENDORS:
+        d = get_descriptor(name)
+        assert d.recommended_model in models_for_provider(name)
+
+
 def test_compat_models_route_and_get_tool_capabilities():
     from coworker.providers.router import ProviderRouter
 
@@ -456,3 +571,47 @@ def test_complete_picks_up_reasoning_content():
     provider = OpenAIProvider(client=_FakeClient(SimpleNamespace(choices=[choice])))
     turn = provider.complete(model="deepseek-v4-pro", messages=[{"role": "user", "content": "x"}])
     assert turn.text == "Answer" and turn.reasoning == "deep thought"
+
+
+def test_default_max_tokens_injected_and_caller_setting_wins():
+    """Compat servers left to their OWN defaults cap completions absurdly low
+    (owner-hit 2026-08-15: Together defaulted Kimi K3 to ~2k tokens, so every report
+    write truncated mid-arguments). The request always names a ceiling now."""
+    from coworker.providers.openai_provider import DEFAULT_MAX_TOKENS
+
+    client = _FakeClient(_response(content="ok"))
+    provider = OpenAIProvider(client=client)
+    provider.complete(model="kimi-k3", messages=[])
+    assert client.chat.completions.calls[0]["max_tokens"] == DEFAULT_MAX_TOKENS
+
+    client2 = _FakeClient(_response(content="ok"))
+    provider2 = OpenAIProvider(client=client2)
+    provider2.complete(model="kimi-k3", messages=[], max_tokens=512)
+    assert client2.chat.completions.calls[0]["max_tokens"] == 512
+
+
+def test_over_limit_max_tokens_is_dropped_and_retried():
+    """A model whose completion limit sits below our default must not surface the 400:
+    drop the param, retry on the server's own default (yesterday's behavior, at worst)."""
+
+    class _LimitRejecting:
+        def __init__(self, response):
+            self._response = response
+            self.calls: list[dict] = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            if "max_tokens" in kwargs:
+                raise RuntimeError(
+                    "Error code: 400 - max_tokens must be at most 8193 for this model"
+                )
+            return self._response
+
+    client = _FakeClient(_response(content="ok"))
+    client.chat.completions = _LimitRejecting(_response(content="ok"))
+    provider = OpenAIProvider(client=client)
+
+    turn = provider.complete(model="tiny-model", messages=[])
+    calls = client.chat.completions.calls
+    assert turn.text == "ok" and len(calls) == 2
+    assert "max_tokens" not in calls[1]

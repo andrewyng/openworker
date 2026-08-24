@@ -7,7 +7,7 @@ import { PanelHead } from "./IntegrationsView";
 // filterable, with sanitized arguments.
 const CARD = "rounded-xl2 border border-line bg-panel";
 const INPUT = "px-3 py-1.5 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent";
-const BTN_ACCENT = "text-[12.5px] px-3 py-1.5 rounded-lg bg-accent text-white shrink-0";
+const BTN_ACCENT = "text-[13px] px-3 py-1.5 rounded-lg bg-accent text-white shrink-0";
 
 export function AuditView() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
@@ -66,20 +66,20 @@ function AuditRow({ ev }: { ev: AuditEvent }) {
   return (
     <div className={CARD + " p-3.5"}>
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="font-mono text-[12.5px] font-medium text-ink">{ev.tool}</span>
-        <span className="text-[11.5px] text-faint">
+        <span className="font-mono text-[13px] font-medium text-ink">{ev.tool}</span>
+        <span className="text-[12px] text-faint">
           {ev.connector || "tool"} · {ev.stage || ev.status || "event"} · {ev.timestamp}
         </span>
       </div>
-      <div className="text-[11.5px] text-muted mt-0.5">
+      <div className="text-[12px] text-muted mt-0.5">
         session {ev.session_id || "-"} {ev.approval ? `· ${ev.approval}` : ""} {ev.status ? `· ${ev.status}` : ""}
       </div>
-      {ev.resource && <div className="text-[11.5px] text-faint mt-0.5">resource: {ev.resource}</div>}
+      {ev.resource && <div className="text-[12px] text-faint mt-0.5">resource: {ev.resource}</div>}
       {ev.args && Object.keys(ev.args).length > 0 && (
-        <div className="font-mono text-[11.5px] text-muted mt-1.5 break-words">{formatAuditArgs(ev.args)}</div>
+        <div className="font-mono text-[12px] text-muted mt-1.5 break-words">{formatAuditArgs(ev.args)}</div>
       )}
       {(ev.reason || ev.result_preview) && (
-        <div className="text-[11.5px] text-faint mt-1">{ev.reason || ev.result_preview}</div>
+        <div className="text-[12px] text-faint mt-1">{ev.reason || ev.result_preview}</div>
       )}
     </div>
   );

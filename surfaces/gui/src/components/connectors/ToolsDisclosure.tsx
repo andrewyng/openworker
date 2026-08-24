@@ -11,8 +11,8 @@ export function ToolsDisclosure({ c, onChanged }: { c: Connector; onChanged: () 
     <div className={GRP + " mt-6"}>
       <details>
         <summary className={ROW + " cursor-pointer hover:bg-paper/60 list-none [&::-webkit-details-marker]:hidden"}>
-          <span className="text-[12.5px] text-muted w-24 shrink-0">› Tools</span>
-          <span className="min-w-0 flex-1 text-[12.5px] text-muted">
+          <span className="text-[13px] text-muted w-24 shrink-0">› Tools</span>
+          <span className="min-w-0 flex-1 text-[13px] text-muted">
             {enabled} of {c.tools.length} enabled
           </span>
         </summary>

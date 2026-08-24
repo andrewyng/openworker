@@ -29,7 +29,7 @@ export function AvailableDetail({
         <ConnectorBadge connector={c} size={44} title={c.title} />
         <div className="min-w-0 flex-1">
           <h2 className="text-[20px] font-semibold tracking-tight leading-tight">{c.title}</h2>
-          <div className="text-[12.5px] text-muted">{c.blurb}</div>
+          <div className="text-[13px] text-muted">{c.blurb}</div>
         </div>
         <button
           className={PILL_ACCENT}

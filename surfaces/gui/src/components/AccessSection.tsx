@@ -43,7 +43,7 @@ const platformOf = (channel: string) => (channel.includes(":") ? channel.split("
 
 const SEC_H = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
 const TAG_CORE =
-  "text-[10px] px-1.5 py-0.5 rounded-full bg-warnSoft/70 text-warnInk border border-warnInk/15";
+  "text-[11px] px-1.5 py-0.5 rounded-full bg-warnSoft/70 text-warnInk border border-warnInk/15";
 const BTN_ACCENT = "text-[12px] px-2.5 py-1.5 rounded-lg bg-accent text-white shrink-0";
 const BTN_BORDERED =
   "text-[12px] px-2.5 py-1.5 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
@@ -216,8 +216,12 @@ export function AccessSection({
       : names.length <= 2
         ? names.join(", ")
         : `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  // A temporary dir's raw name (the session id) never shows — say "Temporary folder"; a
+  // draft with no folder picked yet shows none at all (UX-029).
   const folderPart = projectScoped
-    ? baseName(workspace || roots.find((r) => r.primary)?.path || "") || null
+    ? scratchPrimary
+      ? "Temporary folder"
+      : baseName(workspace || "") || null
     : roots.length > 0
       ? `${roots.length} folder${roots.length === 1 ? "" : "s"}`
       : null;
@@ -293,7 +297,7 @@ export function AccessSection({
                     <div className="flex items-center gap-2 py-1" key={c.connector}>
                       <ConnectorBadge connector={visualFor(c.connector, "connector", byName)} size={24} />
                       <div className="min-w-0 flex-1">
-                        <div className="text-[12.5px] font-medium leading-tight truncate">
+                        <div className="text-[13px] font-medium leading-tight truncate">
                           <span>{labelFor(c.connector, byName)}</span>
                           {c.detail && <span className="text-faint font-normal"> · {c.detail}</span>}
                         </div>
@@ -313,23 +317,18 @@ export function AccessSection({
                       <Toggle
                         checked={c.enabled}
                         onChange={(next) => toggleSession(c.connector, next)}
-                        title="Enabled for this session — tap to mute here"
+                        title="On for this session. Off mutes it for this session only — the connector stays connected."
                       />
                     </div>
                   ))}
                 </div>
-                {connected.length > 0 && (
-                  <p className="text-[10.5px] text-faint mt-1 leading-snug">
-                    Off mutes it for <b>this session only</b> — the connector stays connected.
-                  </p>
-                )}
                 {/* §32 addendum (owner ask 2026-07-13; FB-012): the catalog's long tail,
                     in-session. A quiet row that becomes a typeahead: full list on focus,
                     filter as you type. */}
                 {adding ? (
                   <div className="mt-1.5">
                     <input
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-line bg-panel text-[12.5px] outline-none focus:border-accent"
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-line bg-panel text-[13px] outline-none focus:border-accent"
                       placeholder="Search connectors…"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
@@ -345,7 +344,7 @@ export function AccessSection({
                     {results.length === 0 && (
                       // Also covers a failed/empty catalog fetch: an open picker must never
                       // be silently blank — point at the Connectors page either way.
-                      <div className="text-[11.5px] text-faint mt-1.5 px-0.5">
+                      <div className="text-[12px] text-faint mt-1.5 px-0.5">
                         No match — see all on the Connectors page below.
                       </div>
                     )}
@@ -364,7 +363,7 @@ export function AccessSection({
                         >
                           <ConnectorBadge connector={visualFor(c.name, "connector", byName)} size={22} />
                           <span className="min-w-0 flex-1">
-                            <span className="block text-[12.5px] font-medium leading-tight">
+                            <span className="block text-[13px] font-medium leading-tight">
                               {c.title}
                             </span>
                             <span className="block text-[11px] text-faint truncate">{c.blurb}</span>
@@ -375,22 +374,27 @@ export function AccessSection({
                     </div>
                   </div>
                 ) : (
-                  <button
-                    className="mt-1 text-[12px] text-accent hover:underline text-left"
-                    onClick={() => setAdding(true)}
-                    data-testid="access-add-source"
-                  >
-                    + Add a source…
-                  </button>
+                  /* UX-038 (owner ruling: option C): ONE footer row, both verbs — the
+                     in-session add flow (with its lands-enabled-here guarantee) and the
+                     global-page jump. The mute explainer lives on the toggles' tooltip. */
+                  <div className="mt-1.5 flex items-center gap-1.5 text-[12px]">
+                    <button
+                      className="text-accent hover:underline text-left"
+                      onClick={() => setAdding(true)}
+                      data-testid="access-add-source"
+                    >
+                      + Add a source
+                    </button>
+                    <span className="text-faint">·</span>
+                    <button
+                      className="text-accent font-medium hover:underline text-left"
+                      data-testid="access-manage"
+                      onClick={() => onOpenIntegrations?.()}
+                    >
+                      Manage →
+                    </button>
+                  </div>
                 )}
-                {/* Lives with its list (tester ask 2026-07-26): each group's manage link sits
-                    directly under that group, not pooled at the section's bottom. */}
-                <button
-                  className="mt-1.5 block text-[12px] text-accent font-medium hover:underline text-left"
-                  onClick={() => onOpenIntegrations?.()}
-                >
-                  Manage all connectors (global) →
-                </button>
               </div>
 
               {recommended.length > 0 && (
@@ -401,7 +405,7 @@ export function AccessSection({
                       <div className="flex items-center gap-2 py-1" key={r.connector}>
                         <ConnectorBadge connector={visualFor(r.connector, "connector", byName)} size={24} />
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5 text-[12.5px] font-medium leading-tight">
+                          <div className="flex items-center gap-1.5 text-[13px] font-medium leading-tight">
                             <span className="truncate">{labelFor(r.connector, byName)}</span>
                             {r.tier === "core" && <span className={TAG_CORE}>core</span>}
                           </div>
@@ -513,7 +517,7 @@ function ConnectInline({
       </div>
       {/* Scope semantics, stated once (owner ask 2026-07-13): connecting is account-level,
           the toggle above is what scopes it to a session. */}
-      <p className="text-[10.5px] text-faint mt-2 leading-snug">
+      <p className="text-[11px] text-faint mt-2 leading-snug">
         Connecting makes {c.title} available to all your coworkers — the toggle in this list
         controls just this session.
       </p>
@@ -563,12 +567,12 @@ function ChannelsInline({
           {channels.map((s) => (
             <div className="flex items-center gap-1.5 py-1" key={s.channel}>
               <Icon name="plug" size={13} className="text-muted shrink-0" />
-              <span className="min-w-0 flex-1 text-[12.5px] truncate" title={s.channel}>
+              <span className="min-w-0 flex-1 text-[13px] truncate" title={s.channel}>
                 {s.channel_name ? `#${s.channel_name}` : s.channel}
               </span>
               {s.collision && (
                 <span
-                  className="text-[10.5px] text-warnInk bg-warnSoft/70 border border-warnInk/15 rounded px-1 shrink-0"
+                  className="text-[11px] text-warnInk bg-warnSoft/70 border border-warnInk/15 rounded px-1 shrink-0"
                   title="This channel is also this session's Inbox-routing target — inbound and outbound collide."
                 >
                   ⚠
@@ -597,7 +601,7 @@ function ChannelsInline({
           {error}
         </p>
       )}
-      <p className="text-[10.5px] text-faint mt-1.5 leading-snug">
+      <p className="text-[11px] text-faint mt-1.5 leading-snug">
         The agent receives messages posted to these channels. Removing one stops this session
         from listening — the connector stays connected.
       </p>

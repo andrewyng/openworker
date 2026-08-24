@@ -145,7 +145,7 @@ def main(argv=None) -> None:
     parser.add_argument(
         "--mode",
         default=cfg.mode,
-        choices=["discuss", "plan", "interactive", "auto"],
+        choices=["discuss", "plan", "interactive", "auto", "bypass-approvals", "auto-approve"],
     )
     parser.add_argument("--host", default=cfg.host)
     parser.add_argument("--port", type=int, default=cfg.port)

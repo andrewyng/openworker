@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Attachment, SessionUsage } from "../types";
 import { isPdfFile, readFile } from "../attach";
+import { ProjectBindMenu } from "./ProjectBindMenu";
 import { getSettings, inspectPdf, sessionSkills, type SessionSkillRow } from "../api";
 import { formatTokens, totalTokens } from "../usage";
 import { Dropdown, type Option } from "./Dropdown";
@@ -20,11 +21,42 @@ import {
 // polished enough to ship, and Custom (config.toml auto-allow rules) is a power-user mode
 // with no in-app explanation. The server still honors both — a session already in one of
 // those modes keeps working; the picker just doesn't offer them.
-const PERMISSION_OPTIONS: Option[] = [
+// "auto" is the legacy wire value for Bypass approvals (server: Mode.BYPASS_APPROVALS) —
+// kept so saved sessions and configs keep working. Auto-Approve ("auto-approve") is the
+// reviewer mode (spec: reviewed-auto-mode.md); it appears only when the server says the
+// feature flag is on, wired in the settings pass — until then the picker omits it.
+// `caution` prefixes the label with a warning triangle; `gated` hides the entry unless the
+// server's auto_approve flag is on. Picker-local extensions of Dropdown's Option.
+type ModeOption = Option & { caution?: boolean; gated?: boolean };
+
+// "auto" is the legacy wire value for Bypass approvals (server: Mode.BYPASS_APPROVALS).
+// Auto-approve is `gated`: shown only when getSettings().auto_approve is true (the feature
+// flag, off by default). Copy (owner, 2026-08-22): imperative like the sibling entries;
+// "your session model" carries the who-judges fact inline; per-check cost is logged, not
+// picker text.
+const PERMISSION_OPTIONS: ModeOption[] = [
   { value: "discuss", label: "Discuss", description: "Chat and explore — no edits or commands" },
   { value: "interactive", label: "Ask for approval", description: "Ask before edits and commands" },
-  { value: "auto", label: "Full access", description: "Run everything without asking" },
+  {
+    value: "auto-approve",
+    label: "Auto-approve",
+    description:
+      "Let your session model classify actions and handle approvals, prompting you for anything it's unsure about",
+    gated: true,
+  },
+  {
+    value: "auto",
+    label: "Bypass approvals",
+    description: "Run everything without asking — approvals off",
+    caution: true,
+  },
 ];
+
+/** The picker's label for a mode value ("auto-approve" -> "Auto-approve"). Exported so the
+ * transcript's mode markers read the same names the user just chose from. */
+export function modeLabel(value: string): string {
+  return PERMISSION_OPTIONS.find((o) => o.value === value)?.label || value;
+}
 
 // No hardcoded model fallback: until the server supplies the list (a few seconds after a
 // cold app boot), the picker renders a disabled "Loading models…" chip. A baked-in list
@@ -53,6 +85,10 @@ interface Props {
   // session; after the first turn the fact lives in the topbar subtitle (§22) — no
   // interactive-then-disabled control.
   running: boolean;
+  // A proposal gate (team/items) is awaiting the user: the engine is suspended,
+  // so `running` is true — but typing must stay possible, because a typed reply
+  // IS an answer (decline-with-feedback). Unblocks Send while the gate is up.
+  gateOpen?: boolean;
   connected: boolean;
   // False when the default model's provider has no key — the composer shows a "connect a model"
   // banner and routes sends to setup (preserving the draft) instead of dropping them.
@@ -73,7 +109,11 @@ interface Props {
   // when" is one mental model. Absent handler = no toggle (e.g. Chat).
   unattended?: boolean;
   onUnattendedChange?: (on: boolean) => void;
+  // The pending-approval card rendered above the input (plan / work-items / team / tool /
+  // folder requests). Attended sessions only — Unattended parks the prompt in the Inbox.
   approvalSlot?: ReactNode;
+  // UX-044: "View & edit…" in the Project memory submenu routes to the memory panel.
+  onOpenMemory?: () => void;
   // Push text + attachments into the composer (e.g. a start-panel task card). The `nonce` makes
   // repeated identical prefills re-apply; the user can still edit before sending.
   prefill?: { text: string; attachments?: Attachment[]; nonce: number };
@@ -136,6 +176,23 @@ export function Composer(props: Props) {
   };
   const [dragging, setDragging] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  // UX-044: which "This session" submenu is open (bindings live server-side).
+  const [bindMenu, setBindMenu] = useState<"memory" | "board" | null>(null);
+  // Bindings need a session and a workspace surface (Chat has neither).
+  const sessionRows = Boolean(props.sessionId && props.workspace !== undefined);
+  const bindRow = (icon: "book" | "table", label: string, kind: "memory" | "board") => (
+    <button
+      className={
+        "w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-left hover:bg-paper" +
+        (bindMenu === kind ? " bg-paper" : "")
+      }
+      onClick={() => setBindMenu(bindMenu === kind ? null : kind)}
+    >
+      <Icon name={icon} size={15} className="shrink-0 text-muted" />
+      <span className="flex-1">{label}</span>
+      <Icon name="chevronRight" size={12} className="shrink-0 text-faint" />
+    </button>
+  );
   const [dictation, setDictation] = useState<DictationStatus | null>(null);
   const [dictationBusy, setDictationBusy] = useState<string | null>(null);
   const [dictationError, setDictationError] = useState<string | null>(null);
@@ -156,7 +213,14 @@ export function Composer(props: Props) {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    const max = parseFloat(getComputedStyle(el).lineHeight || "22") * 4;
+    // The cap must include the vertical PADDING: scrollHeight does, so a
+    // padding-blind cap left the box ~20px short and scrolled the top padding
+    // (plus the first line) out of the clip while typing (OPE-106). Six lines —
+    // team briefs outgrew four.
+    const cs = getComputedStyle(el);
+    const pad =
+      (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    const max = (parseFloat(cs.lineHeight) || 22) * 6 + pad;
     const next = Math.min(el.scrollHeight, max);
     el.style.height = `${Math.max(next, 24)}px`;
     el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
@@ -318,7 +382,7 @@ export function Composer(props: Props) {
     const t = (skill ? text.slice(skill.length + 1) : text).trim();
     if (
       (!t && attachments.length === 0 && !skill) ||
-      props.running ||
+      (props.running && !props.gateOpen) ||
       dictation?.recording ||
       dictationBusy
     )
@@ -441,7 +505,7 @@ export function Composer(props: Props) {
       {attachNotice && (
         <div
           data-testid="attach-notice"
-          className="max-w-3xl mx-auto mb-1.5 flex items-center gap-2 rounded-lg border border-warnInk/30 bg-warnSoft px-3 py-1.5 text-[12.5px] text-warnInk"
+          className="max-w-3xl mx-auto mb-1.5 flex items-center gap-2 rounded-lg border border-warnInk/30 bg-warnSoft px-3 py-1.5 text-[13px] text-warnInk"
         >
           <span className="flex-1">{attachNotice}</span>
           <button
@@ -502,7 +566,7 @@ export function Composer(props: Props) {
                 >
                   <span className="text-[13px] font-medium text-accent shrink-0">/{s.name}</span>
                   <span className="text-[12px] text-faint truncate flex-1">{s.description}</span>
-                  <span className="text-[10.5px] px-1.5 py-0.5 rounded-full border border-line text-faint shrink-0">
+                  <span className="text-[11px] px-1.5 py-0.5 rounded-full border border-line text-faint shrink-0">
                     {s.scope}
                   </span>
                 </button>
@@ -512,8 +576,12 @@ export function Composer(props: Props) {
         )}
         <textarea
           ref={textareaRef}
-          className="w-full block px-3.5 pt-3.5 pb-1.5 text-[14.5px]"
-          placeholder={props.placeholder || "Ask the coworker…  (drop or paste files)"}
+          className="w-full block px-3.5 pt-3.5 pb-1.5 text-[14px]"
+          placeholder={
+            props.gateOpen
+              ? "Reply to adjust the proposal — or use the buttons above"
+              : props.placeholder || "Ask the coworker…  (drop or paste files)"
+          }
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKey}
@@ -535,8 +603,19 @@ export function Composer(props: Props) {
             </button>
             {attachMenuOpen && (
               <>
-                <div className="fixed inset-0 z-30" onClick={() => setAttachMenuOpen(false)} />
-                <div className="absolute z-40 bottom-full mb-1 left-0 min-w-[180px] rounded-xl border border-line bg-panel shadow-2xl py-1.5">
+                <div
+                  className="fixed inset-0 z-30"
+                  onClick={() => {
+                    setAttachMenuOpen(false);
+                    setBindMenu(null);
+                  }}
+                />
+                <div className="absolute z-40 bottom-full mb-1 left-0 min-w-[200px] rounded-xl border border-line bg-panel shadow-2xl py-1.5">
+                  {sessionRows && (
+                    <div className="px-3 pt-1 pb-0.5 text-[10.5px] font-semibold tracking-wide uppercase text-faint">
+                      This message
+                    </div>
+                  )}
                   {attachItem("image", "Photo or image", () => pickFiles("image/*"))}
                   {attachItem("file", "PDF", () => pickFiles("application/pdf,.pdf"))}
                   {attachItem(
@@ -544,7 +623,28 @@ export function Composer(props: Props) {
                     "Other files",
                     () => pickFiles("text/*,.md,.csv,.json,.yaml,.yml,.log,.py,.ts,.tsx,.js,.rs,.go,.toml"),
                   )}
+                  {sessionRows && (
+                    <>
+                      <div className="my-1 border-t border-line" />
+                      <div className="px-3 pt-0.5 pb-0.5 text-[10.5px] font-semibold tracking-wide uppercase text-faint">
+                        This session
+                      </div>
+                      {bindRow("book", "Project memory", "memory")}
+                      {bindRow("table", "Board", "board")}
+                    </>
+                  )}
                 </div>
+                {bindMenu && props.sessionId && (
+                  <ProjectBindMenu
+                    sessionId={props.sessionId}
+                    kind={bindMenu}
+                    onClose={() => {
+                      setBindMenu(null);
+                      setAttachMenuOpen(false);
+                    }}
+                    onOpenMemory={props.onOpenMemory}
+                  />
+                )}
               </>
             )}
           </div>
@@ -581,7 +681,7 @@ export function Composer(props: Props) {
             />
           ) : null}
 
-          {dictationBusy === "Transcribing…" && <span className="text-[11.5px] text-accent">Transcribing…</span>}
+          {dictationBusy === "Transcribing…" && <span className="text-[12px] text-accent">Transcribing…</span>}
 
           <span className="ml-auto" />
 
@@ -650,8 +750,8 @@ export function Composer(props: Props) {
             </button>
           )}
 
-          {/* send / stop */}
-          {props.running ? (
+          {/* send / stop — a pending gate re-opens Send: the reply resolves it */}
+          {props.running && !props.gateOpen ? (
             <button className="btn danger" onClick={props.onInterrupt}>
               ⏹ Stop
             </button>
@@ -712,7 +812,7 @@ function UsageChip({
   // across the whole session, never just the last turn; "Input" is the fresh
   // (uncached) share — the cached share sits in the cache rows at its own price.
   const stat = (label: string, value: number) => (
-    <div className="flex items-baseline justify-between text-[11.5px] leading-snug">
+    <div className="flex items-baseline justify-between text-[12px] leading-snug">
       <span className="text-faint">{label}</span>
       <span className="text-ink tabular-nums">{formatTokens(value)}</span>
     </div>
@@ -720,7 +820,7 @@ function UsageChip({
   return (
     <div className="relative">
       <button
-        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11.5px] text-muted hover:text-ink hover:bg-paper shrink-0"
+        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[12px] text-muted hover:text-ink hover:bg-paper shrink-0"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -756,7 +856,7 @@ function UsageChip({
           >
             {contextWindow ? (
               <div className="mb-2.5">
-                <div className="text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold mb-1">
+                <div className="text-[11px] uppercase tracking-[0.06em] text-faint font-semibold mb-1">
                   Context window
                 </div>
                 <div className="h-1.5 rounded-full bg-line overflow-hidden">
@@ -765,16 +865,16 @@ function UsageChip({
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <div className="mt-1 text-[11.5px] text-muted tabular-nums">
+                <div className="mt-1 text-[12px] text-muted tabular-nums">
                   {formatTokens(usage.context)} of {formatTokens(contextWindow)} · {pct}%
                 </div>
               </div>
             ) : usage.context > 0 ? (
-              <div className="mb-2.5 text-[11.5px] text-muted tabular-nums">
+              <div className="mb-2.5 text-[12px] text-muted tabular-nums">
                 In context now: {formatTokens(usage.context)} tokens
               </div>
             ) : null}
-            <div className="text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold mb-1">
+            <div className="text-[11px] uppercase tracking-[0.06em] text-faint font-semibold mb-1">
               Session totals
             </div>
             <div className="flex flex-col gap-1.5">
@@ -803,12 +903,12 @@ function UsageChip({
                 </div>
               ))}
             </div>
-            <div className="mt-2 pt-2 border-t border-line flex items-baseline justify-between text-[11.5px]">
+            <div className="mt-2 pt-2 border-t border-line flex items-baseline justify-between text-[12px]">
               <span className="text-faint">Total</span>
               <span className="text-ink tabular-nums">{formatTokens(total)} tokens</span>
             </div>
             {model && !modelLabels?.[model] && contextWindow === undefined && (
-              <div className="mt-1 text-[10.5px] text-faint leading-snug">
+              <div className="mt-1 text-[11px] text-faint leading-snug">
                 Context meter unavailable for custom models.
               </div>
             )}
@@ -834,6 +934,19 @@ function ModeMenu({
   onUnattendedChange?: (on: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // The Auto-Approve entry is gated on the server flag. Fetch once on first open; a session
+  // already IN auto-approve mode always shows its own entry so the current mode is legible
+  // even if the flag was later turned off.
+  const [autoApproveEnabled, setAutoApproveEnabled] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    getSettings()
+      .then((s) => setAutoApproveEnabled(s.auto_approve === true))
+      .catch(() => {});
+  }, [open]);
+  const options = PERMISSION_OPTIONS.filter(
+    (o) => !o.gated || autoApproveEnabled || o.value === mode,
+  );
   const current = PERMISSION_OPTIONS.find((o) => o.value === mode);
   return (
     <div className="relative">
@@ -862,7 +975,7 @@ function ModeMenu({
             role="menu"
             data-testid="mode-menu"
           >
-            {PERMISSION_OPTIONS.map((o) => (
+            {options.map((o) => (
               <button
                 key={o.value}
                 className="w-full flex flex-col items-start px-2.5 py-1.5 rounded-lg text-left hover:bg-paper"
@@ -873,9 +986,13 @@ function ModeMenu({
               >
                 <span
                   className={
-                    "text-[13px] " + (o.value === mode ? "font-medium text-accent" : "text-ink")
+                    "flex items-center text-[13px] " +
+                    (o.value === mode ? "font-medium text-accent" : "text-ink")
                   }
                 >
+                  {o.caution && (
+                    <Icon name="warning" size={13} className="mr-1.5 shrink-0 text-warnInk" />
+                  )}
                   {o.label}
                   {o.value === mode && <span className="ml-1.5">✓</span>}
                 </span>
