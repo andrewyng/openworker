@@ -119,6 +119,19 @@ function Telegram({ s }: { s: number }) {
   );
 }
 
+function DingTalk({ s }: { s: number }) {
+  // Stylised wing mark on DingTalk blue.
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="2" y="2" width="20" height="20" rx="4.5" fill="#3370ff" />
+      <path
+        d="M17.2 6.3c-2.2.4-4.2 1.4-5.8 2.9l-.6.6c-.3.3-.4.8-.2 1.2.3.6 1.1.8 1.7.5l.1-.1c1.2-.7 2.6-1.1 4-1.2.6-.1 1-.6.9-1.2-.1-.5-.5-.8-1-.7h-.1ZM14.9 10.5c-1.5.2-2.9.8-4.1 1.7l-.2.2c-.4.3-.5.9-.2 1.3.3.5.9.7 1.4.4l.1-.1c1-.6 2.1-1 3.3-1.1.6-.1 1-.6.9-1.1-.1-.5-.5-.9-1-.9l-.2-.4ZM12.6 14.5c-1 .1-1.9.5-2.7 1.1l-.2.1c-.4.3-.5.8-.3 1.2.2.5.8.7 1.3.5l.1-.1c.7-.4 1.4-.6 2.2-.7.5-.1.9-.5.8-1-.1-.5-.5-.8-1-.8l-.2-.3Z"
+        fill="#fff"
+      />
+    </svg>
+  );
+}
+
 const MARKS: Record<string, (p: { s: number }) => JSX.Element> = {
   gmail: Gmail,
   google_calendar: GoogleCalendar,
@@ -131,6 +144,7 @@ const MARKS: Record<string, (p: { s: number }) => JSX.Element> = {
   pagerduty: PagerDuty,
   github: GitHub,
   telegram: Telegram,
+  dingtalk: DingTalk,
 };
 
 export function hasBrandIcon(name: string): boolean {

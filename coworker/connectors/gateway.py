@@ -120,6 +120,13 @@ class Gateway:
         await to_thread(_post)
 
     async def _on_inbound(self, event: MessageEvent) -> None:
+        logger.info(
+            "gateway._on_inbound platform=%s chat_id=%s user_id=%s mentions_me=%s",
+            event.source.platform,
+            event.source.chat_id,
+            event.source.user_id,
+            getattr(event, "mentions_me", False),
+        )
         self._record_recent(event)  # capture identity even from unauthorized senders
         settings = self.settings.get(event.source.platform)
         if settings is None or not is_authorized(settings, event.source):

@@ -271,6 +271,7 @@ export function AccessSection({
             />
           ) : channelsFor ? (
             <ChannelsInline
+              connector={channelsFor}
               label={labelFor(channelsFor, byName)}
               channels={channelsOf(channelsFor)}
               recent={recent}
@@ -528,8 +529,9 @@ function ConnectInline({
 }
 
 // The per-connector channels drill-down (§32 child view): which channels THIS session listens
-// to on a two-way messaging connector (Slack/Telegram).
+// to on a two-way messaging connector (Slack/Telegram/DingTalk).
 function ChannelsInline({
+  connector,
   label,
   channels,
   recent,
@@ -540,6 +542,7 @@ function ChannelsInline({
   onRemove,
   onBack,
 }: {
+  connector: string;
   label: string;
   channels: Subscription[];
   recent: RecentChannel[];
@@ -594,7 +597,13 @@ function ChannelsInline({
       )}
       <div className={`${SEC_H} mt-3 mb-1.5`}>{tt("access.add_channel")}</div>
       <div className="flex items-center gap-1.5">
-        <ChannelPicker value={draft} onChange={onDraft} recent={recent} onSubmit={onAdd} />
+        <ChannelPicker
+          value={draft}
+          onChange={onDraft}
+          recent={recent}
+          onSubmit={onAdd}
+          placeholder={`${connector}:<conversationId>`}
+        />
         <button className={BTN_ACCENT} disabled={!draft.trim()} onClick={onAdd}>
           {tt("access.add_btn")}
         </button>

@@ -20,6 +20,7 @@ from .base import (
     SendResult,
     SessionSource,
 )
+from .dingtalk import DingTalkAdapter
 from .senders import _send_slack, _send_slack_interactive, _send_telegram
 
 logger = logging.getLogger("coworker.connectors")
@@ -441,6 +442,21 @@ def make_adapter(
     """
     if platform == "telegram" and profile.get("bot_token"):
         return TelegramAdapter(profile["bot_token"])
+    if platform == "dingtalk":
+        if profile.get("client_id") and profile.get("client_secret"):
+            logger.info("dingtalk adapter created (stream mode)")
+            return DingTalkAdapter(
+                client_id=profile["client_id"],
+                client_secret=profile["client_secret"],
+                secrets=secrets,
+            )
+        if profile.get("webhook_url"):
+            logger.info("dingtalk adapter created (webhook mode)")
+            return DingTalkAdapter(
+                webhook_url=profile["webhook_url"],
+                secret=profile.get("secret"),
+                secrets=secrets,
+            )
     if platform == "slack":
         if profile.get("mode") == "relay":
             if not (relay_url and token_provider):

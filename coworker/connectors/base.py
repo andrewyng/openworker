@@ -8,10 +8,14 @@ can `send` outbound. Inbound identity is carried by `SessionSource`; a `target` 
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Awaitable, Callable, Optional
+
+
+logger = logging.getLogger("coworker.connectors")
 
 
 class MessageType(str, Enum):
@@ -180,5 +184,10 @@ class BasePlatformAdapter(ABC):
         """Send an outbound message."""
 
     async def handle_message(self, event: MessageEvent) -> None:
+        logger.info(
+            "adapter.handle_message platform=%s handler_set=%s",
+            self.platform,
+            self._handler is not None,
+        )
         if self._handler is not None:
             await self._handler(event)

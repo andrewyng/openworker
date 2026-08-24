@@ -137,6 +137,47 @@ def _validate_slack(creds: dict) -> ValidationResult:
     return ValidationResult(False, error=data.get("error") or "invalid bot token")
 
 
+def _validate_dingtalk(creds: dict) -> ValidationResult:
+    """Validate either a Stream-mode enterprise app or a group-bot webhook."""
+    client_id = creds.get("client_id", "")
+    client_secret = creds.get("client_secret", "")
+    if client_id and client_secret:
+        try:
+            import dingtalk_stream
+        except ImportError:
+            return ValidationResult(
+                False,
+                error="dingtalk-stream SDK is not installed — run `pip install dingtalk-stream`",
+            )
+        try:
+            credential = dingtalk_stream.Credential(client_id, client_secret)
+            client = dingtalk_stream.DingTalkStreamClient(credential)
+            token = client.get_access_token()
+        except Exception as exc:
+            return ValidationResult(False, error=str(exc))
+        if token:
+            return ValidationResult(True, identity="DingTalk enterprise bot (stream)")
+        return ValidationResult(False, error="invalid DingTalk client credentials")
+
+    # Fallback / dual-use: validate the group-bot webhook if provided.
+    from .dingtalk import send_dingtalk
+
+    webhook_url = creds.get("webhook_url", "")
+    if not webhook_url.startswith("https://oapi.dingtalk.com/robot/send"):
+        return ValidationResult(
+            False,
+            error="expected a DingTalk group-bot webhook URL, or Client ID + Client Secret for stream mode",
+        )
+    secret = creds.get("secret") or None
+    try:
+        result = send_dingtalk(webhook_url, "OpenWorker connection test", secret=secret)
+    except Exception as exc:
+        return ValidationResult(False, error=str(exc))
+    if result.ok:
+        return ValidationResult(True, identity="DingTalk group bot")
+    return ValidationResult(False, error=result.error or "invalid DingTalk webhook")
+
+
 def _validate_whoami(
     method: str,
     url: str,
@@ -487,6 +528,56 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
             "Paste both tokens below and Connect, then invite the bot to a channel or DM it.",
         ],
         validate=_validate_slack,
+    ),
+    ConnectorDescriptor(
+        name="dingtalk",
+        title="DingTalk",
+        icon="💬",
+        blurb="Send notifications to a DingTalk group bot, or hold two-way conversations with an enterprise Stream-mode robot.",
+        auth="webhook",
+        two_way=True,
+        channels=True,
+        brand_color="#3370ff",
+        logo="dingtalk",
+        fields=[
+            Field(
+                "client_id",
+                "Client ID (AppKey)",
+                secret=True,
+                required=False,
+                help="Enterprise app Client ID for Stream mode (two-way, no public IP needed).",
+                placeholder="dingxxxxxxxxxxxx",
+            ),
+            Field(
+                "client_secret",
+                "Client Secret (AppSecret)",
+                secret=True,
+                required=False,
+                help="Enterprise app Client Secret for Stream mode.",
+            ),
+            Field(
+                "webhook_url",
+                "Webhook URL",
+                secret=True,
+                required=False,
+                help="Group-bot webhook for outbound-only notifications. Ignored when Client ID + Client Secret are provided.",
+                placeholder="https://oapi.dingtalk.com/robot/send?access_token=...",
+            ),
+            Field(
+                "secret",
+                "Secret",
+                secret=True,
+                required=False,
+                help="Optional signing secret for the group-bot webhook.",
+            ),
+            _ALLOWED_FIELD,
+        ],
+        instructions=[
+            "For two-way chat (recommended): open https://open-dev.dingtalk.com → create an enterprise-internal app → add a robot → set message-receiving mode to Stream. Copy the app's Client ID and Client Secret below.",
+            "For outbound-only notifications: open a DingTalk group → Group Settings → Group Assistant → Add Robot → Custom, enable signing if desired, and copy the webhook URL.",
+            "If both sets of credentials are provided, Stream mode takes precedence.",
+        ],
+        validate=_validate_dingtalk,
     ),
     ConnectorDescriptor(
         name="email",

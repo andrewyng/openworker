@@ -15,6 +15,7 @@ import os
 from typing import Callable, Optional
 
 from .base import SendResult
+from .dingtalk import send_dingtalk
 
 Sender = Callable[[str, str, str, Optional[str]], SendResult]
 
@@ -53,6 +54,21 @@ def _send_telegram(
             True, message_id=str(data.get("result", {}).get("message_id"))
         )
     return SendResult(False, error=data.get("description") or "telegram send failed")
+
+
+def _send_dingtalk(
+    token: str, chat_id: str, text: str, thread_id: Optional[str] = None
+) -> SendResult:
+    """DingTalk sender. `token` is a JSON blob carrying webhook_url + optional secret."""
+    import json
+
+    try:
+        creds = json.loads(token)
+    except Exception:
+        return SendResult(False, error="invalid dingtalk credentials")
+    return send_dingtalk(
+        creds.get("webhook_url", ""), text, secret=creds.get("secret")
+    )
 
 
 def _send_slack(
@@ -141,6 +157,7 @@ def _send_slack_interactive(
 DEFAULT_SENDERS: dict[str, Sender] = {
     "telegram": _send_telegram,
     "slack": _send_slack,
+    "dingtalk": _send_dingtalk,
 }
 
 
