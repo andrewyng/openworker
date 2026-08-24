@@ -198,3 +198,78 @@ def test_callback_route(tmp_path, monkeypatch):
         assert future.result() == ("c1", "s1")
     finally:
         loop.close()
+
+
+# -- stale-token countermeasures (owner-hit 2026-08-21, DLAI Redshift) ----------
+
+
+@pytest.mark.asyncio
+async def test_storage_reports_remaining_lifetime_and_blanks_stale_access(tmp_path, monkeypatch):
+    """The SDK never computes expiry for tokens loaded from storage and treats a
+    None expiry as valid-forever — so storage must (a) report the REMAINING
+    lifetime from the issued_at it persists and (b) blank the access token once
+    stale, which makes the SDK run the refresh grant before the request."""
+    from mcp.shared.auth import OAuthToken
+
+    from coworker.secrets import SecretStore
+
+    secrets = SecretStore(tmp_path / "s.json")
+    storage = mcp_oauth.SecretStoreTokenStorage("dlai", secrets)
+
+    now = 1_000_000.0
+    monkeypatch.setattr(mcp_oauth.time, "time", lambda: now)
+    await storage.set_tokens(
+        OAuthToken(access_token="A", expires_in=3600, refresh_token="R")
+    )
+
+    # Fresh: full remaining lifetime, access token intact.
+    tok = await storage.get_tokens()
+    assert tok.access_token == "A" and tok.expires_in == 3600
+
+    # Half-spent: remaining shrinks with the clock.
+    monkeypatch.setattr(mcp_oauth.time, "time", lambda: now + 1800)
+    tok = await storage.get_tokens()
+    assert tok.access_token == "A" and tok.expires_in == 1800
+
+    # Past expiry: access token blanked (refresh token kept) → SDK refreshes first.
+    monkeypatch.setattr(mcp_oauth.time, "time", lambda: now + 3700)
+    tok = await storage.get_tokens()
+    assert tok.access_token == "" and tok.refresh_token == "R"
+    assert tok.expires_in <= 0
+
+
+@pytest.mark.asyncio
+async def test_storage_treats_unknown_token_age_as_stale(tmp_path):
+    """Tokens persisted before issued_at existed have unknown age — assume stale
+    (blank access, keep refresh) rather than sending an hour-old bearer."""
+    from coworker.secrets import SecretStore
+
+    secrets = SecretStore(tmp_path / "s.json")
+    secrets.put(
+        "mcp-oauth:dlai",
+        {"tokens": {"access_token": "A", "expires_in": 3600, "refresh_token": "R"}},
+    )
+    storage = mcp_oauth.SecretStoreTokenStorage("dlai", secrets)
+    tok = await storage.get_tokens()
+    assert tok.access_token == "" and tok.refresh_token == "R"
+
+
+@pytest.mark.asyncio
+async def test_provider_seeds_and_persists_oauth_metadata(tmp_path):
+    """The refresh grant runs BEFORE the SDK's discovery, so the provider must
+    seed persisted authorization-server metadata at load — otherwise refresh
+    POSTs to the default <origin>/token (404 on data.dlai.link)."""
+    from coworker.secrets import SecretStore
+
+    secrets = SecretStore(tmp_path / "s.json")
+    md = {
+        "issuer": "https://data.example",
+        "authorization_endpoint": "https://data.example/api/auth/authorize",
+        "token_endpoint": "https://data.example/api/auth/token",
+    }
+    secrets.put("mcp-oauth:dlai", {"oauth_metadata": md})
+    auth = mcp_oauth.build_auth(
+        "dlai", "https://data.example/api/mcp", secrets, interactive=False
+    )
+    await auth._initialize()
+    assert str(auth.context.oauth_metadata.token_endpoint) == md["token_endpoint"]

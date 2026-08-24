@@ -40,13 +40,14 @@ def test_code_agent_tools(tmp_path):
 
 def test_chat_agent_has_no_workspace_tools():
     assert chat_agent().build_tools(AgentContext()) == []
-    assert chat_agent().needs_workspace is False
-    assert code_agent().needs_workspace is True
+    assert chat_agent().requires_folder is False
+    assert code_agent().requires_folder is True
 
 
 def test_get_agent_fallback():
-    assert get_agent("chat").name == "chat"
-    # Unknown ids fall back to the default persona (Cowork), per the persona registry.
+    # Chat is removed (owner 2026-08-21): its id, like any unknown id, falls back to
+    # the default persona per the registry.
+    assert get_agent("chat").name == "cowork"
     assert get_agent("nope").name == "cowork"
 
 

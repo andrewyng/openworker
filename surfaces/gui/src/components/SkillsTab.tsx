@@ -22,13 +22,13 @@ import { Icon } from "./Icon";
 // Persona-bundled skills arrive with personas (§10), managed on the persona page, not here.
 
 const CARD = "rounded-xl2 border border-line bg-panel";
-const FIELD_LABEL = "text-[12.5px] font-medium text-ink";
+const FIELD_LABEL = "text-[13px] font-medium text-ink";
 const INPUT =
   "w-full min-w-0 px-3 py-2 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent";
 const BTN_ACCENT =
-  "text-[12.5px] px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
+  "text-[13px] px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
 const BTN_BORDERED =
-  "text-[12.5px] px-3 py-2 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
+  "text-[13px] px-3 py-2 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
 const BADGE =
   "text-[11px] px-2 py-0.5 rounded-full border border-line bg-paper text-muted shrink-0";
 
@@ -165,7 +165,7 @@ export function SkillsTab({
       <div className="flex items-start justify-between gap-3 mb-4">
         <div>
           <h2 className="text-[16px] font-semibold">Skills</h2>
-          <p className="text-[12.5px] text-muted mt-1 leading-relaxed">
+          <p className="text-[13px] text-muted mt-1 leading-relaxed">
             Reusable instructions the worker can follow in every conversation. Off here means
             off everywhere.
           </p>
@@ -199,7 +199,7 @@ export function SkillsTab({
                   }}
                 >
                   <div className="text-[13px] font-medium">Write it myself</div>
-                  <div className="text-[11.5px] text-muted">
+                  <div className="text-[12px] text-muted">
                     A name, a description, and the instructions
                   </div>
                 </button>
@@ -212,7 +212,7 @@ export function SkillsTab({
                   }}
                 >
                   <div className="text-[13px] font-medium">Import a file</div>
-                  <div className="text-[11.5px] text-muted">
+                  <div className="text-[12px] text-muted">
                     A .zip or SKILL.md someone shared — you review before it installs
                   </div>
                 </button>
@@ -226,7 +226,7 @@ export function SkillsTab({
                   }}
                 >
                   <div className="text-[13px] font-medium">Create with OpenWorker</div>
-                  <div className="text-[11.5px] text-muted">
+                  <div className="text-[12px] text-muted">
                     Starts a conversation — the worker builds it and asks before adding it to
                     your skills
                   </div>
@@ -249,7 +249,7 @@ export function SkillsTab({
       />
 
       {error ? (
-        <div className="text-[12.5px] text-red-500 mb-3" role="alert">
+        <div className="text-[13px] text-red-500 mb-3" role="alert">
           {error}
         </div>
       ) : null}
@@ -257,7 +257,7 @@ export function SkillsTab({
         <div
           role="status"
           className={
-            "mb-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-[12.5px] " +
+            "mb-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-[13px] " +
             (notice.tone === "ok"
               ? "bg-tealSoft/70 text-tealInk border-tealInk/20"
               : "bg-warnSoft/70 text-warnInk border-warnInk/20")
@@ -279,7 +279,7 @@ export function SkillsTab({
       {upload ? (
         <div className={`${CARD} p-4 mb-4`}>
           <div className="text-[13px] font-medium mb-1">Review before installing</div>
-          <p className="text-[12.5px] text-muted mb-3">
+          <p className="text-[13px] text-muted mb-3">
             Read the instructions — installing a skill means the worker will follow them.
           </p>
           <div className="text-[13px] mb-1">

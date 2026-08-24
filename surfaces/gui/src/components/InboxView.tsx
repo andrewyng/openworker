@@ -30,7 +30,7 @@ const KIND_TABS: { key: string; label: string }[] = [
 ];
 
 const CHIP = (active: boolean) =>
-  "text-[11.5px] px-2.5 py-1 rounded-full border " +
+  "text-[12px] px-2.5 py-1 rounded-full border " +
   (active
     ? "border-accent text-accent bg-accentSoft"
     : "border-line text-muted hover:border-lineStrong");

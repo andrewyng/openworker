@@ -35,6 +35,8 @@ export const CHIP_WARN =
   "text-[11px] font-medium px-2 py-0.5 rounded-full bg-warnSoft text-warnInk border border-warnInk/20 shrink-0";
 export const CHIP_OFF =
   "text-[11px] font-medium px-2 py-0.5 rounded-full bg-paper text-muted border border-lineStrong shrink-0";
+export const CHIP_ERR =
+  "text-[11px] font-medium px-2 py-0.5 rounded-full bg-danger/10 text-danger border border-danger/25 shrink-0";
 
 /** Small × affordance (danger on hover). */
 export const XBTN = "text-faint hover:text-danger shrink-0 leading-none";

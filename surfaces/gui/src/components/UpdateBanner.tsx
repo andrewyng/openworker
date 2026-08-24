@@ -78,13 +78,13 @@ export function UpdateBanner() {
   const busy = phase === "downloading" || phase === "installing";
 
   return (
-    // Docked over the sidebar column (FB-002, owner call): 264px grid column minus the
+    // Docked over the sidebar column (FB-002, owner call): 300px grid column minus the
     // 12px side margins, bottom offset clearing the ~57px account row so the card sits
     // just above it. z-[35]: above the account menu's click-away backdrop (z-30) so the
     // card stays clickable, but BELOW the menu itself (z-40) — an open menu must never
     // be occluded by a passive status card.
     <div
-      className="fixed bottom-[64px] left-3 z-[35] w-[240px] rounded-xl border border-line bg-panel shadow-2xl px-4 py-3.5"
+      className="fixed bottom-[64px] left-3 z-[35] w-[276px] rounded-xl border border-line bg-panel shadow-2xl px-4 py-3.5"
       role="status"
       data-testid="update-banner"
     >
@@ -93,13 +93,13 @@ export function UpdateBanner() {
         OpenWorker v{update.version} is ready to install.
       </div>
       {phase === "error" && (
-        <div className="text-[11.5px] text-warnInk mt-1.5">
+        <div className="text-[12px] text-warnInk mt-1.5">
           The update couldn't be installed — it will be offered again next launch.
         </div>
       )}
       <div className="flex items-center gap-2 mt-2.5">
         <button
-          className="px-3 py-1.5 rounded-full bg-accent text-white text-[12.5px] disabled:opacity-50"
+          className="px-3 py-1.5 rounded-full bg-accent text-white text-[13px] disabled:opacity-50"
           onClick={install}
           disabled={busy}
           data-testid="update-install"
@@ -107,7 +107,7 @@ export function UpdateBanner() {
           {busy ? "Downloading…" : "Restart to update"}
         </button>
         <button
-          className="px-2 py-1.5 text-[12.5px] text-faint hover:text-muted"
+          className="px-2 py-1.5 text-[13px] text-faint hover:text-muted"
           onClick={() => {
             dismissed.current = update.version;
             setUpdate(null);

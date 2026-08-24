@@ -119,7 +119,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
         {step === 0 && (
           <section data-testid="ob-step-model" className="flex-1 min-h-0 flex flex-col">
             {/* Persistent header — stays put while the region below swaps (§39). */}
-            <h1 className="text-[19px] font-semibold">Welcome to OpenWorker<span className="beta-tag">BETA</span></h1>
+            <h1 className="text-[20px] font-semibold">Welcome to OpenWorker<span className="beta-tag">BETA</span></h1>
             <p className="text-[13px] text-muted mt-0.5 mb-4">
               Pick a model provider to get started — OpenWorker runs on your own key, and your
               key and your data stay on this computer.
@@ -140,11 +140,11 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
             {/* Persistent footer (§39). */}
             <div className="flex items-center gap-3 pt-5">
               {!skipConfirm ? (
-                <button className="text-[12.5px] text-faint hover:text-muted" onClick={() => setSkipConfirm(true)}>
+                <button className="text-[13px] text-faint hover:text-muted" onClick={() => setSkipConfirm(true)}>
                   Skip setup
                 </button>
               ) : (
-                <span className="text-[12.5px] text-muted">
+                <span className="text-[13px] text-muted">
                   Nothing works without a model —{" "}
                   <button className="text-accent" onClick={() => finish()}>
                     skip anyway
@@ -173,7 +173,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
              slot keeps its place but flips to a green congrats, and every row grows a quiet
              Connect pill. The gated Google pair is ONE combined grayed row. */
           <section data-testid="ob-step-tools" className="flex-1 min-h-0 flex flex-col">
-            <h1 className="text-[19px] font-semibold">Connect your everyday tools</h1>
+            <h1 className="text-[20px] font-semibold">Connect your everyday tools</h1>
             <p className="text-[13px] text-muted mt-0.5 mb-3">
               Chat can only advise. Connected, your coworker does the actual work:
             </p>
@@ -190,7 +190,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                   >
                     <ConnectorBadge connector={c} size={34} title={c.title} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[13.5px] font-semibold leading-tight">{benefit}</span>
+                      <span className="block text-[13px] font-semibold leading-tight">{benefit}</span>
                       <span className="block text-[12px] text-muted truncate">{detail}</span>
                     </span>
                     {cloud?.signed_in &&
@@ -200,7 +200,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                         <span className="text-[12px] text-muted shrink-0">Check your browser…</span>
                       ) : (
                         <button
-                          className="shrink-0 rounded-full border border-line px-4 py-1.5 text-[12.5px] font-medium hover:border-lineStrong"
+                          className="shrink-0 rounded-full border border-line px-4 py-1.5 text-[13px] font-medium hover:border-lineStrong"
                           onClick={() => startTool(name)}
                         >
                           Connect
@@ -218,14 +218,14 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                   })}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-[13.5px] font-semibold leading-tight text-faint">
+                  <span className="block text-[13px] font-semibold leading-tight text-faint">
                     Gmail &amp; Google Calendar
                   </span>
                   <span className="block text-[12px] text-faint truncate">
                     Coming soon — pending Google&rsquo;s app verification.
                   </span>
                 </span>
-                {cloud?.signed_in && <span className="text-[11.5px] text-faint shrink-0">Coming soon</span>}
+                {cloud?.signed_in && <span className="text-[12px] text-faint shrink-0">Coming soon</span>}
               </div>
             </div>
 
@@ -234,7 +234,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                 returns from the browser (§41). */}
             {!cloud?.signed_in ? (
               <div className="mt-3.5 rounded-xl border border-line bg-paper px-4 py-3 flex items-center gap-3.5 shrink-0">
-                <span className="flex-1 text-[12.5px] text-muted leading-snug">
+                <span className="flex-1 text-[13px] text-muted leading-snug">
                   <span className="block text-[13px] font-semibold text-ink mb-0.5">
                     Sign in for one-click connections
                   </span>
@@ -242,7 +242,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                   Tokens stay on this computer.
                 </span>
                 {signinPhase ? (
-                  <span className="inline-flex items-center gap-2 text-[12.5px] text-muted shrink-0">
+                  <span className="inline-flex items-center gap-2 text-[13px] text-muted shrink-0">
                     <Spinner />
                     {signinPhase === "opening" ? (
                       "Opening browser…"
@@ -281,7 +281,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                 <span className="block text-[13px] font-semibold text-ok mb-0.5">
                   🎉 You&rsquo;re signed in{cloud.account ? ` as ${cloud.account}` : ""}
                 </span>
-                <span className="block text-[12.5px] text-muted">
+                <span className="block text-[13px] text-muted">
                   Connect a tool above with one click — or add them anytime later from the
                   Connectors page.
                 </span>
@@ -321,7 +321,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
               <div className="w-12 h-12 rounded-full bg-okSoft text-ok grid place-items-center mx-auto mb-3 text-[22px]">
                 ✓
               </div>
-              <h1 className="text-[19px] font-semibold mb-1">You're set up</h1>
+              <h1 className="text-[20px] font-semibold mb-1">You're set up</h1>
               <p className="text-[13px] text-muted mb-5">Two good ways to start:</p>
             </div>
 
@@ -330,11 +330,11 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
               onClick={() => finish("automations")}
               data-testid="ob-cta-automation"
             >
-              <span className="w-9 h-9 rounded-lg bg-accentSoft text-accent grid place-items-center text-[15px] shrink-0">
+              <span className="w-9 h-9 rounded-lg bg-accentSoft text-accent grid place-items-center text-[14px] shrink-0">
                 ◷
               </span>
               <span className="flex-1 min-w-0 text-left">
-                <b className="block text-[13.5px]">Create your first automation</b>
+                <b className="block text-[13px]">Create your first automation</b>
                 <span className="text-[12px] text-muted">
                   A weekly digest, a morning brief — pick a template, running in two minutes.
                 </span>
@@ -346,11 +346,11 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
               onClick={() => finish("work")}
               data-testid="ob-start"
             >
-              <span className="w-9 h-9 rounded-lg bg-accentSoft text-accent grid place-items-center text-[15px] shrink-0">
+              <span className="w-9 h-9 rounded-lg bg-accentSoft text-accent grid place-items-center text-[14px] shrink-0">
                 ✦
               </span>
               <span className="flex-1 min-w-0 text-left">
-                <b className="block text-[13.5px]">Start working with Coworker</b>
+                <b className="block text-[13px]">Start working with Coworker</b>
                 <span className="text-[12px] text-muted">
                   Open a session and just ask — analyze files, draft, research, build.
                 </span>

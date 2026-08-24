@@ -82,6 +82,12 @@ def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, An
 
 _MAX_TOKENS_ERROR = "'max_tokens' is not supported"
 
+# Ceiling, not a spend target — same rationale as the Anthropic provider's default: a
+# coworker writing a report ships the whole file inside one tool call's arguments, and
+# compat servers left to their OWN defaults cap completions absurdly low (observed
+# 2026-08-15: Together defaulted Kimi K3 to ~2k tokens — every ~5KB write truncated).
+DEFAULT_MAX_TOKENS = 32000
+
 
 def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
     """Kwargs for the one retry an unsupported-parameter error earns, or re-raise.
@@ -102,6 +108,14 @@ def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
         # Older compat servers don't know the usage opt-in; drop it, lose only metering.
         fixed = dict(kwargs)
         fixed.pop("stream_options")
+        return fixed
+    if ("max_tokens" in msg or "max_new_tokens" in msg) and "max_tokens" in kwargs:
+        # Our 32k default exceeded this model's completion limit (each server words the
+        # 400 differently, so no number parsing) — drop the param and retry on the
+        # server's own default rather than surfacing the 400. Worst case is exactly
+        # yesterday's behavior; best case the server allows far more once asked.
+        fixed = dict(kwargs)
+        fixed.pop("max_tokens")
         return fixed
     raise exc
 
@@ -179,11 +193,13 @@ class OpenAIProvider(ProviderClient):
         }
         if tools:
             kwargs["tools"] = tools
+        kwargs.setdefault("max_tokens", DEFAULT_MAX_TOKENS)
         _pin_reasoning_effort(kwargs)
 
         client = self._ensure_client()
-        # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
-        for _ in range(2):
+        # Up to three param-fix retries: effort, the max_tokens rename, and the
+        # max_tokens over-limit drop can ALL need fixing on one call.
+        for _ in range(3):
             try:
                 response = client.chat.completions.create(**kwargs)
                 break
@@ -227,6 +243,7 @@ class OpenAIProvider(ProviderClient):
         }
         if tools:
             kwargs["tools"] = tools
+        kwargs.setdefault("max_tokens", DEFAULT_MAX_TOKENS)
         _pin_reasoning_effort(kwargs)
         client = self._ensure_client()
 
@@ -236,8 +253,9 @@ class OpenAIProvider(ProviderClient):
         finish_reason = None
         usage: Optional[TokenUsage] = None
 
-        # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
-        for _ in range(2):
+        # Up to three param-fix retries: effort, the max_tokens rename, and the
+        # max_tokens over-limit drop can ALL need fixing on one call.
+        for _ in range(3):
             try:
                 chunks = client.chat.completions.create(**kwargs)
                 break

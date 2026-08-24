@@ -65,7 +65,7 @@ export function AddConnectionModal({
           <div className="flex-1 font-semibold text-[16px] tracking-tight">
             {title || `Connect ${c.title}`}
           </div>
-          <button className="text-faint hover:text-ink text-[18px] leading-none" onClick={onClose} title="Close">
+          <button className="text-faint hover:text-ink text-[20px] leading-none" onClick={onClose} title="Close">
             ×
           </button>
         </div>
@@ -73,7 +73,7 @@ export function AddConnectionModal({
         {twoModes ? (
           <>
             <div className="px-5 pt-4">
-              <div className="inline-flex rounded-full p-0.5 bg-paper text-[12.5px] font-medium">
+              <div className="inline-flex rounded-full p-0.5 bg-paper text-[13px] font-medium">
                 {(["one", "manual"] as const).map((p) => (
                   <button
                     key={p}
@@ -163,7 +163,7 @@ function McpOneClick({ c, onConnected }: { c: Connector; onConnected: () => void
       >
         {waiting ? "Check your browser…" : `Connect ${c.title}`}
       </button>
-      {error && <div className="text-[12.5px] text-danger">{error}</div>}
+      {error && <div className="text-[13px] text-danger">{error}</div>}
       <p className="text-[12px] text-faint text-center flex items-center justify-center gap-1.5">
         <span className={TAG_ACCENT}>Recommended</span> agents get a curated set of{" "}
         {c.title} tools · tokens stay on this computer
@@ -203,7 +203,7 @@ function GenericOneClick({ c, cloud }: { c: Connector; cloud: CloudStatus | null
       ) : (
         <CloudStatusPending />
       )}
-      {error && <div className="text-[12.5px] text-danger">{error}</div>}
+      {error && <div className="text-[13px] text-danger">{error}</div>}
       <p className="text-[12px] text-faint text-center flex items-center justify-center gap-1.5">
         <span className={TAG_ACCENT}>Recommended</span> tokens stay on this computer
       </p>
@@ -235,7 +235,7 @@ function SlackOneClick({ c, cloud }: { c: Connector; cloud: CloudStatus | null }
       ) : (
         <CloudStatusPending />
       )}
-      {error && <div className="text-[12.5px] text-danger">{error}</div>}
+      {error && <div className="text-[13px] text-danger">{error}</div>}
       <p className="text-[12px] text-faint text-center flex items-center justify-center gap-1.5">
         <span className={TAG_ACCENT}>Recommended</span> relay · tokens stay on this computer
       </p>
@@ -271,7 +271,7 @@ function GithubOneClick({ c, cloud }: { c: Connector; cloud: CloudStatus | null 
       ) : (
         <CloudStatusPending />
       )}
-      {error && <div className="text-[12.5px] text-danger">{error}</div>}
+      {error && <div className="text-[13px] text-danger">{error}</div>}
       <p className="text-[12px] text-faint text-center flex items-center justify-center gap-1.5">
         <span className={TAG_ACCENT}>Recommended</span> relay · short-lived tokens, never stored
       </p>
@@ -327,7 +327,7 @@ function HubSpotOneClick({ c, cloud }: { c: Connector; cloud: CloudStatus | null
       ) : (
         <CloudStatusPending />
       )}
-      {error && <div className="text-[12.5px] text-danger">{error}</div>}
+      {error && <div className="text-[13px] text-danger">{error}</div>}
       <p className="text-[12px] text-faint text-center">
         Works for any number of portals · tokens stay on this computer
       </p>
@@ -360,7 +360,7 @@ function SlackManual({ onConnected }: { onConnected: () => void }) {
       <button className={PILL_LINE + " w-full !py-2"} onClick={submit} disabled={busy || !bot.trim() || !app.trim()}>
         {busy ? "Validating…" : "Connect"}
       </button>
-      {error && <div className="text-[12.5px] text-danger">{error}</div>}
+      {error && <div className="text-[13px] text-danger">{error}</div>}
       <p className="text-[12px] text-warnInk text-center">
         One mode at a time — this pauses any relay workspaces.
       </p>

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import {
   getSettings,
   getTrustedWorkspaces,
+  setAutoApprove,
+  setAutoApproveShadow,
   setCompactionSettings,
   setContextBar,
   setOnboarded,
@@ -39,7 +41,7 @@ import { useThemePref } from "../theme";
 import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { ModelsTab } from "./ManageTabs";
-import { GalleryModal } from "./GalleryModal";
+import { MemorySection } from "./MemorySection";
 import { PersonasTab } from "./PersonasTab";
 import { SkillsTab } from "./SkillsTab";
 import { showPersonas } from "../flags";
@@ -51,23 +53,29 @@ import { showPersonas } from "../flags";
 // Models + Personas host the existing tab components inside the page shell (field re-skin to follow).
 // "appearance" is the General tab's stable key — callers deep-link with it, so the
 // rename (UX-021) changed only the label. "files" folded into General as a card.
-type SetTab = "appearance" | "models" | "skills" | "voice" | "personas";
+type SetTab = "appearance" | "models" | "context" | "skills" | "voice" | "memory" | "personas";
 
 const CARD = "rounded-xl2 border border-line bg-panel";
-const FIELD_LABEL = "text-[12.5px] font-medium text-ink";
+const FIELD_LABEL = "text-[13px] font-medium text-ink";
 const FIELD_HELP = "text-[12px] text-muted mt-1.5 leading-relaxed";
 const INPUT =
   "flex-1 min-w-0 px-3 py-2 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent";
-const BTN_ACCENT = "text-[12.5px] px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
+const BTN_ACCENT = "text-[13px] px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
 const BTN_BORDERED =
-  "text-[12.5px] px-3 py-2 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
+  "text-[13px] px-3 py-2 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
 
-const SET_TABS: { key: SetTab; label: string; icon: "sliders" | "code" | "mic" | "sparkle" | "book" }[] = [
+const SET_TABS: {
+  key: SetTab;
+  label: string;
+  icon: "sliders" | "code" | "mic" | "archive" | "sparkle" | "book" | "refresh";
+}[] = [
   { key: "appearance", label: "General", icon: "sliders" },
   { key: "models", label: "Models", icon: "code" },
+  { key: "context", label: "Context optimization", icon: "refresh" },
   { key: "skills", label: "Skills", icon: "book" },
   { key: "voice", label: "Voice input", icon: "mic" },
-  { key: "personas", label: "Personas", icon: "sparkle" },
+  { key: "memory", label: "Memory", icon: "archive" },
+  { key: "personas", label: "Coworkers", icon: "sparkle" },
 ];
 
 export function SettingsView({
@@ -92,7 +100,7 @@ export function SettingsView({
   return (
     <main className="flex-1 min-w-0 flex bg-paper">
       <nav className="page-subnav w-[208px] shrink-0 border-r border-line bg-panel/40 px-3 py-4">
-        <div className="px-2 text-[13.5px] font-semibold mb-3 flex items-center gap-2">
+        <div className="px-2 text-[13px] font-semibold mb-3 flex items-center gap-2">
           <Icon name="gear" size={16} /> Settings
         </div>
         {tabs.map((t) => {
@@ -123,17 +131,22 @@ export function SettingsView({
                 sub="Providers and the models offered in the composer's picker. Keys are stored only on this computer."
               />
               <ModelsTab />
-              {/* Token savings is model-spend behavior, so it lives here (UX-021),
-                  not under General. */}
-              <div className="mt-6">
-                <TokenSavingsCard />
-                <CompactionCard />
-              </div>
+            </section>
+          ) : tab === "context" ? (
+            <section>
+              <PanelHead
+                title="Context optimization"
+                sub="How sessions spend tokens — attachment handling and long-history compaction."
+              />
+              <TokenSavingsCard />
+              <CompactionCard />
             </section>
           ) : tab === "skills" ? (
             <SkillsTab onCreateSkill={onCreateSkill} />
           ) : tab === "voice" ? (
             <VoiceInputSection />
+          ) : tab === "memory" ? (
+            <MemorySection />
           ) : (
             <PersonasSection onOpenPersona={onOpenPersona} />
           )}
@@ -278,7 +291,7 @@ function VoiceInputSection() {
         <div className={CARD + " p-4 text-[13px] text-muted"}>Voice Input setup is available in the OpenWorker desktop app.</div>
       ) : (
         <div className="space-y-4">
-          <div className="rounded-xl border border-green-200 bg-green-50/70 px-4 py-3 text-[12.5px] text-green-800">
+          <div className="rounded-xl border border-green-200 bg-green-50/70 px-4 py-3 text-[13px] text-green-800">
             <span className="font-medium">Private by design.</span> Audio is held in memory only while you record and is transcribed locally.
           </div>
 
@@ -286,12 +299,12 @@ function VoiceInputSection() {
             <div className="p-4 flex items-start gap-3">
               <Icon name="code" size={18} className="text-accent mt-0.5" />
               <div className="min-w-0 flex-1">
-                <div className="text-[13.5px] font-medium">This device</div>
+                <div className="text-[13px] font-medium">This device</div>
                 <div className="text-[12px] text-muted mt-1">{status?.device_summary || "Checking compatibility…"}</div>
                 {status?.compatibility_reason && <div className="text-[12px] text-red-600 mt-1.5">{status.compatibility_reason}</div>}
               </div>
               {status && (
-                <span className={"text-[11.5px] px-2 py-1 rounded-full " + (status.supported ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600")}>
+                <span className={"text-[12px] px-2 py-1 rounded-full " + (status.supported ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600")}>
                   {status.supported ? "● Compatible" : "Unsupported"}
                 </span>
               )}
@@ -308,14 +321,14 @@ function VoiceInputSection() {
             <div className="p-4 flex items-center gap-3">
               <div className="w-9 h-9 rounded-lg bg-accentSoft text-accent grid place-items-center font-semibold">W</div>
               <div className="min-w-0 flex-1">
-                <div className="text-[13.5px] font-medium">Whisper Base · English</div>
+                <div className="text-[13px] font-medium">Whisper Base · English</div>
                 <div className="text-[12px] text-muted mt-0.5">
                   {status?.model_verified ? `Installed and verified · ${formatBytes(status.model_bytes)}` : `Local voice model · ${formatBytes(status?.model_bytes || 147_964_211)}`}
                 </div>
               </div>
               {status?.model_verified ? (
                 <>
-                  <span className="text-[11.5px] px-2 py-1 rounded-full bg-green-50 text-green-700">Verified</span>
+                  <span className="text-[12px] px-2 py-1 rounded-full bg-green-50 text-green-700">Verified</span>
                   <button className={BTN_BORDERED} onClick={() => void repair()}>Repair</button>
                   <button className="text-[12px] text-red-600 px-2 py-2" onClick={() => void remove()}>Delete</button>
                 </>
@@ -330,7 +343,7 @@ function VoiceInputSection() {
             {downloading && (
               <div className="border-t border-line px-4 py-3">
                 <div className="h-1.5 rounded-full bg-line overflow-hidden"><div className="h-full bg-accent transition-all" style={{ width: `${progressPercent}%` }} /></div>
-                <div className="mt-1.5 text-[11.5px] text-muted flex"><span>{formatBytes(progress?.downloaded_bytes || 0)} of {formatBytes(progressTotal)}</span><span className="ml-auto">{progressPercent}%</span></div>
+                <div className="mt-1.5 text-[12px] text-muted flex"><span>{formatBytes(progress?.downloaded_bytes || 0)} of {formatBytes(progressTotal)}</span><span className="ml-auto">{progressPercent}%</span></div>
               </div>
             )}
           </div>
@@ -339,12 +352,12 @@ function VoiceInputSection() {
             <div className="p-4 flex items-center gap-3">
               <Icon name="mic" size={18} className={ready ? "text-green-600" : "text-muted"} />
               <div className="min-w-0 flex-1">
-                <div className="text-[13.5px] font-medium">Microphone test</div>
+                <div className="text-[13px] font-medium">Microphone test</div>
                 <div className="text-[12px] text-muted mt-0.5">
                   {ready ? "Your microphone and local transcription engine are working." : "Record a short phrase to enable the composer microphone."}
                 </div>
               </div>
-              {ready && <span className="text-[11.5px] px-2 py-1 rounded-full bg-green-50 text-green-700">● Ready</span>}
+              {ready && <span className="text-[12px] px-2 py-1 rounded-full bg-green-50 text-green-700">● Ready</span>}
               <button className={BTN_BORDERED} disabled={!status?.supported || !status?.model_verified || phase === "transcribing"} onClick={() => void toggleTest()}>
                 {status?.recording ? "Stop and check" : phase === "transcribing" ? "Transcribing…" : ready ? "Test again" : "Test microphone"}
               </button>
@@ -363,37 +376,19 @@ function VoiceInputSection() {
 // -- Personas: installed/enabled/delete management, the dir/Git importer, and the
 // entry point to the Persona Gallery (a screen-sized modal — installs finish back
 // here, disabled pending consent; a gallery install re-mounts the list in place).
+// The Gallery entry point is GONE (owner 2026-08-21) — coworkers install from
+// GitHub / folder / zip only. GalleryModal stays in the tree for the gallery's
+// possible return as a first-class distribution surface, but nothing mounts it.
 function PersonasSection({ onOpenPersona }: { onOpenPersona?: (id: string) => void }) {
-  const [galleryBump, setGalleryBump] = useState(0);
-  const [galleryOpen, setGalleryOpen] = useState(false);
-
   return (
     <section>
-      <PanelHead
-        title="Personas"
-        sub="Which coworkers are enabled and shown in the picker, plus installing new persona bundles."
-      />
-      <PersonasTab key={galleryBump} onOpenPersona={onOpenPersona} />
-      <button
-        className="mt-6 w-full rounded-xl2 border border-line bg-panel px-4 py-3.5 flex items-center gap-3 text-left hover:border-lineStrong"
-        data-testid="gallery-link"
-        onClick={() => setGalleryOpen(true)}
-      >
-        <Icon name="sparkle" size={16} className="text-accent shrink-0" />
-        <span className="min-w-0 flex-1">
-          <span className="block text-[13.5px] font-medium">Browse the Persona Gallery</span>
-          <span className="block text-[12px] text-muted">
-            Curated coworkers from the OpenWorker team — see what each can do before installing.
-          </span>
-        </span>
-        <span className="text-[12.5px] text-accent shrink-0">Open →</span>
-      </button>
-      {galleryOpen && (
-        <GalleryModal
-          onClose={() => setGalleryOpen(false)}
-          onInstalled={() => setGalleryBump((b) => b + 1)}
-        />
-      )}
+      <PanelHead title="Coworkers" sub="Manage your coworkers and add new ones." />
+      <p className="text-[13px] text-muted leading-relaxed max-w-[560px] mt-5 mb-1">
+        Coworkers are agents specialized for a particular role or task. They come equipped
+        with the tools and skills to be successful in that role. Enabling a coworker lets
+        you pick it when starting a conversation.
+      </p>
+      <PersonasTab onOpenPersona={onOpenPersona} />
     </section>
   );
 }
@@ -438,6 +433,8 @@ function AppearanceSection() {
       <SidebarCard />
 
       <ContextBarCard />
+
+      <AutoApproveCard />
 
       <FilesCard />
 
@@ -513,8 +510,8 @@ function TrustedWorkspacesCard() {
           {workspaces.map((workspace) => (
             <div key={workspace.workspace} className="py-2.5 flex items-start gap-3">
               <div className="min-w-0 flex-1">
-                <div className="text-[12.5px] text-ink break-all">{workspace.workspace}</div>
-                <div className="text-[11.5px] text-muted mt-0.5">
+                <div className="text-[13px] text-ink break-all">{workspace.workspace}</div>
+                <div className="text-[12px] text-muted mt-0.5">
                   {workspace.requested_commands.length
                     ? `${workspace.requested_commands.length} project command allowance${workspace.requested_commands.length === 1 ? "" : "s"}`
                     : "No project command allowances currently declared"}
@@ -675,7 +672,7 @@ function TokenSavingsCard() {
             className="w-16 px-2 py-1.5 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent"
             onChange={(e) => save({ pdf_max_mb: Math.max(1, Math.min(Number(e.target.value) || 10, 10)) })}
           />
-          <span className="text-[12.5px] text-muted">MB</span>
+          <span className="text-[13px] text-muted">MB</span>
         </label>
       </div>
       <div className={FIELD_HELP}>
@@ -748,7 +745,7 @@ function CompactionCard() {
               })
             }
           />
-          <span className="text-[12.5px] text-muted">% of the context window</span>
+          <span className="text-[13px] text-muted">% of the context window</span>
         </label>
         <label className="flex items-center gap-2.5">
           <span className="text-[13px] text-ink">or at</span>
@@ -769,7 +766,7 @@ function CompactionCard() {
               })
             }
           />
-          <span className="text-[12.5px] text-muted">tokens, whichever is smaller</span>
+          <span className="text-[13px] text-muted">tokens, whichever is smaller</span>
         </label>
       </div>
       <div className={FIELD_HELP}>
@@ -836,6 +833,77 @@ function ContextBarCard() {
             A small meter showing how full the model&rsquo;s context window is. Turn it off
             to show this session&rsquo;s token total instead; either way the full breakdown
             is one click away.
+          </span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
+// Auto-Approve (spec §1.5): the experimental feature flag that adds the "Auto-Approve" mode
+// to the composer's mode picker, plus its shadow-evaluation sibling. Both default off and are
+// user-global (a cloned repo can't turn either on). Shadow is nested under the main flag — it
+// only makes sense to measure the reviewer once you know what it is.
+function AutoApproveCard() {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [shadow, setShadow] = useState(false);
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => {
+        setOn(s.auto_approve === true);
+        setShadow(s.auto_approve_shadow === true);
+      })
+      .catch(() => setOn(false));
+  }, []);
+
+  const saveOn = async (next: boolean) => {
+    setOn(next);
+    await setAutoApprove(next);
+  };
+  const saveShadow = async (next: boolean) => {
+    setShadow(next);
+    await setAutoApproveShadow(next);
+  };
+
+  if (on === null) return null;
+  return (
+    <div className={CARD + " p-4 mb-4"} data-testid="auto-approve-card">
+      <div className={FIELD_LABEL}>Auto-approve (experimental)</div>
+      <label className="flex items-start gap-3 py-2">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          data-testid="auto-approve-toggle"
+          checked={on}
+          onChange={(e) => saveOn(e.target.checked)}
+        />
+        <span>
+          <span className="block text-[13px] text-ink">Enable Auto-approve mode</span>
+          <span className="block text-[12px] text-muted">
+            Adds an <em>Auto-approve</em> option to the mode picker. In that mode, your session
+            model reviews each action that would normally need approval and clears the routine
+            ones; anything doubtful still asks you. It can never allow something the rules
+            block. One extra model call per check, billed to your usage.
+          </span>
+        </span>
+      </label>
+      <label className="flex items-start gap-3 py-2 pl-7">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          data-testid="auto-approve-shadow-toggle"
+          checked={shadow}
+          onChange={(e) => saveShadow(e.target.checked)}
+        />
+        <span>
+          <span className="block text-[13px] text-ink">
+            Shadow evaluation <span className="text-faint">(for measuring)</span>
+          </span>
+          <span className="block text-[12px] text-muted">
+            On any mode, the reviewer records what it <em>would</em> have decided next to your
+            own choice — without changing anything. Lets you see how it would behave before
+            trusting it. Also costs one model call per approval.
           </span>
         </span>
       </label>
@@ -943,7 +1011,7 @@ function FilesCard() {
         Each conversation gets its own folder under this location. Existing conversations keep their current
         folder; you can grant access to more folders inside any conversation.
       </div>
-      {scratchMsg && <div className="text-[12.5px] text-muted mt-2.5">{scratchMsg}</div>}
+      {scratchMsg && <div className="text-[13px] text-muted mt-2.5">{scratchMsg}</div>}
     </div>
   );
 }

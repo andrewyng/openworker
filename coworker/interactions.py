@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .inbox import KIND_APPROVAL, KIND_QUESTION
+from .tools.ask import option_label
 
 
 @dataclass
@@ -48,7 +49,15 @@ def buttons_for(item) -> list[Button]:
             Button("Approve", encode(item.id, "allow")),
             Button("Deny", encode(item.id, "deny")),
         ]
+    if item.kind == KIND_QUESTION and getattr(item, "questions", None):
+        # Grouped questions (OPE-51): one button row can't answer 2+ questions — send plain text
+        # with the open-the-app hint instead.
+        return []
     if item.kind == KIND_QUESTION and getattr(item, "options", None):
-        # One button per option; the resolution IS the chosen option text (what the agent gets).
-        return [Button(opt, encode(item.id, opt)) for opt in item.options]
+        # One button per option; the resolution IS the chosen option's label (what the agent
+        # gets). Rich {label, description, …} options button as their label.
+        return [
+            Button(option_label(opt), encode(item.id, option_label(opt)))
+            for opt in item.options
+        ]
     return []
