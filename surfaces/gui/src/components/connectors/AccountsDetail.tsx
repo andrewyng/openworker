@@ -38,7 +38,7 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
           <h2 className="text-[20px] font-semibold tracking-tight leading-tight">
             {c.title}
           </h2>
-          <div className="text-[12.5px] text-muted flex items-center gap-1.5">
+          <div className="text-[13px] text-muted flex items-center gap-1.5">
             {c.connected ? (
               <>
                 <span className="w-2 h-2 rounded-full bg-ok" />

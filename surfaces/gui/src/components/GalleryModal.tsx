@@ -27,8 +27,8 @@ import { PersonaHero } from "./PersonaHero";
 
 const CARD = "rounded-xl border border-line bg-panel/60";
 const BTN_ACCENT =
-  "text-[12.5px] px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
-const CHIP = "text-[10.5px] px-1.5 py-0.5 rounded border border-line text-muted";
+  "text-[13px] px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
+const CHIP = "text-[11px] px-1.5 py-0.5 rounded border border-line text-muted";
 
 type Source = "all" | "openworker" | "team";
 
@@ -151,7 +151,7 @@ export function GalleryModal({
           <button
             key={key}
             className={
-              "text-[11.5px] px-2.5 py-1 rounded-full border " +
+              "text-[12px] px-2.5 py-1 rounded-full border " +
               (source === key
                 ? "border-accent text-accent bg-accentSoft"
                 : "border-line text-muted hover:border-lineStrong")
@@ -164,7 +164,7 @@ export function GalleryModal({
       </div>
 
       {unavailable && cloud?.signed_in && (
-        <div className="text-[12.5px] text-muted">
+        <div className="text-[13px] text-muted">
           The gallery is unreachable right now — try again in a moment.
         </div>
       )}
@@ -198,7 +198,7 @@ export function GalleryModal({
       )}
 
       <div className="text-[11px] uppercase tracking-[0.05em] text-faint font-semibold mb-2">
-        All personas
+        All coworkers
       </div>
       <div className="space-y-2">
         {visible.map((p) => {
@@ -212,13 +212,13 @@ export function GalleryModal({
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 mb-0.5">
-                  <span className="font-semibold text-[13.5px]">{p.name}</span>
+                  <span className="font-semibold text-[13px]">{p.name}</span>
                   <span className={CHIP}>{p.family}</span>
                   <span className="text-[11px] text-faint">
                     v{p.version} · {p.publisher}
                   </span>
                 </div>
-                <div className="text-[12.5px] text-muted mb-1.5">{p.tagline}</div>
+                <div className="text-[13px] text-muted mb-1.5">{p.tagline}</div>
                 {p.recommended_connectors.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {p.recommended_connectors.map((c) => (
@@ -231,26 +231,26 @@ export function GalleryModal({
                 {isInstalled ? (
                   <span className="text-[12px] text-muted">Installed</span>
                 ) : (
-                  <span className="text-[12.5px] text-accent">View & install →</span>
+                  <span className="text-[13px] text-accent">View & install →</span>
                 )}
               </div>
             </div>
           );
         })}
         {visible.length === 0 && !unavailable && (
-          <div className="text-[12.5px] text-muted py-4">
+          <div className="text-[13px] text-muted py-4">
             {source === "team"
               ? "Nothing shared with your team yet."
               : q
-              ? "No personas match your search."
-              : "No personas published yet."}
+              ? "No coworkers match your search."
+              : "No coworkers published yet."}
           </div>
         )}
       </div>
 
       {source !== "team" && teamCount === 0 && (
         <div className="mt-5 pt-3 border-t border-line text-[12px] text-faint" data-testid="gallery-team-teaser">
-          From your team — nothing shared yet. Publishing a persona to your teammates is coming soon.
+          From your team — nothing shared yet. Publishing a coworker to your teammates is coming soon.
         </div>
       )}
     </div>
@@ -261,31 +261,31 @@ export function GalleryModal({
   const detailView = detailSlug && (
     <div data-testid="gallery-detail">
       <button
-        className="text-[12.5px] text-muted hover:text-ink mb-3"
+        className="text-[13px] text-muted hover:text-ink mb-3"
         onClick={() => setDetailSlug(null)}
       >
         ← Gallery
       </button>
       {!detail ? (
-        <div className="text-[12.5px] text-muted">Loading…</div>
+        <div className="text-[13px] text-muted">Loading…</div>
       ) : !detail.ok || !card ? (
-        <div className="text-[12.5px] text-danger">{detail.error || "could not load details"}</div>
+        <div className="text-[13px] text-danger">{detail.error || "could not load details"}</div>
       ) : (
         <div className="space-y-4">
           <div className="flex items-start gap-4">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 mb-1">
-                <span className="font-semibold text-[17px]">{card.name}</span>
+                <span className="font-semibold text-[16px]">{card.name}</span>
                 <span className={CHIP}>{card.family}</span>
               </div>
               <div className="text-[13px] text-muted">{card.tagline}</div>
-              <div className="text-[11.5px] text-faint mt-1">
+              <div className="text-[12px] text-faint mt-1">
                 v{card.version} · {card.publisher} · {card.risk_summary}
               </div>
             </div>
             <div className="shrink-0">
               {installed.has(detailSlug) ? (
-                <span className="text-[12.5px] text-muted">Installed</span>
+                <span className="text-[13px] text-muted">Installed</span>
               ) : (
                 <button className={BTN_ACCENT} onClick={() => install(detailSlug)} disabled={busy}>
                   {busy ? "Installing…" : "Install"}
@@ -293,11 +293,11 @@ export function GalleryModal({
               )}
             </div>
           </div>
-          {msg && <div className="text-[12.5px] text-danger">{msg}</div>}
+          {msg && <div className="text-[13px] text-danger">{msg}</div>}
 
           {justInstalled && (
             <div className="rounded-lg border border-okLine bg-okSoft px-3.5 py-2.5 flex items-center gap-3">
-              <span className="flex-1 text-[12.5px] text-ok">
+              <span className="flex-1 text-[13px] text-ok">
                 Installed — it&rsquo;s waiting in Personas, disabled until you approve and enable it.
               </span>
               <button className={BTN_ACCENT} onClick={onClose}>
@@ -323,7 +323,7 @@ export function GalleryModal({
                 Read by this app&rsquo;s own parser, so it matches exactly what the install
                 consent will ask you to approve. No executable code is installed.
               </div>
-              <div className="space-y-2 text-[12.5px]">
+              <div className="space-y-2 text-[13px]">
                 <div>
                   <span className="text-muted">Tools: </span>
                   {caps.tools.join(", ") || "none"}
@@ -352,7 +352,7 @@ export function GalleryModal({
                         </div>
                       ))}
                     </div>
-                    <div className="text-[11.5px] text-faint mt-2">
+                    <div className="text-[12px] text-faint mt-2">
                       You connect these yourself (one click when signed in) — installing the
                       coworker grants it nothing until you do.
                     </div>
@@ -372,7 +372,7 @@ export function GalleryModal({
       <div className="absolute left-1/2 top-[6vh] -translate-x-1/2 w-[720px] max-w-[94vw] max-h-[88vh] rounded-xl2 border border-line bg-panel shadow-2xl overflow-hidden flex flex-col">
         <div className="px-5 pt-4 pb-3 border-b border-line flex items-center gap-3 shrink-0">
           <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-semibold">Persona Gallery</div>
+            <div className="text-[14px] font-semibold">Coworker Gallery</div>
             <div className="text-[12px] text-muted">
               Curated coworkers · installs stay disabled until you approve them
             </div>
@@ -381,8 +381,8 @@ export function GalleryModal({
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search personas"
-              className="w-[180px] px-3 py-1.5 rounded-lg border border-line bg-paper text-[12.5px] text-ink outline-none focus:border-accent"
+              placeholder="Search coworkers"
+              className="w-[180px] px-3 py-1.5 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent"
             />
           )}
           <button
@@ -398,7 +398,7 @@ export function GalleryModal({
         <div className="overflow-y-auto hairline-scroll p-5">
           {loading ? (
             <div className="space-y-2" data-testid="gallery-loading" aria-busy="true">
-              <div className="text-[12.5px] text-muted mb-3">Loading the gallery…</div>
+              <div className="text-[13px] text-muted mb-3">Loading the gallery…</div>
               {[0, 1, 2].map((i) => (
                 <div key={i} className={CARD + " p-3.5 animate-pulse"}>
                   <div className="h-3.5 w-44 rounded bg-line mb-2.5" />
@@ -410,7 +410,7 @@ export function GalleryModal({
             <div className={CARD + " p-5 flex items-center gap-4"} data-testid="gallery-signin">
               <div className="min-w-0 flex-1">
                 <div className="font-semibold text-[14px] mb-1">Sign in to browse the Gallery</div>
-                <div className="text-[12.5px] text-muted leading-relaxed">
+                <div className="text-[13px] text-muted leading-relaxed">
                   The Gallery is a curated set of coworkers from OpenWorker Cloud and needs a
                   (free) cloud sign-in. Installing personas from a folder or Git URL — on the
                   Personas page — always works without an account.

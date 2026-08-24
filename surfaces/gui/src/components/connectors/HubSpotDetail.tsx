@@ -17,7 +17,7 @@ import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_ACCENT, TAG_QUIET, TAG_WARN, XB
 // are the ACL against humans) + collapsed Tools. Adding a portal goes through
 // the ONE entry point: header button → modal (One click w/ access radios | Manual).
 
-const LABEL = "text-[12.5px] text-muted w-24 shrink-0";
+const LABEL = "text-[13px] text-muted w-24 shrink-0";
 
 export function HubSpotDetail({ c, cloud, slack: _slack, onChanged }: DetailProps) {
   const [adding, setAdding] = useState(false);
@@ -29,7 +29,7 @@ export function HubSpotDetail({ c, cloud, slack: _slack, onChanged }: DetailProp
         <ConnectorBadge connector={c} size={44} title="HubSpot" />
         <div className="min-w-0 flex-1">
           <h2 className="text-[20px] font-semibold tracking-tight leading-tight">HubSpot</h2>
-          <div className="text-[12.5px] text-muted flex items-center gap-1.5">
+          <div className="text-[13px] text-muted flex items-center gap-1.5">
             {c.connected ? (
               <>
                 <span className="w-2 h-2 rounded-full bg-ok" />
@@ -49,7 +49,7 @@ export function HubSpotDetail({ c, cloud, slack: _slack, onChanged }: DetailProp
 
       {!c.connected && (
         <div className={GRP}>
-          <div className={ROW + " text-[12.5px] text-muted"}>
+          <div className={ROW + " text-[13px] text-muted"}>
             Connect a portal — read-only or read &amp; write is chosen at consent; there are no
             delete tools either way.
           </div>
@@ -158,7 +158,7 @@ function PrivacyGroup({ c, onChanged }: Pick<DetailProps, "c" | "onChanged">) {
             {fields.map((f) => (
               <span
                 key={f}
-                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-paper border border-line text-[12.5px] font-mono"
+                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-paper border border-line text-[13px] font-mono"
               >
                 {f}
                 <button className={XBTN} title="remove" onClick={() => save(fields.filter((x) => x !== f))}>
@@ -167,7 +167,7 @@ function PrivacyGroup({ c, onChanged }: Pick<DetailProps, "c" | "onChanged">) {
               </span>
             ))}
             <input
-              className="flex-1 min-w-[140px] bg-transparent text-[12.5px] outline-none placeholder:text-faint"
+              className="flex-1 min-w-[140px] bg-transparent text-[13px] outline-none placeholder:text-faint"
               placeholder="Property name, e.g. salary"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}

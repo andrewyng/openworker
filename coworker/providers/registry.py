@@ -92,6 +92,10 @@ class ProviderDescriptor:
     )
     # One-line note under the provider title (e.g. "Connects through X's OpenAI-compatible API").
     blurb: str = ""
+    # "oauth" → no key form at all: the provider is configured by a browser sign-in
+    # (tokens in its `provider:<name>` profile) and the GUI renders connect/sign-out
+    # instead of fields. None → the usual key/field form.
+    auth: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,6 +105,7 @@ class ProviderDescriptor:
             "fields": [f.to_dict() for f in self.fields],
             "recommended_model": self.recommended_model,
             "blurb": self.blurb,
+            "auth": self.auth,
         }
 
 
@@ -141,6 +146,14 @@ def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     if base_url:
         return OpenAIProvider(secrets=secrets, base_url=base_url)
     return OpenAIResponsesProvider(secrets=secrets)
+
+
+def _build_codex(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    # Credentials come from the OAuth token set in the provider's own profile,
+    # resolved (and refreshed) at call time by the token store — never a key.
+    from .codex_provider import CodexProvider
+
+    return CodexProvider(secrets=secrets)
 
 
 def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -229,6 +242,37 @@ def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = 
     return build
 
 
+def _openai_responses_compat(
+    vendor: str,
+    default_base_url: str,
+    env_key: Optional[str] = None,
+    *,
+    reasoning_summary: bool = True,
+):
+    """Builder factory for vendors that explicitly implement the OpenAI Responses API.
+
+    Credentials stay isolated to the vendor's own profile/environment variable, matching the
+    Chat Completions compat path above. In particular, an OpenAI key is never sent to Ark.
+    """
+
+    def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+        base_url = ((profile or {}).get("base_url") or "").strip() or default_base_url
+        api_key = ((profile or {}).get("api_key") or "").strip() or (
+            os.environ.get(env_key, "").strip() if env_key else ""
+        )
+        if not api_key:
+            raise RuntimeError(
+                f"No {vendor} API key configured — add it in Settings ▸ Models."
+            )
+        return OpenAIResponsesProvider(
+            api_key=api_key,
+            base_url=base_url,
+            reasoning_summary=reasoning_summary,
+        )
+
+    return build
+
+
 def _compat(
     name: str,
     title: str,
@@ -264,6 +308,49 @@ def _compat(
         recommended_model=recommended_model,
         env_key=env_key,
         blurb=f"Uses {vendor}'s OpenAI-compatible API — the endpoint is prefilled, just add your key.",
+    )
+
+
+def _responses_compat(
+    name: str,
+    title: str,
+    *,
+    base_url: str,
+    recommended_model: str,
+    env_key: str,
+    endpoint_help: str = "",
+    reasoning_summary: bool = True,
+) -> ProviderDescriptor:
+    """Descriptor for a vendor exposing the OpenAI Responses API."""
+    return ProviderDescriptor(
+        name=name,
+        title=title,
+        needs_key=True,
+        fields=[
+            ProviderField(
+                "api_key",
+                f"{title} API key",
+                secret=True,
+            ),
+            ProviderField(
+                "base_url",
+                "Endpoint",
+                required=False,
+                default=base_url,
+                placeholder=base_url,
+                help=endpoint_help
+                or f"Prefilled with {title}'s official Responses endpoint.",
+            ),
+        ],
+        build=_openai_responses_compat(
+            title,
+            base_url,
+            env_key,
+            reasoning_summary=reasoning_summary,
+        ),
+        recommended_model=recommended_model,
+        env_key=env_key,
+        blurb=f"Uses {title}'s OpenAI-compatible Responses API — the endpoint is prefilled, just add your key.",
     )
 
 
@@ -330,6 +417,17 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="gpt-5.6-sol",
         env_key="OPENAI_API_KEY",
         blurb="OpenAI by default; custom endpoints can use an API key or Microsoft Entra ID.",
+    ),
+    ProviderDescriptor(
+        name="openai-codex",
+        title="ChatGPT subscription",
+        needs_key=False,
+        fields=[],
+        build=_build_codex,
+        recommended_model="gpt-5.6-sol",
+        blurb="Sign in with your ChatGPT plan and run OpenAI models through your "
+        "subscription — no API key. Tokens stay on this machine.",
+        auth="oauth",
     ),
     ProviderDescriptor(
         name="anthropic",
@@ -520,6 +618,26 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         blurb="Runs models inside your own Google Cloud project. Gemini and Claude use "
         "their native APIs; open-weight models go through the Vertex MaaS endpoint.",
     ),
+    # Ark has two intentionally separate provider identities. BytePlus pay-as-you-go and
+    # Volcengine Agent Plan use different regions, endpoints, credentials, and model catalogs;
+    # combining them would let one provider profile route a model to the wrong service.
+    _responses_compat(
+        "ark",
+        "BytePlus Ark",
+        base_url="https://ark.ap-southeast.bytepluses.com/api/v3",
+        recommended_model="dola-seed-evolving-latest-version",
+        env_key="ARK_API_KEY",
+        endpoint_help="BytePlus Ark's Asia Pacific endpoint. This provider is separate from Volcengine Ark Agent Plan.",
+        reasoning_summary=False,
+    ),
+    _responses_compat(
+        "ark-agent-plan-cn",
+        "Volcengine Ark Agent Plan",
+        base_url="https://ark.cn-beijing.volces.com/api/plan/v3",
+        recommended_model="doubao-seed-evolving",
+        env_key="ARK_AGENT_PLAN_CN_API_KEY",
+        endpoint_help="Volcengine Ark Agent Plan's China (Beijing) endpoint. It requires an Agent Plan API key.",
+    ),
     # OpenAI-compatible vendors, listed as first-class providers so users don't need to know the
     # "point the OpenAI slot at a different endpoint" trick (owner call, 2026-07-04). Each keeps
     # its own key profile; the endpoint is prefilled and editable (regional variants in `help`).
@@ -657,6 +775,9 @@ def descriptor_configured(d: ProviderDescriptor, profile: dict[str, Any]) -> boo
     a stored or env key. Multi-field cloud providers (no `api_key` field, e.g. Bedrock):
     every required field present — their actual credentials may be ambient (~/.aws, ADC).
     """
+    if d.auth == "oauth":
+        # A stored token set = signed in (the tokens live in the same profile).
+        return bool((profile or {}).get("tokens"))
     if not d.needs_key:
         return True  # keyless (Ollama) — usable out of the box
     profile = profile or {}
@@ -782,16 +903,27 @@ def _verify_bedrock(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
             }
         if kind == "ProfileNotFound":
             return {"ok": False, "error": f"{exc}"}
-        if kind == "ClientError":
-            code = (getattr(exc, "response", {}) or {}).get("Error", {}).get("Code", "")
+        # botocore raises MODELED subclasses of ClientError (class name
+        # "AccessDeniedException", not "ClientError"), so detect by the response shape,
+        # never the class name — a name check sent every modeled error to the generic
+        # fallback and hid the specific message (owner report 2026-08-17).
+        code = (getattr(exc, "response", None) or {}).get("Error", {}).get("Code", "")
+        if code:
             if code in ("UnrecognizedClientException", "InvalidSignatureException"):
                 return {"ok": False, "error": "AWS rejected the credentials."}
             if code in ("AccessDeniedException", "AccessDenied"):
                 return {
                     "ok": False,
-                    "error": "Credentials work but lack Bedrock access (bedrock:ListFoundationModels).",
+                    "error": (
+                        "Credentials work but lack Bedrock access "
+                        "(bedrock:ListFoundationModels) — check the key's policy, its "
+                        "expiry (short-term keys last up to 12h), and that the region "
+                        "matches where the key was created."
+                    ),
                 }
-            return {"ok": False, "error": f"AWS Bedrock returned {code or kind}."}
+            if code == "ExpiredTokenException":
+                return {"ok": False, "error": "The credentials have expired — generate a new key."}
+            return {"ok": False, "error": f"AWS Bedrock returned {code}."}
         return {"ok": False, "error": f"Couldn't reach AWS Bedrock ({kind})."}
     return {"ok": True}
 
@@ -945,9 +1077,11 @@ def verify_provider_key(
     fields: Optional[dict[str, Any]] = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
-    """Validate a provider's credentials with one cheap, read-only call (list models) — the same
-    pattern connectors use to validate tokens. Transient: callers pass the key directly so a user
-    can Test before saving. Never raises; returns {ok, error?}. Multi-field cloud providers
+    """Validate a provider's credentials with one cheap call — usually list models.
+
+    Ark's Responses-compatible data plane does not document a `/models` probe, so its Test button
+    sends a non-persisted one-token Responses request instead. Callers pass the key directly so a
+    user can Test before saving. Never raises; returns {ok, error?}. Multi-field cloud providers
     (Bedrock, Vertex) take their whole form via `fields`; everyone else uses api_key/base_url.
     """
     import httpx
@@ -956,6 +1090,10 @@ def verify_provider_key(
     key = (api_key or "").strip()
     if name == "openai" and _openai_auth_method(fields or {}) == OPENAI_AUTH_AZURE_AD:
         return _verify_azure_openai_entra(fields or {}, timeout)
+    if d.auth == "oauth":
+        # OAuth providers verify from their stored tokens (needs the SecretStore),
+        # which only the manager holds — see SessionManager.verify_provider.
+        return {"ok": False, "error": f"{d.title} verifies via its sign-in, not a key."}
     if name == "bedrock":
         return _verify_bedrock(fields or {}, timeout)
     if name == "vertex":
@@ -976,6 +1114,22 @@ def verify_provider_key(
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
+        elif name in ("ark", "ark-agent-plan-cn"):
+            default_base = next(
+                (f.default for f in d.fields if f.key == "base_url" and f.default), ""
+            )
+            base = (base_url or "").strip().rstrip("/") or default_base.rstrip("/")
+            resp = httpx.post(
+                base + "/responses",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": d.recommended_model,
+                    "input": "Reply with OK.",
+                    "max_output_tokens": 1,
+                    "store": False,
+                },
+                timeout=timeout,
+            )
         else:  # openai + any OpenAI-compatible endpoint (Azure, OpenRouter, vendors, vLLM…)
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""

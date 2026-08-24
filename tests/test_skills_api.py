@@ -272,10 +272,10 @@ def test_engine_catalog_respects_settings_disable(tmp_path):
     client.patch("/v1/skills/hidden", json={"enabled": False})
 
     from coworker.agent import build_engine
-    from coworker.agents.registry import get_agent
+    from coworker.agents.chat import chat_agent
 
     engine = build_engine(
-        agent=get_agent("chat"),
+        agent=chat_agent(),  # workspace-free agent (persona retired; builder remains)
         provider=ScriptedProvider(),
         skill_filter=lambda: manager.effective_skill_names("s1"),
     )

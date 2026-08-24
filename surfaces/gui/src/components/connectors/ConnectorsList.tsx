@@ -1,23 +1,28 @@
 import { useState } from "react";
-import { type CloudStatus, type Connector, type SlackStatus } from "../../api";
+import { type CloudStatus, type Connector, type McpServer, type SlackStatus } from "../../api";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
+import { AddMcpModal, CustomMcpGroup } from "./CustomMcp";
 import { CHIP_OK, CHIP_OFF, CHIP_WARN, GRP, GRP_H, FOOT, PILL_QUIET, ROW } from "./ui";
 
 // The Connectors LIST (UX-DECISIONS §21): connected first in their own inset group —
 // rows navigate to the connector's detail subpage; problems surface as a chip in the
 // list, never one click deep. Available connectors below with a Connect pill.
+// Custom MCP servers (UX-034) render as their own group after Connected; the "Add
+// custom server" affordance sits at the top of the page (owner ruling: top).
 
 const AVAILABLE_FOLD = 8; // rows shown before "show all"
 
 export function ConnectorsList({
   connectors,
+  mcpServers,
   cloud,
   slack,
   onOpen,
   onChanged,
 }: {
   connectors: Connector[];
+  mcpServers: McpServer[];
   cloud: CloudStatus | null;
   slack: SlackStatus | null;
   onOpen: (name: string) => void;
@@ -26,17 +31,26 @@ export function ConnectorsList({
   const [filter, setFilter] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [addingMcp, setAddingMcp] = useState(false);
 
   const q = filter.trim().toLowerCase();
   const match = (c: Connector) => !q || c.title.toLowerCase().includes(q) || c.name.includes(q);
   const connected = connectors.filter((c) => c.connected && match(c));
   const available = connectors.filter((c) => !c.connected && c.available && match(c));
+  const customMcp = mcpServers.filter((s) => !q || s.name.toLowerCase().includes(q));
   const shown = showAll || q ? available : available.slice(0, AVAILABLE_FOLD);
   const connectingC = connecting ? connectors.find((c) => c.name === connecting) : null;
 
   return (
     <div>
-      <div className="flex items-center justify-end mb-4">
+      <div className="flex items-center justify-between mb-4">
+        <button
+          className={PILL_QUIET}
+          onClick={() => setAddingMcp(true)}
+          data-testid="add-custom-server"
+        >
+          + Add custom MCP server
+        </button>
         <input
           placeholder="Search"
           value={filter}
@@ -60,16 +74,22 @@ export function ConnectorsList({
               >
                 <ConnectorBadge connector={c} size={34} title={c.title} />
                 <span className="min-w-0 flex-1">
-                  <span className="font-medium text-[13.5px]">{c.title}</span>
+                  <span className="font-medium text-[13px]">{c.title}</span>
                   <span className="block text-[12px] text-muted">{statusLine(c)}</span>
                 </span>
                 {healthChip(c, slack)}
-                <span className="text-faint text-[15px] shrink-0">›</span>
+                <span className="text-faint text-[14px] shrink-0">›</span>
               </button>
             ))}
           </div>
         </>
       )}
+
+      <CustomMcpGroup
+        servers={customMcp}
+        onOpen={(name) => onOpen("mcp:" + name)}
+        onChanged={onChanged}
+      />
 
       <div className={GRP_H}>Available</div>
       <div className={GRP}>
@@ -84,7 +104,7 @@ export function ConnectorsList({
           >
             <ConnectorBadge connector={c} size={34} title={c.title} />
             <span className="min-w-0 flex-1">
-              <span className="font-medium text-[13.5px]">{c.title}</span>
+              <span className="font-medium text-[13px]">{c.title}</span>
               <span className="block text-[12px] text-muted truncate">{c.blurb}</span>
             </span>
             <span
@@ -100,7 +120,7 @@ export function ConnectorsList({
           </button>
         ))}
         {shown.length === 0 && (
-          <div className={ROW + " text-[12.5px] text-muted"}>Nothing matches.</div>
+          <div className={ROW + " text-[13px] text-muted"}>Nothing matches.</div>
         )}
       </div>
       {!showAll && !q && available.length > AVAILABLE_FOLD && (
@@ -120,6 +140,7 @@ export function ConnectorsList({
           onChanged={onChanged}
         />
       )}
+      {addingMcp && <AddMcpModal onClose={() => setAddingMcp(false)} onChanged={onChanged} />}
     </div>
   );
 }

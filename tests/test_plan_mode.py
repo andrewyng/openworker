@@ -103,7 +103,7 @@ def test_plan_approval_flips_mode_and_executes(tmp_path):
     assert EventType.PLAN_PROPOSED in types
     assert seen_plans == ["1. write x.py  2. verify"]
     # same session flipped to auto and executed the write with no approval prompt
-    assert permissions.mode is Mode.AUTO
+    assert permissions.mode is Mode.BYPASS_APPROVALS
     assert EventType.PERMISSION_REQUIRED not in types
     assert (tmp_path / "x.py").read_text() == "done\n"
 

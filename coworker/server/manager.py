@@ -12,9 +12,11 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 
@@ -84,6 +86,20 @@ from ..providers import (
 )
 from ..secrets import SecretStore, state_dir
 from ..sessions import SessionRecord
+from ..teams import Actor as TeamActor
+from ..teams import BoardError as TeamsBoardError
+from ..teams import JournalStore, Role as TeamRole, TeamStore, board_tools, journal_tools
+from ..projects import (
+    project_key,
+    project_label,
+    project_presence,
+    resolve_board_space,
+    resolve_memory_key,
+)
+from ..teams.chat import ChatStore
+from ..teams.registry import TeamRegistry, TeamWorker
+from ..teams.attachments import AttachmentStore
+from ..teams.tokens import BoardTokens
 from ..skills import (
     SessionSkillStore,
     SkillLoader,
@@ -100,7 +116,50 @@ def _grants_of(engine) -> dict[str, Any]:
     """The engine's session-scoped "Always allow" approvals, in persistable shape."""
     tools = sorted(getattr(engine.permissions, "session_allow_tools", None) or ())
     commands = sorted(getattr(engine.permissions, "session_allow_commands", None) or ())
-    return {"tools": tools, "commands": commands} if (tools or commands) else {}
+    readonly = bool(getattr(engine.permissions, "session_readonly", False))
+    out: dict[str, Any] = {}
+    if tools or commands or readonly:
+        out = {"tools": tools, "commands": commands}
+        if readonly:
+            out["readonly"] = True
+    return out
+
+
+def _grant_offered(outcome, request) -> bool:
+    """Whether a persistent grant is legitimately offered for this tool — the server-side
+    mirror of what the approval card actually renders (`ApprovalCard.tsx`).
+
+    - ALWAYS_TOOL is tool-wide and argument-unbounded, so it is withheld from run_shell (the
+      command-scoped grant is the narrower option), from save_skill (every skill proposal
+      gets its own review), from anything that reaches off the machine — connectors and
+      MCP tools alike, where "always allow send_message" would cover every future recipient —
+      and from URL-carrying egress (§1.9): "always allow web_fetch" would cover every future
+      destination, and the domain-scoped grant is the one the card offers. Fixed-destination
+      egress (web_search: no url argument) keeps it — tool-wide IS provider-wide there.
+    - ALWAYS_COMMAND only means anything for the shell tool.
+    - ALWAYS_DOMAIN only means anything for a tool carrying a url.
+    """
+    from ..engine import ApprovalOutcome
+    from ..risk import RiskClass, classify
+
+    name = getattr(request, "tool_name", "")
+    metadata = getattr(request, "metadata", None)
+    args = getattr(request, "arguments", None) or {}
+    risk = classify(name, metadata)
+
+    if outcome is ApprovalOutcome.ALWAYS_COMMAND:
+        return risk is RiskClass.EXEC
+    if outcome is ApprovalOutcome.ALWAYS_DOMAIN:
+        return risk is RiskClass.EGRESS and bool(args.get("url"))
+    if outcome is ApprovalOutcome.ALWAYS_TOOL:
+        if risk in (RiskClass.EXEC, RiskClass.EXTERNAL):
+            return False
+        if risk is RiskClass.EGRESS and args.get("url"):
+            return False
+        if getattr(metadata, "category", "") == "connector":
+            return False
+        return name != "save_skill"
+    return True
 
 
 def _approval_body(request) -> str:
@@ -110,6 +169,14 @@ def _approval_body(request) -> str:
     reason = (getattr(request, "reason", "") or "").strip()
     preview = args_preview(getattr(request, "arguments", None))
     return "\n".join(p for p in (reason, preview) if p)
+
+
+def _stable_error(error: str) -> str:
+    """An error string with per-process noise removed, for change detection only:
+    hex object addresses and long digit runs (pids, ports, timestamps) vary between
+    identical failures across relaunches."""
+    stable = re.sub(r"0x[0-9a-fA-F]+", "0xADDR", error or "")
+    return re.sub(r"\d{4,}", "N", stable)
 
 
 class SessionManager:
@@ -147,6 +214,10 @@ class SessionManager:
         if self.default_workspace:
             self.session_store.touch_workspace(self.default_workspace)
         self._engines: dict[str, TurnEngine] = {}
+        # Sessions whose workspace was promoted mid-turn (workspace-scratch-design.md §5):
+        # evicted from the engine cache at the next mark_idle so the following turn
+        # rebuilds fully anchored on the new workspace.
+        self._promotion_rebuild: set[str] = set()
         self._running_sessions: set[str] = (
             set()
         )  # sessions with an in-flight turn (busy)
@@ -168,6 +239,16 @@ class SessionManager:
         # feeds list_mcp's status so the GUI can show "authorizing…" and failures.
         self._mcp_authorizing: set[str] = set()
         self._mcp_errors: dict[str, str] = {}
+        # ChatGPT-subscription provider sign-in in flight / its last error — feeds
+        # the providers list + status route so the GUI can show "authorizing…".
+        self._codex_authorizing = False
+        self._codex_error: Optional[str] = None
+        # http servers whose anonymous connect came back 401/403 — the failure is
+        # "needs sign-in", so the GUI offers the OAuth switch instead of a raw error.
+        self._mcp_auth_hints: set[str] = set()
+        # Servers that failed to connect while preparing a session's tools —
+        # drained once by the WS handler to append a transcript notice.
+        self._mcp_session_failures: dict[str, list[str]] = {}
         self.gateway: Optional[Gateway] = None
         self._data_base = base
         # Desktop/UI prefs (default model, onboarding state) — not secrets; a plain JSON file.
@@ -190,8 +271,28 @@ class SessionManager:
         # The scheduler also resumes self-wake'd sessions each tick (extra_tick).
         self.task_store = TaskStore(base / "automation.db")
         self.scheduler = Scheduler(
-            self.task_store, self._run_scheduled_task, extra_tick=self.resume_due_wakes
+            self.task_store, self._run_scheduled_task, extra_tick=self._scheduler_tick
         )
+        # Agent teams: two append-only stores, one record discipline. The journal is
+        # case-keyed (knowledge outlives boards/teams); the board log is space-scoped,
+        # and assignment feeds journal-case grants. Verbs register per-session behind
+        # the persona's `team:` trait; the registry holds rosters (lead/worker
+        # sessions per board) that the wake plumbing walks.
+        self.journal_store = JournalStore(base / "journal.db")
+        self.team_store = TeamStore(base / "teams.db", journal=self.journal_store)
+        self.chat_store = ChatStore(base / "chat.db")
+        self.teams = TeamRegistry(base / "teams.json")
+        # External board clients (OPE-100): join tokens bind actor+role; the
+        # `/v1/board` API resolves them and the store enforces authority.
+        self.board_tokens = BoardTokens(base / "board-tokens.json")
+        # Work-item attachments (OPE-105): content-addressed blobs next to the
+        # board; the log carries only `attachment://` refs.
+        self.attachment_store = AttachmentStore(base / "attachments")
+        self._team_inflight: set[str] = set()
+        # Lead-session last-turn timestamps for the check-in backstop (monotonic-ish
+        # wall clock; restart resets the clock rather than firing a wake storm).
+        self._team_last_alive: dict[str, float] = {}
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         # Personas: registry + lifecycle state under this manager's data dir. Installed as the
         # process singleton so agents.get_agent resolves persona ids (incl. third-party) here.
         self.personas = PersonaRegistry(state_path=base / "personas.json")
@@ -353,8 +454,14 @@ class SessionManager:
     DEFAULT_SCRATCH_BASE = "~/OpenWorker"
 
     def scratch_base(self) -> Path:
-        """Common area for per-conversation scratch directories. Configurable via prefs."""
-        base = self._prefs.get("scratch_base") or self.DEFAULT_SCRATCH_BASE
+        """Common area for per-conversation scratch directories. Configurable via prefs;
+        the env override keeps tests (and any sandboxed run) out of the real home dir —
+        universal scratch means every session provisions here, not just orphan ones."""
+        base = (
+            self._prefs.get("scratch_base")
+            or os.environ.get("COWORKER_SCRATCH_BASE")
+            or self.DEFAULT_SCRATCH_BASE
+        )
         return Path(base).expanduser()
 
     def _provision_scratch(self, session_id: str) -> str:
@@ -362,6 +469,75 @@ class SessionManager:
         d = self.scratch_base() / session_id
         d.mkdir(parents=True, exist_ok=True)
         return str(d.resolve())
+
+    _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
+    def is_temp_workspace(self, path: Optional[str]) -> bool:
+        """True when `path` is a per-conversation temporary directory (lives under the
+        scratch base). The GUI uses this to label the folder "Temporary folder" instead
+        of exposing its raw path."""
+        if not path:
+            return False
+        try:
+            return (
+                Path(path).expanduser().resolve().is_relative_to(self.scratch_base().resolve())
+            )
+        except OSError:
+            return False
+
+    def provision_temp_workspace(self, session_id: str, *, git: bool = True) -> dict[str, Any]:
+        """UX-029 "Start in a temporary folder": create the conversation's temporary
+        directory at SEND time (not connect) and, for code-family work, make git ready.
+        Idempotent — re-sending against an existing dir is a no-op."""
+        if not self._SESSION_ID_RE.match(session_id or "") or session_id in {".", ".."}:
+            return {"ok": False, "error": "invalid session id"}
+        path = self._provision_scratch(session_id)
+        if git and not (Path(path) / ".git").is_dir():
+            try:
+                subprocess.run(
+                    ["git", "init", "-q"],
+                    cwd=path,
+                    capture_output=True,
+                    timeout=10,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                pass  # no git on PATH → still a usable folder, just not a repo
+        return {"ok": True, "path": path, "git": (Path(path) / ".git").is_dir()}
+
+    def save_temp_as_project(self, session_id: str, dest: str) -> dict[str, Any]:
+        """UX-029 "Save as project…": move a session's temporary folder to a real
+        location and rebind the session there. The cached engine is dropped so the next
+        connect rebuilds against the new path — callers must reconnect after this."""
+        if not dest or not dest.strip():
+            return {"ok": False, "error": "no destination folder"}
+        record = self.session_store.load(session_id)
+        src = record.workspace if record and record.workspace else None
+        if not src:
+            engine = self._engines.get(session_id)
+            executor = getattr(engine, "executor", None) if engine else None
+            src = str(executor.cwd) if executor else None
+        if not src or not self.is_temp_workspace(src) or not Path(src).is_dir():
+            return {"ok": False, "error": "this session is not in a temporary folder"}
+        if self.is_running(session_id):
+            return {"ok": False, "error": "wait for the current task to finish first"}
+        d = Path(dest).expanduser()
+        if d.exists():
+            if not d.is_dir() or any(d.iterdir()):
+                return {"ok": False, "error": "destination must be a new or empty folder"}
+            d.rmdir()  # shutil.move into an existing dir would nest src inside it
+        try:
+            d.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(src, str(d))
+        except OSError as e:
+            return {"ok": False, "error": f"could not move the folder: {e}"}
+        new_path = str(d.resolve())
+        if record:
+            record.workspace = new_path
+            self.session_store.save(record)
+        self._engines.pop(session_id, None)
+        self.session_store.touch_workspace(new_path)
+        return {"ok": True, "path": new_path}
 
     def resolve_workspace(self, requested: Optional[str]) -> Optional[str]:
         if requested:
@@ -379,8 +555,7 @@ class SessionManager:
         record = self.session_store.load(session_id)
         if record:
             return record.workspace or None
-        ag = get_agent(agent or "code")
-        return self.resolve_workspace(workspace) if ag.needs_workspace else None
+        return self.resolve_workspace(workspace)
 
     def get_engine(
         self,
@@ -393,6 +568,9 @@ class SessionManager:
         directory_requester: Optional[Any] = None,
         plan_approver: Optional[Any] = None,
         question_asker: Optional[Any] = None,
+        tool_requester: Optional[Any] = None,
+        team_approver: Optional[Any] = None,
+        items_approver: Optional[Any] = None,
     ) -> Optional[TurnEngine]:
         engine = self._engines.get(session_id)
         if engine is not None:
@@ -404,6 +582,12 @@ class SessionManager:
                 engine.plan_approver = plan_approver
             if question_asker is not None:
                 engine.question_asker = question_asker
+            if tool_requester is not None:
+                engine.tool_requester = tool_requester
+            if team_approver is not None:
+                engine.team_approver = team_approver
+            if items_approver is not None:
+                engine.items_approver = items_approver
             return engine
 
         record = self.session_store.load(session_id)
@@ -415,30 +599,49 @@ class SessionManager:
             ws = record.workspace or None
             model, mode, messages = record.model, Mode(record.mode), record.messages
         else:
-            ws = self.resolve_workspace(workspace) if ag.needs_workspace else None
+            ws = self.resolve_workspace(workspace)
             model, mode, messages = self.model, self.mode, None
 
-        if ag.needs_workspace and (not ws or not Path(ws).is_dir()):
-            # Knowledge surfaces (Cowork, Ops, …) start "orphan": no folder picked →
-            # auto-provision a per-conversation scratch directory (generalizes MyHelper's
-            # auto-workspace). Code-family surfaces still require a real repo; Chat needs none.
-            if ag.family == "knowledge":
+        if not ws or not Path(ws).is_dir():
+            # Sessions without a folder start "orphan": auto-provision a per-conversation
+            # scratch directory (generalizes MyHelper's auto-workspace). Folder-gated
+            # personas (requires_folder) still demand a real directory picked by the user.
+            if not ag.requires_folder:
                 ws = self._provision_scratch(session_id)
             else:
                 return None
 
         if ws:
             self.session_store.touch_workspace(ws)
-        # Orphan surfaces are multi-root: the scratch (ws) is the primary writable root, plus any
-        # folders the user added (persisted per session). Code/Chat stay single-root (roots=None).
+        # Universal scratch (workspace-scratch-design.md §4): EVERY session is multi-root
+        # with a per-conversation scratch dir. Orphan sessions run ON their scratch
+        # (ws == scratch, primary). Sessions on a real folder — gated personas, or a
+        # temp-workspace pick that later became a project — keep that folder primary and
+        # gain scratch as a second writable root, so deliverables/temp files have a home
+        # that never dirties the user's repo. request_directory rides on roots, so it now
+        # registers everywhere.
         roots = None
-        if ag.family == "knowledge" and ws:
+        if ws:
             extra = [
                 r
                 for r in ((record.extra_roots if record else []) or [])
                 if Path(str(r.get("path", ""))).is_dir()
             ]
-            roots = [{"path": ws, "writable": True, "label": "scratch"}, *extra]
+            if self.is_temp_workspace(ws):
+                roots = [{"path": ws, "writable": True, "label": "scratch"}, *extra]
+            elif self._SESSION_ID_RE.match(session_id or "") and session_id not in {".", ".."}:
+                roots = [
+                    {"path": ws, "writable": True, "label": "workspace"},
+                    {
+                        "path": self._provision_scratch(session_id),
+                        "writable": True,
+                        "label": "scratch",
+                    },
+                    *extra,
+                ]
+            else:
+                # A session id we won't put in a filesystem path: primary root only.
+                roots = [{"path": ws, "writable": True, "label": "workspace"}, *extra]
         engine = build_engine(
             agent=ag,
             workspace=ws,
@@ -449,6 +652,7 @@ class SessionManager:
             # and stay usable, only the write tools go. Read at build time; running
             # sessions finish under the mode they started with.
             memory_store=self.memory_store,
+            memory_workspace=self._memory_key_for(record, ws),
             memory_off=not self.memory_settings.enabled,
             # LIVE, not a snapshot: turning saving off mid-conversation must take
             # effect at once (owner-hit 2026-07-28 — a running session kept saving).
@@ -458,7 +662,11 @@ class SessionManager:
             user_rules=lambda: self.memory_settings.user_rules,
             on_memory_saved=self._memory_saved_notifier(session_id),
             messages=messages,
-            extra_tools=extra_tools,
+            extra_tools=[
+                *(extra_tools or []),
+                *self._team_tools_for(session_id, ag, record, ws),
+            ]
+            or None,
             secrets=self.secrets,
             task_store=self.task_store,
             wake_store=self.wakes,
@@ -475,6 +683,9 @@ class SessionManager:
             plan_approver=plan_approver or self.inbox_plan_approver(session_id, agent),
             question_asker=question_asker
             or self.inbox_question_asker(session_id, agent),
+            tool_requester=tool_requester,
+            team_approver=team_approver,
+            items_approver=items_approver,
             subscription_store=self.subscriptions,
             channel_buffer=self.channel_buffer,
             routing_targets=self._routing_targets(session_id, agent),
@@ -482,7 +693,18 @@ class SessionManager:
             connector_filter=self.effective_connectors(session_id, agent_name),
             # Per-session skill menu, LIVE (SKILLS-SPEC §3): a callable so load_skill sees
             # disables/new skills immediately; the catalog snapshot is taken at build.
-            skill_filter=lambda sid=session_id, w=ws: self.effective_skill_names(sid, w),
+            skill_filter=lambda sid=session_id, w=ws, a=agent_name: (
+                self.effective_skill_names(sid, w, agent=a)
+            ),
+            # Persona-carried skills (OPE-58): the bundle's skills/ dir joins the loader
+            # so its skills are readable, not just listed.
+            extra_skill_dirs=(
+                [d] if (d := self.persona_skill_scope(agent_name)[0]) is not None else None
+            ),
+            # Auto-Approve (spec §1.5): prefs-backed, so the Settings toggle takes effect on
+            # the next session build without a config.toml edit.
+            auto_approve=self.auto_approve(),
+            auto_approve_shadow=self.auto_approve_shadow(),
         )
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
@@ -519,8 +741,11 @@ class SessionManager:
         from ..config import load_config
 
         entry = self.personas.get(persona_id)
-        family = entry.family if entry else ""
-        workspace_kind = entry.workspace if entry else ""
+        # Wire fields kept stable; both now carry the workspace shape ("folder" = gated
+        # primary folder, "scratch" = starts on the per-session scratch dir).
+        kind = ("folder" if entry.requires_folder else "scratch") if entry else ""
+        family = kind
+        workspace_kind = kind
 
         def _send() -> None:
             try:
@@ -550,14 +775,36 @@ class SessionManager:
     def _persona_of(self, session_id: str, persona_id: Optional[str] = None) -> str:
         if persona_id:
             return persona_id
+        # The live engine is the freshest truth — a brand-new session has no record row
+        # until its first send, but its socket already knows the persona.
+        engine = self._engines.get(session_id)
+        live = getattr(engine, "agent_name", None) if engine is not None else None
+        if live:
+            return live
         record = self.session_store.load(session_id)
         return (record.agent if record else None) or self.personas.default_id()
+
+    def _persona_connector_grant(self, persona_id: str) -> Optional[set[str]]:
+        """The persona's declared connector allowlist (OPE-93). None = unrestricted (the
+        `all` sentinel of general builtins); a set = only these ids can ever be effective
+        for its sessions — the empty set means no connector access at all."""
+        entry = self.personas.get(persona_id)
+        if entry is None or entry.manifest is None:
+            # Builder-based builtins (Chat/Code/Cowork/Ops) predate the allowlist: their
+            # `connectors` trait gates TOOLS only, while their sessions legitimately use
+            # the drawer/inbound path (channel bindings). No manifest → no restriction.
+            return None
+        declared = entry.manifest.connectors
+        if declared is True:
+            return None
+        return set(declared or ())
 
     def effective_connectors(
         self, session_id: str, persona_id: Optional[str] = None
     ) -> set[str]:
         """The connectors effectively enabled for this session (§4.1): connected AND not muted by
-        the session override / persona default. Drives the engine's connector-tool gating; seeds the
+        the session override / persona default AND within the persona's declared grant (OPE-93).
+        Drives the engine's connector-tool gating and the inbound delivery gate; seeds the
         persona defaults from the manifest on first read using the full connected set.
         """
         persona = self._persona_of(session_id, persona_id)
@@ -568,13 +815,15 @@ class SessionManager:
             persona, manifest, connected=connected
         )
         session_overrides = self.session_connections.get(session_id)
-        return set(
+        effective = set(
             effective_connections(
                 connected=connected,
                 persona_defaults=persona_defaults,
                 session_overrides=session_overrides,
             )
         )
+        grant = self._persona_connector_grant(persona)
+        return effective if grant is None else effective & grant
 
     def _inbound_connector_allowed(self, session_id: str, connector: str) -> bool:
         """Whether an inbound message on `connector` should be DELIVERED to `session_id` (§4.3).
@@ -585,19 +834,6 @@ class SessionManager:
         return connector in self.effective_connectors(session_id)
 
     # -- persona + session connection surfaces (UI-REFRESH §5/§6) ----------------
-    @staticmethod
-    def _workspace_kind(entry) -> str:
-        """The persona's workspace requirement as a stable string for the GUI. Manifest-backed
-        personas carry it verbatim (git|deliverable|none); builtins (which have no manifest) map
-        family/needs_workspace into the SAME vocabulary so the frontend reads one enum:
-        code-family → git, knowledge-family with a workspace → deliverable, none → none.
-        """
-        if entry.manifest is not None:
-            return entry.manifest.workspace
-        if not entry.needs_workspace:
-            return "none"
-        return "git" if entry.family == "code" else "deliverable"
-
     def _connected_connectors(self) -> set[str]:
         """The account-connected connector names (the first layer of the §4 hierarchy)."""
         return {c["name"] for c in connector_list(self.secrets) if c["connected"]}
@@ -635,19 +871,34 @@ class SessionManager:
             }
             for rec in (manifest.recommends if manifest else [])
         ]
+        media_dir = self.personas.media_dir(persona_id)
+        media = (
+            sorted(
+                f.name
+                for f in media_dir.iterdir()
+                if f.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+            )
+            if media_dir
+            else []
+        )
         return {
             "id": entry.id,
             "name": entry.name,
             "icon": entry.icon,
             "tagline": entry.tagline,
             "description": manifest.description if manifest else "",
+            "media": media,
+            "builtin": entry.builtin,
+            "group": entry.group,
             "enabled": self.personas.is_enabled(entry.id),
+            "surfaced": self.personas.is_surfaced(entry.id),
+            "default": entry.id == self.personas.default_id(),
             "tools": list(entry.tools),
             "recommended_models": list(manifest.recommended_models) if manifest else [],
             "default_permission_mode": (
                 manifest.default_permission_mode if manifest else "interactive"
             ),
-            "workspace": self._workspace_kind(entry),
+            "requires_folder": entry.requires_folder,
             "recommends": recommends,
             "default_connections": self._persona_default_connections(
                 persona_id, manifest, connected
@@ -733,6 +984,12 @@ class SessionManager:
         connectors = connector_list(self.secrets)
         by_name = {c["name"]: c for c in connectors}
         connected_names = {c["name"] for c in connectors if c["connected"]}
+        # OPE-93 (owner-hit 2026-08-15): the drawer must show the persona's world, not the
+        # account's. An undeclared connector is not a mutable source of this session — it
+        # was rendering as toggled-ON while the engine (correctly) refused its tools.
+        grant = self._persona_connector_grant(persona)
+        if grant is not None:
+            connected_names &= grant
         effective = self.effective_connectors(session_id, persona)
         connected = [
             {
@@ -822,6 +1079,7 @@ class SessionManager:
                 data={
                     "path": str(args.get("path", "")),
                     "writable": bool(args.get("writable", False)),
+                    "primary": bool(args.get("primary", False)),
                 },
                 tool_call_id=tool_call_id,
             )
@@ -835,6 +1093,33 @@ class SessionManager:
             if not path:
                 return {"granted": False, "error": "no directory was provided"}
             writable = bool(resp.get("writable", args.get("writable", False)))
+            if bool(args.get("primary", False)):
+                promo = await asyncio.to_thread(self.promote_workspace, session_id, path)
+                if promo.get("ok"):
+                    return {
+                        "granted": True,
+                        "path": promo["path"],
+                        "writable": True,
+                        "primary": True,
+                        "note": (
+                            "This folder is now the session's workspace. For the rest "
+                            "of this turn, address it by absolute path."
+                        ),
+                    }
+                res = self.add_root(session_id, path, writable)
+                if not res.get("ok"):
+                    return {
+                        "granted": False,
+                        "error": promo.get("error", "could not promote"),
+                    }
+                return {
+                    "granted": True,
+                    "path": path,
+                    "writable": writable,
+                    "primary": False,
+                    "note": promo.get("error", "")
+                    + " — granted as an additional folder instead",
+                }
             res = self.add_root(session_id, path, writable)
             if not res.get("ok"):
                 return {
@@ -924,6 +1209,13 @@ class SessionManager:
         loop = asyncio.get_running_loop()
         effective: Optional[set[str]] = None  # computed lazily, once
         out: list[Any] = []
+        # Persona `mcp:` wiring (OPE-58 sibling stub): a persona that declares an `mcp:`
+        # list SCOPES its sessions to those servers — the consent screen already presents
+        # that list as what the persona uses, so honoring it keeps consent truthful. It
+        # only ever shrinks: the user's enabled/configured/authed gates all still apply,
+        # and a persona with no list changes nothing. Connector-backed servers keep their
+        # own per-persona connector gating instead.
+        persona_mcp = self.persona_mcp_scope(agent)
         for server in load_mcp_servers(
             ws,
             secrets=self.secrets,
@@ -957,8 +1249,15 @@ class SessionManager:
                     for t in mcp_tool_defs(server.name)
                     if tool_enabled(self.secrets, server.name, t.name)
                 ]
+            elif persona_mcp is not None and server.name not in persona_mcp:
+                # Raw servers outside the persona's declared scope stay off its sessions.
+                continue
             try:
                 conn = await self.mcp.ensure(server)
+                self._mcp_errors.pop(server.name, None)
+                # Recovery resets the notice dedupe: if this server breaks again
+                # later, the next session gets a fresh transcript notice.
+                self._clear_mcp_notified(server.name)
             except Exception as exc:
                 if mcp_oauth.is_auth_required(exc):
                     # Stored tokens no longer refresh (vendor rotated/expired
@@ -971,7 +1270,32 @@ class SessionManager:
                     logger.info(
                         "mcp %s needs re-auth; skipped for this session", server.name
                     )
-                # else: bad command / unreachable url — skip, don't break the session
+                else:
+                    # Bad command / crashed child / unreachable url — the session
+                    # still runs without the tools, but the failure must not be
+                    # silent (three-for-three silent failures in the 2026-08-20
+                    # drill): record it for the MCP page and the session notice.
+                    msg = str(exc) or exc.__class__.__name__
+                    tail = self.mcp.last_stderr(server.name)
+                    if tail:
+                        msg = f"{msg} — {tail}"
+                    self._mcp_errors[server.name] = msg[:500]
+                    logger.warning(
+                        "mcp %s failed to connect: %s", server.name, msg[:500]
+                    )
+                # Transcript notice on state CHANGE, not state (owner ruling
+                # 2026-08-21): a continuously-broken server stamps only the first
+                # session after it breaks (or breaks differently) — the Connectors
+                # page carries the standing error. Personas that DECLARE the server
+                # in their manifest keep the every-session notice: for them the
+                # missing tools are material every time (the 2026-08-20 drill case).
+                declared = persona_mcp is not None and server.name in persona_mcp
+                if declared or self._should_notify_mcp_failure(
+                    server.name, self._mcp_errors.get(server.name, "")
+                ):
+                    self._mcp_session_failures.setdefault(session_id, []).append(
+                        server.name
+                    )
                 continue
             callables = build_callables(
                 server,
@@ -989,6 +1313,31 @@ class SessionManager:
                     )
             out.extend(callables)
         return out
+
+    def _should_notify_mcp_failure(self, name: str, error: str) -> bool:
+        """True once per failure episode: the first session after `name` starts
+        failing (or its error text changes) notices; unchanged-broken stays quiet.
+        Persisted in prefs so an app relaunch doesn't re-stamp the same complaint.
+        Compared on a NORMALIZED error: stderr often embeds per-process values
+        (0x… object addresses, pids), which made "the same" failure look new on
+        every relaunch and re-stamp every session (owner-hit 2026-08-21)."""
+        stable = _stable_error(error)
+        notified = self._prefs.setdefault("mcp_notified_errors", {})
+        if notified.get(name) == stable:
+            return False
+        notified[name] = stable
+        self._save_prefs()
+        return True
+
+    def _clear_mcp_notified(self, name: str) -> None:
+        if self._prefs.get("mcp_notified_errors", {}).pop(name, None) is not None:
+            self._save_prefs()
+
+    def pop_mcp_failures(self, session_id: str) -> list[tuple[str, Optional[str]]]:
+        """Drain (name, error) for servers that failed while preparing this session's
+        tools — consumed once by the WS handler to append a transcript notice."""
+        names = self._mcp_session_failures.pop(session_id, [])
+        return [(n, self._mcp_errors.get(n)) for n in names]
 
     def list_mcp(self) -> list[dict[str, Any]]:
         """Servers from the global config + connection status (does not connect)."""
@@ -1013,6 +1362,12 @@ class SessionManager:
                 status = "authorizing"
             elif is_oauth and not mcp_oauth.has_tokens(name, self.secrets):
                 status = "needs_auth"
+            elif name in self._mcp_errors and not is_oauth:
+                # Startup/connection failure (stdio crash, unreachable url) — the
+                # drill class. OAuth servers keep their softer statuses: acquiring
+                # tokens supersedes a stale sign-in error (the GUI still prints
+                # last_error under the row either way).
+                status = "error"
             else:
                 status = "configured"
             out.append(
@@ -1031,6 +1386,8 @@ class SessionManager:
                     "requires_approval": bool(raw.get("requires_approval", True)),
                     "auth": "oauth" if is_oauth else None,
                     "status": status,
+                    "auth_hint": name in self._mcp_auth_hints,
+                    "last_test_at": self._prefs.get("mcp_last_test", {}).get(name),
                     "last_error": self._mcp_errors.get(name),
                     "tool_count": (
                         len(self.mcp._conns[name].tools) if connected else None
@@ -1040,10 +1397,21 @@ class SessionManager:
             )
         return out
 
+    def begin_mcp_connect(self, name: str) -> None:
+        """Flag `authorizing` BEFORE the background connect task starts. The GUI's
+        fast poll keys off this status; the first refresh used to outpace the task,
+        so a failing Test showed nothing until the lazy 5s tick (owner-hit
+        2026-08-21 — the button looked dead). Known names only, so an unknown
+        server can't wedge the flag (connect_mcp only clears it on a match)."""
+        if name in read_global():
+            self._mcp_authorizing.add(name)
+
     async def connect_mcp(self, name: str) -> dict[str, Any]:
         """Connect one server NOW — for OAuth servers this may open the browser and wait
         for the loopback callback, so callers run it as a background task and watch
         list_mcp for the status flip."""
+        from ..mcp import oauth as mcp_oauth
+
         for server in load_mcp_servers(
             self.default_workspace,
             secrets=self.secrets,
@@ -1053,15 +1421,38 @@ class SessionManager:
                 continue
             self._mcp_authorizing.add(name)
             self._mcp_errors.pop(name, None)
+            self._mcp_auth_hints.discard(name)
             try:
                 # The ONE place a browser sign-in may start: an explicit connect.
-                conn = await self.mcp.ensure(server, interactive=True)
+                # verify (not ensure): an already-live server gets a real round-trip
+                # and a refreshed tool list instead of a cached yes.
+                conn = await self.mcp.verify(server, interactive=True)
+                # The Connectors row says "Ready · tested ⟨when⟩" — the claim must
+                # survive an app restart, so it lives in prefs, not memory.
+                self._prefs.setdefault("mcp_last_test", {})[name] = int(time.time())
+                self._save_prefs()
+                self._clear_mcp_notified(name)
                 return {"ok": True, "tools": len(conn.tools)}
             except Exception as exc:
-                self._mcp_errors[name] = str(exc) or exc.__class__.__name__
+                if (
+                    server.transport == "http"
+                    and server.auth != "oauth"
+                    and mcp_oauth.is_http_auth_error(exc)
+                ):
+                    # Anonymous probe of a guarded server (the add-by-URL flow):
+                    # the answer is sign-in, not a raw 401 dump.
+                    self._mcp_auth_hints.add(name)
+                    msg = "authentication required — sign in to connect"
+                else:
+                    msg = str(exc) or exc.__class__.__name__
+                    tail = self.mcp.last_stderr(name)
+                    if tail:
+                        msg = f"{msg} — {tail}"
+                self._mcp_errors[name] = msg[:500]
                 return {"ok": False, "error": self._mcp_errors[name]}
             finally:
                 self._mcp_authorizing.discard(name)
+        self._mcp_authorizing.discard(name)  # begin_mcp_connect flagged a name we never matched
         return {"ok": False, "error": f"unknown MCP server: {name}"}
 
     async def mcp_connect_connector(self, name: str) -> dict[str, Any]:
@@ -1122,6 +1513,27 @@ class SessionManager:
 
     def delete_mcp(self, name: str) -> dict[str, Any]:
         ok = delete_global_server(name)
+        if ok:
+            # A later re-add under the same name starts clean, not pre-failed —
+            # and not pre-trusted (the old entry's test says nothing about the new).
+            self._mcp_errors.pop(name, None)
+            self._mcp_auth_hints.discard(name)
+            if self._prefs.get("mcp_last_test", {}).pop(name, None) is not None:
+                self._save_prefs()
+            self._clear_mcp_notified(name)
+            # Removing a server must not leave its connection running until the next
+            # restart, nor its OAuth tokens + DCR registration in the secret store —
+            # "Remove" is the user saying this server is GONE (owner review 2026-08-21).
+            # The route runs in a threadpool; the shutdown event belongs to the loop.
+            conn = self.mcp._conns.get(name)
+            if conn is not None:
+                if self._loop is not None:
+                    self._loop.call_soon_threadsafe(conn.shutdown.set)
+                else:
+                    conn.shutdown.set()
+            from ..mcp import oauth as mcp_oauth
+
+            mcp_oauth.sign_out(name, self.secrets)
         return {"ok": ok, "name": name}
 
     async def mcp_tools(self, name: str) -> dict[str, Any]:
@@ -1240,13 +1652,945 @@ class SessionManager:
     def browser_close(self) -> dict[str, Any]:
         return browser_close_session()
 
-    def list_artifacts(self, session_id: str) -> list[dict[str, Any]]:
+    # ------------------------------------------------------------- agent teams (OPE-96)
+
+    # ------------------------------------------------- project identity (pass 20)
+
+    def _memory_key_for(self, record, ws: Optional[str]) -> Optional[str]:
+        """Binding > git > path, with the one-time path→git re-key on the way."""
+        binding = ((record.bindings if record else {}) or {}).get("memory")
+        return resolve_memory_key(
+            ws,
+            binding=binding,
+            names=self.session_store.names(),
+            memory_store=self.memory_store,
+        )
+
+    def _space_for(self, record, ws: Optional[str]) -> Optional[str]:
+        """Board-space twin of _memory_key_for — same ladder, board collision rule."""
+        binding = ((record.bindings if record else {}) or {}).get("board")
+        return resolve_board_space(
+            ws,
+            binding=binding,
+            names=self.session_store.names(),
+            team_store=self.team_store,
+        )
+
+    def _board_space(self, session_id: str) -> Optional[str]:
+        record = self.session_store.load(session_id)
+        workspace = (record.workspace if record else None) or self.default_workspace
+        return self._space_for(record, workspace) if workspace else None
+
+    def _user_actor(self) -> TeamActor:
+        return TeamActor(id="user", role=TeamRole.USER)
+
+    def board_item_detail(self, session_id: str, item_id: int) -> dict[str, Any]:
+        """One item in full, with its TIMELINE — creations, assignments,
+        transitions, and comments merged chronologically (the detail pane renders
+        the item's whole story; the store is an event log, so this is just its
+        honest projection). Acts as the user."""
+        space = self._board_space(session_id)
+        if space is None:
+            return {"error": "no board for this session"}
+        try:
+            item = self.team_store.get_item(space, int(item_id))
+        except TeamsBoardError as error:
+            return {"error": str(error)}
+        timeline: list[dict[str, Any]] = []
+        for event in self.team_store.events(space, item_id=int(item_id)):
+            payload = event.get("payload") or {}
+            row: dict[str, Any] = {
+                "seq": event["seq"],
+                "ts": event["ts"],
+                "actor": event["actor"],
+            }
+            if event["kind"] == "item_created":
+                row["kind"] = "created"
+            elif event["kind"] == "item_assigned":
+                row["kind"] = "claimed" if payload.get("claimed") else "assigned"
+                row["assignee"] = payload.get("assignee") or ""
+            elif event["kind"] == "item_transitioned":
+                row["kind"] = "moved"
+                row["to"] = payload.get("to") or ""
+                if payload.get("comment"):
+                    row["body"] = payload["comment"]
+                if payload.get("refs"):
+                    row["refs"] = payload["refs"]
+            elif event["kind"] == "item_commented":
+                row["kind"] = "comment"
+                row["body"] = payload.get("body") or ""
+                if payload.get("refs"):
+                    row["refs"] = payload["refs"]
+            else:
+                continue
+            timeline.append(row)
+        item["timeline"] = timeline
+        return item
+
+    def board_comment(self, session_id: str, item_id: int, body: str) -> dict[str, Any]:
+        """A pure note from the user on an item — never changes state (owner
+        doctrine 2026-08-17); the assignee hears it through its feed."""
+        space = self._board_space(session_id)
+        if space is None:
+            return {"error": "no board for this session"}
+        try:
+            event = self.team_store.comment(
+                space, self._user_actor(), int(item_id), body
+            )
+        except (TeamsBoardError, ValueError) as error:
+            return {"error": str(error)}
+        self.kick_team_tick()  # the assignee's feed has news
+        return {"ok": True, "seq": event["seq"]}
+
+    def session_board(self, session_id: str) -> dict[str, Any]:
+        """The session's board: items grouped by the workspace-keyed space. Empty
+        (space=None) when the workspace has no items — the rail hides itself."""
+        space = self._board_space(session_id)
+        if space is None:
+            return {"space": None, "name": "", "items": []}
+        items = self.team_store.list_items(space, self._user_actor())
+        if not items:
+            return {"space": None, "name": "", "items": []}
+        # Blocked rows carry the blocker as a plain fact ("blocked: need tfvars") —
+        # the latest blocked-transition comment, resolved here so the list stays
+        # one round-trip.
+        for item in items:
+            if item["state"] != "blocked":
+                continue
+            for event in reversed(
+                self.team_store.events(space, item_id=item["id"])
+            ):
+                payload = event.get("payload") or {}
+                if event["kind"] == "item_transitioned" and payload.get("to") == "blocked":
+                    if payload.get("comment"):
+                        item["blocker"] = self._clamp(payload["comment"], 120)
+                    break
+        return {"space": space, "name": Path(space).name, "items": items}
+
+    def board_transition(
+        self, session_id: str, item: int, to: str, comment: str = ""
+    ) -> dict[str, Any]:
+        space = self._board_space(session_id)
+        if space is None:
+            return {"error": "this session has no board"}
+        try:
+            return self.team_store.transition(
+                space, self._user_actor(), int(item), to, comment=comment
+            )
+        except (TeamsBoardError, ValueError) as error:
+            return {"error": str(error)}
+
+    def board_create_items(
+        self, session_id: str, items: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """The decomposition gate's approved action: create the proposed items as
+        the LEAD (its identity is the creator; the user's approval is the gate that
+        let this run). Validates everything up front so a bad batch creates nothing."""
+        record = self.session_store.load(session_id)
+        if record is None or not record.workspace:
+            return {"approved": False, "error": "the session has no workspace"}
+        space = self._space_for(record, record.workspace)
+        actor = TeamActor(
+            id=f"{record.agent}:{session_id[:8]}",
+            role=TeamRole.LEAD,
+            persona=record.agent,
+            session_id=session_id,
+        )
+        for entry in items:
+            if not str((entry or {}).get("title", "")).strip() or not str(
+                (entry or {}).get("criteria", "")
+            ).strip():
+                return {
+                    "approved": False,
+                    "error": "every item needs a title and acceptance criteria",
+                }
+        created = []
+        for entry in items:
+            item = self.team_store.create_item(
+                space,
+                actor,
+                title=str(entry["title"]),
+                criteria=str(entry["criteria"]),
+                description=str(entry.get("description", "")),
+                case=str(entry.get("case", "")) or None,
+            )
+            created.append({"id": item["id"], "title": item["title"]})
+        return {
+            "approved": True,
+            "items": created,
+            "note": "items created on the board — staff and assign to start work",
+        }
+
+    def team_chat(self, team_id: str, *, mark_read: bool = True) -> dict[str, Any]:
+        """The chat view's payload. Viewing IS reading for the user: the badge
+        cursor advances on fetch."""
+        team = self.teams.get(team_id)
+        if team is None or not team.chat_enabled or not team.chat_group:
+            return {"enabled": False, "messages": [], "members": []}
+        group = self.chat_store.get_group(team.chat_group) or {"members": []}
+        messages = self.chat_store.messages(team.chat_group)
+        if mark_read and messages:
+            self.chat_store.consume(team.chat_group, "user", messages[-1]["seq"])
+        return {
+            "enabled": True,
+            "team_id": team_id,
+            "members": group["members"],
+            "messages": messages,
+        }
+
+    def post_team_chat(self, team_id: str, text: str) -> dict[str, Any]:
+        team = self.teams.get(team_id)
+        if team is None or not team.chat_enabled or not team.chat_group:
+            return {"error": "chat is not enabled for this team"}
+        try:
+            message = self.chat_store.post(
+                team.chat_group, "user", text, author_role="user"
+            )
+        except (TeamsBoardError, ValueError) as error:
+            return {"error": str(error)}
+        # A user post wakes every member — kick the drain rather than waiting a tick.
+        if self._loop is not None:
+            asyncio.run_coroutine_threadsafe(self.team_tick(), self._loop)
+        return message
+
+    def journal_overview(self) -> list[dict[str, Any]]:
+        return self.journal_store.overview(self._user_actor())
+
+    TEAM_WAKE_CAP_PER_HOUR = 60  # budget gate at the wake gate: silent server cap
+
+    def _team_tools_for(
+        self, session_id: str, agent: Any, record: Any, ws: Optional[str]
+    ) -> list[Any]:
+        """Board/journal verbs, gated by the persona `team:` trait. Leads get the
+        coordination set (+ steer); workers get the worker set bound to their roster
+        actor id. OPENWORKER_TEAM_BOARD=1 keeps the phase-1 any-session-as-lead dev
+        mode."""
+        role = getattr(agent, "team", None)
+        if role is None and ws and os.environ.get("OPENWORKER_TEAM_BOARD") == "1":
+            role = "lead"
+        if role is None or not ws:
+            return []
+        space = self._space_for(record, ws)
+        if role == "worker":
+            info = (record.team if record is not None else {}) or {}
+            actor = TeamActor(
+                id=str(info.get("actor") or f"{agent.name}:{session_id[:8]}"),
+                role=TeamRole.WORKER,
+                persona=agent.name,
+                session_id=session_id,
+            )
+            space = str(info.get("space") or space)
+        else:
+            actor = TeamActor(
+                id=f"{agent.name}:{session_id[:8]}",
+                role=TeamRole.LEAD,
+                persona=agent.name,
+                session_id=session_id,
+            )
+        tools = board_tools(
+            self.team_store,
+            space=space,
+            actor=actor,
+            attachments=self.attachment_store,
+        ) + journal_tools(
+            self.journal_store, actor=actor, space=space
+        )
+        if role == "lead":
+            tools.append(self._steer_tool(session_id))
+            tools.append(self._team_options_tool())
+        # post_chat registers for every team persona; it resolves the group at call
+        # time (the team may not exist yet at engine build) and fails gracefully
+        # when chat is off.
+        tools.append(self._post_chat_tool(session_id, role))
+        return tools
+
+    def _post_chat_tool(self, session_id: str, role: str) -> Any:
+        import aisuite as ai
+
+        manager = self
+
+        def post_chat(text: str, record_on_item: Optional[int] = None) -> dict:
+            """Post to # team chat. Mention teammates with @name to reach them —
+            only mentioned members are woken (the user always sees it). Chat is for
+            questions and consensus; status lives on the board. If your message
+            answers something that matters, pass record_on_item to also record it
+            as a comment on that work item."""
+            team, handle, actor = manager._chat_identity(session_id, role)
+            if team is None:
+                return {"error": "this session is not part of a team"}
+            if not team.chat_enabled or not team.chat_group:
+                return {"error": "team chat is not enabled for this team"}
+            try:
+                message = manager.chat_store.post(
+                    team.chat_group, handle, text, author_role=role
+                )
+            except (TeamsBoardError, ValueError) as error:
+                return {"error": str(error)}
+            result: dict[str, Any] = {
+                "ok": True,
+                "mentioned": message["mentions"],
+            }
+            if record_on_item is not None and actor is not None:
+                try:
+                    manager.team_store.comment(
+                        team.space, actor, int(record_on_item), text
+                    )
+                    result["recorded_on"] = int(record_on_item)
+                except (TeamsBoardError, ValueError) as error:
+                    result["record_error"] = str(error)
+            return result
+
+        return ai.tool(
+            post_chat,
+            metadata=ai.ToolMetadata(
+                category="team", risk_level="low", capabilities=["team"]
+            ),
+        )
+
+    def _chat_identity(self, session_id: str, role: str):
+        """(team, chat handle, board actor) for a team session — the lead's chat
+        handle is "lead"; a worker's handle IS its board actor (the callname)."""
+        if role == "lead":
+            team = self.teams.for_lead_session(session_id)
+            if team is None:
+                return None, "", None
+            record = self.session_store.load(session_id)
+            actor = TeamActor(
+                id=team.lead_actor,
+                role=TeamRole.LEAD,
+                persona=record.agent if record else "",
+                session_id=session_id,
+            )
+            return team, "lead", actor
+        found = self.teams.for_worker_session(session_id)
+        if found is None:
+            return None, "", None
+        team, worker = found
+        actor = TeamActor(
+            id=worker.actor,
+            role=TeamRole.WORKER,
+            persona=worker.persona,
+            session_id=session_id,
+        )
+        return team, worker.actor, actor
+
+    def _team_options_tool(self) -> Any:
+        """Registry-injected staffing knowledge: the lead's options come from the
+        persona registry at call time — installing a worker coworker automatically
+        widens what a lead can propose; nothing is hardcoded. Solo personas never
+        appear (fail closed at the source AND at create_team)."""
+        import aisuite as ai
+
+        manager = self
+
+        def team_options() -> dict:
+            """List the worker coworkers available for staffing (call before
+            propose_team). Only team-capable workers are listed — solo coworkers
+            cannot join a team."""
+            out = []
+            # Registry entries directly — NOT list_all(), which applies the
+            # ships:false visibility filter: a lead that is running (internal
+            # build or user-enabled) must be able to staff its workers even
+            # when those workers are hidden from the settings page.
+            for pid in manager.personas.ids():
+                entry = manager.personas.get(pid)
+                m = getattr(entry, "manifest", None)
+                if m is None or m.team != "worker":
+                    continue
+                if not manager.personas.is_enabled(pid):
+                    continue
+                out.append(
+                    {
+                        "persona": pid,
+                        "name": m.name,
+                        "tagline": m.tagline,
+                        "recommended_models": list(m.recommended_models),
+                    }
+                )
+            return {"workers": out}
+
+        return ai.tool(
+            team_options,
+            metadata=ai.ToolMetadata(
+                category="team", risk_level="low", capabilities=["team"]
+            ),
+        )
+
+    def _steer_tool(self, lead_session_id: str) -> Any:
+        """The lead's downward steering verb. Text lands in the worker's session
+        attributed [Lead] — queued into a live turn, or a fresh background turn when
+        idle. Strictly downward: no worker ever gets this tool."""
+        import aisuite as ai
+
+        manager = self
+
+        def steer_worker(worker: str, message: str) -> dict:
+            """Send steering text to one of your workers (by actor id). Use for
+            exceptions — changed requirements, stop/redirect, unblock guidance;
+            routine status flows through the board, not steering."""
+            team = manager.teams.for_lead_session(lead_session_id)
+            if team is None:
+                return {"error": "no team yet — propose one with propose_team first"}
+            match = next((w for w in team.workers if w.actor == worker), None)
+            if match is None:
+                return {
+                    "error": f"no worker '{worker}' on this team",
+                    "workers": [w.actor for w in team.workers],
+                }
+            if manager._loop is None:
+                return {"error": "steering is unavailable in this surface"}
+            asyncio.run_coroutine_threadsafe(
+                manager.deliver_to_session(
+                    match.session_id, f"[Lead] {message}".strip()
+                ),
+                manager._loop,
+            )
+            return {"ok": True, "delivered_to": worker}
+
+        return ai.tool(
+            steer_worker,
+            metadata=ai.ToolMetadata(
+                category="team", risk_level="medium", capabilities=["team"]
+            ),
+        )
+
+    def create_team(
+        self, session_id: str, members: list[dict[str, Any]], *, enable_chat: bool = False
+    ) -> dict[str, Any]:
+        """The staffing gate's approved action: PRE-SPAWN worker sessions (state on
+        disk, zero tokens — the first model turn fires when the first assignment
+        lands) and register the team. Fails closed on personas without `team: worker`."""
+        record = self.session_store.load(session_id)
+        if record is None or not record.workspace:
+            return {"approved": False, "error": "the lead session has no workspace"}
+        if self.teams.for_lead_session(session_id) is not None:
+            return {"approved": False, "error": "this session already leads a team"}
+        space = self._space_for(record, record.workspace)
+        workers: list[TeamWorker] = []
+        used: set[str] = {"lead", "user", "board"}  # reserved handles
+        for member in members:
+            pid = str((member or {}).get("persona", "")).strip()
+            try:
+                ag = get_agent(pid)
+            except Exception:
+                return {
+                    "approved": False,
+                    "error": f"unknown coworker '{pid}' — it must be installed and enabled",
+                }
+            if getattr(ag, "team", None) != "worker":
+                # Fail closed: solo personas are not team-eligible — their prompts
+                # are written at a human, not a lead.
+                return {
+                    "approved": False,
+                    "error": f"'{pid}' is not team-capable (needs `team: worker`)",
+                }
+            # The lead-given callname is the HANDLE: board assignee, @mention target,
+            # sidebar label. It must be mention-safe and unique on the team.
+            name = str(member.get("name", "")).strip().lower()
+            if name and not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,23}", name):
+                return {
+                    "approved": False,
+                    "error": f"'{name}' isn't a usable callname — letters/digits/._- only, max 24",
+                }
+            actor, n = name or pid, 2
+            while actor in used:
+                actor, n = f"{name or pid}-{n}", n + 1
+            used.add(actor)
+            worker_sid = uuid.uuid4().hex[:12]
+            model = str(member.get("model") or record.model)
+            self.session_store.save(
+                SessionRecord(
+                    session_id=worker_sid,
+                    workspace=record.workspace,
+                    model=model,
+                    mode=record.mode,
+                    messages=[],
+                    agent=pid,
+                )
+            )
+            # Written via the dedicated setter: the turn-save upsert never touches
+            # `team`, so a worker's first turn can't detach it from its lead.
+            self.session_store.set_team(
+                worker_sid,
+                {
+                    "team_id": "",  # patched below once the team exists
+                    "role": "worker",
+                    "actor": actor,
+                    "lead_session": session_id,
+                    "space": space,
+                },
+            )
+            workers.append(
+                TeamWorker(
+                    actor=actor,
+                    persona=pid,
+                    session_id=worker_sid,
+                    model=model,
+                    reason=str(member.get("reason", "")).strip(),
+                )
+            )
+        chat_group = ""
+        if enable_chat:
+            group = self.chat_store.create_group(
+                "team chat",
+                [
+                    *(
+                        {"name": w.actor, "persona": w.persona, "role": "worker"}
+                        for w in workers
+                    ),
+                    {"name": "lead", "persona": record.agent, "role": "lead"},
+                ],
+            )
+            chat_group = group["group_id"]
+        team = self.teams.create(
+            space=space,
+            lead_session=session_id,
+            lead_actor=f"{record.agent}:{session_id[:8]}",
+            workers=workers,
+            chat_enabled=enable_chat,
+            chat_group=chat_group,
+        )
+        for worker in workers:
+            self.session_store.set_team(
+                worker.session_id,
+                {
+                    "team_id": team.team_id,
+                    "role": "worker",
+                    "actor": worker.actor,
+                    "lead_session": session_id,
+                    "space": space,
+                },
+            )
+            self._emit_session_created(worker.session_id, worker.persona)
+        self.session_store.set_team(
+            session_id,
+            {
+                "team_id": team.team_id,
+                "role": "lead",
+                "actor": team.lead_actor,
+                "space": space,
+            },
+        )
+        return {
+            "approved": True,
+            "team_id": team.team_id,
+            "workers": [
+                {"actor": w.actor, "persona": w.persona, "session_id": w.session_id}
+                for w in workers
+            ],
+            "note": (
+                "team created — workers are idle until you assign. Create work items"
+                " and assign them to the actor ids above; review-state items are"
+                " yours to verify."
+            ),
+        }
+
+    def kick_team_tick(self) -> None:
+        """Nudge the wake plumbing from outside the turn loop — e.g. after an
+        external board client writes through the `/v1/board` API, so a review or a
+        new filing reaches the lead now, not at the next 30s scheduler tick."""
+        if self._loop is not None:
+            asyncio.run_coroutine_threadsafe(self.team_tick(), self._loop)
+
+    async def team_tick(self) -> int:
+        """Drain team queues (called each scheduler tick + kicked after team turns).
+        One wake consumes a burst as one digest; durable-until-consumed — the cursor
+        advances only after the delivery turn is dispatched."""
+        delivered = 0
+        for team in self.teams.all():
+            if team.paused:
+                continue
+            for worker in team.workers:
+                delivered += await self._drain_team_member(
+                    team,
+                    session_id=worker.session_id,
+                    actor=worker.actor,
+                    is_lead=False,
+                )
+            delivered += await self._drain_team_member(
+                team,
+                session_id=team.lead_session,
+                actor=team.lead_actor,
+                is_lead=True,
+            )
+            delivered += await self._maybe_backstop_lead(team)
+        return delivered
+
+    # The lead owns its cadence (sleep_until, stretch-when-quiet); this backstop only
+    # exists because prompts aren't guarantees. A forgotten timer must never orphan
+    # a running team — and it de-facto covers a worker dying without a transition
+    # (its item goes stale; the backstop wake surfaces it in the digest).
+    TEAM_LEAD_BACKSTOP_SECS = 600
+
+    def _lead_backstop_due(self, team) -> bool:
+        sid = team.lead_session
+        if self.is_running(sid) or sid in self._team_inflight:
+            return False
+        if self.wakes.pending(sid):
+            return False  # a timer is set — the lead is on cadence, not forgotten
+        # Restart-safe: the first observation starts the clock instead of waking.
+        last = self._team_last_alive.setdefault(sid, time.time())
+        if time.time() - last < self.TEAM_LEAD_BACKSTOP_SECS:
+            return False
+        try:
+            items = self.team_store.list_items(team.space, self._user_actor())
+        except Exception:
+            return False
+        return any(
+            i["state"] in ("in_progress", "blocked", "review") for i in items
+        )
+
+    async def _maybe_backstop_lead(self, team) -> int:
+        if not self._lead_backstop_due(team):
+            return 0
+        if not self.teams.count_wake(team.team_id, cap=self.TEAM_WAKE_CAP_PER_HOUR):
+            return 0
+        sid = team.lead_session
+        self._team_last_alive[sid] = time.time()
+        message = (
+            "⏰ Backstop check — work is in flight but you had no check-in timer"
+            " set.\n\n"
+            + (self.team_staleness_digest(sid) or "Board state unavailable.")
+            + "\n\nGlance, act only if something needs you, and set your next"
+            " check-in with sleep_until (start 3–5 minutes out; stretch when quiet)."
+        )
+        self._team_inflight.add(sid)
+
+        async def _deliver() -> None:
+            try:
+                await self.deliver_to_session(
+                    sid, message, source=self._board_source(team, message)
+                )
+            finally:
+                self._team_inflight.discard(sid)
+
+        asyncio.create_task(_deliver())
+        return 1
+
+    async def _drain_team_member(
+        self, team, *, session_id: str, actor: str, is_lead: bool
+    ) -> int:
+        # Interest follows the assignment relation: everyone's feed is the events
+        # on their slice (assigned ∪ filed) — comments, moves, reassignments. The
+        # lead additionally subscribes to the board-wide decision classes.
+        directs = self.team_store.feed_for(team.space, actor)
+        subs = (
+            self.team_store.subscribed_events(team.space, actor) if is_lead else []
+        )
+        if subs:
+            seen = {e["seq"] for e in subs}
+            directs = [e for e in directs if e["seq"] not in seen]
+        chat_handle = "lead" if is_lead else actor
+        chats = (
+            self.chat_store.unread_for(team.chat_group, chat_handle)
+            if team.chat_enabled and team.chat_group
+            else []
+        )
+        # Cancel is top-priority: an in-flight worker gets interrupted NOW; the
+        # queued notice (delivered when the turn dies) tells it why. Only for the
+        # item's ASSIGNEE — a filer merely hears about it.
+        def _holds(event) -> bool:
+            try:
+                item = self.team_store.get_item(team.space, int(event["item_id"]))
+            except Exception:
+                return False
+            return item["assignee"] == actor
+
+        cancels = [
+            e
+            for e in directs
+            if e["kind"] == "item_transitioned"
+            and (e.get("payload") or {}).get("to") == "canceled"
+            and _holds(e)
+        ]
+        if cancels and self.is_running(session_id):
+            engine = self._engines.get(session_id)
+            if engine is not None:
+                engine.request_interrupt()
+        if not directs and not subs and not chats:
+            return 0
+        if self.is_running(session_id) or session_id in self._team_inflight:
+            return 0  # it will drain on its next turn end / next tick
+        if not self.teams.count_wake(team.team_id, cap=self.TEAM_WAKE_CAP_PER_HOUR):
+            logger.warning("team %s paused for budget this hour", team.team_id)
+            return 0
+        message, rows = self._team_digest(
+            team, directs, subs, chats, is_lead=is_lead, reader=actor
+        )
+        self._team_inflight.add(session_id)
+        source = self._board_source(team, message, rows=rows)
+
+        async def _deliver() -> None:
+            try:
+                await self.deliver_to_session(session_id, message, source=source)
+                # Consume only after the turn dispatched: a crash before this replays
+                # the batch next tick (at-least-once, never silently lost).
+                # The feed cursor advances past BOTH batches: a subs event deduped
+                # out of directs must not replay as a direct next tick.
+                delivered = [e["seq"] for e in directs] + [e["seq"] for e in subs]
+                if delivered:
+                    self.team_store.consume_feed(team.space, actor, max(delivered))
+                if subs:
+                    self.team_store.consume_subscription(
+                        team.space, actor, subs[-1]["seq"]
+                    )
+                if chats:
+                    self.chat_store.consume(
+                        team.chat_group, chat_handle, chats[-1]["seq"]
+                    )
+            finally:
+                self._team_inflight.discard(session_id)
+
+        asyncio.create_task(_deliver())
+        return 1
+
+    # Long comment/hand-off bodies are already durable on the board — the wake
+    # message's job is to say what needs DECISIONS, not to re-carry the evidence
+    # into the recipient's context on every wake (owner ruling 2026-08-16). The
+    # model text clamps hard; the UI sidecar rows clamp softer (the human gets a
+    # bigger excerpt on click without re-inflating the lead's prompt).
+    DIGEST_CLAMP_MODEL = 300
+    DIGEST_CLAMP_UI = 600
+
+    @staticmethod
+    def _clamp(text: str, limit: int, *, suffix: str = "…") -> str:
+        text = (text or "").strip()
+        if len(text) <= limit:
+            return text
+        return text[:limit].rstrip() + suffix
+
+    def _team_digest(
+        self,
+        team,
+        directs: list[dict],
+        subs: list[dict],
+        chats: Optional[list[dict]] = None,
+        *,
+        is_lead: bool,
+        reader: str = "",
+    ) -> tuple[str, list[dict]]:
+        """Coalesce one queue batch into one wake message. Deterministic, computed
+        by code — the model does judgment, not arithmetic. Returns (model text,
+        structured rows) — the rows ride the display sidecar so the GUI renders a
+        collapsed BoardWakeCard instead of re-parsing prose."""
+        clamp = lambda text: self._clamp(  # noqa: E731 — two-site local shorthand
+            text, self.DIGEST_CLAMP_MODEL, suffix=" … (full text on the board)"
+        )
+        lines: list[str] = []
+        rows: list[dict] = []
+        for event in directs + subs:
+            item_id = event.get("item_id")
+            payload = event.get("payload") or {}
+            item = None
+            if item_id is not None:
+                try:
+                    item = self.team_store.get_item(team.space, int(item_id))
+                except Exception:
+                    item = None
+            title = f"#{item_id} {item['title']}" if item else f"#{item_id}"
+            row = {
+                "item": item_id,
+                "title": item["title"] if item else "",
+                "actor": event.get("actor", ""),
+            }
+            if event["kind"] == "item_assigned":
+                if item is None:
+                    continue
+                assignee = payload.get("assignee") or ""
+                if payload.get("claimed"):
+                    # A self-claim surfacing in the lead's subscription feed —
+                    # supervision by exception, not an assignment to the reader.
+                    lines.append(
+                        f"{event['actor']} claimed {title} — it's theirs now;"
+                        " reassign or cancel if that's wrong."
+                    )
+                    rows.append({**row, "kind": "claimed"})
+                    continue
+                if reader and payload.get("previous") == reader and assignee != reader:
+                    # The reader just LOST this item — its interest ends here.
+                    lines.append(
+                        f"{title} was reassigned to {assignee} by {event['actor']}"
+                        " — stop any work on it; hand off context via a comment"
+                        " if useful."
+                    )
+                    rows.append({**row, "kind": "assigned", "assignee": assignee})
+                    continue
+                if reader and assignee != reader:
+                    # Someone else's assignment surfacing in a broader feed.
+                    lines.append(f"{title} assigned to {assignee} by {event['actor']}")
+                    rows.append({**row, "kind": "assigned", "assignee": assignee})
+                    continue
+                lines.append(
+                    f"You've been assigned work item {title}.\n"
+                    f"  Done when: {item['criteria']}"
+                    + (f"\n  Details: {item['description']}" if item["description"] else "")
+                )
+                rows.append({**row, "kind": "assigned", "assignee": assignee})
+            elif event["kind"] == "item_transitioned":
+                to = payload.get("to", "?")
+                comment = clamp(payload.get("comment") or "")
+                note = f" — “{comment}”" if comment else ""
+                if to == "canceled" and not is_lead:
+                    lines.append(
+                        f"{title} was CANCELED by {event['actor']}{note} — stop any"
+                        " work on it and pick up your other assignments."
+                    )
+                else:
+                    lines.append(f"{title} moved to {to} by {event['actor']}{note}")
+                rows.append(
+                    {
+                        **row,
+                        "kind": "moved",
+                        "to": to,
+                        "note": self._clamp(
+                            payload.get("comment") or "", self.DIGEST_CLAMP_UI
+                        ),
+                    }
+                )
+            elif event["kind"] == "item_created":
+                lines.append(f"New item filed by {event['actor']}: {title}")
+                rows.append({**row, "kind": "filed"})
+            elif event["kind"] == "item_commented":
+                lines.append(
+                    f"Comment on {title} by {event['actor']}:"
+                    f" {clamp(payload.get('body', ''))}"
+                )
+                rows.append(
+                    {
+                        **row,
+                        "kind": "comment",
+                        "note": self._clamp(
+                            payload.get("body") or "", self.DIGEST_CLAMP_UI
+                        ),
+                    }
+                )
+        for chat in chats or []:
+            who = chat["author"] if chat["author_role"] != "user" else "[User]"
+            lines.append(f"# team chat — {who}: {clamp(chat['text'])}")
+            rows.append(
+                {
+                    "kind": "chat",
+                    "actor": who,
+                    "note": self._clamp(chat["text"], self.DIGEST_CLAMP_UI),
+                }
+            )
+        body = "\n".join(f"- {line}" for line in lines) or "- (no detail)"
+        if is_lead:
+            message = (
+                "⏰ Board wake — your team needs decisions:\n"
+                + body
+                + "\n\nFull hand-off comments live on the board (get_item)."
+                " Verify review items against their acceptance criteria (then"
+                " done, or send back with a comment), unblock or reassign blocked"
+                " items, and triage new filings. Steer only where needed."
+            )
+        else:
+            message = (
+                "[Lead] Board update:\n"
+                + body
+                + self._roster_note(team)
+                + "\n\nMove your item to in_progress when you start; blocked (with a"
+                " comment) if stuck; review with a hand-off comment when finished."
+                " Journal evidence as you go."
+            )
+        return message, rows
+
+    @staticmethod
+    def _roster_note(team) -> str:
+        """Teammate awareness as a mechanism: every worker digest carries the
+        roster, so tagging teammates never depends on the lead remembering to
+        introduce them."""
+        if not team.workers:
+            return ""
+        mates = "; ".join(
+            f"{w.actor} ({w.persona}" + (f" — {w.reason})" if w.reason else ")")
+            for w in team.workers
+        )
+        reach = (
+            " Reach them or the lead with @name in # team chat (post_chat)."
+            if team.chat_enabled
+            else " Coordinate through item comments; the lead reads the board."
+        )
+        return f"\n\nYour team: {mates}; lead (coordinator).{reach}"
+
+    @staticmethod
+    def _board_source(
+        team, message: str, *, rows: Optional[list[dict]] = None
+    ) -> dict[str, Any]:
+        """Display-only MessageSource sidecar for board deliveries — the same
+        mechanism connector messages use, so the GUI renders a structured card
+        instead of a fake user bubble (owner ask 2026-08-16). The framed message
+        stays the model-facing text; this only shapes presentation. `rows` are
+        the digest's structured events — the BoardWakeCard renders those
+        (collapsed to one line by default) instead of re-parsing the prose."""
+        return {
+            "connector": "board",
+            "kind": "channel",
+            "channel_id": team.space,
+            "channel_name": "Team board",
+            "sender_id": "board",
+            "sender_name": "Board",
+            "ts": time.time(),
+            "text": message,
+            "board": {"rows": rows or []},
+        }
+
+    def team_staleness_digest(self, session_id: str) -> str:
+        """Attached to a lead's TIMER wakes: pure code over the board — a
+        nothing's-wrong wake is one cheap glance, never a re-survey. Scoped by
+        role membership: sessions with no team role get nothing."""
+        team = self.teams.for_lead_session(session_id)
+        if team is None:
+            return ""
+        try:
+            items = self.team_store.list_items(team.space, self._user_actor())
+        except Exception:
+            return ""
+        by_state: dict[str, int] = {}
+        for item in items:
+            by_state[item["state"]] = by_state.get(item["state"], 0) + 1
+        unassigned = sum(
+            1 for i in items if i["state"] == "open" and not i["assignee"]
+        )
+        parts = [f"{n} {state}" for state, n in sorted(by_state.items())]
+        lines = [f"Board: {', '.join(parts) or 'empty'}."]
+        if unassigned:
+            lines.append(f"{unassigned} open item(s) have no assignee.")
+        reviews = [i for i in items if i["state"] == "review"]
+        if reviews:
+            lines.append(
+                "Awaiting your review: "
+                + ", ".join(f"#{i['id']} {i['title']}" for i in reviews[:5])
+            )
+        blocked = [i for i in items if i["state"] == "blocked"]
+        if blocked:
+            lines.append(
+                "Blocked: " + ", ".join(f"#{i['id']} {i['title']}" for i in blocked[:5])
+            )
+        return "\n".join(lines)
+
+    def _artifact_scan_root(self, session_id: str) -> Optional[Path]:
+        """The dir the Artifacts panel lists: the session's SCRATCH surface only
+        (workspace-scratch-design.md §2.5). For orphan sessions that's the workspace
+        itself; for folder-gated sessions it's the side scratch root — never the user's
+        repo, which would list the whole codebase as 'artifacts'."""
         record = self.session_store.load(session_id)
         workspace = record.workspace if record else self.default_workspace
-        if not workspace:
-            return []
-        root = Path(workspace).expanduser().resolve()
-        if not root.is_dir():
+        if workspace and self.is_temp_workspace(workspace):
+            return Path(workspace).expanduser().resolve()
+        if self._SESSION_ID_RE.match(session_id or "") and session_id not in {".", ".."}:
+            d = (self.scratch_base() / session_id).resolve()
+            if d.is_dir():
+                return d
+        # Legacy fallback (pre-universal-scratch sessions on a custom scratch base):
+        # a workspace that is itself disposable still scans.
+        if workspace and not record:
+            return Path(workspace).expanduser().resolve()
+        return None
+
+    def list_artifacts(self, session_id: str) -> list[dict[str, Any]]:
+        root = self._artifact_scan_root(session_id)
+        if root is None or not root.is_dir():
             return []
         out: list[dict[str, Any]] = []
         suffixes = {
@@ -1320,25 +2664,45 @@ class SessionManager:
     def _artifact_target(
         self, session_id: str, path: str, *, allow_dir: bool = False
     ) -> tuple[Optional[Path], Optional[str]]:
-        """Resolve an artifact path under the session's workspace, or (None, error)."""
+        """Resolve an artifact path under one of the session's roots — workspace first,
+        then the scratch dir, then user-granted extra roots. Universal scratch means a
+        gated session's artifacts live BESIDE its workspace, so single-root resolution
+        would orphan every transcript chip pointing at scratch."""
         record = self.session_store.load(session_id)
         workspace = record.workspace if record else self.default_workspace
-        if not workspace:
+        candidates: list[Path] = []
+        if workspace:
+            candidates.append(Path(workspace).expanduser().resolve())
+        if self._SESSION_ID_RE.match(session_id or "") and session_id not in {".", ".."}:
+            scratch = (self.scratch_base() / session_id).resolve()
+            if scratch.is_dir() and scratch not in candidates:
+                candidates.append(scratch)
+        for r in (record.extra_roots if record else []) or []:
+            p = Path(str(r.get("path", ""))).expanduser()
+            if p.is_dir():
+                rp = p.resolve()
+                if rp not in candidates:
+                    candidates.append(rp)
+        if not candidates:
             return None, "no workspace"
-        root = Path(workspace).expanduser().resolve()
-        target = (root / path).expanduser().resolve()
-        try:
-            target.relative_to(root)
-        except ValueError:
-            return None, "path escapes workspace"
-        if allow_dir and target.is_dir():
-            return target, None
-        if not target.is_file():
+        found_missing = False
+        for root in candidates:
+            target = (root / path).expanduser().resolve()
+            try:
+                target.relative_to(root)
+            except ValueError:
+                continue
+            if allow_dir and target.is_dir():
+                return target, None
+            if target.is_file():
+                return target, None
+            found_missing = True
+        if found_missing:
             return None, (
                 "This isn't in the conversation's folder anymore — it may have been "
                 "moved or deleted."
             )
-        return target, None
+        return None, "path escapes workspace"
 
     def read_artifact(self, session_id: str, path: str) -> dict[str, Any]:
         # Folders are readable too (a model sometimes links a whole package, e.g. a skill
@@ -1468,10 +2832,18 @@ class SessionManager:
 
         if provider not in provider_names():
             return {"ok": False, "error": f"unknown provider: {provider}"}
+        before = self.get_web_search()["provider"]
         profile: dict[str, Any] = {"provider": provider}
         if api_key:
             profile["api_key"] = api_key
         self.secrets.put("web_search:default", profile)
+        # §1.9: "Always allow searches this session" is consent to a NAMED destination —
+        # the card says which provider the queries go to. A new provider is a new
+        # destination, so every live session's grant dies with the old one. (Scheduled
+        # tasks that name-allow web_search are unaffected: their approver re-allows.)
+        if provider != before:
+            for engine in self._engines.values():
+                engine.permissions.session_allow_tools.discard("web_search")
         return {"ok": True, "provider": provider}
 
     # -- model providers (OpenAI, Ollama, …) ------------------------------------
@@ -1488,21 +2860,30 @@ class SessionManager:
                 for f in d.fields
                 if not f.secret and profile.get(f.key)
             }
-            out.append(
-                {
-                    **d.to_dict(),
-                    "configured": configured,
-                    "values": values,
-                    "suggested_models": self._suggested_models(d.name),
-                    # Key hygiene for the Settings pane: when the key was saved (date, stamped
-                    # by set_provider) and when the provider last served a completion (epoch,
-                    # stamped by the router's on_use hook). Absent for env-only config.
-                    "key_set_at": profile.get("key_set_at"),
-                    "last_used_at": (self._prefs.get("provider_last_used") or {}).get(
-                        d.name
-                    ),
-                }
-            )
+            row = {
+                **d.to_dict(),
+                "configured": configured,
+                "values": values,
+                "suggested_models": self._suggested_models(d.name),
+                # Key hygiene for the Settings pane: when the key was saved (date, stamped
+                # by set_provider) and when the provider last served a completion (epoch,
+                # stamped by the router's on_use hook). Absent for env-only config.
+                "key_set_at": profile.get("key_set_at"),
+                "last_used_at": (self._prefs.get("provider_last_used") or {}).get(
+                    d.name
+                ),
+            }
+            if d.auth == "oauth":
+                # Sign-in state instead of key state; the token values themselves
+                # never leave the SecretStore.
+                row["signed_in"] = configured
+                row["account"] = profile.get("account_email") or profile.get(
+                    "account_id"
+                )
+                if d.name == "openai-codex":
+                    row["authorizing"] = self._codex_authorizing
+                    row["last_error"] = self._codex_error
+            out.append(row)
         return out
 
     def pick_native_folder(self) -> dict[str, Any]:
@@ -1643,6 +3024,58 @@ class SessionManager:
         self._refresh_provider(name)
         return {"ok": True, "provider": name}
 
+    # -- ChatGPT-subscription provider (OAuth, no key) ---------------------------
+    def begin_codex_signin(self) -> None:
+        """Flag `authorizing` BEFORE the background sign-in task starts, so the GUI's
+        first poll after the button press already shows it (same reasoning as
+        begin_mcp_connect)."""
+        self._codex_authorizing = True
+        self._codex_error = None
+
+    async def codex_signin(self) -> dict[str, Any]:
+        """Run the interactive browser sign-in and store the tokens. Long-running
+        (the user completes it in the browser) — routes run it as a background task
+        and the GUI polls codex_status for the flip."""
+        from ..providers import codex_auth
+
+        self._codex_authorizing = True
+        self._codex_error = None
+        try:
+            result = await codex_auth.sign_in(self.secrets)
+        except Exception as exc:
+            self._codex_error = str(exc)
+            return {"ok": False, "error": str(exc)}
+        finally:
+            self._codex_authorizing = False
+        self._refresh_provider("openai-codex")
+        # Same convenience as set_provider: surface the recommended model right away,
+        # and win the default when the current default's provider isn't usable.
+        added = "openai-codex:gpt-5.6-sol"
+        self.add_model(added)
+        if not self._provider_configured(self._model_provider(self.model)):
+            self.set_default_model(added)
+        return result
+
+    def codex_status(self) -> dict[str, Any]:
+        from ..providers import codex_auth
+
+        store = codex_auth.CodexTokenStore(self.secrets)
+        return {
+            "signed_in": store.signed_in(),
+            "account": store.account_label(),
+            "authorizing": self._codex_authorizing,
+            "last_error": self._codex_error,
+            "authorize_url": codex_auth.last_authorize_url,
+        }
+
+    def codex_signout(self) -> dict[str, Any]:
+        from ..providers import codex_auth
+
+        had_tokens = codex_auth.CodexTokenStore(self.secrets).clear()
+        self._codex_error = None
+        self._refresh_provider("openai-codex")
+        return {"ok": True, "had_tokens": had_tokens}
+
     def verify_provider(
         self, name: str, fields: Optional[dict[str, Any]]
     ) -> dict[str, Any]:
@@ -1654,6 +3087,11 @@ class SessionManager:
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
+        if d.auth == "oauth":
+            # No key form — verify from the stored token set (signed-out / expired / OK).
+            from ..providers import codex_auth
+
+            return codex_auth.verify(self.secrets)
         fields = fields or {}
         profile = self.secrets.get(f"provider:{name}") or {}
         merged = {}
@@ -1868,6 +3306,10 @@ class SessionManager:
             "nav_layout": self._nav_layout(),
             "sessions_peek": self.sessions_peek(),
             "context_bar": self.context_bar(),
+            # Auto-Approve feature flag + its shadow-eval sibling (spec §1.5). Drive the
+            # Settings toggles and gate the composer's Auto-Approve mode entry.
+            "auto_approve": self.auto_approve(),
+            "auto_approve_shadow": self.auto_approve_shadow(),
             "scratch_base": self._prefs.get("scratch_base")
             or self.DEFAULT_SCRATCH_BASE,
             # Real on-disk secrets location, so the UI shows the OS-native path instead of a
@@ -1936,6 +3378,42 @@ class SessionManager:
         self._prefs["context_bar"] = bool(shown)
         self._save_prefs()
         return {"ok": True, "context_bar": self.context_bar()}
+
+    # -- Auto-Approve (spec §1.5, Part 6 step 3) --------------------------------
+    # The feature flag and its shadow-eval sibling live in prefs (GUI-writable), falling
+    # back to the config.toml value a power user may have hand-set. Prefs is user-global,
+    # so a cloned repo still can't enable either — same guarantee as the config path.
+    def auto_approve(self) -> bool:
+        from ..config import load_config
+
+        if "auto_approve" in self._prefs:
+            return bool(self._prefs["auto_approve"])
+        return bool(load_config().auto_approve)
+
+    def auto_approve_shadow(self) -> bool:
+        from ..config import load_config
+
+        if "auto_approve_shadow" in self._prefs:
+            return bool(self._prefs["auto_approve_shadow"])
+        return bool(load_config().auto_approve_shadow)
+
+    def set_auto_approve(self, on: Any) -> dict[str, Any]:
+        self._prefs["auto_approve"] = bool(on)
+        self._save_prefs()
+        return {
+            "ok": True,
+            "auto_approve": self.auto_approve(),
+            "auto_approve_shadow": self.auto_approve_shadow(),
+        }
+
+    def set_auto_approve_shadow(self, on: Any) -> dict[str, Any]:
+        self._prefs["auto_approve_shadow"] = bool(on)
+        self._save_prefs()
+        return {
+            "ok": True,
+            "auto_approve": self.auto_approve(),
+            "auto_approve_shadow": self.auto_approve_shadow(),
+        }
 
     # -- PDF attachments / token savings (owner ask, 2026-07-17) ----------------
     DEFAULT_PDF_MAX_PAGES = 20
@@ -2424,6 +3902,8 @@ class SessionManager:
         """Build the messaging gateway and start enabled listeners. Inbound messages route to
         durable sessions: a channel message to its subscribers, a DM to the designated DM session
         (else parked). Returns the platforms whose listeners came up."""
+        # Team steering/kicks are dispatched from tool threads; they need the app loop.
+        self._loop = asyncio.get_running_loop()
         self.scheduler.start()  # tick scheduler for automations (independent of connectors)
         return await self._build_and_start_gateway()
 
@@ -2672,26 +4152,111 @@ class SessionManager:
     def approval_outcome(self, resolution: str, request, session_id: str):
         """Map an approval resolution (from any surface) to an ApprovalOutcome, handling
         the task-persistent "always_task" vocabulary alongside the session-scoped ones.
+
+        Server-side validated, not trusted from the caller: a grant that no UI offers for
+        this tool is downgraded to a one-time approval rather than honoured. The GUI already
+        hides the broad "always allow" for run_shell / connectors / save_skill, and Slack
+        mirrors only ever render approve/deny — but `POST /v1/inbox/{id}/resolve` takes a raw
+        string, so without this check any local API caller could mint a session-wide
+        any-argument shell grant. Same philosophy as mint_task_rule: validate here, don't
+        trust the card.
         """
         from ..engine import ApprovalOutcome
 
         if resolution == "always_task":
-            self.mint_task_rule(
+            minted = self.mint_task_rule(
                 session_id,
                 request.tool_name,
                 getattr(request, "arguments", None),
                 getattr(request, "metadata", None),
             )
+            if not minted:
+                self._audit_grant_refused(session_id, request, resolution)
             return ApprovalOutcome.ONCE
         try:
-            return ApprovalOutcome(resolution)
+            outcome = ApprovalOutcome(resolution)
         except ValueError:
-            pass
-        if resolution == "allow":
+            if resolution == "allow":
+                return ApprovalOutcome.ONCE
+            if resolution == "always":
+                outcome = ApprovalOutcome.ALWAYS_TOOL
+            else:
+                return ApprovalOutcome.DENY
+        if outcome in (
+            ApprovalOutcome.ALWAYS_TOOL,
+            ApprovalOutcome.ALWAYS_COMMAND,
+            ApprovalOutcome.ALWAYS_DOMAIN,
+        ) and not _grant_offered(outcome, request):
+            self._audit_grant_refused(session_id, request, resolution)
             return ApprovalOutcome.ONCE
-        if resolution == "always":
-            return ApprovalOutcome.ALWAYS_TOOL
-        return ApprovalOutcome.DENY
+        return outcome
+
+    def audit_autonomy_change(
+        self, session_id: str, kind: str, before: Any, after: Any
+    ) -> None:
+        """Record a change to how much the agent may do unsupervised — the permission mode,
+        or the attended/unattended toggle. Without this, "who turned on auto mode, and when"
+        is unanswerable from the audit store, which is at odds with the per-call trail the
+        rest of the engine keeps. Raising autonomy is flagged so it can be filtered."""
+        # AUTO_APPROVE sits above interactive (turning the reviewer on means fewer human
+        # checks — that IS raising autonomy) and below bypass, which removes checks
+        # entirely. "auto" is the legacy spelling of "bypass-approvals".
+        order = {
+            "discuss": 0,
+            "plan": 1,
+            "interactive": 2,
+            "custom": 2,
+            "auto-approve": 3,
+            "auto": 4,
+            "bypass-approvals": 4,
+        }
+        raised = (
+            order.get(str(after), 0) > order.get(str(before), 0)
+            if kind == "mode"
+            else bool(after) and not bool(before)
+        )
+        try:
+            self.audit_store.append(
+                {
+                    "session_id": session_id,
+                    "tool": "",
+                    "arguments": {},
+                    "stage": f"{kind}_changed",
+                    "status": "raised" if raised else "lowered",
+                    "reason": f"{kind}: {before} → {after}",
+                }
+            )
+        except Exception:
+            pass
+
+    def set_unattended(self, session_id: str, on: bool) -> dict[str, Any]:
+        """Flip the attended/unattended toggle, with an audit row. Note this changes only
+        WHERE the human is reached, never the autonomy ceiling (that's the mode) — but it is
+        still worth recording, since an unattended session routes prompts away from the
+        screen the user is looking at."""
+        before = self.unattended.is_unattended(session_id)
+        self.unattended.set(session_id, on)
+        if before != on:
+            self.audit_autonomy_change(session_id, "unattended", before, on)
+        return {"ok": True, "session_id": session_id, "unattended": on}
+
+    def _audit_grant_refused(self, session_id: str, request, resolution: str) -> None:
+        try:
+            self.audit_store.append(
+                {
+                    "session_id": session_id,
+                    "tool": getattr(request, "tool_name", ""),
+                    "arguments": getattr(request, "arguments", None) or {},
+                    "stage": "grant_refused",
+                    "status": "downgraded",
+                    "reason": (
+                        f"resolution {resolution!r} is not offered for this tool — "
+                        "applied as a one-time approval"
+                    ),
+                }
+            )
+        except Exception:
+            pass
 
     def _scheduled_approver(self, task, session_id: str):
         from ..engine import ApprovalOutcome
@@ -2744,6 +4309,7 @@ class SessionManager:
             approver=self._scheduled_approver(task, session_id),
             provider=self.provider,
             memory_store=self.memory_store,
+            memory_workspace=self._memory_key_for(None, task.workspace),
             memory_off=not self.memory_settings.enabled,
             memory_saving_enabled=lambda: self.memory_settings.enabled,
             # Callable, not a snapshot: editing your instructions in Settings applies
@@ -2760,8 +4326,11 @@ class SessionManager:
             # Scheduled runs respect the same per-session connection hierarchy as live sessions:
             # expose only the persona's effective-enabled connectors' tools (§4.3).
             connector_filter=self.effective_connectors(session_id, task.agent),
-            skill_filter=lambda sid=session_id, w=task.workspace: (
-                self.effective_skill_names(sid, w)
+            skill_filter=lambda sid=session_id, w=task.workspace, a=task.agent: (
+                self.effective_skill_names(sid, w, agent=a)
+            ),
+            extra_skill_dirs=(
+                [d] if (d := self.persona_skill_scope(task.agent)[0]) is not None else None
             ),
         )
         self._seed_task_permissions(engine, task)
@@ -2875,9 +4444,19 @@ class SessionManager:
         return resolve_from_reply(text, _resolve) is not None
 
     # -- self-wake resumption ---------------------------------------------------
+    async def _scheduler_tick(self) -> None:
+        """The shared per-tick work: resume due self-wakes, then drain team queues.
+        Team deliveries dispatch as tasks (a long worker turn must not stall the
+        scheduler)."""
+        await self.resume_due_wakes()
+        try:
+            await self.team_tick()
+        except Exception:
+            logger.exception("team tick failed")
+
     async def resume_due_wakes(self) -> int:
         """Resume sessions whose self-wakes are due (called each scheduler tick). A suspended
-        agent (it called sleep_for / wake_on / wake_on_event and ended its turn) is re-invoked on
+        agent (it called sleep_until / wake_on / wake_on_event and ended its turn) is re-invoked on
         its own session with a wake message so it continues where it left off. Returns the count.
         """
         resumed = 0
@@ -2907,12 +4486,33 @@ class SessionManager:
         # finishes — the one shared post-turn moment, so auto-titling hooks in here and
         # can never add latency to the response itself.
         self._maybe_autotitle(session_id)
+        # Team sessions: a finished turn is the moment new board events exist (an
+        # assign, a review transition) — kick the queue drain now instead of waiting
+        # for the next scheduler tick. Cheap no-op for teamless sessions.
+        if self.teams.for_lead_session(session_id):
+            self._team_last_alive[session_id] = time.time()
+        if self._loop is not None and (
+            self.teams.for_lead_session(session_id)
+            or self.teams.for_worker_session(session_id)
+        ):
+            asyncio.run_coroutine_threadsafe(self.team_tick(), self._loop)
+        if session_id in self._promotion_rebuild:
+            # Promotion happened this turn: drop the cached engine so the next turn
+            # rebuilds with the new primary (relative anchoring, env snapshot, git).
+            self._promotion_rebuild.discard(session_id)
+            self._engines.pop(session_id, None)
 
     def is_running(self, session_id: str) -> bool:
         return session_id in self._running_sessions
 
     async def _resume_wake(self, wake) -> None:
-        await self.deliver_to_session(wake.session_id, self._wake_message(wake))
+        message = self._wake_message(wake)
+        # A lead's timer wake carries the staleness digest — pure code over the
+        # board, scoped by role membership (teamless sessions get a bare wake).
+        digest = self.team_staleness_digest(wake.session_id)
+        if digest:
+            message = f"{message}\n\n{digest}"
+        await self.deliver_to_session(wake.session_id, message)
 
     async def deliver_to_session(
         self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None
@@ -3416,7 +5016,7 @@ class SessionManager:
                 messages=engine.messages,
                 title=title_from(engine.messages),
                 agent=getattr(engine, "agent_name", "code"),
-                extra_roots=self._extra_roots_of(engine),
+                extra_roots=self._extra_roots_of(engine, session_id),
                 grants=_grants_of(engine),
                 compaction=(
                     engine.compaction_state.as_dict()
@@ -3434,14 +5034,26 @@ class SessionManager:
             engine.permissions.allow_tool_for_session(str(tool))
         for command in grants.get("commands") or []:
             engine.permissions.allow_command_for_session(str(command))
+        if grants.get("readonly"):
+            engine.permissions.allow_readonly_for_session()
 
-    @staticmethod
-    def _extra_roots_of(engine: TurnEngine) -> list[dict[str, Any]]:
-        """Added folders = the engine's roots minus the primary scratch (index 0)."""
+    def _extra_roots_of(
+        self, engine: TurnEngine, session_id: str
+    ) -> list[dict[str, Any]]:
+        """User/agent-added folders = the engine's roots minus the primary (index 0) AND
+        the session's provisioned scratch root. Persisting the scratch as an "extra"
+        would re-add it as a plain folder on every rebuild (universal scratch made
+        index-0-only slicing wrong for dual-root sessions)."""
         roots = getattr(engine, "roots", None) or []
+        scratch = (self.scratch_base() / session_id).expanduser()
+        try:
+            scratch = scratch.resolve()
+        except OSError:
+            pass
         return [
             {"path": str(r.path), "writable": bool(r.writable), "label": r.label}
             for r in roots[1:]
+            if r.path != scratch
         ]
 
     # -- LLM auto-titles (FB-010) -------------------------------------------------
@@ -3575,15 +5187,29 @@ class SessionManager:
             else self._provision_scratch(session_id)
         )
         extra = (record.extra_roots if record else []) or []
+        primary_is_scratch = self.is_temp_workspace(primary)
         out = [
             {
                 "path": primary,
                 "writable": True,
-                "label": "scratch",
+                "label": "scratch" if primary_is_scratch else "workspace",
                 "primary": True,
                 "exists": Path(primary).is_dir(),
             }
         ]
+        # Universal scratch: a real-folder session also carries its provisioned scratch
+        # root (mirrors the engine-side shape so a cold read matches a live one).
+        if not primary_is_scratch and self._SESSION_ID_RE.match(session_id or ""):
+            scratch = self.scratch_base() / session_id
+            out.append(
+                {
+                    "path": str(scratch.expanduser().resolve()),
+                    "writable": True,
+                    "label": "scratch",
+                    "primary": False,
+                    "exists": scratch.is_dir(),
+                }
+            )
         for r in extra:
             p = str(r.get("path", ""))
             out.append(
@@ -3596,6 +5222,45 @@ class SessionManager:
                 }
             )
         return out
+
+    def promote_workspace(self, session_id: str, path: str) -> dict[str, Any]:
+        """Root promotion (workspace-scratch-design.md §5): adopt `path` as the session's
+        primary workspace. One-way and once — only while the primary is still the
+        provisioned scratch; a session that already has a real workspace is never
+        re-pointed. Mutates the live session (roots + shell cwd), persists, and marks
+        the engine for a post-turn rebuild."""
+        p = Path(path).expanduser()
+        if not p.is_dir():
+            return {"ok": False, "error": f"not a directory: {path}"}
+        resolved = p.resolve()
+        engine = self._engines.get(session_id)
+        if engine is None:
+            return {"ok": False, "error": "no live session to promote"}
+        executor = getattr(engine, "executor", None)
+        current = str(executor.cwd) if executor is not None else None
+        if not current or not self.is_temp_workspace(current):
+            return {"ok": False, "error": "this session already has a workspace"}
+        roots = getattr(engine, "roots", None)
+        if roots is None:
+            return {"ok": False, "error": "this session has no directory list"}
+        # Shared list: permissions, file tools, and the context injector see the new
+        # primary immediately. The old scratch primary stays as the scratch root.
+        roots[:] = [
+            RootDir(path=resolved, writable=True, label="workspace"),
+            *[r for r in roots if r.path != resolved],
+        ]
+        try:
+            # Move the live shell too — save() derives the persisted workspace from the
+            # executor's cwd, so this is also what makes the promotion durable.
+            res = executor.run(f"cd {shlex.quote(str(resolved))}", timeout=15)
+            if res.get("exit_code") != 0:
+                executor.cwd = str(resolved)
+        except Exception:
+            executor.cwd = str(resolved)  # a respawned shell starts there
+        self.save(session_id, engine)
+        self.session_store.touch_workspace(str(resolved))
+        self._promotion_rebuild.add(session_id)
+        return {"ok": True, "path": str(resolved), "roots": self.get_roots(session_id)}
 
     def add_root(
         self, session_id: str, path: str, writable: bool = False
@@ -3616,7 +5281,9 @@ class SessionManager:
                         r.writable = bool(writable)
             else:
                 engine.roots.append(RootDir(path=resolved, writable=bool(writable)))
-            self.session_store.set_extra_roots(session_id, self._extra_roots_of(engine))
+            self.session_store.set_extra_roots(
+                session_id, self._extra_roots_of(engine, session_id)
+            )
         else:
             # A brand-new conversation has no record yet (it's only saved after the first turn) —
             # create one now so set_extra_roots has a row to update and the folder survives.
@@ -3631,7 +5298,12 @@ class SessionManager:
                         agent="cowork",  # folder access is a Cowork affordance
                     )
                 )
-            extra = [r for r in self.get_roots(session_id) if not r["primary"]]
+            session_scratch = str((self.scratch_base() / session_id).expanduser().resolve())
+            extra = [
+                r
+                for r in self.get_roots(session_id)
+                if not r["primary"] and r["path"] != session_scratch
+            ]
             extra = [r for r in extra if Path(r["path"]).resolve() != resolved]
             extra.append(
                 {
@@ -3652,7 +5324,32 @@ class SessionManager:
                 ],
             )
         self.session_store.touch_workspace(str(resolved))
-        return {"ok": True, "roots": self.get_roots(session_id)}
+        # Grant-time notice (pass 20): if this directory's project already has
+        # memory or a board, say so — one line, pointer only, to agent + user.
+        notice = self._project_notice(str(resolved))
+        engine = self._engines.get(session_id)
+        if notice and engine is not None:
+            engine._append_notice("project_presence", notice)
+        return {"ok": True, "roots": self.get_roots(session_id), "notice": notice}
+
+    def _project_notice(self, path: str) -> Optional[str]:
+        """One-line presence pointer for a newly granted directory, or None."""
+        try:
+            key = project_key(path)
+            pres = project_presence(
+                key, memory_store=self.memory_store, team_store=self.team_store
+            )
+        except Exception:
+            return None
+        parts = []
+        if pres["memories"]:
+            parts.append(f"project memory ({pres['memories']} entries)")
+        if pres["board_items"]:
+            parts.append("a board")
+        if not parts:
+            return None
+        label = project_label(key)["label"]
+        return f"“{label}” already has {' and '.join(parts)} — bind it by name or start a session there to use it."
 
     def remove_root(self, session_id: str, path: str) -> dict[str, Any]:
         """Revoke a previously-added folder. The primary scratch cannot be removed."""
@@ -3665,7 +5362,9 @@ class SessionManager:
                     "error": "cannot remove the primary scratch directory",
                 }
             engine.roots[:] = [r for r in engine.roots if r.path != resolved]
-            self.session_store.set_extra_roots(session_id, self._extra_roots_of(engine))
+            self.session_store.set_extra_roots(
+                session_id, self._extra_roots_of(engine, session_id)
+            )
         else:
             current = self.get_roots(session_id)
             if (
@@ -3677,10 +5376,12 @@ class SessionManager:
                     "ok": False,
                     "error": "cannot remove the primary scratch directory",
                 }
+            session_scratch = (self.scratch_base() / session_id).expanduser().resolve()
             extra = [
                 r
                 for r in current
-                if not r["primary"] and Path(r["path"]).resolve() != resolved
+                if not r["primary"]
+                and Path(r["path"]).resolve() not in (resolved, session_scratch)
             ]
             self.session_store.set_extra_roots(
                 session_id,
@@ -3803,15 +5504,69 @@ class SessionManager:
                 # sleeping (a self-wake is pending) / idle — a count-less dot that never bubbles.
                 "attention": len(self.inbox.pending(session_id=r.session_id)),
                 "liveness": self._session_liveness(r.session_id),
+                # When sleeping: the next timer fire (ISO) — drives the "sleeping
+                # until…" strip so a scheduled agent never reads as a dead one.
+                "sleeping_until": self._sleeping_until(r.session_id),
                 # Channels this session listens to (inbound subscriptions) — drives the per-session
                 # "connections" indicator.
                 "subscriptions": [
                     s.channel for s in self.subscriptions.for_session(r.session_id)
                 ],
+                # Agent teams: {} for plain sessions. Workers carry role/lead_session
+                # (+ a computed current-item line); leads carry role/team_id — drives
+                # the sidebar's ONE expandable team entry.
+                "team": self._session_team_row(r),
             }
             for r in self.session_store.list(workspace=ws)
             if not r.session_id.startswith("__")  # hide internal threads
         ]
+
+    def _session_team_row(self, record: SessionRecord) -> dict[str, Any]:
+        info = record.team or {}
+        if not info:
+            return {}
+        row = {
+            "role": info.get("role", ""),
+            "team_id": info.get("team_id", ""),
+            "lead_session": info.get("lead_session", ""),
+        }
+        if info.get("role") == "lead":
+            team = self.teams.get(str(info.get("team_id", "")))
+            if team is not None and team.chat_enabled and team.chat_group:
+                row["chat_enabled"] = True
+                row["chat_unread"] = self.chat_store.unread_count(
+                    team.chat_group, "user"
+                )
+        if info.get("role") == "worker" and info.get("space") and info.get("actor"):
+            try:
+                items = self.team_store.list_items(
+                    str(info["space"]), self._user_actor(), assignee=str(info["actor"])
+                )
+            except Exception:
+                items = []
+            active = next(
+                (
+                    i
+                    for state in ("blocked", "review", "in_progress", "open")
+                    for i in items
+                    if i["state"] == state
+                ),
+                None,
+            )
+            row["actor"] = info["actor"]
+            row["current_item"] = (
+                f"#{active['id']} {active['state'].replace('_', ' ')}" if active else "idle"
+            )
+            row["status"] = active["state"] if active else "idle"
+        return row
+
+    def _sleeping_until(self, session_id: str) -> Optional[str]:
+        fires = [
+            w.fire_at
+            for w in self.wakes.pending(session_id)
+            if w.kind == "timer" and w.fire_at
+        ]
+        return min(fires) if fires else None
 
     def _session_liveness(self, session_id: str) -> str:
         if self.is_running(session_id):
@@ -3862,17 +5617,56 @@ class SessionManager:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}
 
+    def persona_mcp_scope(self, persona_id: str) -> Optional[set[str]]:
+        """The persona's declared MCP-server scope (OPE-58 sibling stub): the manifest's
+        `mcp:` names, or None when it declares none (= no scoping). Only ever narrows —
+        the user's enabled/configured/authed gates apply regardless."""
+        entry = self.personas.get(persona_id)
+        names = list((entry.manifest.mcp if entry and entry.manifest else []) or [])
+        return {n for n in names if n} or None
+
+    def persona_skill_scope(
+        self, persona_id: str
+    ) -> tuple[Optional[Path], Optional[set[str]]]:
+        """The persona's own skill folder + optional allowlist (OPE-58).
+
+        A manifest-backed persona carries skills as a `skills/` dir next to its manifest —
+        the sharing bundle shape (manifest + skill folders). The manifest's `skills:` list,
+        when non-empty, narrows which of those activate. Additive on top of global/project
+        scopes: the persona SHIPS skills; it never hides the user's own."""
+        entry = self.personas.get(persona_id)
+        manifest = entry.manifest if entry else None
+        if manifest is None or not manifest.source:
+            return None, None
+        d = Path(manifest.source).parent / "skills"
+        if not d.is_dir():
+            return None, None
+        allow = {s for s in manifest.skills if s} or None
+        return d, allow
+
     def effective_skill_names(
-        self, session_id: str, workspace: Optional[str | Path] = None
+        self,
+        session_id: str,
+        workspace: Optional[str | Path] = None,
+        agent: Optional[str] = None,
     ) -> set[str]:
         """The session's skill menu (§3): merged scopes − Settings disables − session mutes.
-        The single resolver behind the engine catalog, the rail list, and the composer popup."""
+        The single resolver behind the engine catalog, the rail list, and the composer popup.
+        Persona-carried skills (OPE-58) join the merge for the session's persona — user
+        disables and mutes still win over them."""
         dirs = [self.skill_store.global_dir]
         if workspace:
             dirs.append(self.skill_store.project_dir(workspace))
         loader = SkillLoader(dirs)
+        names = set(loader.names())
+        persona_dir, allow = self.persona_skill_scope(self._persona_of(session_id, agent))
+        if persona_dir is not None:
+            persona_names = set(SkillLoader([persona_dir]).names())
+            if allow is not None:
+                persona_names &= allow
+            names |= persona_names
         return effective_skills(
-            names=set(loader.names()),
+            names=names,
             disabled=self.skill_store.disabled_names(),
             session_overrides=self.session_skills.get(session_id),
         )
@@ -3880,7 +5674,9 @@ class SessionManager:
     def session_skills_view(
         self, session_id: str, workspace: Optional[str] = None
     ) -> dict[str, Any]:
-        """The rail payload: every in-scope, Settings-enabled skill with its mute state."""
+        """The rail payload: every in-scope, Settings-enabled skill with its mute state.
+        Persona-carried skills (OPE-58) appear with scope "coworker" — mutable per session
+        like any other, but owned by the persona bundle, not the Settings store."""
         disabled = self.skill_store.disabled_names()
         overrides = self.session_skills.get(session_id)
         rows = [
@@ -3893,6 +5689,23 @@ class SessionManager:
             for r in self.skill_store.rows(workspace or None)
             if r["name"] not in disabled
         ]
+        seen = {r["name"] for r in rows}
+        persona_dir, allow = self.persona_skill_scope(self._persona_of(session_id))
+        if persona_dir is not None:
+            for entry in SkillLoader([persona_dir]).catalog():
+                name = entry["name"]
+                if name in seen or name in disabled:
+                    continue  # a global/project copy shadows the bundle's
+                if allow is not None and name not in allow:
+                    continue
+                rows.append(
+                    {
+                        "name": name,
+                        "description": entry["description"],
+                        "scope": "coworker",
+                        "enabled": overrides.get(name, True),
+                    }
+                )
         return {"skills": rows}
 
     def _scratch_workspace_error(self, workspace: Any) -> Optional[dict[str, Any]]:
@@ -4024,6 +5837,71 @@ class SessionManager:
                 pass
 
         return notify
+
+    # -- project bindings (pass 20 / UX-044) -------------------------------------
+
+    def project_menu(self, session_id: str, kind: str) -> dict[str, Any]:
+        """The submenu payload: the session's derived project (pinned, labeled per
+        the UX-044 rules) + named entries MRU-ordered. The GUI shows 5 and grows a
+        filter at 6+; the full named list ships so the filter reaches everything."""
+        record = self.session_store.load(session_id)
+        ws = (record.workspace if record else None) or self.default_workspace
+        derived_key = project_key(ws) if ws else None
+        names = self.session_store.names()
+        bound = ((record.bindings if record else {}) or {}).get(kind)
+        named = names.list(kind)
+        return {
+            "kind": kind,
+            "bound": bound,
+            "derived": (
+                {**project_label(derived_key), "key": derived_key}
+                if derived_key
+                else None
+            ),
+            "named": [{"name": n["name"], "key": n["key"]} for n in named],
+        }
+
+    def set_binding(
+        self, session_id: str, kind: str, name: Optional[str]
+    ) -> dict[str, Any]:
+        """Bind (or unbind, name=None) a named project for this session. Takes
+        effect at the next engine build — the running engine keeps the knowledge
+        it started with (same doctrine as memory deletions)."""
+        if kind not in ("memory", "board"):
+            return {"ok": False, "error": f"unknown kind {kind!r}"}
+        if self.is_running(session_id):
+            return {"ok": False, "error": "wait for the current task to finish first"}
+        if name and self.session_store.names().resolve(kind, name) is None:
+            return {"ok": False, "error": f"no {kind} named {name!r}"}
+        record = self.session_store.load(session_id)
+        bindings = dict((record.bindings if record else {}) or {})
+        if name:
+            bindings[kind] = name
+        else:
+            bindings.pop(kind, None)
+        if record is None:
+            return {"ok": False, "error": "unknown session"}
+        self.session_store.set_bindings(session_id, bindings)
+        # Rebind applies from the next engine build; drop the cached engine so the
+        # next turn rebuilds with the new key (messages persist via the record).
+        self._engines.pop(session_id, None)
+        return {"ok": True, "bindings": bindings}
+
+    def name_current_project(
+        self, session_id: str, kind: str, name: str
+    ) -> dict[str, Any]:
+        """Give the session's derived project a user name (UX-044 'Name current…')."""
+        record = self.session_store.load(session_id)
+        ws = (record.workspace if record else None) or self.default_workspace
+        if not ws:
+            return {"ok": False, "error": "session has no workspace"}
+        try:
+            entry = self.session_store.names().name_current(
+                kind, name, project_key(ws)
+            )
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, **entry}
 
     def list_memory(self) -> list[dict[str, Any]]:
         return [

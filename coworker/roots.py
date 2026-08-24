@@ -63,13 +63,33 @@ def render_context(roots: list[RootDir]) -> str:
     if not roots:
         return ""
     lines = ["Available directories (you may use file/shell tools within these):"]
+    has_side_scratch = any(i > 0 and r.label == "scratch" for i, r in enumerate(roots))
     for i, r in enumerate(roots):
         access = "read-write" if r.writable else "read-only"
-        tag = " — primary scratch, the default place to save files" if i == 0 else ""
+        if i == 0 and r.label == "scratch":
+            tag = " — primary scratch, the default place to save files"
+        elif i == 0:
+            tag = " — the session's workspace (relative paths resolve here)"
+        elif r.label == "scratch":
+            tag = (
+                " — your scratch directory: temporary files, and artifacts you don't "
+                "want to leave inside the workspace"
+            )
+        else:
+            tag = ""
         lines.append(f"- {r.path} [{access}]{tag}")
-    lines.append(
-        "Relative paths resolve against the primary directory; pass an absolute path to use "
-        "another directory. Writes are only allowed in read-write directories. If the user "
-        "cares where a deliverable lands, ask; otherwise save it in the primary scratch."
-    )
+    if has_side_scratch:
+        lines.append(
+            "Relative paths resolve against the workspace; pass an absolute path to use "
+            "another directory. Writes are only allowed in read-write directories. Put "
+            "reports, analyses, and other non-repo deliverables in the scratch directory "
+            "(they appear in the user's Artifacts panel) — write into the workspace only "
+            "for changes that belong in it."
+        )
+    else:
+        lines.append(
+            "Relative paths resolve against the primary directory; pass an absolute path to use "
+            "another directory. Writes are only allowed in read-write directories. If the user "
+            "cares where a deliverable lands, ask; otherwise save it in the primary scratch."
+        )
     return "\n".join(lines)

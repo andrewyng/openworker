@@ -96,12 +96,12 @@ export function SearchModal({
         onMouseEnter={() => setActive(idx)}
         onClick={() => choose(s)}
       >
-        <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink">
+        <span className="min-w-0 flex-1 truncate text-[13px] text-ink">
           {s.title || s.session_id}
         </span>
         <span className="text-[12px] text-faint shrink-0">{tagFor(s)}</span>
         {idx < 9 && (
-          <kbd className="text-[10.5px] text-faint bg-paper border border-line rounded px-1.5 py-0.5 shrink-0 font-sans">
+          <kbd className="text-[11px] text-faint bg-paper border border-line rounded px-1.5 py-0.5 shrink-0 font-sans">
             ⌘{idx + 1}
           </kbd>
         )}
@@ -120,9 +120,9 @@ export function SearchModal({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search chats"
-            className="flex-1 bg-transparent outline-none text-[15px] text-ink placeholder:text-faint"
+            className="flex-1 bg-transparent outline-none text-[14px] text-ink placeholder:text-faint"
           />
-          <kbd className="text-[10.5px] text-faint bg-paper border border-line rounded px-1.5 py-0.5 font-sans">
+          <kbd className="text-[11px] text-faint bg-paper border border-line rounded px-1.5 py-0.5 font-sans">
             Esc
           </kbd>
         </div>
