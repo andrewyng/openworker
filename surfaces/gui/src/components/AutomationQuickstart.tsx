@@ -61,25 +61,6 @@ interface QuickTemplate {
 
 const TEMPLATES: QuickTemplate[] = [
   {
-    key: "github",
-    title: "GitHub digest",
-    blurb: "Merged PRs and commits, posted to your team's Slack.",
-    cadence: "Weekly",
-    conns: [
-      { name: "slack", why: "Where the digest posts" },
-      { name: "github", why: "What the digest summarizes" },
-    ],
-    needsRepo: true,
-    needsChannel: true,
-    consent: true,
-    day: "mon",
-    time: "09:00",
-    instructions: ({ repo, channel }) =>
-      `Summarize activity since the last digest in the GitHub repository ${repo || "(the connected repository)"}: ` +
-      `merged pull requests, notable commits, and anything needing attention. ` +
-      `Post the digest to the Slack channel ${channel} using send_message.`,
-  },
-  {
     key: "pipeline",
     title: "Pipeline digest",
     blurb: "Deals that moved — and deals going quiet — posted to Slack.",
@@ -135,6 +116,24 @@ const TEMPLATES: QuickTemplate[] = [
     day: "weekdays",
     time: "09:00",
     instructions: () => "Summarize my unread email into one short digest note.",
+  },
+  {
+    key: "inboxcleanup",
+    title: "Inbox cleanup",
+    blurb: "Review old email first, then organize it with your approval.",
+    cadence: "Weekly",
+    conns: [{ name: "gmail", why: "The inbox to review and organize" }],
+    day: "mon",
+    time: "09:00",
+    instructions: () =>
+      "Help me get my inbox under control. First, give me a quick picture of what I am dealing with: " +
+      "how much is unread, how much is old, and the main sources (newsletters, promotions, notifications, and people). " +
+      "If email access is unavailable, explain how to connect it before continuing. Before sorting anything, ask how I want it organized: " +
+      "which categories or labels make sense, what I am comfortable archiving or deleting, and which senders I always want to see. " +
+      "Start with older messages. Show a representative sample of messages you would archive, delete, or flag for a reply, and wait for my approval " +
+      "before applying those choices at scale. Do not archive, label, mark, or delete any message until I approve the proposed approach. " +
+      "Never delete any email permanently without asking me for explicit approval immediately before that deletion. " +
+      "Do not claim that a message was changed unless the requested action has completed successfully.",
   },
   {
     key: "cleanup",

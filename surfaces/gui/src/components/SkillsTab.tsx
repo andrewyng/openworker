@@ -199,9 +199,7 @@ export function SkillsTab({
                   }}
                 >
                   <div className="text-[13px] font-medium">Write it myself</div>
-                  <div className="text-[12px] text-muted">
-                    A name, a description, and the instructions
-                  </div>
+                  <div className="text-[12px] text-muted">{"A name, a description, and the instructions"}</div>
                 </button>
                 <button
                   role="menuitem"
@@ -212,9 +210,7 @@ export function SkillsTab({
                   }}
                 >
                   <div className="text-[13px] font-medium">Import a file</div>
-                  <div className="text-[12px] text-muted">
-                    A .zip or SKILL.md someone shared — you review before it installs
-                  </div>
+                  <div className="text-[12px] text-muted">{"A .zip or SKILL.md someone shared — you review before it installs"}</div>
                 </button>
                 <button
                   role="menuitem"
@@ -226,10 +222,7 @@ export function SkillsTab({
                   }}
                 >
                   <div className="text-[13px] font-medium">Create with OpenWorker</div>
-                  <div className="text-[12px] text-muted">
-                    Starts a conversation — the worker builds it and asks before adding it to
-                    your skills
-                  </div>
+                  <div className="text-[12px] text-muted">{"Starts a conversation — the worker builds it and asks before adding it to your skills"}</div>
                 </button>
               </div>
             </>

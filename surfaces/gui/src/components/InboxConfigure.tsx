@@ -41,10 +41,7 @@ export function InboxConfigure() {
           the Inbox now (§28; previously with routing under Connectors, §26). */}
       <div className="mt-6" data-testid="unrouted-section">
         <h3 className="text-[14px] font-semibold mb-1">Unrouted</h3>
-        <p className="text-[13px] text-muted mb-3">
-          Inbound messages and background-turn failures nothing claimed — nothing vanishes
-          silently.
-        </p>
+        <p className="text-[13px] text-muted mb-3">{"Inbound messages and background-turn failures nothing claimed — nothing vanishes silently."}</p>
         <UnroutedTable />
       </div>
     </div>
@@ -125,7 +122,7 @@ function InboxRoutingCard() {
     <div className={CARD + " p-4"} data-testid="inbox-mirror-card">
       <div className="font-semibold text-[13px] mb-1">Unattended approvals</div>
       <p className="text-[12px] text-muted mb-3">
-        Channel where an Unattended session posts Approve/Deny buttons. Currently mirroring to{" "}
+        {"Channel where an Unattended session posts Approve/Deny buttons. Currently mirroring to "}
         <strong className="text-ink font-medium" title={target || undefined}>
           {known ? `#${known}` : target || "in-app Inbox only"}
         </strong>
@@ -184,9 +181,7 @@ function DmRouteCard() {
   return (
     <div className={CARD + " p-4"}>
       <div className="font-semibold text-[13px] mb-1">Direct messages</div>
-      <p className="text-[12px] text-muted mb-3">
-        Session that handles DMs to the bot. With none, DMs park under Unrouted below.
-      </p>
+      <p className="text-[12px] text-muted mb-3">{"Session that handles DMs to the bot. With none, DMs park under Unrouted below."}</p>
       <div className="flex items-center gap-2">
         <span className="text-muted shrink-0">
           <Icon name="chat" size={16} />
