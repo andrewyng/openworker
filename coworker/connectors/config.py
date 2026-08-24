@@ -14,7 +14,7 @@ from typing import Optional
 from ..secrets import SecretStore
 from .base import SessionSource
 
-PLATFORMS = ("telegram", "slack", "github")
+PLATFORMS = ("telegram", "slack", "dingtalk", "github")
 
 
 @dataclass
@@ -76,6 +76,11 @@ def load_settings(
     for platform in PLATFORMS:
         profile = secrets.get(f"{platform}:default") or {}
         token = profile.get("bot_token")
+        # DingTalk authenticates in Stream mode with client_id + client_secret,
+        # not a bot_token. Treat those as the credential for enablement so the
+        # adapter actually registers and connects at startup.
+        if platform == "dingtalk":
+            token = token or (profile.get("client_id") and profile.get("client_secret"))
         allowed = set(profile.get("allowed_users") or [])
         allowed |= _csv(os.environ.get(f"{platform.upper()}_ALLOWED_USERS"))
         allow_all = bool(profile.get("allow_all")) or os.environ.get(

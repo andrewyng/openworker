@@ -152,6 +152,12 @@ const DescriptLogo = strokeLogo(
   </>,
 );
 
+const DingTalkLogo = strokeLogo(
+  <>
+    <path d="M5 19c3-4 7-6 11-6M6 15c3-2 6-3 9-3M8 11c2-1 4-2 6-2M10 7c1 0 2-.5 3-.5" strokeWidth={2} />
+  </>,
+);
+
 const ClayLogo = strokeLogo(
   <>
     <path d="M3 19a9 9 0 0 1 18 0zM1.5 19h21" />
@@ -226,6 +232,7 @@ export const CONNECTORS: Record<string, ConnectorRegistryEntry> = {
   attio: { label: "Attio", logo: AttioLogo },
   monday: { label: "monday.com", logo: MondayLogo },
   descript: { label: "Descript", logo: DescriptLogo },
+  dingtalk: { label: "DingTalk", logo: DingTalkLogo },
   clay: { label: "Clay", logo: ClayLogo },
   close: { label: "Close", logo: CloseLogo },
   docusign: { label: "Docusign", logo: DocusignLogo },

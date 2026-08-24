@@ -42,6 +42,13 @@ def _connect_slack(mgr):
     )
 
 
+def _connect_dingtalk(mgr):
+    mgr.secrets.put(
+        "dingtalk:default",
+        {"client_id": "cid-test", "client_secret": "secret-test", "enabled": True},
+    )
+
+
 def _mention_event(
     text="<@UBOT> check the deploy?",
     *,
@@ -71,6 +78,21 @@ def _plain_event(text="lunch anyone?", *, chat_id="C1", ts="1700000011.000200"):
     ev = _mention_event(text, chat_id=chat_id, ts=ts)
     ev.mentions_me = False
     return ev
+
+
+def _dingtalk_mention_event(text="@OpenWorker 你是谁？"):
+    return MessageEvent(
+        text=text,
+        source=SessionSource(
+            platform="dingtalk",
+            chat_id="cidpuRTat/SCmxsJBdabXkFlw==",
+            user_id="U1",
+            user_name="林海舟",
+            chat_type="group",
+        ),
+        message_id="msg-1",
+        mentions_me=True,
+    )
 
 
 def _mgr(tmp_path):
@@ -177,6 +199,9 @@ def test_distinct_thread_spawns_distinct_session(tmp_path, monkeypatch):
 def test_subscribed_coworker_overrides_router(tmp_path, monkeypatch):
     mgr = _mgr(tmp_path)
     captured = _capture_deliveries(mgr, monkeypatch)
+    # Materialize the subscribed session so the router can seed its send grant.
+    engine = mgr.get_engine("sA")
+    mgr.save("sA", engine)
     mgr.subscriptions.subscribe("sA", "slack:C1")
 
     asyncio.run(mgr._dispatch_inbound(_mention_event()))
@@ -185,11 +210,14 @@ def test_subscribed_coworker_overrides_router(tmp_path, monkeypatch):
     assert len(captured) == 1
     sid, message, _ = captured[0]
     assert sid == "sA"
-    assert "must" in message and "respond" in message
+    assert "MUST" in message and "send_message" in message
     assert "slack:C1:1700000010.000100" in message
     # …and the router spawned nothing.
     assert mgr.mention_sessions.all() == []
-    assert mgr.list_sessions() == []
+    assert len(mgr.list_sessions()) == 1
+    # The subscribed session carries the same standing grant a spawned mention session would.
+    target = "slack:C1:1700000010.000100"
+    assert target in mgr._engines["sA"].permissions.task_rules["send_message"]
 
 
 def test_grant_reseeds_on_engine_rebuild(tmp_path, monkeypatch):
@@ -249,6 +277,75 @@ def test_untagged_channel_traffic_stays_judgement_only(tmp_path, monkeypatch):
     assert captured == [] and mgr.list_sessions() == []
 
 
+# -- DingTalk ------------------------------------------------------------------------
+
+
+def test_dingtalk_mention_spawns_with_conversation_target(tmp_path, monkeypatch):
+    """DingTalk has no thread concept: the grant target must be the conversation itself."""
+    mgr = _mgr(tmp_path)
+    captured = _capture_deliveries(mgr, monkeypatch)
+
+    asyncio.run(mgr._dispatch_inbound(_dingtalk_mention_event()))
+
+    listed = [s for s in mgr.list_sessions() if s["origin"] == "dingtalk"]
+    assert len(listed) == 1
+    sid = listed[0]["session_id"]
+    target = "dingtalk:cidpuRTat/SCmxsJBdabXkFlw=="
+    assert mgr.mention_sessions.get(target) == sid
+    assert target in mgr._engines[sid].permissions.task_rules["send_message"]
+
+    _, opening, _ = captured[-1]
+    assert "DingTalk" in opening
+    assert "conversation" in opening
+    assert "Slack" not in opening
+
+
+def test_dingtalk_subscribed_session_gets_grant_and_conversation_target(
+    tmp_path, monkeypatch
+):
+    """A channel subscribed by an existing session uses the same send_message grant."""
+    mgr = _mgr(tmp_path)
+    _connect_dingtalk(mgr)
+    captured = _capture_deliveries(mgr, monkeypatch)
+    engine = mgr.get_engine("sA")
+    mgr.save("sA", engine)
+    mgr.subscriptions.subscribe("sA", "dingtalk:cidpuRTat/SCmxsJBdabXkFlw==")
+
+    asyncio.run(mgr._dispatch_inbound(_dingtalk_mention_event()))
+
+    assert len(captured) == 1
+    sid, message, _ = captured[0]
+    assert sid == "sA"
+    target = "dingtalk:cidpuRTat/SCmxsJBdabXkFlw=="
+    assert target in message
+    assert "conversation" in message
+    assert "Slack" not in message
+    assert "MUST" in message and "send_message" in message
+    assert target in mgr._engines["sA"].permissions.task_rules["send_message"]
+    assert mgr.mention_sessions.all() == []
+
+
+def test_dingtalk_followup_reseeds_grant(tmp_path, monkeypatch):
+    mgr = _mgr(tmp_path)
+    captured = _capture_deliveries(mgr, monkeypatch)
+    asyncio.run(mgr._dispatch_inbound(_dingtalk_mention_event()))
+    sid = mgr.list_sessions()[0]["session_id"]
+    target = "dingtalk:cidpuRTat/SCmxsJBdabXkFlw=="
+
+    # Simulate a restart: drop the in-memory engine. On the next @ the router
+    # should steer the same session and re-seed the grant.
+    mgr._engines.pop(sid)
+    asyncio.run(mgr._dispatch_inbound(_dingtalk_mention_event(text="@OpenWorker 还有呢")))
+
+    assert len(mgr.list_sessions()) == 1
+    assert mgr.mention_sessions.get(target) == sid
+    engine = mgr.get_engine(sid)
+    assert target in engine.permissions.task_rules["send_message"]
+    _, message, _ = captured[-1]
+    assert "Follow-up" in message
+    assert "DingTalk" in message
+
+
 # -- origin persistence ---------------------------------------------------------------
 
 
@@ -288,3 +385,67 @@ def test_origin_columns_migrate_on_old_db(tmp_path):
     assert old is not None and old.origin is None
     assert store.set_origin("old", "slack", "#x")
     assert store.load("old").origin == "slack"
+
+
+# -- §37 connector auto-send -------------------------------------------------------
+
+
+def test_deliver_pins_auto_send_target_for_mentioned_dingtalk(
+    tmp_path, monkeypatch
+):
+    """A DingTalk @-mention delivered to a subscribed session must pin the auto-send
+    target so a model that ignores the framing and replies with plain text still gets
+    its reply delivered to the chat."""
+    mgr = _mgr(tmp_path)
+    mgr.get_engine("sA")
+
+    # Stub engine.run so we don't actually drive a model turn — we only want to
+    # verify that the deliver path pins the auto-send target before the turn starts.
+    async def fake_run(*args, **kwargs):
+        if False:
+            yield  # make this an async generator
+
+    engine = mgr._engines["sA"]
+    monkeypatch.setattr(engine, "run", fake_run)
+
+    src = {
+        "connector": "dingtalk",
+        "channel_id": "cidABC",
+        "channel_name": "cidABC",
+        "sender_id": "u1",
+        "sender_name": "林海舟",
+        "kind": "channel",
+        "ts": 1.0,
+        "text": "你是谁？",
+    }
+    asyncio.run(
+        mgr.deliver_to_session(
+            "sA",
+            "🔔 You were tagged on DingTalk in cidABC by 林海舟: 你是谁？\n\n"
+            "You MUST reply using the send_message tool with target "
+            '"dingtalk:cidABC". …',
+            source=src,
+        )
+    )
+
+    assert engine._auto_send_target == "dingtalk:cidABC"
+
+
+def test_deliver_does_not_pin_auto_send_when_source_lacks_connector(
+    tmp_path, monkeypatch
+):
+    """A delivery WITHOUT a connector source (e.g. an internal wake) must NOT pin the
+    auto-send target — only inbound channel messages should."""
+    mgr = _mgr(tmp_path)
+    mgr.get_engine("sA")
+
+    async def fake_run(*args, **kwargs):
+        if False:
+            yield
+
+    engine = mgr._engines["sA"]
+    monkeypatch.setattr(engine, "run", fake_run)
+
+    asyncio.run(mgr.deliver_to_session("sA", "scheduled wake"))
+
+    assert engine._auto_send_target is None

@@ -29,6 +29,7 @@ export function ChannelPicker({
   recent,
   onSubmit,
   onPickName,
+  placeholder,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -37,6 +38,7 @@ export function ChannelPicker({
   // Fires when a pick RESOLVES a display name for the raw address — callers can echo the
   // human name (+ workspace) wherever they show the target (§25 consent line, summaries).
   onPickName?: (address: string, name: string, workspace?: string) => void;
+  placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement | null>(null);
@@ -143,7 +145,7 @@ export function ChannelPicker({
       <input
         ref={inputRef}
         className="chan-input w-full"
-        placeholder="slack:C0123 or channel link"
+        placeholder={placeholder || "slack:C0123 or channel link"}
         value={display}
         title={value || undefined}
         onChange={(e) => {

@@ -56,7 +56,7 @@ export function AddConnectionModal({
     <div className="fixed inset-0 z-40" data-testid="add-connection-modal">
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
       <div
-        className="absolute left-1/2 top-[14%] -translate-x-1/2 w-[480px] max-w-[calc(100vw-2rem)] bg-panel rounded-2xl border border-line shadow-2xl"
+        className="absolute left-1/2 top-[14%] -translate-x-1/2 w-[480px] max-w-[calc(100vw-2rem)] max-h-[calc(100vh-7rem)] overflow-y-auto bg-panel rounded-2xl border border-line shadow-2xl"
         role="dialog"
         aria-label={title || `Connect ${c.title}`}
       >

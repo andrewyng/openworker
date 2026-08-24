@@ -22,11 +22,12 @@ _SCHEMA = {
     "function": {
         "name": "send_message",
         "description": (
-            "Send a message to a connected chat (Slack or Telegram). `target` is the "
-            "reply handle from an inbound message (e.g. 'telegram:12345' or 'slack:C0123', "
-            "optionally with a ':<thread>' suffix) — or, for Slack, just the channel NAME "
-            "('#general' or 'general'; resolved against the connected workspaces). Use this to "
-            "actually reach a person — plain assistant text is not delivered anywhere."
+            "Send a message to a connected chat (Slack, Telegram, or DingTalk). `target` is the "
+            "reply handle from an inbound message (e.g. 'telegram:12345', 'slack:C0123', "
+            "or 'dingtalk:<conversationId>', optionally with a ':<thread>' suffix) — or, "
+            "for Slack, just the channel NAME ('#general' or 'general'; resolved against the "
+            "connected workspaces). Use this to actually reach a person — plain assistant text "
+            "is not delivered anywhere."
         ),
         "parameters": {
             "type": "object",
@@ -128,6 +129,22 @@ def _resolve_token(secrets: SecretStore, platform: str, chat_id: str) -> Optiona
             per_team = secrets.get(f"slack:team:{team}") or {}
             return per_team.get("bot_token")
     creds = secrets.get(f"{platform}:default") or {}
+    if platform == "dingtalk":
+        import json
+
+        # Stream mode: replies use the sessionWebhook that arrived with the inbound
+        # message for this conversation. It is persisted by the adapter.
+        session_webhooks = creds.get("session_webhooks") or {}
+        session_webhook = session_webhooks.get(chat_id)
+        if session_webhook:
+            return json.dumps({"webhook_url": session_webhook})
+
+        webhook_url = creds.get("webhook_url")
+        if not webhook_url:
+            return None
+        return json.dumps(
+            {"webhook_url": webhook_url, "secret": creds.get("secret") or ""}
+        )
     return creds.get("bot_token")
 
 
