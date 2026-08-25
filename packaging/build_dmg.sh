@@ -3,8 +3,9 @@
 #
 #   1. PyInstaller-bundle the server into a standalone onedir folder (no venv at runtime).
 #   2. Stage it at binaries/sidecar/ for Tauri's `resources` slot (+ sign its Mach-Os).
-#   3. `tauri build --bundles app` → OpenWorker.app (resources are copied in).
-#   4. Wrap the .app in a compressed .dmg via hdiutil (reliable + headless; Tauri's own
+#   3. Verify and stage the pinned universal Cua Driver + capability policy.
+#   4. `tauri build --bundles app` → OpenWorker.app (resources are copied in).
+#   5. Wrap the .app in a compressed .dmg via hdiutil (reliable + headless; Tauri's own
 #      bundle_dmg.sh uses Finder AppleScript and fails in non-interactive sessions).
 #
 # Prerequisites (mirrors build_windows.ps1's header):
@@ -73,11 +74,11 @@ if [ -n "${APPLE_CERTIFICATE:-}" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   security list-keychains -d user -s "$KC" login.keychain-db
 fi
 
-echo "==> [1/5] PyInstaller: bundling openworker-server ($TRIPLE)"
+echo "==> [1/6] PyInstaller: bundling openworker-server ($TRIPLE)"
 "$PLATFORM/.venv/bin/pyinstaller" --noconfirm --clean \
   --distpath "$HERE/dist" --workpath "$HERE/build" "$HERE/openworker-server.spec"
 
-echo "==> [2/5] staging sidecar resources"
+echo "==> [2/6] staging sidecar resources"
 # Onedir bundle (exe + _internal/) ships via Tauri `resources` as Contents/Resources/sidecar/
 # — onefile's per-launch self-extraction cost 6-7s of boot splash. rm -rf first: cp WRITES
 # THROUGH a symlink at the destination (a dev-convenience symlink in the old externalBin slot
@@ -109,6 +110,41 @@ if [ -n "$(find "$GUI/src-tauri/binaries/sidecar" -type d -name "*.framework" | 
 fi
 chmod +x "$GUI/src-tauri/binaries/sidecar/openworker-server"
 
+echo "==> [3/6] staging pinned universal Cua Driver"
+CUA_VERSION="0.22.0"
+CUA_SHA256="202eb9dd2185d64fc0599079671f50efe2bf71b300a85644cf26d627bb7355e6"
+CUA_CACHE="$HERE/cache"
+CUA_ARCHIVE="${CUA_DRIVER_ARCHIVE:-$CUA_CACHE/cua-driver-$CUA_VERSION-darwin-universal.tar.gz}"
+if [ ! -f "$CUA_ARCHIVE" ]; then
+  mkdir -p "$CUA_CACHE"
+  CUA_URL="https://github.com/trycua/cua/releases/download/cua-driver-rs-v$CUA_VERSION/cua-driver-rs-$CUA_VERSION-darwin-universal-binary.tar.gz"
+  echo "    downloading $CUA_URL"
+  curl -L --fail --silent --show-error "$CUA_URL" -o "$CUA_ARCHIVE"
+fi
+ACTUAL_CUA_SHA="$(shasum -a 256 "$CUA_ARCHIVE" | awk '{print $1}')"
+if [ "$ACTUAL_CUA_SHA" != "$CUA_SHA256" ]; then
+  echo "ERROR: Cua Driver archive checksum mismatch: expected $CUA_SHA256, got $ACTUAL_CUA_SHA" >&2
+  exit 1
+fi
+CUA_STAGE="$CUA_CACHE/extracted-$CUA_VERSION-darwin-universal"
+CUA_DST="$GUI/src-tauri/binaries/sidecar/cua-driver"
+rm -rf "$CUA_STAGE" "$CUA_DST"
+mkdir -p "$CUA_STAGE" "$CUA_DST"
+tar -xzf "$CUA_ARCHIVE" -C "$CUA_STAGE"
+cp "$CUA_STAGE/cua-driver" "$CUA_DST/"
+cp "$CUA_STAGE/cua-cursor-theme" "$CUA_DST/"
+cp "$HERE/cua-driver-capabilities.yaml" "$CUA_DST/"
+cp "$HERE/cua-driver-LICENSE.txt" "$CUA_DST/"
+chmod +x "$CUA_DST/cua-driver" "$CUA_DST/cua-cursor-theme"
+# Preserve Cua AI's notarized Developer ID signatures: macOS attributes Accessibility
+# and Screen Recording grants to the driver's own identity. The outer OpenWorker bundle
+# seals these unmodified resources in its signature.
+find "$CUA_DST" -type f -print0 | while IFS= read -r -d '' f; do
+  file -b "$f" | grep -q "Mach-O" || continue
+  codesign --verify --strict "$f"
+done
+echo "    -> $CUA_DST (v$CUA_VERSION universal, SHA256 and signatures verified)"
+
 # Sign the sidecar's Mach-O files BEFORE tauri build: `tauri build` signs the .app (sealing
 # resources into its signature) but does NOT sign nested binaries inside resources — unsigned
 # Mach-Os there fail notarization. Hardened runtime + timestamp on every one, same identity,
@@ -121,7 +157,7 @@ if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   # tree is fully dereferenced, so each file must validate standalone — that is exactly
   # what the notary service checks). Entitlements only on the entrypoint
   # (disable-library-validation: the bundled python.org dylibs carry another Team ID).
-  find "$SIDECAR" -type f ! -name "openworker-server" \
+  find "$SIDECAR" -type f ! -path "$SIDECAR/cua-driver/*" ! -name "openworker-server" \
     ! -name "*.py" ! -name "*.pyc" ! -name "*.txt" ! -name "*.pem" ! -name "*.json" \
     -print0 | while IFS= read -r -d '' f; do
     file -b "$f" | grep -q "Mach-O" || continue
@@ -131,7 +167,7 @@ if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
     --entitlements "$GUI/src-tauri/entitlements.plist" "$SIDECAR/openworker-server"
 fi
 
-echo "==> [3/5] tauri build (.app)"
+echo "==> [4/6] tauri build (.app)"
 # Auto-update artifacts (.app.tar.gz + minisign .sig): produced only when the updater
 # signing key is available — from the env (CI secret TAURI_SIGNING_PRIVATE_KEY), or from
 # `.ocw-updater.env` one directory above the repo (same convention as the notary env).
@@ -152,7 +188,7 @@ fi
 # under set -u on macOS's stock bash 3.2 — hit by keyless (fresh-clone) builds.
 ( cd "$GUI" && npm run tauri build -- --bundles app ${UPDATER_OVERLAY[@]+"${UPDATER_OVERLAY[@]}"} )
 
-echo "==> [4/5] hdiutil: wrapping into .dmg"
+echo "==> [5/6] hdiutil: wrapping into .dmg"
 BUNDLE="$GUI/src-tauri/target/release/bundle"
 STAGING="$(mktemp -d)"
 cp -R "$BUNDLE/macos/$APP.app" "$STAGING/"
@@ -232,10 +268,10 @@ if [ "${OCW_SKIP_NOTARIZE:-}" = "1" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; t
   # Local-iteration escape hatch: sign (seconds) but skip the notary round-trip
   # (minutes). Locally built DMGs carry no quarantine flag, so Gatekeeper never
   # prompts on this machine anyway. NEVER distribute a build made this way.
-  echo "==> [5/5] OCW_SKIP_NOTARIZE=1 — signing container, SKIPPING notarize/staple (do not distribute)"
+  echo "==> [6/6] OCW_SKIP_NOTARIZE=1 — signing container, SKIPPING notarize/staple (do not distribute)"
   codesign --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$DMG"
 elif [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
-  echo "==> [5/5] release finishing: sign container → notarize → staple"
+  echo "==> [6/6] release finishing: sign container → notarize → staple"
   codesign --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$DMG"
 
   # CI provides the App Store Connect key under tauri's APPLE_API_* names (release.yml)

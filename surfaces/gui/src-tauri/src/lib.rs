@@ -357,18 +357,20 @@ async fn pick_folder(app: tauri::AppHandle) -> Option<String> {
     rx.recv().ok().flatten().map(|fp| fp.to_string())
 }
 
-/// Native executable picker for Settings > Computer use. The selected path is
+/// Native application picker for Settings > Computer use. The selected path is
 /// still validated by the local Python server before it enters the allowlist.
 #[tauri::command]
 async fn pick_program(app: tauri::AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
     let (tx, rx) = std::sync::mpsc::channel();
-    app.dialog()
-        .file()
-        .add_filter("Windows programs", &["exe"])
-        .pick_file(move |p| {
-            let _ = tx.send(p);
-        });
+    let dialog = app.dialog().file().set_title("Allow an application");
+    #[cfg(target_os = "windows")]
+    let dialog = dialog.add_filter("Windows programs", &["exe"]);
+    #[cfg(target_os = "macos")]
+    let dialog = dialog.add_filter("macOS applications", &["app"]);
+    dialog.pick_file(move |p| {
+        let _ = tx.send(p);
+    });
     rx.recv().ok().flatten().map(|fp| fp.to_string())
 }
 

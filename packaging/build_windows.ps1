@@ -83,8 +83,8 @@ Copy-Item -Recurse -Force $Src $Dst
 Write-Host "    -> $Dst"
 
 Write-Host "==> [3/4] staging pinned Cua Driver" -ForegroundColor Cyan
-$CuaVersion = "0.20.0"
-$CuaSha256  = "c020fefee01aacc174a27fea84a0cb77d47ef8290bfc772b3db7e3e06670d2b2"
+$CuaVersion = "0.22.0"
+$CuaSha256  = "18bf9530bfb78b360ac877d596c5b3f14ed8a3d8cdf5682d3b7231d20fb03f76"
 $CuaCache   = Join-Path $Here "cache"
 $CuaArchive = if ($env:CUA_DRIVER_ARCHIVE) {
     $env:CUA_DRIVER_ARCHIVE

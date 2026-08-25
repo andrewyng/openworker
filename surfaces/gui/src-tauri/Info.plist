@@ -8,6 +8,8 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>OpenWorker records only while you use the composer microphone to turn your spoken prompt into editable text. Audio is transcribed locally and is not uploaded.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>OpenWorker captures only an application window you explicitly allow, so an approved task can inspect and interact with that application.</string>
   <key>NSDesktopFolderUsageDescription</key>
   <string>A task you run may need to read or save files on your Desktop. OpenWorker never scans this folder on its own.</string>
   <key>NSDocumentsFolderUsageDescription</key>

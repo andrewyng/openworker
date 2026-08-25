@@ -917,6 +917,7 @@ export interface ComputerUseProgram {
 export interface ComputerUseSettings {
   enabled: boolean;
   supported: boolean;
+  platform: "macos" | "windows" | "unsupported";
   allowed_programs: ComputerUseProgram[];
   driver_installed?: boolean;
   driver_reloaded?: boolean;
@@ -1704,6 +1705,17 @@ export async function setComputerUseSettings(patch: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
+export async function requestComputerUsePermissions(): Promise<{
+  ok: boolean;
+  message?: string;
+  error?: string;
+}> {
+  const res = await fetch(`${httpBase()}/v1/settings/computer-use/permissions`, {
+    method: "POST",
   });
   return res.json();
 }

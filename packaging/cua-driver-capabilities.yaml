@@ -1,9 +1,12 @@
 version: 3
+expires_after: 8h
+idle_timeout: 30m
 
-# Bootstrap profile. OpenWorker replaces this file with exact PIDs and window IDs
-# for programs selected in Settings > Computer use before exposing any window state
-# or input action. No shell, filesystem, browser-profile, process-control, or
-# desktop-wide screenshot/input tools are admitted.
+# Bootstrap profile reference. At runtime OpenWorker writes an equivalent short-lived
+# manifest under the user's state directory, adding exact PIDs and window IDs for the
+# applications selected in Settings > Computer use. The signed application bundle is
+# never modified. No shell, filesystem, browser-profile, process-control, or desktop-wide
+# screenshot/input tools are admitted.
 resources:
   apps: []
   desktop:

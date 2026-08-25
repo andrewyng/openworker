@@ -1871,6 +1871,11 @@ def create_app(manager: SessionManager) -> FastAPI:
             enabled=b.get("enabled"),
             allowed_programs=b.get("allowed_programs"),
         )
+
+    @app.post("/v1/settings/computer-use/permissions")
+    def settings_computer_use_permissions() -> dict[str, Any]:
+        return manager.request_computer_use_permissions()
+
     @app.post("/v1/settings/model-key")
     def settings_set_model_key(body: dict) -> dict[str, Any]:
         return manager.set_model_key((body or {}).get("api_key", ""))

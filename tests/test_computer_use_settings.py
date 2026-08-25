@@ -2,6 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 
+from coworker.connectors import computer_automation
 from coworker.server import manager as manager_module
 from coworker.server.app import create_app
 from coworker.server.manager import SessionManager
@@ -15,6 +16,9 @@ def test_computer_use_is_disabled_and_empty_by_default(tmp_path):
 
 
 def test_computer_use_settings_persist_program_allowlist(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        computer_automation, "computer_use_platform", lambda: "windows"
+    )
     reloads = []
     monkeypatch.setattr(
         manager_module,
@@ -53,6 +57,9 @@ def test_computer_use_settings_persist_program_allowlist(tmp_path, monkeypatch):
 
 def test_computer_use_settings_reject_command_interpreters(tmp_path, monkeypatch):
     monkeypatch.setattr(
+        computer_automation, "computer_use_platform", lambda: "windows"
+    )
+    monkeypatch.setattr(
         manager_module,
         "reset_computer_use_permissions",
         lambda: {"driver_installed": False, "driver_reloaded": False},
@@ -70,3 +77,15 @@ def test_computer_use_settings_reject_command_interpreters(tmp_path, monkeypatch
     ).json()
     assert result["ok"] is False
     assert "cannot be allowed" in result["error"]
+
+
+def test_macos_permission_setup_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        manager_module,
+        "request_computer_use_permissions",
+        lambda: {"ok": True, "message": "Follow the macOS prompts."},
+    )
+    client = TestClient(create_app(SessionManager(data_dir=tmp_path / "data")))
+
+    result = client.post("/v1/settings/computer-use/permissions").json()
+    assert result == {"ok": True, "message": "Follow the macOS prompts."}

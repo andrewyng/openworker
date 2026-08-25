@@ -1,4 +1,4 @@
-"""Allowlist-enforced Windows desktop automation through the Cua Driver CLI.
+"""Allowlist-enforced desktop automation through the Cua Driver CLI.
 
 The driver is a local native sidecar. OpenWorker remains the approval authority
 for every input action, and refreshes a deny-by-default capability manifest with
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -21,12 +22,13 @@ from typing import Any, Callable, Optional
 import aisuite as ai
 import yaml
 
+from ..secrets import state_dir
 from .tool_defs import approval_for_tool
 
 
 _DRIVER_LOCK = threading.Lock()
 _DAEMON_READY = False
-_BLOCKED_PROGRAM_NAMES = {
+_BLOCKED_WINDOWS_PROGRAM_NAMES = {
     "bash.exe",
     "cmd.exe",
     "conhost.exe",
@@ -48,18 +50,80 @@ _BLOCKED_PROGRAM_NAMES = {
     "wsl.exe",
     "wt.exe",
 }
+_BLOCKED_MACOS_APP_NAMES = {
+    "automator.app",
+    "finder.app",
+    "iterm.app",
+    "iterm2.app",
+    "script editor.app",
+    "shortcuts.app",
+    "terminal.app",
+    "warp.app",
+    "wezterm.app",
+}
+_BLOCKED_MACOS_BUNDLE_IDS = {
+    "com.apple.automator",
+    "com.apple.finder",
+    "com.apple.scripteditor2",
+    "com.apple.shortcuts",
+    "com.apple.terminal",
+    "com.github.wez.wezterm",
+    "com.googlecode.iterm2",
+    "dev.warp.warp-stable",
+}
+_BLOCKED_MACOS_EXECUTABLE_NAMES = {
+    "automator",
+    "bash",
+    "finder",
+    "iterm2",
+    "node",
+    "osascript",
+    "perl",
+    "python",
+    "python3",
+    "ruby",
+    "script editor",
+    "shortcuts",
+    "sh",
+    "terminal",
+    "warp",
+    "wezterm-gui",
+    "zsh",
+}
 _CONFIG_LOCK = threading.RLock()
 _COMPUTER_USE_ENABLED = False
 _ALLOWED_PROGRAMS: tuple[dict[str, str], ...] = ()
 _TOKEN_LOCK = threading.Lock()
 _TOKEN_LABELS: dict[tuple[str, int, int, str], str] = {}
+_MACHO_MAGICS = {
+    b"\xbe\xba\xfe\xca",
+    b"\xbf\xba\xfe\xca",
+    b"\xca\xfe\xba\xbe",
+    b"\xca\xfe\xba\xbf",
+    b"\xce\xfa\xed\xfe",
+    b"\xcf\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xce",
+    b"\xfe\xed\xfa\xcf",
+}
+
+
+def computer_use_platform() -> str:
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "unsupported"
+
+
+def computer_use_supported() -> bool:
+    return computer_use_platform() != "unsupported"
 
 
 def _path_key(value: str | Path) -> str:
     path = os.path.normpath(os.path.expandvars(str(value or "").strip()))
     if path.startswith("\\\\?\\"):
         path = path[4:]
-    return path.casefold()
+    return path.casefold() if computer_use_platform() == "windows" else path
 
 
 def _program_name(path: str | Path) -> str:
@@ -67,9 +131,73 @@ def _program_name(path: str | Path) -> str:
     return stem or Path(str(path)).name or "Program"
 
 
+def _macos_app_details(path: Path) -> tuple[Path, str]:
+    """Resolve one .app bundle to its contained executable and bundle id."""
+
+    bundle = path.resolve(strict=True)
+    if not bundle.is_dir() or bundle.suffix.casefold() != ".app":
+        raise ValueError(f"only macOS .app bundles can be allowed: {path}")
+    contents = (bundle / "Contents").resolve(strict=True)
+    if not contents.is_relative_to(bundle):
+        raise ValueError(f"application Contents directory escapes its bundle: {path}")
+    info_path = contents / "Info.plist"
+    try:
+        with info_path.open("rb") as stream:
+            info = plistlib.load(stream)
+    except (OSError, plistlib.InvalidFileException) as exc:
+        raise ValueError(f"application has no valid Info.plist: {path}") from exc
+    executable_name = str(info.get("CFBundleExecutable") or "").strip()
+    if (
+        not executable_name
+        or executable_name in {".", ".."}
+        or "/" in executable_name
+        or "\\" in executable_name
+    ):
+        raise ValueError(f"application has no valid CFBundleExecutable: {path}")
+    executable_root = (contents / "MacOS").resolve(strict=True)
+    if not executable_root.is_relative_to(contents):
+        raise ValueError(f"application executable directory escapes its bundle: {path}")
+    executable = (executable_root / executable_name).resolve(strict=True)
+    if not executable.is_relative_to(executable_root) or not executable.is_file():
+        raise ValueError(f"application executable escapes its bundle: {path}")
+    if not os.access(executable, os.X_OK):
+        raise ValueError(f"application executable is not runnable: {executable}")
+    try:
+        with executable.open("rb") as stream:
+            magic = stream.read(4)
+    except OSError as exc:
+        raise ValueError(f"application executable cannot be read: {executable}") from exc
+    if magic not in _MACHO_MAGICS:
+        raise ValueError(f"application executable is not a Mach-O binary: {executable}")
+    return executable, str(info.get("CFBundleIdentifier") or "").strip().casefold()
+
+
+def _program_executable(path: str | Path) -> Path:
+    selected = Path(str(path)).expanduser()
+    if computer_use_platform() == "windows":
+        resolved = selected.resolve(strict=True)
+        if not resolved.is_file() or resolved.suffix.casefold() != ".exe":
+            raise ValueError(f"only Windows .exe programs can be allowed: {selected}")
+        return resolved
+    if computer_use_platform() == "macos":
+        return _macos_app_details(selected)[0]
+    raise ValueError("Computer use is supported only on macOS and Windows")
+
+
+def program_path_available(path: str | Path) -> bool:
+    try:
+        _program_executable(path)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def validate_allowed_programs(
     value: Any, *, require_exists: bool = True
 ) -> list[dict[str, str]]:
+    platform = computer_use_platform()
+    if platform == "unsupported":
+        raise ValueError("Computer use is supported only on macOS and Windows")
     if not isinstance(value, list):
         raise ValueError("allowed_programs must be a list")
     if len(value) > 20:
@@ -88,12 +216,32 @@ def validate_allowed_programs(
         path = Path(expanded)
         if not path.is_absolute():
             raise ValueError(f"program path must be absolute: {raw_path}")
-        if path.suffix.casefold() != ".exe":
-            raise ValueError(f"only Windows .exe programs can be allowed: {path}")
-        if path.name.casefold() in _BLOCKED_PROGRAM_NAMES:
-            raise ValueError(f"system command interpreters cannot be allowed: {path.name}")
-        if require_exists and not path.is_file():
-            raise ValueError(f"program was not found: {path}")
+        if platform == "windows":
+            if path.suffix.casefold() != ".exe":
+                raise ValueError(f"only Windows .exe programs can be allowed: {path}")
+            if path.name.casefold() in _BLOCKED_WINDOWS_PROGRAM_NAMES:
+                raise ValueError(f"system command interpreters cannot be allowed: {path.name}")
+            if require_exists and not path.is_file():
+                raise ValueError(f"program was not found: {path}")
+            if path.exists():
+                path = path.resolve()
+        else:
+            if path.suffix.casefold() != ".app":
+                raise ValueError(f"only macOS .app bundles can be allowed: {path}")
+            if path.name.casefold() in _BLOCKED_MACOS_APP_NAMES:
+                raise ValueError(f"system automation applications cannot be allowed: {path.name}")
+            if require_exists and not path.is_dir():
+                raise ValueError(f"program was not found: {path}")
+            if path.exists():
+                executable, bundle_id = _macos_app_details(path)
+                if (
+                    executable.name.casefold() in _BLOCKED_MACOS_EXECUTABLE_NAMES
+                    or bundle_id in _BLOCKED_MACOS_BUNDLE_IDS
+                ):
+                    raise ValueError(
+                        f"system automation applications cannot be allowed: {path.name}"
+                    )
+                path = path.resolve()
         key = _path_key(path)
         if key in seen:
             continue
@@ -127,11 +275,34 @@ def _effective_allowed_paths() -> dict[str, dict[str, Any]]:
     with _CONFIG_LOCK:
         if not _COMPUTER_USE_ENABLED:
             return {}
-        entries: list[dict[str, Any]] = [
-            {"name": item["name"], "path": item["path"], "launch": True}
-            for item in _ALLOWED_PROGRAMS
-        ]
-    return {_path_key(item["path"]): item for item in entries}
+        configured = [dict(item) for item in _ALLOWED_PROGRAMS]
+    entries: list[dict[str, Any]] = []
+    for item in configured:
+        try:
+            executable = _program_executable(item["path"])
+        except (OSError, ValueError):
+            continue
+        entries.append(
+            {
+                "name": item["name"],
+                "path": item["path"],
+                "executable": str(executable),
+                "launch": True,
+            }
+        )
+    return {_path_key(item["executable"]): item for item in entries}
+
+
+def _allowed_program_for_path(program_path: str) -> Optional[dict[str, Any]]:
+    requested = _path_key(program_path)
+    return next(
+        (
+            item
+            for item in _effective_allowed_paths().values()
+            if _path_key(item["path"]) == requested
+        ),
+        None,
+    )
 
 
 def _element_text(element: dict[str, Any]) -> str:
@@ -251,9 +422,26 @@ def _driver_path() -> Optional[Path]:
 
 
 def _process_executable(pid: int) -> Optional[str]:
-    """Resolve a Windows PID to its full executable without shelling out."""
+    """Resolve a local PID to its full executable without shelling out."""
 
-    if os.name != "nt" or int(pid) <= 0:
+    if int(pid) <= 0:
+        return None
+    if computer_use_platform() == "macos":
+        try:
+            import ctypes
+
+            libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            proc_pidpath = libproc.proc_pidpath
+            proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+            proc_pidpath.restype = ctypes.c_int
+            buffer = ctypes.create_string_buffer(4096)
+            length = proc_pidpath(int(pid), buffer, len(buffer))
+            if length <= 0:
+                return None
+            return os.fsdecode(buffer.value)
+        except (AttributeError, OSError, ValueError):
+            return None
+    if computer_use_platform() != "windows":
         return None
     try:
         import ctypes
@@ -321,12 +509,12 @@ def _manifest_document(allowed_windows: list[dict[str, Any]]) -> str:
     allowed_paths = _effective_allowed_paths()
     app_resources = []
     for item in allowed_paths.values():
-        path = Path(str(item["path"]))
-        if not path.is_file():
+        executable = Path(str(item["executable"]))
+        if not executable.is_file():
             continue
         app_resources.append(
             {
-                "executable": str(path),
+                "executable": str(executable),
                 "launch": bool(item.get("launch")),
                 "windows": "all",
                 "terminate": "deny",
@@ -349,6 +537,8 @@ def _manifest_document(allowed_windows: list[dict[str, Any]]) -> str:
     )
     document = {
         "version": 3,
+        "expires_after": "8h",
+        "idle_timeout": "30m",
         "resources": {
             "apps": app_resources,
             "desktop": {
@@ -373,13 +563,39 @@ def _manifest_document(allowed_windows: list[dict[str, Any]]) -> str:
     return yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
 
 
+def _manifest_path(_driver: Path) -> Path:
+    override = str(os.environ.get("OPENWORKER_CUA_MANIFEST") or "").strip()
+    if override:
+        return Path(override).expanduser()
+    return state_dir() / "cua-driver" / "computer-use-capabilities.yaml"
+
+
+def _write_manifest(manifest: Path, content: str) -> None:
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        manifest.parent.chmod(0o700)
+    tmp = manifest.with_name(
+        f".{manifest.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    )
+    try:
+        tmp.write_text(content, encoding="utf-8")
+        if os.name != "nt":
+            tmp.chmod(0o600)
+        tmp.replace(manifest)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _install_manifest(
     driver: Path, allowed_windows: list[dict[str, Any]], *, restart_if_running: bool
 ) -> bool:
     """Install a reviewed manifest and restart the immutable CUA daemon if needed."""
 
     global _DAEMON_READY
-    manifest = driver.with_name("cua-driver-capabilities.yaml")
+    manifest = _manifest_path(driver)
     content = _manifest_document(allowed_windows)
     try:
         current = manifest.read_text(encoding="utf-8") if manifest.is_file() else ""
@@ -406,9 +622,7 @@ def _install_manifest(
                 )
             except (OSError, subprocess.TimeoutExpired):
                 pass
-        tmp = manifest.with_name(manifest.name + ".tmp")
-        tmp.write_text(content, encoding="utf-8")
-        tmp.replace(manifest)
+        _write_manifest(manifest, content)
         _DAEMON_READY = False
         if was_running and restart_if_running:
             _start_daemon(driver)
@@ -469,7 +683,7 @@ def shutdown_computer_use() -> None:
 
 
 def _daemon_args(driver: Path) -> list[str]:
-    manifest = driver.with_name("cua-driver-capabilities.yaml")
+    manifest = _manifest_path(driver)
     return [
         str(driver),
         "serve",
@@ -482,9 +696,9 @@ def _daemon_args(driver: Path) -> list[str]:
 
 
 def _start_daemon(driver: Path) -> None:
-    manifest = driver.with_name("cua-driver-capabilities.yaml")
+    manifest = _manifest_path(driver)
     if not manifest.is_file():
-        raise RuntimeError(f"Cua Driver capability manifest is missing: {manifest}")
+        _write_manifest(manifest, _manifest_document([]))
     env = os.environ.copy()
     env["CUA_DRIVER_RS_TELEMETRY_ENABLED"] = "false"
     env["CUA_TELEMETRY_ENABLED"] = "false"
@@ -591,7 +805,7 @@ def _run_driver(
     if driver is None:
         return {
             "ok": False,
-            "error": "Cua Driver is not installed. Reinstall the Windows OpenWorker build.",
+            "error": "Cua Driver is not installed. Reinstall the OpenWorker desktop build.",
         }
     try:
         _ensure_daemon(driver)
@@ -642,6 +856,36 @@ def _run_driver(
             "error": result.get("error") or f"Cua Driver exited {proc.returncode}",
         }
     return {"ok": True, **result}
+
+
+def request_computer_use_permissions() -> dict[str, Any]:
+    """Start Cua Driver's user-initiated macOS permission onboarding flow."""
+
+    if computer_use_platform() != "macos":
+        return {"ok": False, "error": "Permission setup is available only on macOS"}
+    driver = _driver_path()
+    if driver is None:
+        return {
+            "ok": False,
+            "error": "Cua Driver is not installed. Reinstall the OpenWorker desktop build.",
+        }
+    env = os.environ.copy()
+    env["CUA_DRIVER_RS_TELEMETRY_ENABLED"] = "false"
+    env["CUA_TELEMETRY_ENABLED"] = "false"
+    try:
+        subprocess.Popen(
+            [str(driver), "permissions", "grant"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+        )
+    except OSError as exc:
+        return {"ok": False, "error": f"could not open macOS permission setup: {exc}"}
+    return {
+        "ok": True,
+        "message": "Follow the macOS prompts, then restart OpenWorker if requested.",
+    }
 
 
 def _session_label(session_id: Optional[str]) -> str:
@@ -887,26 +1131,41 @@ def make_computer_automation_tools(
         disabled = _disabled_error()
         if disabled:
             return disabled
-        requested = _path_key(program_path)
-        allowed = _effective_allowed_paths().get(requested)
+        allowed = _allowed_program_for_path(program_path)
         if allowed is None or not bool(allowed.get("launch")):
             return {
                 "ok": False,
                 "error": "program is not allowed in Settings > Computer use",
             }
         path = Path(str(allowed["path"]))
-        if not path.is_file():
+        executable = Path(str(allowed["executable"]))
+        if not program_path_available(path):
             return {"ok": False, "error": f"program was not found: {path}"}
+        launch_pid: Optional[int] = None
         try:
-            process = subprocess.Popen(
-                [str(path)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=(
-                    getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-                ),
-            )
+            if computer_use_platform() == "macos":
+                opened = subprocess.run(
+                    ["/usr/bin/open", str(path)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=15,
+                    check=False,
+                )
+                if opened.returncode != 0:
+                    return {
+                        "ok": False,
+                        "error": f"could not open {allowed['name']}: open exited {opened.returncode}",
+                    }
+            else:
+                process = subprocess.Popen(
+                    [str(executable)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                launch_pid = process.pid
         except OSError as exc:
             return {"ok": False, "error": f"could not open {allowed['name']}: {exc}"}
         time.sleep(1.5)
@@ -919,14 +1178,15 @@ def make_computer_automation_tools(
                 windows = [
                     _public_window(window)
                     for window in current
-                    if _path_key(window.get("_executable") or "") == requested
+                    if _path_key(window.get("_executable") or "")
+                    == _path_key(executable)
                 ]
             except (OSError, RuntimeError, yaml.YAMLError):
                 pass
         return {
             "ok": True,
             "program": {"name": allowed["name"], "path": str(path)},
-            "pid": process.pid,
+            "pid": int(windows[0]["pid"]) if windows else launch_pid,
             "windows": windows,
             "allowlist_reloaded": reloaded,
             "instruction": (

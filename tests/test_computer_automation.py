@@ -2,10 +2,32 @@
 
 from __future__ import annotations
 
+import os
+import plistlib
+import sys
+from pathlib import Path
+
 import pytest
 
 from coworker.connectors import computer_automation
 from coworker.roots import RootDir
+
+
+def _platform(monkeypatch, name):
+    monkeypatch.setattr(computer_automation, "computer_use_platform", lambda: name)
+
+
+def _mac_app(tmp_path, name="Writer", bundle_id="com.example.writer"):
+    app = tmp_path / f"{name}.app"
+    executable = app / "Contents" / "MacOS" / name
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"\xcf\xfa\xed\xfe" + b"test")
+    executable.chmod(0o755)
+    with (app / "Contents" / "Info.plist").open("wb") as stream:
+        plistlib.dump(
+            {"CFBundleExecutable": name, "CFBundleIdentifier": bundle_id}, stream
+        )
+    return app, executable
 
 
 def _tools(tmp_path, monkeypatch, fake):
@@ -30,7 +52,10 @@ def _tools(tmp_path, monkeypatch, fake):
     }
 
 
-def test_validate_allowed_programs_rejects_interpreters_and_deduplicates(tmp_path):
+def test_validate_allowed_programs_rejects_interpreters_and_deduplicates(
+    tmp_path, monkeypatch
+):
+    _platform(monkeypatch, "windows")
     editor = tmp_path / "editor.exe"
     editor.write_bytes(b"MZ")
     command = tmp_path / "powershell.exe"
@@ -49,6 +74,7 @@ def test_validate_allowed_programs_rejects_interpreters_and_deduplicates(tmp_pat
 
 
 def test_runtime_allowlist_binds_exact_executable_process_and_window(tmp_path, monkeypatch):
+    _platform(monkeypatch, "windows")
     editor = tmp_path / "editor.exe"
     other = tmp_path / "other.exe"
     editor.write_bytes(b"MZ")
@@ -72,9 +98,99 @@ def test_runtime_allowlist_binds_exact_executable_process_and_window(tmp_path, m
     assert [(item["pid"], item["window_id"]) for item in allowed] == [(7, 9)]
     manifest = computer_automation._manifest_document(allowed)
     assert str(editor) in manifest
+    assert "expires_after: 8h" in manifest
+    assert "idle_timeout: 30m" in manifest
     assert "applications:\n    - 7" in manifest
     assert "window_id: 9" in manifest
     assert "Private" not in manifest and "window_id: 10" not in manifest
+
+
+def test_macos_app_allowlist_resolves_inner_executable_and_rejects_automation_apps(
+    tmp_path, monkeypatch
+):
+    _platform(monkeypatch, "macos")
+    writer, executable = _mac_app(tmp_path)
+    terminal, _ = _mac_app(tmp_path, "Terminal", "com.apple.Terminal")
+
+    assert computer_automation.validate_allowed_programs([str(writer)]) == [
+        {"name": "Writer", "path": str(writer.resolve())}
+    ]
+    assert computer_automation._program_executable(writer) == executable.resolve()
+    assert computer_automation.program_path_available(writer) is True
+    with pytest.raises(ValueError, match="cannot be allowed"):
+        computer_automation.validate_allowed_programs([str(terminal)])
+    with pytest.raises(ValueError, match="only macOS .app"):
+        computer_automation.validate_allowed_programs([str(executable)])
+
+    script_app, script_executable = _mac_app(
+        tmp_path, "ScriptWrapped", "com.example.scriptwrapped"
+    )
+    script_executable.write_bytes(b"#!/bin/sh\n")
+    with pytest.raises(ValueError, match="not a Mach-O"):
+        computer_automation.validate_allowed_programs([str(script_app)])
+
+
+def test_macos_runtime_allowlist_matches_pid_executable_and_manifest(tmp_path, monkeypatch):
+    _platform(monkeypatch, "macos")
+    writer, executable = _mac_app(tmp_path)
+    other, other_executable = _mac_app(tmp_path, "Other", "com.example.other")
+    computer_automation.configure_computer_use(
+        enabled=True,
+        allowed_programs=[{"name": "Writer", "path": str(writer)}],
+    )
+    monkeypatch.setattr(
+        computer_automation,
+        "_process_executable",
+        lambda pid: str(executable if pid == 7 else other_executable),
+    )
+
+    allowed = computer_automation._allowed_window_records(
+        [
+            {"app_name": "Writer", "pid": 7, "window_id": 9, "title": "Draft"},
+            {"app_name": "Other", "pid": 8, "window_id": 10, "title": "Private"},
+        ]
+    )
+    assert [(item["pid"], item["window_id"]) for item in allowed] == [(7, 9)]
+    manifest = computer_automation._manifest_document(allowed)
+    assert str(executable.resolve()) in manifest
+    assert str(other.resolve()) not in manifest
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS libproc only")
+def test_macos_process_executable_resolves_current_pid():
+    executable = computer_automation._process_executable(os.getpid())
+    assert executable is not None
+    assert Path(executable).is_file()
+    assert Path(executable).name.casefold().startswith("python")
+
+
+def test_macos_program_launch_uses_launch_services(tmp_path, monkeypatch):
+    _platform(monkeypatch, "macos")
+    writer, _ = _mac_app(tmp_path)
+    calls = []
+    tools = _tools(
+        tmp_path,
+        monkeypatch,
+        lambda tool, _args, **_kwargs: {"ok": True, "windows": []}
+        if tool == "list_windows"
+        else {"ok": True},
+    )
+    computer_automation.configure_computer_use(
+        enabled=True,
+        allowed_programs=[{"name": "Writer", "path": str(writer)}],
+    )
+    monkeypatch.setattr(computer_automation.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        computer_automation.subprocess,
+        "run",
+        lambda args, **_kwargs: calls.append(args)
+        or type("Completed", (), {"returncode": 0})(),
+    )
+
+    result = tools["computer_open_program"](str(writer))
+
+    assert result["ok"] is True
+    assert calls == [["/usr/bin/open", str(writer)]]
 
 
 def test_daemon_uses_bounded_permission_mode(tmp_path):
@@ -82,6 +198,20 @@ def test_daemon_uses_bounded_permission_mode(tmp_path):
     args = computer_automation._daemon_args(driver)
     assert args[args.index("--permission-mode") + 1] == "bounded"
     assert "--dangerously-bypass-approvals" not in args
+
+
+def test_runtime_manifest_lives_outside_signed_app_bundle(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    driver = tmp_path / "OpenWorker.app" / "Contents" / "Resources" / "cua-driver"
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(state))
+    monkeypatch.delenv("OPENWORKER_CUA_MANIFEST", raising=False)
+
+    manifest = computer_automation._manifest_path(driver)
+    computer_automation._write_manifest(manifest, "version: 3\n")
+
+    assert manifest == state / "cua-driver" / "computer-use-capabilities.yaml"
+    assert manifest.read_text() == "version: 3\n"
+    assert not driver.parent.exists()
 
 
 def test_shutdown_revokes_manifest_and_stops_daemon(tmp_path, monkeypatch):

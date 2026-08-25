@@ -56,7 +56,7 @@ export async function pickFolder(): Promise<string | null> {
   return typeof path === "string" && path ? path : null;
 }
 
-/** Select one Windows executable for the Computer use allowlist. */
+/** Select one native application for the Computer use allowlist. */
 export async function pickProgram(): Promise<string | null> {
   const path = await invoke<string>("pick_program");
   return typeof path === "string" && path ? path : null;

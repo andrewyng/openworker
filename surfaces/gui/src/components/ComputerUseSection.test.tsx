@@ -5,6 +5,7 @@ import { ComputerUseSection } from "./ComputerUseSection";
 const SETTINGS = {
   enabled: false,
   supported: true,
+  platform: "windows" as const,
   allowed_programs: [
     {
       name: "Editor",
@@ -69,5 +70,43 @@ describe("ComputerUseSection", () => {
         { name: "writer", path: "C:\\Office\\writer.exe" },
       ],
     });
+  });
+
+  it("offers macOS permission setup and accepts app bundles", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("__OCW_PLATFORM__", "macos");
+    vi.stubGlobal("__TAURI__", {
+      core: {
+        invoke: vi.fn(async (command: string) =>
+          command === "pick_program" ? "/Applications/Pages.app" : null,
+        ),
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push(`${(init?.method || "GET").toUpperCase()} ${url}`);
+        if (url.endsWith("/permissions")) {
+          return {
+            ok: true,
+            json: async () => ({ ok: true, message: "Follow the macOS prompts." }),
+          } as Response;
+        }
+        return {
+          ok: true,
+          json: async () => ({ ...SETTINGS, platform: "macos", allowed_programs: [] }),
+        } as Response;
+      }),
+    );
+
+    render(<ComputerUseSection />);
+    expect((await screen.findByText("Allowed programs")).parentElement?.textContent).toContain(
+      "Select an installed .app.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add program…" }));
+    expect(await screen.findByText("Pages")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Set up permissions…" }));
+    await waitFor(() => expect(calls.some((call) => call.includes("/permissions"))).toBe(true));
+    expect(await screen.findByText("Follow the macOS prompts.")).toBeTruthy();
   });
 });

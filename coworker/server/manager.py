@@ -62,8 +62,12 @@ from ..connectors.browser_automation import (
     browser_take_screenshot,
 )
 from ..connectors.computer_automation import (
+    computer_use_platform,
+    computer_use_supported,
     computer_use_configuration,
     configure_computer_use,
+    program_path_available,
+    request_computer_use_permissions,
     reset_computer_use_permissions,
     shutdown_computer_use,
     validate_allowed_programs,
@@ -3174,9 +3178,10 @@ class SessionManager:
             allowed_programs=programs,
         )
         config = computer_use_configuration()
-        config["supported"] = os.name == "nt"
+        config["supported"] = computer_use_supported()
+        config["platform"] = computer_use_platform()
         config["allowed_programs"] = [
-            {**program, "available": Path(program["path"]).is_file()}
+            {**program, "available": program_path_available(program["path"])}
             for program in config["allowed_programs"]
         ]
         return config
@@ -3209,6 +3214,9 @@ class SessionManager:
                 "reload_warning": str(exc),
             }
         return {"ok": True, **payload, **runtime}
+
+    def request_computer_use_permissions(self) -> dict[str, Any]:
+        return request_computer_use_permissions()
     # -- direct-message routing -------------------------------------------------
     def dm_session(self) -> Optional[str]:
         """The session a DM to the bot is routed to (user-designated). None → DMs are parked."""
