@@ -44,3 +44,9 @@ class SessionRecord:
     # lead_session, space}. Leads gain their entry when the staffing gate creates the
     # team. Drives tool binding (board actor identity) + the sidebar's expandable entry.
     team: dict[str, Any] = field(default_factory=dict)
+    # UI locale captured when a browser session connects.  It is intentionally a
+    # presentation preference, but native skills use it to choose their localized
+    # instructions deterministically after reconnects/restarts.
+    language: str = "en-US"
+    # Sticky runtime selection prevents existing sessions from being migrated silently.
+    runtime: str = "legacy"

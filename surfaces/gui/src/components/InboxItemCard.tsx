@@ -2,6 +2,8 @@ import { useState, type ReactNode } from "react";
 import type { InboxItem } from "../api";
 import type { QuestionOption } from "../types";
 import { humanizeApprovalTitle } from "../humanize";
+import { useLanguage } from "../i18n";
+import { approvalCopy, standingGrantTitle } from "./approvalI18n";
 import {
   approvalActionLabels,
   PreviewBlock,
@@ -299,6 +301,8 @@ export function InboxItemCard({
   chip?: ReactNode; // optional "go to session" affordance (shown in the Inbox list, not inline)
   compact?: boolean;
 }) {
+  const [language] = useLanguage();
+  const copy = approvalCopy(language);
   const isQuestion = item.kind === "question";
   return (
     <div
@@ -313,9 +317,9 @@ export function InboxItemCard({
           older rows fall back to the raw kind/title/body treatment below. */}
       {item.kind === "approval" && item.data?.tool ? (
         <div className="flex items-center justify-between gap-3">
-          <TitleText line={humanizeApprovalTitle(item.data.tool, item.data.arguments)} />
+          <TitleText line={humanizeApprovalTitle(item.data.tool, item.data.arguments)} language={language} />
           {(() => {
-            const s = scopeNote(item.data.tool, item.data.arguments);
+            const s = scopeNote(item.data.tool, item.data.arguments, undefined, language);
             return (
               <span className={"text-[11px] whitespace-nowrap pt-0.5 " + (s.external ? "text-warnInk" : "text-faint")}>
                 {s.text}
@@ -331,11 +335,11 @@ export function InboxItemCard({
       )}
       {item.kind === "approval" && item.data?.tool === "save_skill" ? (
         // Parked skill proposals wear the same review surface as the live card (§5.2).
-        <SaveSkillPreview args={item.data.arguments} />
+        <SaveSkillPreview args={item.data.arguments} language={language} />
       ) : item.kind === "approval" && item.data?.tool && typeof item.data.arguments?.content === "string" ? (
-        <PreviewBlock text={item.data.arguments.content} />
+        <PreviewBlock text={item.data.arguments.content} language={language} />
       ) : item.kind === "approval" && item.data?.tool && typeof item.data.arguments?.command === "string" ? (
-        <PreviewBlock text={item.data.arguments.command} />
+        <PreviewBlock text={item.data.arguments.command} language={language} />
       ) : !isQuestion && item.body ? (
         <div className="text-[13px] text-muted mt-1 whitespace-pre-wrap">{item.body}</div>
       ) : null}
@@ -346,7 +350,7 @@ export function InboxItemCard({
             className={item.data?.tool ? BTN_ACCENT : BTN_PRIMARY}
             onClick={() => onResolve(item.id, "allow")}
           >
-            {item.data?.tool ? approvalActionLabels(item.data.tool).allow : "Approve"}
+            {item.data?.tool ? approvalActionLabels(item.data.tool, language).allow : language === "pt-BR" ? "Aprovar" : language === "es-ES" ? "Aprobar" : "Approve"}
           </button>
           {/* Task-persistent standing grant (§25) — present only when the approval was
               raised inside an automation run AND the call can carry a tool+target rule.
@@ -354,17 +358,17 @@ export function InboxItemCard({
           {item.data?.task_id && item.data?.standing_target && (
             <button
               className={BTN_BORDERED}
-              title={`Always allow against ${item.data.standing_target} for “${item.data.task_title || "this automation"}” — revoke any time on its Automations page`}
+              title={standingGrantTitle(language, item.data.tool || "this action", item.data.standing_target, item.data.task_title || (language === "pt-BR" ? "esta automação" : language === "es-ES" ? "esta automatización" : "this automation"))}
               onClick={() => onResolve(item.id, "always_task")}
             >
-              Allow every time
+              {copy.allowEveryTime}
             </button>
           )}
           <button
             className={item.data?.tool ? BTN_QUIET : BTN_BORDERED}
             onClick={() => onResolve(item.id, "deny")}
           >
-            {item.data?.tool ? approvalActionLabels(item.data.tool).deny : "Deny"}
+            {item.data?.tool ? approvalActionLabels(item.data.tool, language).deny : copy.deny}
           </button>
         </div>
       ) : isQuestion ? (

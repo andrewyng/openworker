@@ -1402,11 +1402,13 @@ export interface SkillRow {
   name: string;
   description: string;
   instructions: string;
-  scope: "global" | "project";
+  scope: "builtin" | "global" | "project";
   source: string; // "local" | "uploaded"
   enabled: boolean;
   path: string;
   files?: number; // bundled resources beyond SKILL.md (§6 — rich skills are visible)
+  locked?: boolean;
+  localized?: boolean;
 }
 
 export interface SessionSkillRow {
@@ -1433,8 +1435,13 @@ const jsonPost = (body: unknown, method = "POST") => ({
   body: JSON.stringify(body),
 });
 
-export async function listSkills(workspace?: string): Promise<SkillRow[]> {
-  const qs = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+export async function listSkills(
+  workspace?: string,
+  language = document.documentElement.lang || "en-US",
+): Promise<SkillRow[]> {
+  const params = new URLSearchParams({ language });
+  if (workspace) params.set("workspace", workspace);
+  const qs = `?${params.toString()}`;
   const res = await fetch(skillUrl(qs));
   return (await res.json()).skills ?? [];
 }
@@ -1496,6 +1503,69 @@ export async function confirmSkillUpload(
   workspace?: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(skillUrl("/upload/confirm"), jsonPost({ token, scope, workspace }));
+  return res.json();
+}
+
+export interface SkillEvalCase {
+  id: string;
+  name: string;
+  prompt: string;
+  expected_output?: string;
+  assertions?: Array<{ text?: string; type?: string; value?: unknown }>;
+}
+
+export interface SkillDraft {
+  id: string;
+  session_id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  locale: string;
+  status: string;
+  evals: SkillEvalCase[];
+  iterations: Array<{ id: number; model: string; repeats: number; runs: Array<Record<string, unknown>> }>;
+  reviews: Array<{ case_id: string; variant: string; feedback: string }>;
+}
+
+export async function listSkillDrafts(sessionId: string): Promise<SkillDraft[]> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/skill-drafts`);
+  return (await res.json()).drafts ?? [];
+}
+
+export async function getSkillDraft(draftId: string): Promise<{ ok: boolean; draft?: SkillDraft; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/skill-drafts/${encodeURIComponent(draftId)}`);
+  return res.json();
+}
+
+export async function runSkillDraft(
+  draftId: string,
+  sessionId: string,
+  repeats = 1,
+): Promise<{ ok: boolean; queued?: boolean; error?: string }> {
+  const res = await fetch(
+    `${httpBase()}/v1/skill-drafts/${encodeURIComponent(draftId)}/runs`,
+    jsonPost({ session_id: sessionId, repeats }),
+  );
+  return res.json();
+}
+
+export async function reviewSkillDraft(
+  draftId: string,
+  reviews: Array<{ case_id: string; variant: string; feedback: string }>,
+): Promise<{ ok: boolean; draft?: SkillDraft; error?: string }> {
+  const res = await fetch(
+    `${httpBase()}/v1/skill-drafts/${encodeURIComponent(draftId)}/reviews`,
+    jsonPost({ reviews }),
+  );
+  return res.json();
+}
+
+export async function discardSkillDraft(
+  draftId: string,
+  sessionId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const q = new URLSearchParams({ session_id: sessionId });
+  const res = await fetch(`${httpBase()}/v1/skill-drafts/${encodeURIComponent(draftId)}?${q}`, { method: "DELETE" });
   return res.json();
 }
 
@@ -2383,7 +2453,8 @@ export class Session {
   private outbox: object[] = [];
 
   constructor(sessionId: string, workspace: string, agent: string, handlers: Handlers) {
-    const q = `?workspace=${encodeURIComponent(workspace)}&agent=${encodeURIComponent(agent)}`;
+    const language = document.documentElement.lang || "en-US";
+    const q = `?workspace=${encodeURIComponent(workspace)}&agent=${encodeURIComponent(agent)}&language=${encodeURIComponent(language)}`;
     this.ws = openWebSocket(`${wsBase()}/ws/session/${sessionId}${q}`);
     this.ws.onmessage = (e) => {
       try {

@@ -136,3 +136,35 @@ def explorer_tools(
             ),
         )
     ]
+
+
+def specialist_tools(
+    *, workspace: str | Path, provider: Any, model: str, session_id: str,
+    broker: Any, model_settings: Optional[dict[str, Any]] = None,
+) -> list:
+    """Expose approved, read-only specialists with fresh context to a supervisor.
+
+    The broker enforces a fixed registry and uses PLAN-mode child engines. No child receives
+    shell, connector, write, directory-grant, or recursive delegation tools.
+    """
+    def delegate_to_specialist(task: str, specialist: str = "researcher") -> dict:
+        """Delegate a broad read-only task to a specialist with fresh context.
+
+        Use only when independent research, planning, or review will materially help. At most
+        two such calls may be issued in one assistant turn. The returned result is structured
+        and contains the specialist's report; do not assume it performed writes or external actions.
+        """
+        return broker.run(
+            session_id=session_id, workspace=workspace, provider=provider, model=model,
+            task=task, specialist=specialist, model_settings=model_settings,
+        )
+
+    return [
+        ai.tool(
+            delegate_to_specialist,
+            metadata=ai.ToolMetadata(
+                category="subagent", risk_level="low", capabilities=["delegation"],
+                requires_approval=False,
+            ),
+        )
+    ]

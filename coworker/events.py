@@ -41,6 +41,13 @@ class EventType(str, Enum):
     INTERRUPTED = "interrupted"
     COMPACTING = "compacting"  # compaction started — surfaces show a transient signal
     COMPACTED = "compacted"  # outbound history was compacted (summary or trim)
+    RUN_STATE = "run_state"
+    CONTEXT_OFFLOADED = "context_offloaded"
+    BUDGET_WARNING = "budget_warning"
+    DELEGATION_STARTED = "delegation_started"
+    DELEGATION_PROGRESS = "delegation_progress"
+    DELEGATION_COMPLETED = "delegation_completed"
+    DELEGATION_FAILED = "delegation_failed"
 
 
 @dataclass

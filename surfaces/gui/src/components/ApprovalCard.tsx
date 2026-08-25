@@ -1,7 +1,9 @@
 import { useState } from "react";
 import type { ApprovalDecision, Item } from "../types";
 import { humanizeApprovalTitle, type HumanLine } from "../humanize";
+import { useLanguage, type Language } from "../i18n";
 import { Icon } from "./Icon";
+import { approvalCopy, approvalToolVerb, localizedApprovalDecision, localizedApprovalLine, standingGrantTitle } from "./approvalI18n";
 
 export function shortArgs(args: any): string {
   if (!args || typeof args !== "object") return "";
@@ -14,17 +16,6 @@ export function shortArgs(args: any): string {
     .join("  ");
 }
 
-// Human verbs kept for the §25 grant lines (the card title now comes from humanize.ts).
-const TOOL_VERBS: Record<string, string> = {
-  write_file: "Write a file",
-  replace_in_file: "Edit a file",
-  apply_patch: "Apply a patch",
-  apply_unified_diff: "Apply a patch",
-  run_shell: "Run a command",
-  send_message: "Send a message",
-  send_file: "Send a file",
-};
-
 // §35: routine workspace writes render as a compact ROW; everything else is a full card.
 const FILE_WRITES = new Set(["write_file", "replace_in_file", "apply_patch", "apply_unified_diff"]);
 // Actions that leave the Mac get the warm border + explicit destination note.
@@ -34,21 +25,23 @@ type ApprovalItem = Extract<Item, { kind: "approval" }>;
 
 // Per-tool button copy (§7): a skill proposal is an "add", not an "allow". Shared with the
 // parked Inbox card so both dialects match.
-export function approvalActionLabels(name?: string): { allow: string; deny: string } {
+export function approvalActionLabels(name?: string, language: Language = "en-US"): { allow: string; deny: string } {
+  const copy = approvalCopy(language);
   return name === "save_skill"
-    ? { allow: "Add to my skills", deny: "Not now" }
-    : { allow: "Allow once", deny: "Deny" };
+    ? { allow: copy.addSkills, deny: copy.notNow }
+    : { allow: copy.allowOnce, deny: copy.deny };
 }
 
 // save_skill's review surface (SKILLS-SPEC §5.2): description, the full instructions
 // (clamped, expandable, scrollable), every bundled file, and the guaranteed footer that
 // answers "added WHERE, available WHEN". Shared verbatim with the parked Inbox card —
 // one decision, one dialect.
-export function SaveSkillPreview({ args }: { args: any }) {
+export function SaveSkillPreview({ args, language = "en-US" }: { args: any; language?: Language }) {
+  const copy = approvalCopy(language);
   return (
     <>
       {args?.description && <div className="approval-with">{String(args.description)}</div>}
-      {args?.instructions && <PreviewBlock text={String(args.instructions)} mono={false} />}
+      {args?.instructions && <PreviewBlock text={String(args.instructions)} mono={false} language={language} />}
       {Array.isArray(args?.files) && args.files.length > 0 && (
         <div data-testid="skill-bundle-files">
           {args.files.map((f: unknown, i: number) => (
@@ -62,8 +55,7 @@ export function SaveSkillPreview({ args }: { args: any }) {
         </div>
       )}
       <div className="approval-with">
-        Approving adds it to your skills on this computer — usable in every conversation from
-        then on.
+        {copy.skillFooter}
       </div>
     </>
   );
@@ -85,12 +77,13 @@ function permissionLines(args: any): PermissionLine[] {
     .map((p) => ({ tool: String(p.tool), target: String(p.target), access: String(p.access || "read") }));
 }
 
-export function TitleText({ line }: { line: HumanLine }) {
+export function TitleText({ line, language = "en-US" }: { line: HumanLine; language?: Language }) {
+  const localized = localizedApprovalLine(line, language);
   return (
     <span className="approval-title">
-      {line.pre}
+      {localized.pre}
       {line.obj && <b>{line.obj}</b>}
-      {line.post}
+      {localized.post}
     </span>
   );
 }
@@ -113,23 +106,25 @@ export function scopeNote(
   name: string,
   args: any,
   category?: string,
+  language: Language = "en-US",
 ): { text: string; external: boolean } {
+  const copy = approvalCopy(language);
   // save_skill's corner answers WHERE (SKILLS-SPEC §5.2): the exact place to find, edit,
   // or turn off the skill afterwards.
-  if (name === "save_skill") return { text: "saves to Settings ▸ Skills", external: false };
-  if (category === "connector") return { text: "acts on a connected service", external: true };
+  if (name === "save_skill") return { text: copy.skillDestination, external: false };
+  if (category === "connector") return { text: copy.connectedService, external: true };
   // Egress (§1.9): the request itself reaches the network — never "stays on this computer".
   if (name === "web_fetch")
-    return { text: `leaves this computer → ${grantHost(args?.url) || "the web"}`, external: true };
+    return { text: copy.leavesFor(grantHost(args?.url) || (language === "pt-BR" ? "a web" : language === "es-ES" ? "la web" : "the web")), external: true };
   if (name === "web_search")
-    return { text: "leaves this computer → your search provider", external: true };
+    return { text: copy.leavesFor(language === "pt-BR" ? "seu provedor de pesquisa" : language === "es-ES" ? "tu proveedor de búsqueda" : "your search provider"), external: true };
   if (EXTERNAL.has(name)) {
     const platform = String(args?.target ?? "").split(":")[0];
     const names: Record<string, string> = { slack: "Slack", telegram: "Telegram" };
-    return { text: `leaves this computer → ${names[platform] || platform || "a connected chat"}`, external: true };
+    return { text: copy.leavesFor(names[platform] || platform || (language === "pt-BR" ? "uma conversa conectada" : language === "es-ES" ? "un chat conectado" : "a connected chat")), external: true };
   }
   const overwrite = name === "write_file" && args?.overwrite;
-  return { text: "stays on this computer" + (overwrite ? " · overwrites the existing file" : ""), external: false };
+  return { text: copy.staysHere + (overwrite ? ` · ${copy.overwrites}` : ""), external: false };
 }
 
 // The proposed content/command, straight from the tool call's ARGS — the file/action
@@ -139,7 +134,8 @@ export function scopeNote(
 const PREVIEW_LINES = 5;
 const PREVIEW_CHARS = 420;
 
-export function PreviewBlock({ text, mono = true }: { text: string; mono?: boolean }) {
+export function PreviewBlock({ text, mono = true, language = "en-US" }: { text: string; mono?: boolean; language?: Language }) {
+  const copy = approvalCopy(language);
   const [all, setAll] = useState(false);
   const lines = text.split("\n");
   const clipped = lines.length > PREVIEW_LINES || text.length > PREVIEW_CHARS;
@@ -154,10 +150,10 @@ export function PreviewBlock({ text, mono = true }: { text: string; mono?: boole
       {clipped && (
         <button className="approval-prev-more" onClick={() => setAll((v) => !v)}>
           {all
-            ? "show less"
+            ? copy.showLess
             : lines.length > PREVIEW_LINES
-              ? `show all ${lines.length} lines`
-              : "show the full message"}
+              ? copy.showAllLines(lines.length)
+              : copy.showFullMessage}
         </button>
       )}
     </div>
@@ -166,7 +162,7 @@ export function PreviewBlock({ text, mono = true }: { text: string; mono?: boole
 
 // Outbound message text: short one-liners keep the cozy inline quote; anything
 // long (or multi-line) gets the clamped preview so the card stays card-sized.
-function MessagePreview({ text, label }: { text: string; label?: string }) {
+function MessagePreview({ text, label, language = "en-US" }: { text: string; label?: string; language?: Language }) {
   if (text.length <= 220 && !text.includes("\n")) {
     return (
       <div className="approval-with">
@@ -174,7 +170,7 @@ function MessagePreview({ text, label }: { text: string; label?: string }) {
       </div>
     );
   }
-  return <PreviewBlock text={text} mono={false} />;
+  return <PreviewBlock text={text} mono={false} language={language} />;
 }
 
 function Buttons({
@@ -183,6 +179,7 @@ function Buttons({
   runTask,
   primaryLabel,
   denyLabel = "Deny",
+  language = "en-US",
   autoApprove = false,
 }: {
   item: ApprovalItem;
@@ -190,11 +187,13 @@ function Buttons({
   runTask?: { id: string; title: string } | null;
   primaryLabel: string;
   denyLabel?: string;
+  language?: Language;
   // Session is in Auto-Approve mode: session grants don't skip the reviewer there (§1.5),
   // so no session-scoped "always" button is shown at all — a button that lies is worse
   // than none. Allow once / Deny only.
   autoApprove?: boolean;
 }) {
+  const copy = approvalCopy(language);
   const connector = item.category === "connector";
   const offerStanding = !!(runTask && item.standingTarget);
   // §1.9: egress grants are destination-shaped. web_fetch offers the DOMAIN — tool-wide
@@ -218,10 +217,10 @@ function Buttons({
       {offerStanding && (
         <button
           className="btn"
-          title={`Always allow ${item.name} → ${item.standingTarget} for “${runTask?.title || "this automation"}” — revoke any time on its Automations page`}
+          title={standingGrantTitle(language, item.name, item.standingTarget || "", runTask?.title || (language === "pt-BR" ? "esta automação" : language === "es-ES" ? "esta automatización" : "this automation"))}
           onClick={() => onApprove("always_task")}
         >
-          Allow every time
+          {copy.allowEveryTime}
         </button>
       )}
       {/* In a run context the task-persistent grant replaces the session-scoped one —
@@ -234,33 +233,33 @@ function Buttons({
       {!noSessionGrant && (
         <button
           className="btn"
-          title={`Always allow ${TOOL_VERBS[item.name]?.toLowerCase() || item.name} for this session`}
+          title={language === "pt-BR" ? `Sempre permitir ${approvalToolVerb(item.name, language).toLowerCase()} nesta conversa` : language === "es-ES" ? `Permitir siempre ${approvalToolVerb(item.name, language).toLowerCase()} en esta conversación` : `Always allow ${approvalToolVerb(item.name, language).toLowerCase()} for this session`}
           onClick={() => onApprove("always_tool")}
         >
-          Always allow
+          {copy.alwaysAllow}
         </button>
       )}
       {!autoApprove && !offerStanding && item.name === "web_fetch" && fetchHost && (
         <button
           className="btn"
-          title={`Every fetch to ${fetchHost} (and its subdomains) runs without asking for the rest of this session`}
+          title={language === "pt-BR" ? `Toda consulta a ${fetchHost} e seus subdomínios será executada sem perguntar durante o restante desta conversa` : language === "es-ES" ? `Cada consulta a ${fetchHost} y sus subdominios se ejecutará sin preguntar durante el resto de esta conversación` : `Every fetch to ${fetchHost} (and its subdomains) runs without asking for the rest of this session`}
           onClick={() => onApprove("always_domain")}
         >
-          Always allow {fetchHost} this session
+          {language === "pt-BR" ? `Sempre permitir ${fetchHost} nesta conversa` : language === "es-ES" ? `Permitir siempre ${fetchHost} en esta conversación` : `Always allow ${fetchHost} this session`}
         </button>
       )}
       {!autoApprove && !offerStanding && item.name === "web_search" && (
         <button
           className="btn"
-          title="Every web search runs without asking for the rest of this session — the grant ends if you change the search provider"
+          title={language === "pt-BR" ? "Toda pesquisa na web será executada sem perguntar durante o restante desta conversa; a permissão termina se você alterar o provedor de pesquisa" : language === "es-ES" ? "Cada búsqueda web se ejecutará sin preguntar durante el resto de esta conversación; el permiso termina si cambias el proveedor de búsqueda" : "Every web search runs without asking for the rest of this session — the grant ends if you change the search provider"}
           onClick={() => onApprove("always_tool")}
         >
-          Always allow searches this session
+          {language === "pt-BR" ? "Sempre permitir pesquisas nesta conversa" : language === "es-ES" ? "Permitir siempre las búsquedas en esta conversación" : "Always allow searches this session"}
         </button>
       )}
       {!autoApprove && item.name === "run_shell" && (
         <button className="btn" onClick={() => onApprove("always_command")}>
-          Always allow this command
+          {copy.alwaysCommand}
         </button>
       )}
       {/* Session-wide read-only grant (owner ask 2026-08-11): offered only when the
@@ -271,10 +270,10 @@ function Buttons({
         <button
           className="btn"
           data-testid="allow-readonly-session"
-          title="Auto-allow read-only commands (local reads and pipelines only — no network, writes, or interpreters) for the rest of this session"
+          title={language === "pt-BR" ? "Permitir automaticamente comandos somente leitura durante o restante desta conversa" : language === "es-ES" ? "Permitir automáticamente comandos de solo lectura durante el resto de esta conversación" : "Auto-allow read-only commands (local reads and pipelines only — no network, writes, or interpreters) for the rest of this session"}
           onClick={() => onApprove("readonly_session")}
         >
-          Allow read-only commands
+          {copy.readonlyCommands}
         </button>
       )}
       <span className="spacer" />
@@ -302,9 +301,11 @@ export function ApprovalCard({
   // grants wouldn't skip the reviewer anyway (§1.5), so the "always" buttons are hidden.
   autoApprove?: boolean;
 }) {
+  const [language] = useLanguage();
+  const copy = approvalCopy(language);
   const [peek, setPeek] = useState(false);
   const title = humanizeApprovalTitle(item.name, item.args);
-  const scope = scopeNote(item.name, item.args, item.category);
+  const scope = scopeNote(item.name, item.args, item.category, language);
   const grants = item.name === "create_scheduled_task" ? permissionLines(item.args) : [];
   // "requires approval" is the engine's default boilerplate — only surface a real reason.
   const reason = item.reason && item.reason !== "requires approval" ? item.reason : "";
@@ -325,10 +326,10 @@ export function ApprovalCard({
     return (
       <div className={"approval approval-row" + dock} data-testid="approval-row">
         <div className="approval-row-line">
-          <TitleText line={title} />
+          <TitleText line={title} language={language} />
           {content && (
             <button className="approval-peek" onClick={() => setPeek((v) => !v)}>
-              preview {peek ? "▴" : "▾"}
+              {copy.preview} {peek ? "▴" : "▾"}
             </button>
           )}
           <span className="spacer" />
@@ -336,11 +337,13 @@ export function ApprovalCard({
             item={item}
             onApprove={onApprove}
             runTask={runTask}
-            primaryLabel="Allow"
+            primaryLabel={copy.allow}
+            denyLabel={approvalActionLabels(item.name, language).deny}
+            language={language}
             autoApprove={autoApprove}
           />
         </div>
-        {peek && content && <PreviewBlock text={content} />}
+        {peek && content && <PreviewBlock text={content} language={language} />}
         {provenance}
         {reason && <div className="approval-reason">{reason}</div>}
       </div>
@@ -351,44 +354,44 @@ export function ApprovalCard({
     <div className={"approval" + (scope.external ? " approval-external" : "") + dock}>
       <div className="approval-top">
         <div className="approval-heading">
-          <span className="approval-ico" title={`Tool: ${item.name}`}>
+          <span className="approval-ico" title={`${copy.tool}: ${item.name}`}>
             <Icon name="shield" size={15} />
           </span>
-          <TitleText line={title} />
+          <TitleText line={title} language={language} />
         </div>
         <span className={"approval-scope" + (scope.external ? " out" : "")}>{scope.text}</span>
       </div>
 
       {/* Tool-shaped previews — the proposal, not an args dump. */}
       {item.name === "run_shell" && item.args?.command && (
-        <PreviewBlock text={String(item.args.command)} />
+        <PreviewBlock text={String(item.args.command)} language={language} />
       )}
-      {FILE_WRITES.has(item.name) && content && <PreviewBlock text={content} />}
+      {FILE_WRITES.has(item.name) && content && <PreviewBlock text={content} language={language} />}
       {item.name === "send_file" && (
         <>
           <span className="approval-filechip">
             <span className="ico">
               <Icon name="file" size={13} />
             </span>
-            {String(item.args?.path ?? "").split("/").pop() || "file"}
-            {item.args?.as_screenshot ? " · as a PNG screenshot" : ""}
+            {String(item.args?.path ?? "").split("/").pop() || copy.file}
+            {item.args?.as_screenshot ? ` · ${copy.pngScreenshot}` : ""}
           </span>
           {item.args?.comment && (
-            <MessagePreview text={String(item.args.comment)} label="With the message" />
+            <MessagePreview text={String(item.args.comment)} label={copy.withMessage} language={language} />
           )}
         </>
       )}
       {item.name === "send_message" && item.args?.text && (
-        <MessagePreview text={String(item.args.text)} />
+        <MessagePreview text={String(item.args.text)} language={language} />
       )}
       {/* save_skill (SKILLS-SPEC §5.2): the arguments ARE the review surface. */}
-      {item.name === "save_skill" && <SaveSkillPreview args={item.args} />}
+      {item.name === "save_skill" && <SaveSkillPreview args={item.args} language={language} />}
       {/* web_search (§1.9): name the LIVE destination — "currently", never "default",
           because the card must show the setting as it stands right now. */}
       {item.name === "web_search" && (
         <div className="approval-with">
-          Queries go to your configured search provider
-          {item.searchProvider ? ` (currently: ${item.searchProvider})` : ""}.
+          {copy.searchProvider}
+          {item.searchProvider ? ` ${copy.currentProvider(item.searchProvider)}` : ""}.
         </div>
       )}
 
@@ -400,9 +403,9 @@ export function ApprovalCard({
                 {g.access === "write" ? "✓" : "·"}
               </span>
               <span className="grant-line">
-                {TOOL_VERBS[g.tool] || g.tool} <code className="approval-tool">{g.target}</code>
+                {approvalToolVerb(g.tool, language)} <code className="approval-tool">{g.target}</code>
                 <span className="grant-note">
-                  {g.access === "write" ? " — always allowed once you approve" : " — read-only"}
+                  {g.access === "write" ? ` — ${copy.alwaysAfterApproval}` : ` — ${copy.readOnly}`}
                 </span>
               </span>
             </div>
@@ -418,14 +421,15 @@ export function ApprovalCard({
       {reason && <div className="approval-reason">{reason}</div>}
 
       {item.resolved ? (
-        <div className="resolved">Approved: {item.resolved.replace("_", " ")}</div>
+        <div className="resolved">{copy.approved}: {localizedApprovalDecision(item.resolved, language)}</div>
       ) : (
         <Buttons
           item={item}
           onApprove={onApprove}
           runTask={runTask}
-          primaryLabel={approvalActionLabels(item.name).allow}
-          denyLabel={approvalActionLabels(item.name).deny}
+          primaryLabel={approvalActionLabels(item.name, language).allow}
+          denyLabel={approvalActionLabels(item.name, language).deny}
+          language={language}
           autoApprove={autoApprove}
         />
       )}

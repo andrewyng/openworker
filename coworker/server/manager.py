@@ -15,6 +15,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -104,6 +105,11 @@ from ..skills import (
     SkillStore,
     effective_skills,
 )
+from ..skills.builtin import RESERVED_SKILL_NAMES, builtin_skill_dirs
+from ..skills.base import normalize_locale
+from ..skills.lab import SkillDraftStore
+from ..runtime import EffectLedger, GraphRuntime, LegacyRuntime, RuntimeStore
+from ..runtime.delegation import DelegationBroker
 
 _SCOPES = {s.value for s in Scope}
 
@@ -212,6 +218,10 @@ class SessionManager:
         if self.default_workspace:
             self.session_store.touch_workspace(self.default_workspace)
         self._engines: dict[str, TurnEngine] = {}
+        self._runtimes: dict[str, Any] = {}
+        self.runtime_store = RuntimeStore(base / "runtime.db")
+        self.effect_ledger = EffectLedger(base / "runtime.db")
+        self.delegations = DelegationBroker(self.runtime_store, emit=self._emit_delegation)
         # Sessions whose workspace was promoted mid-turn (workspace-scratch-design.md §5):
         # evicted from the engine cache at the next mark_idle so the following turn
         # rebuilds fully anchored on the new workspace.
@@ -339,6 +349,9 @@ class SessionManager:
         # tools — one resolver feeds the catalog injection, the rail, and the composer popup.
         self.skill_store = SkillStore()
         self.session_skills = SessionSkillStore(base / "session_skills.json")
+        self.skill_drafts = SkillDraftStore(base / "skill-drafts")
+        self._skill_eval_running: set[str] = set()
+        self._skill_eval_lock = threading.Lock()
         # Dead-letter: inbound messages with no destination + background-turn failures, so neither
         # vanishes silently (a debugging/visibility surface, not a redelivery queue).
         self.unrouted = UnroutedStore(base / "unrouted.json")
@@ -569,9 +582,14 @@ class SessionManager:
         tool_requester: Optional[Any] = None,
         team_approver: Optional[Any] = None,
         items_approver: Optional[Any] = None,
+        language: str = "en-US",
     ) -> Optional[TurnEngine]:
+        language = normalize_locale(language)
         engine = self._engines.get(session_id)
         if engine is not None:
+            if hasattr(engine, "skill_loader"):
+                engine.skill_loader.set_locale(normalize_locale(language))
+            engine.skill_locale = normalize_locale(language)
             if approver is not None:
                 engine.approver = approver
             if directory_requester is not None:
@@ -596,6 +614,9 @@ class SessionManager:
         if record:
             ws = record.workspace or None
             model, mode, messages = record.model, Mode(record.mode), record.messages
+            if record.language != language:
+                record.language = language
+                self.session_store.save(record)
         else:
             ws = self.resolve_workspace(workspace)
             model, mode, messages = self.model, self.mode, None
@@ -699,6 +720,13 @@ class SessionManager:
             extra_skill_dirs=(
                 [d] if (d := self.persona_skill_scope(agent_name)[0]) is not None else None
             ),
+            skill_locale=normalize_locale(language),
+            skill_draft_store=self.skill_drafts,
+            skill_eval_runner=lambda draft_id, repeats, sid=session_id: self.run_skill_evals(
+                sid, draft_id, repeats
+            ),
+            effect_ledger=self.effect_ledger,
+            delegation_broker=self.delegations,
             # Auto-Approve (spec §1.5): prefs-backed, so the Settings toggle takes effect on
             # the next session build without a config.toml edit.
             auto_approve=self.auto_approve(),
@@ -724,10 +752,57 @@ class SessionManager:
 
             engine.compaction_state = CompactionState.from_dict(record.compaction)
         engine.compaction_settings = self.compaction_settings
+        engine.skill_locale = normalize_locale(language)
         self._engines[session_id] = engine
         if is_new_session:
             self._emit_session_created(session_id, agent_name)
         return engine
+
+    def get_runtime(self, session_id: str, engine: Optional[TurnEngine] = None) -> Any:
+        """Return a sticky runtime while preserving the current ``TurnEngine`` API.
+
+        Persisted sessions retain their legacy runtime. New non-chat sessions use the
+        LangGraph wrapper when it is installed; the explicit legacy fallback keeps the app
+        usable during upgrades and never removes tools or changes permissions.
+        """
+        current = self._runtimes.get(session_id)
+        if current is not None:
+            return current
+        engine = engine or self._engines.get(session_id) or self.get_engine(session_id)
+        if engine is None:
+            return None
+        record = self.session_store.load(session_id)
+        wanted = getattr(engine, "runtime_kind", None) or (record.runtime if record else "")
+        if not wanted:
+            wanted = "graph" if getattr(engine, "agent_name", "code") != "chat" else "legacy"
+        if wanted == "graph" and GraphRuntime.available():
+            runtime = GraphRuntime(session_id=session_id, engine=engine, store=self.runtime_store)
+            engine.runtime_kind = "graph"
+        else:
+            runtime = LegacyRuntime(session_id=session_id, engine=engine, store=self.runtime_store)
+            engine.runtime_kind = "legacy"
+        self._runtimes[session_id] = runtime
+        return runtime
+
+    def runtime_state(self, session_id: str) -> dict[str, Any]:
+        runtime = self.get_runtime(session_id)
+        state = runtime.state() if runtime is not None else self.runtime_store.get(session_id)
+        if state is None:
+            return {"ok": False, "error": "No runtime state for this session."}
+        return {"ok": True, "run": state.to_dict()}
+
+    def _emit_delegation(self, session_id: str, event: str, data: dict[str, Any]) -> None:
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self.broadcast_session(session_id, {"type": event, "data": data}), loop,
+            )
+
+    def steer_delegation(self, session_id: str, delegation_id: str, text: str) -> dict[str, Any]:
+        return self.delegations.steer(session_id, delegation_id, text)
+
+    def cancel_delegation(self, session_id: str, delegation_id: str) -> dict[str, Any]:
+        return self.delegations.cancel(session_id, delegation_id)
 
     def _emit_session_created(self, session_id: str, persona_id: str) -> None:
         """Phase 5 telemetry, fired once per brand-new session on a background thread
@@ -1177,7 +1252,8 @@ class SessionManager:
             return
         self.mark_running(item.session_id)
         try:
-            async for _event in engine.resume():
+            runtime = self.get_runtime(item.session_id, engine)
+            async for _event in runtime.resume():
                 pass
             self.save(item.session_id, engine)
         finally:
@@ -4328,6 +4404,8 @@ class SessionManager:
             extra_skill_dirs=(
                 [d] if (d := self.persona_skill_scope(task.agent)[0]) is not None else None
             ),
+            effect_ledger=self.effect_ledger,
+            delegation_broker=self.delegations,
         )
         self._seed_task_permissions(engine, task)
         return engine
@@ -4527,7 +4605,8 @@ class SessionManager:
             engine.queue_steering(message, source)
             return
         try:
-            async for event in engine.run(message, source=source):
+            runtime = self.get_runtime(sid, engine)
+            async for event in runtime.run(message, source=source):
                 # Stream every event to any socket viewing this session, so a background turn
                 # (channel delivery, self-wake, durable resume) is seen live — not just on reselect.
                 await self.broadcast_session(
@@ -4779,7 +4858,8 @@ class SessionManager:
             f"{task.instructions}"
         )
         try:
-            async for _event in engine.run(opening):
+            runtime = self.get_runtime(run.session_id, engine)
+            async for _event in runtime.run(opening):
                 pass
             run.result_text = _last_assistant_text(engine.messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
@@ -5019,6 +5099,8 @@ class SessionManager:
                     if getattr(engine, "compaction_state", None)
                     else {}
                 ),
+                language=getattr(engine, "skill_locale", "en-US"),
+                runtime=getattr(engine, "runtime_kind", "legacy"),
             )
         )
 
@@ -5424,6 +5506,7 @@ class SessionManager:
 
     def discard_branch(self, session_id: str) -> bool:
         self._engines.pop(session_id, None)
+        self._runtimes.pop(session_id, None)
         return self.session_store.discard_branch(session_id)
 
     def rename_session(self, session_id: str, title: str) -> dict[str, Any]:
@@ -5452,6 +5535,7 @@ class SessionManager:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal sessions cannot be deleted here"}
         engine = self._engines.pop(session_id, None)
+        self._runtimes.pop(session_id, None)
         if engine is not None:
             try:
                 # (was engine.interrupt() — a method that never existed; the AttributeError
@@ -5511,6 +5595,7 @@ class SessionManager:
                 "agent": r.agent,
                 "model": r.model,
                 "mode": r.mode,
+                **self._session_runtime_row(r),
                 "updated_at": r.updated_at,
                 "messages": r.message_count,
                 "pinned": r.pinned,
@@ -5540,6 +5625,17 @@ class SessionManager:
             for r in self.session_store.list_visible(workspace=ws)
             if not r.session_id.startswith("__")  # hide internal threads
         ]
+
+    def _session_runtime_row(self, record: SessionRecord) -> dict[str, Any]:
+        state = self.runtime_store.get(record.session_id)
+        return {
+            "runtime": record.runtime or "legacy",
+            "run_id": state.run_id if state else None,
+            "run_status": state.status if state else "idle",
+            "budget": state.budget if state else {},
+            "usage": state.usage if state else {},
+            "delegations": state.delegations if state else [],
+        }
 
     def _session_team_row(self, record: SessionRecord) -> dict[str, Any]:
         info = record.team or {}
@@ -5599,10 +5695,12 @@ class SessionManager:
         return _list_agents()
 
     # -- skills (SKILLS-SPEC §4.4) ------------------------------------------------
-    def list_skills(self, workspace: Optional[str] = None) -> list[dict[str, Any]]:
+    def list_skills(
+        self, workspace: Optional[str] = None, *, language: str = "en-US"
+    ) -> list[dict[str, Any]]:
         """Enriched rows for the Settings screen (scope/source/enabled). Optional workspace
         adds that project's skills, with project copies shadowing same-named global ones."""
-        return self.skill_store.rows(workspace or None)
+        return self.skill_store.rows(workspace or None, locale=normalize_locale(language))
 
     def reveal_skill(
         self, name: str, workspace: Optional[str] = None
@@ -5677,7 +5775,7 @@ class SessionManager:
         dirs = [self.skill_store.global_dir]
         if workspace:
             dirs.append(self.skill_store.project_dir(workspace))
-        loader = SkillLoader(dirs)
+        loader = SkillLoader(dirs + builtin_skill_dirs())
         names = set(loader.names())
         persona_dir, allow = self.persona_skill_scope(self._persona_of(session_id, agent))
         if persona_dir is not None:
@@ -5749,6 +5847,8 @@ class SessionManager:
         return None
 
     def create_skill(self, body: dict[str, Any]) -> dict[str, Any]:
+        if str(body.get("name", "")).strip() in RESERVED_SKILL_NAMES:
+            return {"ok": False, "error": "This is a protected Worker skill."}
         blocked = self._scratch_workspace_error(body.get("workspace"))
         if blocked:
             return blocked
@@ -5765,6 +5865,11 @@ class SessionManager:
         return {"ok": True, "skill": created}
 
     def update_skill(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
+        if name in RESERVED_SKILL_NAMES:
+            if set(body) <= {"enabled", "workspace"} and "enabled" in body:
+                self.skill_store.set_enabled(name, bool(body["enabled"]))
+                return {"ok": True}
+            return {"ok": False, "error": "This is a protected Worker skill."}
         try:
             if "enabled" in body:
                 self.skill_store.set_enabled(name, bool(body["enabled"]))
@@ -5780,6 +5885,8 @@ class SessionManager:
         return {"ok": True}
 
     def delete_skill(self, name: str, workspace: Optional[str] = None) -> dict[str, Any]:
+        if name in RESERVED_SKILL_NAMES:
+            return {"ok": False, "error": "This is a protected Worker skill."}
         try:
             self.skill_store.delete(name, workspace or None)
         except ValueError as exc:
@@ -5823,6 +5930,225 @@ class SessionManager:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "skill": saved}
+
+    # -- skill lab --------------------------------------------------------------
+    def create_skill_draft(self, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            draft = self.skill_drafts.stage(
+                name=str(body.get("name", "")),
+                description=str(body.get("description", "")),
+                instructions=str(body.get("instructions", "")),
+                evals=body.get("evals", []),
+                session_id=str(body.get("session_id", "")),
+                locale=normalize_locale(str(body.get("language", "en-US"))),
+                draft_id=str(body.get("draft_id", "")),
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "draft": draft}
+
+    def update_skill_draft(self, draft_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """PATCH semantics for a staged draft while retaining its iterations/reviews."""
+        try:
+            current = self.skill_drafts.get(draft_id)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        merged = {
+            "draft_id": draft_id,
+            "session_id": body.get("session_id", current.get("session_id", "")),
+            "name": body.get("name", current.get("name", "")),
+            "description": body.get("description", current.get("description", "")),
+            "instructions": body.get("instructions", current.get("instructions", "")),
+            "evals": body.get("evals", current.get("evals", [])),
+            "language": body.get("language", current.get("locale", "en-US")),
+        }
+        return self.create_skill_draft(merged)
+
+    def get_skill_draft(self, draft_id: str) -> dict[str, Any]:
+        try:
+            return {"ok": True, "draft": self.skill_drafts.get(draft_id)}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def list_skill_drafts(self, session_id: str) -> dict[str, Any]:
+        return {"ok": True, "drafts": self.skill_drafts.list_for_session(session_id)}
+
+    def review_skill_draft(self, draft_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return {"ok": True, "draft": self.skill_drafts.add_review(draft_id, body.get("reviews", []))}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def prepare_skill_trigger_optimization(
+        self, draft_id: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            draft = self.skill_drafts.prepare_trigger_optimization(
+                draft_id,
+                body.get("examples", []),
+                max_iterations=int(body.get("max_iterations", 5)),
+            )
+        except (TypeError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "draft": draft}
+
+    def discard_skill_draft(self, draft_id: str, session_id: str) -> dict[str, Any]:
+        try:
+            self.skill_drafts.discard(draft_id, session_id=session_id)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
+    def _emit_skill_eval(self, session_id: str, data: dict[str, Any]) -> None:
+        """Best-effort progress updates from an isolated evaluation thread."""
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self.broadcast_session(session_id, {"type": "skill_eval_progress", "data": data}),
+                loop,
+            )
+
+    @staticmethod
+    def _skill_assertions(text: str, assertions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        import re as _re
+
+        results: list[dict[str, Any]] = []
+        for raw in assertions:
+            if not isinstance(raw, dict):
+                continue
+            kind = str(raw.get("type", "contains"))
+            value = str(raw.get("value", ""))
+            passed = False
+            evidence = ""
+            if kind == "contains":
+                passed = bool(value) and value.casefold() in text.casefold()
+                evidence = value
+            elif kind == "regex":
+                try:
+                    passed = bool(_re.search(value, text))
+                except _re.error:
+                    evidence = "Invalid regular expression."
+                else:
+                    evidence = value
+            elif kind == "max_chars":
+                try:
+                    passed = len(text) <= int(value)
+                except ValueError:
+                    evidence = "Invalid character limit."
+                else:
+                    evidence = str(len(text))
+            elif kind == "json_required":
+                try:
+                    parsed = json.loads(text)
+                    required = raw.get("value", [])
+                    passed = isinstance(parsed, dict) and isinstance(required, list) and all(str(k) in parsed for k in required)
+                    evidence = ", ".join(map(str, required))
+                except (ValueError, TypeError):
+                    evidence = "Output is not a JSON object."
+            else:
+                evidence = "Unsupported assertion type."
+            results.append({"text": str(raw.get("text") or kind), "passed": passed, "evidence": evidence})
+        return results
+
+    def run_skill_evals(self, session_id: str, draft_id: str, repeats: int = 1) -> dict[str, Any]:
+        try:
+            draft = self.skill_drafts.get(draft_id)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        if draft.get("session_id") != session_id:
+            return {"ok": False, "error": "This draft belongs to another conversation."}
+        if not draft.get("evals"):
+            return {"ok": False, "error": "Add at least one evaluation case first."}
+        with self._skill_eval_lock:
+            if draft_id in self._skill_eval_running:
+                return {"ok": False, "error": "An evaluation is already running."}
+            self._skill_eval_running.add(draft_id)
+        threading.Thread(
+            target=self._run_skill_evals_thread,
+            args=(session_id, draft_id, repeats),
+            daemon=True,
+        ).start()
+        self._emit_skill_eval(session_id, {"draft_id": draft_id, "status": "started"})
+        return {"ok": True, "queued": True, "draft_id": draft_id}
+
+    def _run_skill_evals_thread(self, session_id: str, draft_id: str, repeats: int) -> None:
+        try:
+            asyncio.run(self._run_skill_evals_async(session_id, draft_id, repeats))
+        finally:
+            with self._skill_eval_lock:
+                self._skill_eval_running.discard(draft_id)
+
+    async def _run_skill_evals_async(self, session_id: str, draft_id: str, repeats: int) -> None:
+        from ..attachments import content_to_text
+
+        draft = self.skill_drafts.get(draft_id)
+        record = self.session_store.load(session_id)
+        if record is None:
+            self._emit_skill_eval(session_id, {"draft_id": draft_id, "status": "failed", "error": "Conversation not found."})
+            return
+        agent = get_agent(record.agent)
+        iteration: dict[str, Any] = {
+            "id": len(draft.get("iterations", [])) + 1,
+            "started_at": _epoch(),
+            "model": record.model,
+            "repeats": repeats,
+            "runs": [],
+        }
+        sandbox_base = self.skill_drafts._folder(draft_id) / "runs" / f"iteration-{iteration['id']}"
+        candidate = self.skill_drafts._folder(draft_id) / "candidate"
+
+        async def run_variant(case: dict[str, Any], variant: str, repeat: int) -> dict[str, Any]:
+            folder = sandbox_base / f"{case['id']}-{variant}-{repeat}"
+            folder.mkdir(parents=True, exist_ok=True)
+            # No connectors, no shell commands, no session memory, and all filesystem
+            # roots point at this disposable folder. Permission prompts are denied.
+            async def deny(_request):
+                return ApprovalOutcome.DENY
+
+            engine = build_engine(
+                agent=agent,
+                workspace=folder,
+                model=record.model,
+                mode=Mode.INTERACTIVE,
+                provider=self.provider,
+                allowed_commands=[],
+                approver=deny,
+                roots=[{"path": str(folder), "writable": True, "label": "evaluation"}],
+                connector_filter=set(),
+                skill_filter={draft["name"]} if variant == "with_skill" else set(),
+                isolated_skill_dirs=[candidate] if variant == "with_skill" else [],
+                skill_locale=draft.get("locale", "en-US"),
+            )
+            started = time.perf_counter()
+            events: list[dict[str, Any]] = []
+            try:
+                async for event in engine.run(case["prompt"]):
+                    events.append({"type": event.type.value, "data": event.data})
+            except Exception as exc:
+                return {"case_id": case["id"], "variant": variant, "repeat": repeat, "error": str(exc), "duration_ms": round((time.perf_counter() - started) * 1000)}
+            assistant = next((m for m in reversed(engine.messages) if m.get("role") == "assistant"), {})
+            text = content_to_text(assistant.get("content", ""), image_placeholder="[image]")
+            return {
+                "case_id": case["id"],
+                "variant": variant,
+                "repeat": repeat,
+                "output": text,
+                "events": events,
+                "duration_ms": round((time.perf_counter() - started) * 1000),
+                "tokens": 0,
+                "assertions": self._skill_assertions(text, case.get("assertions", [])),
+                "files": [],
+            }
+
+        for case in draft["evals"]:
+            for repeat in range(1, repeats + 1):
+                for variant in ("baseline", "with_skill"):
+                    result = await run_variant(case, variant, repeat)
+                    iteration["runs"].append(result)
+                    self._emit_skill_eval(session_id, {"draft_id": draft_id, "status": "running", "case_id": case["id"], "variant": variant, "repeat": repeat})
+        iteration["finished_at"] = _epoch()
+        self.skill_drafts.append_iteration(draft_id, iteration)
+        self._emit_skill_eval(session_id, {"draft_id": draft_id, "status": "finished", "iteration": iteration["id"]})
 
     def _memory_saved_notifier(self, session_id: str):
         """MEMORY-SPEC §5.1: push the memory_saved event that powers the GUI's save

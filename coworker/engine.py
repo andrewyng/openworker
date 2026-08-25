@@ -26,7 +26,8 @@ from . import toolchain as _toolchain
 from .events import Event, EventType
 from .permissions import Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
-from .providers.errors import friendly_model_error
+from .providers.errors import friendly_model_error, rate_limit_retry_after
+from .risk import RiskClass, classify
 from .tools import ToolRegistry
 
 
@@ -218,6 +219,12 @@ class TurnEngine:
         # TOOL_FINISHED event can carry the note to the tool card (§25).
         self._standing_notes: dict[str, str] = {}
         self._interrupt_hooks: list[Callable[[], None]] = list(interrupt_hooks or [])
+        # Optional runtime services. Direct/CLI engines keep their existing behavior until a
+        # SessionManager attaches the local effect ledger and artifact offloader.
+        self.effect_ledger: Any = None
+        self.execution_context: dict[str, str] = {}
+        self.artifact_offloader: Any = None
+        self._last_context_offload: Any = None
 
     # -- external controls ------------------------------------------------------
     def request_interrupt(self) -> None:
@@ -424,6 +431,10 @@ class TurnEngine:
 
     async def _loop(self) -> AsyncIterator[Event]:
         iterations = 0
+        # A short provider RPM window is transient. One silent retry avoids showing
+        # two identical failures (first request + user pressing Retry) in the chat;
+        # quota failures and repeated limits still surface normally.
+        rate_limit_retries = 0
         while True:
             if iterations >= self.max_iterations:
                 yield Event(
@@ -483,6 +494,17 @@ class TurnEngine:
                         self._append_notice("compacted", notice)
                         yield Event(EventType.COMPACTED, {"text": notice})
                         continue
+                retry_after = rate_limit_retry_after(exc)
+                if (
+                    retry_after is not None
+                    and rate_limit_retries == 0
+                    and not streamed
+                    and not streamed_reasoning
+                    and not self._cancel.is_set()
+                ):
+                    rate_limit_retries += 1
+                    await asyncio.sleep(retry_after)
+                    continue
                 # Same contract as the stop path below: the partial the user watched
                 # arrive survives the failure.
                 if streamed or streamed_reasoning:
@@ -494,6 +516,9 @@ class TurnEngine:
                 }
                 if friendly:
                     payload["raw"] = str(exc)
+                if retry_after is not None:
+                    payload["error_code"] = "rate_limited"
+                    payload["retry_after"] = retry_after
                 self._append_notice("error", friendly or str(exc))
                 yield Event(EventType.ERROR, payload)
                 return
@@ -776,7 +801,11 @@ class TurnEngine:
                 *[asyncio.to_thread(self._execute_sync, tc) for tc in concurrent]
             )
             for tool_call, (result, status) in zip(concurrent, outcomes):
-                yield self._record_result(tool_call, result, status)
+                event = self._record_result(tool_call, result, status)
+                if self._last_context_offload is not None:
+                    yield Event(EventType.CONTEXT_OFFLOADED, self._last_context_offload.to_reference())
+                    self._last_context_offload = None
+                yield event
 
         for tool_call in serial:
             if self._cancel.is_set():
@@ -785,7 +814,11 @@ class TurnEngine:
             yield Event(EventType.TOOL_STARTED, {"name": tool_call.name})
             self._audit(tool_call, stage="started")
             result, status = await asyncio.to_thread(self._execute_sync, tool_call)
-            yield self._record_result(tool_call, result, status)
+            event = self._record_result(tool_call, result, status)
+            if self._last_context_offload is not None:
+                yield Event(EventType.CONTEXT_OFFLOADED, self._last_context_offload.to_reference())
+                self._last_context_offload = None
+            yield event
 
     def _mangled_tool(self, tool_call: ToolCall) -> Event:
         """Answer a tool call whose arguments never parsed, with the real diagnosis.
@@ -1282,12 +1315,53 @@ class TurnEngine:
 
     def _execute_sync(self, tool_call: ToolCall) -> tuple[Any, str]:
         """Execute one authorized call (runs in a worker thread)."""
+        spec = self.registry.get(tool_call.name)
+        risk = classify(
+            tool_call.name,
+            getattr(spec, "metadata", None),
+            getattr(self.permissions, "risk_overrides", None),
+        )
+        consequential = risk in {RiskClass.WRITE_LOCAL, RiskClass.EXEC, RiskClass.EXTERNAL}
+        ledger = self.effect_ledger
+        context = self.execution_context
+        if consequential and ledger is not None and context.get("session_id") and context.get("run_id"):
+            state, cached = ledger.begin(
+                session_id=context["session_id"], run_id=context["run_id"],
+                tool_call_id=tool_call.id, tool_name=tool_call.name,
+                arguments=tool_call.arguments,
+            )
+            if state == "completed":
+                return cached, "ok"
+            if state == "uncertain":
+                return {
+                    "error": "A previous execution of this consequential action may have completed before the application stopped. Verify the target before trying a new action."
+                }, "error"
         try:
-            return self.registry.execute(tool_call.name, tool_call.arguments), "ok"
+            result = self.registry.execute(tool_call.name, tool_call.arguments)
         except Exception as exc:
+            if consequential and ledger is not None and context.get("session_id") and context.get("run_id"):
+                ledger.uncertain(
+                    session_id=context["session_id"], run_id=context["run_id"],
+                    tool_call_id=tool_call.id, arguments=tool_call.arguments,
+                )
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"
+        if consequential and ledger is not None and context.get("session_id") and context.get("run_id"):
+            ledger.complete(
+                session_id=context["session_id"], run_id=context["run_id"],
+                tool_call_id=tool_call.id, arguments=tool_call.arguments, result=result,
+            )
+        return result, "ok"
 
     def _record_result(self, tool_call: ToolCall, result: Any, status: str) -> Event:
+        self._last_context_offload = None
+        if status == "ok" and self.artifact_offloader is not None:
+            try:
+                result, self._last_context_offload = self.artifact_offloader.prepare(
+                    result, tool_call_id=tool_call.id
+                )
+            except Exception:
+                # Optional local artifact storage must never discard a tool result.
+                self._last_context_offload = None
         self._step += 1
         if status == "ok":
             # Only successful calls: a write that raised left nothing on disk to run.

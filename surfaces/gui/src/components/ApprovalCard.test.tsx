@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { ApprovalCard } from "./ApprovalCard";
+import { ApprovalCard, approvalActionLabels, scopeNote } from "./ApprovalCard";
 import { InboxItemCard } from "./InboxItemCard";
+import { approvalToolVerb, localizedApprovalDecision, localizedApprovalLine, standingGrantTitle } from "./approvalI18n";
 import type { Item } from "../types";
 import type { InboxItem } from "../api";
 
@@ -19,6 +20,24 @@ const sendApproval = (extra: Partial<ApprovalItem> = {}): ApprovalItem => ({
 });
 
 afterEach(cleanup);
+
+describe("ApprovalCard — active interface language", () => {
+  it("uses Portuguese UI copy while preserving commands and tool identifiers", () => {
+    expect(localizedApprovalLine({ pre: "Run a command" }, "pt-BR").pre).toBe("Executar um comando");
+    expect(localizedApprovalLine({ pre: "Use browser_open_url" }, "pt-BR").pre).toBe("Usar browser_open_url");
+    expect(scopeNote("run_shell", {}, undefined, "pt-BR").text).toBe("permanece neste computador");
+    expect(approvalActionLabels("run_shell", "pt-BR")).toEqual({ allow: "Permitir uma vez", deny: "Negar" });
+    expect(approvalToolVerb("send_message", "pt-BR")).toBe("Enviar uma mensagem");
+    expect(localizedApprovalDecision("always_command", "pt-BR")).toBe("comando sempre permitido");
+    expect(standingGrantTitle("pt-BR", "send_message", "slack:C1", "Relatório")).toContain("revogue");
+  });
+
+  it("uses Spanish copy for connected-service approvals", () => {
+    expect(localizedApprovalLine({ pre: "Use browser_open_url" }, "es-ES").pre).toBe("Usar browser_open_url");
+    expect(scopeNote("browser_open_url", {}, "connector", "es-ES").text).toBe("actúa en un servicio conectado");
+    expect(approvalActionLabels("browser_open_url", "es-ES")).toEqual({ allow: "Permitir una vez", deny: "Denegar" });
+  });
+});
 
 describe("ApprovalCard — standing scoped approvals (§25)", () => {
   it("offers Allow every time only with BOTH a run context and an eligible target", () => {

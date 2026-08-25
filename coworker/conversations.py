@@ -78,6 +78,8 @@ class ConversationStore:
                 extra_roots TEXT, pinned INTEGER DEFAULT 0, archived INTEGER DEFAULT 0,
                 origin TEXT, origin_label TEXT,
                 auto_title TEXT, renamed INTEGER DEFAULT 0,
+                language TEXT DEFAULT 'en-US',
+                runtime TEXT DEFAULT 'legacy',
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS workspaces (
@@ -118,6 +120,8 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN compaction TEXT",
             "ALTER TABLE sessions ADD COLUMN team TEXT",
             "ALTER TABLE sessions ADD COLUMN bindings TEXT",
+            "ALTER TABLE sessions ADD COLUMN language TEXT DEFAULT 'en-US'",
+            "ALTER TABLE sessions ADD COLUMN runtime TEXT DEFAULT 'legacy'",
             "ALTER TABLE conversation_members ADD COLUMN pending INTEGER NOT NULL DEFAULT 0",
         ):
             try:
@@ -234,13 +238,14 @@ class ConversationStore:
             title = record.title or title_from(record.messages)
             self._conn.execute(
                 """
-                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, team, bindings, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, team, bindings, language, runtime, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace, model = excluded.model, mode = excluded.mode,
                     title = COALESCE(sessions.title, excluded.title), agent = excluded.agent,
                     n_msgs = excluded.n_msgs, messages = NULL, extra_roots = excluded.extra_roots,
                     grants = excluded.grants, compaction = excluded.compaction,
+                    language = excluded.language, runtime = excluded.runtime,
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -256,6 +261,8 @@ class ConversationStore:
                     json.dumps(record.compaction or {}),
                     json.dumps(record.team or {}),
                     json.dumps(record.bindings or {}),
+                    record.language or "en-US",
+                    record.runtime or "legacy",
                 ),
             )
             self._conn.commit()
@@ -300,6 +307,8 @@ class ConversationStore:
             bindings=_load_grants(
                 row["bindings"] if "bindings" in row.keys() else None
             ),
+            language=(row["language"] if "language" in row.keys() else None) or "en-US",
+            runtime=(row["runtime"] if "runtime" in row.keys() else None) or "legacy",
         )
 
     def set_team(self, session_id: str, team: dict) -> None:
@@ -370,6 +379,8 @@ class ConversationStore:
                 origin=r["origin"],
                 origin_label=r["origin_label"],
                 team=_load_grants(r["team"] if "team" in r.keys() else None),
+                language=(r["language"] if "language" in r.keys() else None) or "en-US",
+                runtime=(r["runtime"] if "runtime" in r.keys() else None) or "legacy",
             )
             for r in rows
         ]
@@ -401,6 +412,7 @@ class ConversationStore:
             updated_at=row["updated_at"], pinned=bool(row["pinned"]),
             archived=bool(row["archived"]), origin=row["origin"], origin_label=row["origin_label"],
             team=_load_grants(row["team"] if "team" in row.keys() else None),
+            runtime=(row["runtime"] if "runtime" in row.keys() else None) or "legacy",
         )
 
     def create_branch(self, session_id: str, *, user_ordinal: int, ts: float | None) -> dict:
@@ -455,6 +467,7 @@ class ConversationStore:
                 extra_roots=source.extra_roots, grants=source.grants, pinned=source.pinned,
                 archived=source.archived, origin=source.origin, origin_label=source.origin_label,
                 compaction={}, bindings=source.bindings, team=source.team,
+                language=source.language, runtime=source.runtime,
             )
             self.save(child)
             self._conn.execute(

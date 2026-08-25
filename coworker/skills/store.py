@@ -28,7 +28,8 @@ from typing import Any, Callable, Optional
 import aisuite as ai
 
 from ..secrets import state_dir
-from .base import Skill, _parse_skill
+from .base import Skill, SkillLoader, _parse_skill, normalize_locale
+from .builtin import BUILTIN_SCOPE, RESERVED_SKILL_NAMES, builtin_skills_dir
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _MAX_NAME = 64
@@ -36,7 +37,7 @@ GLOBAL_SCOPE = "global"
 PROJECT_SCOPE = "project"
 
 
-def validate_name(name: str) -> str:
+def validate_name(name: str, *, allow_reserved: bool = False) -> str:
     """Skill names become folder names — reject anything that could escape the scope dir."""
     name = (name or "").strip()
     if not name:
@@ -47,6 +48,8 @@ def validate_name(name: str) -> str:
         raise ValueError(
             "Skill name may only contain letters, digits, dots, dashes, and underscores."
         )
+    if name in RESERVED_SKILL_NAMES and not allow_reserved:
+        raise ValueError(f"'{name}' is a built-in Worker skill and cannot be replaced.")
     return name
 
 
@@ -133,7 +136,9 @@ class SkillStore:
             return self._folder_of(self.global_dir, name), GLOBAL_SCOPE
         raise ValueError(f"Unknown skill: {name}")
 
-    def rows(self, workspace: Optional[str | Path] = None) -> list[dict[str, Any]]:
+    def rows(
+        self, workspace: Optional[str | Path] = None, *, locale: str = "en-US"
+    ) -> list[dict[str, Any]]:
         """Enriched listing for the Settings screen: scope, source, enabled. Global first,
         then project (a project row with a colliding name is the effective copy)."""
         disabled = self.disabled_names()
@@ -167,6 +172,32 @@ class SkillStore:
                     "files": max(bundled, 0),
                 }
                 if skill.name in seen:  # project copy shadows the global one
+                    out[seen[skill.name]] = row
+                else:
+                    seen[skill.name] = len(out)
+                    out.append(row)
+        root = builtin_skills_dir()
+        if root.is_dir():
+            loader = SkillLoader([root], locale=normalize_locale(locale))
+            for skill in loader.values():
+                folder = Path(skill.path or root)
+                try:
+                    bundled = sum(1 for p in folder.rglob("*") if p.is_file()) - 1
+                except OSError:
+                    bundled = 0
+                row = {
+                    "name": skill.name,
+                    "description": skill.description,
+                    "instructions": skill.instructions,
+                    "scope": BUILTIN_SCOPE,
+                    "source": "worker",
+                    "enabled": skill.name not in disabled,
+                    "path": str(folder),
+                    "files": max(bundled, 0),
+                    "locked": True,
+                    "localized": True,
+                }
+                if skill.name in seen:
                     out[seen[skill.name]] = row
                 else:
                     seen[skill.name] = len(out)
@@ -263,7 +294,7 @@ class SkillStore:
             return set()
 
     def set_enabled(self, name: str, enabled: bool) -> None:
-        name = validate_name(name)
+        name = validate_name(name, allow_reserved=True)
         with self._lock:
             disabled = self.disabled_names()
             if enabled:

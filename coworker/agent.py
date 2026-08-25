@@ -39,12 +39,14 @@ from .providers import ProviderClient, ProviderRouter
 from .overrides import RiskOverrideStore
 from .secrets import SecretStore, state_dir
 from .skills import SkillLoader, save_skill_tool, skill_catalog_text, skill_tools
+from .skills.builtin import builtin_skill_dirs
+from .skills.lab import SkillDraftStore, skill_lab_tools
 from .tools import ToolRegistry
 from .tools.ask import ask_user_tool
 from .tools.directories import request_directory_tool
 from .tools.plan import propose_plan_tool
 from .tools.toolreq import request_tool_tool
-from .tools.subagent import explorer_tools
+from .tools.subagent import explorer_tools, specialist_tools
 from .web import make_web_fetch_tool, make_web_search_tool
 from .workspace_trust import WorkspaceTrustStore
 from .tools.shell import LocalExecutor
@@ -235,6 +237,12 @@ def build_engine(
     # Persona-carried skill folders (OPE-58): the bundle's skills/ dir joins the loader so
     # its skills are readable by load_skill, not just listed by the filter.
     extra_skill_dirs: Optional[list[str | Path]] = None,
+    skill_locale: str = "en-US",
+    skill_draft_store: Optional[SkillDraftStore] = None,
+    skill_eval_runner: Optional[Callable[[str, int], dict[str, Any]]] = None,
+    isolated_skill_dirs: Optional[list[str | Path]] = None,
+    effect_ledger: Optional[Any] = None,
+    delegation_broker: Optional[Any] = None,
 ) -> TurnEngine:
     ws = Path(workspace).expanduser().resolve() if workspace else None
     if agent.requires_folder and ws is None:
@@ -401,9 +409,14 @@ def build_engine(
         if block:
             instructions = f"{instructions}\n\n{block}"
 
-    # Persona dirs come FIRST so a user's global/workspace copy of the same name shadows
-    # the bundle's (later dirs overwrite earlier in the loader).
-    skill_loader = SkillLoader([Path(d) for d in (extra_skill_dirs or [])] + _skill_dirs(ws))
+    # Built-ins are package-owned and are loaded last so their protected names cannot
+    # be shadowed by writable global/project folders.
+    skill_loader = SkillLoader(
+        [Path(d) for d in (extra_skill_dirs or [])]
+        + ([Path(d) for d in isolated_skill_dirs] if isolated_skill_dirs is not None else _skill_dirs(ws))
+        + builtin_skill_dirs(),
+        locale=skill_locale,
+    )
     # Per-session effective menu (SKILLS-SPEC §3). The manager passes a CALLABLE so
     # load_skill consults the LIVE state per call (a Settings disable applies to running
     # sessions; a skill created after this build is still loadable). The catalog itself
@@ -411,6 +424,26 @@ def build_engine(
     # sees is also live: skill changes apply from the next message, no new session needed.
     # Default None preserves CLI / direct callers.
     registry.register_all(skill_tools(skill_loader, allowed=skill_filter))
+    if skill_draft_store is not None and session_id is not None and skill_eval_runner is not None:
+        registry.register_all(
+            skill_lab_tools(
+                skill_draft_store,
+                session_id=session_id,
+                locale=lambda: getattr(_engine_box[0], "skill_locale", skill_locale)
+                if _engine_box
+                else skill_locale,
+                run_evals=skill_eval_runner,
+            )
+        )
+    # All non-chat supervisors can use bounded read-only specialists when the server supplied
+    # a broker. The broker owns lifecycle/event persistence; this tool never exposes writes.
+    if delegation_broker is not None and ws is not None and session_id:
+        registry.register_all(
+            specialist_tools(
+                workspace=ws, provider=provider, model=model, session_id=session_id,
+                broker=delegation_broker, model_settings=model_settings,
+            )
+        )
     # The worker-authors door (SKILLS-SPEC §5.2): save_skill proposes installing a finished
     # skill; requires_approval routes it through the standard approval card, so the review-
     # before-save rule holds without any bespoke plumbing. Bundled files may only come from
@@ -535,6 +568,16 @@ def build_engine(
     engine.todo = todo  # type: ignore[attr-defined]
     engine.agent_name = agent.name  # type: ignore[attr-defined]
     engine.roots = root_list  # type: ignore[attr-defined]  # shared list; Slice C mutates in place
+    # Tool output that would otherwise dominate model context is written into the session scratch
+    # directory. The transcript receives only a bounded reference to the artifact.
+    from .runtime.artifacts import ArtifactOffloader
+
+    artifact_root = next(
+        (r.path for r in root_list if r.label == "scratch" and r.writable),
+        next((r.path for r in root_list if r.writable), None),
+    )
+    engine.artifact_offloader = ArtifactOffloader(artifact_root)  # type: ignore[attr-defined]
+    engine.effect_ledger = effect_ledger  # type: ignore[attr-defined]
     # Session facts (spec Part 0 / §2.4): freeze the known world NOW, before the agent has
     # acted. Freezing is the whole point — compared against live state, an agent that runs
     # `git remote add backup https://attacker.net/…` would make its own destination look

@@ -6,6 +6,7 @@ from coworker.agent import build_engine
 from coworker.agents import AgentContext, chat_agent, code_agent, get_agent
 from coworker.providers import ModelCapabilities
 from coworker.skills import SkillLoader, skill_catalog_text, skill_tools
+from coworker.skills.builtin import builtin_skills_dir
 from coworker.tools import ToolRegistry
 from coworker.tools.shell import LocalExecutor
 from coworker.tools.todo import TodoList
@@ -79,6 +80,18 @@ def test_skill_loader_catalog_and_load(tmp_path):
     loaded = reg.execute("load_skill", {"name": "pdf"})
     assert "pdfplumber" in loaded["instructions"]
     assert reg.execute("load_skill", {"name": "missing"})["error"]
+
+
+def test_native_skill_creator_has_localized_equivalent_entrypoints():
+    folder = builtin_skills_dir() / "skill-creator"
+    bodies = [(folder / name).read_text(encoding="utf-8") for name in ("SKILL.md", "SKILL.pt-BR.md", "SKILL.es-ES.md")]
+    for body in bodies:
+        assert "name: skill-creator" in body
+        assert "save_skill" in body
+        assert "stage_skill_draft" in body
+        assert "run_skill_evals" in body
+    assert SkillLoader([builtin_skills_dir()], locale="pt-BR").get("skill-creator").description.startswith("Crie")
+    assert SkillLoader([builtin_skills_dir()], locale="es-ES").get("skill-creator").description.startswith("Crea")
 
 
 # -- engine assembly per agent --------------------------------------------------

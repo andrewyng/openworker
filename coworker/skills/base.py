@@ -25,11 +25,26 @@ class Skill:
     allowed_tools: list[str] = field(default_factory=list)
 
 
+SUPPORTED_LOCALES = {"pt-BR", "en-US", "es-ES"}
+
+
+def normalize_locale(value: str | None) -> str:
+    """Return a supported Worker locale, with English as a safe fallback."""
+    return value if value in SUPPORTED_LOCALES else "en-US"
+
+
 class SkillLoader:
-    def __init__(self, dirs: list[str | Path]) -> None:
+    def __init__(self, dirs: list[str | Path], *, locale: str = "en-US") -> None:
         self._dirs = [Path(d) for d in dirs]
+        self._locale = normalize_locale(locale)
         self._skills: dict[str, Skill] = {}
         self.rescan()
+
+    def set_locale(self, locale: str) -> None:
+        locale = normalize_locale(locale)
+        if locale != self._locale:
+            self._locale = locale
+            self.rescan()
 
     def rescan(self) -> None:
         """Re-read the skill dirs. load_skill rescans on a miss so a skill created AFTER
@@ -45,6 +60,11 @@ class SkillLoader:
         for sub in sorted(directory.iterdir()):
             md = sub / "SKILL.md"
             if md.is_file():
+                # Bundled/native skills may carry an equivalent localized entrypoint.
+                # User-created skills retain the plain SKILL.md contract unchanged.
+                localized = sub / f"SKILL.{self._locale}.md"
+                if localized.is_file():
+                    md = localized
                 skill = _parse_skill(md)
                 self._skills[skill.name] = skill
 
@@ -53,6 +73,10 @@ class SkillLoader:
 
     def get(self, name: str) -> Optional[Skill]:
         return self._skills.get(name)
+
+    def values(self) -> list[Skill]:
+        """Parsed skills in discovery order, for trusted management surfaces."""
+        return list(self._skills.values())
 
     def catalog(self) -> list[dict]:
         return [

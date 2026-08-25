@@ -89,6 +89,7 @@ import { TeamRequestCard } from "./components/TeamRequestCard";
 import { WorkItemsCard } from "./components/WorkItemsCard";
 import { TeamChatView } from "./components/TeamChatView";
 import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
+import { useLanguage } from "./i18n";
 
 const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
@@ -128,6 +129,15 @@ const gatesWorkspaceFallback = (a: string) => a === "code";
 const LAST_SESSION_KEY = "coworker:last-session-by-agent:v1";
 const RAIL_HIDDEN_KEY = "coworker:rail-hidden:v1";
 const NAV_COLLAPSED_KEY = "coworker:nav-collapsed:v1";
+
+function rateLimitMessage(waitSeconds: number): string {
+  const lang = document.documentElement.lang;
+  if (lang === "pt-BR")
+    return `O limite de requisições do modelo foi atingido. Aguarde cerca de ${waitSeconds} s e tente novamente.`;
+  if (lang === "es-ES")
+    return `Se alcanzó el límite de solicitudes del modelo. Espera unos ${waitSeconds} s y vuelve a intentarlo.`;
+  return `The model rate limit was reached. Wait about ${waitSeconds} seconds, then try again.`;
+}
 
 type LastSession = { sessionId: string; workspace: string; updatedAt: number };
 
@@ -180,6 +190,7 @@ function fallbackWorkspace(current: string | null, projects: RecentWorkspace[]):
 }
 
 export function App() {
+  const [language] = useLanguage();
   const [workspace, setWorkspace] = useState<string | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
   // UX-029: the active session runs in a temporary folder (never show its raw path —
@@ -685,6 +696,11 @@ export function App() {
     if (gatesWorkspace(agent) && !workspace) return; // Code needs a folder (gate handles it)
     const handleEvent = (ev: WsEvent) => {
       const d = ev.data || {};
+      // Skill-lab evaluations run in an isolated worker thread. Forward their
+      // progress so Settings ▸ Skills can refresh without polling or a reload.
+      if (ev.type === "skill_eval_progress") {
+        window.dispatchEvent(new CustomEvent("worker:skill-eval", { detail: d }));
+      }
       // An interrupted/errored turn never emits assistant_message, so its streamed partial
       // would otherwise live only in the ephemeral buffer until the next turn_start wipes it
       // (owner-hit 2026-07-22). Promote it to a durable transcript item — the engine persists
@@ -939,9 +955,12 @@ export function App() {
           break;
         case "error":
           flushPartialStream();
+          const errorText = d.error_code === "rate_limited"
+            ? rateLimitMessage(Math.max(1, Number(d.retry_after) || 1))
+            : "Error: " + (d.error || "unknown");
           setItems((p) => [
             ...p,
-            { kind: "notice", tone: "warn", text: "Error: " + (d.error || "unknown"), retriable: true },
+            { kind: "notice", tone: "warn", text: errorText, retriable: true },
           ]);
           break;
         case "input_rejected":
@@ -1014,7 +1033,7 @@ export function App() {
     // first connect, dropping the user's first message (the "send twice" bug). The scratch
     // dir is deterministic from `sessionId` server-side, so skipping that reconnect is safe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booting, sessionId, agent, refreshSessions, connectNonce]);
+  }, [booting, sessionId, agent, refreshSessions, connectNonce, language]);
 
   // Stream-following (FB-004): auto-scroll only while the user is AT the bottom, so scrolling
   // up to read during a streaming turn sticks. `atBottomRef` is the live truth (per scroll
@@ -1810,6 +1829,7 @@ export function App() {
         <SettingsView
           key={settingsTab}
           initialTab={settingsTab}
+          sessionId={sessionId}
           onOpenPersona={(id) => openPersona(id, "settings")}
           onCreateSkill={(description) => {
             // The Skills doorway (SKILLS-SPEC §5.2): creation is a conversation. Fresh
@@ -1821,6 +1841,10 @@ export function App() {
                 ? `Build a new skill for me: ${description}`
                 : "Build a new skill for me: (describe what the skill should do)",
             );
+          }}
+          onContinueSkillDraft={(draftId) => {
+            setSurface("session");
+            prefillComposer(`Continue the skill-creator draft ${draftId}: review the lab feedback, revise if needed, and use save_skill only after I approve the final version.`);
           }}
         />
       ) : surface === "audit" ? (

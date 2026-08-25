@@ -8,10 +8,16 @@ import {
   stageSkillUpload,
   confirmSkillUpload,
   updateSkill,
+  discardSkillDraft,
+  listSkillDrafts,
+  reviewSkillDraft,
+  runSkillDraft,
+  type SkillDraft,
   type SkillRow,
   type SkillUploadPreview,
 } from "../api";
 import { Icon } from "./Icon";
+import { useLanguage } from "../i18n";
 
 // Settings ▸ Skills (SKILLS-SPEC §5/§6) — the management home: the LIST is the page; every
 // add-surface appears only when summoned from the single "Add skill" menu (the three doors:
@@ -68,10 +74,14 @@ async function fileToB64(file: File): Promise<string> {
 
 export function SkillsTab({
   onCreateSkill,
+  sessionId,
+  onContinueSkillDraft,
 }: {
   // The doorway (SKILLS-SPEC §5.2): starts a new conversation with the description
   // prefilled in the composer — the worker builds the skill and proposes it via save_skill.
   onCreateSkill?: (description: string) => void;
+  sessionId?: string;
+  onContinueSkillDraft?: (draftId: string) => void;
 }) {
   const [rows, setRows] = useState<SkillRow[]>([]);
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -79,6 +89,9 @@ export function SkillsTab({
   const [addOpen, setAddOpen] = useState(false);
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [language] = useLanguage();
+  const [drafts, setDrafts] = useState<SkillDraft[]>([]);
+  const [selectedDraft, setSelectedDraft] = useState<SkillDraft | null>(null);
   // The state-change callout (SKILLS-SPEC §4.1 #2): name-first so the user knows WHICH
   // skill, and visually distinct so it can't be skimmed past (tester ask 2026-07-27).
   const [notice, setNotice] = useState<{ name: string; text: string; tone: "ok" | "warn" } | null>(
@@ -97,10 +110,24 @@ export function SkillsTab({
   const DELETE_NOTE =
     "removed. If a conversation already used it, start a new one for a completely clean slate.";
 
-  const refresh = () => listSkills().then(setRows);
+  const refresh = () => {
+    void listSkills(undefined, language).then(setRows);
+    if (sessionId) {
+      void listSkillDrafts(sessionId).then((next) => {
+        setDrafts(next);
+        setSelectedDraft((current) => next.find((item) => item.id === current?.id) ?? current);
+      });
+    }
+  };
   useEffect(() => {
     refresh();
-  }, []);
+  }, [sessionId, language]);
+
+  useEffect(() => {
+    const onEvaluation = () => refresh();
+    window.addEventListener("worker:skill-eval", onEvaluation);
+    return () => window.removeEventListener("worker:skill-eval", onEvaluation);
+  }, [sessionId, language]);
 
   const fail = (res: { ok?: boolean; error?: string }) => {
     setNotice(null);
@@ -349,11 +376,42 @@ export function SkillsTab({
         </div>
       ) : null}
 
+      {sessionId && drafts.length ? (
+        <section className={`${CARD} p-4 mb-4`} aria-label="Skill lab">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <div className="text-[13px] font-medium">Skill lab</div>
+              <p className="text-[12px] text-muted mt-1">Drafts stay separate until you approve installation in the conversation.</p>
+            </div>
+            <button className={BTN_BORDERED} onClick={refresh}>Refresh</button>
+          </div>
+          <div className="flex flex-wrap gap-2 mb-3">
+            {drafts.map((draft) => (
+              <button
+                key={draft.id}
+                className={`${BTN_BORDERED} ${selectedDraft?.id === draft.id ? "border-accent text-accent" : ""}`}
+                onClick={() => setSelectedDraft(draft)}
+              >
+                {draft.name} · {draft.status}
+              </button>
+            ))}
+          </div>
+          {selectedDraft ? (
+            <SkillLab
+              draft={selectedDraft}
+              sessionId={sessionId}
+              onRefresh={refresh}
+              onContinue={onContinueSkillDraft}
+              reportError={setError}
+            />
+          ) : null}
+        </section>
+      ) : null}
+
       <div className={`${CARD} divide-y divide-line`}>
         {rows.length === 0 && !editor ? (
           <div className="p-5 text-[13px] text-muted">
-            No skills yet — <b>Add skill</b> teaches your worker its first one, like
-            “prepare my Monday status report”.
+            {"No skills yet — "}<b>Add skill</b>{" teaches your worker its first one, like “prepare my Monday status report”."}
           </div>
         ) : null}
         {rows.map((row) => (
@@ -367,7 +425,7 @@ export function SkillsTab({
                 {/* §6: a rich skill must not look identical to a one-file one. Styled as a
                     chip with a folder icon so it READS as clickable (live drive: plain
                     text hid the affordance). */}
-                {row.files ? (
+                {row.files && !row.locked ? (
                   <button
                     className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md border border-line bg-paper text-muted hover:text-ink hover:border-lineStrong shrink-0"
                     title="Show folder"
@@ -381,28 +439,32 @@ export function SkillsTab({
                   it mid-word hid what the skill does (live drive). */}
               <div className="text-[12px] text-muted leading-relaxed">{row.description}</div>
             </div>
-            <button
-              className={BTN_BORDERED}
-              title="Edit"
-              onClick={() =>
-                setEditor({
-                  mode: "edit",
-                  name: row.name,
-                  description: row.description,
-                  instructions: row.instructions,
-                })
-              }
-            >
-              <Icon name="pencil" size={13} />
-            </button>
-            <button
-              className={BTN_BORDERED}
-              aria-label={`Delete ${row.name}`}
-              onClick={() => remove(row)}
-              onBlur={() => setArmedDelete(null)}
-            >
-              {armedDelete === row.name ? "Confirm delete" : <Icon name="trash" size={13} />}
-            </button>
+            {!row.locked ? (
+              <>
+                <button
+                  className={BTN_BORDERED}
+                  title="Edit"
+                  onClick={() =>
+                    setEditor({
+                      mode: "edit",
+                      name: row.name,
+                      description: row.description,
+                      instructions: row.instructions,
+                    })
+                  }
+                >
+                  <Icon name="pencil" size={13} />
+                </button>
+                <button
+                  className={BTN_BORDERED}
+                  aria-label={`Delete ${row.name}`}
+                  onClick={() => remove(row)}
+                  onBlur={() => setArmedDelete(null)}
+                >
+                  {armedDelete === row.name ? "Confirm delete" : <Icon name="trash" size={13} />}
+                </button>
+              </>
+            ) : null}
             <label className="inline-flex items-center gap-1.5 text-[12px] text-muted">
               <input
                 type="checkbox"
@@ -429,5 +491,74 @@ export function SkillsTab({
       </div>
 
     </section>
+  );
+}
+
+function SkillLab({
+  draft,
+  sessionId,
+  onRefresh,
+  onContinue,
+  reportError,
+}: {
+  draft: SkillDraft;
+  sessionId: string;
+  onRefresh: () => void;
+  onContinue?: (draftId: string) => void;
+  reportError: (message: string) => void;
+}) {
+  const [feedback, setFeedback] = useState("");
+  const latest = draft.iterations[draft.iterations.length - 1];
+  const run = async (repeats: number) => {
+    const result = await runSkillDraft(draft.id, sessionId, repeats);
+    if (!result.ok) reportError(result.error || "Could not start the evaluation.");
+    else onRefresh();
+  };
+  const submitFeedback = async () => {
+    const result = await reviewSkillDraft(draft.id, [{ case_id: "overall", variant: "with_skill", feedback }]);
+    if (!result.ok) reportError(result.error || "Could not save feedback.");
+    else {
+      setFeedback("");
+      onRefresh();
+    }
+  };
+  return (
+    <div className="border-t border-line pt-3 space-y-3">
+      <div className="grid sm:grid-cols-2 gap-3 text-[12px]">
+        <div><span className="text-muted">Description</span><div>{draft.description}</div></div>
+        <div><span className="text-muted">Tests</span><div>{draft.evals.length} isolated case{draft.evals.length === 1 ? "" : "s"}</div></div>
+      </div>
+      <div className="rounded-lg bg-paper border border-line p-3 text-[12px]">
+        <div className="font-medium mb-1">Latest comparison</div>
+        {latest ? (
+          <div className="text-muted">Iteration {latest.id} · {latest.runs.length} runs · model {latest.model}</div>
+        ) : <div className="text-muted">No test run yet. The baseline never receives the candidate skill.</div>}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button className={BTN_ACCENT} onClick={() => void run(1)}>Run tests</button>
+        <button className={BTN_BORDERED} onClick={() => void run(3)}>Benchmark ×3</button>
+        <button className={BTN_BORDERED} onClick={() => onContinue?.(draft.id)}>Accept version</button>
+        <button className={BTN_BORDERED} onClick={() => void discardSkillDraft(draft.id, sessionId).then((r) => r.ok ? onRefresh() : reportError(r.error || "Could not discard draft."))}>Discard draft</button>
+      </div>
+      <label className={FIELD_LABEL}>Feedback</label>
+      <textarea
+        className={`${INPUT} min-h-[72px]`}
+        value={feedback}
+        placeholder="What should be improved before installation?"
+        onChange={(event) => setFeedback(event.target.value)}
+      />
+      <button className={BTN_BORDERED} disabled={!feedback.trim()} onClick={() => void submitFeedback()}>Apply feedback</button>
+      {latest ? (
+        <details className="text-[12px]">
+          <summary className="cursor-pointer text-muted">Comparison details</summary>
+          <div className="mt-2 space-y-2">
+            {latest.runs.map((run, index) => {
+              const item = run as { case_id?: string; variant?: string; output?: string; duration_ms?: number; assertions?: Array<{ text: string; passed: boolean }> };
+              return <div key={index} className="rounded-lg border border-line bg-paper p-2"><b>{item.case_id} · {item.variant}</b><span className="text-muted"> · {item.duration_ms ?? 0} ms</span><pre className="mt-1 whitespace-pre-wrap font-sans text-muted">{item.output || "No text output"}</pre>{item.assertions?.length ? <div className="mt-1">{item.assertions.map((a, i) => <span key={i} className={a.passed ? "text-tealInk" : "text-warnInk"}>{a.passed ? "✓" : "×"} {a.text} </span>)}</div> : null}</div>;
+            })}
+          </div>
+        </details>
+      ) : null}
+    </div>
   );
 }

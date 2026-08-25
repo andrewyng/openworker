@@ -4,7 +4,7 @@ use them (GPT-5.6 rolls out per-organization; quota/credits can run out on any m
 """
 
 from coworker.config import Config
-from coworker.providers.errors import friendly_model_error
+from coworker.providers.errors import friendly_model_error, rate_limit_retry_after
 from coworker.providers.matrix import MATRIX, models_for_provider
 from coworker.providers.registry import get_descriptor
 
@@ -65,14 +65,13 @@ def test_quota_errors_are_translated():
 
 
 def test_unrelated_errors_pass_through_raw():
-    # a plain rate-limit (429 without a quota code) must NOT be dressed up
-    assert (
-        friendly_model_error(
-            "gpt-5.6-sol",
-            RuntimeError("Error code: 429 - rate_limit_exceeded, retry after 2s"),
-        )
-        is None
+    # A transient rate limit gets one bounded retry rather than raw provider JSON.
+    exc = RuntimeError(
+        "Error code: 429 - {'error': {'message': 'max RPM: 3, please try again after 2 seconds', "
+        "'type': 'rate_limit_reached_error'}}"
     )
+    assert rate_limit_retry_after(exc) == 2
+    assert friendly_model_error("gpt-5.6-sol", exc) == "Rate limit reached."
     # a 404 from a wrong base_url isn't an access problem
     assert (
         friendly_model_error(

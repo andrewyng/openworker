@@ -84,12 +84,16 @@ export function SettingsView({
   initialTab,
   onOpenPersona,
   onCreateSkill,
+  sessionId,
+  onContinueSkillDraft,
 }: {
   initialTab?: SetTab;
   onOpenPersona?: (id: string) => void;
   // Skills doorway (SKILLS-SPEC §5.2): start a new conversation with the description
   // prefilled — the worker builds the skill and proposes it via save_skill.
   onCreateSkill?: (description: string) => void;
+  sessionId?: string;
+  onContinueSkillDraft?: (draftId: string) => void;
 }) {
   // Personas is flag-gated (hidden for launch) — filter the tab AND coerce a stale
   // deep-link to it (openSettings("personas") callers) so the page never opens on a
@@ -144,7 +148,11 @@ export function SettingsView({
               <CompactionCard />
             </section>
           ) : tab === "skills" ? (
-            <SkillsTab onCreateSkill={onCreateSkill} />
+            <SkillsTab
+              onCreateSkill={onCreateSkill}
+              sessionId={sessionId}
+              onContinueSkillDraft={onContinueSkillDraft}
+            />
           ) : tab === "voice" ? (
             <VoiceInputSection />
           ) : tab === "memory" ? (

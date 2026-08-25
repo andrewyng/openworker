@@ -22,6 +22,14 @@ export type EventType =
   | "interrupted"
   | "model_changed"
   | "memory_saved"
+  | "skill_eval_progress"
+  | "run_state"
+  | "context_offloaded"
+  | "budget_warning"
+  | "delegation_started"
+  | "delegation_progress"
+  | "delegation_completed"
+  | "delegation_failed"
   | "compacting"
   | "compacted"
   | "turn_done";
@@ -77,6 +85,12 @@ export interface SessionInfo {
   agent: string;
   model: string;
   mode: string;
+  runtime?: "legacy" | "graph" | string;
+  run_id?: string | null;
+  run_status?: "idle" | "running" | "waiting" | "completed" | "failed" | "interrupted" | "cancelled" | string;
+  budget?: Record<string, unknown>;
+  usage?: Record<string, unknown>;
+  delegations?: Array<Record<string, unknown>>;
   updated_at: string | null;
   messages: number;
   pinned?: boolean;

@@ -632,8 +632,8 @@ def create_app(manager: SessionManager) -> FastAPI:
         )
 
     @app.get("/v1/skills")
-    def skills(workspace: str = "") -> dict[str, Any]:
-        return {"skills": manager.list_skills(workspace or None)}
+    def skills(workspace: str = "", language: str = "en-US") -> dict[str, Any]:
+        return {"skills": manager.list_skills(workspace or None, language=language)}
 
     @app.post("/v1/skills")
     def create_skill(body: dict) -> dict[str, Any]:
@@ -671,6 +671,53 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/skills/upload/confirm")
     def confirm_skill_upload(body: dict) -> dict[str, Any]:
         return manager.confirm_skill_upload(body or {})
+
+    # -- Skill lab: drafts remain local and uninstalled until save_skill approval --
+    @app.post("/v1/skill-drafts")
+    def create_skill_draft(body: dict) -> dict[str, Any]:
+        return manager.create_skill_draft(body or {})
+
+    @app.get("/v1/skill-drafts/{draft_id}")
+    def get_skill_draft(draft_id: str) -> dict[str, Any]:
+        return manager.get_skill_draft(draft_id)
+
+    @app.get("/v1/sessions/{session_id}/skill-drafts")
+    def list_skill_drafts(session_id: str) -> dict[str, Any]:
+        return manager.list_skill_drafts(session_id)
+
+    @app.patch("/v1/skill-drafts/{draft_id}")
+    def update_skill_draft(draft_id: str, body: dict) -> dict[str, Any]:
+        return manager.update_skill_draft(draft_id, dict(body or {}))
+
+    @app.delete("/v1/skill-drafts/{draft_id}")
+    def delete_skill_draft(draft_id: str, session_id: str) -> dict[str, Any]:
+        return manager.discard_skill_draft(draft_id, session_id)
+
+    @app.post("/v1/skill-drafts/{draft_id}/runs")
+    def run_skill_draft(draft_id: str, body: dict) -> dict[str, Any]:
+        body = body or {}
+        return manager.run_skill_evals(
+            str(body.get("session_id", "")), draft_id, int(body.get("repeats", 1))
+        )
+
+    @app.get("/v1/skill-drafts/{draft_id}/runs/{iteration}")
+    def skill_draft_run(draft_id: str, iteration: int) -> dict[str, Any]:
+        result = manager.get_skill_draft(draft_id)
+        draft = result.get("draft") if result.get("ok") else None
+        if not draft:
+            return result
+        for item in draft.get("iterations", []):
+            if item.get("id") == iteration:
+                return {"ok": True, "iteration": item}
+        return {"ok": False, "error": "Unknown evaluation iteration."}
+
+    @app.post("/v1/skill-drafts/{draft_id}/reviews")
+    def review_skill_draft(draft_id: str, body: dict) -> dict[str, Any]:
+        return manager.review_skill_draft(draft_id, body or {})
+
+    @app.post("/v1/skill-drafts/{draft_id}/trigger-optimization")
+    def optimize_skill_triggers(draft_id: str, body: dict) -> dict[str, Any]:
+        return manager.prepare_skill_trigger_optimization(draft_id, body or {})
 
     @app.get("/v1/workspaces/recent")
     def recent_workspaces() -> dict[str, Any]:
@@ -721,6 +768,18 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.get("/v1/sessions/{session_id}/messages")
     def session_messages(session_id: str) -> dict[str, Any]:
         return {"messages": manager.session_messages(session_id)}
+
+    @app.get("/v1/sessions/{session_id}/run-state")
+    def session_run_state(session_id: str) -> dict[str, Any]:
+        return manager.runtime_state(session_id)
+
+    @app.post("/v1/sessions/{session_id}/delegations/{delegation_id}/steer")
+    def session_steer_delegation(session_id: str, delegation_id: str, body: dict) -> dict[str, Any]:
+        return manager.steer_delegation(session_id, delegation_id, str((body or {}).get("text", "")))
+
+    @app.post("/v1/sessions/{session_id}/delegations/{delegation_id}/cancel")
+    def session_cancel_delegation(session_id: str, delegation_id: str) -> dict[str, Any]:
+        return manager.cancel_delegation(session_id, delegation_id)
 
     @app.get("/v1/sessions/{session_id}/branches")
     def session_branches(session_id: str) -> dict[str, Any]:
@@ -2056,6 +2115,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             return
         await ws.accept(subprotocol="openworker" if api_token else None)
         agent = ws.query_params.get("agent") or "code"
+        language = ws.query_params.get("language") or "en-US"
 
         # All four interactive prompts (approval / question / directory / plan) are parked as Inbox
         # items and awaited via inbox.wait — so they survive a dropped socket (redelivered on
@@ -2420,6 +2480,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             session_id,
             workspace=workspace,
             agent=agent,
+            language=language,
             approver=approver,
             extra_tools=mcp_tools,
             directory_requester=directory_requester,
@@ -2500,11 +2561,8 @@ def create_app(manager: SessionManager) -> FastAPI:
             # The receive loop atomically claims this session before scheduling the task.
             # Keeping the claim outside prevents two back-to-back frames from both starting.
             try:
-                events = (
-                    engine.retry()
-                    if retry
-                    else engine.run(content, display=display)
-                )
+                runtime = manager.get_runtime(session_id, engine)
+                events = runtime.retry() if retry else runtime.run(content, display=display)
                 async for event in events:
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.

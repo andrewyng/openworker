@@ -61,18 +61,50 @@ def test_create_then_list_enriched(tmp_path):
     client, _m, _p = _client(tmp_path)
     assert client.post("/v1/skills", json=GREET).json()["ok"] is True
     rows = client.get("/v1/skills").json()["skills"]
-    assert rows == [
-        {
-            "name": "greet",
-            "description": "says hello",
-            "instructions": "Say hello warmly.",
-            "scope": "global",
-            "source": "local",
-            "enabled": True,
-            "path": rows[0]["path"],
-            "files": 0,
-        }
-    ]
+    greet = next(row for row in rows if row["name"] == "greet")
+    assert greet == {
+        "name": "greet",
+        "description": "says hello",
+        "instructions": "Say hello warmly.",
+        "scope": "global",
+        "source": "local",
+        "enabled": True,
+        "path": greet["path"],
+        "files": 0,
+    }
+    builtin = next(row for row in rows if row["name"] == "skill-creator")
+    assert builtin["scope"] == "builtin" and builtin["locked"] is True
+
+
+def test_builtin_skill_is_protected_and_localized(tmp_path):
+    client, _m, _p = _client(tmp_path)
+    pt = next(row for row in client.get("/v1/skills?language=pt-BR").json()["skills"] if row["name"] == "skill-creator")
+    es = next(row for row in client.get("/v1/skills?language=es-ES").json()["skills"] if row["name"] == "skill-creator")
+    assert "Crie" in pt["description"]
+    assert "Crea" in es["description"]
+    for method, url, body in (
+        ("post", "/v1/skills", {"name": "skill-creator", "description": "x", "instructions": "x"}),
+        ("patch", "/v1/skills/skill-creator", {"description": "x"}),
+        ("delete", "/v1/skills/skill-creator", {}),
+    ):
+        request = getattr(client, method)
+        response = (request(url, json=body) if method != "delete" else request(url)).json()
+        assert response["ok"] is False
+    assert client.patch("/v1/skills/skill-creator", json={"enabled": False}).json()["ok"] is True
+    disabled = next(row for row in client.get("/v1/skills").json()["skills"] if row["name"] == "skill-creator")
+    assert disabled["enabled"] is False
+
+
+def test_skill_locale_reloads_and_persists_with_session(tmp_path):
+    _client_, manager, _provider = _client(tmp_path)
+    engine = manager.get_engine("locale-session", agent="chat", language="pt-BR")
+    assert engine is not None and "Crie, melhore" in engine.context_provider()
+    manager.save("locale-session", engine)
+    manager._engines.pop("locale-session")
+    restored = manager.get_engine("locale-session", agent="chat", language="es-ES")
+    assert restored is not None and "Crea, mejora" in restored.context_provider()
+    manager.save("locale-session", restored)
+    assert manager.session_store.load("locale-session").language == "es-ES"
 
 
 def test_create_duplicate_and_blank_rejected(tmp_path):
@@ -108,7 +140,7 @@ def test_delete_and_unknown(tmp_path):
     client, _m, _p = _client(tmp_path)
     client.post("/v1/skills", json=GREET)
     assert client.delete("/v1/skills/greet").json()["ok"] is True
-    assert client.get("/v1/skills").json()["skills"] == []
+    assert [row["name"] for row in client.get("/v1/skills").json()["skills"]] == ["skill-creator"]
     assert client.delete("/v1/skills/greet").json()["ok"] is False
 
 
@@ -198,7 +230,7 @@ def test_upload_preview_then_confirm(tmp_path):
         "/v1/skills/upload", json={"data_b64": _zip_b64({"greet/SKILL.md": md})}
     ).json()
     assert preview["ok"] is True and preview["name"] == "greet"
-    assert client.get("/v1/skills").json()["skills"] == []  # preview installs nothing
+    assert [row["name"] for row in client.get("/v1/skills").json()["skills"]] == ["skill-creator"]  # preview installs nothing
     confirmed = client.post(
         "/v1/skills/upload/confirm", json={"token": preview["token"]}
     ).json()
@@ -235,6 +267,40 @@ def test_draft_endpoint_is_gone(tmp_path):
     assert client.post("/v1/skills/draft", json={"description": "x"}).status_code in (404, 405)
 
 
+def test_skill_lab_draft_endpoints(tmp_path):
+    client, _m, _p = _client(tmp_path)
+    body = {
+        "session_id": "lab-session",
+        "language": "pt-BR",
+        "name": "weekly-report",
+        "description": "Create reports when asked.",
+        "instructions": "Write the report.",
+        "evals": [{"id": "one", "prompt": "Write a report"}],
+    }
+    created = client.post("/v1/skill-drafts", json=body).json()
+    assert created["ok"] is True
+    draft_id = created["draft"]["id"]
+    listed = client.get("/v1/sessions/lab-session/skill-drafts").json()["drafts"]
+    assert listed[0]["id"] == draft_id
+    patched = client.patch(
+        f"/v1/skill-drafts/{draft_id}", json={"description": "Updated report instructions."}
+    ).json()
+    assert patched["ok"] is True
+    assert patched["draft"]["description"] == "Updated report instructions."
+    triggers = client.post(
+        f"/v1/skill-drafts/{draft_id}/trigger-optimization",
+        json={"examples": [{"prompt": "Write an incident report", "should_trigger": True}]},
+    ).json()
+    assert triggers["ok"] is True
+    assert triggers["draft"]["trigger_optimization"]["status"] == "review_required"
+    reviewed = client.post(
+        f"/v1/skill-drafts/{draft_id}/reviews",
+        json={"reviews": [{"case_id": "one", "variant": "with_skill", "feedback": "Looks good"}]},
+    ).json()
+    assert reviewed["ok"] is True
+    assert client.delete(f"/v1/skill-drafts/{draft_id}?session_id=lab-session").json()["ok"] is True
+
+
 # -- session mutes over HTTP ----------------------------------------------------------
 
 
@@ -242,9 +308,9 @@ def test_session_mute_roundtrip(tmp_path):
     client, _m, _p = _client(tmp_path)
     client.post("/v1/skills", json=GREET)
     view = client.get("/v1/sessions/s1/skills").json()["skills"]
-    assert view == [
-        {"name": "greet", "description": "says hello", "scope": "global", "enabled": True}
-    ]
+    assert next(row for row in view if row["name"] == "greet") == {
+        "name": "greet", "description": "says hello", "scope": "global", "enabled": True
+    }
     after = client.post(
         "/v1/sessions/s1/skills", json={"skill": "greet", "enabled": False}
     ).json()["skills"]

@@ -156,6 +156,17 @@ class FlakyProvider(ProviderClient):
         yield StreamChunk(turn=AssistantTurn(text="recovered", finish_reason="stop"))
 
 
+class FlakyRateLimitProvider(FlakyProvider):
+    def stream(self, *, model, messages, tools=None, **settings):
+        self.calls += 1
+        if self.calls <= self._failures:
+            raise RuntimeError(
+                "Error code: 429 - {'error': {'message': 'max RPM: 3, please try again after 1 seconds', "
+                "'type': 'rate_limit_reached_error'}}"
+            )
+        yield StreamChunk(turn=AssistantTurn(text="recovered", finish_reason="stop"))
+
+
 def test_retry_reruns_failed_turn_without_new_user_message(tmp_path):
     provider = FlakyProvider(failures=1)
     engine = TurnEngine(
@@ -176,6 +187,28 @@ def test_retry_reruns_failed_turn_without_new_user_message(tmp_path):
     # Exactly one user message — retry re-runs, it doesn't re-ask.
     assert sum(1 for m in engine.messages if m.get("role") == "user") == 1
     assert engine.messages[-1]["content"] == "recovered"
+
+
+def test_transient_rate_limit_retries_once_without_duplicate_notice(tmp_path, monkeypatch):
+    provider = FlakyRateLimitProvider(failures=1)
+    engine = TurnEngine(
+        provider=provider,
+        registry=ToolRegistry(),
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+    )
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr("coworker.engine.asyncio.sleep", no_wait)
+    async def collect():
+        return [event async for event in engine.run("hello")]
+
+    events = asyncio.run(collect())
+    assert provider.calls == 2
+    assert events[-1].type == EventType.TURN_END
+    assert not [message for message in engine.messages if message.get("kind") == "error"]
 
 
 def test_retry_is_noop_unless_tail_is_error_notice(tmp_path):
