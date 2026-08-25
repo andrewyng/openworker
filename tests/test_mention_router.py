@@ -449,3 +449,164 @@ def test_deliver_does_not_pin_auto_send_when_source_lacks_connector(
     asyncio.run(mgr.deliver_to_session("sA", "scheduled wake"))
 
     assert engine._auto_send_target is None
+
+
+def test_deliver_auto_routes_inbox_to_dingtalk_chat(tmp_path, monkeypatch):
+    """When a DingTalk message is delivered to a session, that session's Inbox
+    approvals should be mirrored back to the same DingTalk chat so the user can
+    reply 'allow' / 'deny' from mobile."""
+    mgr = _mgr(tmp_path)
+    _connect_dingtalk(mgr)
+    mgr.get_engine("sA")
+
+    async def fake_run(*args, **kwargs):
+        if False:
+            yield
+
+    engine = mgr._engines["sA"]
+    monkeypatch.setattr(engine, "run", fake_run)
+
+    chat_id = "cidpuRTat/SCmxsJBdabXkFlw=="
+    src = {
+        "connector": "dingtalk",
+        "channel_id": chat_id,
+        "channel_name": chat_id,
+        "sender_id": "u1",
+        "sender_name": "林海舟",
+        "kind": "channel",
+        "ts": 1.0,
+        "text": "整理",
+    }
+    asyncio.run(
+        mgr.deliver_to_session(
+            "sA",
+            "🔔 You were tagged on DingTalk in cidpuRTat/SCmxsJBdabXkFlw== by 林海舟: 整理\n\n"
+            "You MUST reply using the send_message tool with target \"dingtalk:cidpuRTat/SCmxsJBdabXkFlw==\". …",
+            source=src,
+        )
+    )
+
+    route = mgr.inbox_routing.route_for("sA")
+    binding = mgr.inbox_routing.binding_for(route)
+    assert binding.channel == "dingtalk"
+    assert binding.target == chat_id
+
+
+def test_deliver_dingtalk_short_circuits_when_pending_approval(
+    tmp_path, monkeypatch
+):
+    """If a DingTalk message arrives while the session already has a pending
+    approval/plan/directory, don't start a new turn that repeats 'waiting for
+    confirmation'. Reply inline via gateway.deliver instead."""
+    mgr = _mgr(tmp_path)
+    _connect_dingtalk(mgr)
+    mgr.get_engine("sA")
+
+    run_called = False
+
+    async def fake_run(*args, **kwargs):
+        nonlocal run_called
+        run_called = True
+        if False:
+            yield
+
+    engine = mgr._engines["sA"]
+    monkeypatch.setattr(engine, "run", fake_run)
+
+    # Seed a pending approval item for this session.
+    item = mgr.inbox.add_approval(
+        "sA",
+        "Run `run_shell`?",
+        body="mv a b",
+        inbox=mgr.inbox_routing.route_for("sA"),
+    )
+    assert item.state == "pending"
+
+    class FakeGateway:
+        def __init__(self):
+            self.delivered: list[tuple] = []
+
+        async def deliver(self, target, text):
+            self.delivered.append((target, text))
+
+    fake_gateway = FakeGateway()
+    mgr.gateway = fake_gateway
+
+    chat_id = "cidpuRTat/SCmxsJBdabXkFlw=="
+    src = {
+        "connector": "dingtalk",
+        "channel_id": chat_id,
+        "channel_name": chat_id,
+        "sender_id": "u1",
+        "sender_name": "林海舟",
+        "kind": "channel",
+        "ts": 1.0,
+        "text": "整理",
+    }
+    asyncio.run(
+        mgr.deliver_to_session(
+            "sA",
+            "🔔 You were tagged on DingTalk in cidpuRTat/SCmxsJBdabXkFlw== by 林海舟: 整理\n\n"
+            "You MUST reply using the send_message tool with target "
+            '"dingtalk:cidpuRTat/SCmxsJBdabXkFlw==". …',
+            source=src,
+        )
+    )
+
+    assert not run_called
+    assert len(fake_gateway.delivered) == 1
+    target, text = fake_gateway.delivered[0]
+    assert target == f"dingtalk:{chat_id}"
+    assert "allow" in text.lower()
+
+
+def test_dingtalk_tokenless_allow_resolves_pending_item(tmp_path):
+    """DingTalk replies do not need to copy the [ow:<id>] token; a bare 'allow' or
+    'deny' in the conversation resolves the most recent pending approval."""
+    mgr = _mgr(tmp_path)
+    _connect_dingtalk(mgr)
+    chat_id = "cidTestChat"
+    inbox_name = f"dingtalk-{chat_id}"
+    mgr.inbox_routing.set_binding(inbox_name, channel="dingtalk", target=chat_id)
+    item = mgr.inbox.add_approval(
+        "sA", "Run run_shell?", body="empty trash", inbox=inbox_name
+    )
+
+    event = MessageEvent(
+        text="allow",
+        source=SessionSource(
+            platform="dingtalk",
+            chat_id=chat_id,
+            user_id="u1",
+            user_name="林海舟",
+        ),
+    )
+    assert mgr._resolve_inbox_reply(event) is True
+    resolved = mgr.inbox.get(item.id)
+    assert resolved.state == "resolved"
+    assert resolved.resolution == "allow"
+
+
+def test_dingtalk_tokenless_deny_resolves_pending_item(tmp_path):
+    mgr = _mgr(tmp_path)
+    _connect_dingtalk(mgr)
+    chat_id = "cidTestChat"
+    inbox_name = f"dingtalk-{chat_id}"
+    mgr.inbox_routing.set_binding(inbox_name, channel="dingtalk", target=chat_id)
+    item = mgr.inbox.add_approval(
+        "sA", "Run run_shell?", body="empty trash", inbox=inbox_name
+    )
+
+    event = MessageEvent(
+        text="deny",
+        source=SessionSource(
+            platform="dingtalk",
+            chat_id=chat_id,
+            user_id="u1",
+            user_name="林海舟",
+        ),
+    )
+    assert mgr._resolve_inbox_reply(event) is True
+    resolved = mgr.inbox.get(item.id)
+    assert resolved.state == "resolved"
+    assert resolved.resolution == "deny"
