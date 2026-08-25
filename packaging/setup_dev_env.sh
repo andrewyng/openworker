@@ -11,11 +11,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV="$ROOT/.venv"
 
 python3 -m venv "$VENV"
-# The coworker package (server, engine, connectors) + inbound-messaging extras.
+# The coworker package (server, engine, connectors) + extras needed by the
+# documented local test/build flows. Keep this aligned with CI: a fresh venv
+# should not rely on optional packages already installed on the machine.
 # aisuite comes in as a regular dependency (git-pinned in pyproject.toml until
 # the next PyPI release).
 "$VENV/bin/pip" install --quiet --upgrade pip
-"$VENV/bin/pip" install --quiet -e "$ROOT[messaging,dev]"
+"$VENV/bin/pip" install --quiet -e "$ROOT[messaging,dev,bedrock]" pyinstaller typer tzdata
 
 "$VENV/bin/python" -c 'import aisuite, coworker' # fail loudly if the wiring broke
 echo "Ready: $VENV"

@@ -12,6 +12,13 @@ A fresh checkout has no server to run — create the venv both flows below expec
 bash packaging/setup_dev_env.sh   # → .venv (server + aisuite)
 ```
 
+On Linux, install the native WebKit/Tauri packages before running the desktop
+shell:
+
+```bash
+bash packaging/install_linux_desktop_deps.sh
+```
+
 ## Run it (browser, two terminals)
 
 1. **Start the server** (needs a model key, e.g. `OPENAI_API_KEY`, in the environment —
@@ -42,6 +49,12 @@ packaged sidecar binary is only produced by the release scripts in `packaging/`)
 cd surfaces/gui
 npm install        # first time
 npm run tauri dev  # builds the shell, launches the window, starts the server
+```
+
+Linux release-style bundles can be built from the repo root with:
+
+```bash
+packaging/build_linux.sh
 ```
 
 ## Tests

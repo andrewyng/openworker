@@ -193,6 +193,9 @@ fn server_bin() -> PathBuf {
             if let Some(contents) = dir.parent() {
                 candidates.push(contents.join("Resources").join("sidecar").join(exe_name));
             }
+            if cfg!(target_os = "linux") {
+                candidates.push(PathBuf::from("/usr/lib/OpenWorker/sidecar").join(exe_name));
+            }
             candidates.push(dir.join(exe_name)); // legacy onefile externalBin slot
             for c in candidates {
                 if c.exists() {
