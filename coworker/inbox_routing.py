@@ -1,12 +1,13 @@
 """Multi-inbox routing — named inboxes + delivery bindings.
 
 An inbox is a named queue with optional delivery binding(s): in-app is always the store of
-record; a binding can also mirror items to a Slack channel or Telegram chat. Sessions route to
-an inbox by a per-session override, else the persona's default, else ``"default"``. Bindings
-are bidirectional: an item is delivered to the bound channel with its id embedded, and an
-inbound reply (correlated by that id) resolves the item — so the connectors/mobile are just
-transports of the same items. The gateway wiring is injected (a ``sender`` callable) so this
-module stays testable without touching Slack/Telegram.
+record; a binding can also mirror items to a Slack channel, Telegram chat, or DingTalk
+conversation. Sessions route to an inbox by a per-session override, else the persona's
+default, else ``"default"``. Bindings are bidirectional: an item is delivered to the bound
+channel with its id embedded, and an inbound reply (correlated by that id) resolves the item
+— so the connectors/mobile are just transports of the same items. The gateway wiring is
+injected (a ``sender`` callable) so this module stays testable without touching
+Slack/Telegram/DingTalk.
 """
 
 from __future__ import annotations
@@ -31,8 +32,8 @@ _DENY_WORDS = re.compile(r"\b(?:deny|denied|reject|rejected|no)\b")
 @dataclass
 class InboxBinding:
     name: str
-    channel: Optional[str] = None  # None (in-app only) | "slack" | "telegram"
-    target: str = ""  # channel id / chat id for the binding
+    channel: Optional[str] = None  # None (in-app only) | "slack" | "telegram" | "dingtalk"
+    target: str = ""  # channel id / chat id / conversation id for the binding
 
 
 class InboxRouting:
@@ -91,6 +92,10 @@ class InboxRouting:
         with self._lock:
             self._session_override[session_id] = inbox_name
             self._save()
+
+    def has_session_override(self, session_id: str) -> bool:
+        """Whether this session has an explicit inbox override."""
+        return session_id in self._session_override
 
     # -- resolution -------------------------------------------------------------
     def route_for(self, session_id: str, persona_id: Optional[str] = None) -> str:

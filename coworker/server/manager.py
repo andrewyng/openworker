@@ -27,8 +27,15 @@ from ..connections import (
     SessionConnectionStore,
     effective as effective_connections,
 )
-from ..inbox import InboxStore, args_preview
-from ..inbox_routing import InboxRouting
+from ..inbox import (
+    KIND_APPROVAL,
+    KIND_DIRECTORY,
+    KIND_PLAN,
+    STATE_PENDING,
+    InboxStore,
+    args_preview,
+)
+from ..inbox_routing import DEFAULT_INBOX, InboxRouting
 from ..personas import PersonaRegistry
 from ..personas.registry import set_registry as set_persona_registry
 from ..selfwake import WakeStore
@@ -3719,6 +3726,12 @@ class SessionManager:
                         "routing Inbox requests there."
                     ),
                 }
+        if channel == "dingtalk":
+            settings = load_settings(self.secrets).get("dingtalk")
+            if settings is None or not settings.enabled:
+                return {"ok": False, "error": "DingTalk is not connected."}
+            if not target:
+                return {"ok": False, "error": "Choose a destination conversation."}
         self.inbox_routing.set_binding(name, channel=channel, target=target)
         return {"ok": True, "bindings": self.inbox_routing.bindings()}
 
@@ -4351,6 +4364,15 @@ class SessionManager:
                 return
         target = f"{binding.channel}:{binding.target}"
         body = "\n".join(p for p in (item.title, item.body) if p).strip()
+        # Text-only adapters (DingTalk session webhook, etc.) cannot render buttons, so we
+        # include the correlation token and reply instructions inline.
+        if binding.channel == "dingtalk":
+            if item.kind in {KIND_APPROVAL, KIND_DIRECTORY, KIND_PLAN}:
+                body = (
+                    f"{body}\n\nReply with 'allow' or 'deny' [ow:{item.id}]"
+                ).strip()
+            else:
+                body = f"{body}\n\n[ow:{item.id}]".strip()
         buttons = buttons_for(item)
         try:
             if buttons:
@@ -4412,9 +4434,10 @@ class SessionManager:
 
     # -- inbox replies over messaging connectors --------------------------------
     def _resolve_inbox_reply(self, event) -> bool:
-        """Try to handle an inbound Slack/Telegram message as an Inbox reply. Returns True if the
-        message carried an `[ow:<id>]` token (so it's consumed here, not routed as a new turn) —
-        resolving the item also releases any agent suspended on it."""
+        """Try to handle an inbound Slack/Telegram/DingTalk message as an Inbox reply. Returns
+        True if the message carried an `[ow:<id>]` token (or a bare DingTalk "allow"/"deny"
+        reply to the most recent pending item in this conversation) so it's consumed here,
+        not routed as a new turn — resolving the item also releases any agent suspended on it."""
         from ..inbox_routing import resolve_from_reply
 
         text = getattr(event, "text", "") or ""
@@ -4423,10 +4446,8 @@ class SessionManager:
             item = self.inbox.get(item_id)
             if item is None:
                 return False
-            if (
-                getattr(event.source, "platform", "") == "slack"
-                and item.kind in {"approval", "directory", "plan"}
-            ):
+            platform = getattr(event.source, "platform", "")
+            if platform == "slack" and item.kind in {"approval", "directory", "plan"}:
                 actor_id = str(getattr(event.source, "user_id", "") or "")
                 if not self._slack_actor_owns_item(
                     item,
@@ -4435,9 +4456,35 @@ class SessionManager:
                     team_id=getattr(event.source, "team_id", None),
                 ):
                     return False
+            # For non-Slack platforms (DingTalk, Telegram, etc.), gateway.is_authorized
+            # already verified the sender before this resolver runs.
             return self.inbox.resolve(item_id, resolution)
 
-        return resolve_from_reply(text, _resolve) is not None
+        if resolve_from_reply(text, _resolve) is not None:
+            return True
+
+        # DingTalk fallback: users typically reply "allow" or "deny" without copying the
+        # [ow:<id>] token. In that case, resolve the most recent pending approval/plan/directory
+        # item in this conversation's bound inbox.
+        platform = getattr(event.source, "platform", "")
+        chat_id = getattr(event.source, "chat_id", "") or ""
+        if platform == "dingtalk" and chat_id:
+            lowered = text.strip().lower()
+            if lowered in {"allow", "deny"}:
+                inbox_name = f"dingtalk-{chat_id}"
+                pending = self.inbox.list(
+                    inbox=inbox_name,
+                    state=STATE_PENDING,
+                )
+                pending = [
+                    i
+                    for i in pending
+                    if i.kind in {KIND_APPROVAL, KIND_DIRECTORY, KIND_PLAN}
+                ]
+                if pending:
+                    return self.inbox.resolve(pending[-1].id, lowered)
+
+        return False
 
     # -- self-wake resumption ---------------------------------------------------
     async def _scheduler_tick(self) -> None:
@@ -4538,7 +4585,30 @@ class SessionManager:
             if connector and chat_id:
                 from ..connectors.base import format_target
 
-                engine.require_send_message(format_target(connector, chat_id))
+                target = format_target(connector, chat_id)
+                engine.require_send_message(target)
+                if connector == "dingtalk":
+                    # If the session is already blocked on an approval/plan/directory,
+                    # don't start a new turn that just repeats "waiting for confirmation".
+                    # Reply inline so the user knows to answer the existing request.
+                    pending = self.inbox.pending(session_id)
+                    blocking_kinds = {KIND_APPROVAL, KIND_DIRECTORY, KIND_PLAN}
+                    blocking = [it for it in pending if it.kind in blocking_kinds]
+                    if blocking:
+                        await self.gateway.deliver(
+                            target,
+                            "⏳ 我正在等待你处理上一条请求。请直接回复 `allow` 或 `deny`，"
+                            "或在桌面端审批后继续。",
+                        )
+                        return
+                    # Route this session's Inbox approvals back to the same DingTalk chat so
+                    # mobile users can reply 'allow' / 'deny' without opening the desktop app.
+                    if not self.inbox_routing.has_session_override(session_id):
+                        inbox_name = f"dingtalk-{chat_id}"
+                        self.inbox_routing.set_binding(
+                            inbox_name, channel="dingtalk", target=chat_id
+                        )
+                        self.inbox_routing.set_session_override(session_id, inbox_name)
         if not self.try_mark_running(session_id):
             logger.info("deliver_to_session %s: session busy, queueing steering", session_id)
             engine.queue_steering(message, source)
