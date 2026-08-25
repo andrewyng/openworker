@@ -13,14 +13,14 @@ import {
   type JournalCase,
   type RootInfo,
 } from "../api";
-import type { SessionInfo, TodoItem } from "../types";
+import type { DelegationInfo, RuntimeRunState, SessionInfo, TodoItem } from "../types";
 import { useLanguage, type Language } from "../i18n";
 import { AccessSection } from "./AccessSection";
 import { BoardSection } from "./BoardPanel";
 import { Icon } from "./Icon";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
 
-type Panel = "progress" | "artifacts" | "board" | "journal" | "team" | "files";
+type Panel = "progress" | "runtime" | "artifacts" | "board" | "journal" | "team" | "files";
 
 const localized = (language: Language, english: string, portuguese: string, spanish: string) =>
   language === "pt-BR" ? portuguese : language === "es-ES" ? spanish : english;
@@ -53,6 +53,9 @@ interface Props {
   toolNames: string[];
   todo: TodoItem[];
   running: boolean;
+  runtimeRun?: RuntimeRunState | null;
+  runtime?: string;
+  delegations?: DelegationInfo[];
   // Fires when a full artifact preview opens/closes, so the app can auto-collapse the left nav
   // to give the preview (PDF/webpage/sheet) more room (#3).
   onPreviewChange?: (open: boolean) => void;
@@ -91,6 +94,9 @@ export function RightRail({
   toolNames,
   todo,
   running,
+  runtimeRun,
+  runtime,
+  delegations = [],
   onPreviewChange,
   showArtifacts = true,
   personaId,
@@ -117,6 +123,7 @@ export function RightRail({
   // still auto-opens the first time a live turn has todos.
   const [open, setOpen] = useState<Record<Panel, boolean>>({
     progress: false,
+    runtime: false,
     artifacts: false,
     board: false,
     journal: false,
@@ -263,6 +270,24 @@ export function RightRail({
           {!isLead && (
             <RailSection title={localized(language, "Progress", "Progresso", "Progreso")} open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
               <ProgressSummary running={running} toolNames={toolNames} todo={todo} />
+            </RailSection>
+          )}
+
+          {(runtime === "graph" || runtimeRun?.runtime === "graph" || delegations.length > 0) && (
+            <RailSection
+              title={localized(language, "Agent run", "Execução do agente", "Ejecución del agente")}
+              count={runtimeRun?.status || (running ? "running" : "idle")}
+              countAttention={runtimeRun?.status === "failed" || runtimeRun?.status === "waiting"}
+              open={open.runtime}
+              onToggle={() => setOpen({ ...open, runtime: !open.runtime })}
+            >
+              <RuntimeSummary
+                run={runtimeRun}
+                runtime={runtime}
+                delegations={runtimeRun?.delegations?.length ? runtimeRun.delegations : delegations}
+                running={running}
+                language={language}
+              />
             </RailSection>
           )}
 
@@ -528,6 +553,75 @@ function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolN
   );
 }
 
+function RuntimeSummary({
+  run,
+  runtime,
+  delegations,
+  running,
+  language,
+}: {
+  run?: RuntimeRunState | null;
+  runtime?: string;
+  delegations: DelegationInfo[];
+  running: boolean;
+  language: Language;
+}) {
+  const status = run?.status || (running ? "running" : "idle");
+  const toolCount = delegations.reduce((total, item) => total + (item.tools?.length || 0), 0);
+  const usage = run?.usage || {};
+  const tokens = Number(usage.input || 0) + Number(usage.output || 0);
+
+  return (
+    <div className="runtime-tree" data-testid="runtime-tree">
+      <div className="runtime-supervisor">
+        <span className={"runtime-dot " + status} />
+        <Icon name="sparkle" size={14} />
+        <span className="runtime-supervisor-name">{localized(language, "Supervisor", "Supervisor", "Supervisor")}</span>
+        <span className="runtime-node">{run?.node || (runtime === "graph" ? "ready" : "legacy")}</span>
+      </div>
+      <div className="runtime-meta">
+        {runtime === "graph" || run?.runtime === "graph"
+          ? localized(language, "Durable graph", "Grafo durável", "Grafo durable")
+          : localized(language, "Legacy runtime", "Runtime legado", "Runtime heredado")}
+        {tokens > 0 && ` · ${tokens.toLocaleString()} tokens`}
+        {toolCount > 0 && ` · ${toolCount} tools`}
+      </div>
+      {delegations.length === 0 ? (
+        <div className="rail-muted runtime-empty">
+          {localized(
+            language,
+            "No specialists delegated for this run.",
+            "Nenhum especialista foi delegado nesta execução.",
+            "No se delegaron especialistas en esta ejecución.",
+          )}
+        </div>
+      ) : (
+        <div className="runtime-delegations">
+          {delegations.map((delegation) => (
+            <div className="runtime-delegation" key={delegation.id}>
+              <span className={"runtime-branch-dot " + (delegation.status || "idle")} />
+              <div className="runtime-delegation-main">
+                <div className="runtime-delegation-head">
+                  <span>{delegation.title || delegation.specialist || "Specialist"}</span>
+                  <span className="runtime-status">{delegation.status || "idle"}</span>
+                </div>
+                {(delegation.progress || delegation.task) && (
+                  <div className="runtime-delegation-detail">{delegation.progress || delegation.task}</div>
+                )}
+                {delegation.result?.confidence && (
+                  <div className="runtime-delegation-detail">
+                    {localized(language, "Confidence", "Confiança", "Confianza")}: {delegation.result.confidence}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RailSection({
   title,
   open,
@@ -547,6 +641,7 @@ function RailSection({
   count?: string;
   countAttention?: boolean;
 }) {
+  const contentId = `rail-section-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   return (
     <section className="rail-section">
       <div className="rail-section-head">
@@ -554,6 +649,8 @@ function RailSection({
           className="rail-section-toggle"
           data-testid={`rail-toggle-${title.toLowerCase()}`}
           onClick={onToggle}
+          aria-expanded={open}
+          aria-controls={contentId}
         >
           <Icon name={open ? "chevronDown" : "chevronRight"} size={14} className="rail-chev" />
           <span>{title}</span>
@@ -563,7 +660,7 @@ function RailSection({
         </button>
         {action}
       </div>
-      {open && <div className="rail-section-body">{children}</div>}
+      {open && <div className="rail-section-body" id={contentId}>{children}</div>}
     </section>
   );
 }

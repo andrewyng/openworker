@@ -785,11 +785,18 @@ class SessionManager:
         return runtime
 
     def runtime_state(self, session_id: str) -> dict[str, Any]:
-        runtime = self.get_runtime(session_id)
-        state = runtime.state() if runtime is not None else self.runtime_store.get(session_id)
+        # This endpoint is polled/loaded by the UI while switching conversations. Read the
+        # persisted checkpoint directly: constructing an engine here would allocate a scratch
+        # workspace for every legacy or not-yet-saved session merely to answer "no state".
+        state = self.runtime_store.get(session_id)
         if state is None:
             return {"ok": False, "error": "No runtime state for this session."}
-        return {"ok": True, "run": state.to_dict()}
+        run = state.to_dict()
+        # Specialists are independently durable: their lifecycle can outlive the parent
+        # graph checkpoint, so the ledger is the canonical source when reconstructing UI
+        # state after a restart.
+        run["delegations"] = self.runtime_store.delegations(session_id)
+        return {"ok": True, "run": run}
 
     def _emit_delegation(self, session_id: str, event: str, data: dict[str, Any]) -> None:
         loop = self._loop
@@ -5634,7 +5641,7 @@ class SessionManager:
             "run_status": state.status if state else "idle",
             "budget": state.budget if state else {},
             "usage": state.usage if state else {},
-            "delegations": state.delegations if state else [],
+            "delegations": self.runtime_store.delegations(record.session_id),
         }
 
     def _session_team_row(self, record: SessionRecord) -> dict[str, Any]:

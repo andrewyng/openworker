@@ -664,6 +664,24 @@ button.btn.danger { color: var(--accent); }
 .rail-chat-row .rail-team-name { font-weight: 500; color: var(--muted); }
 .rail-muted { font-size: 12px; color: var(--faint); line-height: 1.45; overflow-wrap: anywhere; }
 .rail-error { font-size: 12px; color: var(--accent); overflow-wrap: anywhere; }
+.runtime-tree { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.runtime-supervisor { display: flex; align-items: center; gap: 7px; color: var(--ink); font-size: 13px; }
+.runtime-supervisor-name { font-weight: 600; }
+.runtime-node { margin-left: auto; color: var(--faint); font-family: var(--mono); font-size: 11px; max-width: 105px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-dot, .runtime-branch-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--faint); }
+.runtime-dot.running, .runtime-branch-dot.running { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+.runtime-dot.completed, .runtime-branch-dot.completed { background: var(--ok); }
+.runtime-dot.waiting, .runtime-branch-dot.cancelling { background: var(--warn-ink); }
+.runtime-dot.failed, .runtime-branch-dot.failed { background: var(--danger); }
+.runtime-meta { padding-left: 21px; color: var(--faint); font-size: 11px; }
+.runtime-empty { padding: 3px 0 1px 21px; }
+.runtime-delegations { display: flex; flex-direction: column; gap: 7px; margin-left: 3px; padding-left: 18px; border-left: 1px solid var(--line); }
+.runtime-delegation { display: flex; align-items: flex-start; gap: 8px; margin-left: -22px; min-width: 0; }
+.runtime-branch-dot { margin-top: 6px; }
+.runtime-delegation-main { min-width: 0; flex: 1; }
+.runtime-delegation-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: var(--ink); font-size: 12px; font-weight: 550; }
+.runtime-status { color: var(--faint); font-size: 10px; font-weight: 500; text-transform: capitalize; }
+.runtime-delegation-detail { margin-top: 2px; color: var(--faint); font-size: 11px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-todo-list { display: flex; flex-direction: column; gap: 9px; }
 .rail-todo {
   display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; align-items: flex-start;

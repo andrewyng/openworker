@@ -12,6 +12,7 @@ import {
   type Board,
   getHealth,
   getRecentWorkspaces,
+  getRunState,
   getSessionMessages,
   getSessionBranches,
   createSessionBranch,
@@ -51,6 +52,7 @@ import type {
   SessionInfo,
   SessionUsage,
   TodoItem,
+  RuntimeRunState,
   WsEvent,
 } from "./types";
 import { fullPersonaName, isProjectScoped } from "./personaScope";
@@ -261,6 +263,7 @@ export function App() {
   };
   const [todo, setTodo] = useState<TodoItem[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [runtimeRun, setRuntimeRun] = useState<RuntimeRunState | null>(null);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
@@ -507,6 +510,17 @@ export function App() {
     getRecentWorkspaces().then(setProjects).catch(() => setProjects([]));
   }, []);
 
+  // A graph run has durable state beyond the transcript. Fetch it when the user opens a
+  // session so a restarted app immediately restores the supervisor/specialist view; live
+  // WebSocket events below then keep it current without polling.
+  useEffect(() => {
+    let cancelled = false;
+    getRunState(sessionId)
+      .then((state) => { if (!cancelled) setRuntimeRun(state); })
+      .catch(() => { if (!cancelled) setRuntimeRun(null); });
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
   // initial: adopt the server's seed workspace if any, else force the gate.
   // Retry health for a while: the desktop shell starts its sidecar in parallel, so the
   // server may not answer for a second or two. Only fall back to the gate once it's truly up.
@@ -725,6 +739,48 @@ export function App() {
       // silent no-op / failure prompt) — the transient must never outlive it.
       if (ev.type !== "compacting") setCompacting(false);
       switch (ev.type) {
+        case "run_state": {
+          const run = d.run as RuntimeRunState | undefined;
+          if (run) {
+            setRuntimeRun((previous) => ({
+              ...run,
+              // Graph checkpoints are written by the supervisor while specialists write
+              // independently to the durable ledger. Keep the live specialist rows when
+              // a supervisor snapshot has not caught up with that ledger yet.
+              delegations: run.delegations?.length ? run.delegations : previous?.delegations || [],
+            }));
+            setSessions((previous) => previous.map((item) => item.session_id === sessionId
+              ? {
+                  ...item,
+                  runtime: run.runtime,
+                  run_id: run.run_id,
+                  run_status: run.status,
+                  budget: run.budget,
+                  usage: run.usage,
+                  delegations: run.delegations?.length ? run.delegations : item.delegations || [],
+                }
+              : item));
+          }
+          break;
+        }
+        case "delegation_started":
+        case "delegation_progress":
+        case "delegation_completed":
+        case "delegation_failed": {
+          const delegation = d.delegation;
+          if (delegation) {
+            setRuntimeRun((previous) => previous
+              ? {
+                  ...previous,
+                  delegations: [
+                    ...(previous.delegations || []).filter((item) => item.id !== delegation.id),
+                    delegation,
+                  ],
+                }
+              : previous);
+          }
+          break;
+        }
         case "ready":
           setConnected(true);
           if (d.model) setModel(d.model);
@@ -2233,6 +2289,9 @@ export function App() {
             toolNames={items.filter((i) => i.kind === "tool").map((i: any) => i.name)}
             todo={todo}
             running={running}
+            runtimeRun={runtimeRun}
+            runtime={curSession?.runtime}
+            delegations={curSession?.delegations}
             onPreviewChange={onArtifactPreview}
             // Universal scratch (UX-036): every session has a scratch surface, so the
             // Artifacts section always shows — the server lists the scratch root only.

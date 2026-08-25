@@ -78,6 +78,35 @@ export interface SessionUsage {
   context: number;
 }
 
+export interface DelegationInfo {
+  id: string;
+  specialist?: string;
+  title?: string;
+  status?: string;
+  task?: string;
+  progress?: string;
+  tools?: string[];
+  result?: {
+    summary?: string;
+    confidence?: string;
+    risks?: string[];
+  };
+}
+
+export interface RuntimeRunState {
+  session_id: string;
+  run_id: string;
+  runtime: "legacy" | "graph" | string;
+  status: string;
+  node?: string;
+  artifacts?: Array<Record<string, unknown>>;
+  delegations?: DelegationInfo[];
+  budget?: Record<string, unknown>;
+  usage?: Record<string, unknown>;
+  errors?: Array<Record<string, unknown>>;
+  updated_at?: number;
+}
+
 export interface SessionInfo {
   session_id: string;
   title?: string;
@@ -90,7 +119,7 @@ export interface SessionInfo {
   run_status?: "idle" | "running" | "waiting" | "completed" | "failed" | "interrupted" | "cancelled" | string;
   budget?: Record<string, unknown>;
   usage?: Record<string, unknown>;
-  delegations?: Array<Record<string, unknown>>;
+  delegations?: DelegationInfo[];
   updated_at: string | null;
   messages: number;
   pinned?: boolean;

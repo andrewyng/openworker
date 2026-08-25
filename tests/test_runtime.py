@@ -145,3 +145,36 @@ def test_run_state_and_delegation_routes_are_exposed(tmp_path):
     assert client.post(
         "/v1/sessions/runtime-api/delegations/missing/cancel"
     ).json()["ok"] is False
+
+
+def test_runtime_state_rebuilds_delegations_from_the_durable_ledger(tmp_path):
+    from coworker.server.manager import SessionManager
+
+    manager = SessionManager(workspace=tmp_path, provider=OneTurnProvider())
+    engine = manager.get_engine("delegation-ledger", agent="cowork", workspace=str(tmp_path))
+    runtime = manager.get_runtime("delegation-ledger", engine)
+
+    async def drive():
+        return [event async for event in runtime.run("hello")]
+
+    asyncio.run(drive())
+    manager.save("delegation-ledger", engine)
+    manager.runtime_store.save_delegation({
+        "id": "delegation-1",
+        "session_id": "delegation-ledger",
+        "specialist": "reviewer",
+        "title": "Reviewer",
+        "status": "completed",
+        "tools": ["read_file"],
+    })
+
+    assert manager.runtime_state("delegation-ledger")["run"]["delegations"][0]["id"] == "delegation-1"
+    assert manager.list_sessions()[0]["delegations"][0]["specialist"] == "reviewer"
+
+
+def test_unknown_run_state_does_not_construct_an_engine(tmp_path):
+    from coworker.server.manager import SessionManager
+
+    manager = SessionManager(workspace=tmp_path, provider=OneTurnProvider())
+    assert manager.runtime_state("not-yet-saved")["ok"] is False
+    assert manager._engines == {}

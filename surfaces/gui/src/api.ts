@@ -1,4 +1,4 @@
-import type { GroupedQuestion, QuestionOption, SessionInfo, WsEvent } from "./types";
+import type { GroupedQuestion, QuestionOption, RuntimeRunState, SessionInfo, WsEvent } from "./types";
 
 declare const __COWORKER_DEV_TOKEN__: string;
 
@@ -195,6 +195,35 @@ export interface ConversationMessage {
 export async function getSessionMessages(sessionId: string): Promise<ConversationMessage[]> {
   const res = await fetch(`${httpBase()}/v1/sessions/${sessionId}/messages`);
   return (await res.json()).messages ?? [];
+}
+
+export async function getRunState(sessionId: string): Promise<RuntimeRunState | null> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/run-state`);
+  const data = await res.json();
+  return data.ok && data.run ? data.run : null;
+}
+
+export async function steerDelegation(
+  sessionId: string,
+  delegationId: string,
+  text: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/delegations/${encodeURIComponent(delegationId)}/steer`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) },
+  );
+  return res.json();
+}
+
+export async function cancelDelegation(
+  sessionId: string,
+  delegationId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/delegations/${encodeURIComponent(delegationId)}/cancel`,
+    { method: "POST" },
+  );
+  return res.json();
 }
 
 export interface BranchVariant {
