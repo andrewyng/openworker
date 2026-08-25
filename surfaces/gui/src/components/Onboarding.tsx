@@ -11,6 +11,7 @@ import {
 import { ConnectorBadge } from "../connectors/ConnectorIcon";
 import { ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
 import { Spinner } from "./AutomationQuickstart";
+import { useI18n } from "../i18n";
 
 // First-run onboarding (UX-DECISIONS §24 → §29 → §39): model → your tools → go.
 // §39 (owner design, 2026-07-18): step 1 is a PROVIDER GALLERY — 13 real brand
@@ -38,6 +39,7 @@ const TOOL_ROWS = [
 const TOOLS_SOON = ["gmail", "google_calendar"];
 
 export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "automations") => void }) {
+  const { t } = useI18n();
   const [step, setStep] = useState(0);
 
   // -- step 1: model (provider gallery ⇄ key form, shared machinery) ---------------
@@ -122,10 +124,9 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
         {step === 0 && (
           <section data-testid="ob-step-model" className="flex-1 min-h-0 flex flex-col">
             {/* Persistent header — stays put while the region below swaps (§39). */}
-            <h1 className="text-[20px] font-semibold">Welcome to OpenWorker<span className="beta-tag">BETA</span></h1>
+            <h1 className="text-[20px] font-semibold">{t("onboarding.welcome")}<span className="beta-tag">BETA</span></h1>
             <p className="text-[13px] text-muted mt-0.5 mb-4">
-              Pick a model provider to get started — OpenWorker runs on your own key, and your
-              key and your data stay on this computer.
+              {t("onboarding.providerIntro")}
             </p>
 
             {!ps.sel ? (
@@ -144,13 +145,13 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
             <div className="flex items-center gap-3 pt-5">
               {!skipConfirm ? (
                 <button className="text-[13px] text-faint hover:text-muted" onClick={() => setSkipConfirm(true)}>
-                  Skip setup
+                  {t("onboarding.skipSetup")}
                 </button>
               ) : (
                 <span className="text-[13px] text-muted">
-                  Nothing works without a model —{" "}
+                  {t("onboarding.nothingWithoutModel")} {" "}
                   <button className="text-accent" onClick={() => finish()}>
-                    skip anyway
+                    {t("onboarding.skipAnyway")}
                   </button>
                 </span>
               )}
@@ -160,11 +161,11 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                 onClick={advance}
                 data-testid="ob-continue"
               >
-                {ps.verify.state === "testing" ? "Checking…" : "Next"}
+                {ps.verify.state === "testing" ? t("onboarding.checking") : t("onboarding.next")}
               </button>
             </div>
             <p className="text-[11px] text-faint mt-3">
-              Models can be enabled or hidden anytime in Settings ▸ Models.
+              {t("onboarding.modelsSettings")}
             </p>
           </section>
         )}
@@ -176,9 +177,9 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
              slot keeps its place but flips to a green congrats, and every row grows a quiet
              Connect pill. The gated Google pair is ONE combined grayed row. */
           <section data-testid="ob-step-tools" className="flex-1 min-h-0 flex flex-col">
-            <h1 className="text-[20px] font-semibold">Connect your everyday tools</h1>
+            <h1 className="text-[20px] font-semibold">{t("onboarding.toolsTitle")}</h1>
             <p className="text-[13px] text-muted mt-0.5 mb-3">
-              Chat can only advise. Connected, your coworker does the actual work:
+              {t("onboarding.toolsIntro")}
             </p>
 
             <div className="flex-1 min-h-0 overflow-y-auto pr-1" data-testid="ob-tool-gallery">
