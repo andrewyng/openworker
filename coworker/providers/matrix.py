@@ -174,6 +174,26 @@ MATRIX: dict[str, ModelEntry] = {
     "mistral:mistral-large-latest": ModelEntry(
         "Mistral Large · Mistral", _AGENTIC, 128_000
     ),
+    # -- SambaNova ---------------------------------------------------------------
+    # OpenAI-compatible API (verified against api.sambanova.ai/v1/models 2026-07-30).
+    "sambanova:Meta-Llama-3.3-70B-Instruct": ModelEntry(
+        "Llama 3.3 70B · SambaNova", _AGENTIC, 131_072
+    ),
+    "sambanova:DeepSeek-V3.1": ModelEntry(
+        "DeepSeek V3.1 · SambaNova", _AGENTIC, 131_072
+    ),
+    "sambanova:DeepSeek-V3.2": ModelEntry(
+        "DeepSeek V3.2 · SambaNova", _AGENTIC, 32_768
+    ),
+    "sambanova:MiniMax-M2.7": ModelEntry(
+        "MiniMax M2.7 · SambaNova", _AGENTIC, 196_608
+    ),
+    "sambanova:gemma-4-31B-it": ModelEntry(
+        "Gemma 4 31B · SambaNova", _AGENTIC, 131_072
+    ),
+    "sambanova:gpt-oss-120b": ModelEntry(
+        "GPT-OSS 120B · SambaNova", _AGENTIC, 131_072
+    ),
     # -- resellers (their model namespaces, verbatim) -----------------------------
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
     "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together", _AGENTIC, 128_000),
@@ -221,6 +241,16 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "openrouter:meta-llama/llama-4-maverick": ModelEntry(
         "Llama 4 Maverick · via OpenRouter", _AGENTIC, 1_000_000
+    ),
+    # -- SambaNova ------------------------------------------------------
+    "sambanova:Meta-Llama/Llama-4-Maverick-17B-128E-Instruct": ModelEntry(
+        "Llama 4 Maverick · SambaNova", _AGENTIC, 1_000_000
+    ),
+    "sambanova:Qwen/Qwen3-72B-Instruct": ModelEntry(
+        "Qwen3 72B · SambaNova", _AGENTIC, 128_000
+    ),
+    "sambanova:deepseek-ai/DeepSeek-V3-0324": ModelEntry(
+        "DeepSeek V3 · SambaNova", _AGENTIC, 128_000
     ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
