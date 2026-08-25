@@ -36,6 +36,7 @@ _REVIEWER_PAUSED_TEXT = (
 from .permissions import Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
 from .providers.errors import friendly_model_error
+from .tool_results import PreparedToolResult, ToolResultStore
 from .tools import ToolRegistry
 
 
@@ -114,6 +115,9 @@ class TurnEngine:
         self.provider = provider
         self.registry = registry
         self.permissions = permissions
+        self.tool_result_store = ToolResultStore(permissions.workspace_root)
+        if self.registry.get("read_tool_result") is None:
+            self.registry.register(self.tool_result_store.reader_tool())
         self.model = model
         self.approver = approver or _deny_all
         self.max_iterations = max_iterations
@@ -1381,10 +1385,10 @@ class TurnEngine:
                 **({"approval_note": origin["note"]} if origin.get("note") else {}),
                 **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
             }
-        message = _tool_result_message(tool_call, result)
+        prepared = self._append_tool_result(tool_call, result)
+        message = self.messages[-1]
         if display:
             message["_display"] = display
-        self.messages.append(message)
         hidden = int((display or {}).get("hidden_by_filters") or 0)
         stripped = int((display or {}).get("hidden_fields") or 0)
         if hidden or stripped:
@@ -1414,7 +1418,15 @@ class TurnEngine:
             {
                 "name": tool_call.name,
                 "status": status,
-                "result_preview": _preview(result),
+                "result_preview": _preview(prepared.value),
+                **(
+                    {
+                        "result_ref": prepared.reference,
+                        "original_chars": prepared.original_chars,
+                    }
+                    if prepared.reference
+                    else {}
+                ),
                 **({"display": display} if display else {}),
                 **({"standing_rule": rule} if rule else {}),
                 # (c) quiet provenance chip — same fields the `_display` sidecar persists.
@@ -1448,6 +1460,17 @@ class TurnEngine:
             return
         record = self.session_facts.note(tool_call.name, tool_call.arguments)
         self._audit(tool_call, **record.to_audit())
+
+    def _append_tool_result(
+        self, tool_call: ToolCall, result: Any
+    ) -> PreparedToolResult:
+        """Persist a bounded provider-facing result and invalidate token estimates."""
+        prepared = self.tool_result_store.prepare(tool_call.name, result)
+        self.messages.append(_tool_result_message(tool_call, prepared.value))
+        # The last provider usage was measured before this result existed. Re-estimate the
+        # complete outbound view at the next compaction checkpoint.
+        self._last_context_tokens = None
+        return prepared
 
     def _audit(self, tool_call: ToolCall, **event: Any) -> None:
         if self.audit_sink is None:
