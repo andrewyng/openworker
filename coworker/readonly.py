@@ -24,14 +24,14 @@ from __future__ import annotations
 import re
 import shlex
 
-# Commands that only read local state, with no writing flags to police.
+# Commands that only read local state, with no writing or helper-execution flags to police.
 _SIMPLE_SAFE = {
-    "ls", "cat", "head", "tail", "wc", "nl", "sort", "uniq", "cut", "tr",
-    "grep", "egrep", "fgrep", "rg", "ugrep", "file", "stat", "du", "df",
-    "pwd", "echo", "printf", "which", "whoami", "id", "date", "uname",
+    "ls", "cat", "head", "tail", "wc", "nl", "cut", "tr",
+    "grep", "egrep", "fgrep", "stat", "du", "df",
+    "pwd", "echo", "which", "whoami", "id", "uname",
     "basename", "dirname", "realpath", "readlink", "jq", "column", "diff",
     "comm", "strings", "md5sum", "shasum", "sha1sum", "sha256sum",
-    "hexdump", "xxd", "od", "true", "false", "yamllint", "actionlint",
+    "hexdump", "od", "true", "false", "yamllint",
 }
 
 # Git subcommands that only read. Note the per-subcommand guards below — several git
@@ -49,20 +49,65 @@ _GIT_BRANCH_FLAG_OK = {
 
 _FIND_BAD = ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fls", "-fprintf")
 
-_ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=[^;&|<>`]*$")
+_ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
-# A sed script token that invokes the `w`/`W` (write-file) command: at the start, after a
-# separator, or after an address. Conservative — a false hit just means one manual approval.
-_SED_WRITE = re.compile(r"(^|[;{])\s*[0-9,$/ ]*[wW]\s")
+_SORT_SHORT_FLAGS = frozenset("bdfghiMhnRrSsuVz")
+_SORT_LONG_FLAGS = {
+    "--dictionary-order",
+    "--general-numeric-sort",
+    "--human-numeric-sort",
+    "--ignore-case",
+    "--ignore-leading-blanks",
+    "--ignore-nonprinting",
+    "--month-sort",
+    "--numeric-sort",
+    "--random-sort",
+    "--reverse",
+    "--sort=general-numeric",
+    "--sort=human-numeric",
+    "--sort=month",
+    "--sort=numeric",
+    "--sort=random",
+    "--sort=version",
+    "--stable",
+    "--unique",
+    "--version-sort",
+    "--zero-terminated",
+}
+_UNIQ_SHORT_FLAGS = frozenset("cdiuDz")
+_UNIQ_LONG_FLAGS = {
+    "--all-repeated",
+    "--count",
+    "--group",
+    "--ignore-case",
+    "--repeated",
+    "--unique",
+    "--zero-terminated",
+}
 
 
 def _stages(command: str) -> list[list[str]] | None:
     """Tokenize with operators surfaced; split into pipeline stages. None = reject."""
     if not command or not command.strip():
         return None
+    # The executor submits the original text to a shell. Newlines are command separators
+    # there, but shlex treats them as whitespace and would otherwise hide a second command.
+    if "\r" in command or "\n" in command:
+        return None
+    # POSIX shlex consumes backslashes, while PowerShell executes the original spelling.
+    # Catch Windows path-invoked command heads before tokenization erases that distinction.
+    if re.search(r"(^|\|)\s*\S*\\", command):
+        return None
     # Substitutions can hide inside double quotes, which the tokenizer strips — check the
     # raw text. Rejects a literal '$(' in a grep pattern too; that asymmetry is the point.
-    if "`" in command or "$(" in command or "<(" in command or ">(" in command:
+    if (
+        "`" in command
+        or "$(" in command
+        or "<(" in command
+        or ">(" in command
+        or "(" in command
+        or ")" in command
+    ):
         return None
     lex = shlex.shlex(command, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
@@ -100,6 +145,10 @@ def _git_ok(args: list[str]) -> bool:
     sub, rest = args[i], args[i + 1 :]
     if any(t.startswith("--output") for t in rest):
         return False  # git log/diff --output=<file> writes
+    if any(t in {"--ext-diff", "--textconv", "--filters"} for t in rest):
+        return False  # repository config can map these to arbitrary helper programs
+    if sub == "grep" and any(t.startswith("--open-files") for t in rest):
+        return False
     if sub in _GIT_SAFE:
         return True
     if sub == "branch":
@@ -111,7 +160,12 @@ def _git_ok(args: list[str]) -> bool:
     if sub == "stash":
         return bool(rest) and rest[0] in {"list", "show"}
     if sub == "remote":
-        return not rest or rest[0] in {"-v", "show", "get-url"}
+        if not rest or all(t in {"-v", "--verbose"} for t in rest):
+            return True
+        if rest[0] != "get-url":
+            return False
+        operands = [t for t in rest[1:] if t not in {"--all", "--push"}]
+        return len(operands) == 1 and not operands[0].startswith("-")
     if sub == "config":
         return any(t in {"--get", "--get-all", "--get-regexp", "--list", "-l"} for t in rest)
     if sub == "reflog":
@@ -119,32 +173,121 @@ def _git_ok(args: list[str]) -> bool:
     return False
 
 
+def _short_flags_ok(token: str, allowed: frozenset[str]) -> bool:
+    return len(token) > 1 and token.startswith("-") and not token.startswith("--") and all(
+        char in allowed for char in token[1:]
+    )
+
+
+def _sort_ok(args: list[str]) -> bool:
+    """Allow presentation-only sort flags; output, temp, helper, and indirect-input
+    options fail closed by being absent from the allowlist."""
+    for token in args:
+        if token == "--":
+            continue
+        if token.startswith("-") and token != "-":
+            if token not in _SORT_LONG_FLAGS and not _short_flags_ok(
+                token, _SORT_SHORT_FLAGS
+            ):
+                return False
+    return True
+
+
+def _uniq_ok(args: list[str]) -> bool:
+    """uniq's optional second positional operand is an output file."""
+    positional = 0
+    skip_value = False
+    end_options = False
+    for token in args:
+        if skip_value:
+            if not token.isdigit():
+                return False
+            skip_value = False
+            continue
+        if token == "--":
+            end_options = True
+            continue
+        if not end_options and token in {
+            "-f",
+            "-s",
+            "-w",
+            "--skip-fields",
+            "--skip-chars",
+            "--check-chars",
+        }:
+            skip_value = True
+            continue
+        if not end_options and token.startswith(
+            ("--skip-fields=", "--skip-chars=", "--check-chars=")
+        ):
+            if not token.partition("=")[2].isdigit():
+                return False
+            continue
+        if not end_options and token.startswith(("--all-repeated=", "--group=")):
+            continue
+        if not end_options and token.startswith("-") and token != "-":
+            if token not in _UNIQ_LONG_FLAGS and not _short_flags_ok(
+                token, _UNIQ_SHORT_FLAGS
+            ):
+                return False
+            continue
+        positional += 1
+        if positional > 1:
+            return False
+    return not skip_value
+
+
+def _xxd_ok(args: list[str]) -> bool:
+    """xxd accepts a second positional output file; revert mode writes to it."""
+    if any(
+        token.startswith("-")
+        and not token.startswith("--")
+        and "r" in token[1:]
+        for token in args
+    ):
+        return False
+    return sum(1 for token in args if token == "-" or not token.startswith("-")) <= 1
+
+
 def _stage_ok(argv: list[str]) -> bool:
-    # Leading VAR=value assignments (LC_ALL=C grep …) are inert — skip them.
-    i = 0
-    while i < len(argv) and _ENV_ASSIGN.match(argv[i]):
-        i += 1
-    argv = argv[i:]
     if not argv:
         return False
+    # PATH, loader variables, and tool-specific config variables can replace or inject
+    # executable code into an otherwise safe-looking command.
+    if _ENV_ASSIGN.match(argv[0]):
+        return False
     head = argv[0]
-    if "/" in head:
+    if "/" in head or "\\" in head or ":" in head:
         return False  # path-invoked binaries can be anything; bare names only
     args = argv[1:]
     if head in _SIMPLE_SAFE:
         return True
+    if head == "sort":
+        return _sort_ok(args)
+    if head == "uniq":
+        return _uniq_ok(args)
+    if head == "xxd":
+        return _xxd_ok(args)
+    if head == "file":
+        return not any(
+            t.startswith("--compile")
+            or (
+                t.startswith("-")
+                and not t.startswith("--")
+                and "C" in t[1:]
+            )
+            for t in args
+        )
+    if head == "rg":
+        return not any(t == "--pre" or t.startswith("--pre=") for t in args)
+    if head == "printf":
+        return not any(t == "-v" or t.startswith("-v") for t in args)
     if head == "env":
         return not args  # bare `env` prints; `env CMD` executes
     if head == "command":
         return bool(args) and args[0] in {"-v", "-V"}
     if head == "git":
         return _git_ok(args)
-    if head == "sed":
-        if any(t.startswith(("-i", "--in-place", "-f", "--file")) for t in args):
-            return False
-        return not any(_SED_WRITE.search(t) for t in args if not t.startswith("-"))
-    if head in {"awk", "gawk", "mawk", "nawk"}:
-        return not any(">" in t or "system" in t for t in args)
     if head == "find":
         return not any(t.startswith(_FIND_BAD) for t in args)
     return False
@@ -170,11 +313,11 @@ def is_readonly_command(command: str) -> bool:
 
 # Operands are not paths: arguments are strings, charsets, or command names.
 _NO_PATH_OPERANDS = {
-    "echo", "printf", "pwd", "whoami", "id", "date", "uname", "true", "false",
+    "echo", "printf", "pwd", "whoami", "id", "uname", "true", "false",
     "which", "basename", "dirname", "tr", "command", "env",
 }
 # The FIRST non-flag operand is a pattern/program, not a path; the rest are files.
-_PATTERN_FIRST = {"grep", "egrep", "fgrep", "rg", "ugrep", "jq", "awk", "gawk", "mawk", "nawk", "sed"}
+_PATTERN_FIRST = {"grep", "egrep", "fgrep", "rg", "jq"}
 # Flags whose VALUE is a path, for the commands that accept them.
 _PATH_VALUE_FLAGS = {"-f", "--file", "--exclude-from", "--include-from"}
 # `head -n 5`, `cut -f 1`, `sed -n 2p`: a bare number is some flag's count, never a file
