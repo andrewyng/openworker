@@ -13,7 +13,7 @@
 - Fork：<https://github.com/cr-yijieshusheng/openworker>
 - 汉化分支：`i18n-simplified-chinese`
 - 上游合并申请：<https://github.com/andrewyng/openworker/pull/542>
-- 预发布版本：<https://github.com/cr-yijieshusheng/openworker/releases/tag/v0.2.0-zh.1>
+- 最新预发布版本：<https://github.com/cr-yijieshusheng/openworker/releases/tag/v0.2.1-zh.1>
 
 当前已覆盖常用会话、设置、模型供应商、导航、模型选择和部分连接器文案。少量高级功能、连接器详情和开发者文案仍可能显示英文；遇到问题请在 Fork 仓库提交 Issue，并注明系统、版本和复现步骤。
 
@@ -29,7 +29,7 @@
 2. 启动后打开 `设置 → 常规 → 界面语言`，选择 `简体中文`。
 3. 在 `设置 → 模型` 中配置自己的模型供应商和 API Key。Key 只保存在本机，不要在 Issue、截图或 README 中公开。
 
-预发布版本主要用于体验和反馈，不建议在生产环境替换官方自动更新版本。上游项目更新后，可以通过同步上游 `main` 并重新应用汉化提交的方式继续跟进。
+预发布版本主要用于体验和反馈。本 Fork 已关闭官方自动更新；请从 Fork 的 Releases 页面手动下载后续版本。上游项目更新后，可以通过同步上游 `main` 并重新应用汉化提交的方式继续跟进。
 
 **AI that gets your everyday tasks done.** OpenWorker is an open-source AI coworker that lives on your desktop and delivers **finished work**, not just chat: a polished document, a Slack reply with the numbers, an updated calendar, a triaged inbox.
 
