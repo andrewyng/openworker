@@ -222,6 +222,12 @@ MATRIX: dict[str, ModelEntry] = {
     "openrouter:meta-llama/llama-4-maverick": ModelEntry(
         "Llama 4 Maverick · via OpenRouter", _AGENTIC, 1_000_000
     ),
+    # Stealth/cloaked alpha (catalog-checked 2026-08-24: 1,048,576 ctx, tool calling).
+    # These are temporary lab previews — expect the slug to vanish when the lab ships
+    # the real model; keep it until OpenRouter retires it.
+    "openrouter:stealth/ox-alpha": ModelEntry(
+        "Ox Alpha · via OpenRouter", _AGENTIC, 1_048_576
+    ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
     # Converse) plus AWS's own `-v<n>:<m>` version suffix. Some regions require the
