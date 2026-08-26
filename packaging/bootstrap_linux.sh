@@ -97,8 +97,15 @@ fi
 # -- plan, then consent --------------------------------------------------------------------
 say "plan"
 echo "  system packages ($PM, needs sudo)"
-have cargo && echo "  Rust:  already installed ($(cargo --version 2>/dev/null))" \
-           || echo "  Rust:  install via rustup (writes to your shell profile)"
+# Captured BEFORE step 2 runs. Step 2 sources $HOME/.cargo/env into this script so the rest of
+# it can use cargo, which makes `have cargo` true afterwards even on a fresh install — and the
+# "start a new shell" hint at the end, keyed off that, was suppressed on exactly the case that
+# needs it. (Found on a first real run, ChromeOS Crostini, 2026-08-26.) NODE_MAJOR below is
+# captured up here for the same reason.
+RUST_PREINSTALLED=0
+if have cargo; then RUST_PREINSTALLED=1; fi
+[ "$RUST_PREINSTALLED" = 1 ] && echo "  Rust:  already installed ($(cargo --version 2>/dev/null))" \
+                             || echo "  Rust:  install via rustup (writes to your shell profile)"
 NODE_MAJOR=0
 if have node; then NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"; fi
 [ "$NODE_MAJOR" -ge 20 ] 2>/dev/null && echo "  Node:  already $(node -v)" \
@@ -130,7 +137,7 @@ fi
 
 # -- 2. Rust -------------------------------------------------------------------------------
 say "[2/5] Rust toolchain"
-if have cargo; then
+if [ "$RUST_PREINSTALLED" = 1 ]; then
   echo "    already installed — leaving it alone"
 else
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -174,7 +181,7 @@ say "[5/5] npm dependencies"
 
 # -- what now ------------------------------------------------------------------------------
 say "ready"
-if ! have cargo || [ "$NODE_VIA_NVM" = 1 ]; then
+if [ "$RUST_PREINSTALLED" = 0 ] || [ "$NODE_VIA_NVM" = 1 ]; then
   echo "  Start a new shell first (this one predates the PATH changes):"
   echo "      exec \$SHELL -l"
   echo ""
