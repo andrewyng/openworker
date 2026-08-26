@@ -127,10 +127,14 @@ def stale_plan_notice(todo: Optional[TodoList], messages: list[dict]) -> str:
         return ""  # nothing left to move; a finished list is not a stale one
     calls = 0
     for message in reversed(messages):
-        for call in reversed(message.get("tool_calls") or []):
-            if (call.get("function") or {}).get("name") == "todo_write":
-                return _STALE_NOTICE if calls >= _STALE_AFTER else ""
-            calls += 1
+        batch = message.get("tool_calls") or []
+        if any((c.get("function") or {}).get("name") == "todo_write" for c in batch):
+            # Calls the model issued in the SAME batch as the write did not age the list — it
+            # emitted them together, plan first and work after. Counting them let one wide
+            # parallel batch trip the threshold on the round trip right after a fresh rewrite,
+            # telling the model the list it had just written was out of date.
+            return _STALE_NOTICE if calls >= _STALE_AFTER else ""
+        calls += len(batch)
     # No todo_write left in the visible history — compaction dropped it, or this is a resumed
     # thread. The list still came from somewhere, so age it by everything that has run since.
     return _STALE_NOTICE if calls >= _STALE_AFTER else ""

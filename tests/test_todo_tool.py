@@ -105,6 +105,21 @@ def test_parallel_calls_in_one_message_each_count_as_a_step():
     assert stale_plan_notice(_plan("in_progress"), [_wrote_the_plan(), *burst]) != ""
 
 
+def test_the_writes_own_batch_does_not_age_it():
+    # A model that plans and then works in ONE parallel batch emits todo_write alongside the
+    # calls it is about to make. Those siblings are not steps the list fell behind by: counting
+    # them told the model, on the very next round trip, that the list it had just written was
+    # stale.
+    together = {
+        "role": "assistant",
+        "tool_calls": [{"function": {"name": "todo_write"}}]
+        + [{"function": {"name": "read_file"}}] * (_STALE_AFTER + 4),
+    }
+    assert stale_plan_notice(_plan("in_progress"), [together]) == ""
+    # ...and the batch after it still ages it normally.
+    assert stale_plan_notice(_plan("in_progress"), [together, *_calls(_STALE_AFTER)]) != ""
+
+
 def test_build_engine_nags_only_once_the_run_has_moved_on(tmp_path):
     # The wiring: the notice reaches the model through the ephemeral per-turn context block, so
     # it is never persisted, never replayed into the transcript, and clears itself the round
