@@ -23,8 +23,6 @@ import {
   getAutostart,
   getDictationStatus,
   getKeepAwake,
-  checkForUpdate,
-  installUpdate,
   isTauri,
   listenDictationDownloadProgress,
   markDictationTestPassed,
@@ -477,17 +475,12 @@ function AppearanceSection() {
         </div>
       )}
 
-      {/* One card for the app-lifecycle actions (UX-021): the onboarding replay (§24 —
-          every build, the browser dev shell runs the same first-run flow) and, on
-          desktop, the manual update check (launch also checks automatically). */}
+      {/* Fork builds are updated manually from the Fork's Release page. */}
       <div className={CARD + " p-4 mt-4"}>
         <div className={FIELD_LABEL + " mb-2"}>{t("settings.setupUpdates")}</div>
-        <div className="flex items-center gap-2">
-          <button className={BTN_BORDERED} onClick={runSetupAgain}>
-            {t("settings.runSetupAgain")}
-          </button>
-          {desktop && <UpdateInline />}
-        </div>
+        <button className={BTN_BORDERED} onClick={runSetupAgain}>
+          {t("settings.runSetupAgain")}
+        </button>
         <div className={FIELD_HELP}>{t("settings.setupHelp")}</div>
       </div>
     </section>
@@ -546,63 +539,6 @@ function TrustedWorkspacesCard() {
         </div>
       )}
     </div>
-  );
-}
-
-function UpdateInline() {
-  const [state, setState] = useState<"idle" | "checking" | "none" | "found" | "installing" | "error">("idle");
-  const [version, setVersion] = useState("");
-
-  const check = async () => {
-    setState("checking");
-    try {
-      const u = await checkForUpdate();
-      if (u) {
-        setVersion(u.version);
-        setState("found");
-      } else {
-        setState("none");
-      }
-    } catch {
-      setState("error");
-    }
-  };
-
-  const install = async () => {
-    setState("installing");
-    try {
-      await installUpdate(); // success restarts the app
-    } catch {
-      setState("error");
-    }
-  };
-
-  return (
-    <span className="inline-flex items-center gap-2.5">
-      {state === "found" ? (
-        <button className={BTN_BORDERED} onClick={install} data-testid="settings-update-install">
-          Update to v{version} and restart
-        </button>
-      ) : (
-        <button
-          className={BTN_BORDERED}
-          onClick={check}
-          disabled={state === "checking" || state === "installing"}
-          data-testid="settings-update-check"
-        >
-          {state === "checking" ? "Checking…" : "Check for updates"}
-        </button>
-      )}
-      {(state === "none" || state === "error" || state === "installing") && (
-        <span className="text-[12px] text-muted">
-          {state === "none"
-            ? "You're on the latest version."
-            : state === "error"
-              ? "Couldn't check right now — try again later."
-              : "Downloading — OpenWorker restarts by itself when it's ready."}
-        </span>
-      )}
-    </span>
   );
 }
 
