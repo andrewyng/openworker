@@ -412,12 +412,12 @@ impl Drop for KeepAwakeGuard {
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn start_keep_awake() -> Option<KeepAwakeGuard> {
     // logind's inhibitor lock, held for exactly as long as the command it runs. `cat` with a
-    // piped stdin is the hold (see Drop). Missing systemd-inhibit (no logind, a container, a
-    // non-systemd distro) → None, and the Settings toggle stays off instead of lying.
+    // piped stdin is the hold (see Drop). No lock → None, and the Settings toggle stays off
+    // instead of lying.
     //
     // ChromeOS Crostini caveat: the lock is real inside the VM, but ChromeOS itself decides
     // when the device suspends, and a suspended Chromebook stops the VM regardless.
-    Command::new("systemd-inhibit")
+    let mut child = Command::new("systemd-inhibit")
         .args([
             "--what=idle:sleep",
             "--who=OpenWorker",
@@ -429,8 +429,32 @@ fn start_keep_awake() -> Option<KeepAwakeGuard> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .ok()
-        .map(KeepAwakeGuard)
+        .ok()?;
+
+    // A successful spawn only proves the binary ran. systemd-inhibit ITSELF fails whenever it
+    // cannot reach logind — containers, non-systemd sessions, no session bus — printing
+    // "Failed to connect to bus" to the stderr we discarded and exiting 1 straight away. Taking
+    // the spawn as success left us holding a corpse and reporting a hold nobody held, which is
+    // the exact lie this function exists to avoid.
+    //
+    // So wait for it to fail. A working inhibitor runs `cat` until we close its stdin, i.e.
+    // forever; a broken one is gone in milliseconds. Polling caps the cost at GRACE and returns
+    // the instant it dies, which on the happy path a settings toggle will never notice.
+    const GRACE: std::time::Duration = std::time::Duration::from_millis(400);
+    const STEP: std::time::Duration = std::time::Duration::from_millis(10);
+    let deadline = std::time::Instant::now() + GRACE;
+    while std::time::Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(None) => std::thread::sleep(STEP), // still alive — the lock is real so far
+            Ok(Some(_)) => return None,           // exited: no inhibitor was ever taken
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    Some(KeepAwakeGuard(child))
 }
 
 // -- native commands (invoked from the SPA via window.__TAURI__.core.invoke) -----------------
@@ -1212,6 +1236,30 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    /// A keep-awake guard must represent a LIVE hold. `Command::spawn` only proves the binary
+    /// could be executed: `systemd-inhibit` itself exits non-zero when it cannot reach logind
+    /// (containers, non-systemd sessions, a session bus that isn't there), and a guard built
+    /// from that dead child would make the Settings toggle report a hold nobody is holding.
+    ///
+    /// Holds on either kind of machine: where an inhibitor can be taken this asserts the child
+    /// is alive, and where one can't, `start_keep_awake()` must return None rather than a
+    /// corpse. (Reported by a review bot; reproduced in a container where systemd-inhibit is
+    /// installed but exits 1 with "Failed to connect to bus".)
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[test]
+    fn keep_awake_never_reports_a_dead_inhibitor() {
+        if let Some(mut guard) = start_keep_awake() {
+            // A real inhibitor lives until we release it; a broken one dies within
+            // milliseconds. Checking immediately after spawn cannot tell them apart — the
+            // child has not been scheduled yet — so give it time to fail first.
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            assert!(
+                guard.0.try_wait().expect("query the inhibitor").is_none(),
+                "start_keep_awake() returned a guard whose inhibitor had already exited"
+            );
+        }
     }
 
     /// Voice Input is compiled out on Linux, and the GUI gates the mic button on this flag —
