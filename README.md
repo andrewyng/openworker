@@ -67,7 +67,7 @@ OpenWorker is local-first. Everything lives on your machine: the agent loop, you
 
 ## Run from source
 
-Prerequisites: Python 3.10+, Node 20+, and (for the desktop shell) the Rust toolchain via [rustup](https://rustup.rs/). On Linux the shell also needs the WebKit/GTK development packages — see [docs/linux.md](docs/linux.md).
+Prerequisites: Python 3.10+, Node 20+, and (for the desktop shell) the Rust toolchain via [rustup](https://rustup.rs/). On Linux, `bash packaging/bootstrap_linux.sh` installs all of it — including the WebKit/GTK packages the shell needs — in one step; see [docs/linux.md](docs/linux.md).
 
 ```shell
 git clone https://github.com/andrewyng/openworker
@@ -103,7 +103,7 @@ Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gu
 | `coworker/` | Python backend - agent engine, model providers, connectors, MCP client, memory, automations |
 | `surfaces/gui/` | Desktop app - React UI + Tauri shell that supervises the server |
 | `stt/` | Speech-to-text sidecar (Rust) for voice input |
-| `packaging/` | Installer builds (macOS DMG, Windows, Linux .deb/AppImage), auto-update manifest, dev bootstrap |
+| `packaging/` | Installer builds (macOS DMG, Windows, Linux .deb/AppImage), auto-update manifest, dev bootstrap (`setup_dev_env.sh`, `bootstrap_linux.sh`) |
 | `docs/` | Design specs and decision logs |
 | `tests/` | Backend test suite |
 

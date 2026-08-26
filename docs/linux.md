@@ -99,25 +99,55 @@ disabled. Nothing else in the app is affected. Turning it on later is a small ch
 
 ## Build from source
 
-Prerequisites: Python 3.10+, Node 20+, the Rust toolchain via [rustup](https://rustup.rs/), and
-the Tauri system libraries.
+### The one-command way
+
+```shell
+git clone https://github.com/andrewyng/openworker
+cd openworker
+bash packaging/bootstrap_linux.sh
+```
+
+That installs everything a build needs, skipping whatever you already have: the WebKit/GTK
+system libraries (apt or dnf, via `sudo`), the Rust toolchain, Node 20 if yours is older,
+the Python venv at `.venv`, and the GUI's npm packages. It prints the plan and asks before
+touching anything — `--yes` skips the prompt, `--packaging` also installs the extra Python
+deps `build_linux.sh` needs.
+
+It installs Rust and Node with the official rustup/nvm installers, which append to your shell
+profile. Prefer your distro's packages? Install those two yourself first; the script detects
+them and moves on.
+
+Budget **~10 GB of free disk** — `surfaces/gui/src-tauri/target` alone reaches 5.8 GB. On
+ChromeOS: Settings → Advanced → Developers → Linux → *Disk size*. The script warns if you're
+short before it starts.
+
+Then:
+
+```shell
+cd surfaces/gui && npm run tauri dev     # the real desktop shell — window + server
+```
+
+### Doing it by hand
+
+Prerequisites: Python 3.10+, Node 20+ (Debian 12 ships 18), the Rust toolchain via
+[rustup](https://rustup.rs/), and the Tauri system libraries.
 
 ```shell
 # Debian 12 / Ubuntu 22.04+ (Crostini included)
-sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
-                 libayatana-appindicator3-dev patchelf file \
-                 build-essential curl wget file python3-venv
+sudo apt install build-essential pkg-config curl wget file git \
+                 python3-venv python3-dev \
+                 libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
+                 libayatana-appindicator3-dev libssl-dev patchelf
 
 # Fedora
-sudo dnf install webkit2gtk4.1-devel gtk3-devel librsvg2-devel patchelf
+sudo dnf install gcc gcc-c++ make pkgconf-pkg-config python3-devel \
+                 webkit2gtk4.1-devel gtk3-devel librsvg2-devel \
+                 libappindicator-gtk3-devel openssl-devel patchelf
 ```
 
 Then the same three steps as every other platform:
 
 ```shell
-git clone https://github.com/andrewyng/openworker
-cd openworker
-
 bash packaging/setup_dev_env.sh          # 1. Python venv at .venv
 
 .venv/bin/openworker-server --cwd ~/some/project --port 8765   # 2. the server
@@ -135,7 +165,8 @@ bash packaging/build_linux.sh
 ```
 
 Produces `.deb` and `.AppImage` under `surfaces/gui/src-tauri/target/release/bundle/`. It needs
-the build-only Python deps in the venv first:
+the build-only Python deps in the venv first (`bootstrap_linux.sh --packaging` does this for
+you):
 
 ```shell
 .venv/bin/pip install -e '.[bedrock]' pyinstaller typer
