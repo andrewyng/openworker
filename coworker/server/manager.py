@@ -2895,16 +2895,20 @@ class SessionManager:
         paths from web file dialogs, but the sidecar is local and can (the desktop shell uses
         Tauri's own picker instead). Blocking until pick/cancel; callers run it off-thread.
         """
+        import os
         import subprocess
         import sys
 
+        prompt = "Give the coworker access to a folder"
         if sys.platform == "darwin":
-            cmd = [
-                "osascript",
-                "-e",
-                'tell application "System Events" to activate',
-                "-e",
-                'POSIX path of (choose folder with prompt "Give the coworker access to a folder")',
+            candidates = [
+                [
+                    "osascript",
+                    "-e",
+                    'tell application "System Events" to activate',
+                    "-e",
+                    f'POSIX path of (choose folder with prompt "{prompt}")',
+                ]
             ]
         elif sys.platform == "win32":
             # WinForms folder dialog via PowerShell — no extra deps. -STA is required
@@ -2912,22 +2916,37 @@ class SessionManager:
             ps = (
                 "Add-Type -AssemblyName System.Windows.Forms; "
                 "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
-                "$f.Description = 'Give the coworker access to a folder'; "
+                f"$f.Description = '{prompt}'; "
                 "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) "
                 "{ [Console]::Out.Write($f.SelectedPath) }"
             )
-            cmd = ["powershell.exe", "-NoProfile", "-STA", "-Command", ps]
+            candidates = [["powershell.exe", "-NoProfile", "-STA", "-Command", ps]]
         else:
-            # Linux: zenity when present; otherwise the GUI's paste-a-path input remains.
-            cmd = ["zenity", "--file-selection", "--directory"]
-        try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        except (OSError, subprocess.TimeoutExpired):
-            return {"ok": False, "error": "no native folder picker available"}
-        path = (out.stdout or "").strip()
-        if out.returncode != 0 or not path:
-            return {"ok": False, "canceled": True}
-        return {"ok": True, "path": path}
+            # Linux/BSD: no single blessed dialog, and none is guaranteed present — a minimal
+            # desktop (ChromeOS Crostini's container ships neither) may have none at all. Try
+            # the two that come with the big desktops, then zenity's Qt clone; the first one
+            # actually installed wins. All missing → the GUI's paste-a-path input remains the
+            # way in, which is why this returns an error rather than raising.
+            home = os.path.expanduser("~")
+            candidates = [
+                ["zenity", "--file-selection", "--directory", f"--title={prompt}"],
+                ["kdialog", "--getexistingdirectory", home, "--title", prompt],
+                ["qarma", "--file-selection", "--directory", f"--title={prompt}"],
+            ]
+        for cmd in candidates:
+            try:
+                out = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            except FileNotFoundError:
+                continue  # dialog not installed — try the next one
+            except (OSError, subprocess.TimeoutExpired):
+                break
+            path = (out.stdout or "").strip()
+            if out.returncode != 0 or not path:
+                # The dialog ran and the user dismissed it. Never fall through to another
+                # picker here — a second window popping up after a cancel is worse than none.
+                return {"ok": False, "canceled": True}
+            return {"ok": True, "path": path}
+        return {"ok": False, "error": "no native folder picker available"}
 
     def _note_provider_use(self, name: str) -> None:
         """Router on_use hook: remember when a provider last served a completion. Persisted

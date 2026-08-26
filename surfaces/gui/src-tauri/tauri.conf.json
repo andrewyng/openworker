@@ -20,6 +20,10 @@
     "active": true,
     "targets": "all",
     "publisher": "OpenWorker",
+    "shortDescription": "AI that gets your everyday tasks done",
+    "longDescription": "OpenWorker is an open-source AI coworker that runs on your own machine and delivers finished work, not just chat. It works across your files, terminal and connected apps, checks in before anything consequential, and uses the model provider you choose.",
+    "homepage": "https://openworker.com",
+    "license": "MIT",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -30,9 +34,17 @@
     "resources": {
       "binaries/sidecar": "sidecar"
     },
+    "category": "Productivity",
     "macOS": {
       "entitlements": "entitlements.plist",
       "minimumSystemVersion": "12.0"
+    },
+    "linux": {
+      "deb": {
+        "recommends": ["xdg-utils", "zenity"],
+        "section": "utils",
+        "priority": "optional"
+      }
     },
     "windows": {
       "webviewInstallMode": {

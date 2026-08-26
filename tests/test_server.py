@@ -1005,6 +1005,52 @@ def test_pick_native_folder_paths(tmp_path, monkeypatch):
     assert out["ok"] is False and "picker" in out["error"]
 
 
+def test_pick_native_folder_linux_dialog_fallbacks(tmp_path, monkeypatch):
+    """Linux ships no guaranteed folder dialog — a minimal desktop (ChromeOS Crostini's
+    container among them) has none — so the picker tries zenity, then kdialog, then qarma and
+    stops at the first one actually installed. A cancel from the dialog that DID open ends it:
+    a second window appearing after the user dismissed one is worse than no dialog at all."""
+    import subprocess
+    import sys
+    from types import SimpleNamespace
+
+    client = _client(tmp_path, [])
+    mgr = client.app.state.manager
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    tried: list[str] = []
+
+    def only(installed, *, returncode=0, stdout="/tmp/picked\n"):
+        """A subprocess.run stand-in where exactly one dialog binary exists."""
+
+        def run(cmd, *a, **k):
+            tried.append(cmd[0])
+            if cmd[0] != installed:
+                raise FileNotFoundError(cmd[0])
+            return SimpleNamespace(returncode=returncode, stdout=stdout, stderr="")
+
+        return run
+
+    # zenity absent, kdialog present: kdialog answers and qarma is never reached.
+    monkeypatch.setattr(subprocess, "run", only("kdialog"))
+    assert mgr.pick_native_folder() == {"ok": True, "path": "/tmp/picked"}
+    assert tried == ["zenity", "kdialog"]
+
+    # A cancel from the first installed dialog is final.
+    tried.clear()
+    monkeypatch.setattr(subprocess, "run", only("zenity", returncode=1, stdout=""))
+    assert mgr.pick_native_folder() == {"ok": False, "canceled": True}
+    assert tried == ["zenity"]
+
+    # None installed: every candidate is tried, then a clean error — never an exception,
+    # because the GUI's paste-a-path field is still a working way in.
+    tried.clear()
+    monkeypatch.setattr(subprocess, "run", only("none-of-them"))
+    out = mgr.pick_native_folder()
+    assert out["ok"] is False and "picker" in out["error"]
+    assert tried == ["zenity", "kdialog", "qarma"]
+
+
 def test_provider_set_and_remove_roundtrip(tmp_path):
     """Settings ▸ Models "Remove key": DELETE /v1/providers/{name} forgets the stored
     profile so the provider reads unconfigured again; unknown names are a clean error.

@@ -1,5 +1,6 @@
-# App CI — the coworker Python suite, the GUI unit tests, and the hermetic
-# Playwright e2e suite (mocked /v1 + WS; no model or network needed).
+# App CI — the coworker Python suite, the GUI unit tests, the hermetic Playwright e2e
+# suite (mocked /v1 + WS; no model or network needed), and a compile of the Linux
+# desktop shell.
 
 name: CI
 
@@ -57,3 +58,31 @@ jobs:
       - name: e2e
         working-directory: surfaces/gui
         run: npm run e2e
+
+  desktop-shell-linux:
+    # The Tauri shell carries real Linux-only code — the dictation stub that stands in for
+    # ocw-stt, the tray fallback, sidecar resolution through the resource dir — and no other
+    # job compiles any of it. Without this, a break in the Linux build would first surface at
+    # release time. ubuntu-22.04 to match packaging/build_linux.sh's glibc floor.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: surfaces/gui/src-tauri
+
+      - name: Tauri system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
+
+      - name: cargo test
+        working-directory: surfaces/gui/src-tauri
+        # No frontend build first: without `tauri/custom-protocol` (which only `tauri build`
+        # passes) the shell serves the UI from devUrl and embeds nothing, so `frontendDist`
+        # never has to exist. The Vite build stays in the gui-unit job where it belongs.
+        run: cargo test --lib

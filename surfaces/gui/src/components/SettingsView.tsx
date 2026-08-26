@@ -23,6 +23,7 @@ import {
   getAutostart,
   getDictationStatus,
   getKeepAwake,
+  canSelfUpdate,
   checkForUpdate,
   installUpdate,
   isTauri,
@@ -398,6 +399,10 @@ function AppearanceSection() {
   const [theme, setTheme] = useThemePref();
   const [autostart, setAuto] = useState(false);
   const [keepAwake, setKeep] = useState(false);
+  // The shell reports back whether it actually took a hold. It can't everywhere — a Linux
+  // session with no systemd-inhibit, ChromeOS Crostini (the host decides when it sleeps) —
+  // and there the checkbox silently springs back, which reads as a broken toggle. Say why.
+  const [keepAwakeUnavailable, setKeepUnavailable] = useState(false);
   const desktop = isTauri();
 
   useEffect(() => {
@@ -408,7 +413,11 @@ function AppearanceSection() {
   }, []);
 
   const toggleAuto = async (v: boolean) => setAuto(!!(await setAutostart(v)));
-  const toggleKeep = async (v: boolean) => setKeep(!!(await setKeepAwake(v)));
+  const toggleKeep = async (v: boolean) => {
+    const on = !!(await setKeepAwake(v));
+    setKeep(on);
+    setKeepUnavailable(v && !on);
+  };
   const runSetupAgain = async () => {
     await setOnboarded(false);
     window.dispatchEvent(new CustomEvent("coworker:open-onboarding"));
@@ -455,6 +464,12 @@ function AppearanceSection() {
             <span>
               <span className="block text-[13px] text-ink">Keep this system awake</span>
               <span className="block text-[12px] text-muted">Prevent idle sleep so scheduled tasks fire on time.</span>
+              {keepAwakeUnavailable && (
+                <span className="block text-[12px] text-muted mt-1">
+                  This system doesn't offer a sleep inhibitor OpenWorker can hold, so sleep stays
+                  under your OS's control.
+                </span>
+              )}
             </span>
           </label>
         </div>
@@ -535,6 +550,15 @@ function TrustedWorkspacesCard() {
 function UpdateInline() {
   const [state, setState] = useState<"idle" | "checking" | "none" | "found" | "installing" | "error">("idle");
   const [version, setVersion] = useState("");
+  // A .deb install can't replace its own files — the package manager owns them. Checking there
+  // would only ever answer "you're on the latest version", which is a guess, so ask the shell
+  // first and say what's actually true instead. Defaults to true: macOS, Windows and the
+  // AppImage all self-update, and nothing should flicker while the answer is in flight.
+  const [selfUpdates, setSelfUpdates] = useState(true);
+
+  useEffect(() => {
+    canSelfUpdate().then((v) => setSelfUpdates(v !== false));
+  }, []);
 
   const check = async () => {
     setState("checking");
@@ -559,6 +583,14 @@ function UpdateInline() {
       setState("error");
     }
   };
+
+  if (!selfUpdates) {
+    return (
+      <span className="text-[12px] text-muted">
+        This install updates through your package manager.
+      </span>
+    );
+  }
 
   return (
     <span className="inline-flex items-center gap-2.5">

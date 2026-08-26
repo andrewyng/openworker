@@ -70,9 +70,15 @@ export const getAutostart = () => invoke<boolean>("get_autostart");
 export const setAutostart = (enabled: boolean) => invoke<boolean>("set_autostart", { enabled });
 
 /** Keep this system awake so scheduled tasks fire while idle (caffeinate on macOS,
- * SetThreadExecutionState on Windows). Persists across restarts. */
+ * SetThreadExecutionState on Windows, systemd-inhibit on Linux). Persists across restarts.
+ * setKeepAwake returns whether the hold was actually taken — false where the system offers
+ * no inhibitor the app can hold. */
 export const getKeepAwake = () => invoke<boolean>("get_keep_awake");
 export const setKeepAwake = (enabled: boolean) => invoke<boolean>("set_keep_awake", { enabled });
+
+/** False where the app can't replace itself (a Linux .deb — its files belong to the package
+ * manager), so Settings can say that instead of checking. null in the browser build. */
+export const canSelfUpdate = () => invoke<boolean>("can_self_update");
 
 /** Begin native window dragging from a custom title/header region. */
 export const startWindowDrag = () => invoke<boolean>("start_window_drag");

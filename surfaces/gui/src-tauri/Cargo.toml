@@ -21,5 +21,13 @@ tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
-# Kept outside the Tauri shell so another product can depend on the same local STT engine.
+
+# Local speech-to-text. Kept outside the Tauri shell so another product can depend on the same
+# engine — and kept OFF Linux, where it is replaced by the `dictation_stub` module in src/lib.rs.
+# ocw-stt pulls in whisper-rs (compiles whisper.cpp: cmake + a C++ toolchain) and cpal (ALSA
+# headers). On macOS/Windows those come with the platform SDK; on Linux they would be two extra
+# apt packages and minutes of build time on every checkout, for a feature the Linux build does
+# not offer. Target-scoped rather than a cargo feature so `tauri dev` and `tauri build` need no
+# extra flags on Linux — one clone, one command, on every platform.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
 ocw-stt = { path = "../../../stt" }
