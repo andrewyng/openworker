@@ -756,16 +756,10 @@ def _verify_bedrock(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
     def get(key: str) -> Optional[str]:
         return (fields.get(key) or "").strip() or None
 
-    try:
-        import boto3
-        from botocore.config import Config
-    except ImportError:
-        return {
-            "ok": False,
-            "error": "boto3 is not installed — `pip install 'openworker[bedrock]'`.",
-        }
     # Exactly one auth method is exercised — the one the form has selected. Per-method
-    # required fields are checked here so the Test button says what's missing.
+    # required fields are checked here so the Test button says what's missing. Do this
+    # before importing boto3 so the test suite (and users) get a helpful missing-field
+    # message even when the optional `bedrock` extra is not installed.
     method = get("auth_method") or "api_key"
     if method == "api_key" and not (
         get("bedrock_api_key") or os.environ.get("AWS_BEARER_TOKEN_BEDROCK")
@@ -775,6 +769,14 @@ def _verify_bedrock(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
         get("aws_access_key_id") and get("aws_secret_access_key")
     ):
         return {"ok": False, "error": "Enter an access key ID and secret access key."}
+    try:
+        import boto3
+        from botocore.config import Config
+    except ImportError:
+        return {
+            "ok": False,
+            "error": "boto3 is not installed — `pip install 'openworker[bedrock]'`.",
+        }
     try:
         if method == "api_key":
             # The key rides the env var (boto3's only bearer channel); bearer then wins
