@@ -76,7 +76,12 @@ def test_trivy_is_pinned_for_every_platform_we_ship():
     """tfsec is deprecated upstream (folded into trivy); `trivy config` is the IaC scanner
     the cloud-posture bundle drives, so its pin must exist wherever the app runs."""
     tool = toolchain.MANAGED["trivy"]
-    assert set(tool.downloads) >= {"darwin_arm64", "darwin_amd64", "linux_amd64"}
+    assert set(tool.downloads) >= {
+        "darwin_arm64",
+        "darwin_amd64",
+        "linux_amd64",
+        "linux_arm64",
+    }
     for dl in tool.downloads.values():
         assert dl.member == "trivy"  # release assets are tarballs, not bare binaries
     assert "tfsec" not in toolchain.MANAGED
