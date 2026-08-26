@@ -13,7 +13,7 @@
 - Fork：<https://github.com/cr-yijieshusheng/openworker>
 - 汉化分支：`i18n-simplified-chinese`
 - 上游合并申请：<https://github.com/andrewyng/openworker/pull/542>
-- 最新预发布版本：<https://github.com/cr-yijieshusheng/openworker/releases/tag/v0.2.1-zh.1>
+- 最新预发布版本：<https://github.com/cr-yijieshusheng/openworker/releases/tag/v0.2.1-zh.2>
 
 当前已覆盖常用会话、设置、模型供应商、导航、模型选择和部分连接器文案。少量高级功能、连接器详情和开发者文案仍可能显示英文；遇到问题请在 Fork 仓库提交 Issue，并注明系统、版本和复现步骤。
 
