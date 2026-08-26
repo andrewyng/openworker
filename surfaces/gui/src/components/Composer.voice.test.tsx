@@ -129,4 +129,12 @@ describe("Composer voice input (§37)", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("No microphone is available.");
     expect(screen.getByLabelText("Start dictation").hasAttribute("disabled")).toBe(false);
   });
+
+  it("cancels active native dictation when the composer unmounts", async () => {
+    const view = render(<Composer {...props()} />);
+    fireEvent.click(await screen.findByLabelText("Start dictation"));
+    await screen.findByLabelText("Stop dictation");
+    view.unmount();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("cancel_dictation", undefined));
+  });
 });

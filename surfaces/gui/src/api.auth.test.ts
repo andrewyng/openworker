@@ -36,3 +36,13 @@ it("authenticates REST and session WebSocket calls with the launch token", async
   const socket = (session as unknown as { ws: FakeWebSocket }).ws;
   expect(socket.protocols).toEqual(["openworker", "launch-token"]);
 });
+
+it("rejects an unauthorized health payload instead of treating it as app state", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({
+    ok: false,
+    status: 401,
+    json: async () => ({ detail: "Unauthorized" }),
+  }) as Response));
+
+  await expect(getHealth()).rejects.toThrow("Health check failed (401)");
+});

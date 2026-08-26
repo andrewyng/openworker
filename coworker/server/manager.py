@@ -4612,7 +4612,7 @@ class SessionManager:
             engine.queue_steering(message, source)
             return
         try:
-            runtime = self.get_runtime(sid, engine)
+            runtime = self.get_runtime(session_id, engine)
             async for event in runtime.run(message, source=source):
                 # Stream every event to any socket viewing this session, so a background turn
                 # (channel delivery, self-wake, durable resume) is seen live — not just on reselect.

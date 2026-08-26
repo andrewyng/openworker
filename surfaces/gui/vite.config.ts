@@ -17,8 +17,15 @@ export default defineConfig(({ command }) => {
       (process.platform === "win32"
         ? path.join(process.env.APPDATA || os.homedir(), "coworker")
         : path.join(os.homedir(), ".config", "coworker"));
+    const configuredHttp = process.env.VITE_COWORKER_HTTP;
+    let sidecarPort = process.env.COWORKER_SIDECAR_PORT || "8765";
     try {
-      devToken = fs.readFileSync(path.join(state, "sidecar-8765.token"), "utf8").trim();
+      if (configuredHttp) sidecarPort = new URL(configuredHttp).port || sidecarPort;
+    } catch {
+      // An invalid optional override is handled by the normal API retry path.
+    }
+    try {
+      devToken = fs.readFileSync(path.join(state, `sidecar-${sidecarPort}.token`), "utf8").trim();
     } catch {
       // The Tauri dev shell injects its in-memory token at runtime. Plain browser dev
       // shows the normal startup retry until the standalone server/token file exists.

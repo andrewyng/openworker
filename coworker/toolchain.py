@@ -168,6 +168,13 @@ def _managed_path(tool: ManagedTool) -> Path:
     return managed_dir() / tool.name / tool.version / exe
 
 
+def _candidate_names(name: str) -> tuple[str, ...]:
+    """Names to probe directly when a GUI launch bypasses normal PATH lookup."""
+    if sys.platform != "win32" or Path(name).suffix:
+        return (name,)
+    return (name, f"{name}.exe", f"{name}.cmd", f"{name}.bat")
+
+
 def resolve(name: str) -> Optional[str]:
     """Absolute path to `name`, or None. PATH first (the user's choice wins), then the
     dirs a GUI launch can't see, then anything we installed ourselves."""
@@ -176,9 +183,10 @@ def resolve(name: str) -> Optional[str]:
         return str(Path(found).resolve())
 
     for raw in _KNOWN_DIRS:
-        candidate = Path(raw).expanduser() / name
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate.resolve())
+        for candidate_name in _candidate_names(name):
+            candidate = Path(raw).expanduser() / candidate_name
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate.resolve())
 
     tool = MANAGED.get(name)
     if tool:

@@ -115,7 +115,7 @@ export function SkillsTab({
     if (sessionId) {
       void listSkillDrafts(sessionId).then((next) => {
         setDrafts(next);
-        setSelectedDraft((current) => next.find((item) => item.id === current?.id) ?? current);
+        setSelectedDraft((current) => next.find((item) => item.id === current?.id) ?? null);
       });
     }
   };

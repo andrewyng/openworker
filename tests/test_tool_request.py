@@ -6,8 +6,11 @@ because the user's out-of-band decision IS the consent.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from coworker import toolchain
 from coworker.engine import EventType, TurnEngine
 from coworker.permissions import Mode, PermissionEngine
 from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient, ToolCall
@@ -52,6 +55,13 @@ def _engine(tmp_path, requester, tool: str = "gitleaks"):
 
 async def _run(engine) -> list:
     return [e async for e in engine.run("check this repo")]
+
+
+@pytest.fixture(autouse=True)
+def supported_catalog(monkeypatch):
+    """Keep generic request-flow tests independent of the host operating system."""
+    monkeypatch.setattr(toolchain, "_platform_key", lambda: "darwin_amd64")
+    monkeypatch.setattr(toolchain, "resolve", lambda name: None)
 
 
 @pytest.mark.asyncio
@@ -159,6 +169,24 @@ async def test_non_catalog_tool_gets_no_card_and_a_shell_steer(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_catalog_tool_without_windows_build_gets_explicit_guidance(tmp_path, monkeypatch):
+    """Windows users must learn that a pinned scanner is unavailable before any approval."""
+    monkeypatch.setattr(toolchain, "_platform_key", lambda: "windows_amd64")
+    called = []
+
+    async def requester(args, tool_call_id=None):
+        called.append(args)
+        return {"installed": False}
+
+    engine = _engine(tmp_path, requester, tool="gitleaks")
+    events = await _run(engine)
+    assert not [e for e in events if e.type is EventType.TOOL_REQUESTED]
+    assert called == []
+    body = str([m for m in engine.messages if m.get("role") == "tool"][-1]["content"])
+    assert "no managed build" in body and "windows_amd64" in body
+
+
+@pytest.mark.asyncio
 async def test_no_requester_still_returns_guidance(tmp_path):
     """Headless surfaces have nobody to ask — the agent must still be told to disclose
     rather than assume the check passed."""
@@ -167,3 +195,31 @@ async def test_no_requester_still_returns_guidance(tmp_path):
     assert not [e for e in events if e.type is EventType.TOOL_REQUESTED]
     tool_msg = [m for m in engine.messages if m.get("role") == "tool"][-1]
     assert "degraded" in str(tool_msg["content"]).lower()
+
+
+@pytest.mark.asyncio
+async def test_headless_windows_catalog_tool_reports_missing_managed_build(tmp_path, monkeypatch):
+    monkeypatch.setattr(toolchain, "_platform_key", lambda: "windows_amd64")
+
+    engine = _engine(tmp_path, None)
+    events = await _run(engine)
+
+    assert not [e for e in events if e.type is EventType.TOOL_REQUESTED]
+    body = str([m for m in engine.messages if m.get("role") == "tool"][-1]["content"])
+    assert "no managed build" in body and "windows_amd64" in body
+
+
+@pytest.mark.asyncio
+async def test_windows_uses_an_existing_user_scanner_before_reporting_no_managed_build(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(toolchain, "_platform_key", lambda: "windows_amd64")
+    expected_path = r"C:\Tools\gitleaks.exe"
+    monkeypatch.setattr(toolchain, "resolve", lambda name: expected_path)
+    engine = _engine(tmp_path, None)
+
+    events = await _run(engine)
+
+    assert not [e for e in events if e.type is EventType.TOOL_REQUESTED]
+    tool_msg = [m for m in engine.messages if m.get("role") == "tool"][-1]
+    assert json.loads(str(tool_msg["content"]))["path"] == expected_path

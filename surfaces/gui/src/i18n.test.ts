@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { createElement } from "react";
 import i18n from "i18next";
-import { changeLanguage, detectLanguage, getLanguage, initI18n, supportedLanguages, translationResources } from "./i18n";
+import { changeLanguage, detectLanguage, getLanguage, initI18n, LegacyUiLocalizer, supportedLanguages, translationResources } from "./i18n";
 
 describe("language preferences", () => {
-  afterEach(() => localStorage.clear());
+  afterEach(() => { cleanup(); localStorage.clear(); });
 
   it("detects supported browser languages and falls back to English", () => {
     expect(detectLanguage(["pt-PT", "en-US"])).toBe("pt-BR");
@@ -35,5 +37,43 @@ describe("language preferences", () => {
     for (const language of supportedLanguages) {
       expect(keys(translationResources[language].translation).sort()).toEqual(english);
     }
+  });
+
+  it("updates a dynamic legacy aria label instead of restoring its prior state", async () => {
+    initI18n();
+    changeLanguage("pt-BR");
+    const ui = (label: string, text: string) => createElement(
+      "div",
+      null,
+      createElement(LegacyUiLocalizer),
+      createElement("button", { "aria-label": label }, text),
+    );
+    const root = document.createElement("div");
+    root.id = "root";
+    document.body.append(root);
+    const view = render(ui("Start dictation", "Start"), { container: root });
+    await waitFor(() => expect(screen.getByRole("button").getAttribute("aria-label")).toBe("Iniciar ditado"));
+    view.rerender(ui("Stop dictation", "Stop"));
+    await waitFor(() => expect(screen.getByRole("button").getAttribute("aria-label")).toBe("Parar ditado"));
+    view.unmount();
+    root.remove();
+  });
+
+  it("preserves a legacy source while switching between non-English languages", async () => {
+    initI18n();
+    changeLanguage("pt-BR");
+    const root = document.createElement("div");
+    root.id = "root";
+    document.body.append(root);
+    const view = render(createElement("div", null, createElement(LegacyUiLocalizer), "Start dictation"), {
+      container: root,
+    });
+    await waitFor(() => expect(root.textContent).toContain("Iniciar ditado"));
+    changeLanguage("es-ES");
+    await waitFor(() => expect(root.textContent).toContain("Iniciar dictado"));
+    changeLanguage("en-US");
+    await waitFor(() => expect(root.textContent).toContain("Start dictation"));
+    view.unmount();
+    root.remove();
   });
 });

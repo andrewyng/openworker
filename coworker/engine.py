@@ -1628,8 +1628,32 @@ class TurnEngine:
         args = tool_call.arguments or {}
         name = str(args.get("name", "")).strip()
         reason = str(args.get("reason", ""))
+        existing_path = _toolchain.resolve(name) if name else None
 
-        if self.tool_requester is None or not name:
+        if existing_path:
+            result: dict[str, Any] = {
+                "installed": True,
+                "path": existing_path,
+                "note": "a user-provided own copy is already available at this path",
+            }
+        elif name in _toolchain.MANAGED and _toolchain.describe(name) is None:
+            # A catalogued tool without a build for this OS must be distinguished from
+            # an unknown tool even when this engine cannot show approval cards. The
+            # agent still needs an honest, actionable explanation instead of silently
+            # dropping its check (notably on Windows, where scanners are user-installed).
+            result = {
+                "installed": False,
+                "error": (
+                    f"'{name}' is in the pinned tool catalog but has no managed build for "
+                    f"{_toolchain._platform_key()}."
+                ),
+                "guidance": (
+                    "Install a trusted copy yourself with the shell (subject to normal "
+                    "command approval), or continue without it and say in your report "
+                    "which checks were degraded."
+                ),
+            }
+        elif self.tool_requester is None or not name:
             result: dict[str, Any] = {
                 "installed": False,
                 "error": "tool requests aren't available here",

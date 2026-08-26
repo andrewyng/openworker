@@ -208,6 +208,10 @@ function isLegacyPhrase(value: string) {
   return Object.prototype.hasOwnProperty.call(legacyPhrases["pt-BR"], value.trim());
 }
 
+function isLocalizedSource(source: string, value: string) {
+  return supportedLanguages.some((language) => value === replaceText(source, language));
+}
+
 function localizeLegacyDom(root: HTMLElement, language: Language) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
@@ -218,7 +222,11 @@ function localizeLegacyDom(root: HTMLElement, language: Language) {
     if (!parent || parent.closest("pre, code, [data-i18n-skip], .markdown-body, .transcript")) continue;
     const knownSource = legacyTextSources.get(text);
     if (!knownSource && !isLegacyPhrase(text.data)) continue;
-    const source = knownSource ?? text.data;
+    // If React changed a dynamic label in place, the current text is a new source.
+    // Reusing the prior source would translate a stale state (e.g. Start after Stop).
+    const source = knownSource && isLocalizedSource(knownSource, text.data)
+      ? knownSource
+      : text.data;
     legacyTextSources.set(text, source);
     const next = replaceText(source, language);
     if (next !== text.data) text.data = next;
@@ -232,7 +240,9 @@ function localizeLegacyDom(root: HTMLElement, language: Language) {
       if (!existing && !isLegacyPhrase(current)) continue;
       const sources = legacyAttributeSources.get(element) ?? new Map<string, string>();
       legacyAttributeSources.set(element, sources);
-      const source = existing ?? current;
+      const source = existing && isLocalizedSource(existing, current)
+        ? existing
+        : current;
       sources.set(attribute, source);
       element.setAttribute(attribute, replaceText(source, language));
     }

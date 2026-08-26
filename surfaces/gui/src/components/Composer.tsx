@@ -272,8 +272,8 @@ export function Composer(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.prefill?.nonce]);
 
-  // Dictation is intentionally native-only: the browser/dev build remains a local server client
-  // and never turns on the browser microphone or ships audio anywhere.
+  // Desktop dictation is native and local. Browser builds may use the browser's own
+  // SpeechRecognition implementation, whose privacy/processing guarantees are browser-specific.
   useEffect(() => {
     if (!isTauri()) return;
     const refresh = (event?: Event) => {
@@ -300,6 +300,20 @@ export function Composer(props: Props) {
     }, 250);
     return () => window.clearInterval(timer);
   }, [recording]);
+
+  const recordingRef = useRef(recording);
+  useEffect(() => {
+    recordingRef.current = recording;
+  }, [recording]);
+
+  useEffect(() => () => {
+    if (!recordingRef.current) return;
+    if (isTauri()) {
+      void cancelDictation().catch(() => undefined);
+    } else {
+      browserRecognitionRef.current?.abort();
+    }
+  }, []);
 
   // Live waveform: poll mic loudness at ~10Hz while recording; the bars scroll left so the
   // trace reads as a real input meter (owner catch on DMG #28 — the first cut's bars were
@@ -809,7 +823,7 @@ export function Composer(props: Props) {
                 (recording
                   ? "Stop recording and transcribe"
                   : voiceReady
-                    ? "Start local voice dictation"
+                    ? (isTauri() ? "Start local voice dictation" : "Start browser voice dictation")
                     : "Configure Voice Input in Settings")
               }
               aria-label={recording ? "Stop dictation" : voiceReady ? "Start dictation" : "Configure Voice Input in Settings"}

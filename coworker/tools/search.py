@@ -115,14 +115,19 @@ def search_tools(workspace: str) -> list:
             # last because ripgrep resolves conflicting globs with the later one winning.
             for ignored in sorted(_IGNORE_DIRS):
                 cmd += ["--glob", f"!**/{ignored}/**"]
-            cmd.append(str(base))
+            # Search from the requested directory so glob exclusions apply to paths
+            # *inside* the workspace. Passing an absolute path made a Windows temp
+            # workspace under AppData match our AppData exclusion itself.
+            cmd.append(".")
             try:
-                out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                out = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=30, cwd=str(base)
+                )
             except Exception as exc:
                 return {"error": f"grep failed: {exc}"}
             if out.returncode not in (0, 1):  # 1 = no matches
                 return {"error": (out.stderr or "ripgrep error").strip()[:300]}
-            return {"engine": "ripgrep", **_parse_rg(out.stdout, root, n)}
+            return {"engine": "ripgrep", **_parse_rg(out.stdout, root, n, base)}
 
         return {"engine": "python", **_py_grep(root, base, pattern, glob, n)}
 
@@ -146,15 +151,21 @@ def _rel(path: str, root: Path) -> str:
         return path
 
 
-def _parse_rg(stdout: str, root: Path, n: int) -> dict[str, Any]:
+def _parse_rg(stdout: str, root: Path, n: int, base: Optional[Path] = None) -> dict[str, Any]:
     matches: list[dict[str, Any]] = []
     for line in stdout.splitlines():
-        parts = line.split(":", 2)
-        if len(parts) == 3:
-            f, ln, txt = parts
+        # ripgrep prints absolute paths unchanged. Match the numeric line separator
+        # rather than splitting blindly: Windows drive prefixes and matched text may
+        # both contain colons.
+        match = re.match(r"^(.*?):(\d+):(.*)$", line)
+        if match:
+            f, ln, txt = match.groups()
+            path = Path(f)
+            if base is not None and not path.is_absolute():
+                path = base / path
             matches.append(
                 {
-                    "file": _rel(f, root),
+                    "file": _rel(str(path), root),
                     "line": int(ln) if ln.isdigit() else 0,
                     "text": txt[:300],
                 }

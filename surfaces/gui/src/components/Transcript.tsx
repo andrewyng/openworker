@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ApprovalDecision, Item } from "../types";
 import { useLanguage, type Language } from "../i18n";
 import { shortArgs } from "./ApprovalCard";
@@ -127,6 +127,11 @@ function UserBubble({
   const [draft, setDraft] = useState(item.text);
   const [error, setError] = useState("");
   const currentIndex = branch?.variants.findIndex((variant) => variant.session_id === currentSessionId) ?? -1;
+  useEffect(() => {
+    setDraft(item.text);
+    setError("");
+    setEditing(false);
+  }, [currentSessionId, item.text]);
   const submit = async () => {
     const text = draft.trim();
     if (!text || !onEditResend) return;

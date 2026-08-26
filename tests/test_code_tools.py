@@ -13,7 +13,7 @@ import pytest
 
 from coworker.tools.files import file_tools
 from coworker.tools.git import git_tools
-from coworker.tools.search import _py_grep, search_tools
+from coworker.tools.search import _parse_rg, _py_grep, search_tools
 from coworker.web.fetch import _html_to_text, make_web_fetch_tool
 
 
@@ -59,6 +59,13 @@ def test_ripgrep_uses_the_same_ignored_dirs_as_the_python_fallback(tmp_path, mon
     user_glob = commands[0].index("*.py")
     for ignored in search._IGNORE_DIRS:
         assert commands[0].index(f"!**/{ignored}/**") > user_glob
+
+
+def test_parse_rg_keeps_windows_drive_prefix(tmp_path):
+    root = tmp_path.resolve()
+    output = f"{root}\\a.py:7:def hello():\n"
+    parsed = _parse_rg(output, root, 100)
+    assert parsed["matches"] == [{"file": "a.py", "line": 7, "text": "def hello():"}]
 
 
 def test_grep_rejects_path_escape(tmp_path):

@@ -515,6 +515,9 @@ export function App() {
   // WebSocket events below then keep it current without polling.
   useEffect(() => {
     let cancelled = false;
+    // Never let the rail render a completed/failed run from the previous session
+    // while this session's durable state is still loading.
+    setRuntimeRun(null);
     getRunState(sessionId)
       .then((state) => { if (!cancelled) setRuntimeRun(state); })
       .catch(() => { if (!cancelled) setRuntimeRun(null); });
@@ -589,7 +592,7 @@ export function App() {
       getHealth()
         .then(async (h) => {
           if (cancelled) return;
-          setModel(h.model);
+          if (typeof h.model === "string" && h.model) setModel(h.model);
           // First-run setup wizard (desktop): show until the user completes/dismisses it.
           if (isTauri()) {
             getSettings()
@@ -1682,9 +1685,10 @@ export function App() {
   const hasHistory = items.length > 0;
   // Curated labels read "Claude Opus 4.8 · Anthropic" — the provider suffix is dropdown context,
   // noise in a facts line. Fall back to the raw id without its provider prefix.
+  const modelId = typeof model === "string" ? model : "";
   const modelDisplay =
-    modelLabels[model]?.split(" · ")[0] ||
-    (model.includes(":") ? model.split(":").slice(1).join(":") : model);
+    modelLabels[modelId]?.split(" · ")[0] ||
+    (modelId.includes(":") ? modelId.split(":").slice(1).join(":") : modelId || "No model selected");
   // UX-029: with the coworker picker shipping, the coworker's name is a fixed fact again
   // (it was dropped 2026-07-22 while personas were hidden). For temporary folders the raw
   // path never shows — "Temporary folder" + the Save as project… affordance instead.
@@ -1821,7 +1825,9 @@ export function App() {
         <Onboarding
           onDone={(next) => {
             setOnboarding(false);
-            getHealth().then((h) => setModel(h.model)).catch(() => {});
+            getHealth().then((h) => {
+              if (typeof h.model === "string" && h.model) setModel(h.model);
+            }).catch(() => {});
             loadSettings(); // pick up a model connected during setup (clears the composer chip)
             if (next === "gallery") {
               // The specialists tip: land on Settings ▸ Personas, where the Gallery link lives.

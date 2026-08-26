@@ -16,7 +16,7 @@ test("boot splash shows the OpenWorker star, not the sparkle glyph", async ({ pa
   await expect(mark).toBeVisible();
   await expect(mark.locator("svg")).toBeVisible(); // the Icon logo, not a text glyph
   await expect(mark).not.toContainText("✦");
-  await expect(page.getByText(/Starting OpenWorker|Restoring your session/)).toBeVisible();
+  await expect(page.getByText(/Starting Worker|Restoring your session/)).toBeVisible();
 });
 
 test("model picker recovers when settings fetches die during sidecar boot", async ({ page }) => {

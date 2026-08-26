@@ -37,6 +37,14 @@ const openWebSocket = (url: string): WebSocket => {
     : new WebSocket(url);
 };
 
+async function requireOk(res: Response, operation: string): Promise<Response> {
+  // Older test doubles and browser shims may omit `ok`; only an explicit non-2xx
+  // response is an error here. This prevents an auth error body from masquerading
+  // as a successful health/settings payload during boot.
+  if (res.ok === false) throw new Error(`${operation} failed (${res.status || "HTTP error"})`);
+  return res;
+}
+
 export interface Health {
   status: string;
   default_workspace: string | null;
@@ -59,7 +67,7 @@ export interface WorkspaceCommandTrust {
 
 export async function getHealth(): Promise<Health> {
   const res = await fetch(`${httpBase()}/v1/health`);
-  return res.json();
+  return (await requireOk(res, "Health check")).json();
 }
 
 export async function getRecentWorkspaces(): Promise<RecentWorkspace[]> {
@@ -1815,7 +1823,7 @@ export async function getReviewerStats(sessionId: string): Promise<ReviewerStats
 
 export async function getSettings(): Promise<ModelSettings> {
   const res = await fetch(`${httpBase()}/v1/settings`);
-  return res.json();
+  return (await requireOk(res, "Settings request")).json();
 }
 
 export async function setModelKey(

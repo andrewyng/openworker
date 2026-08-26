@@ -9,10 +9,15 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import sys
 
 import pytest
 
 from coworker import toolchain
+
+
+def _platform_name(name: str) -> str:
+    return name + (".exe" if sys.platform == "win32" else "")
 
 
 def _make_exe(path, body: str = "#!/bin/sh\necho hi\n"):
@@ -23,7 +28,7 @@ def _make_exe(path, body: str = "#!/bin/sh\necho hi\n"):
 
 
 def test_resolve_prefers_path(tmp_path, monkeypatch):
-    on_path = _make_exe(tmp_path / "bin" / "semgrep")
+    on_path = _make_exe(tmp_path / "bin" / _platform_name("semgrep"))
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     assert toolchain.resolve("semgrep") == str(on_path.resolve())
 
@@ -31,7 +36,7 @@ def test_resolve_prefers_path(tmp_path, monkeypatch):
 def test_resolve_finds_tools_launchd_path_cannot_see(tmp_path, monkeypatch):
     """The actual production failure: PATH is bare, the tool is in a brew-style dir."""
     brew = tmp_path / "opt" / "homebrew" / "bin"
-    gitleaks = _make_exe(brew / "gitleaks")
+    gitleaks = _make_exe(brew / _platform_name("gitleaks"))
     monkeypatch.setenv("PATH", "/usr/bin:/bin")  # what a Finder launch really gets
     monkeypatch.setattr(toolchain, "_KNOWN_DIRS", (str(brew),))
     assert toolchain.resolve("gitleaks") == str(gitleaks.resolve())
@@ -39,13 +44,13 @@ def test_resolve_finds_tools_launchd_path_cannot_see(tmp_path, monkeypatch):
 
 def test_resolve_returns_absolute_path(tmp_path, monkeypatch):
     """Callers must be able to invoke without depending on PATH at all."""
-    _make_exe(tmp_path / "bin" / "trivy")
+    _make_exe(tmp_path / "bin" / _platform_name("trivy"))
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     assert os.path.isabs(toolchain.resolve("trivy") or "")
 
 
 def test_missing_reports_only_absent_tools(tmp_path, monkeypatch):
-    _make_exe(tmp_path / "bin" / "gitleaks")
+    _make_exe(tmp_path / "bin" / _platform_name("gitleaks"))
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     monkeypatch.setattr(toolchain, "_KNOWN_DIRS", ())
     monkeypatch.setattr(toolchain, "MANAGED", {})
@@ -158,5 +163,5 @@ def test_install_writes_a_verified_binary(tmp_path, monkeypatch):
     assert toolchain.resolve("osv-scanner") == path
     # And linked under the stable bin dir, so a shell with that dir on PATH picks the
     # tool up by name the moment the install finishes — no respawn, no full paths.
-    linked = toolchain.bin_dir() / "osv-scanner"
+    linked = toolchain.bin_dir() / os.path.basename(path)
     assert linked.exists() and open(linked, "rb").read() == payload

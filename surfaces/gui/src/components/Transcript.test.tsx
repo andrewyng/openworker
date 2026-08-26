@@ -209,6 +209,30 @@ describe("editing and resending user messages", () => {
     render(<Transcript items={EDITABLE} onApprove={vi.fn()} onEditResend={onEditResend} running />);
     expect(screen.queryByTestId("bubble-edit")).toBeNull();
   });
+
+  it("resets an active edit when the selected conversation branch changes", () => {
+    const branchGroups = [{
+      user_ordinal: 0,
+      variants: [
+        { session_id: "branch-a", position: 0 },
+        { session_id: "branch-b", position: 1 },
+      ],
+    }];
+    const first: Item[] = [{ kind: "user", text: "first version", ts: 1752969720, userOrdinal: 0 }];
+    const view = render(
+      <Transcript items={first} onApprove={vi.fn()} onEditResend={vi.fn()} branchGroups={branchGroups} currentSessionId="branch-a" />,
+    );
+    fireEvent.click(screen.getByTestId("bubble-edit"));
+    fireEvent.change(screen.getByTestId("bubble-edit-input"), { target: { value: "stale edit" } });
+
+    const second: Item[] = [{ kind: "user", text: "second version", ts: 1752969720, userOrdinal: 0 }];
+    view.rerender(
+      <Transcript items={second} onApprove={vi.fn()} onEditResend={vi.fn()} branchGroups={branchGroups} currentSessionId="branch-b" />,
+    );
+    expect(screen.queryByTestId("bubble-edit-input")).toBeNull();
+    fireEvent.click(screen.getByTestId("bubble-edit"));
+    expect((screen.getByTestId("bubble-edit-input") as HTMLTextAreaElement).value).toBe("second version");
+  });
 });
 
 // MEMORY-SPEC §5.1 — the save notice lives IN the conversation (a corner toast vanished
