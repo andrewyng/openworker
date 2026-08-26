@@ -533,12 +533,18 @@ class ConversationStore:
             self._conn.commit()
 
     def delete(self, session_id: str) -> bool:
+        # Resolve (and validate) the path BEFORE any DB or filesystem mutation so a hostile
+        # id can't unlink a .jsonl outside conv_dir — path.unlink() below runs regardless of
+        # the DB rowcount, which made it an arbitrary-delete primitive.
+        try:
+            path = self._file(session_id)
+        except ValueError:
+            return False
         with self._lock:
             cur = self._conn.execute(
                 "DELETE FROM sessions WHERE session_id = ?", (session_id,)
             )
             self._conn.commit()
-        path = self._file(session_id)
         if path.exists():
             path.unlink()
         return cur.rowcount > 0
