@@ -23,8 +23,10 @@
 #   APPLE_API_KEY_CONTENT        base64 App Store Connect API .p8 (notarytool)
 #   APPLE_API_KEY                the API key id
 #   APPLE_API_ISSUER             the API issuer id
-# When the secrets are absent (forks, scratch runs) the build degrades to unsigned —
-# installable via `xattr -cr`. Windows remains unsigned (Authenticode is a later step).
+# When the secrets are absent (forks, scratch runs) the macOS build uses an Ad-hoc
+# signature: it is still untrusted, but avoids the misleading "app is damaged" dialog.
+# Users can approve it once in Privacy & Security. Windows remains unsigned (Authenticode
+# is a later step).
 
 name: Release
 
@@ -175,10 +177,14 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           CONF_VERSION=$(python3 -c "import json; print(json.load(open('surfaces/gui/src-tauri/tauri.conf.json'))['version'])")
-          if [ "${TAG#v}" != "$CONF_VERSION" ]; then
-            echo "::error::tag $TAG != tauri.conf.json version $CONF_VERSION — bump the config before tagging"
-            exit 1
-          fi
+          TAG_VERSION="${TAG#v}"
+          case "$TAG_VERSION" in
+            "$CONF_VERSION"|"$CONF_VERSION-zh."*) ;;
+            *)
+              echo "::error::tag $TAG is not $CONF_VERSION or a $CONF_VERSION-zh.N prerelease"
+              exit 1
+              ;;
+          esac
           if ls dist/*.sig >/dev/null 2>&1; then
             python3 packaging/make_update_manifest.py \
               --version "${TAG#v}" --tag "$TAG" --repo "$GITHUB_REPOSITORY" \

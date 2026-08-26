@@ -12,6 +12,7 @@ import {
 } from "../api";
 import { openExternal } from "../tauri";
 import { PROVIDER_LOGOS, providerRank } from "./logos";
+import { useI18n } from "../i18n";
 
 // The provider gallery ⇄ key form, shared by Onboarding step 1 (§39) and
 // Settings ▸ Models (UX-021) so the two can never drift apart visually. The hook
@@ -100,6 +101,7 @@ export interface ProviderSetupState {
 }
 
 export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetupState {
+  const { t } = useI18n();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   // null = the gallery; a provider name = that provider's key form.
   const [sel, setSel] = useState<string | null>(null);
@@ -224,24 +226,24 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
       // The card keeps just the state — the account email truncated badly at card
       // width (owner-hit 2026-08-21); the detail pane shows who is signed in.
       if (p.signed_in)
-        return <span className="block text-[12px] text-ok font-medium truncate">✓ Signed in</span>;
-      return <span className="block text-[12px] text-faint truncate">Sign in with your plan</span>;
+        return <span className="block text-[12px] text-ok font-medium truncate">✓ {t("provider.signedIn")}</span>;
+      return <span className="block text-[12px] text-faint truncate">{t("provider.signInPlan")}</span>;
     }
     if (p.configured && p.needs_key) {
       const used = o?.lastUsed ? relTime(p.last_used_at) : null;
       return (
         <span className="block text-[12px] text-ok font-medium truncate">
-          ✓ Connected{used ? <span className="text-muted font-normal"> · used {used}</span> : ""}
+          ✓ {t("provider.connected")}{used ? <span className="text-muted font-normal"> · used {used}</span> : ""}
         </span>
       );
     }
     if (!p.needs_key)
       return (
         <span className="block text-[12px] text-faint truncate">
-          {keylessOk.has(p.name) ? <span className="text-ok font-medium">✓ Running</span> : "No key needed"}
+          {keylessOk.has(p.name) ? <span className="text-ok font-medium">✓ {t("provider.running")}</span> : t("provider.noKeyNeeded")}
         </span>
       );
-    return <span className="block text-[12px] text-faint truncate">Not set up</span>;
+    return <span className="block text-[12px] text-faint truncate">{t("provider.notSetUp")}</span>;
   };
 
   return {
@@ -295,6 +297,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
  * Signin runs server-side in the background; this polls the status route until the
  * flow flips to signed-in or reports an error. Tokens never reach the GUI. */
 function OAuthSignIn({ info, tp, onChanged }: { info: ProviderInfo; tp: string; onChanged: () => Promise<void> }) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(!!info.authorizing);
   const [error, setError] = useState<string | null>(info.last_error || null);
   const [reopenUrl, setReopenUrl] = useState<string | null>(null);
@@ -325,7 +328,7 @@ function OAuthSignIn({ info, tp, onChanged }: { info: ProviderInfo; tp: string; 
   const start = async () => {
     setBusy(true);
     setError(null);
-    await codexSignin().catch(() => setError("Couldn't start the sign-in."));
+    await codexSignin().catch(() => setError(t("provider.startSignInError")));
     void poll();
   };
 
@@ -334,7 +337,7 @@ function OAuthSignIn({ info, tp, onChanged }: { info: ProviderInfo; tp: string; 
       <div className="mt-4">
         <div className="flex items-center gap-2.5 rounded-xl border border-okLine bg-okSoft px-3 py-2.5">
           <span className="text-[13px] text-ink min-w-0 flex-1 truncate" data-testid={`${tp}-oauth-account`}>
-            ✓ Signed in{info.account ? ` as ${info.account}` : ""}
+          ✓ {t("provider.signedIn")}{info.account ? ` as ${info.account}` : ""}
           </span>
           <button
             className="shrink-0 rounded-lg border border-line bg-panel px-3 py-1.5 text-[13px] text-ink hover:border-lineStrong"
@@ -344,7 +347,7 @@ function OAuthSignIn({ info, tp, onChanged }: { info: ProviderInfo; tp: string; 
               await onChanged();
             }}
           >
-            Sign out
+            {t("provider.signOut")}
           </button>
         </div>
         <p className="text-[12px] text-faint mt-2">
@@ -361,11 +364,11 @@ function OAuthSignIn({ info, tp, onChanged }: { info: ProviderInfo; tp: string; 
         disabled={busy}
         data-testid={`${tp}-oauth-signin`}
       >
-        {busy ? "Waiting for the browser…" : "Sign in with ChatGPT"}
+        {busy ? t("provider.waitingBrowser") : t("provider.signInChatGPT")}
       </button>
       {busy && (
         <p className="text-[12px] text-faint mt-2">
-          Finish signing in in the browser window.
+          {t("provider.finishBrowser")}
           {reopenUrl && (
             <>
               {" "}
@@ -373,7 +376,7 @@ function OAuthSignIn({ info, tp, onChanged }: { info: ProviderInfo; tp: string; 
                 className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
                 onClick={() => openExternal(reopenUrl)}
               >
-                Reopen the sign-in page
+                {t("provider.reopenSignIn")}
               </button>
             </>
           )}
@@ -432,6 +435,7 @@ export function ProviderForm({
   tp: string;
   footer?: ReactNode;
 }) {
+  const { t } = useI18n();
   const { info, sel } = ps;
   const label = "block text-[12px] text-muted mt-3 mb-1";
   const input =
@@ -495,7 +499,7 @@ export function ProviderForm({
             disabled={ps.verify.state === "testing" || (!ps.secretFilled && !ps.credentialed)}
             data-testid={`${tp}-test`}
           >
-            {ps.verify.state === "testing" ? "…" : info?.needs_key ? "Test" : "Detect"}
+            {ps.verify.state === "testing" ? "…" : info?.needs_key ? t("provider.test") : t("provider.detect")}
           </button>
         )}
       </div>
@@ -506,7 +510,7 @@ export function ProviderForm({
   return (
     <div>
       <button className="text-[13px] text-muted hover:text-ink" onClick={ps.backToGallery} data-testid={`${tp}-back`}>
-        ‹ All providers
+        ‹ {t("provider.allProviders")}
       </button>
       <div className="flex items-center gap-3 mt-3 mb-1">
         <ProviderMark name={info?.name || ""} title={info?.title || ""} size={36} />
@@ -583,10 +587,10 @@ export function ProviderForm({
             <div className="mt-3.5 flex items-center justify-between gap-3 border-t border-line pt-3">
               {ps.savedState ? (
                 <span className="text-[12px] font-medium text-ok" data-testid={`${tp}-saved-pill`}>
-                  ✓ Tested &amp; saved
+                  ✓ {t("provider.testSave")}
                 </span>
               ) : (
-                <span className="text-[12px] text-faint">Runs one read-only check, then saves.</span>
+                <span className="text-[12px] text-faint">{t("provider.readOnlyCheck")}</span>
               )}
               <button
                 className="shrink-0 rounded-lg border border-accent bg-accent px-4 py-1.5 text-[13px] font-medium text-white hover:brightness-105 disabled:opacity-40"
@@ -594,7 +598,7 @@ export function ProviderForm({
                 disabled={ps.verify.state === "testing"}
                 data-testid={`${tp}-test`}
               >
-                {ps.verify.state === "testing" ? "…" : <>Test &amp; save</>}
+                {ps.verify.state === "testing" ? "…" : <>{t("provider.testSave")}</>}
               </button>
             </div>
           </div>
@@ -603,24 +607,24 @@ export function ProviderForm({
 
       {info?.needs_key && KEY_HELP[sel] && (
         <p className="text-[12px] text-faint mt-2">
-          No key yet?{" "}
+          {t("provider.noKeyYet")}{" "}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
             onClick={() => openExternal(KEY_HELP[sel].url)}
           >
-            Create one at {KEY_HELP[sel].label} ↗
+            {t("provider.createAt")} {KEY_HELP[sel].label} ↗
           </button>{" "}
-          — takes about a minute.
+          — {t("provider.takesMinute")}
         </p>
       )}
       {info && !info.needs_key && info.auth !== "oauth" && (
         <p className="text-[12px] text-faint mt-2">
-          No API key needed — Ollama runs models on this computer.{" "}
+          {t("provider.noApiKey")}{" "}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
             onClick={() => openExternal("https://ollama.com/download")}
           >
-            Install Ollama ↗
+            {t("provider.installOllama")} ↗
           </button>
         </p>
       )}
@@ -639,7 +643,7 @@ export function ProviderForm({
               onClick={() => ps.setShowEndpoint(true)}
               data-testid={`${tp}-endpoint-link`}
             >
-              Custom endpoint ⌄
+              {t("provider.customEndpoint")}
             </button>
           );
         return (

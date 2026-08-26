@@ -18,8 +18,8 @@
 #     (aisuite installs like any other dependency — git-pinned in pyproject.toml.)
 #
 # SIGNING: set APPLE_SIGNING_IDENTITY to a "Developer ID Application: … (TEAMID)" identity and
-# `tauri build` signs the .app + the bundled sidecar with it. Left unset → UNSIGNED (first launch
-# needs right-click → Open).
+# `tauri build` signs the .app + the bundled sidecar with it. Left unset → the final app gets an
+# Ad-hoc signature (still untrusted, but it avoids the misleading "app is damaged" dialog).
 #
 # NOTARIZATION (step 5, runs only when the identity is set): signs the .dmg CONTAINER, submits
 # to Apple's notary service, staples the ticket, and verifies with spctl. Signing alone is NOT
@@ -29,8 +29,9 @@
 # `.ocw-notary.env` one directory ABOVE the repo (shared by every clone/worktree on a machine,
 # never committed). Vars missing → the DMG is still produced, with a loud warning.
 #
-# LOCAL ITERATION: leave APPLE_SIGNING_IDENTITY unset for a fully unsigned dev build, or set
-# OCW_SKIP_NOTARIZE=1 to sign but skip the slow notary round-trip. Neither is distributable.
+# LOCAL ITERATION: leave APPLE_SIGNING_IDENTITY unset for an Ad-hoc-signed dev build, or set
+# OCW_SKIP_NOTARIZE=1 to use a real identity but skip the slow notary round-trip. Neither is
+# fully trusted for public distribution.
 #
 # Experimental (use-at-your-own-risk) connectors are EXCLUDED from this build by default —
 # the spec strips coworker.connectors.experimental. Self-builders can opt in with:
@@ -152,6 +153,24 @@ fi
 # under set -u on macOS's stock bash 3.2 — hit by keyless (fresh-clone) builds.
 ( cd "$GUI" && npm run tauri build -- --bundles app ${UPDATER_OVERLAY[@]+"${UPDATER_OVERLAY[@]}"} )
 
+# Forks do not have an Apple Developer ID certificate. Tauri can leave the app with an
+# invalid/mixed signature in that case, which Gatekeeper reports as "damaged". Apply a
+# consistent Ad-hoc signature after every resource has been copied into the final bundle.
+# This is not notarization and does not make the app trusted; it only gives end users the
+# standard one-time Privacy & Security -> Open Anyway flow. When a real identity is set,
+# Tauri's Developer ID signing remains untouched.
+if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+  echo "==> signing app bundle with an Ad-hoc identity (no Apple certificate configured)"
+  BUNDLE="$GUI/src-tauri/target/release/bundle"
+  APP_PATH="$BUNDLE/macos/$APP.app"
+  while IFS= read -r -d '' f; do
+    file -b "$f" | grep -q "Mach-O" || continue
+    codesign --force --sign - "$f"
+  done < <(find "$APP_PATH" -type f -print0)
+  codesign --force --deep --sign - "$APP_PATH"
+  codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+fi
+
 echo "==> [4/5] hdiutil: wrapping into .dmg"
 BUNDLE="$GUI/src-tauri/target/release/bundle"
 STAGING="$(mktemp -d)"
@@ -267,7 +286,7 @@ elif [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
     echo "    (env, \$OCW_NOTARY_ENV, or $NOTARY_ENV)."
   fi
 else
-  echo "    (unsigned dev build — set APPLE_SIGNING_IDENTITY for a distributable DMG)"
+  echo "    (Ad-hoc-signed DMG — users must approve it once in Privacy & Security)"
 fi
 
 echo ""

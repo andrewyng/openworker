@@ -26,6 +26,7 @@ import { Icon, type IconName } from "./Icon";
 import { personaGlyph } from "./personaIcon";
 import { SearchModal } from "./SearchModal";
 import { baseName } from "../paths";
+import { useI18n } from "../i18n";
 
 // Session surfaces shown as accordions, in display order. The surfaced personas drive this list
 // (so third-party / Ops personas appear); the hardcoded set is the fallback before personas load.
@@ -170,6 +171,7 @@ const compactAge = (iso?: string | null): string => {
 // Sessions shown per group before "Show more" comes from Settings (sessions_peek, default 5).
 
 export function Sidebar(props: Props) {
+  const { t } = useI18n();
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
   // The account row (§26): cloud sign-in status drives the avatar/name/dot; refreshed on
@@ -480,14 +482,14 @@ export function Sidebar(props: Props) {
               style={{ top: rowMenu!.top, left: rowMenu!.left }}
               role="menu"
             >
-              {item("row-menu-rename", "pencil", "Rename", () => {
+              {item("row-menu-rename", "pencil", t("nav.rename"), () => {
                 setEditingId(s.session_id);
                 setEditValue(title);
               })}
-              {item("row-menu-pin", "pin", s.pinned ? "Unpin" : "Pin", () =>
+              {item("row-menu-pin", "pin", s.pinned ? t("nav.unpin") : t("nav.pin"), () =>
                 props.onTogglePin(s.session_id, !s.pinned),
               )}
-              {item("row-menu-archive", "archive", s.archived ? "Unarchive" : "Archive", () =>
+              {item("row-menu-archive", "archive", s.archived ? t("nav.unarchive") : t("nav.archive"), () =>
                 props.onArchiveSession(s.session_id, !s.archived),
               )}
               <div className="h-px bg-line my-1 mx-2" />
@@ -503,7 +505,7 @@ export function Sidebar(props: Props) {
                   }}
                 >
                   <Icon name="trash" size={13} className="shrink-0" />
-                  <span className="flex-1">Delete?</span>
+                  <span className="flex-1">{t("nav.deleteConfirm")}</span>
                 </button>
               ) : (
                 <button
@@ -513,7 +515,7 @@ export function Sidebar(props: Props) {
                   onClick={() => setConfirmDelId(s.session_id)}
                 >
                   <Icon name="trash" size={13} className="shrink-0" />
-                  <span className="flex-1">Delete</span>
+                  <span className="flex-1">{t("nav.delete")}</span>
                 </button>
               )}
             </div>
@@ -717,12 +719,12 @@ export function Sidebar(props: Props) {
     return (
     <div className="relative flex items-center justify-between px-1.5 mb-1" data-testid="recent-header">
       <span className="text-[11px] uppercase tracking-[0.07em] text-faint font-semibold">
-        Recent
+        {t("nav.recent")}
       </span>
       <button
         className="w-6 h-6 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-chromeHover -mr-1"
-        title="Group & filter conversations"
-        aria-label="Group and filter conversations"
+        title={t("nav.groupAndFilter")}
+        aria-label={t("nav.groupAndFilter")}
         onClick={() => setGroupMenuOpen((v) => !v)}
       >
         <Icon name="sliders" size={14} />
@@ -736,9 +738,9 @@ export function Sidebar(props: Props) {
             data-testid="group-filter-menu"
           >
             <div className="px-2 pt-1 pb-1 text-[11px] uppercase tracking-[0.06em] text-faint font-semibold">
-              Group by
+              {t("nav.groupBy")}
             </div>
-            {([["grouped", "Coworker"], ["flat", "Chronological"]] as ["flat" | "grouped", string][]).map(
+            {([["grouped", t("nav.groupByCoworker")], ["flat", t("nav.chronological")]] as ["flat" | "grouped", string][]).map(
               ([key, label]) => (
                 <button
                   key={key}
@@ -755,11 +757,11 @@ export function Sidebar(props: Props) {
                 <div className="my-1 border-t border-line" />
                 <div className="px-2 pt-1 pb-1 flex items-center justify-between">
                   <span className="text-[11px] uppercase tracking-[0.06em] text-faint font-semibold">
-                    Filter by coworker
+                    {t("nav.filterByCoworker")}
                   </span>
                   {filterPersonas.size > 0 && (
                     <button className="text-[11px] text-accent" onClick={() => setFilterPersonas(new Set())}>
-                      Clear
+                      {t("nav.clear")}
                     </button>
                   )}
                 </div>
@@ -786,7 +788,7 @@ export function Sidebar(props: Props) {
                   })}
                 </div>
                 <div className="px-2 pt-1 pb-0.5 text-[11px] text-faint leading-snug">
-                  None checked shows all.
+                  {t("nav.noneChecked")}
                 </div>
               </>
             )}
@@ -854,6 +856,9 @@ export function Sidebar(props: Props) {
         )
   ).filter((s) => personaVisible(s.key));
 
+  const surfaceLabel = (key: string, label: string) =>
+    key === "cowork" ? t("nav.coworker") : key === "chat" ? t("nav.chat") : key === "code" ? t("nav.code") : label;
+
   const isCurrent = (key: string) => props.agent === key; // the active session's persona
   const isExpanded = (key: string) => openKey === key; // its body is open
   // Expand ≠ switch: clicking a header only browses (toggles the accordion). The chat area
@@ -875,12 +880,12 @@ export function Sidebar(props: Props) {
                 rows carry a right-aligned compact age and truncate to PROJECT_PEEK + "Show more". */}
             <div className="flex items-center justify-between px-1.5 pt-1">
               <span className="text-[11px] uppercase tracking-[0.07em] text-faint font-semibold">
-                Projects
+                {t("nav.projects")}
               </span>
               <button
                 className="w-5 h-5 grid place-items-center rounded text-faint hover:text-ink hover:bg-panel"
-                title="New project"
-                aria-label="New project"
+                title={t("nav.newProject")}
+                aria-label={t("nav.newProject")}
                 onClick={() => props.onNewProject(browseKey)}
               >
                 <Icon name="folderPlus" size={14} />
@@ -889,7 +894,7 @@ export function Sidebar(props: Props) {
             <div className="space-y-0.5">
               {projectOrder.length === 0 && (
                 <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                  No projects yet — start one with the + above.
+                  {t("nav.projects")} — {t("nav.newProject")} +
                 </div>
               )}
               {projectOrder.map((proj) => {
@@ -957,7 +962,7 @@ export function Sidebar(props: Props) {
           <div className="space-y-0.5">
             {mine.filter(matches).length === 0 ? (
               <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                {normalizedQuery ? "No matching conversations." : "No conversations yet."}
+                {normalizedQuery ? t("nav.noMatching") : t("nav.noConversations")}
               </div>
             ) : (
               <>
@@ -1028,7 +1033,7 @@ export function Sidebar(props: Props) {
           className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left font-medium text-ink hover:bg-chromeHover"
           onClick={() => props.onNewSession(props.agent)}
         >
-          <Icon name="plus" size={15} className="shrink-0" /> New session
+          <Icon name="plus" size={15} className="shrink-0" /> {t("nav.newSession")}
         </button>
       </div>
 
@@ -1039,7 +1044,7 @@ export function Sidebar(props: Props) {
           className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left text-muted hover:bg-chromeHover hover:text-ink"
           onClick={() => setSearchModalOpen(true)}
         >
-          <Icon name="search" size={15} className="shrink-0" /> Search
+          <Icon name="search" size={15} className="shrink-0" /> {t("nav.search")}
         </button>
       </div>
 
@@ -1055,7 +1060,7 @@ export function Sidebar(props: Props) {
           onClick={props.onOpenScheduled}
         >
           <Icon name="clock" size={15} className="shrink-0" />
-          <span className="flex-1">Automations</span>
+          <span className="flex-1">{t("nav.automations")}</span>
         </button>
       </div>
 
@@ -1096,7 +1101,7 @@ export function Sidebar(props: Props) {
                           (isCurrent(s.key) ? "font-semibold text-ink" : "font-medium text-ink")
                         }
                       >
-                        {s.label}
+                        {surfaceLabel(s.key, s.label)}
                       </span>
                       <LiveDot state={liveByPersona.get(s.key)} />
                       <AttnBadge n={attnByPersona.get(s.key) || 0} />
@@ -1117,7 +1122,7 @@ export function Sidebar(props: Props) {
             <div className="space-y-0.5">
               {recentSessions.length === 0 ? (
                 <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                  {normalizedQuery ? "No matching conversations." : "No conversations yet."}
+                  {normalizedQuery ? t("nav.noMatching") : t("nav.noConversations")}
                 </div>
               ) : (
                 <>
@@ -1131,8 +1136,8 @@ export function Sidebar(props: Props) {
                       onClick={() => setRecentExpanded((v) => !v)}
                     >
                       {recentExpanded
-                        ? "Show less"
-                        : `Show ${recentSessions.length - RECENT_PEEK} more`}
+                        ? t("nav.showLess")
+                        : `${t("nav.showMore")} (${recentSessions.length - RECENT_PEEK})`}
                     </button>
                   )}
                 </>
@@ -1167,7 +1172,7 @@ export function Sidebar(props: Props) {
                 ) : (
                   <>
                     <div className="px-3 py-1.5 text-[11px] text-faint border-b border-line">
-                      Not signed in — one-click connections need OpenWorker Cloud
+                      {t("nav.notSignedInCloud")}
                     </div>
                     <button
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 mb-1 text-[13px] text-left text-accent hover:bg-paper"
@@ -1185,33 +1190,32 @@ export function Sidebar(props: Props) {
                         });
                       }}
                     >
-                      <Icon name="plug" size={15} className="shrink-0" /> Sign in to OpenWorker
-                      Cloud
+                      <Icon name="plug" size={15} className="shrink-0" /> {t("nav.signInCloud")}
                     </button>
                   </>
                 )}
                 {appMenuItem(
                   "inbox",
-                  "Inbox",
+                  t("nav.inbox"),
                   props.onOpenInbox,
                   props.inboxActive,
                   <AttnBadge n={totalAttention} />,
                 )}
-                {appMenuItem("plug", "Connectors", props.onOpenIntegrations, props.integrationsActive)}
+                {appMenuItem("plug", t("nav.connectors"), props.onOpenIntegrations, props.integrationsActive)}
                 <div className="h-px bg-line my-1 mx-2" />
                 {appMenuItem(
                   "gear",
-                  "Settings",
+                  t("nav.settings"),
                   props.onManage,
                   false,
                   <span className="text-[11px] text-faint">⌘ ,</span>,
                 )}
                 {/* No Automations here — the sidebar's top nav already carries it. */}
-                {appMenuItem("audit", "Activity", props.onOpenAudit, props.auditActive)}
+                {appMenuItem("audit", t("nav.activity"), props.onOpenAudit, props.auditActive)}
                 {cloud?.signed_in && (
                   <>
                     <div className="h-px bg-line my-1 mx-2" />
-                    {appMenuItem("signOut", "Sign out", async () => {
+                    {appMenuItem("signOut", t("nav.signOut"), async () => {
                       await cloudLogout().catch(() => {});
                       announceCloudChanged();
                     })}
@@ -1233,7 +1237,7 @@ export function Sidebar(props: Props) {
             }}
             aria-haspopup="menu"
             aria-expanded={appMenuOpen}
-            aria-label={cloud?.signed_in ? `Account: ${accountEmail}` : "Account: not signed in"}
+            aria-label={cloud?.signed_in ? `${t("nav.account")}: ${accountEmail}` : `${t("nav.account")}: ${t("nav.notSignedIn")}`}
           >
             <span
               className={
@@ -1247,12 +1251,12 @@ export function Sidebar(props: Props) {
               {cloud?.signed_in ? accountName.slice(0, 1).toUpperCase() : "?"}
             </span>
             <span className={"truncate " + (cloud?.signed_in ? "" : "text-muted")}>
-              {cloud?.signed_in ? accountName : "Not signed in"}
+              {cloud?.signed_in ? accountName : t("nav.notSignedIn")}
             </span>
             {cloud?.signed_in && (
               <span
                 className="w-[7px] h-[7px] rounded-full bg-ok shrink-0"
-                title="Signed in to OpenWorker Cloud"
+                title={t("nav.signedInCloud")}
                 aria-hidden
               />
             )}

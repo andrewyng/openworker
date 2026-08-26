@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getConnectors } from "../api";
 import { ConnectorsSection } from "./connectors/ConnectorsSection";
 import { Icon } from "./Icon";
+import { useI18n } from "../i18n";
 
 // The Connectors surface (renamed from "Integrations", §26). The separate "MCP
 // servers" tab is retired (UX-034): custom MCP servers now live on the Connectors
@@ -11,6 +12,7 @@ import { Icon } from "./Icon";
 // Activity is the audit log, reached from the account menu.
 
 export function IntegrationsView() {
+  const { t } = useI18n();
   // Sub-nav count: how many connectors exist. Polled so the badge stays live.
   const [connCount, setConnCount] = useState<number | null>(null);
 
@@ -27,11 +29,11 @@ export function IntegrationsView() {
     <main className="flex-1 min-w-0 flex bg-paper">
       <nav className="page-subnav w-[208px] shrink-0 border-r border-line bg-panel/40 px-3 py-4">
         <div className="px-2 text-[13px] font-semibold mb-3 flex items-center gap-2">
-          <Icon name="plug" size={16} /> Connectors
+          <Icon name="plug" size={16} /> {t("integrations.connectors")}
         </div>
         <button className="w-full text-left px-2.5 py-2 rounded-lg text-[13px] flex items-center justify-between bg-paper text-accent font-medium">
           <span className="flex items-center gap-2 min-w-0">
-            <Icon name="plug" size={15} /> Connectors
+            <Icon name="plug" size={15} /> {t("integrations.connectors")}
           </span>
           {connCount != null && (
             <span className="text-[11px] shrink-0 text-accent">{connCount}</span>
@@ -43,8 +45,8 @@ export function IntegrationsView() {
         <div className="max-w-4xl mx-auto px-7 py-6">
           <section>
             <PanelHead
-              title="Connectors"
-              sub="Apps and tools your coworkers can use. Connected ones come first."
+              title={t("integrations.connectors")}
+              sub={t("integrations.subtitle")}
             />
             <ConnectorsSection />
           </section>

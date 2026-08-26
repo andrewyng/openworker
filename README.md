@@ -6,6 +6,31 @@
 
 > **Beta** - OpenWorker is in open beta: fully usable, updates itself, and we're actively polishing rough edges. [Issues](https://github.com/andrewyng/openworker/issues) welcome.
 
+## 社区简体中文汉化版
+
+这是基于上游 OpenWorker 的社区 Fork，提供 English / 简体中文界面切换。它不是官方中文版，汉化工作正在持续完善中。
+
+- Fork：<https://github.com/cr-yijieshusheng/openworker>
+- 汉化分支：`i18n-simplified-chinese`
+- 上游合并申请：<https://github.com/andrewyng/openworker/pull/542>
+- 最新预发布版本：<https://github.com/cr-yijieshusheng/openworker/releases/tag/v0.2.1-zh.2>
+
+当前已覆盖常用会话、设置、模型供应商、导航、模型选择和部分连接器文案。少量高级功能、连接器详情和开发者文案仍可能显示英文；遇到问题请在 Fork 仓库提交 Issue，并注明系统、版本和复现步骤。
+
+![OpenWorker 简体中文会话界面](docs/assets/openworker-zh-session.png)
+
+![OpenWorker 简体中文设置界面](docs/assets/openworker-zh-settings.png)
+
+![OpenWorker 简体中文模型供应商设置](docs/assets/openworker-zh-provider.png)
+
+### 使用汉化版
+
+1. 在 Fork 的 `Releases` 页面下载预发布包，或切换到 `i18n-simplified-chinese` 分支从源码运行。
+2. 启动后打开 `设置 → 常规 → 界面语言`，选择 `简体中文`。
+3. 在 `设置 → 模型` 中配置自己的模型供应商和 API Key。Key 只保存在本机，不要在 Issue、截图或 README 中公开。
+
+预发布版本主要用于体验和反馈。本 Fork 已关闭官方自动更新；请从 Fork 的 Releases 页面手动下载后续版本。上游项目更新后，可以通过同步上游 `main` 并重新应用汉化提交的方式继续跟进。
+
 **AI that gets your everyday tasks done.** OpenWorker is an open-source AI coworker that lives on your desktop and delivers **finished work**, not just chat: a polished document, a Slack reply with the numbers, an updated calendar, a triaged inbox.
 
 It runs on your machine and doesn't lock you into any model: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider, or run fully local with Ollama. Your data leaves your machine only through the model and integrations *you* choose.
