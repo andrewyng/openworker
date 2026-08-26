@@ -20,7 +20,10 @@ _SECRET_KEYS = (
     "app_token",
     "raw",
 )
-_BODY_KEYS = ("body", "content", "html")
+# Field names whose value is free-form content, not metadata — redacted wholesale. Beyond
+# request bodies this now covers tool OUTPUT fields (shell stdout/stderr can be `cat .env`
+# / `printenv`), so a result preview never replays them into the durable log.
+_BODY_KEYS = ("body", "content", "html", "output", "stdout", "stderr")
 
 
 class AuditStore:
@@ -100,7 +103,9 @@ class AuditStore:
                     event.get("status") or "",
                     event.get("approval") or "",
                     json.dumps(args, default=str),
-                    _truncate(str(event.get("result_preview") or "")),
+                    _result_preview(
+                        tool, event.get("result"), event.get("result_preview")
+                    ),
                     _truncate(str(event.get("reason") or "")),
                     _truncate(str(resource or "")),
                     str(event.get("call_id") or ""),
@@ -187,6 +192,25 @@ class AuditStore:
 
     def close(self) -> None:
         self._conn.close()
+
+
+def _result_preview(tool: str, result: Any, fallback: Any) -> str:
+    """Redact a tool RESULT before it's flattened into the durable preview.
+
+    Results carry the same sensitive payloads the args policy already redacts — email
+    bodies, shell output (``cat .env`` / ``printenv``), connector message text — but the
+    stored preview previously got only ``_truncate()``, so it persisted them in plaintext
+    in the local audit DB (and re-served them via AuditStore.list). Apply the same key
+    policy to the structured result before flattening; only fall back to the caller's
+    pre-flattened preview string when there's no structured result to redact.
+    """
+    if isinstance(result, dict):
+        return _truncate(json.dumps(_sanitize_args(tool, result), default=str))
+    if isinstance(result, list):
+        return _truncate(json.dumps(_summarize(result), default=str))
+    if isinstance(result, str):
+        return _truncate(result)
+    return _truncate(str(fallback or ""))
 
 
 def _sanitize_args(tool: str, args: dict[str, Any]) -> dict[str, Any]:
