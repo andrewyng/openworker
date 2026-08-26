@@ -62,9 +62,9 @@ jobs:
           cache: npm
           cache-dependency-path: surfaces/gui/package-lock.json
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@a54c7afa936fefeb4456b2dd8068152669aa8203 # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
         with:
           workspaces: surfaces/gui/src-tauri
 
@@ -188,7 +188,7 @@ jobs:
             echo "::warning::no updater signatures in dist/ — release ships WITHOUT auto-update manifest"
           fi
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.8
         with:
           draft: true
           files: dist/*
