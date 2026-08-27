@@ -41,6 +41,19 @@ def test_grep_finds_matches_and_respects_glob(tmp_path):
     assert only_py["matches"][0]["line"] == 1
 
 
+def test_grep_works_when_workspace_sits_under_an_ignored_dir_name(tmp_path):
+    # Regression for #576: ripgrep matches --glob patterns against paths
+    # relative to the *current working directory*, not the search root, so a
+    # workspace living under e.g. .../node_modules/ws excluded itself entirely.
+    ws = tmp_path / "node_modules" / "ws"
+    ws.mkdir(parents=True)
+    (ws / "a.py").write_text("hello under ignored parent\n", encoding="utf-8")
+    grep = search_tools(str(ws))[0]
+    out = grep(pattern="hello")
+    assert out["count"] == 1
+    assert out["matches"][0]["file"] == "a.py"
+
+
 def test_ripgrep_uses_the_same_ignored_dirs_as_the_python_fallback(tmp_path, monkeypatch):
     import coworker.tools.search as search
 
