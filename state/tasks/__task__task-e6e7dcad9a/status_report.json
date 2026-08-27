@@ -1,0 +1,49 @@
+{
+  "timestamp": "2026-08-16T14:33:03.526739",
+  "market_open": false,
+  "accounts": {
+    "A": {
+      "label": "Mean-Reversion",
+      "connected": true,
+      "account_number": "PA3A9D6N35PX",
+      "status": "AccountStatus.ACTIVE",
+      "equity": 5014.05,
+      "cash": 5014.05,
+      "buying_power": 20056.2,
+      "positions": 0,
+      "unrealized_pl": 0
+    },
+    "B": {
+      "label": "Momentum",
+      "connected": true,
+      "account_number": "PA3JCVHM3HAQ",
+      "status": "AccountStatus.ACTIVE",
+      "equity": 2525.88,
+      "cash": 1080.88,
+      "buying_power": 4323.52,
+      "positions": 4,
+      "unrealized_pl": -1240.0
+    },
+    "C": {
+      "label": "Options/High-Vol",
+      "connected": true,
+      "account_number": "PA3IAF0QHXD1",
+      "status": "AccountStatus.ACTIVE",
+      "equity": 5036.34,
+      "cash": 22.31,
+      "buying_power": 14128.53,
+      "positions": 32,
+      "unrealized_pl": 30.45
+    }
+  },
+  "positions": 36,
+  "portfolio_value": 12576.27,
+  "trade_log_count": 0,
+  "daily_pnl": -1209.55,
+  "fx_connected": true,
+  "fx_positions": 0,
+  "circuit_breaker_tripped": false,
+  "swallowed": {
+    "scanner.fetch_option_chain:alpaca | HTTPError": 49
+  }
+}

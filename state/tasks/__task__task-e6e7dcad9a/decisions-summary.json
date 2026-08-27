@@ -1,0 +1,25 @@
+{
+  "source_file": "decisions_20260816.csv",
+  "trading_day": "2026-08-16",
+  "copied_at": "2026-08-16T14:33:47-04:00",
+  "rows_total": 1717,
+  "counts_by_decision": {
+    "NO_GO": 1445,
+    "GO": 136,
+    "GATE_SKIP": 136
+  },
+  "go_tickers": [
+    "ALB",
+    "FCX",
+    "INTC",
+    "JOBY",
+    "NVDA",
+    "QBTS",
+    "QCOM",
+    "SHOP"
+  ],
+  "accounts_seen": [
+    "A",
+    "B"
+  ]
+}

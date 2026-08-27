@@ -12222,7 +12222,7 @@ CREATE TABLE workspaces (
                 path TEXT PRIMARY KEY, last_used TEXT DEFAULT CURRENT_TIMESTAMP
             );
 INSERT INTO workspaces VALUES('/tmp/claude-1000/-home-iconbaypark2900/1b63463f-5ffe-442a-bdbb-09c09536f2b4/scratchpad/proj','2026-08-16 14:04:46');
-INSERT INTO workspaces VALUES('/home/iconbaypark2900/openworker-workspace','2026-08-26 23:50:27');
+INSERT INTO workspaces VALUES('/home/iconbaypark2900/openworker-workspace','2026-08-27 00:37:51');
 INSERT INTO workspaces VALUES('/home/iconbaypark2900/OpenWorker/__task__task-c685e22a0b','2026-08-26 10:19:01');
 INSERT INTO workspaces VALUES('/home/iconbaypark2900/OpenWorker/__task__task-1b2c4d3f13','2026-08-26 08:37:34');
 INSERT INTO workspaces VALUES('/home/iconbaypark2900/OpenWorker/__task__task-e6e7dcad9a','2026-08-20 18:23:18');

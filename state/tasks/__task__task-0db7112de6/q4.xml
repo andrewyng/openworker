@@ -1,0 +1,1356 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/HPlHpb2DoewgFtIP4/6VpiEFWuI</id>
+  <title>arXiv Query: search_query=(abs:"tool use" OR abs:"multi-agent" OR abs:"agentic workflow" OR abs:"retrieval-augmented") AND cat:cs.CL&amp;id_list=&amp;start=0&amp;max_results=40</title>
+  <updated>2026-08-20T20:34:20Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=(abs:%22tool+use%22+OR+(abs:%22multi-agent%22+OR+(abs:%22agentic+workflow%22+OR+abs:%22retrieval-augmented%22)))+AND+cat:cs.CL&amp;start=0&amp;max_results=40&amp;id_list=" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>40</opensearch:itemsPerPage>
+  <opensearch:totalResults>5972</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2608.19197v1</id>
+    <title>SPADE: Self-Play in Adaptive Synthetic Executable Environments</title>
+    <updated>2026-08-19T17:58:56Z</updated>
+    <link href="https://arxiv.org/abs/2608.19197v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.19197v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Continuous self-improvement requires an ever-expanding pool of self-generated, diverse, adaptive goals. For language agents, existing training environment pools (hand-curated, statically synthesized, or frozen-verifier) keep the goal distribution fixed as the learner scales. We introduce SPADE (Self-Play in Adaptive Synthetic Executable Environments), a self-play RL framework in which a single LLM plays two roles: an Environment Designer that writes complete, long-horizon training environments as executable code with an OpenAI Gym-style reset()/step() interface, and a Reasoning Agent that learns to act in them. Each is a stateful, multi-turn environment (state transitions, reward functions, and verification code), so one interface spans reasoning problems and multi-step agentic tool use. The Reasoning Agent's regret is estimated using the gap between its reward with and without privileged hints; in optimizing this regret signal the Environment Designer learns to target environments at the edge of the agent's capabilities while keeping them feasible. Through extensive experimentation, we find several components critical to success: grounding the Environment Designer on documents sampled from a large pretraining corpus, and giving it an accumulated environment memory. Scaling to 30B-parameter models, SPADE improves over the strongest fixed-environment baseline by +5.3 on average across eight held-out math, science, code, and reasoning benchmarks, and lifts the tool-use setting by +5.7 on BFCL-v4 multi-turn and +13.9 on ACEBench-Agent; on the games setting, the margin over the strongest baseline grows with model scale. By making environment design itself a learnable component, SPADE takes a concrete step toward open-ended self-improvement.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-19T17:58:56Z</published>
+    <arxiv:comment>Work in progress. Project page: https://spade-rl.github.io ; Code: https://github.com/spade-rl/spade</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Bo Liu</name>
+    </author>
+    <author>
+      <name>Simon Yu</name>
+    </author>
+    <author>
+      <name>Yiding Jiang</name>
+    </author>
+    <author>
+      <name>Ao Qu</name>
+    </author>
+    <author>
+      <name>Andrew Zhao</name>
+    </author>
+    <author>
+      <name>Zichen Liu</name>
+    </author>
+    <author>
+      <name>Junsu Kim</name>
+    </author>
+    <author>
+      <name>Zijian Zhou</name>
+    </author>
+    <author>
+      <name>Seungone Kim</name>
+    </author>
+    <author>
+      <name>Tongzheng Ren</name>
+    </author>
+    <author>
+      <name>Mickel Liu</name>
+    </author>
+    <author>
+      <name>Hanfei Yu</name>
+    </author>
+    <author>
+      <name>Zhaorun Chen</name>
+    </author>
+    <author>
+      <name>Weiyan Shi</name>
+    </author>
+    <author>
+      <name>Paul Pu Liang</name>
+    </author>
+    <author>
+      <name>Luke Zettlemoyer</name>
+    </author>
+    <author>
+      <name>Yejin Choi</name>
+    </author>
+    <author>
+      <name>Natasha Jaques</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.19029v1</id>
+    <title>Adaptive Memory and Reflection Multi-Agent System for Medical Question Answering</title>
+    <updated>2026-08-19T15:24:18Z</updated>
+    <link href="https://arxiv.org/abs/2608.19029v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.19029v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Accurate and responsible medical question answering (QA) is important in healthcare, where complex cases require factual knowledge and nuanced reasoning. Existing medical QA systems, typically based on single-agent architectures and static retrieval, often lack adaptability, persistent memory, and structured decision-making. This work introduces an adaptive memory and reflection (AMR) agentic system, a multi-agent framework in which specialized agents use dedicated memory and reflection-based feedback to retrieve relevant prior cases and improve subsequent reasoning. Complexity assessment routes questions through solo, collaborative, or escalated workflows, while consensus and ethical overseer modules support reasoning consolidation and output review. Evaluation on MedQA and MedMCQA demonstrates strong performance compared with several baselines. Ablation studies show that combining agent-specific memory, reflection, and external retrieval yields the strongest performance. These findings highlight the potential of structured memory and feedback for developing more trustworthy medical agents. The source code is publicly available at https://github.com/mm-air/AMR-Agent.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.MA" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-19T15:24:18Z</published>
+    <arxiv:comment>Accepted by IEEE SMC 2026</arxiv:comment>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Pradeep Murugesan</name>
+    </author>
+    <author>
+      <name>Luoxiao Yang</name>
+    </author>
+    <author>
+      <name>Xueli Chen</name>
+    </author>
+    <author>
+      <name>Xinqi Fan</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.18681v1</id>
+    <title>Learning What to Fail On: Failure-Mode Contextual Bandits for Adversarial Data Curation</title>
+    <updated>2026-08-19T08:31:15Z</updated>
+    <link href="https://arxiv.org/abs/2608.18681v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.18681v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>We introduce a failure-aware adversarial retrieval-augmented framework for improving robustness in natural language understanding. Rather than selecting synthetic examples with a fixed reward threshold, our method formulates adversarial data curation as a failure-mode contextual bandit problem. Candidate examples are generated with retrieval-augmented prompting, filtered by the current target model, automatically validated by an LLM judge ensemble, and clustered into recurring failure modes. A stochastic policy then selects which failure modes to sample for retraining, and is updated using validation-based reward that balances robustness gains, forgetting, and data cost. This makes the data curator itself the learning agent, enabling adaptive selection of the most useful model failures across training rounds. On standard benchmarks, our approach improves RoBERTa-base accuracy from 88.48% to 92.60% on SNLI, from 75.04% to 80.95% on ANLI, and from 54.67% to 71.99% on MultiNLI, while consistently outperforming prior adversarial augmentation methods. We further demonstrate transfer to FEVER fact verification, achieving up to 79.86\% FEVER score and 82.45\% accuracy with RoBERTa-large. Finally, we provide a theoretical interpretation showing that, under stated assumptions, failure-mode sampling can reduce shortcut-aligned gradient contributions while inducing bounded distributional drift. By combining retrieval, automated validation, contextual-bandit failure selection, and controlled adversarial retraining, our framework enables scalable robustness improvement without additional human annotation.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-19T08:31:15Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <arxiv:journal_ref>Transactions on Machine Learning Research (TMLR), August 2026</arxiv:journal_ref>
+    <author>
+      <name>Roie Kazoom</name>
+    </author>
+    <author>
+      <name>Ofir Cohen</name>
+    </author>
+    <author>
+      <name>Rami Puzis</name>
+    </author>
+    <author>
+      <name>Asaf Shabtai</name>
+    </author>
+    <author>
+      <name>Ofer Hadar</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.18575v1</id>
+    <title>Beyond LLM-Based Reasoning: Lightweight GNNs for Agent Failure Attribution</title>
+    <updated>2026-08-19T06:16:09Z</updated>
+    <link href="https://arxiv.org/abs/2608.18575v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.18575v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Large language model (LLM)-based multi-agent systems (MAS) often exhibit complex failure modes, which frequently cause agents to produce incorrect outcomes. This motivates the task of Agent Failure Attribution: given a failed multi-agent trajectory, identify the faulty agents and their corresponding error types. Existing approaches predominantly rely on LLMs to perform failure attribution, either through direct prompting, fine-tuning on synthetic data or complex agentic pipelines. While effective, these methods incur substantial computational overhead due to long-context processing, expensive post-training and handcrafted workflows. Moreover, empirical evidence shows that even state-of-the-art models achieve limited accuracy on existing benchmarks, suggesting that scaling model size alone is insufficient. In this work, we revisit this task and question the necessity of such expensive generative solutions. We introduce AFANet, a lightweight graph-based framework that models interaction trajectories through step-level semantic signals and agent-level relationships. We show that with significantly fewer parameters and near-zero inference cost, AFANet (i) matches or outperforms LLM-based baselines, including fine-tuned models on in-domain benchmarks, (ii) maintains robust performance across different GNN architectures and (iii) can be further improved with inexpensive test-time adaptation on the OOD benchmark. Our results suggest that effective agent failure attribution does not require heavy LLM reasoning and a lightweight, structured approach can achieve strong performance.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-19T06:16:09Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Ting-Wei Li</name>
+    </author>
+    <author>
+      <name>Yuanchen Bei</name>
+    </author>
+    <author>
+      <name>Xiao Lin</name>
+    </author>
+    <author>
+      <name>Hanghang Tong</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.18489v1</id>
+    <title>MissDiag: Diagnostic Evaluation of Incomplete-Knowledge Robustness in KGQA and KG-RAG</title>
+    <updated>2026-08-19T03:28:11Z</updated>
+    <link href="https://arxiv.org/abs/2608.18489v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.18489v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Knowledge graph question answering (KGQA) and knowledge-graph-based retrieval-augmented generation (KG-RAG) aim to ground answers in explicit graph evidence, but real-world knowledge graphs are often sparse, outdated, and incomplete. Existing robustness evaluations usually report aggregate changes in answer quality after evidence is removed or perturbed, which measures sensitivity to incomplete support but leaves the source of degradation under-specified: the same score change can conflate the type of missing evidence, the response of the evaluated system, and the sensitivity of the answer-matching protocol. To address this gap, we propose \textbf{MissDiag}, a diagnostic evaluation framework for incomplete-knowledge robustness in KGQA and KG-RAG. MissDiag keeps the question and gold answer fixed while applying structurally typed missingness interventions to benchmark-provided support graphs, enabling paired comparisons that decompose robustness changes by evidence type, system response, and evaluation protocol rather than reducing them to a single aggregate score drop. Experiments across multiple system families show that incomplete-knowledge robustness is better understood as a typed degradation phenomenon than as a uniform property: answer-adjacent evidence loss produces the largest observed degradation, source-context removal is often neutral and can be beneficial, and semantic answer matching changes absolute scores while preserving the main typed degradation patterns. By transforming aggregate robustness measurement into typed diagnostic attribution, MissDiag provides a more interpretable basis for comparing, diagnosing, and stress-testing KGQA and KG-RAG systems under incomplete knowledge.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-19T03:28:11Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Hang Wang</name>
+    </author>
+    <author>
+      <name>Hang Dong</name>
+    </author>
+    <author>
+      <name>Lu Liu</name>
+    </author>
+    <author>
+      <name>Chuanru Ren</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.18312v1</id>
+    <title>Artifact-centered Claim-aware Observability for Autonomous Scientific Agents</title>
+    <updated>2026-08-18T20:47:24Z</updated>
+    <link href="https://arxiv.org/abs/2608.18312v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.18312v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Autonomous scientific agents now increasingly propose ideas, write code, run experiments, analyze results, and even draft papers. Observe and audit those agents are necessary but logging every model call is not enough, scientists also need to inspect the artifacts and claims that the systems produced and their relations. This is driven by the fact that failures in scientific agent systems are often distributed across several objects. A manuscript claim may cite the wrong evidence, a search process may select a degenerate candidate, a laboratory novelty claim may depend on an unstated rule, or a multi-agent plan may change without a visible trigger. Existing tracing, experiment tracking, and archival provenance tools are valuable, but their native objects do not make these scientific audit relations first-class. We argue that autonomous scientific systems should emit portable, claim-aware artifact lineage as a minimum audit layer. We propose a compact observability profile organized around individuals, operators, fitness records, lineage, archives, runs, streams, and steering commands. In this profile, scientific claims are ordinary individuals with explicit evidence bindings and verification records. The profile is intended as a semantic layer that complements current telemetry and provenance standards. Execution details can remain in OpenTelemetry. Final packages can export to PROV-O or RO-Crate standards.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CY" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.HC" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T20:47:24Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Xiangyu Yin</name>
+    </author>
+    <author>
+      <name>Ming Du</name>
+    </author>
+    <author>
+      <name>Michael H. Prince</name>
+    </author>
+    <author>
+      <name>Mathew J. Cherukara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.18072v1</id>
+    <title>Multi-Agent AI System for Radiology Report Structuring and Quality Assurance with Independent Radiologist Evaluation</title>
+    <updated>2026-08-18T17:57:08Z</updated>
+    <link href="https://arxiv.org/abs/2608.18072v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.18072v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Purpose: To develop and evaluate a locally deployed multi-agent AI system for radiology report structuring and quality assurance. Materials and Methods: This retrospective study included 638 radiology reports from CT examinations of the chest, abdomen, and pelvis dictated by 15 board-certified radiologists in 2023 and 2024. A multi-agent AI pipeline was developed to perform report structuring and quality assurance (QA). The system structured the report into standardized anatomical sections at the sentence level using regex rules and local large language models. It also detected mismatches between the Findings and Impression sections, or within sections; gender-anatomy conflicts; and undocumented communication of critical findings. Two board-certified radiologists independently evaluated a 45-report subset. Results: The multi-agent system structured the Findings sections of all reports (22,270 sentences) into a predefined anatomical format while retaining the original report content. The system flagged 90 (14.1%) reports, most commonly for section mismatches (80 reports, 12.5%). In the radiologist evaluation, both reviewers agreed that 31 (69%) were correctly restructured, 2 reports (4%) were incorrectly restructured, and disagreed on the remaining 12 reports (27%). Both reviewers agreed that no clinically important information was omitted and no fabricated content was introduced. Overall QA performance was rated as "excellent" or "good" in 84% of the evaluated reports, with the remaining reports rated as "fair". Conclusion: A locally deployed multi-agent AI system combined radiology report structuring and quality assurance within a single workflow. The system demonstrated favorable performance in radiologist evaluation. Such systems may support standardization of reporting and quality assurance in radiology practice.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T17:57:08Z</published>
+    <arxiv:comment>14 pages, 2 figures, 4 tables</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Iryna Hartsock</name>
+    </author>
+    <author>
+      <name>Cesar Lam</name>
+    </author>
+    <author>
+      <name>Christopher Otteni</name>
+    </author>
+    <author>
+      <name>Aliya Qayyum</name>
+    </author>
+    <author>
+      <name>Robert Gatenby</name>
+    </author>
+    <author>
+      <name>Cyrillo Araujo</name>
+    </author>
+    <author>
+      <name>Ghulam Rasool</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17994v1</id>
+    <title>Judge, Retrieve, or Abstain: Uncertainty-Guarded LLM Judging with Provable Risk Guarantees</title>
+    <updated>2026-08-18T16:42:02Z</updated>
+    <link href="https://arxiv.org/abs/2608.17994v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17994v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Using LLMs as judges has become standard practice for evaluating model outputs at scale. This is particularly common for subjective, open-ended tasks such as assessing helpfulness or alignment, where no single reference answer exists. However, objective tasks introduce a distinct reliability challenge for reference-free LLM judging. In the absence of a reference answer, the judge evaluates factual correctness either through its parametric knowledge or through tool augmentation. Although the former enables efficient evaluation, the judge may hallucinate or lack sufficient evidence for its verdict. Conversely, tool augmentation can provide additional evidence but introduces extra computational cost and requires an appropriate mechanism to determine when and how that evidence should be used reliably. More importantly, neither approach alone provides formal control over the risk of accepted verdicts or guarantees their reliability at a specified level. We propose a risk-controlled framework that calibrates uncertainty thresholds on a held-out set so that the false discovery rate among accepted verdicts remains below a user-specified level~$α$ with high probability, using finite-sample Clopper--Pearson intervals. When the parametric mode is not sufficiently confident, the instance is routed to a retrieval-augmented mode, where the judge gathers web evidence and re-evaluates the instance under a second calibrated threshold. The finite-sample guarantee carries over to this two-threshold routing without additional assumptions. Across open-domain QA benchmarks and judges of varying scales, the framework maintains the target error rate while achieving substantially higher coverage than single-mode baselines.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T16:42:02Z</published>
+    <arxiv:comment>Accepted at Conference on Language Modelling 2026</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Sher Badshah</name>
+    </author>
+    <author>
+      <name>Ali Emami</name>
+    </author>
+    <author>
+      <name>Hassan Sajjad</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17950v1</id>
+    <title>Do Large Language Models Play Six Degrees of Separation? Measuring Topological Compression in Long-Context Manifolds</title>
+    <updated>2026-08-18T16:05:25Z</updated>
+    <link href="https://arxiv.org/abs/2608.17950v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17950v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Large Language Models (LLMs) demonstrate remarkable multi-hop reasoning capabilities over long contexts, yet the internal mechanisms enabling these distant cognitive leaps remain poorly understood. Traditional attention-based interpretability often fails to capture true semantic proximity due to routing artifacts like attention sinks. In this paper, we bypass attention weights to directly analyze the dynamic geometry of the hidden state manifold, proving that deep LLM latent spaces natively organize into Small-World networks. By sparsifying the continuous similarity matrices of long-context representations into unweighted graphs, we trace the connectivity between highly disjoint semantic anchors across two distinct architectures. Our findings reveal a sharp topological phase transition: while early syntactic layers remain entirely fractured, deep reasoning layers abruptly compress massive conceptual distances into highly navigable pathways strictly bounded by the "Six Degrees of Separation" limit (=&lt; 6 semantic hops). Furthermore, we demonstrate the practical efficacy of this framework by applying it to zero-shot hallucination detection within Retrieval-Augmented Generation (RAG) using the RAGognize dataset. We show that factually grounded generations maintain structural integrity with their source context (approximately 3 hops), whereas hallucinations induce severe topological collapse. Ultimately, this work mathematically formalizes how transformers execute abstract reasoning and provides a novel, strictly geometric signature for evaluating factual reliability.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T16:05:25Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Md. Faiyaz Abdullah Sayeedi</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17781v1</id>
+    <title>Preference Is Not Intervention: The Structure and Stability Boundaries of Reader-Specific Evidence Utility</title>
+    <updated>2026-08-18T13:45:17Z</updated>
+    <link href="https://arxiv.org/abs/2608.17781v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17781v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>ML systems increasingly condition decisions on downstream model identity, but this is useful only if model-specific differences form reusable structure rather than input-local interactions. We test this in retrieval-augmented generation (RAG), where evidence utility can be measured under controlled interventions. Holding query, evidence, task, scoring, and intervention fixed, nine readers disagree on effect sign in 33\% of jointly affected cells; reader$\times$query interaction explains 29.8\% of utility variance versus an 8.4\% permutation null; and self-selected evidence improves F1 by $+0.031$ ($t=3.39$). We then ask the sharper question: \emph{which components of this heterogeneity are stable reader properties across queries?} Separating three measurable objects---evidence \emph{activity}, \emph{ordinal preference}, and \emph{conditional signed direction}---we find ordinal reader geometry stable across four independent settings (split-half $ρ=0.60$--$0.83$): leave-one-out interventions, PRISM preferences, RAMDocs, and RAGuard. Signed geometry is task-bounded: weak in open-ended QA (0.14, 0.35), especially for misleading and irrelevant evidence, but strong in binary fact-checking (0.75) with no significant ordinal gap, though still below its sparsity-matched ceiling. Sparsity, decoding noise, and metric artifacts do not explain the main ordinal--signed gap. Finally, stable ordinal similarity fails to predict cross-reader intervention transfer (oracle-distance $ρ=-0.27$; regret reliability $-0.28$). Reader-specific utility exists, but preference is not intervention: stable ranking similarity does not license transfer of help/harm decisions.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T13:45:17Z</published>
+    <arxiv:comment>16 pages, 6 figures, 11 tables</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Shi Zhou</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17587v1</id>
+    <title>Write, Execute, Refine: From Skill Followers to Skill Optimizers via Reinforcement Learning from Execution Feedback</title>
+    <updated>2026-08-18T09:52:48Z</updated>
+    <link href="https://arxiv.org/abs/2608.17587v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17587v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Expert-written natural language skills can improve tool-using agents, yet agent-authored skills perform 8-11 points worse than using no skill. This gap suggests that following procedural guidance and improving it from execution evidence are distinct capabilities. Inference time loops can repair skills but do not improve the model that writes the next one. We study how to organize execution experience from intermediate skills into training states for an optimizer. We introduce WER (Write, Execute, and Refine), a multi-phase framework that trains a Skill Optimizer outside a frozen executor. The optimizer proposes skills, a frozen agent executes each repeatedly, and a programmatic verifier scores the outcomes. The scores provide relative credit and select mixed-outcome records. Matched successful and failed trajectories from these records form the next phase's refinement states, so the optimizer learns from the consequences of its earlier outputs. On BFCL v4 multi-turn and tau2-bench, WER improves average Pass@1 over the no-skill baseline by 7.80 and 3.85 points, respectively. Under an identical refinement workflow, it outperforms the same backbone without optimizer training by 9.35 and 10.29 points. The trained 4B optimizer reaches 76.63 percent on BFCL v4, outperforming all evaluated off-the-shelf general-purpose models used as skill optimizers on average.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T09:52:48Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Kang Peng</name>
+    </author>
+    <author>
+      <name>Zhiwei Zhang</name>
+    </author>
+    <author>
+      <name>Yichen Zhang</name>
+    </author>
+    <author>
+      <name>Zezhong Wang</name>
+    </author>
+    <author>
+      <name>Yiming Du</name>
+    </author>
+    <author>
+      <name>Geng Tu</name>
+    </author>
+    <author>
+      <name>Baojun Wang</name>
+    </author>
+    <author>
+      <name>Bin Liang</name>
+    </author>
+    <author>
+      <name>Ruifeng Xu</name>
+    </author>
+    <author>
+      <name>Kam-Fai Wong</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17550v1</id>
+    <title>Code as Representation: A Compilable Parsing Paradigm for Academic Documents</title>
+    <updated>2026-08-18T09:10:43Z</updated>
+    <link href="https://arxiv.org/abs/2608.17550v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17550v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Academic papers are a primary carrier of scientific knowledge, yet most of this knowledge remains locked in PDFs that are optimized for human reading rather than machine use. For Multimodal Large Language Models (MLLMs), the core challenge is not only perception, but representation: scientific pages interleave text with Structured Academic Elements (SAEs) such as tables, formulas, charts, and pseudocode, whose structure, data, and logic are poorly preserved by common surrogates like Markdown. We therefore propose Compilable Academic Document Parsing (CADP), a paradigm that reconstructs a full page as contextual \LaTeX{} plus executable Python, so that structure-preserving elements and executable chart representations can be reconstructed, recompiled, and directly verified against the source page. To support this setting, we introduce CADP-Bench, an expert-verified benchmark of full academic pages containing tightly coupled text and multiple SAE types, evaluated through a re-injection compilation protocol. We further study current capabilities using SOTA MLLMs and an exploratory multi-agent baseline that incorporates common agentic techniques. Results show that even frontier models still struggle to produce high-fidelity executable reconstructions, highlighting substantial room for improvement in structure-aware scientific document parsing. CADP-Bench is released for future research.</summary>
+    <category term="cs.CV" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T09:10:43Z</published>
+    <arxiv:comment>Accepted by ACM MM 2026</arxiv:comment>
+    <arxiv:primary_category term="cs.CV"/>
+    <author>
+      <name>Rihui Jin</name>
+    </author>
+    <author>
+      <name>Jun Wang</name>
+    </author>
+    <author>
+      <name>chengyuan zhu</name>
+    </author>
+    <author>
+      <name>Liang Mingyu</name>
+    </author>
+    <author>
+      <name>Yue Gao</name>
+    </author>
+    <author>
+      <name>Li Yunxuan</name>
+    </author>
+    <author>
+      <name>Kuicai Dong</name>
+    </author>
+    <author>
+      <name>Guilin Qi</name>
+    </author>
+    <author>
+      <name>Lin Ren</name>
+    </author>
+    <author>
+      <name>Yongrui Chen</name>
+    </author>
+    <author>
+      <name>Xinbang Dai</name>
+    </author>
+    <author>
+      <name>Jiaqi Li</name>
+    </author>
+    <author>
+      <name>Tongtong Wu</name>
+    </author>
+    <author>
+      <name>Gholamreza Haffari</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17536v1</id>
+    <title>CoAL-RAG: A Complexity-Aware Legal Retrieval-Augmented Generation Method</title>
+    <updated>2026-08-18T08:58:11Z</updated>
+    <link href="https://arxiv.org/abs/2608.17536v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17536v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Legal consultation questions exhibit multi-level complexity. A single retrieval strategy often leads to over-reasoning for simple questions and poor interpretability for complex ones, making it difficult to meet the requirements for both answer quality and efficiency in high-risk scenarios. To address this issue, this paper proposes CoAL-RAG, a complexity-aware legal retrieval-augmented generation method, which constructs a multi-dimensional evaluation mechanism based on ``question essence'' and ``retrieval consistency'' to enable adaptive routing of retrieval strategies. First, the reasoning demand is quantified according to the logical structure of the question. Then, the discrepancy between semantic retrieval and keyword retrieval is utilized to indirectly reflect problem complexity, thereby selecting the most appropriate retrieval strategy and dynamically filtering contextual information. Experimental results demonstrate that the proposed method significantly outperforms baseline models not only on Chinese legal benchmarks (SocialLawQA, LawBench) but also demonstrates strong cross-jurisdictional generalization on English datasets (LexGLUE, CaseHold). Specifically, on Chinese datasets, the BLEU score improves by 42.5\% and ROUGE-L reaches 3.6 times that of knowledge graph-based methods. On English benchmarks, CoAL-RAG maintains highly competitive accuracy, achieving an optimal balance between generation quality, deep logical reasoning, and system efficiency across different legal systems.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T08:58:11Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Jin Su</name>
+    </author>
+    <author>
+      <name>Zhuofeng Zhao</name>
+    </author>
+    <author>
+      <name>Huanhuan Wang</name>
+    </author>
+    <author>
+      <name>Hao Chen</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17188v1</id>
+    <title>Token Optimization and Context Window Management in Multi-Agent AI Workflows</title>
+    <updated>2026-08-17T22:56:50Z</updated>
+    <link href="https://arxiv.org/abs/2608.17188v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17188v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Multi-agent AI workflows are limited not only by model quality but by token cost, latency, and context-window quality. This paper presents a practitioner framework for token optimization and context-window management, grounded in an internal production dashboard that extracts structured work items from meetings, email, and chat with LLMs and routes summaries across workstreams. Six patterns are described: context stratification, fetch-once/process-locally architecture, schema-contracted prompts, token-aware fallback chains, semantic caching, and inter-agent communication compression. In production they cut measured cold-load latency to 61-116 seconds (six timed runs) from an operational baseline of roughly 3.5-10.5 minutes, with an estimated 60-70% token reduction. It also reports a controlled context-composition study: 2,420 confirmatory trials across 11 model configurations, using 661 anonymized workplace items scored for relevance. Holding the prompt at a fixed ten items, replacing some high-relevance items with same-domain low-relevance items improves the model's relevance-score concordance on the target items, versus high-relevance items only; we call this relevance-contrast context. In the all-11 paired analysis, the 50:50 signal/noise condition improved relevance accuracy by +0.077 over the 100% condition (naive 95% CI [+0.056, +0.098], Cohen's d = 0.49, Holm-adjusted p &lt; .001, n = 220). These cells are not independent; by the nine model families the effect is +0.084 (95% interval [+0.064, +0.103]), reported as a within-corpus descriptive comparison, not a population inference. A Fusion-of-N follow-up found that learned synthesis did not beat the mechanical set union of item IDs. The contribution is a measured engineering layer between model research and production agent practice: repeatable patterns and evaluation methods for faster, cheaper, more reliable workflows.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T22:56:50Z</published>
+    <arxiv:comment>29 pages (main paper + technical appendix), 3 figures. Also archived on Zenodo: 10.5281/zenodo.21924612</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Dvir Shamay</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17153v1</id>
+    <title>Towards Safer RAG: Only Agents Capable of System 2 Thinking may Access Untrusted Documents</title>
+    <updated>2026-08-17T21:37:20Z</updated>
+    <link href="https://arxiv.org/abs/2608.17153v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17153v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Retrieval-Augmented Generation (RAG) has significantly enhanced the performance of large language models (LLMs), yet these systems remain vulnerable to knowledge-poisoning attacks, in which misinformation in retrieved documents can influence the model's final outputs. Notably, an LLM may correctly detect that a document contains incorrect information while nevertheless being influenced by it. Prior work has addressed this vulnerability through the Cordon Principle, which prevents models responsible for final answer synthesis from directly accessing raw evidence. Although effective, this strict isolation can introduce substantial computational overhead. In this work, we propose a refined security principle: only agents capable of deliberative System 2 reasoning may access untrusted documents. To evaluate this principle, we introduce novel metrics that quantify the discrepancy between misinformation detection and downstream influence. We then empirically compare state-of-the-art reasoning language models with standard language models across these metrics. Our results show that reasoning-capable models are substantially more robust to corrupted evidence, without requiring the strict isolation imposed by the Cordon Principle. These findings provide empirical support for our refined principle and suggest a more practical foundation for secure RAG system design.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T21:37:20Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Mehrdad Ghassabi</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17051v1</id>
+    <title>Institution-Specific LLM Prompting Recovers PHI That De-identification Systems and Their Gold Standards Both Miss</title>
+    <updated>2026-08-17T18:56:04Z</updated>
+    <link href="https://arxiv.org/abs/2608.17051v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17051v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Secondary use of electronic health records requires de-identification, yet existing systems miss \emph{institutionally situated} protected health information (PHI) such as hospital abbreviations, building names, and internal codes whose status is locally determined. We ask whether large language models (LLMs) with in-context learning (ICL) can close this gap and control the precision--recall trade-off.
+  On 100 annotated pediatric oncology notes (5,322 PHI spans) from Texas Children's Hospital, we benchmarked eight LLMs against two purpose-built systems (Stanford TiDE, OpenMed PII) and two pattern-based baselines. Each LLM ran under three prompts of increasing specificity: (1) a HIPAA-aligned baseline, (2) baseline plus the institutional PHI categories it missed, and (3) prompt 2 plus instructions against over-redacting clinical content. We then compared 14~multi-agent and ensemble configurations against the best single prompt, with recall the primary safety metric.
+  LLMs outperformed the purpose-built systems (best F1=0.918$\pm$0.001 vs.\ TiDE 0.779), with advantages concentrated in contextual categories. Naming the missed categories recovered 79\% (48/61) of them, and discouraging over-redaction restored precision. No agentic architecture beat calibrated single-pass prompting (F1 0.906--0.907), but LLM outputs surfaced 414~candidate annotation gaps; re-annotation confirmed 227~PHI spans, against which the final prompt reached recall=0.981 (F1=0.907$\pm$0.002).
+  Well-calibrated ICL resolves both the institutional PHI gap and the precision--recall trade-off in one LLM call per note. LLMs cost more to run than traditional methods, but that cost buys a way to audit the reference standard.
+  LLMs are a legitimate, adaptable alternative to purpose-built de-identification systems; institution-specific prompt development should be the primary adaptation strategy.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T18:56:04Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Daniel Palacios</name>
+    </author>
+    <author>
+      <name>Matthew Brady Neeley</name>
+    </author>
+    <author>
+      <name>Angel Adetomike Otto</name>
+    </author>
+    <author>
+      <name>Shalini Dhamodharan</name>
+    </author>
+    <author>
+      <name>John P. Woodhouse</name>
+    </author>
+    <author>
+      <name>Chi-fan Lin</name>
+    </author>
+    <author>
+      <name>Mark Zobeck</name>
+    </author>
+    <author>
+      <name>Zhandong Liu</name>
+    </author>
+    <author>
+      <name>Hyun-Hwan Jeong</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16831v1</id>
+    <title>Policy Iteration with Human Feedback: Bringing Post-Training RL to In-context Learning</title>
+    <updated>2026-08-17T17:16:43Z</updated>
+    <link href="https://arxiv.org/abs/2608.16831v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16831v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Generative pretraining established reusable task representations; later work on language-based task conditioning and in-context learning showed that a fixed model could adapt its behavior from instructions and demonstrations. Policy Iteration with Human Feedback (PIHF) builds on this development and the recurrent evaluate-and-improve structure of generalized policy iteration. PIHF uses a pretrained language model as its execution substrate and moves persistent revision to a versioned natural-language policy and tool set. A language-model critic and clinical expert review complete-panel reasoning and tool-use trajectories to localize recurrent failures and form candidate revisions; the expert may reinterpret the evidence and retains authority over admission and rollback, while Recall@1 and Recall@5 validate outcomes after candidate execution.
+  Across cumulative ablations and ultra-rare-disease benchmarks, a PIHF-derived policy improved Recall@1 in one proprietary executor and three open-weight executors spanning 3 to 49 billion active parameters. Gains were 32.7 percentage points for GPT-5.4 and 31.1 points for Qwen3.6-35B, a difference of 1.7 points. These results support the feasibility of using pretrained language models as fixed-weight execution substrates for expert-guided policy development in rare-disease diagnosis.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T17:16:43Z</published>
+    <arxiv:comment>PIHF method paper</arxiv:comment>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Minh-Ha Nguyen</name>
+    </author>
+    <author>
+      <name>Cathy Shyr</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16645v2</id>
+    <title>Reconstruction: A Blind Benchmark for Recovering Research Ideas from Pre-Publication Bibliographies</title>
+    <updated>2026-08-19T00:55:47Z</updated>
+    <link href="https://arxiv.org/abs/2608.16645v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16645v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Can a language model recover the true research idea of a published paper when given only that paper's pre-publication bibliography? We introduce Reconstruction, a blind idea-recovery benchmark that withholds the seed paper and all contemporaneous or future literature, and asks models to propose hypotheses that an independent large language model judge matches against the held-out ground-truth idea. A strict anti-leakage protocol-temporal citation cutoff, anonymous reference IDs, and frozen per-paper bibliographies, which prevents prompt-time leakage of the seed idea. Across six scientific domains and 643 evaluated papers, seven frontier models achieve only modest Match rates (approx. 3-15%). We then evaluate a reference-only multi-agent (top 4) pipeline that combines cross-model review with a Swiss tournament over aligned hypothesis slots, without external web search. Cross-model review plus tournament selection raises Match rates to approx. 23-42% across all six domains, which is an observed approx. 2.4x lift over the best single-model baseline. This draft reports the protocol, anti-leakage design, and current results as an arXiv timestamp.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.MA" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T14:44:30Z</published>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Shaolong Chen</name>
+    </author>
+    <author>
+      <name>Yanlin Fei</name>
+    </author>
+    <author>
+      <name>Nazhou Liu</name>
+    </author>
+    <author>
+      <name>Xinmiao Yu</name>
+    </author>
+    <author>
+      <name>Lei Li</name>
+    </author>
+    <author>
+      <name>Rahul Thapa</name>
+    </author>
+    <author>
+      <name>Madalina Ciobanu</name>
+    </author>
+    <author>
+      <name>Qingqing Mao</name>
+    </author>
+    <author>
+      <name>Ritankar Das</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16620v2</id>
+    <title>Palmyra x6 Technical Report: An Agentic, Tool-Use Model Post-Trained via Anchored Supervised Fine-Tuning</title>
+    <updated>2026-08-18T15:12:20Z</updated>
+    <link href="https://arxiv.org/abs/2608.16620v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16620v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Palmyra x6 is a large language model optimized for use with enterprise-oriented agentic tasks. The model was built by post-training a Mixture-of-Experts base model with Anchored Supervised Fine-Tuning on a compact corpus of verified, synthetic tool-use trajectories, optimized with a Muon + Adam hybrid. The recipe is deliberately conservative and deliberately controlled: 626 trajectories, a single epoch, a low learning rate, and a KL anchor to the frozen base. The model shows substantial gains over the previous default model for Writer Agent, and compares favorably with several recent models on public benchmarks, scoring the highest on BFCL Core at $0.785$ and posts the highest six-benchmark mean of the cohort. Furthermore, the model has shown itself to be competitive or leading relative to comparators in our bias and safety evaluations.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T14:21:03Z</published>
+    <arxiv:comment>12 pages</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Peng Du</name>
+    </author>
+    <author>
+      <name>Kiran Kamble</name>
+    </author>
+    <author>
+      <name>Rakshith Vasudev</name>
+    </author>
+    <author>
+      <name>Zhizhuo Yang</name>
+    </author>
+    <author>
+      <name>Rohith Nadimpally</name>
+    </author>
+    <author>
+      <name>Arjun Krishna</name>
+    </author>
+    <author>
+      <name>Waseem Alshikh</name>
+    </author>
+    <author>
+      <name>Daniel M. Bikel</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16536v1</id>
+    <title>DSPrompt: Dynamic Soft Prompt Defense Against M-RAG Corruption</title>
+    <updated>2026-08-17T13:11:51Z</updated>
+    <link href="https://arxiv.org/abs/2608.16536v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16536v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Multimodal Retrieval Augmented Generation (M-RAG) is increasingly vulnerable to adversarial attacks where malicious data are crafted to produce embeddings that align with benign entries in the vector space, deceiving retrieval and inducing harmful outputs. Existing defenses primarily operate at query time, relying on auxiliary detectors, similarity re-ranking, or feature-consistency checks. However, these approaches suffer from non-trivial inference overhead, generalize poorly to unseen attack strategies, and often assume specific attack distributions. To address this, we propose DSPrompt, a Dynamic Soft Prompt defense framework that directly reshapes the retriever's embedding semantics, without modifying the retrieval pipeline. It inserts few learnable soft prompts into each layer of the visual and textual encoders of a frozen retriever, utilizing a shallow-to-deep length schedule that is adaptive to the capacity in the model layers. These prompts are trained under a dynamic min-max scheme: an online multimodal attacker continually crafts hard adversarial documents against the current retriever, while the defender is updated to push such documents out of the top-k while preserving the ranking and diversity of benign evidence. Because the defended encoder can be pre-computed and indexed exactly as in standard dense retrieval, DSPrompt incurs no additional per-query optimization and introduces fewer than 1% additional parameters. Extensive experiments across four benchmarks and three representative poisoning attacks show that DSPrompt substantially reduces the attack success rate and poison retrieval rate while maintaining near-lossless retrieval utility and generation fidelity, consistently outperforming existing defense baselines at a fraction of their computational cost.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T13:11:51Z</published>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Chang Liu</name>
+    </author>
+    <author>
+      <name>Yuni Lai</name>
+    </author>
+    <author>
+      <name>Mingyue Cui</name>
+    </author>
+    <author>
+      <name>Cong Tian</name>
+    </author>
+    <author>
+      <name>Yunyan Zhang</name>
+    </author>
+    <author>
+      <name>Xian Wu</name>
+    </author>
+    <author>
+      <name>Kai Zhou</name>
+    </author>
+    <author>
+      <name>Bin Xiao</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16515v1</id>
+    <title>When Context Misleads: Intent-Guided Decoding for Robust Retrieval-Augmented Generation</title>
+    <updated>2026-08-17T12:56:43Z</updated>
+    <link href="https://arxiv.org/abs/2608.16515v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16515v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Retrieval-augmented generation (RAG) improves large language models by grounding generation in external evidence, but it also introduces a source trust problem: retrieved context may be useful, irrelevant, or even misleading. Existing RAG systems often apply a fixed trust policy toward retrieved evidence, which can either over-trust incorrect context or underuse context when the user explicitly asks for context-following behavior. Therefore, we propose Intent-Guided Decoding (IGD), a framework that arbitrates between retrieved context and parametric memory according to user intent. IGD uses answer-level filtering and token-level correction to steer the final decoding trajectory between retrieved context and parametric memory. We evaluate IGD on three faithful QA benchmarks and three factual-conflict benchmarks across five LLMs, IGD substantially improves factual recovery, achieving gains of up to 65.4 percentage points on factual-conflict benchmarks over Direct RAG, while preserving or improving strict context-following behavior, this findings highlight the importance of balancing factuality and faithfulness in RAG.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T12:56:43Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Haolin Jin</name>
+    </author>
+    <author>
+      <name>Pengyue Yang</name>
+    </author>
+    <author>
+      <name>Huaming Chen</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16417v1</id>
+    <title>D2-ScaleAgent: Dual-Dimensional Scaling for Long Document Understanding</title>
+    <updated>2026-08-17T11:15:27Z</updated>
+    <link href="https://arxiv.org/abs/2608.16417v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16417v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Multi-modal retrieval-augmented generation (RAG) is a key technique for visually rich long document understanding. Existing multi-modal RAG methods are progressively advancing toward multi-agent systems: they first retrieve relevant pages based on a query, and then iteratively understand information within those pages. However, these methods typically rely on fixed workflows and lack the ability to dynamically scale computation at test time, often leading to insufficient evidence. To address this, we propose D2-ScaleAgent, an agentic framework that introduces a dual-dimensional scaling paradigm for retrieval and reasoning. The core of D2-ScaleAgent is a Verifier agent-driven dynamic routing loop based on the intrinsic difficulty of the query, centered around a continuously updated evidence bank that serves as the agent's dynamic working memory: when retrieval needs to be expanded, the agent routes outward (retrieval scaling), decomposing the query into attributes and performing parallel page retrieval, followed by adaptive pruning to ensure comprehensive evidence coverage. When fine-grained reasoning is required, the agent routes inward (reasoning scaling), dynamically selecting sub-agents with varying granularity and count to extract evidence from pages. Finally, D2-ScaleAgent achieves logical closure over the evidence chain. Extensive experiments demonstrate that D2-ScaleAgent is effective on long and visually rich document benchmarks like MMLongBench-Doc, LongDocURL, etc.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T11:15:27Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Hao Zhang</name>
+    </author>
+    <author>
+      <name>Longrong Yang</name>
+    </author>
+    <author>
+      <name>Lunhao Duan</name>
+    </author>
+    <author>
+      <name>Ziyang Wang</name>
+    </author>
+    <author>
+      <name>Qing-Guo Chen</name>
+    </author>
+    <author>
+      <name>Shanshan Zhao</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16286v1</id>
+    <title>Clause Encounters of the Third Kind: Can LLMs Replace Language Teachers?</title>
+    <updated>2026-08-17T08:58:30Z</updated>
+    <link href="https://arxiv.org/abs/2608.16286v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16286v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>While various organizations now actively encourage LLM use in classrooms, we still lack rigorous, systematic evaluations of how well these models actually perform the fundamental tasks of language pedagogy. This paper examines whether state-of-the-art LLMs can deliver the kind of corrective feedback and methodological explanations that language learners need. The study tests multiple large language models on their ability to identify, correct, and explain common learner mistakes in English, by systematically varying model parameters to investigate how these technical adjustments affect output quality, pedagogical clarity, and consistency, along with using retrieval-augmented generation to query methodological data. The evaluation employs automated metrics (GLEU, BERTScore) but also human expert judgments to capture dimensions that purely computational measures miss: linguistic nuance, cultural sensitivity, and instructional appropriateness. While models demonstrate impressive surface-level correction abilities, their explanations often lack the terminological and domain knowledge that effective language teaching requires, suggesting that current enthusiasm for AI-assisted language learning may be outpacing our understanding of these systems' actual pedagogical competence.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T08:58:30Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <arxiv:journal_ref>Oxford Intersections: AI in Society (Oxford, online edn, Oxford Academic, 20 Mar. 2025 - )</arxiv:journal_ref>
+    <author>
+      <name>Kristina Šekrst</name>
+    </author>
+    <author>
+      <name>Ana Kovačić</name>
+    </author>
+    <arxiv:doi>10.1093/9780198945215.003.0252</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1093/9780198945215.003.0252" title="doi"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16185v2</id>
+    <title>LENS: In-Context Search via Latent Evidence Exploration over Dynamic Raw Documents</title>
+    <updated>2026-08-18T06:51:13Z</updated>
+    <link href="https://arxiv.org/abs/2608.16185v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16185v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>LLM agents increasingly answer questions over dynamic raw-document collections, where files may change before preprocessing, and relevant evidence (spans, sections, pages, or tables) is query-dependent. Existing retrieval-augmented approaches pre-materialize evidence via fixed chunking, embeddings, or persistent indexes: effective for lookup, yet costly, stale-prone, and committed to a granularity before the query is known.
+  We formulate in-context search as Budgeted Evidence Localization over a latent evidence space induced by dynamic raw documents and propose LENS (Latent Evidence Exploration and Search), an index-free framework. Instead of pre-materializing the evidence space, LENS maintains a query-conditioned belief over candidate units, iteratively selecting candidates via complementary lexical, local, and exploratory proposal policies, updating the belief via an LLM relevance oracle, and narrowing toward high-posterior regions under a controllable budget. Evidence is consolidated into compact, source-grounded regions of interest and compressed into self-organizing knowledge clusters reused across related queries.
+  On a controlled 500-question evaluation with matched corpus snapshots, LENS reaches 62.4% exact match and 84.8% evidence recall vs. 65.2% exact match but 50.4% evidence recall for a ReAct-style baseline. Across scales, LENS gives the strongest supporting-fact localization and answer grounding. On a fixed 150-question fullwiki subset over the raw Wikipedia dump with zero indexing, LENS and ReAct are nearly tied in official answer quality (43.3% vs. 42.7% EM), with LENS grounding more answers in retrieved evidence (84.0% vs. 70.7%). A no-retrieval Closed-Book reference highlights the contribution of model memory. LENS is query-ready after corpus changes, needs no preprocessing or persistent index, and preserves source-grounded evidence localization throughout.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T07:04:25Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Xingjun Wang</name>
+    </author>
+    <author>
+      <name>Gongsheng Li</name>
+    </author>
+    <author>
+      <name>Qi Fan</name>
+    </author>
+    <author>
+      <name>Yunlin Mao</name>
+    </author>
+    <author>
+      <name>Luyan Su</name>
+    </author>
+    <author>
+      <name>Yingda Chen</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16068v1</id>
+    <title>CAPO: Constraint-Aware Prompt Optimization for LLM Agents</title>
+    <updated>2026-08-17T04:01:04Z</updated>
+    <link href="https://arxiv.org/abs/2608.16068v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16068v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Large language models (LLMs) are increasingly deployed as agents that rely on system prompts to use tools and complete tasks. Such deployments impose distinct operational requirements, including appropriate tool use, concise prompts and solution paths, and compliance with safety and formatting policies. For many practitioners, however, assembling domain-specific supervised data to post-train models to meet these requirements is infeasible. We introduce CAPO (Constraint-Aware Prompt Optimization), a primal-dual method that combines pool-based rewrites with adaptive constraint weighting to optimize system prompts under explicit operational constraints. Across agentic benchmarks, CAPO more reliably reaches empirically feasible operating points while improving task performance. CAPO also generalizes beyond agentic settings, achieving strong results on assistant-style evaluations with output-format and safety/privacy constraints. We further introduce DCAPO (Dynamically Trained CAPO), which trains a feedback- and dual-conditioned rewriter with pool-based GRPO while keeping the task agent frozen. Across task agents of different sizes, DCAPO produces a feasible prompt in every evaluated domain and matches or improves the task accuracy achieved by the evaluated baselines. A surrogate analysis characterizes how finite-pool and discrete-rewrite errors enter the inexact primal-dual procedure.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T04:01:04Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Victor Ye Dong</name>
+    </author>
+    <author>
+      <name>Reid Pryzant</name>
+    </author>
+    <author>
+      <name>Yi Liu</name>
+    </author>
+    <author>
+      <name>Jian Jiao</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16044v1</id>
+    <title>Coverage Is Not Containment: A Fundamental Limit of Admission-Time Defenses Against Coordinated Poisoning of Vector Retrieval</title>
+    <updated>2026-08-17T03:18:51Z</updated>
+    <link href="https://arxiv.org/abs/2608.16044v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16044v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Retrieval-augmented generation (RAG) answers a question by retrieving passages from a vector store and trusting them as context, so anyone who can add documents can try to steer the answer. A recent, appealing defense filters poisoning at ingestion, rejecting any document that behaves like a hub. We show it -- and every ingestion-time filter -- is defeated by a coordinated adversary that injects a handful of individually unremarkable documents which together surround one target query and seize its top-k (on BGE-large / BEIR, m=10 documents take 10/10; 9.9/10 on a live HNSW index). The attack is not theoretical. Realized as ordinary fluent text and run end-to-end through a BGE-large + HNSW + Qwen2.5-7B pipeline, it makes the generator emit the attacker's planted claim in 88% of targets, versus 0% without the injection. And no admission-time defense stops it: at ingestion an attack cone is geometrically identical to a legitimate niche upload, so -- measuring this directly -- the strongest trained classifier, given every feature and thousands of examples, separates the two no better than chance, catching 4.2% of attacks at a 1% false-positive rate. We prove this limit for the entire class of ingestion-time statistics (any decision from documents and reference queries alone), and it reproduces -- and worsens -- across two corpora and five encoders. The one signal that separates an attack from legitimate niche ingestion -- a query's demand -- is invisible before retrieval, which is also the escape: a retrieval-time detector that observes demand catches 100% of the attacks at the same 1% false-positive rate. Coverage of the query space by an admission gate is not containment of coordinated poisoning; robust defense must move past the front door, to demand.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.IR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T03:18:51Z</published>
+    <arxiv:comment>10 pages, 9 figures. Preprint; under submission</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Prashant Kumar Pathak</name>
+    </author>
+    <author>
+      <name>Tarun Kumar Sharma</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.15844v1</id>
+    <title>MicroVerse: An Instrument for Measuring Self-Authored Identity Drift in Long-Horizon Multi-Agent Language-Model Simulations</title>
+    <updated>2026-08-16T16:31:42Z</updated>
+    <link href="https://arxiv.org/abs/2608.15844v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.15844v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Long-horizon, multi-agent language model (LM) simulations are widely proposed for studying social behavior, yet instruments to measure whether persona-conditioned agents maintain identity fidelity under sustained pressure are lacking. We present MicroVerse, a behavioral-science instrument that measures identity drift in generative agents. Agents carry an immutable "soul file" (core values, moral boundaries, personality, goals) and inhabit a resource-scarce 50 x 50 environment where water is a non-respawning survival constraint. Scarcity is operationalized via a per-tick existence-cost gradient. The eight-verb action space maps directly to moral boundaries (trade, talk, attack, scavenge). Using a three-layer memory architecture, agents periodically revise a mutable current identity against their immutable original soul via importance-triggered reflection. To mitigate survivor bias, MicroVerse decouples measurement from behavior using uniform longitudinal engine snapshots every N ticks alongside a forced-end snapshot of all living and dead agents. Identity drift is scored offline using a paraphrase-aware, value-anchored, multi-register diff rather than raw cosine similarity. We evaluate the instrument via a controlled seed run (n = 25) and a reflection-threshold sweep (thresholds {40, 80, 150}) to determine if drift dynamics are gate artifacts or threshold-robust properties. We report two primary findings: (1) Anti-self-deception emerges unprompted as the single largest semantic category of identity modification (27 of 111 added boundaries, 24%). (2) The system is threshold-robust; lower gates accelerate and increase revision frequency but preserve drift direction. All empirical results are strictly preliminary existence proofs and effect shapes (one model, one seed per arm, n = 25) rather than statistical significance claims.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-16T16:31:42Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Sky Ng</name>
+      <arxiv:affiliation>Eliza</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Brihi Joshi</name>
+      <arxiv:affiliation>Eliza</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Ishan Gupta</name>
+      <arxiv:affiliation>Eliza</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Shirley Huang</name>
+      <arxiv:affiliation>Eliza</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Zonglin Di</name>
+      <arxiv:affiliation>Eliza</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Yun Shen</name>
+      <arxiv:affiliation>Eliza</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Qianfeng Wen</name>
+      <arxiv:affiliation>Eliza</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Yifan Simon Liu</name>
+      <arxiv:affiliation>Eliza</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Ruoqi Gao</name>
+      <arxiv:affiliation>Eliza</arxiv:affiliation>
+    </author>
+    <author>
+      <name> Yilan</name>
+      <arxiv:affiliation>Eliza</arxiv:affiliation>
+    </author>
+    <author>
+      <name> Fan</name>
+      <arxiv:affiliation>Jaden</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Zhiwei Zhang</name>
+      <arxiv:affiliation>Jaden</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Muhammad Ahmed Mohsin</name>
+      <arxiv:affiliation>Jaden</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Yucheng Lu</name>
+      <arxiv:affiliation>Jaden</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Xiaoyi Liu</name>
+      <arxiv:affiliation>Jaden</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Heming Liu</name>
+      <arxiv:affiliation>Jaden</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Qianyu Zhu</name>
+      <arxiv:affiliation>Jaden</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Hanwen Xing</name>
+      <arxiv:affiliation>Jaden</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Zhengyang Shan</name>
+      <arxiv:affiliation>Jaden</arxiv:affiliation>
+    </author>
+    <author>
+      <name>My Chiffon Nguyen</name>
+      <arxiv:affiliation>Jaden</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Guanghui Min</name>
+      <arxiv:affiliation>Jaden</arxiv:affiliation>
+    </author>
+    <author>
+      <name> Jianheng</name>
+      <arxiv:affiliation>Jaden</arxiv:affiliation>
+    </author>
+    <author>
+      <name> Hou</name>
+      <arxiv:affiliation>Lorenzo</arxiv:affiliation>
+    </author>
+    <author>
+      <name> Yunze</name>
+      <arxiv:affiliation>Lorenzo</arxiv:affiliation>
+    </author>
+    <author>
+      <name> Xiao</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Keyang Xuan</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Hannah Collison</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Jintao Huang</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Jiatong Li</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Sankalp Jajee</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Yunhan Zhao</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Bing Hu</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Xupeng Chen</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Binghang Lu</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Weihang Xiao</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Aravind Mohan</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Bolun Sun</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Yunshu Wu</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Yuanda Xu</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Runyu Zhang</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Zheyuan Deng</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name> Xinchen</name>
+      <arxiv:affiliation>Cara</arxiv:affiliation>
+    </author>
+    <author>
+      <name> Tan</name>
+    </author>
+    <author>
+      <name>Dianzhuo Wang</name>
+    </author>
+    <author>
+      <name>Yijun Wang</name>
+    </author>
+    <author>
+      <name>Yixuan He</name>
+    </author>
+    <author>
+      <name>Koutian Wu</name>
+    </author>
+    <author>
+      <name>Cheng Cheng</name>
+    </author>
+    <author>
+      <name>Xiaomin Li</name>
+    </author>
+    <author>
+      <name>Yuexing Hao</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.15547v1</id>
+    <title>BengaliMCQ: Automatic Generation and Answer Prediction of Academic Multiple-Choice Questions in a Low-Resource Language</title>
+    <updated>2026-08-16T05:44:52Z</updated>
+    <link href="https://arxiv.org/abs/2608.15547v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.15547v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Traditional retrieval-augmented generation (RAG) frameworks process documents without attending to their hierarchical structure, leading to poor performance, especially in low-resource languages such as Bengali. To address this, we propose a structure-aware RAG framework that models Bengali textbooks as hierarchical graphs and uses a contrastively trained graph neural network to retrieve a small set of relevant passages. These passages provide focused context for a large language model, enabling topic-specific multiple-choice question (MCQ) generation and in-domain answer prediction. Experimental results demonstrate that our framework outperforms strong dense retrieval baselines across retrieval metrics, produces more relevant MCQs, and achieves superior answer prediction accuracy.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-16T05:44:52Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Abu Tarabin Surzo</name>
+    </author>
+    <author>
+      <name>A. K. M. Nihalul Kabir</name>
+    </author>
+    <author>
+      <name>Sm Azmain Faysal</name>
+    </author>
+    <author>
+      <name>Ariana Haque Ami</name>
+    </author>
+    <author>
+      <name>Lawrence Amlan Gomes</name>
+    </author>
+    <author>
+      <name>Farig Sadeque</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.15032v1</id>
+    <title>Handoff-H1: An Orchestrated Vision-Agent System for Material Quantity Takeoff from Construction Blueprints</title>
+    <updated>2026-08-15T04:34:51Z</updated>
+    <link href="https://arxiv.org/abs/2608.15032v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.15032v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Converting a set of architectural blueprints into a complete material quantity takeoff requires visual perception across drawing sheets, dimensional and multi-hop reasoning, and grounding in construction conventions that the drawings never state. We present Handoff-H1, a takeoff system built from three layers: purpose-built computer-vision models that extract primitives; tool-using agents equipped with image operations and in-house visual-task tools, including CV-model-backed counting, detection and plan decomposition; and a persistent, hierarchically structured project foundation, grounded in a curated construction knowledge base. We evaluate on the Construction Blueprint Takeoff Benchmark: 10 real residential blueprint sets paired with consensus-validated expert takeoffs - 2,009 verified line items, restricted for scoring to the 1,348 primary-tier materials that drive an estimate - scored per trade by an LLM judge on material coverage and quantity Precision@25% (P@.25) and combined into a weighted composite. Under identical scoring from the raw PDF, seven frontier and open-weight models span composites of 35-61, and independent professional estimators - scored against the same reconciled gold standard - post 77.6% (65.5% coverage, 87.9% P@.25). Handoff-H1, working end-to-end from the raw PDF, reaches 81.6% (86.1% coverage, 78.8% P@.25): roughly 20 points above the strongest frontier agent, and above the independent estimators by pairing near-human quantity precision with coverage they do not reach. The evaluation harness is public for the open harbor framework; the blueprint sets and ground truth are available upon request for research use.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CV" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-15T04:34:51Z</published>
+    <arxiv:comment>15 pages, 7 figures. Evaluation harness available on https://github.com/handoffai/residential-takeoff-benchmark/. Request data via e-mail to research@handoff.ai</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Bruno Chicelli</name>
+    </author>
+    <author>
+      <name>Henrique Alves</name>
+    </author>
+    <author>
+      <name>Rodrigo Anselmo</name>
+    </author>
+    <author>
+      <name>Joshua Weinberg</name>
+    </author>
+    <author>
+      <name>Felipe Lemos</name>
+    </author>
+    <author>
+      <name>Jan Baryla</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.14927v1</id>
+    <title>LLMs Can Predict Failure Risk, But Struggle to Predict Which Collaboration Protocol Pays Off: Cost-Aware Protocol Routing Across Reasoning Tasks</title>
+    <updated>2026-08-14T22:35:37Z</updated>
+    <link href="https://arxiv.org/abs/2608.14927v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.14927v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Multi-agent large language model (LLM) systems can improve reasoning by spending more computation, but deployment requires deciding when extra collaboration is worth its cost. We isolate this decision by running every problem under four protocols while holding the solver fixed within each setting: direct solving (Baseline), iterative self-correction (Single), planner-executor-reviewer collaboration (PER), and multi-agent deliberation (Broadcast). The primary benchmark comprises 4,181 competition-level math problems; paired robustness checks cover four benchmarks spanning competition math, biology, and broader science with two solver families. Across fixed policies, trained routers, and frozen LLM routers, conservative policies under-escalate, whereas higher-solve frozen routers often over-escalate. A post-answer, pre-collaboration gpt-oss-120b probe ranks Baseline failures with 0.8847 AUROC (4,151 parseable cases; 95% CI [0.8732, 0.8955]). The same score remains informative for predicting whether any collaboration helps (0.7683 AUPRC), but is much weaker for identifying PER- or Broadcast-specific value (0.1674 and 0.1041 AUPRC). Separately, the pre-answer self-confidence gate reaches 78.0% solve at 45K tokens, compared with 73.8% at 71.3K for a frozen gpt-oss-120b router and 92.4% for a retrospective fixed-order oracle. Across 10 paired model-condition settings, the oracle adds 23.2-58.3 points of retrospective coverage over Baseline, but protocol profiles vary by task. In the six settings with held-out router evaluations, oracle gaps remain 18.5-28.9 points. Confidence can therefore support initial escalation, while protocol-specific cost-aware routing remains unresolved.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T22:35:37Z</published>
+    <arxiv:comment>23 pages, 6 figures; includes appendices and ancillary aggregate-result CSV files</arxiv:comment>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Chih-Hsuan Yang</name>
+    </author>
+    <author>
+      <name>Jingyan Jiang</name>
+    </author>
+    <author>
+      <name>Cheng-Hau Yang</name>
+    </author>
+    <author>
+      <name>Vikram Vasudevan</name>
+    </author>
+    <author>
+      <name>Huihuo Zheng</name>
+    </author>
+    <author>
+      <name>Venkatram Vishwanath</name>
+    </author>
+    <author>
+      <name>Rajeev Thakur</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.14375v1</id>
+    <title>Wrong but Useful: Trajectory Value Beyond Answer Correctness in Multi-Agent Messages</title>
+    <updated>2026-08-14T15:16:57Z</updated>
+    <link href="https://arxiv.org/abs/2608.14375v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.14375v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Multi-agent reasoning systems often use agreement, confidence, or automated scores to decide which messages should shape a final answer. Such filtering assumes that a message likely to be correct is also worth keeping. Yet a wrong answer can contain a useful decomposition, constraint, or scientific principle. We test this distinction with Diverse Hypothesis Deliberation (DHD), a controlled measurement protocol that caches five independently generated messages and replays the same downstream solver, called the integrator, with each message available or hidden. The replay comparison measures a message's trajectory value: whether making the message available helps or harms subsequent reasoning. Across five mathematics and science benchmarks and two openly available model families, gpt-oss-120b and gemma-4-31B-it, wrong-helpful messages appear in every benchmark-model combination. Among wrong-answer messages that change final correctness, more than four in ten changes are helpful in each model. Controlled repeats show that the number of repeatable message effects is unlikely to arise from replay variation alone (p=0.0002). A focused intervention on repeatable wrong-helpful messages finds that the complete message works best, while retaining its reasoning preserves more success than retaining only its answer; the source of the complete-message advantage remains open. Within the same problem, repeated trajectory-value evidence also identifies a better keep-or-remove choice than answer correctness alone. Answer correctness is therefore informative but does not determine trajectory value. DHD measures this missing property and produces reusable labels for learning when agents should listen.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T15:16:57Z</published>
+    <arxiv:comment>24 pages, 9 figures. Includes an appendix and an ancillary reproducibility artifact</arxiv:comment>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Chih-Hsuan Yang</name>
+    </author>
+    <author>
+      <name>Anjir Ahmed Chowdhury</name>
+    </author>
+    <author>
+      <name>Cheng-Hau Yang</name>
+    </author>
+    <author>
+      <name>Weijian Zheng</name>
+    </author>
+    <author>
+      <name>Fernando Llorente</name>
+    </author>
+    <author>
+      <name>Xiaolong Ma</name>
+    </author>
+    <author>
+      <name>Xinyang Li</name>
+    </author>
+    <author>
+      <name>Eliu A. Huerta</name>
+    </author>
+    <author>
+      <name>Ian T. Foster</name>
+    </author>
+    <author>
+      <name>Rajeev Thakur</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.14210v1</id>
+    <title>How Much Do Legal RAG Systems Still Hallucinate?</title>
+    <updated>2026-08-14T11:39:17Z</updated>
+    <link href="https://arxiv.org/abs/2608.14210v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.14210v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Hallucination is a major challenge for retrieval-augmented generation (RAG) systems in the legal domain, where ungrounded answers can lead to serious consequences. To better understand this problem, we conduct a fine-grained analysis of hallucination behavior in eight legal RAG systems across two legal corpora, the GDPR (in English) and a national civil law (in French). Using claim-level and answer-level evaluation, we report on hallucination density and severity, analyze performance across question categories and user personas, and validate our findings on an independent set of 142 legal-expert-authored questions. Our results show that hallucinations remain pervasive, ranging from less than 10% of responses for the best-performing systems to nearly half in the worst case. We further find that false-premise questions, containing incorrect assumptions that must be rejected, produce high hallucination rates on the manually-drafted questions.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T11:39:17Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Souvick Das</name>
+    </author>
+    <author>
+      <name>Sallam Abualhaija</name>
+    </author>
+    <author>
+      <name>Domenico Bianculli</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.14055v1</id>
+    <title>HERMES: a multi-agent framework for structured knowledge extraction from ultra-long documents in geoscience</title>
+    <updated>2026-08-14T07:59:58Z</updated>
+    <link href="https://arxiv.org/abs/2608.14055v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.14055v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Authoritative scientific knowledge in geoscience remains largely trapped in legacy monographs and historical literature, where unstructured text and complex layouts hinder computational access. We introduce HERMES, a scalable multi-agent framework that extracts structured data from ultra-long scientific documents. Using a coordinating large language model, HERMES integrates domain constraints, validation rules and evidence tracing within a unified document-level extraction process that incorporates parsed text, tables, figures and captions. Applied to the 55-volume Treatise on Invertebrate Paleontology, the system produced a structured database of 32,277 fossil taxonomic entities and 451,878 attributes, released online at https://treatise.geolex.org. Extraction performance remained stable across fossil groups (average F1 scores of approximately 0.90 for entities and 0.91 for attributes), improving per-volume efficiency approximately sixfold relative to the tested fully manual baseline. Evaluation in palaeomagnetism and geochemistry, conducted without additional model training, demonstrated transfer across distinct geoscience domains. This work provides a practical pathway to transform historical scientific literature into FAIR-oriented structured data, offering a sustainable infrastructure for data-intensive disciplines and large-scale knowledge integration.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T07:59:58Z</published>
+    <arxiv:comment>31-page main manuscript with 6 figures and 3 tables; supplementary information included</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Ziqi Song</name>
+    </author>
+    <author>
+      <name>Zongyuan Xiang</name>
+    </author>
+    <author>
+      <name>James G. Ogg</name>
+    </author>
+    <author>
+      <name>Bruce S. Lieberman</name>
+    </author>
+    <author>
+      <name>Gabi Ogg</name>
+    </author>
+    <author>
+      <name>Natalia López Carranza</name>
+    </author>
+    <author>
+      <name>Wen Du</name>
+    </author>
+    <author>
+      <name>Yufei Ye</name>
+    </author>
+    <author>
+      <name>Shuan Li</name>
+    </author>
+    <author>
+      <name>Zhong Peng</name>
+    </author>
+    <author>
+      <name>Shaoqi Yu</name>
+    </author>
+    <author>
+      <name>Juye Wei</name>
+    </author>
+    <author>
+      <name>Ying Zhou</name>
+    </author>
+    <author>
+      <name>Jieping Ye</name>
+    </author>
+    <author>
+      <name>Jiang Yang</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13926v1</id>
+    <title>Never the Number: Structural Abstention for AI Systems Whose Answers Are Consumed as Fact</title>
+    <updated>2026-08-14T03:53:21Z</updated>
+    <link href="https://arxiv.org/abs/2608.13926v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13926v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Large language models have made natural language interfaces to databases (NLIDB) newly credible, but LLM text-to-SQL systems fail in a way that matters for deployment: a hallucinated column or a mis-aggregated total yields a fluent wrong answer, indistinguishable at the point of use from a right one. Where the consumer cannot inspect the generated query, as in enterprise AI deployments and operational dashboards, and increasingly where the consumer is a tool-using agent rather than a person, accuracy alone is insufficient: nothing marks which answers to distrust. This is a reliability problem before it is an accuracy problem.
+  We propose an architectural pattern for such systems, a trusted kernel with a generative shell, resting on one invariant: a component that can fabricate may influence which question the system answers, never which value it returns. A generative shell interprets underspecified input and phrases replies; a deterministic kernel matches fully specified questions against a bounded set of answerable question shapes and compiles them to queries by deterministic execution. The two meet at a confirmation the user reads before any value is computed, and requests the kernel cannot express are declined rather than approximated. We call this structural abstention, and distinguish it from the statistical abstention of selective prediction and calibrated confidence: refusal here needs no confidence estimate, because unanswerable requests are unrepresentable.
+  We specify the pattern implementation-independently, give a five-decision recipe and work it across three domains, extend the invariant from returned values to the actions of agentic systems, and report a two-year production case study alongside two generative alternatives, a fine-tuned parser and a tool-retrieval agent. We close against enterprise and reliability benchmarks published since.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.DB" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T03:53:21Z</published>
+    <arxiv:comment>26 pages, 5 figures, 5 tables. Technical report. Describes architecture and design principles only; contains no code, schemas, datasets, or performance metrics</arxiv:comment>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name> Zhelun</name>
+      <arxiv:affiliation>Allen</arxiv:affiliation>
+    </author>
+    <author>
+      <name> Wu</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13900v1</id>
+    <title>Agentic Transaction: Towards ACID-Compliant Agent Systems</title>
+    <updated>2026-08-14T03:13:54Z</updated>
+    <link href="https://arxiv.org/abs/2608.13900v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13900v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Large language model (LLM) agents are evolving from conversational assistants into autonomous systems that execute long-horizon tasks through reasoning, tool use, code generation, and workspace manipulation. As agents increasingly operate over persistent environments and multi-step workflows, they face challenges analogous to those addressed by transactional database systems: reliable execution, consistent outcomes, safe concurrency, and durable state management. We introduce the concept of an agentic transaction and propose an ACID-compliant agent system framework that reinterprets the classical ACID properties for agent execution through four semantic guarantees: Semantic Atomicity, Semantic Consistency, Semantic Isolation, and Semantic Durability. Together, these properties provide a principled foundation for building reliable agent systems despite model uncertainty and dynamic execution environments. To instantiate this framework, we develop an ACID-compliant data agent that realizes these guarantees through transactional exploration-execution-validation cycles, transactional skill hubs, confidence divergence-based validation, semantic dependency-aware isolation, and transaction-aware semantic state management. Experimental results on widely used benchmarks show that our system achieves a 10.6% improvement over state-of-the-art agents, including Claude Code. This work opens a broader research agenda on extending transactional principles and system architectures toward building trustworthy, scalable, and self-evolving AI agent systems.</summary>
+    <category term="cs.DB" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T03:13:54Z</published>
+    <arxiv:primary_category term="cs.DB"/>
+    <author>
+      <name>Zhaoyan Sun</name>
+    </author>
+    <author>
+      <name>Xiaoxiao Wang</name>
+    </author>
+    <author>
+      <name>Guoliang Li</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13722v1</id>
+    <title>BM25-Augmented Many-Shot Translation for Low-Resource North-Eastern Indian Languages</title>
+    <updated>2026-08-13T19:31:56Z</updated>
+    <link href="https://arxiv.org/abs/2608.13722v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13722v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>This paper describes the University of Florida Gators submission to the WMT26 Low-Resource Indic Language Translation shared task. We adapt the retrieval-augmented many-shot translation pipeline from our AmericasNLP 2026 system to translate between English and eleven North-Eastern Indian languages in both directions. At inference time, BM25 retrieves the most similar parallel examples from a language-specific training bank, and Gemini 2.5 Flash translates the input conditioned on these examples. No model fine-tuning is involved. Training banks combine official WMT26 data with publicly available corpora such as Samanantar and prior WMT shared task releases. A grid search over retrieval count r and development exemplar count d across all 22 language-direction pairs selects the best configuration for each submission.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-13T19:31:56Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Aashish Dhawan</name>
+    </author>
+    <author>
+      <name>Christopher Driggers-Ellis</name>
+    </author>
+    <author>
+      <name>Dzmitry Kasinets</name>
+    </author>
+    <author>
+      <name>Christan Grant</name>
+    </author>
+    <author>
+      <name>Daisy Zhe Wang</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13708v1</id>
+    <title>TeachMateGPT: A Multi-Agent Knowledge-Grounded Framework for Pedagogical Assessment Generation from Science Curriculum Materials</title>
+    <updated>2026-08-13T19:06:37Z</updated>
+    <link href="https://arxiv.org/abs/2608.13708v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13708v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Automatically generating textbook-grounded assessment items can reduce science teachers' workload, but existing retrieval-augmented generation (RAG) systems rely on flat retrieval, support only single-question generation, lack safeguards against weak evidence, and are ill-suited to low-resource, board-exam-structured curricula. We address these limitations with TeachMateGPT, a multi-agent system contributing four advances to curriculum-grounded science-assessment authoring. (i) COPE, a hierarchical knowledge base replacing token-window chunking with a multi-resolution index that segments documents along syllabus structure and links them at three granularities via a traversable graph-based lineage, matching evidence to each topic's instructional level. (ii) A staged, fail-closed agent pipeline replacing one-shot retrieve-then-generate: routing gates search, retrieval fuses dense and lexical evidence under a coverage gate that withholds generation on insufficient evidence, and specialist agents draft objective and constructed-response items. (iii) SAVER, a source-attributed verification protocol scoring faithfulness, relevance, and hallucination risk against retrieved evidence, applying stricter grounding checks across each creative question's four sub-parts, paired with teacher-in-the-loop evaluation rather than automatic filtering. (iv) NCTB-SciGen8, a curriculum-grounded dataset of 198 items (143 multiple-choice, 55 creative questions) spanning all 14 chapters of the NCTB Class 8 science textbook, produced by the pipeline and rated by three practicing teachers. TeachMateGPT raises faithfulness (0.68 $\rightarrow$ 0.96) and answer relevancy (0.60 $\rightarrow$ 0.89) over a vanilla RAG baseline.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-13T19:06:37Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Fatema Tuj Johora Faria</name>
+    </author>
+    <author>
+      <name>Mukaffi Bin Moin</name>
+    </author>
+    <author>
+      <name>M. F. Mridha</name>
+    </author>
+    <author>
+      <name>Jubayer Al Mahmud</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13706v2</id>
+    <title>CLAIR-Fin: An Adversarial Multi-Agent Framework for Claim-Level Verification and Adaptive Debate in Cross-Modal Financial QA</title>
+    <updated>2026-08-18T12:21:40Z</updated>
+    <link href="https://arxiv.org/abs/2608.13706v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13706v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Existing defenses against hallucination in retrieval-augmented and multi-agent pipelines remain partial: evidence is trusted despite modality disagreement, debate verifies an aggregate report rather than individual claims, and such verification occurs only after drafting, leaving inter-agent errors undetected until the final text. To close this gap, we present CLAIR-Fin, a nine-agent framework that decomposes each question into atomic claims maintained in a typed Financial Claim Ledger. Each claim is resolved through Asymmetric Evidence Authority, which conditions evidence trust on claim type rather than treating all modalities as equally reliable; Chain-of-Custody Verification, which checks grounding at the hand-off between drafting and adversarial review rather than only at the pipeline's exit; an Adaptive Rebuttal Cycle, which routes contested claims through adversarial debate whose depth scales with what that debate finds; and a terminal entailment audit paired with a continuous Hallucination Risk Index that distinguishes claims that passed scrutiny from claims never contested. We evaluate CLAIR-Fin on BB-FinQA-X, a 500-question cross-modal financial evaluation set built from Bangladesh Bank Annual Report material, stratified by query type, format, and difficulty. Relative to a single-pass retrieval-augmented generation baseline, it raises faithfulness ($0.780 \rightarrow 0.889$) while abstaining on 5.4% of questions when evidence is insufficient rather than forcing an unsupported response, and it exceeds stronger retrieval-strategy baselines such as HyDE and Graph-RAG on faithfulness ($\leq 0.874$).</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-13T18:59:41Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Fatema Tuj Johora Faria</name>
+    </author>
+    <author>
+      <name>Mukaffi Bin Moin</name>
+    </author>
+    <author>
+      <name>Jubayer Al Mahmud</name>
+    </author>
+    <author>
+      <name>M. F. Mridha</name>
+    </author>
+    <author>
+      <name>Md. Alam Hossain</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13476v1</id>
+    <title>MARC v1: An Open-Source Multi-Agent Framework for Clinical AI Reasoning and Coordination</title>
+    <updated>2026-08-13T17:00:08Z</updated>
+    <link href="https://arxiv.org/abs/2608.13476v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13476v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>We present Multi-Agent Reasoning and Coordination (MARC), an open-source framework that replaces monolithic LLM prompting with deterministic multi-agent orchestration for clinical reasoning. MARC coordinates role-specialized agents for extraction, reasoning, answer generation, and evaluation, with explicit context passing and traceable intermediate outputs, enabling stage-wise failure attribution. We additionally introduce a Decomposer module that generates task-specific agent prompts from a plain-language description, eliminating manual prompt engineering. The framework supports both API-based and local CPU-compatible deployments and is entirely configurable via YAML, without code modifications. MARC is designed to be model-agnostic, interpretable, and accessible to clinical domain experts without programming expertise. The full framework is available at https://github.com/Penn-RAIL/MARC-v1.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-13T17:00:08Z</published>
+    <arxiv:comment>13 pages, 4 figures</arxiv:comment>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Saisha Shetty</name>
+    </author>
+    <author>
+      <name>Satvik Tripathi</name>
+    </author>
+    <author>
+      <name>Austin Lin</name>
+    </author>
+    <author>
+      <name>Colin Zhao</name>
+    </author>
+    <author>
+      <name>Theodore Kim</name>
+    </author>
+    <author>
+      <name>Don Enwerem</name>
+    </author>
+    <author>
+      <name>Jacinta Arnold</name>
+    </author>
+    <author>
+      <name>Shahriar Faghani</name>
+    </author>
+    <author>
+      <name>Tessa S Cook</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13237v1</id>
+    <title>When Should Multi-Round RAG Stop? Structured Stopping Judgments and Retrieval Reduction in Search-R1</title>
+    <updated>2026-08-13T13:42:48Z</updated>
+    <link href="https://arxiv.org/abs/2608.13237v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13237v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Multi-round retrieval-augmented generation (RAG) must decide when to stop searching as evidence accumulates. Because the deployed policy is determined by the first STOP on each trajectory, this is a sequential selection problem rather than an independent state-classification task. We adapt S2G-RAG's structured sufficiency-and-gap judgment to a frozen Search-R1 pipeline and train a Qwen3.5-2B judge on 3,009 states from 900 disjoint HotpotQA questions. Search-R1's reasoner, retriever, corpus, prompt, and search budget remain unchanged, while the judge checkpoint and stopping threshold are selected on grouped validation and frozen before confirmatory evaluation. On the confirmatory test set, the resulting policy reduces retrieval calls by 77 (3.70\%) relative to Native Search-R1, while Official Exact Match decreases by 0.625 percentage points. Thus, the trained S2G-style structured judge reduces retrieval while broadly preserving answer accuracy. The result does not imply unchanged or improved accuracy, safe stopping, or lower total inference cost.</summary>
+    <category term="cs.IR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-13T13:42:48Z</published>
+    <arxiv:comment>16 pages, 3 figures. Code: https://github.com/luobostorm/search-r1-s2g-stopping</arxiv:comment>
+    <arxiv:primary_category term="cs.IR"/>
+    <author>
+      <name>Weimeng Luo</name>
+    </author>
+  </entry>
+</feed>

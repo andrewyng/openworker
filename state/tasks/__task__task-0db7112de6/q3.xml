@@ -1,0 +1,1007 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/EYOzr9gzv9by+uqD884vdo0w9XU</id>
+  <title>arXiv Query: search_query=(abs:"inference efficiency" OR abs:"mixture of experts" OR abs:"quantization" OR abs:"long context") AND cat:cs.LG&amp;id_list=&amp;start=0&amp;max_results=40</title>
+  <updated>2026-08-20T20:34:19Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=(abs:%22inference+efficiency%22+OR+(abs:%22mixture+of+experts%22+OR+(abs:%22quantization%22+OR+abs:%22long+context%22)))+AND+cat:cs.LG&amp;start=0&amp;max_results=40&amp;id_list=" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>40</opensearch:itemsPerPage>
+  <opensearch:totalResults>7373</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2608.19181v1</id>
+    <title>Beyond Teacher Likelihood: Group-Calibrated On-Policy Distillation for Long-Context Reasoning</title>
+    <updated>2026-08-19T17:54:58Z</updated>
+    <link href="https://arxiv.org/abs/2608.19181v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.19181v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>On-policy distillation (OPD) trains a student on its own responses using dense token-level guidance from a stronger teacher. In long-context tasks, however, token-level teacher support can favor locally plausible responses that omit evidence distributed across the input or violate global task constraints. Task-specific verifiers, in contrast, evaluate task completion at the response level and may return graded rewards that reflect partial success. We diagnose this mismatch on fixed responses from two representative long-context evidence-aggregation tasks. Across longer input ranges, trajectory-level OPD scores become progressively less aligned with verifier rewards, indicating teacher-verifier disagreement. Motivated by this observation, we introduce Group-Calibrated On-Policy Distillation (GC-OPD). GC-OPD separately normalizes verifier rewards and trajectory-level OPD scores within each rollout group and uses their difference as a signed teacher-verifier disagreement residual. Relative-advantage-based credit assignment (RACA) distributes this trajectory-level residual across tokens according to their relative OPD advantages while preserving the original OPD signal. Across five long-context benchmarks, post-training with GC-OPD raises the five-benchmark averages of the official Qwen3-4B and Qwen3-8B checkpoints from 29.08 to 40.47 and from 35.12 to 44.65, respectively. Vanilla OPD reaches 39.31 and 43.56 under the same setup. Controlled ablations show that the signed residual is more effective than either an additional OPD-derived term or direct group-normalized verifier reward addition, while RACA further improves over uniform token allocation. Together, these results demonstrate that group-relative residual calibration can incorporate verifier outcomes without discarding dense token-level guidance. Code is available at https://github.com/SolereZhang/GC-OPD.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-19T17:54:58Z</published>
+    <arxiv:comment>20 pages, 5 figures</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Zhu Zhang</name>
+    </author>
+    <author>
+      <name>Jixun Wang</name>
+    </author>
+    <author>
+      <name>Xiaoang Xu</name>
+    </author>
+    <author>
+      <name>Xiaorong Wang</name>
+    </author>
+    <author>
+      <name>Zihan Zhou</name>
+    </author>
+    <author>
+      <name>Zhiyuan Wang</name>
+    </author>
+    <author>
+      <name>Shuo Wang</name>
+    </author>
+    <author>
+      <name>Chaojun Xiao</name>
+    </author>
+    <author>
+      <name>Yuezhi Zhou</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.19141v1</id>
+    <title>Geometric Iterative Retrieval for Neural Audio Codec Resynthesis</title>
+    <updated>2026-08-19T17:29:56Z</updated>
+    <link href="https://arxiv.org/abs/2608.19141v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.19141v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Neural audio codecs based on Residual Vector Quantization (RVQ) have become the dominant discrete representation for token-based general audio generation, yet resynthesizing high-quality audio from coarse codec tokens remains an open problem and bounds the fidelity of every system that generates them. Prior work has framed resynthesis as a choice between discrete token prediction and continuous regression. We argue that this dichotomy is incomplete and introduce geometric iterative retrieval, a paradigm that uses the RVQ layer hierarchy itself as a natural iterative decomposition in continuous codebook space. Rather than classifying over discrete vocabularies or regressing to a single target vector, our method performs contrastive retrieval in the codebook's geometric space. We evaluate our method on codec restoration tasks across speech and music, and show improvements over both single-pass token prediction and one-step regression baselines.</summary>
+    <category term="cs.SD" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-19T17:29:56Z</published>
+    <arxiv:primary_category term="cs.SD"/>
+    <author>
+      <name>Leo Schmidt-Traub</name>
+    </author>
+    <author>
+      <name>Frédéric Berdoz</name>
+    </author>
+    <author>
+      <name>Luca A. Lanzendörfer</name>
+    </author>
+    <author>
+      <name>Roger Wattenhofer</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.18656v1</id>
+    <title>FlashAttention for Scalable Vector Architectures</title>
+    <updated>2026-08-19T08:02:17Z</updated>
+    <link href="https://arxiv.org/abs/2608.18656v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.18656v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Inference with transformer models on CPUs is increasingly important, especially for Small Language Models (SLMs), where vector architectures are emerging as a promising execution substrate. The attention module is a major bottleneck due to high memory bandwidth requirements; FlashAttention mitigates this by fusing operations to improve data locality and reduce intermediate memory traffic. In this paper, we present FlashAttention-V, a blocked FlashAttention for scalable vector architectures that adapts efficiently from short to very long vectors by exploiting parallelism across attention heads, inter-head packing to enable efficient utilization of vector lengths beyond the head dimension, and improving vector register utilization and memory access locality. We integrate FlashAttention-V into ggml within llama.cpp and evaluate it on TinyLlama, Llama 3.2, Qwen2.5, and Pythia-410M using gem5 and a Banana Pi BPI-F3. On the Banana Pi BPI-F3, we confirm that loop reordering and loop unrolling across attention heads are effective optimization principles, scaling performance gains with larger models and most pronounced with short contexts and during decoding. Simulation-based analysis shows that FlashAttention-V achieves 22x-42x speedup over scalar FlashAttention at 512-bit VL in prefill, with an additional 2x-2.5x gain scaling to 64 lanes and 4096-bit VL. During decode, FlashAttention-V achieves 8x-11x speedup using 512-bit vector lengths over scalar FlashAttention, with performance showing diminishing sensitivity to vector width and lane count due to single-token, memory-bound execution. We further identify structural bottlenecks in Q8_0 quantized linear layers that limit arithmetic amortization under long-vector execution, consistent across RVV and Arm SVE, indicating that current quantization formats pose a fundamental challenge to long-vector scalability.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.PF" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-19T08:02:17Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Sonia Rani Gupta</name>
+    </author>
+    <author>
+      <name>Nikela Papadopoulou</name>
+    </author>
+    <author>
+      <name>Miquel Pericàs</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.18578v1</id>
+    <title>Compress and Forget: bitsandbytes Quantization Amplifies Proactive Interference in LLMs</title>
+    <updated>2026-08-19T06:17:13Z</updated>
+    <link href="https://arxiv.org/abs/2608.18578v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.18578v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Proactive interference (PI) is a documented failure mode in large language models in which retrieval of a repeatedly overwritten value degrades as prior overwrites accumulate, mirroring a classical phenomenon in human working memory. Post-training quantization (PTQ) is now the default deployment path for open-weight models, yet its effect on this failure mode has not been tested. We evaluate three precision levels (FP16, INT8, INT4/NF4, via bitsandbytes) across three architecturally distinct instruction-tuned models (Qwen2.5-7B-Instruct, Mistral-7B-Instruct-v0.3, Phi-3.5-mini-instruct), holding the retrieval task fixed. INT4 quantization significantly reduces accuracy under high interference in every model (e.g., from 81.0% to 68.3% for Qwen), confirmed by paired McNemar's tests ($p \le 2.6 \times 10^{-6}$) and a mixed-effects regression spanning all interference levels; INT8, often assumed safe, also carries a smaller but real penalty in two of three models. The effect is specific to semantically similar (word-type) distractors and reverses sign under a numeric control condition, and is mechanistically linked to a rise in same-key intrusion errors under INT4 (from 21.5% to 24.6% of trials, $p = 4.8 \times 10^{-7}$). A follow-up ablation shows the effect originates in the quantized transformer backbone rather than the output projection layer. These results suggest that bitsandbytes 4-bit quantization can impose an additional cost on applications relying on long, updatable, semantically dense contexts, even when aggregate benchmark accuracy appears largely unaffected. We release our code and tokenizer-verified vocabulary construction method at https://github.com/ShayanShahrabi/compress-and-forget</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-19T06:17:13Z</published>
+    <arxiv:comment>21 pages, 6 figures, 11 tables. Code and data released at https://github.com/ShayanShahrabi/compress-and-forget</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Shayan Shahrabi-Farahani</name>
+      <arxiv:affiliation>Shahid Beheshti University, Tehran, Iran</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Dara Rahmati</name>
+      <arxiv:affiliation>Shahid Beheshti University, Tehran, Iran</arxiv:affiliation>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.18451v1</id>
+    <title>Atrial Fibrillation Detection with Arbitrary Leads via a Codebook-Based Reconstruction-Classification Framework</title>
+    <updated>2026-08-19T02:25:23Z</updated>
+    <link href="https://arxiv.org/abs/2608.18451v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.18451v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>\textbf{Background and Objective}: Reliable atrial fibrillation (AF) detection from electrocardiogram (ECG) signals remains challenging in real-world clinical settings due to variable lead configurations, cross-dataset domain shifts, and pervasive physiological and technical artifacts. So we develop a robust and generalizable deep learning model for accurate AF detection.\\ \textbf{Methods}: We propose the Dual-Codebook Graph Collaborative Network (DCGCNet), a novel end-to-end vector-quantized variational autoencoder that jointly performs AF classification and ECG reconstruction. DCGCNet introduces two key components: (1) a Local-Global Contrastive Module for learning noise-invariant representations, and (2) an Adaptive Codebook Vector Quantizer that dynamically refines codebook prototypes to better align with input data distributions, thereby preventing codebook collapse and enhancing generalization.\\ \textbf{Results}: DCGCNet achieves state-of-the-art performance in standard intra-dataset 12-lead evaluation and demonstrates exceptional cross-dataset generalization across seven diverse settings, consistently attaining AUC &gt; 0.98 in all cases. Furthermore, it maintains high diagnostic accuracy under realistic noisy conditions, including baseline wander, powerline interference, and EMG artifacts.\\ \textbf{Conclusions}: DCGCNet establishes a new benchmark for robust, generalizable, and noise-resilient AF detection, showing strong potential for deployment in real-world clinical environments.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="q-bio.QM" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-19T02:25:23Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Hongtao Li</name>
+    </author>
+    <author>
+      <name>Jia Wei</name>
+    </author>
+    <author>
+      <name>Guoyao Li</name>
+    </author>
+    <author>
+      <name>Yuchen Lei</name>
+    </author>
+    <author>
+      <name>Guangnian Ma</name>
+    </author>
+    <author>
+      <name>Jia Xiao</name>
+    </author>
+    <author>
+      <name>Yuanjun Lai</name>
+    </author>
+    <author>
+      <name>Shuzhen Lv</name>
+    </author>
+    <author>
+      <name>Xueqiang Ouyang</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.18261v1</id>
+    <title>Cacheable by Design? Training Mixture-of-Experts Routers for Locality Against the Edge Memory-Bandwidth Wall: A Pre-Registered Negative Result with a Systems Measurement Study</title>
+    <updated>2026-08-18T19:23:32Z</updated>
+    <link href="https://arxiv.org/abs/2608.18261v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.18261v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Serving a 235B-parameter Mixture-of-Experts (MoE) model on a single 8 GB GPU is bottlenecked not by compute but by memory bandwidth: decode must stream each token's active experts from whichever tier holds them, and on consumer hardware most experts sit on an SSD far slower than RAM. We quantify this bandwidth wall on Qwen3-235B (Q4_K_M, 134 GB): measured decode is 0.44 tok/s warm, matching a bytes-per-token / bandwidth model, while a batching scheme that should amortize one disk sweep instead collapses at batch 32 from paging thrash. We build llama-moe-trace, a zero-surgery router-telemetry tool, and measure routing on Qwen3-30B: adjacent-token expert reuse is 2.0x chance, 95% of traffic uses 52.5% of experts, and an LRU cache of 13.4% of experts serves 66% of requests. We then ask whether cacheability is trainable: we pre-register training of 137M MoE language models with auxiliary locality and domain router losses, under joint criteria on cache-miss reduction and perplexity. The mechanism works (misses down up to 60%; a 99% static-pin hit rate) but every configuration fails the pre-registered &lt;=1% perplexity gate -- miss reduction and quality are tightly coupled. Concurrent StickyMoE reports the same loss as near-free on single-domain sub-25M models; on multi-domain 137M we find the tax real. Our contribution is this pre-registered, stricter-criterion, multi-domain evaluation plus edge-serving measurements. A 340M rung shows the tax does not shrink with scale (it rises slightly). We further show training-free cache-aware rerouting stacks with trained locality -- together ~80% miss reduction at &lt;=3.4% perplexity at both sizes, far cheaper than either alone -- while domain-primed prefetching does not help. All code, traces, and the pre-registration are released.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T19:23:32Z</published>
+    <arxiv:comment>Pre-registered negative result plus a systems measurement study. Code, router-telemetry tool (llama-moe-trace), traces, data manifests, and the frozen pre-registration: https://github.com/Shriniwas410/cacheable-by-design</arxiv:comment>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Shriniwas Ramesh Suram</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17896v1</id>
+    <title>Dynamic Compression in Recurrent Networks</title>
+    <updated>2026-08-18T15:29:18Z</updated>
+    <link href="https://arxiv.org/abs/2608.17896v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17896v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Recurrent models process long contexts efficiently by compressing their history into a fixed-size state, but modern architectures typically do so in a single causal pass over the sequence. Each input must therefore be compressed before the model knows how it will later be used, forcing a limited state to compromise across possible future demands. We introduce dynamic compression, which allows a recurrent model to selectively revisit past tokens and revise its fixed-size state through additional recurrent updates. The model need not preserve every part of the history at uniformly high fidelity in its recurrent state, because lower-fidelity information can be revisited from the retained raw sequence when it becomes relevant. We study this in a controlled setting where the model first learns multiple functions in-context and, later in the same sequence, encounters a series of few-shot tasks that each require it to identify and reuse one of those functions. A single-pass model must preserve every function at sufficient fidelity for any future task, whereas selective re-scanning allows the model to revisit and refine only the function currently needed. We find that dynamic compression substantially reduces the recurrent state required for accurate reuse and scales more favorably as the number of stored functions grows. These results demonstrate a computation--memory tradeoff in which recurrent models can spend more computation revisiting their history to make more effective use of a fixed-size state.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T15:29:18Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Jyothish Pari</name>
+    </author>
+    <author>
+      <name>Ryan Bahlous-Boldi</name>
+    </author>
+    <author>
+      <name>Pulkit Agrawal</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17744v1</id>
+    <title>Thinking in a Low-Resource Language: What SFT Builds, What RL Fixes, What Accuracy Cannot See</title>
+    <updated>2026-08-18T13:09:03Z</updated>
+    <link href="https://arxiv.org/abs/2608.17744v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17744v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Take three frontier mixture-of-experts models (Alibaba, OpenAI, NVIDIA; 3.6-4.0B active parameters each) and fine-tune them to reason in a low-resource language. On accuracy benchmarks almost nothing happens, and the benchmark itself is noise at this scale: changing only the random seed moves the score by 7.7 points, more than every data and recipe effect we measured. That null is our first result. The real changes live where accuracy cannot see. Base models never think in Greek: 0 of 1,000 reasoning traces, even when the question is Greek, so the model answers correctly while reasoning in a form its user cannot read, audit, or correct. After supervised fine-tuning (SFT), every released checkpoint reasons in the language of the question on ~98% of items, one family at 3x fewer tokens, with judged grammaticality improving on all four models and general ability within a few points of each base: nothing was forgotten, and fluency was gained. We propose six behavioural dimensions that make such changes measurable, each gated to reject any metric that correlates with output length, and we report how our own instruments lied: six failures, each caught by a control. What SFT cannot do is fix its own defects: a quarter of answers skip the requested format, answers leak into the reasoning channel, and an explicit "think in English" is obeyed under half the time. Reinforcement learning with verifiable rewards, pre-registered before training, fixes the first two outright (fallback 24% to 2.5%, leak 3.5% to 0.0%, both against a flat random-reward control) and moves the third (+9.1pp), while the Greek reasoning habit survives an accuracy-only gradient untouched. We release five checkpoints. The instruments, the controls and the pre-registration travel to any low-resource language; Greek is the case that let us measure them.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.RO" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T13:09:03Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Ayoub Kirouane</name>
+    </author>
+    <author>
+      <name>Christos Petrocheilos</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17687v1</id>
+    <title>Mixture-of-Expert Blocks Contain Strong Hallucination Detection Signals</title>
+    <updated>2026-08-18T12:00:20Z</updated>
+    <link href="https://arxiv.org/abs/2608.17687v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17687v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Despite their widespread use, Large Language Models (LLMs) remain limited by a fundamental problem: the generation of plausible but false content, known as hallucinations. Most existing detection methods operate at the answer or sentence level, yet per-token detection is essential for localizing hallucinated spans and enabling fine-grained interventions. In this paper, we explore the use of the Mixture-of-Experts (MoE) paradigm to address this gap. In MoE architectures, a single forward pass activates a sparse subset of experts (i.e., distinct feedforward networks per layer) via a routing mechanism, producing internal signals (e.g., router entropy, expert disagreement, and expert usage patterns) that are unavailable in dense architectures and have not been previously exploited for hallucination detection. To this end, we introduce InnerExpert, the first method to leverage these MoE-specific signals for per-token hallucination detection. InnerExpert combines routing-level and standard transformer signals into compact per-token feature vectors, classified by a lightweight detector trained on labels produced by an LLM-as-a-judge pipeline, which enables continuous model updates without manual annotation. Our results show that InnerExpert outperforms existing methods across five datasets and two MoE architectures, achieving up to 0.91 answer-level and 0.76 token-level AUROC, while requiring only a single forward pass.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T12:00:20Z</published>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Joao Fonseca</name>
+    </author>
+    <author>
+      <name>Rodrigo Rodrigues</name>
+    </author>
+    <author>
+      <name>Paolo Romano</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17616v1</id>
+    <title>MoNe: Modular Neural Memory for Efficient Long Context Inference</title>
+    <updated>2026-08-18T10:28:23Z</updated>
+    <link href="https://arxiv.org/abs/2608.17616v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17616v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>We present MoNe, a lightweight modular neural memory that attaches to any frozen pretrained Transformer to enable long-context inference without retraining. MoNe reads context in fixed-size segments via test-time learning of fast-weight neural memory networks with layer-localized gradient updates; at inference, the memory generates keys and values from the query tokens alone, with no context tokens re-read. This two-phase design decouples inference cost from context length, achieving $O(N)$ preprocessing and $O(1)$ query cost with peak GPU memory that does not grow with $N$. At 128K tokens, MoNe reduces both compute and peak GPU memory by approximately 80% compared to ICL with only 6.4% parameter overhead. MoNe generalizes to context lengths far beyond the backbone's native window, achieving strong performance on needle-in-a-haystack and word extraction benchmarks from RULER, where ICL degrades sharply.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T10:28:23Z</published>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Wonguk Cho</name>
+    </author>
+    <author>
+      <name>Kyubyung Chae</name>
+    </author>
+    <author>
+      <name>Tribhuvanesh Orekondy</name>
+    </author>
+    <author>
+      <name>Sunghyun Park</name>
+    </author>
+    <author>
+      <name>Hyoungwoo Park</name>
+    </author>
+    <author>
+      <name>Jeongho Kim</name>
+    </author>
+    <author>
+      <name>Arash Behboodi</name>
+    </author>
+    <author>
+      <name>Kyuwoong Hwang</name>
+    </author>
+    <author>
+      <name>Sungrack Yun</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17342v1</id>
+    <title>MoFE: A Novel Mixture-of-Experts Framework with Fourier Neural Operators for Cryptocurrency Forecasting</title>
+    <updated>2026-08-18T04:00:16Z</updated>
+    <link href="https://arxiv.org/abs/2608.17342v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17342v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Forecasting cryptocurrency prices remains a formidable challenge due to inherent non-stationarity, abrupt regime shifts, and multi-scale stochastic dependencies. Conventional deep learning models often struggle to capture complex underlying dynamics, frequently resulting in persistent phase-lagged predictions. To address these limitations, we propose MoFE, a novel deep learning framework that integrates Fourier Neural Operators (FNOs) within a Mixture-of-Experts (MoE) architecture. Rooted in the theoretical framework of stochastic differential equations, MoFE conceptualizes cryptocurrency volatility as a superposition of multi-frequency components, which includes user network based fundamental growth, mining costs and halving mechanism caused seasonal volatility, and market sentiment-induced chaos. Specifically, specialized adaptive FNO (AFNO) and Convolution dual-domain experts learn continuous function-to-function mappings to encapsulate global spectral trends, cyclical adjustments and microstructures, while a dynamic gating based MoE mechanism enables adaptive strategy switching across diverse market regimes. Extensive experiments on Bitcoin datasets spanning January 2020 to December 2025 demonstrate that MoFE achieves state-of-the-art (SOTA) performance in both T+1 and T+5 forecasting horizons. Notably, the model effectively mitigates the phase-lag effect, delivering superior Directional Accuracy (DA) and Information Coefficient (IC). In high-fidelity simulated trading environments, these predictive gains transfer into significant excess returns and robust risk-adjusted performance, characterized by a high Sharpe ratio.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T04:00:16Z</published>
+    <arxiv:comment>9 pages, 7 figures. Published in 2026 IEEE International Conference on Blockchain and Cryptocurrency (ICBC)</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <arxiv:journal_ref>2026 IEEE International Conference on Blockchain and Cryptocurrency (ICBC), 2026, pp. 1-9</arxiv:journal_ref>
+    <author>
+      <name>Bowen Liu</name>
+    </author>
+    <author>
+      <name>Mingming Sun</name>
+    </author>
+    <arxiv:doi>10.1109/ICBC67748.2026.11575439</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1109/ICBC67748.2026.11575439" title="doi"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16844v1</id>
+    <title>Proteus: Incremental Memory Activation for Long-Context Sequence Modeling</title>
+    <updated>2026-08-17T17:30:43Z</updated>
+    <link href="https://arxiv.org/abs/2608.16844v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16844v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The quadratic cost of attention-based sequence models for long contexts has motivated a growing line of research on memory-based models that can compress context into a compact state. However, most existing memory models expose a static memory throughout the entire sequence. Because early tokens face no compression pressure, they occupy too many degrees of freedom and "pollute" the memory state, leaving little capacity for later context and increasing interference between what is stored and what arrives next. We study a new paradigm of incremental memory activation, where the effective capacity of memory is progressively expanded as the context grows. Imposing an early bottleneck forces the model to compress history more effectively, while unlocking fresh capacity over time reduces interference and improves retention of later context. We instantiate this paradigm in Proteus, a straightforward mechanism that can be incorporated into a broad class of neural memory architectures at no additional cost. We apply Proteus to state-of-the-art models, including SWLA, Comba, Titans, and Hope-Attention, and observe consistent improvements on standard language modeling and reasoning, as well as on long-context retrieval and understanding, with gains that grow at longer context lengths. Overall, our results show that static memory is suboptimal and that scheduling effective capacity is a simple and broadly applicable tool for sequence modeling.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T17:30:43Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Reza Bayat</name>
+    </author>
+    <author>
+      <name>Ali Behrouz</name>
+    </author>
+    <author>
+      <name>Vahab Mirrokni</name>
+    </author>
+    <author>
+      <name>Aaron Courville</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.15787v1</id>
+    <title>Routing Divergence Is Not Evidence of Behavioral Influence in Same-Weight MoE Self-Distillation</title>
+    <updated>2026-08-16T15:07:17Z</updated>
+    <link href="https://arxiv.org/abs/2608.15787v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.15787v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Two Mixture-of-Experts (MoE) forward passes can share every weight yet route the same token through different experts. This creates a possible blind spot in same-weight self-distillation, where a demonstration-conditioned teacher supervises a query-only student. We study this mismatch in its single-step form, with frozen weights rather than as a proxy for a full training trajectory. An exact blockwise decomposition separates a routing term, which changes gates at fixed content, from a dense-like content term. Across seven open-weight checkpoints and two domains, the routing term spans only $1.6\times$ as a fraction of block output, while its residual-stream exposure spans $3.2\times$. Exposure is ordered by the routed block's share of the residual. Scaling the always-on backbone in two confirmatory models moves exposure monotonically; common-mode controls support a mass-and-coherence mechanism rather than denominator dilution alone. Preregistered PubMedQA patches on three models show that the full routing term moves outputs by less than half the natural context effect and is largely reproduced by matched-norm noise, whereas the content term is strongly direction-specific. Scale and merged-expert probes show that the narrow block-level range is not universal, although exposure remains small at the tested boundaries. Router movement alone is therefore not evidence of behavioral influence: measure exposure first, and use a behavioral intervention when the decision matters.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-16T15:07:17Z</published>
+    <arxiv:comment>15 pages, 4 figures</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Cedric Caruzzo</name>
+    </author>
+    <author>
+      <name>Donggeun Yoo</name>
+    </author>
+    <author>
+      <name>Tae Soo Kim</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.15693v1</id>
+    <title>Large Models for Small Devices: Recent Advances and Empirical Analysis of Edge AI Deployment</title>
+    <updated>2026-08-16T11:52:13Z</updated>
+    <link href="https://arxiv.org/abs/2608.15693v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.15693v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Running large AI models on resource-constrained edge devices requires model compression to reduce model size and computation. What compresses well, however, need not deploy well. We survey dozens of recent works that report compression results on real hardware and extract practical deployment guidelines from them. Following these guidelines, we deploy compact language and image models on GPU, CPU, and Raspberry Pi platforms across question answering and image segmentation. No single technique wins across tasks. For question answering, Qwen3.5 0.8B reaches 93.85 SQuAD F1 and 92 EM under Q5_K_M GGUF quantization, while structured pruning at the same precision costs 16 F1 at a 1% ratio. For segmentation, the ranking reverses: default quantization leaves parameters and MACs unchanged, whereas pruning cuts model size by nearly 80% at near-constant mIoU. Pruning can even inflate the deployed artifact by 21-49% by breaking k-quant super-block alignment; combined with longer, less format-compliant outputs, this raises Raspberry Pi latency up to 3.4x. Compression can also manufacture the appearance of competence rather than destroy it visibly: one LoRA-recovered variant stays fully parseable and holds 71% strict BoolQ accuracy while sending 97 of 100 predictions to a single class, at 52.6% balanced accuracy. We explain these effects through neural-flow graph analysis and prefill-decode-level latency decomposition, and condense them into task-specific deployment research directions. The right technique depends on the task, the model, and the hardware. Our experiment code and artifacts are open-sourced at https://github.com/Arnavvvkumar/deployment</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-16T11:52:13Z</published>
+    <arxiv:comment>Parts of this work were presented at the IEEE Consumer Communications &amp; Networking Conference (CCNC), Las Vegas, NV, USA, January 2026</arxiv:comment>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Subhransu Das</name>
+    </author>
+    <author>
+      <name>Jiaming Cheng</name>
+    </author>
+    <author>
+      <name>Arnav Kumar</name>
+    </author>
+    <author>
+      <name>Sadia Afrose</name>
+    </author>
+    <author>
+      <name>Mingzhe Han</name>
+    </author>
+    <author>
+      <name>Michael Silagy</name>
+    </author>
+    <author>
+      <name>Shreya Palande</name>
+    </author>
+    <author>
+      <name>Brijesh Soni</name>
+    </author>
+    <author>
+      <name>Rajiv Ramnath</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.15602v1</id>
+    <title>FluxBin: Flexible LUT-based Ultra-low-bit LLM Inference by Algorithm-Kernel Synergy</title>
+    <updated>2026-08-16T08:01:06Z</updated>
+    <link href="https://arxiv.org/abs/2608.15602v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.15602v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>While binary quantization theoretically promises extreme compression and acceleration for Large Language Models (LLMs), existing research often overlooks the necessity of specialized hardware kernels, thus failing to unleash the full acceleration potential due to persistent reliance on expensive floating-point arithmetic or runtime dequantization overheads. To bridge this gap, we propose FluxBin (\textbf{F}lexible \textbf{L}UT-based \textbf{U}ltra-low-bit e\textbf{X}ecution with \textbf{Bin}ary bases), an algorithm-kernel co-design that synergizes post-training quantization with a highly optimized CUDA kernel. Algorithmically, we introduce Decoupled Row-Column Binary Decomposition to enhance representational capacity while maintaining hardware efficiency, complemented by a Hessian-guided saliency-aware hybrid bases that preserve critical information. At the kernel level, we implement a Lookup Table Building Approach with Scale Fusion to reduce floating-point arithmetic, featuring a Virtual Columnar Mapping that transforms irregular, sparse, and salient matrices into dense execution. Extensive evaluations demonstrate FluxBin achieves up to $5.92\times$ speedup and $10.19\times$ energy savings across diverse model architectures, delivering comparable accuracy to heavily fine-tuned methods. This effectively enables the deployment of 70B-scale models on one single A100 GPU with a $4\times$ memory reduction. Code is available at https://github.com/nicyyyy/FluxBin.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-16T08:01:06Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Qingyao Yang</name>
+    </author>
+    <author>
+      <name>Runming Yang</name>
+    </author>
+    <author>
+      <name>He Xiao</name>
+    </author>
+    <author>
+      <name>Wendong Xu</name>
+    </author>
+    <author>
+      <name>Junyu Chen</name>
+    </author>
+    <author>
+      <name>Haobo Liu</name>
+    </author>
+    <author>
+      <name>Chenchen Ding</name>
+    </author>
+    <author>
+      <name>Ruihan Hu</name>
+    </author>
+    <author>
+      <name>Yik-Chung Wu</name>
+    </author>
+    <author>
+      <name>Ngai Wong</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.15567v1</id>
+    <title>SchurQuant: Groupwise Discrete Optimization for Layer-Wise LLM Quantization</title>
+    <updated>2026-08-16T06:29:10Z</updated>
+    <link href="https://arxiv.org/abs/2608.15567v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.15567v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Weight-only post-training quantization (PTQ) enables the deployment of large language models under tight memory budgets, but accuracy often collapses at 2-3 bits. Existing backpropagation-free PTQ optimizers have two limitations: group decisions ignore the correction that the remaining continuous suffix can absorb, and discrete refinements typically keep the affine quantization grid fixed. We introduce SCHUROPT, which analytically eliminates the suffix's optimal continuous response, yielding an exact groupwise quadratic with Schur-complement curvature. It then alternates closed-form row-wise scale/zero-point refitting with coordinate descent over integer codes. With the GPTQ objective fixed, SCHUROPT improves mean zero-shot accuracy on 2-bit Qwen3-4B by 11.88 percentage points (pp). At higher precision, however, tighter reconstruction does not consistently improve end-model metrics. SCHURQUANT therefore combines SCHUROPT with quantized-prefix teacher reconstruction, reference-weight regularization, residual-add targets, and teacher-decision token weighting. Across eight Llama and Qwen models, SCHURQUANT achieves the highest mean zero-shot accuracy among the evaluated backpropagation free PTQ baselines, outperforming the strongest baseline by 9.65 pp at 2 bits.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-16T06:29:10Z</published>
+    <arxiv:comment>14 pages, 6 tables</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Gunjun Lee</name>
+    </author>
+    <author>
+      <name>Sehwan Son</name>
+    </author>
+    <author>
+      <name>Younjoo Lee</name>
+    </author>
+    <author>
+      <name>Byungjun Kim</name>
+    </author>
+    <author>
+      <name>Jung Ho Ahn</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.15516v1</id>
+    <title>UniFed-VLM: Federated Instruction Tuning for Vision-Language Models with Multiple Heterogeneity</title>
+    <updated>2026-08-16T04:01:04Z</updated>
+    <link href="https://arxiv.org/abs/2608.15516v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.15516v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Vision-Language Models (VLMs) have demonstrated strong performance in multimodal understanding and generation. However, fine-tuning of VLMs typically relies on centralized data, which raises privacy concerns in certain domains (e.g. healthcare). Federated Learning (FL) provides a natural solution by enabling model training without sharing raw data. However, applying FL to VLM instruction tuning is highly challenging. VLMs have substantial parameter scales, and in real-world scenarios, clients exhibit significant heterogeneity in tasks, modalities, and model architectures.
+  Existing methods mainly focus on simplified settings and are unable to handle such multi-dimensional heterogeneous scenarios. In this work, we study federated instruction tuning under joint heterogeneity in tasks, modalities, and model architectures.
+  We propose UniFed-VLM, a unified federated instruction tuning framework for VLMs that addresses multiple types of heterogeneity. It consists of two key components: 1) Federated Compensated Subspace Aggregation (FedCSA), which performs subspace-aligned aggregation of parameter-efficient adapters with dynamic weighting and compensation to mitigate heterogeneity-induced conflicts; 2) Two-stage Collaborative Distillation (TCoD), which enables effective knowledge transfer across heterogeneous models via a Mutual Distillation Adapter (MDA) and a mixture-of-experts-based distillation strategy. We conduct experiments on multiple benchmark datasets, and the results show that UniFed-VLM achieves stronger average performance across diverse tasks compared with existing FL methods. The source code is available at: https://github.com/wangpengyu2004/UniFed-VLM.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-16T04:01:04Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Pengyu Wang</name>
+    </author>
+    <author>
+      <name>Baochen Xiong</name>
+    </author>
+    <author>
+      <name>Xiaoshan Yang</name>
+    </author>
+    <author>
+      <name>Yifan Xu</name>
+    </author>
+    <author>
+      <name>Zhang Qimeng</name>
+    </author>
+    <author>
+      <name>Haifeng Chen</name>
+    </author>
+    <author>
+      <name>Changsheng Xu</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.15383v1</id>
+    <title>Every Expert Counts: ExactMoE for Memory-Efficient W4A16 Inference</title>
+    <updated>2026-08-15T19:26:07Z</updated>
+    <link href="https://arxiv.org/abs/2608.15383v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.15383v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Sparse mixture-of-experts (MoE) language models reduce arithmetic by activating only a small subset of experts per token, yet deployment still requires storing and moving the full expert bank. We present ExactMoE, an inference design that applies symmetric group-128 four-bit weight quantization only to routed experts, stores those experts in kernel-native MARLIN form in pinned host memory, and executes all selected experts through a configurable GPU-resident slot cache and fused grouped MoE kernels. The router, attention, embeddings, normalization layers, and language-model head remain in BF16. "Exact" refers to complete expert availability and an unchanged top-k routing procedure: no expert is pruned, substituted, or forced to execute on the CPU. It does not imply numerical identity with the BF16 model. On OLMoE-1B-7B-0924-Instruct, evaluated on a single NVIDIA L4, a 16-slot configuration reduces peak reserved GPU memory from 14.168 to 1.836 GiB (87.04%) while retaining 81.85% of BF16 decode throughput. A fully resident 64-slot configuration reaches 31.923 tokens/s versus 21.662 tokens/s for BF16 while reserving 4.061 GiB. Across 12,450 zero-shot multiple-choice questions, ExactMoE obtains 70.3534% normalized accuracy versus 70.8996% for BF16, retaining 99.23% of the baseline accuracy. In a matched 16-token ablation, fused grouped execution is 1.97x as fast as a sequential W4 reference. These results identify a practical memory-transfer-throughput frontier for complete-expert MoE inference.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-15T19:26:07Z</published>
+    <arxiv:comment>12 pages, 3 figures, 4 tables</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Amjad Saab</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.15299v1</id>
+    <title>MAPLE: MoE Adaptive Plug-and-play Layer-wise Expert allocation</title>
+    <updated>2026-08-15T16:10:28Z</updated>
+    <link href="https://arxiv.org/abs/2608.15299v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.15299v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Sparsely-activated Mixture-of-Experts (MoE) Transformers universally fix the same number of routed experts across all layers, a convention that ignores the well-documented heterogeneity in layer-wise redundancy. We demonstrate that this uniformity is systematically suboptimal and propose MAPLE, a plug-and-play framework that reallocates the routed-expert budget heterogeneously across layers of any pretrained MoE LLM, without modifying weights or requiring retraining. Our core contribution is a closed-form sensitivity-guided allocation: we probe each layer's response to variation in expert count, quantify sensitivity using three measures, and derive an analytically optimal budget assignment that directs capacity towards sensitive layers and absorbs reductions in redundant layers. This closed-form solution is further refined by a sensitivity-constrained genetic search that uses layer-wise sensitivity as a prior to guide exploration, yielding faster convergence and superior allocation quality. On four MoE models spanning different scales and architectures, MAPLE outperforms uniform and pruning-based baselines under a 75% routed-expert budget. Notably, on DeepSeek-MoE-16B, MAPLE uses only 75% of the experts yet surpasses the original 100% expert-uniform baseline on ARC-E, ARC-C, and BoolQ, improving accuracy from 65.09 to 71.40, 48.49 to 51.50, and 80.03 to 82.38, respectively. These accuracy gains translate into measured deployment efficiency: implementing MAPLE in SGLang reduces single-GPU end-to-end serving latency by 32.2% and improves throughput by 47.4%. These results show that well-designed heterogeneous allocation can be more effective than simply activating more experts, establishing it as a principled and practical axis for improving MoE efficiency.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-15T16:10:28Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Lie Li</name>
+    </author>
+    <author>
+      <name>Wen Li</name>
+    </author>
+    <author>
+      <name>Junxiao Shen</name>
+    </author>
+    <author>
+      <name>Gusheng Hu</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.15117v1</id>
+    <title>Anatomy of a Quantized Agent: VRAM Stability and Forecasting in Code-Synthesis Agentic Workloads</title>
+    <updated>2026-08-15T08:39:43Z</updated>
+    <link href="https://arxiv.org/abs/2608.15117v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.15117v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Analytical models of peak VRAM consumption for LLM inference decompose memory into weight-storage, KV-cache, and activation terms parameterized by step count, tool invocations, and context expansion. We evaluate this decomposition empirically within a strictly scoped measurement study: a LangGraph-based CUDA-kernel-synthesis agent (AgentK), a 4-bit quantization family (Q4 K M), a single NVIDIA H100 GPU, and four LLM backbones across 1,920 trajectories. Focusing on peak-memory forecasting behavior, we report two primary observations. First, closed-form analytical models achieve competitive accuracy when provided with two empirical constants: loaded-weight VRAM and a fixed activation-memory overhead. Supplied with live GPU readings and ground-truth trajectory parameters, the closed-form model matches or outperforms the best learned baseline on three of the four backbones (test MAPE 2.2-4.4% vs. 3.4-6.5%, p = 0.76). The exception is the smallest backbone (Phi-4-mini), where minimal VRAM variance (CV 0.3%) causes dynamic modeling to underperform simple regression. Second, compile success strictly bifurcates by backbone capacity (from 5.7% for Phi-4-mini to 62.0% for Qwen2.5-Coder-14B), demonstrating that functional code synthesis remains constrained by intrinsic LLM capabilities rather than available memory. Furthermore, because overall peak-memory variance is remarkably low across all backbones (CV 0.3-9.4%), learned prompt-feature regression offers statistically insignificant improvements over a constant-mean baseline. Consequently, we find no justification for deploying complex predictive VRAM models in highly quantized, weight-dominated regimes. We release the evaluated corpus and anonymized framework to support replication.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.DC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-15T08:39:43Z</published>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Anubhab Banerjee</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.15051v1</id>
+    <title>A Unified Mamba--MoE Surrogate for Closed-Loop Simulation and Measurement-Window Forecasting of Inverter Transients</title>
+    <updated>2026-08-15T05:35:49Z</updated>
+    <link href="https://arxiv.org/abs/2608.15051v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.15051v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>This paper proposes a Mamba surrogate model with mixture-of-experts (MoE) routing to represent the transient dynamics of inverter-based resources. A Mamba surrogate model is a predictive machine learning model built on the Mamba architecture. MoE routing uses a router network to assign data-dependent weights to specialized subnetworks (experts). The resulting Mamba--MoE surrogate can perform two tasks: (i) closed-loop simulation and (ii) measurement-window forecasting of inverter transients. A single Mamba backbone with task conditioning and expert routing serves both tasks, replacing two separate specialists. Task-matched objectives fit each prediction form, and an adaptive conformal layer provides prediction intervals for both tasks. For the considered grid-following inverter, the unified surrogate model remains in the same low-error regime as a Mamba specialist pair while using 13% fewer parameters. The prediction intervals achieve 94--96% empirical mean marginal coverage across the two tasks. For transient dynamics---that is, beyond the vicinity of an equilibrium point---our surrogate model with MoE routing yields lower errors across all outputs in both tasks compared to a shared Mamba backbone without expert routing. A controller hardware-in-the-loop simulation validates our results and shows that adapting only the shared output head with limited measured data reduces held-out forecasting error.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="eess.SY" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-15T05:35:49Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Haoguang Wang</name>
+    </author>
+    <author>
+      <name>Huy Hoang Le</name>
+    </author>
+    <author>
+      <name>Akhila Kandivalasa</name>
+    </author>
+    <author>
+      <name>Christian Moya</name>
+    </author>
+    <author>
+      <name>Marcos Netto</name>
+    </author>
+    <author>
+      <name>Guang Lin</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16947v1</id>
+    <title>A Constant-Competitive Algorithm for Dynamic Mixture-of-Experts Serving</title>
+    <updated>2026-08-15T03:51:27Z</updated>
+    <link href="https://arxiv.org/abs/2608.16947v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16947v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Huang, Lou, and Xiao introduced Dynamic Mixture-of-Experts Serving and gave an O(sqrt(log k))-competitive randomized algorithm for its integral primal problem, where k is the number of replica GPUs beyond the mandatory copy of each expert. Their matching lower barrier applies to an auxiliary dual and leaves the primal order open. We prove that the randomized primal competitive ratio is in fact Theta(1) for arbitrary numbers of experts. The upper bound reduces reciprocal-max service costs to chasing positive bodies with covering row sparsity two. A finite tangent envelope approximates each reciprocal epigraph within a constant factor, summable positive resets convert accumulated service into movement, and a nonexpansive balanced projection removes the positive-body algorithm's resource augmentation. Combining the resulting fractional path with Lazy Threshold Rounding gives
+  E[ALG] &lt;= 10 C_PB OPT + (5 C_PB + 2) k + 16,
+  where C_PB is the absolute constant from Chasing Positive Bodies at resource augmentation one and covering sparsity two. The full reduction, rounding composition, and quantified main theorem are machine-checked in Lean 4 relative to exact formal interfaces for the two cited source theorems. Deterministic rational controls and a fresh independent replay accompany the formal proof.</summary>
+    <category term="cs.DS" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-15T03:51:27Z</published>
+    <arxiv:comment>7 pages. The new Dynamic MoE reduction and quantified main theorem are checked in Lean 4 relative to exact formal interfaces for the cited Chasing Positive Bodies theorem and Lazy Threshold Rounding lemma. A separate reproducibility archive contains the pinned-source bootstrap, exact controls, proofs, tests, and canonical SHA-256 manifests</arxiv:comment>
+    <arxiv:primary_category term="cs.DS"/>
+    <author>
+      <name>Ian D'Ambrosio</name>
+      <arxiv:affiliation>Nth Research Collective</arxiv:affiliation>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.14929v1</id>
+    <title>Training Leaves Traces: Centered Residual Signatures for Language Model Lineage Verification</title>
+    <updated>2026-08-14T22:36:58Z</updated>
+    <link href="https://arxiv.org/abs/2608.14929v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.14929v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Open-weight language models are fine-tuned, quantized, pruned, and merged, yet their provenance is often undocumented. We study data-free white-box lineage verification: can weights alone reveal whether two compatible model checkpoints share ancestry?
+  Residual training produces a shared identity-aligned component in branch products, so this structure alone cannot establish ancestry. We remove it and compare checkpoint-specific structure across residual blocks, yielding a symmetric lineage score calibrated against independent checkpoints. On residual-MLP and GPT-2 benchmarks, the score separates fine-tuned, LoRA-merged, pruned, and quantized descendants from independent and distilled models (AUROC=1.0), distinguishing weight ancestry from behavioral similarity. Under function-preserving checkpoint laundering experiments, weight-space baselines lose margin or fail; our score remains unchanged and runs 76x faster than the nearest robust baseline on GPT-2. The projection-pairing signal appears across six language-model families and beyond, and a case study correctly identifies 3 related and 7 unrelated LLaMA-2 public checkpoints. Collectively, these results establish a passive, data-free provenance signal for compatible open-weight language-model checkpoints</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T22:36:58Z</published>
+    <arxiv:comment>Preprint</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Aman Singh Thakur</name>
+    </author>
+    <author>
+      <name>Rayan Khoury</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.14774v1</id>
+    <title>p-Spin Glass Network Efficient Single-Batch Continual Learning</title>
+    <updated>2026-08-14T16:24:37Z</updated>
+    <link href="https://arxiv.org/abs/2608.14774v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.14774v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Modern sequence models heavily rely on massive memory footprints and large-batch stochastic optimization, barriers that restrict sample efficiency and continual learning. We introduce the $p$-Spin Glass Network, a novel architecture that overcomes these limitations, structurally manages optimization variance and yields four noticeable capabilities: 1. It enforces memory efficiency: native ternary quantization compresses internal parameters by $8\times$, while exact implicit gradients strictly bound activation memory to $\mathcal{O}(B \cdot T \cdot D)$. 2. it demonstrates sample efficiency, matching the asymptotic performance of a Transformer baseline while utilizing $8\times$ fewer training sequences. 3. Method enables single-batch stability and smooth, monotonic convergence at a stochastic micro-batch size of $1$. 4. Finally, this stability proves modality-agnostic, maintaining robust temporal credit assignment across both discrete subword and long horizon uncompressed raw byte streams. Ultimately, this work removes large batch requirement for stable deep learning, establishing a foundation for continuous learning and edge AI.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T16:24:37Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Vladimer Khasia</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.14385v1</id>
+    <title>DeaMoE: Efficient MoE Structure for Fast Small-Batch Decoding</title>
+    <updated>2026-08-14T15:25:32Z</updated>
+    <link href="https://arxiv.org/abs/2608.14385v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.14385v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Mixture-of-Experts (MoE) models have been widely adopted in real-time interactive applications such as coding assistants, real-time audio-video interaction systems. To meet the extremely low response latency requirements of these scenarios, practitioners commonly employ small-batch decoding, under which MoE inference becomes memory-bound and is severely bottlenecked by expert weight loading. However, this bottleneck has received limited attention, and existing solutions such as post-training weight compression or fine-grained expert design during pre-training either degrade model accuracy or introduce additional computation and communication overhead. To tackle this issue, we propose DeaMoE, a decoding-efficient MoE architecture, in which the experts are grouped into several departments, and the experts belonging to the same department share most parameters since they come from the same professional field, and additionally each expert contains a few private parameters to reflect its uniqueness. Moreover, we design customized two-stage routing strategy for DeaMoE to avoid redundant loading, under which DeaMoE greatly improves the efficiency during LLM decoding. Compared with vanilla MoE, DeaMoE reduces per-step loaded weights by up to 50.9% and achieves up to 1.33 end-to-end TPOT speedup for the pre-trained 7B model on A40, and up to 2.00x and 1.97x peak speedup for DeepSeek-V3 on A40 and H100 in microbenchmarks.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T15:25:32Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Zewen Jin</name>
+    </author>
+    <author>
+      <name>Shen Fu</name>
+    </author>
+    <author>
+      <name>Zeping Duan</name>
+    </author>
+    <author>
+      <name>Shannon Wang</name>
+    </author>
+    <author>
+      <name>Weihao Wu</name>
+    </author>
+    <author>
+      <name>Chengjie Tang</name>
+    </author>
+    <author>
+      <name>Congkun Ai</name>
+    </author>
+    <author>
+      <name>Ping Gong</name>
+    </author>
+    <author>
+      <name>Zijian Dai</name>
+    </author>
+    <author>
+      <name>Youhui Bai</name>
+    </author>
+    <author>
+      <name>Cheng Li</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.14205v1</id>
+    <title>FreeBalance: Pre-Routing Online Moe Load Balancing via Residual Workload Prediction</title>
+    <updated>2026-08-14T11:30:39Z</updated>
+    <link href="https://arxiv.org/abs/2608.14205v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.14205v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Load imbalance poses a major bottleneck to the efficiency of expert parallelism in distributed inference of Mixture-of-Experts (MoE) models. The most heavily loaded rank stalls global execution due to skewed routing distributions, directly increasing latency. While offline expert placement can alleviate persistent imbalance, practical multi-task serving workloads exhibit layer- and batch-dependent routing dynamics, making online load balancing indispensable. Existing approaches rely on routing statistics collected after each MoE router, requiring expert weight load or migration to begin only after routing decisions are available, consequently placing migration overhead on the inference critical path. In this work, we observe that online balancing can instead be largely overlapped with computation before target routing (e.g., attention), if routing distributions can be predicted accurately in advance. Therefore, we propose FreeBalance, a lossless online load-balancing framework that overlaps expert migration with preceding computation stages via residual workload prediction. FreeBalance leverages cross-layer similarities in hidden representations within the residual network to build a lightweight workload predictor. This enables proactive expert migration planning before routing decisions are available, creating substantial overlap between weight transfer and computation-heavy pre-routing stages. Furthermore, a cost model constrains the number of swaps to fully hide the synchronization overhead within the available window. Experiments across models and datasets show that FreeBalance reduces the max-to-mean rank load ratio by 32.8% and end-to-end prefill latency by 13.1%. Specifically, our method hides balancing overhead of an average of 5.1 experts per layer, which would otherwise account for about 8.5% of the critical-path latency.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T11:30:39Z</published>
+    <arxiv:comment>8 pages, 4 figures</arxiv:comment>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Pengfei Chen</name>
+    </author>
+    <author>
+      <name>Yize Wu</name>
+    </author>
+    <author>
+      <name>Shouxu Kuang</name>
+    </author>
+    <author>
+      <name>Ke Gao</name>
+    </author>
+    <author>
+      <name>Ling Li</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.14191v1</id>
+    <title>KV Cache Compression Through the Lens of Transform Coding</title>
+    <updated>2026-08-14T11:08:01Z</updated>
+    <link href="https://arxiv.org/abs/2608.14191v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.14191v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The key-value (KV) cache stores information from past tokens and is a major memory bottleneck in long-context inference. Existing quantization methods address this bottleneck by representing the KV cache uniformly with lower-precision data types and designing quantization schemes to minimize reconstruction error in the cache itself, without accounting for how that error propagates through attention mechanisms. We prove that, under a white-noise quantization model, the expected attention-aware distortion decomposes into additive key and value contributions that factor across tokens and channels. Building on transform coding and reverse water-filling, which are classical tools from signal processing and rate-distortion theory, we introduce Attention-Aware Transform Coding (AATC), which allocates bits over a calibration set to minimize attention-aware distortion. On Llama-3.1-8B-Instruct and Qwen-2.5-7B-Instruct, evaluated across LongBench, RULER, GSM8K, MMLU-Pro, and MATH-500, our method achieves near-lossless accuracy at approximately $5.8\times$ compression, whereas each baseline degrades in at least some settings.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="eess.SP" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T11:08:01Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Hannah Laus</name>
+    </author>
+    <author>
+      <name>Claudio Mayrink Verdun</name>
+    </author>
+    <author>
+      <name>Hao Wang</name>
+    </author>
+    <author>
+      <name>Flavio du Pin Calmon</name>
+    </author>
+    <author>
+      <name>Felix Krahmer</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13966v1</id>
+    <title>QUASAR: Lowering the Loss Floor of Quantization-Aware Training with Loss-Aware Reconstruction</title>
+    <updated>2026-08-14T05:29:58Z</updated>
+    <link href="https://arxiv.org/abs/2608.13966v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13966v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>As large language model inference shifts toward lower precision, post-training quantization (PTQ) becomes increasingly brittle, making quantization-aware training (QAT) essential for preserving model quality. However, QAT computes the loss and surrogate gradients using a lossy reconstruction of latent full-precision weights, while applying updates to the latent weights themselves. This mismatch can lead to suboptimal training trajectories and a higher loss floor. Second-order PTQ methods mitigate a similar gap by minimizing loss-aware reconstruction error, but doing it once for a frozen model can take hours; repeating this process throughout QAT as the weights evolve is impractical. We introduce QUASAR, a QAT method that continuously performs lightweight, loss-aware reconstruction in the training loop to lower the loss floor and improve the resulting low-bit model. At each training step, QUASAR uses the exponential moving average of squared gradients as online saliency estimates, searches over a small set of clipping ranges, and fits affine dequantizers via saliency-weighted least squares. Our analysis shows that the loss-aware reconstruction error is the only reconstruction-dependent term in the QAT convergence bound and controls the loss of the final quantized model, establishing QUASAR's objective as a principled optimization target. QUASAR modifies only the training procedure and supports standard deployment formats, including integer quantization and NVFP4, with no inference-time changes or overhead. Across Qwen3 and Llama-3.1, QUASAR achieves the lowest held-out KL divergence among competitive QAT methods at 2, 3, and 4 bits, reducing KL by at least 10% at 3 and 4 bits and by 29% at 2 bits. At 2 bits, it improves average accuracy across eight tasks by 3.5-4.3 percentage points over strong QAT and PTQ baselines.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T05:29:58Z</published>
+    <arxiv:comment>39 pages</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Vincent Counathe</name>
+    </author>
+    <author>
+      <name>Ben Athiwaratkun</name>
+    </author>
+    <author>
+      <name>Christopher De Sa</name>
+    </author>
+    <author>
+      <name>Tianyi Zhang</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13961v1</id>
+    <title>Polar Code Based Federated Learning: Convergence Analysis and Resource Allocation</title>
+    <updated>2026-08-14T05:10:42Z</updated>
+    <link href="https://arxiv.org/abs/2608.13961v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13961v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Federated learning (FL) enables collaborative model training across distributed devices without sharing raw data; however, it faces significant communication bottlenecks and channel impairments in practice. Conventional network layer treatments either idealize the channel as error free or apply equal error protection (EEP) to transmitted model updates, failing to account for the inherently unequal importance of quantization bits within a single local model. To address this limitation, we propose a cross layer polar code based FL scheme that leverages the unequal error protection (UEP) property of polar codes under finite block lengths. Specifically, the proposed design selectively protects more significant quantization bits, thereby mitigating the detrimental effects of channel noise. We further provide a rigorous convergence analysis of the proposed scheme, deriving an upper bound on the convergence gap, which we then jointly optimize over the number of quantization bits and the polar code block length across all training iterations. Experimental results demonstrate that both constant and variable block length configurations of our polar code based scheme consistently achieve substantial performance gains over uncoded and LDPC-based EEP benchmarks, with the advantage becoming increasingly pronounced as the channel quality deteriorating. These findings confirm the efficacy of our cross-layer design in enhancing FL robustness and efficiency under realistic channel conditions.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T05:10:42Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Han Xiao</name>
+    </author>
+    <author>
+      <name>Wei Kang</name>
+    </author>
+    <author>
+      <name>Nan Liu</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13932v1</id>
+    <title>Post-training Quantization for Hybrid Iterative Generative Models</title>
+    <updated>2026-08-14T04:07:14Z</updated>
+    <link href="https://arxiv.org/abs/2608.13932v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13932v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Iterative Generative Models (IGMs) span autoregressive and diffusion paradigms, and hybrid variants that couple them can achieve remarkable image-generation fidelity. However, their iterative inference incurs substantial computational overhead, making Post-training Quantization (PTQ) appealing for acceleration, while directly applying vanilla PTQ to hybrid IGMs can trigger model collapse. By analyzing these failures, we identify two critical challenges: Excessive Outliers (EOs) in the activations create an irreconcilable trade-off between preserving normal precision and covering EOs, resulting in severe degradation in generation quality; Amplified Anomalies (AAs) arising unpredictably from minor quantization errors, create a mismatch between calibration and inference, thus iteratively triggering model collapse. To address these challenges, we introduce HyGenQ, a PTQ framework for hybrid IGMs. HyGenQ comprises Hierarchical Cluster Decoupling (HCD) and Scaling Recalibration (SR). HCD identifies and decouples outlier channels via a multi-stage clustering process, effectively isolating EOs while maintaining normal value precision, thereby alleviating performance degradation. SR scales AAs beyond Gaussian Bound, thereby avoiding model collapse caused by aggressive truncation. Extensive experiments demonstrate that HyGenQ successfully quantizes representative hybrid IGMs to 8-bit precision (W8A8), significantly outperforming existing baselines and validating its robustness across different model families.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T04:07:14Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Jing Gao</name>
+    </author>
+    <author>
+      <name>Junyi Wu</name>
+    </author>
+    <author>
+      <name>Wei Wang</name>
+    </author>
+    <author>
+      <name>Yan Yan</name>
+    </author>
+    <author>
+      <name>Yao Zhao</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13911v1</id>
+    <title>MedMix: Specialization-Consistent Federated Sparse MoEs under Modality Heterogeneity</title>
+    <updated>2026-08-14T03:30:33Z</updated>
+    <link href="https://arxiv.org/abs/2608.13911v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13911v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Federated multimodal medical AI faces modality heterogeneity at both the client and sample levels: clients may systematically lack access to specific modality types, while individual records within the same client may contain different partial modality subsets. Sparse Mixture-of-Experts (MoE) architectures are a promising remedy for modality-adaptive computation, but their use in federated learning is fragile under cross-client modality heterogeneity, where locally learned routing policies can diverge across clients and drive experts toward incompatible specializations. Different clients may assign the same observed modality configuration to different experts, or train similarly indexed experts on different missing-modality configurations, causing standard aggregation to misalign or overwrite the expert specialization that sparse MoEs are intended to learn. To address this challenge, we propose MedMix, a semantic-alignment framework for federated multimodal sparse MoEs that coordinates cross-client routing and expert specialization using modality context. At the client side, MedMix uses modality-context-aware routing to guide expert selection using each token's modality identity, position, and incompleteness context. Across clients, it uses consensus-guided routing alignment to construct server-side consensus anchors for shared modality patterns and align local routing distributions across clients. Complementing these routing mechanisms, client-adaptive expert aggregation leverages client-specific modality-pattern prototypes to match and aggregate functionally similar experts across clients. Experiments on real-world multimodal medical datasets show that MedMix achieves the best average F1 across diverse modality heterogeneity and modality incompleteness settings, with especially clear gains under severe heterogeneity.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-14T03:30:33Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Adiba Orzikulova</name>
+    </author>
+    <author>
+      <name>Dong Min Kim</name>
+    </author>
+    <author>
+      <name>Jaehong Yoon</name>
+    </author>
+    <author>
+      <name>Sung-Ju Lee</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13756v2</id>
+    <title>The Integer Alibi: Localizing Cross-Kernel Divergence in INT8-Quantized LLM Inference</title>
+    <updated>2026-08-18T06:33:51Z</updated>
+    <link href="https://arxiv.org/abs/2608.13756v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13756v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Two GPU kernels implementing the same scaled INT8 GEMM interface are usually treated as interchangeable. We test that assumption: holding the checkpoint, prompts, hardware, inference engine, decoding, and quantization configuration fixed, we swap only the INT8 linear kernel (CUTLASS versus Triton) inside vLLM. At 1.7B each arm reproduces itself bit-for-bit across cold restarts, yet the arms agree on no sequence in any end-to-end comparison we ran (0/8, 0/16, and 0/64). What makes this more than a benchmark discrepancy is an integer alibi: for shared INT8 operands under a verified no-overflow bound, the INT32 dot product is exact and order-independent, so the accumulator cannot be the source of any difference. Feeding both kernels identical operands from every linear layer of Qwen3-1.7B and 8B (196 and 252 layers), we find bit-identical outputs under power-of-two scales, confirming a pinned prediction list 196/196 and 252/252 (pre-registered at 1.7B, pinned but not blind at 8B), and observed differences of at most one bfloat16 spacing under the checkpoints' real scales. This localizes the divergence to scale application and output rounding after the exact accumulator. Applied as a probe checkpoint, the same intervention restores end-to-end bitwise agreement (8/8 and 16/16 sequences). Cross-implementation FP8 GEMM shows a different signature: both the prevalence and the magnitude of differences grow with reduction depth, while the INT8 fraction stays at parts per million and within one spacing over a 64x range of K. Teacher-forced replay ties layers to tokens: flips concentrate at small logit margins, which predict flip risk with ROC-AUC 0.94 on 16,384 positions. We will release the pre-registration, per-layer predictions, manifests with kernel-selection evidence, and a conformance procedure that turns these controls into a concrete check for kernel interchangeability.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-13T20:34:36Z</published>
+    <arxiv:comment>10 pages (IEEEtran two-column), 3 figures, 4 tables. Pre-registered protocol with append-only amendments. Companion to arXiv:2608.11693. v2: corrects the product-bound attribution (weight side, not activation side; 16256 is exact) and distinguishes the layer-level uniform pow2 regime from the per-channel probe; no result changes. Figure count corrected from v1</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Teng-Ruei Chen</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13668v1</id>
+    <title>The Query Knows What to Forget: A Second Erase Direction for Linear Attention</title>
+    <updated>2026-08-13T18:04:53Z</updated>
+    <link href="https://arxiv.org/abs/2608.13668v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13668v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Linear attention keeps a state of fixed size. At long context, many stored items share this state, and interference between them degrades retrieval. Gated DeltaNet-2 (GDN-2), like every delta-rule model before it, derives its erase vector from the key of the current token. However, the interference in its reads is measured through the query, and the erase step cannot reach it. We introduce the Query-derived Erase Direction (QED). QED adds a second erase direction derived from the query and orthogonal to the key. In the fast-weight view, a key-directed delta edit cannot change the key-orthogonal part of a read. It uses the editable part to cancel old-state content measured along the query. It also improves retrieval at every length past the training window, and it about doubles the usable context length on S-NIAH-1.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-13T18:04:53Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Dhruman Gupta</name>
+    </author>
+    <author>
+      <name>Aritra Das</name>
+    </author>
+    <author>
+      <name>Debayan Gupta</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13426v1</id>
+    <title>Reduced Matrix Multiplication: Input-Adaptive Matrix-Product Reduction for LLM Inference</title>
+    <updated>2026-08-13T16:16:04Z</updated>
+    <link href="https://arxiv.org/abs/2608.13426v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13426v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Transformer-based language models achieve strong performance but incur substantial inference cost due to repeated high-dimensional matrix multiplications. We propose Reduced Matrix Multiplication (RMM), a training-free, input-adaptive inference method that reduces Transformer matrix products by selecting informative slices along their contraction dimensions, without modifying model weights. Under a simple retention-ratio control, RMM provides a smooth and predictable accuracy-efficiency trade-off. Across language models ranging from 1B to 70B parameters, we find that reduction tolerance depends on the model family, task, component, and retention ratio, although it often improves with model scale. Under moderate reduction, RMM remains robust across the evaluated discriminative, autoregressive generation, and long-context settings. We further show that the same principle extends to multimodal vision-language inference. Mechanistic ablations reveal a structural asymmetry within Transformers: attention-side computations are substantially more reducible than MLP components. Finally, wall-clock benchmarks with custom kernels on an NVIDIA A100 show that these computational savings can translate into practical runtime gains, especially at longer sequence lengths. Together, these results position RMM as a scalable direction for input-adaptive inference-time optimization.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-13T16:16:04Z</published>
+    <arxiv:comment>24 pages</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Zixuan Lan</name>
+    </author>
+    <author>
+      <name>Yanhong Li</name>
+    </author>
+    <author>
+      <name>Jiawei Zhou</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13365v1</id>
+    <title>When Local Variance Optimality Is Not Enough: RoPE-Aligned Q/K Rotations for Dynamic 4-Bit Quantisation</title>
+    <updated>2026-08-13T15:31:01Z</updated>
+    <link href="https://arxiv.org/abs/2608.13365v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13365v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Rotation-based post-training quantisation commonly applies an orthogonal transform across an entire attention head to reduce outlier-induced error. RoPE instead partitions each head into two-dimensional frequency pairs, raising the question of whether a transform respecting this decomposition can improve on full-head mixing. Prior work has established the per-pair rotations that commute with RoPE. We state the converse result that, for distinct frequencies, no other single-head orthogonal map commutes with RoPE. For the head-shared parameterisation used in our experiments, we then derive the rotation angle that minimises the larger channel variance under a pooled-covariance, position-averaged surrogate and verify that the implementation attains its analytic minimum. The evaluated head-shared pairwise configuration does not improve accuracy in the tested dynamic W4A4KV4 setting. Across four checkpoints, replacing the full-head Hadamard with this configuration increases perplexity at both short and long context lengths. Composing the pairwise rotation with the Hadamard satisfies the selected $\pm0.05$-PPL interval criterion under the default estimator. Estimating the shared angle from K alone improves pairwise-only on every checkpoint but does not close its gap to full-head mixing. The analytic objective controls a position-averaged second moment of a pooled calibration covariance, whereas the dynamic quantiser sets its step from a tokenwise group range. The pairwise transform also has only two-channel mixing support. Along a controlled interpolation from two-channel to full-head mixing, K range, relative quantisation error, and perplexity degradation decrease as support increases. These results show that optimality for a structured surrogate need not reduce quantisation error when the surrogate and mixing support are misaligned with the quantiser's scale-setting statistic.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-13T15:31:01Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Shuhan Wang</name>
+    </author>
+    <author>
+      <name>Yilin Luo</name>
+    </author>
+    <author>
+      <name>Nan Xu</name>
+    </author>
+    <author>
+      <name>Chi Wang Cheung</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.13335v1</id>
+    <title>Neural Quadratic Forms: A Unified Minimal Model for Sudden Learning and Scaling Laws</title>
+    <updated>2026-08-13T15:05:43Z</updated>
+    <link href="https://arxiv.org/abs/2608.13335v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.13335v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Neural networks trained by gradient descent on a smooth cost function can nevertheless learn in steps: the cost holds on long plateaus and then drops abruptly. Meanwhile, training losses instead follow smooth power laws. Variants of both behaviors occur in architectures with very different microscopic structures, which is the signature of a few relevant collective variables. We show that a symmetry fixes what those variables are: a network layer is a sum over interchangeable units, so relabeling the units leaves it unchanged; given smoothness and the condition that a unit's gradient vanish at the origin, symmetry then enforces a universal leading form for the expansion about the near-zero weights present at the start of training, the quadratic $\Tr[WW^{\top}A(x)]$, in which every architectural detail is confined to a single ``structure matrix" $A(x)$ that we compute for each architecture. Perceptrons, attention layers, mixtures of experts, and convolutions become one model at different $A$. Its training dynamics then close on the ``order parameter" $M=WW^{\top}$ and, whenever the data matrices share an eigenbasis, reduce to a Lotka--Volterra equation whose modes switch on one after another. The smaller the initial weights, the further apart the switch-on times, and the plateaus appear as a singular limit of a smooth flow; when many modes are unresolved the same events merge into a power law in training time whose exponent the theory predicts. We confirm both numerically across training methods and architectures.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cond-mat.dis-nn" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cond-mat.stat-mech" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-13T15:05:43Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Liu Ziyin</name>
+    </author>
+    <author>
+      <name>Yizhou Xu</name>
+    </author>
+    <author>
+      <name>Tomaso Poggio</name>
+    </author>
+    <author>
+      <name>Isaac Chuang</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.12695v1</id>
+    <title>The Impact of Temporal Context Length and Encoding Strategies on Self-Supervised ECG Representation Learning</title>
+    <updated>2026-08-13T01:18:39Z</updated>
+    <link href="https://arxiv.org/abs/2608.12695v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.12695v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Self-supervised electrocardiogram (ECG) models are often trained on a few seconds of ECG signal and, increasingly, on discretized token sequences. It remains unclear whether these choices sacrifice information needed for rhythm inference and longitudinal consistency in real-world ambulatory recordings. We present a controlled study on the Icentia11k single-lead dataset that varies (i) the input horizon (16 seconds, 1 minute, 5 minutes, and 10 minutes) and (ii) the front-end representation (continuous convolutional patch embeddings vs. fixed vector-quantized tokens), while holding the Transformer backbone and training protocol constant. Representations are assessed by downstream abnormal rhythm detection and by patient-level retrieval that probes cross-session stability. Our results show that increasing temporal context beyond 16-second snapshots yields stronger transfer and higher retrieval accuracy, with the strongest performance achieved by the 5- and 10-minute models, indicating improved capture of slow-varying rhythm dynamics and individual-specific structure. Across all evaluated horizons, continuous patch embeddings outperform discretized tokens, suggesting that quantization can discard clinically relevant waveform detail. These findings motivate ECG foundation models that emphasize extended context and continuous encoders for clinical prediction and similarity-based applications. Our code and pretrained models are publicly available at https://github.com/muha-0/ecg-ssl-representation-learning.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="eess.SP" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-13T01:18:39Z</published>
+    <arxiv:comment>Accepted at the 48th Annual International Conference of the IEEE Engineering in Medicine and Biology Society (EMBC 2026). 6 pages, 2 figures, 1 table</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Ahmed Sameh</name>
+    </author>
+    <author>
+      <name>Ramzi Al-Sharawi</name>
+    </author>
+    <author>
+      <name>Yogatheesan Varatharajah</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.12655v1</id>
+    <title>Training Under Challenge: Executable Certificates and Challenge-Closed Optimality for Neural Networks</title>
+    <updated>2026-08-12T23:37:57Z</updated>
+    <link href="https://arxiv.org/abs/2608.12655v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.12655v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>A flat training curve does not reveal whether a neural network has reached a global optimum, is locally trapped, is representation-limited, or is mismatched to its trainer. We introduce Training Under Challenge, an executable-certificate framework in which predeclared, architecture-valid procedures construct complete alternatives in the same certified class and reevaluate the same objective. Any lower-valued candidate is a replayable witness that lower-bounds the checkpoint's empirical global-optimality gap. Passing a finite suite is only suite-relative; global-gap conclusions require a separately justified coverage mechanism. We define a resource-indexed challenge-power modulus that characterizes the largest gap compatible with passage. For squared loss, current block-decrease operators make coverage checkable and yield uniform and realized-residual bounds. We prove the converse frontier: without coverage, a first-order ReLU trainer can reach infinitely many exact conditional head optima while converging to a non-global point. On a channel-gated ResNet-18 distillation problem with known optimum, eight internal challenges cover all 240 audited output directions, and realized-residual bounds lie within factors of 1.74--3.02 of the true gap. Paired predictive certificates separate decoder under-use from representation insufficiency, while quantized-denoising studies demonstrate diagnosis, repair, and current-state recertification.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-12T23:37:57Z</published>
+    <arxiv:comment>82 pages, 24 figures, 10 tables. Ancillary reproducibility materials included</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Farhang Yeganegi</name>
+    </author>
+    <author>
+      <name>Arian Eamaz</name>
+    </author>
+    <author>
+      <name>Mojtaba Soltanalian</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.12447v2</id>
+    <title>Geometric and Behavioral Stratification in Transformer Residual Streams</title>
+    <updated>2026-08-17T22:18:18Z</updated>
+    <link href="https://arxiv.org/abs/2608.12447v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.12447v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Trained transformer models develop privileged bases: coordinate axes whose statistics differ from the rest of the residual stream. But what kind of direction does such a basis select? We investigate the prediction direction, the unembedding direction of the token a model currently predicts, and find that it functions as a content-defined privileged anchor. Measured with respect to this anchor, residual-stream variation is geometrically and behaviorally stratified by proximity to the prediction.
+  The stratification holds in all eighteen models tested (dense and mixture-of-experts, 7B-120B, base and instruction-tuned). A narrow, scale-invariant prediction interface concentrates readout-relevant structure, while the vast prediction-distal complement expands with model scale. Because the prediction direction sits nearly orthogonal to the principal variance axes, variance-based analyses recover this organization only partly, and the shortfall grows with prompt heterogeneity.
+  Anchoring reveals a steep geometric gradient: prediction-proximal regions are highly structured and cluster related prompts, while the complement is flatter and anti-discriminates among prompt groups. The interface is a narrow slice but functionally decisive. Disrupting the variance directions closest to the prediction causes immediate divergence and frequent task-frame shifts; disrupting the next level down delays divergence and preserves framing. The complement is weakly readout-aligned per direction yet causally and temporally load-bearing, and behavior is driven by direction rather than magnitude.
+  These results establish the prediction direction as a privileged anchor distinct from previously described coordinate axes, and give a geometric account of how high-dimensional computation coexists with linear readout.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-12T17:42:20Z</published>
+    <arxiv:comment>63 pages, 10 figures, 15 tables. Code and data: https://github.com/nelsonguda/pdsf-residual-geometry</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Nelson Guda</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.12259v1</id>
+    <title>Calibration Bets on the Past: Post-Training Quantization for Financial Time-Series Forecasting</title>
+    <updated>2026-08-12T17:02:06Z</updated>
+    <link href="https://arxiv.org/abs/2608.12259v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.12259v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Financial forecasting models are typically developed in full precision, yet production deployment often requires low-precision inference to reduce memory and computational cost. Post-training quantization (PTQ) enables such deployment without retraining. However, reliable activation quantization requires calibration: activation ranges are estimated from historical data before deployment and then remain fixed during future inference. The importance of this deployment choice for financial forecasting remains poorly understood. We present a systematic study of activation calibration for PTQ in cross-sectional volatility forecasting on the S&amp;P 500. Our evaluation covers seven representative neural architectures, eight walk-forward test years (2018-2025), and 560 trained models. We find that activation calibration has little effect at 8 bits but becomes the primary determinant of predictive performance at 4 bits. Under default absolute-maximum (abs-max) calibration, static 4-bit quantization of both weights and activations removes 11-62% of the full-precision mean information coefficient in affected architectures. Replacing abs-max with percentile calibration recovers 53-94% of this degradation in the four most affected architectures. The preferred activation range also varies across market periods. Narrow ranges improve resolution under typical market conditions but lose part of their advantage when test-period market dispersion exceeds the calibration history. These findings show that activation calibration is a first-class deployment decision for reliable 4-bit PTQ in financial forecasting. When substantial degradation remains, 8-bit activations or weight-only 4-bit quantization provide more robust deployment choices.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="q-fin.ST" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-12T17:02:06Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Junyi Ye</name>
+    </author>
+    <author>
+      <name>Ivy Gateri Wanjiku</name>
+    </author>
+  </entry>
+</feed>

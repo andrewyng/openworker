@@ -16,6 +16,8 @@ looks like a broken build and is really an unpopulated one.
 | `coworker/conversations/` | conversation history |
 | `coworker/mcp.json`, `prefs.json`, `config.toml` | MCP servers, model binding, settings |
 | `knowledge/` | the brain — FOCUS, ingest, reports, threads |
+| `tasks/` | `__task__task-*` run output — the actual deliverables |
+| `scratch/` | `scratch_base`, per-conversation working files |
 
 ## Use
 
@@ -44,6 +46,17 @@ SQL and runs `PRAGMA integrity_check` before accepting it.
 per-install tokens. `.gitignore` carries a matching guard so a stray
 `git add -A` cannot sweep them in, and `push` refuses to finish if anything
 secret-shaped lands here.
+
+## What is deliberately NOT here
+
+`~/openworker-workspace/` (438 files) is a working directory, not OpenWorker
+state, and it contains a **nested git repo** (`opensciencelab`). Committing it
+would store a gitlink that restores as an empty directory — worse than not
+carrying it. Three `workspaces` rows point at it; move it yourself if that box
+needs it.
+
+Note that `workspaces` stores **absolute paths**, `/home/<user>/...`. They
+resolve on a box with the same username and break on one without.
 
 ## The model binding
 

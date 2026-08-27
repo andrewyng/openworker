@@ -34,6 +34,13 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE="${COWORKER_STATE_DIR:-$HOME/.config/coworker}"
 BRAIN="${OPENWORKER_BRAIN_DIR:-$HOME/OpenWorker/knowledge}"
+# Task output directories sit beside the brain under ~/OpenWorker, one per run
+# (__task__task-*). They hold the actual deliverables -- FOCUS.md, corpora,
+# scripts -- and the coworker.db `workspaces` table points straight at them, so
+# leaving them behind gives a restored box rows that reference nothing.
+TASKROOT="${OPENWORKER_TASK_ROOT:-$HOME/OpenWorker}"
+# scratch_base from prefs.json: per-conversation working files.
+SCRATCH="${OPENWORKER_SCRATCH_DIR:-$HOME/openworker-tasks}"
 DEST="$REPO/state"
 SERVICES=(openworker-server openworker-ui)
 
@@ -107,6 +114,21 @@ do_push() {
     say "  knowledge/ ($(find "$DEST/knowledge" -type f | wc -l) files)"
   fi
 
+  if [ -d "$TASKROOT" ]; then
+    rm -rf "$DEST/tasks"; mkdir -p "$DEST/tasks"
+    # --exclude=.git: a task dir that happens to contain a checkout must not be
+    # committed as a gitlink, which would restore as an empty directory.
+    (cd "$TASKROOT" && find . -maxdepth 1 -name '__task__*' -print0 \
+      | tar --null -T - --exclude=.git -cf - 2>/dev/null) | tar -xf - -C "$DEST/tasks" 2>/dev/null || true
+    say "  tasks/ ($(find "$DEST/tasks" -maxdepth 1 -type d -name '__task__*' | wc -l) task dirs, $(du -sh "$DEST/tasks" 2>/dev/null | cut -f1))"
+  fi
+
+  if [ -d "$SCRATCH" ]; then
+    rm -rf "$DEST/scratch"; mkdir -p "$DEST/scratch"
+    tar -cf - -C "$SCRATCH" --exclude=.git . | tar -xf - -C "$DEST/scratch"
+    say "  scratch/ ($(find "$DEST/scratch" -type f | wc -l) files)"
+  fi
+
   # A last guard: refuse to leave anything secret-shaped in state/.
   local leaked
   leaked="$(find "$DEST" \( -name 'secrets.json' -o -name '*.token' -o -name 'openworker.env' \) 2>/dev/null || true)"
@@ -171,6 +193,15 @@ PY
   if [ -d "$DEST/knowledge" ]; then
     mkdir -p "$BRAIN"; tar -cf - -C "$DEST/knowledge" . | tar -xf - -C "$BRAIN"
     say "  knowledge/ -> $BRAIN"
+  fi
+
+  if [ -d "$DEST/tasks" ]; then
+    mkdir -p "$TASKROOT"; tar -cf - -C "$DEST/tasks" . | tar -xf - -C "$TASKROOT"
+    say "  tasks/ -> $TASKROOT"
+  fi
+  if [ -d "$DEST/scratch" ]; then
+    mkdir -p "$SCRATCH"; tar -cf - -C "$DEST/scratch" . | tar -xf - -C "$SCRATCH"
+    say "  scratch/ -> $SCRATCH"
   fi
 
   if [ -n "$keep_models" ]; then

@@ -1,0 +1,112 @@
+{
+  "results": {
+    "stored": [
+      {
+        "subject": "ROCR AsyncEventsLoop busy-spin gfx1201",
+        "focus": "on",
+        "kind": "breakage"
+      },
+      {
+        "subject": "Ollama 0.33.0-RC2 local model toggle",
+        "focus": "on",
+        "kind": "news"
+      },
+      {
+        "subject": "Iran sanctions announcement scheduled",
+        "focus": "adjacent",
+        "kind": "news"
+      },
+      {
+        "subject": "liaison-agentSystem stalled 7 days",
+        "focus": "adjacent",
+        "kind": "repo"
+      },
+      {
+        "subject": "github mcp token broken",
+        "focus": "on",
+        "kind": "breakage"
+      }
+    ],
+    "skipped": [
+      {
+        "subject": "Davoudi-Stryker QCD T-gate cost",
+        "score": 0.733,
+        "stored_info": ""
+      },
+      {
+        "subject": "neural quantum states outlook",
+        "score": 0.802,
+        "stored_info": ""
+      },
+      {
+        "subject": "asymmetric capacity self-refinement",
+        "score": 0.745,
+        "stored_info": ""
+      },
+      {
+        "subject": "Granqvist judge drug discovery",
+        "score": 0.741,
+        "stored_info": ""
+      },
+      {
+        "subject": "Pratt auditable records AI scientists",
+        "score": 0.763,
+        "stored_info": ""
+      },
+      {
+        "subject": "Dral agentic computational chemistry",
+        "score": 0.754,
+        "stored_info": ""
+      }
+    ]
+  },
+  "collection": {
+    "status": "green",
+    "optimizer_status": "ok",
+    "indexed_vectors_count": 0,
+    "points_count": 34,
+    "segments_count": 8,
+    "config": {
+      "params": {
+        "vectors": {
+          "fast-all-minilm-l6-v2": {
+            "size": 384,
+            "distance": "Cosine"
+          }
+        },
+        "shard_number": 1,
+        "replication_factor": 1,
+        "write_consistency_factor": 1,
+        "on_disk_payload": true
+      },
+      "hnsw_config": {
+        "m": 16,
+        "ef_construct": 100,
+        "full_scan_threshold": 10000,
+        "max_indexing_threads": 0,
+        "on_disk": false
+      },
+      "optimizer_config": {
+        "deleted_threshold": 0.2,
+        "vacuum_min_vector_number": 1000,
+        "default_segment_number": 0,
+        "max_segment_size": null,
+        "memmap_threshold": null,
+        "indexing_threshold": 10000,
+        "flush_interval_sec": 5,
+        "max_optimization_threads": null,
+        "prevent_unoptimized": null
+      },
+      "wal_config": {
+        "wal_capacity_mb": 32,
+        "wal_segments_ahead": 0,
+        "wal_retain_closed": 1
+      },
+      "quantization_config": null
+    },
+    "payload_schema": {},
+    "update_queue": {
+      "length": 0
+    }
+  }
+}
