@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { ApprovalCard } from "./ApprovalCard";
+import { ApprovalCard, scopeNote } from "./ApprovalCard";
 import { InboxItemCard } from "./InboxItemCard";
 import type { Item } from "../types";
 import type { InboxItem } from "../api";
@@ -19,6 +19,15 @@ const sendApproval = (extra: Partial<ApprovalItem> = {}): ApprovalItem => ({
 });
 
 afterEach(cleanup);
+
+describe("scopeNote — cross-platform copy", () => {
+  it("describes an overwriting file write without naming the operating system", () => {
+    expect(scopeNote("write_file", { overwrite: true })).toEqual({
+      text: "stays on this computer · overwrites the existing file",
+      external: false,
+    });
+  });
+});
 
 describe("ApprovalCard — standing scoped approvals (§25)", () => {
   it("offers Allow every time only with BOTH a run context and an eligible target", () => {

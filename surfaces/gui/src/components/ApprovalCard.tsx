@@ -27,7 +27,7 @@ const TOOL_VERBS: Record<string, string> = {
 
 // §35: routine workspace writes render as a compact ROW; everything else is a full card.
 const FILE_WRITES = new Set(["write_file", "replace_in_file", "apply_patch", "apply_unified_diff"]);
-// Actions that leave the Mac get the warm border + explicit destination note.
+// Actions that leave the computer get the warm border + explicit destination note.
 const EXTERNAL = new Set(["send_message", "send_file"]);
 
 type ApprovalItem = Extract<Item, { kind: "approval" }>;
