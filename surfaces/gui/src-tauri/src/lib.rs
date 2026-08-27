@@ -491,11 +491,23 @@ fn voice_input_compatibility() -> (bool, String, Option<String>) {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn voice_input_compatibility() -> (bool, String, Option<String>) {
-    (
-        false,
-        format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH),
-        Some("Voice Input is currently supported on macOS and Windows.".to_owned()),
-    )
+    // The engine is already cross-platform — cpal + whisper-rs, no per-target code — so on
+    // Linux the only real question is whether this machine can capture audio. There is no
+    // useful OS-version or CPU gate to apply the way macOS (Apple Silicon + 12) and Windows
+    // (x64 + 19045) have, so ask the device directly.
+    //
+    // Reporting a blanket "compatible" would walk a machine with no microphone through the
+    // whole setup flow, including the 141 MB model download, and fail only when the user
+    // finally presses record.
+    let arch = std::env::consts::ARCH;
+    match ocw_stt::input_device_name() {
+        Some(name) => (true, format!("Linux · {arch} · {name}"), None),
+        None => (
+            false,
+            format!("Linux · {arch}"),
+            Some("No microphone was found. Connect one and reopen Settings.".to_owned()),
+        ),
+    }
 }
 
 #[tauri::command]
@@ -893,4 +905,35 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Linux's answer must track the machine, not a constant. Exercises whichever branch the
+    /// test host is in: a box with a capture device proves the supported path, one without
+    /// proves the refusal — and CI runners, which have no microphone, are the latter.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_voice_support_tracks_the_actual_capture_device() {
+        let (supported, _summary, reason) = voice_input_compatibility();
+        assert_eq!(
+            supported,
+            ocw_stt::input_device_name().is_some(),
+            "Linux compatibility must reflect whether a capture device actually exists"
+        );
+        assert_eq!(reason.is_some(), !supported, "refusals explain themselves");
+    }
+
+    /// Holds on every platform: Settings shows the summary beside the mic button, and an
+    /// unsupported platform that gives no reason leaves a dead control with no explanation.
+    #[test]
+    fn voice_input_compatibility_is_self_consistent() {
+        let (supported, summary, reason) = voice_input_compatibility();
+        assert!(!summary.is_empty(), "Settings shows this summary");
+        if !supported {
+            assert!(reason.is_some(), "an unsupported platform must say why");
+        }
+    }
 }
