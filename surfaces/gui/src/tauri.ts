@@ -106,8 +106,13 @@ export async function listenDictationDownloadProgress(
 
 export type UpdateInfo = { version: string; notes: string };
 
+/** The version currently installed — the baseline shown next to the update check
+ * ("You're on OpenWorker vX"). null in the browser build. */
+export const appVersion = () => invoke<string | null>("app_version");
+
 /** Ask the shell whether a newer release exists (verified manifest; see lib.rs).
- * null = up to date, unreachable endpoint, or not the desktop app. */
+ * null = up to date, unreachable endpoint, or not the desktop app.
+ * The returned `notes` are the release's changelog — what the update contains. */
 export const checkForUpdate = () => invoke<UpdateInfo | null>("check_for_update");
 
 /** Pre-fetch + verify the update bytes in the background so the install is instant.

@@ -92,6 +92,16 @@ export function UpdateBanner() {
       <div className="text-[12px] text-muted mt-0.5">
         OpenWorker v{update.version} is ready to install.
       </div>
+      {update.notes.trim() && (
+        // What the update contains (the release's changelog). Scrolls rather than
+        // pushing the buttons off-screen when a release ships a long note.
+        <div
+          className="mt-2 max-h-28 overflow-auto rounded-lg border border-line bg-paper px-2.5 py-2 text-[11.5px] text-muted whitespace-pre-wrap leading-relaxed"
+          data-testid="update-notes"
+        >
+          {update.notes.trim()}
+        </div>
+      )}
       {phase === "error" && (
         <div className="text-[12px] text-warnInk mt-1.5">
           The update couldn't be installed — it will be offered again next launch.
