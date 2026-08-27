@@ -1,10 +1,7 @@
 // Persona icon resolution (one source of truth for the sidebar, persona page, and sources drawer).
 //
-// A persona's `icon` (from the manifest, or the built-in registry) resolves to, in order:
-//   1. an emoji        — rendered as-is (e.g. a manifest with `icon: 🛠️`),
-//   2. a named glyph    — a value from our Icon set (e.g. `icon: wrench`),
-//   3. a legacy logo-id — the built-ins' historic ids (cowork/code/chat/ops),
-//   4. the family icon  — the fallback when a manifest declares nothing usable.
+// A persona's `icon` resolves to a named glyph, legacy logo-id, or family fallback.
+// Emoji manifests deliberately fall back to the line-icon set to keep the UI plain-text.
 // So personas are visually distinct (Ops→wrench, Code→code, Cowork→diamond) instead of all ◆.
 
 import { Icon, type IconName } from "./Icon";
@@ -45,7 +42,7 @@ export function personaGlyph(icon?: string, folderScoped?: boolean): IconName {
   return folderScoped ? "code" : "sparkle";
 }
 
-/** Renders a persona's icon: an emoji as text, otherwise the resolved line glyph. */
+/** Renders a persona's icon with the product's line-icon set. */
 export function PersonaGlyph({
   icon,
   folderScoped,
@@ -55,8 +52,5 @@ export function PersonaGlyph({
   folderScoped?: boolean;
   size?: number;
 }) {
-  if (isEmojiIcon(icon)) {
-    return <span style={{ fontSize: size, lineHeight: 1 }}>{icon}</span>;
-  }
   return <Icon name={personaGlyph(icon, folderScoped)} size={size} />;
 }

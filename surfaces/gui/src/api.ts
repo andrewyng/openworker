@@ -440,6 +440,8 @@ export async function getJournalCases(): Promise<JournalCase[]> {
 
 export interface ArtifactInfo {
   path: string; // workspace-relative (the display/API identifier)
+  // Present for a managed delivery: its human-readable folder under deliverables/.
+  container_path?: string;
   abs_path?: string; // absolute — what "Copy path" copies
   name: string;
   kind: "markdown" | "html" | "image" | "code" | "text" | string;

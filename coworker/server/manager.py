@@ -219,6 +219,9 @@ class SessionManager:
             self.session_store.touch_workspace(self.default_workspace)
         self._engines: dict[str, TurnEngine] = {}
         self._runtimes: dict[str, Any] = {}
+        # Root-level artifact state at turn start.  A missing capture deliberately
+        # means "do not migrate": existing session files stay where they are.
+        self._artifact_turn_starts: dict[str, dict[str, tuple[int, int]]] = {}
         self.runtime_store = RuntimeStore(base / "runtime.db")
         self.effect_ledger = EffectLedger(base / "runtime.db")
         self.delegations = DelegationBroker(self.runtime_store, emit=self._emit_delegation)
@@ -1259,6 +1262,7 @@ class SessionManager:
             return
         self.mark_running(item.session_id)
         try:
+            self.begin_artifact_capture(item.session_id)
             runtime = self.get_runtime(item.session_id, engine)
             async for _event in runtime.resume():
                 pass
@@ -2858,35 +2862,6 @@ class SessionManager:
         if root is None or not root.is_dir():
             return []
         out: list[dict[str, Any]] = []
-        suffixes = {
-            ".md",
-            ".markdown",
-            ".html",
-            ".htm",
-            ".txt",
-            ".json",
-            ".csv",
-            ".tsv",
-            ".py",
-            ".js",
-            ".ts",
-            ".tsx",
-            ".css",
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".webp",
-            ".gif",
-            ".pdf",
-            ".xlsx",
-            ".xls",
-            ".pptx",
-            ".ppt",
-            ".pptm",
-            ".docx",
-            ".doc",
-            ".docm",
-        }
         # os.walk with in-place pruning, NOT rglob: rglob descends first and filters after,
         # so a home-directory workspace walked into ~/Library and tripped the macOS App Data
         # TCC prompt ("OpenWorker would like to access data from other apps") on every turn.
@@ -2900,15 +2875,15 @@ class SessionManager:
                 if name.startswith("."):
                     continue
                 path = Path(dirpath) / name
-                if path.suffix.lower() not in suffixes:
+                if path.suffix.lower() not in _ARTIFACT_SUFFIXES:
                     continue
                 try:
                     st = path.stat()
                     if not path.is_file():
                         continue
-                    out.append(
-                        {
-                            "path": str(path.relative_to(root)),
+                    relative = path.relative_to(root)
+                    item = {
+                            "path": relative.as_posix(),
                             # Absolute path for "Copy path" — the relative one is useless
                             # outside the app (tester catch 2026-07-12: it copied just the
                             # filename).
@@ -2918,11 +2893,90 @@ class SessionManager:
                             "size": st.st_size,
                             "modified_at": st.st_mtime,
                         }
-                    )
+                    if len(relative.parts) >= 3 and relative.parts[0] == "deliverables":
+                        item["container_path"] = Path(*relative.parts[:2]).as_posix()
+                    out.append(item)
                 except OSError:
                     continue
         out.sort(key=lambda a: a["modified_at"], reverse=True)
         return out[:80]
+
+    def begin_artifact_capture(self, session_id: str) -> None:
+        root = self._artifact_scan_root(session_id)
+        if root is None or not root.is_dir():
+            self._artifact_turn_starts[session_id] = {}
+            return
+        before: dict[str, tuple[int, int]] = {}
+        for path in root.iterdir():
+            if path.is_file() and not path.name.startswith(".") and path.suffix.lower() in _ARTIFACT_SUFFIXES:
+                try:
+                    stat = path.stat()
+                    before[path.name] = (stat.st_mtime_ns, stat.st_size)
+                except OSError:
+                    pass
+        self._artifact_turn_starts[session_id] = before
+
+    def finalize_artifacts(self, session_id: str) -> dict[str, str]:
+        """Publish top-level deliverables in folders named after each file.
+
+        Session ids remain the isolation boundary because a conversation may create
+        several files.  User-facing files are instead stored as
+        ``deliverables/<filename>/<filename>`` after a turn completes.
+        """
+        root = self._artifact_scan_root(session_id)
+        before = self._artifact_turn_starts.pop(session_id, None)
+        if before is None or root is None or not root.is_dir():
+            return {}
+        published = root / "deliverables"
+        manifest_path = published / ".manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+        except (OSError, json.JSONDecodeError):
+            manifest = {}
+        aliases = manifest.get("aliases") if isinstance(manifest.get("aliases"), dict) else {}
+        moved: dict[str, str] = {}
+        for source in root.iterdir():
+            if (
+                not source.is_file()
+                or source.name.startswith(".")
+                or source.suffix.lower() not in _ARTIFACT_SUFFIXES
+            ):
+                continue
+            try:
+                stat = source.stat()
+            except OSError:
+                continue
+            if before.get(source.name) == (stat.st_mtime_ns, stat.st_size):
+                continue
+            destination_name = source.name
+            destination_dir = published / destination_name
+            destination = destination_dir / destination_name
+            # Never overwrite a prior delivery. Folder and file names stay identical
+            # so versioned exports remain easy to identify in Explorer/Finder.
+            n = 2
+            while destination_dir.exists():
+                destination_name = f"{source.stem}-{n}{source.suffix}"
+                destination_dir = published / destination_name
+                destination = destination_dir / destination_name
+                n += 1
+            try:
+                destination_dir.mkdir(parents=True, exist_ok=False)
+                source.replace(destination)
+            except OSError:
+                # Organization is a convenience, never a reason to lose a completed file.
+                logger.warning("could not organize artifact %s", source, exc_info=True)
+                continue
+            moved[source.name] = destination.relative_to(root).as_posix()
+            aliases[source.name] = moved[source.name]
+        if moved:
+            try:
+                published.mkdir(parents=True, exist_ok=True)
+                temporary = manifest_path.with_suffix(".tmp")
+                temporary.write_text(json.dumps({"aliases": aliases}, indent=2, sort_keys=True), encoding="utf-8")
+                temporary.replace(manifest_path)
+            except OSError:
+                logger.warning("could not write artifact manifest for %s", session_id, exc_info=True)
+        return moved
 
     MAX_BINARY_PREVIEW = 25 * 1024 * 1024  # base64-over-JSON gets heavy past this
 
@@ -2961,6 +3015,24 @@ class SessionManager:
                 return target, None
             if target.is_file():
                 return target, None
+            # Keep an artifact link emitted before finalization valid after its file
+            # moved into a named deliverables folder.
+            relative = Path(path)
+            if len(relative.parts) == 1 and relative.name == path:
+                manifest_path = root / "deliverables" / ".manifest.json"
+                try:
+                    aliases = json.loads(manifest_path.read_text(encoding="utf-8")).get("aliases", {})
+                except (OSError, json.JSONDecodeError):
+                    aliases = {}
+                canonical = aliases.get(path) if isinstance(aliases, dict) else None
+                published = (root / str(canonical or "")).resolve()
+                try:
+                    published.relative_to(root)
+                except ValueError:
+                    pass
+                else:
+                    if published.is_file():
+                        return published, None
             found_missing = True
         if found_missing:
             return None, (
@@ -3558,10 +3630,13 @@ class SessionManager:
             # drives the composer's context-fill meter (absent id → meter hides).
             "model_context_windows": model_context_windows(),
             "has_key": env_key or stored,
-            # Provider-agnostic "can this default model actually run?" — true when the default
-            # model's provider is configured (any provider, not just OpenAI). Drives the GUI's
-            # "No model connected" composer chip and the onboarding Skip warning.
-            "model_ready": self._provider_configured(self._model_provider(self.model)),
+            # Keep `model_ready` backward-compatible for the composer: a configured provider
+            # remains usable even before the optional paid probe. Consumers that need evidence
+            # about this exact model use `model_verified` / `model_verification`.
+            "model_configured": model_configured,
+            "model_ready": model_configured,
+            "model_verified": model_configured and verification.get("status") == "verified",
+            "model_verification": verification,
             "source": "env" if env_key else ("store" if stored else None),
             "onboarded": bool(self._prefs.get("onboarded")),
             "experimental_connectors": experimental_enabled(self.secrets),
@@ -4674,7 +4749,7 @@ class SessionManager:
                     getattr(event, "platform", "slack"),
                     getattr(event, "chat_id", ""),
                     event.message_id,
-                    f"{title}\n✅ {outcome}",
+                    f"{title}\nApproved: {outcome}",
                 )
             except Exception:
                 pass
@@ -4796,6 +4871,7 @@ class SessionManager:
             engine.queue_steering(message, source)
             return
         try:
+            self.begin_artifact_capture(session_id)
             runtime = self.get_runtime(session_id, engine)
             async for event in runtime.run(message, source=source):
                 # Stream every event to any socket viewing this session, so a background turn
@@ -4811,7 +4887,7 @@ class SessionManager:
                         "background turn failed for %s: %s", session_id, reason
                     )
                     self.unrouted.record(session_id, "-", message, reason=reason)
-            self.save(session_id, engine)
+            self.save(session_id, engine, finalize_artifacts=True)
         except (
             Exception
         ) as exc:  # an unexpected raise out of the turn must not be swallowed
@@ -4862,7 +4938,7 @@ class SessionManager:
                 # Chattiness tiers (§31): untagged channel traffic is judgement-only —
                 # silence is the default; the must-respond framing is the mention path's.
                 msg = (
-                    f"💬 New message on {src.chat_name or channel} from {who}: {text}\n"
+                    f"New message on {src.chat_name or channel} from {who}: {text}\n"
                     f"(You're subscribed to this channel but were NOT mentioned. Use your "
                     f"judgement: stay silent unless the message clearly concerns your job and "
                     f"a reply adds real value — most channel chatter needs no response from "
@@ -4914,7 +4990,7 @@ class SessionManager:
         if subs:
             # The user connected a coworker to this channel — it answers tags; no spawn.
             msg = (
-                f"🔔 You were tagged by {who} in {chan}: {event.text}\n"
+                f"You were tagged by {who} in {chan}: {event.text}\n"
                 f"(You are subscribed to this channel and were mentioned directly — you must "
                 f"respond. Reply in the thread with the send_message tool, target "
                 f'"{thread_target}".)'
@@ -4933,7 +5009,7 @@ class SessionManager:
         if sid and self.session_store.load(sid) is not None:
             # Follow-up tag in a thread we already own → steer the same session.
             msg = (
-                f"💬 Follow-up in your Slack thread ({chan}) from {who}: {event.text}\n"
+                f"Follow-up in your Slack thread ({chan}) from {who}: {event.text}\n"
                 f'(Reply in the thread with the send_message tool, target "{thread_target}" '
                 f"— replies there are pre-approved.)"
             )
@@ -4981,7 +5057,7 @@ class SessionManager:
         recent = self.channel_buffer.recent(f"{src.platform}:{src.chat_id}", 7)[:-1]
         context = "\n".join(f"- {m['from']}: {m['text']}" for m in recent)
         opening = (
-            f"🔔 You were mentioned on Slack in {chan} by {who}: {event.text}\n\n"
+            f"You were mentioned on Slack in {chan} by {who}: {event.text}\n\n"
             f"You own this Slack thread. Reply in the thread using the send_message tool "
             f'with target "{thread_target}" — replies to this thread are pre-approved and '
             f"never prompt the user. Anything else (other channels, files, external "
@@ -5043,16 +5119,18 @@ class SessionManager:
         # schedule ("every day at 5:32pm…"), so make explicit that the schedule already fired and
         # the job now is to execute, not to (re)schedule.
         opening = (
-            f"⏰ Scheduled run — {task.title}\n\n"
+            f"Scheduled run — {task.title}\n\n"
             "This automation is due now: carry out the task below immediately and produce the "
             "result. The schedule already exists — do not create or modify any scheduled tasks.\n\n"
             f"{task.instructions}"
         )
         try:
+            self.begin_artifact_capture(run.session_id)
             runtime = self.get_runtime(run.session_id, engine)
             async for _event in runtime.run(opening):
                 pass
             run.result_text = _last_assistant_text(engine.messages)
+            self.finalize_artifacts(run.session_id)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
             run.status = "ok"
             if task.notify_on_completion:
@@ -5064,7 +5142,7 @@ class SessionManager:
             # Persist the run as a continuable session + keep the live engine for an immediate
             # follow-up; record the run (now carrying its session_id).
             try:
-                self.save(run.session_id, engine)
+                self.save(run.session_id, engine, finalize_artifacts=True)
                 self._engines[run.session_id] = engine
             except Exception:
                 pass
@@ -5099,7 +5177,7 @@ class SessionManager:
                         sender,
                         creds["bot_token"],
                         chat_id,
-                        f"✓ {task.title}\n\n{summary}",
+                        f"Completed: {task.title}\n\n{summary}",
                         thread,
                     )
             except Exception:
@@ -5262,6 +5340,7 @@ class SessionManager:
         if run.status == "running":
             record = self.session_store.load(run.session_id)
             run.result_text = _last_assistant_text(record.messages) if record else None
+            self.finalize_artifacts(run.session_id)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
             run.status = "ok"
             run.finished_at = _epoch()
@@ -5271,7 +5350,11 @@ class SessionManager:
             self.task_store.save(task)
         return {"ok": True, "run": run.to_dict()}
 
-    def save(self, session_id: str, engine: TurnEngine) -> None:
+    def save(
+        self, session_id: str, engine: TurnEngine, *, finalize_artifacts: bool = False
+    ) -> None:
+        if finalize_artifacts:
+            self.finalize_artifacts(session_id)
         executor = getattr(engine, "executor", None)
         workspace = os.path.realpath(str(executor.cwd)) if executor else ""
         self.session_store.save(
@@ -6529,6 +6612,14 @@ def _last_assistant_text(messages: list[dict[str, Any]]) -> Optional[str]:
         if msg.get("role") == "assistant" and msg.get("content"):
             return msg["content"]
     return None
+
+
+_ARTIFACT_SUFFIXES = {
+    ".md", ".markdown", ".html", ".htm", ".txt", ".json", ".csv", ".tsv",
+    ".py", ".js", ".ts", ".tsx", ".css", ".png", ".jpg", ".jpeg", ".webp",
+    ".gif", ".pdf", ".xlsx", ".xls", ".pptx", ".ppt", ".pptm", ".docx",
+    ".doc", ".docm",
+}
 
 
 def _recent_files(workspace: str, *, since: float, limit: int = 20) -> list[str]:

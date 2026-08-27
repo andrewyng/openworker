@@ -2568,6 +2568,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             # The receive loop atomically claims this session before scheduling the task.
             # Keeping the claim outside prevents two back-to-back frames from both starting.
             try:
+                manager.begin_artifact_capture(session_id)
                 runtime = manager.get_runtime(session_id, engine)
                 events = runtime.retry() if retry else runtime.run(content, display=display)
                 async for event in events:
@@ -2580,7 +2581,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                         manager.save(session_id, engine)
             finally:
                 manager.mark_idle(session_id)
-                manager.save(session_id, engine)
+                manager.save(session_id, engine, finalize_artifacts=True)
                 await manager.broadcast_session(
                     session_id, {"type": "turn_done", "data": {}}
                 )

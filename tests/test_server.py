@@ -177,6 +177,52 @@ def test_artifacts_list_and_read_previewable_files(tmp_path):
     assert "<h1>Preview</h1>" in html["content"]
 
 
+def test_completed_artifacts_are_published_in_named_folders(tmp_path):
+    """Session ids stay internal while every deliverable gets a useful folder."""
+    client = _client(tmp_path, [])
+    manager = client.app.state.manager
+    manager.begin_artifact_capture("unknown")
+    (tmp_path / "brief.md").write_text("# Brief", encoding="utf-8")
+
+    moved = manager.finalize_artifacts("unknown")
+
+    assert moved == {"brief.md": "deliverables/brief.md/brief.md"}
+    assert not (tmp_path / "brief.md").exists()
+    assert (tmp_path / "deliverables" / "brief.md" / "brief.md").read_text() == "# Brief"
+    # Links emitted before the final move keep working in the transcript.
+    preview = client.get(
+        "/v1/sessions/unknown/artifacts/read", params={"path": "brief.md"}
+    ).json()
+    assert preview["ok"] is True and preview["content"] == "# Brief"
+    artifact = client.get("/v1/sessions/unknown/artifacts").json()["artifacts"][0]
+    assert artifact["path"] == "deliverables/brief.md/brief.md"
+    assert artifact["container_path"] == "deliverables/brief.md"
+
+
+def test_completed_artifacts_keep_existing_deliveries_on_name_collision(tmp_path):
+    client = _client(tmp_path, [])
+    manager = client.app.state.manager
+    manager.begin_artifact_capture("unknown")
+    (tmp_path / "brief.md").write_text("first", encoding="utf-8")
+    manager.finalize_artifacts("unknown")
+    manager.begin_artifact_capture("unknown")
+    (tmp_path / "brief.md").write_text("second", encoding="utf-8")
+
+    moved = manager.finalize_artifacts("unknown")
+
+    assert moved == {"brief.md": "deliverables/brief-2.md/brief-2.md"}
+    assert (tmp_path / "deliverables" / "brief.md" / "brief.md").read_text() == "first"
+    assert (tmp_path / "deliverables" / "brief-2.md" / "brief-2.md").read_text() == "second"
+
+
+def test_existing_artifacts_are_not_migrated_without_a_turn_capture(tmp_path):
+    (tmp_path / "legacy.md").write_text("legacy", encoding="utf-8")
+    client = _client(tmp_path, [])
+
+    assert client.app.state.manager.finalize_artifacts("unknown") == {}
+    assert (tmp_path / "legacy.md").is_file()
+
+
 def test_artifact_read_folder_returns_listing(tmp_path):
     """A linked directory (e.g. a skill package dir) renders as a listing, never a dead
     'not found' (owner report 2026-07-27). Dirs first, then files, sizes on files only."""

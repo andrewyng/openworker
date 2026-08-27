@@ -369,7 +369,7 @@ export function RightRail({
                 {artifacts.length > 0 && (
                   <button
                     className="rail-mini-btn"
-                    onClick={(e) => { e.stopPropagation(); revealArtifact(sessionId, artifacts[0].path, "reveal"); }}
+                    onClick={(e) => { e.stopPropagation(); revealArtifact(sessionId, artifacts[0].container_path || artifacts[0].path, "reveal"); }}
                     title="Show the folder where these files are saved"
                   >
                     <Icon name="folder" size={13} />
