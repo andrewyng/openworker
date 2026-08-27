@@ -21,17 +21,64 @@ use cpal::{
     SampleFormat, Stream, StreamConfig,
 };
 use serde::Serialize;
+
+#[cfg(feature = "whisper")]
 use sha2::{Digest, Sha256};
+
+#[cfg(not(any(feature = "whisper", feature = "moonshine")))]
+compile_error!("At least one STT feature ('whisper' or 'moonshine') must be enabled in ocw-stt.");
+
+#[cfg(feature = "whisper")]
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-/// A reasonably fast English model for short OpenWorker prompts (~142 MB).
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+use moonshine_rs::{ModelArch, Transcriber};
+
+#[cfg(feature = "whisper")]
 pub const DEFAULT_MODEL_FILE: &str = "ggml-base.en.bin";
+#[cfg(feature = "whisper")]
 pub const DEFAULT_MODEL_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
+#[cfg(feature = "whisper")]
 pub const DEFAULT_MODEL_BYTES: u64 = 147_964_211;
+#[cfg(feature = "whisper")]
 pub const DEFAULT_MODEL_SHA256: &str =
     "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002";
-const WHISPER_SAMPLE_RATE: u32 = 16_000;
+#[cfg(feature = "whisper")]
+pub const DEFAULT_MODEL_NAME: &str = "Whisper Base English (local)";
+
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+pub const DEFAULT_MODEL_FILE: &str = "encoder_model.ort";
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+pub const DEFAULT_MODEL_URL: &str =
+    "https://download.moonshine.ai/model/tiny-en/quantized/tiny-en/encoder_model.ort";
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+pub const DEFAULT_MODEL_BYTES: u64 = 43_943_830; // combined tiny-en quantized files total ~43.9MB
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+pub const DEFAULT_MODEL_SHA256: &str = "";
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+pub const DEFAULT_MODEL_NAME: &str = "Moonshine Tiny English (local)";
+
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+const MOONSHINE_MODEL_FILES: [(&str, &str, u64); 3] = [
+    (
+        "encoder_model.ort",
+        "https://download.moonshine.ai/model/tiny-en/quantized/tiny-en/encoder_model.ort",
+        13_281_600,
+    ),
+    (
+        "decoder_model_merged.ort",
+        "https://download.moonshine.ai/model/tiny-en/quantized/tiny-en/decoder_model_merged.ort",
+        30_412_256,
+    ),
+    (
+        "tokenizer.bin",
+        "https://download.moonshine.ai/model/tiny-en/quantized/tiny-en/tokenizer.bin",
+        249_974,
+    ),
+];
+
+const STT_SAMPLE_RATE: u32 = 16_000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DictationStatus {
@@ -118,7 +165,7 @@ impl Dictation {
             model_verified,
             test_passed: model_verified && self.ready_marker_path.is_file(),
             download_in_progress: self.download_in_progress.load(Ordering::SeqCst),
-            model_name: "Whisper Base English (local)",
+            model_name: DEFAULT_MODEL_NAME,
             model_bytes: DEFAULT_MODEL_BYTES,
         }
     }
@@ -135,6 +182,7 @@ impl Dictation {
 
     /// Downloads and verifies the default model atomically, reporting byte progress to the host.
     /// A canceled/failed transfer never replaces a previously verified model.
+    #[cfg(feature = "whisper")]
     pub fn install_default_model_with_progress(
         &self,
         mut on_progress: impl FnMut(DownloadProgress),
@@ -160,9 +208,6 @@ impl Dictation {
                 .map_err(|e| format!("Could not create model directory: {e}"))?;
 
             let partial = self.model_path.with_extension("bin.part");
-            // Per-read timeout, not overall: a 142 MB transfer legitimately takes minutes, but
-            // a stalled connection must surface as an error — the cancel flag is only observed
-            // between reads, so an indefinitely blocked read would also make Cancel unresponsive.
             let agent = ureq::AgentBuilder::new()
                 .timeout_connect(std::time::Duration::from_secs(30))
                 .timeout_read(std::time::Duration::from_secs(30))
@@ -233,6 +278,116 @@ impl Dictation {
         result
     }
 
+    #[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+    pub fn install_default_model_with_progress(
+        &self,
+        mut on_progress: impl FnMut(DownloadProgress),
+    ) -> Result<(), String> {
+        if self.status().model_verified {
+            return Ok(());
+        }
+        if self
+            .download_in_progress
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err("The local voice model is already downloading.".to_owned());
+        }
+        self.cancel_download.store(false, Ordering::SeqCst);
+
+        let result = (|| {
+            let parent = self
+                .model_path
+                .parent()
+                .ok_or_else(|| "Could not determine the local model directory.".to_owned())?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Could not create model directory: {e}"))?;
+
+            let agent = ureq::AgentBuilder::new()
+                .timeout_connect(std::time::Duration::from_secs(30))
+                .timeout_read(std::time::Duration::from_secs(30))
+                .build();
+
+            let mut total_downloaded = 0_u64;
+            on_progress(DownloadProgress {
+                downloaded_bytes: 0,
+                total_bytes: DEFAULT_MODEL_BYTES,
+            });
+
+            for (file_name, file_url, expected_size) in MOONSHINE_MODEL_FILES {
+                let target_path = parent.join(file_name);
+                let partial = parent.join(format!("{file_name}.part"));
+
+                let response = agent
+                    .get(file_url)
+                    .call()
+                    .map_err(|e| format!("Could not download {file_name}: {e}"))?;
+                let mut input = response.into_reader();
+                let mut output = fs::File::create(&partial)
+                    .map_err(|e| format!("Could not save {file_name}: {e}"))?;
+
+                let mut file_downloaded = 0_u64;
+                let mut buffer = [0_u8; 64 * 1024];
+
+                loop {
+                    if self.cancel_download.load(Ordering::SeqCst) {
+                        drop(output);
+                        let _ = fs::remove_file(&partial);
+                        return Err("Voice model download canceled.".to_owned());
+                    }
+                    let count = input
+                        .read(&mut buffer)
+                        .map_err(|e| format!("Could not download {file_name}: {e}"))?;
+                    if count == 0 {
+                        break;
+                    }
+                    output
+                        .write_all(&buffer[..count])
+                        .map_err(|e| format!("Could not save {file_name}: {e}"))?;
+
+                    let count_u64 = count as u64;
+                    file_downloaded += count_u64;
+                    total_downloaded += count_u64;
+
+                    on_progress(DownloadProgress {
+                        downloaded_bytes: total_downloaded,
+                        total_bytes: DEFAULT_MODEL_BYTES,
+                    });
+                }
+
+                output
+                    .flush()
+                    .map_err(|e| format!("Could not finish saving {file_name}: {e}"))?;
+                drop(output);
+
+                if file_downloaded != expected_size {
+                    let _ = fs::remove_file(&partial);
+                    return Err(format!("Downloaded file {file_name} is incomplete ({file_downloaded} of {expected_size} bytes)."));
+                }
+
+                if target_path.exists() {
+                    let _ = fs::remove_file(&target_path);
+                }
+                fs::rename(&partial, &target_path)
+                    .map_err(|e| format!("Could not install {file_name}: {e}"))?;
+            }
+
+            verify_model_file(&self.model_path)?;
+            write_verification_marker(&self.model_path, &self.verified_marker_path)?;
+            let _ = fs::remove_file(&self.ready_marker_path);
+
+            on_progress(DownloadProgress {
+                downloaded_bytes: DEFAULT_MODEL_BYTES,
+                total_bytes: DEFAULT_MODEL_BYTES,
+            });
+            Ok(())
+        })();
+
+        self.download_in_progress.store(false, Ordering::SeqCst);
+        self.cancel_download.store(false, Ordering::SeqCst);
+        result
+    }
+
     /// Verifies an already-installed model (including installs made by older app versions).
     pub fn verify_default_model(&self) -> Result<(), String> {
         verify_model_file(&self.model_path)?;
@@ -251,6 +406,7 @@ impl Dictation {
             .map_err(|e| format!("Could not save the voice input test result: {e}"))
     }
 
+#[cfg(feature = "whisper")]
     pub fn delete_default_model(&self) -> Result<(), String> {
         self.cancel_model_download();
         self.cancel();
@@ -260,6 +416,28 @@ impl Dictation {
             self.verified_marker_path.clone(),
             self.ready_marker_path.clone(),
         ] {
+            if path.exists() {
+                fs::remove_file(&path)
+                    .map_err(|e| format!("Could not remove {}: {e}", path.display()))?;
+            }
+        }
+        Ok(())
+    }
+
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+    pub fn delete_default_model(&self) -> Result<(), String> {
+        self.cancel_model_download();
+        self.cancel();
+        let parent = self.model_path.parent().unwrap_or(&self.model_path);
+        let mut paths_to_remove = vec![
+            self.verified_marker_path.clone(),
+            self.ready_marker_path.clone(),
+        ];
+        for (file_name, _, _) in MOONSHINE_MODEL_FILES {
+            paths_to_remove.push(parent.join(file_name));
+            paths_to_remove.push(parent.join(format!("{file_name}.part")));
+        }
+        for path in paths_to_remove {
             if path.exists() {
                 fs::remove_file(&path)
                     .map_err(|e| format!("Could not remove {}: {e}", path.display()))?;
@@ -334,6 +512,7 @@ impl Dictation {
     }
 }
 
+#[cfg(feature = "whisper")]
 fn verify_model_file(path: &Path) -> Result<(), String> {
     let metadata =
         fs::metadata(path).map_err(|e| format!("Could not read the local voice model: {e}"))?;
@@ -367,6 +546,26 @@ fn verify_model_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+fn verify_model_file(path: &Path) -> Result<(), String> {
+    let parent = if path.is_dir() {
+        path
+    } else {
+        path.parent().ok_or("Invalid model path")?
+    };
+
+    let required_files = ["encoder_model.ort", "decoder_model_merged.ort", "tokenizer.bin"];
+    for file_name in &required_files {
+        let file_path = parent.join(file_name);
+        let metadata = fs::metadata(&file_path)
+            .map_err(|e| format!("Could not read model file {file_name}: {e}"))?;
+        if metadata.len() == 0 {
+            return Err(format!("Model file {file_name} is empty."));
+        }
+    }
+    Ok(())
+}
+
 fn model_modified_millis(path: &Path) -> Option<u128> {
     fs::metadata(path)
         .ok()?
@@ -377,6 +576,7 @@ fn model_modified_millis(path: &Path) -> Option<u128> {
         .map(|duration| duration.as_millis())
 }
 
+#[cfg(feature = "whisper")]
 fn write_verification_marker(model_path: &Path, marker_path: &Path) -> Result<(), String> {
     let modified = model_modified_millis(model_path)
         .ok_or_else(|| "Could not read the installed voice model timestamp.".to_owned())?;
@@ -384,6 +584,29 @@ fn write_verification_marker(model_path: &Path, marker_path: &Path) -> Result<()
         .map_err(|e| format!("Could not record voice model verification: {e}"))
 }
 
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+fn write_verification_marker(model_path: &Path, marker_path: &Path) -> Result<(), String> {
+    let parent = if model_path.is_dir() {
+        model_path
+    } else {
+        model_path.parent().ok_or("Invalid model path")?
+    };
+
+    let mut max_modified = 0_u128;
+    for (file_name, _, _) in MOONSHINE_MODEL_FILES {
+        let file_path = parent.join(file_name);
+        if let Some(m) = model_modified_millis(&file_path) {
+            if m > max_modified {
+                max_modified = m;
+            }
+        }
+    }
+
+    fs::write(marker_path, format!("moonshine-tiny-en\n{max_modified}\n"))
+        .map_err(|e| format!("Could not record voice model verification: {e}"))
+}
+
+#[cfg(feature = "whisper")]
 fn model_verification_marker_matches(model_path: &Path, marker_path: &Path) -> bool {
     let Ok(metadata) = fs::metadata(model_path) else {
         return false;
@@ -398,6 +621,33 @@ fn model_verification_marker_matches(model_path: &Path, marker_path: &Path) -> b
     let hash_matches = lines.next() == Some(DEFAULT_MODEL_SHA256);
     let marker_modified = lines.next().and_then(|value| value.parse::<u128>().ok());
     hash_matches && marker_modified == model_modified_millis(model_path)
+}
+
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+fn model_verification_marker_matches(model_path: &Path, marker_path: &Path) -> bool {
+    let parent = if model_path.is_dir() {
+        model_path
+    } else if let Some(p) = model_path.parent() {
+        p
+    } else {
+        return false;
+    };
+
+    for (file_name, _, expected_size) in MOONSHINE_MODEL_FILES {
+        let file_path = parent.join(file_name);
+        let Ok(metadata) = fs::metadata(&file_path) else {
+            return false;
+        };
+        if metadata.len() != expected_size {
+            return false;
+        }
+    }
+
+    let Ok(marker) = fs::read_to_string(marker_path) else {
+        return false;
+    };
+    let mut lines = marker.lines();
+    lines.next() == Some("moonshine-tiny-en")
 }
 
 fn capture_worker(
@@ -557,12 +807,12 @@ fn append_frames<T>(
 }
 
 fn resample_mono(input: &[f32], source_rate: u32) -> Vec<f32> {
-    if source_rate == WHISPER_SAMPLE_RATE {
+    if source_rate == STT_SAMPLE_RATE {
         return input.to_vec();
     }
     let output_len =
-        (input.len() as u64 * WHISPER_SAMPLE_RATE as u64 / source_rate as u64) as usize;
-    let ratio = source_rate as f64 / WHISPER_SAMPLE_RATE as f64;
+        (input.len() as u64 * STT_SAMPLE_RATE as u64 / source_rate as u64) as usize;
+    let ratio = source_rate as f64 / STT_SAMPLE_RATE as f64;
     (0..output_len)
         .map(|i| {
             let position = i as f64 * ratio;
@@ -574,6 +824,7 @@ fn resample_mono(input: &[f32], source_rate: u32) -> Vec<f32> {
         .collect()
 }
 
+#[cfg(feature = "whisper")]
 fn transcribe(model_path: &Path, samples: &[f32]) -> Result<String, String> {
     if !model_path.is_file() {
         return Err("The local voice model is not installed yet.".to_owned());
@@ -609,6 +860,26 @@ fn transcribe(model_path: &Path, samples: &[f32]) -> Result<String, String> {
     Ok(text.trim().to_owned())
 }
 
+#[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+fn transcribe(model_path: &Path, samples: &[f32]) -> Result<String, String> {
+    let model_dir = if model_path.is_dir() {
+        model_path
+    } else {
+        model_path
+            .parent()
+            .ok_or_else(|| "Invalid local voice model directory.".to_owned())?
+    };
+
+    let transcriber = Transcriber::from_files(model_dir, ModelArch::Tiny, None)
+        .map_err(|e| format!("Could not load the local Moonshine model: {e}"))?;
+
+    let transcript = transcriber
+        .transcribe(samples, 16000)
+        .map_err(|e| format!("Could not transcribe the recording with Moonshine: {e}"))?;
+
+    Ok(transcript.text().trim().to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -618,8 +889,16 @@ mod tests {
 
     use super::{
         resample_mono, write_verification_marker, Dictation, DEFAULT_MODEL_BYTES,
-        DEFAULT_MODEL_FILE,
     };
+
+    #[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+    use super::transcribe;
+
+    #[cfg(feature = "whisper")]
+    use super::DEFAULT_MODEL_FILE;
+
+    #[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+    use super::MOONSHINE_MODEL_FILES;
 
     #[test]
     fn resampling_preserves_a_16khz_stream() {
@@ -634,11 +913,19 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "whisper")]
     fn default_model_size_matches_the_published_base_english_artifact() {
         assert_eq!(DEFAULT_MODEL_BYTES, 147_964_211);
     }
 
     #[test]
+    #[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+    fn default_model_size_matches_the_published_tiny_english_artifact() {
+        assert_eq!(DEFAULT_MODEL_BYTES, 43_943_830);
+    }
+
+    #[test]
+    #[cfg(feature = "whisper")]
     fn readiness_requires_a_verified_model_and_persists_after_a_test() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -662,5 +949,66 @@ mod tests {
         assert!(!dictation.status().model_installed);
         drop(dictation);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+    fn readiness_requires_a_verified_model_and_persists_after_a_test() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("ocw-stt-readiness-{unique}"));
+        fs::create_dir_all(&dir).unwrap();
+        for (file_name, _, size) in MOONSHINE_MODEL_FILES {
+            let file_path = dir.join(file_name);
+            fs::File::create(&file_path)
+                .unwrap()
+                .set_len(size)
+                .unwrap();
+        }
+        let dictation = Dictation::new(&dir);
+        assert!(!dictation.status().model_verified);
+        write_verification_marker(&dictation.model_path, &dictation.verified_marker_path).unwrap();
+        assert!(dictation.status().model_verified);
+        assert!(!dictation.status().test_passed);
+        dictation.mark_test_passed().unwrap();
+        assert!(dictation.status().test_passed);
+        dictation.delete_default_model().unwrap();
+        assert!(!dictation.status().model_installed);
+        drop(dictation);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    #[cfg(all(feature = "moonshine", not(feature = "whisper")))]
+    fn end_to_end_moonshine_download_and_transcribe() {
+        let dir = std::env::temp_dir().join("ocw-stt-moonshine-e2e");
+        let dictation = Dictation::new(&dir);
+
+        println!("Starting Moonshine model download...");
+        dictation
+            .install_default_model_with_progress(|p| {
+                println!(
+                    "Progress: {} / {} bytes ({:.1}%)",
+                    p.downloaded_bytes,
+                    p.total_bytes,
+                    (p.downloaded_bytes as f64 / p.total_bytes as f64) * 100.0
+                );
+            })
+            .expect("Moonshine model download failed");
+
+        assert!(dictation.status().model_installed);
+        assert!(dictation.status().model_verified);
+
+        // Generate 1 second of 16kHz silence/sine audio
+        let samples = vec![0.0f32; 16000];
+        let result = transcribe(&dictation.model_path, &samples);
+        println!("Transcription result on silence: {:?}", result);
+        assert!(result.is_ok());
+
+        dictation.delete_default_model().unwrap();
+        let _ = fs::remove_dir_all(dir);
     }
 }
