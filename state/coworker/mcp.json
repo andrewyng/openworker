@@ -1,0 +1,100 @@
+{
+  "mcpServers": {
+    "arxiv": {
+      "type": "http",
+      "url": "http://127.0.0.1:3001/mcp/arxiv",
+      "headers": {
+        "Authorization": "Bearer local-mcp-key"
+      },
+      "requires_approval": false
+    },
+    "wikipedia": {
+      "type": "http",
+      "url": "http://127.0.0.1:3001/mcp/wikipedia",
+      "headers": {
+        "Authorization": "Bearer local-mcp-key"
+      },
+      "requires_approval": false
+    },
+    "tavily": {
+      "type": "http",
+      "url": "http://127.0.0.1:3001/mcp/tavily",
+      "headers": {
+        "Authorization": "Bearer local-mcp-key"
+      },
+      "requires_approval": false
+    },
+    "exa": {
+      "type": "http",
+      "url": "http://127.0.0.1:3001/mcp/exa",
+      "headers": {
+        "Authorization": "Bearer local-mcp-key"
+      },
+      "requires_approval": false
+    },
+    "context7": {
+      "type": "http",
+      "url": "http://127.0.0.1:3001/mcp/context7",
+      "headers": {
+        "Authorization": "Bearer local-mcp-key"
+      },
+      "requires_approval": false
+    },
+    "fetch": {
+      "type": "http",
+      "url": "http://127.0.0.1:3001/mcp/fetch",
+      "headers": {
+        "Authorization": "Bearer local-mcp-key"
+      },
+      "requires_approval": false
+    },
+    "github": {
+      "type": "http",
+      "url": "http://127.0.0.1:3001/mcp/github",
+      "headers": {
+        "Authorization": "Bearer local-mcp-key"
+      },
+      "requires_approval": true
+    },
+    "filesystem": {
+      "type": "http",
+      "url": "http://127.0.0.1:3001/mcp/filesystem",
+      "headers": {
+        "Authorization": "Bearer local-mcp-key"
+      },
+      "requires_approval": false
+    },
+    "memory": {
+      "type": "http",
+      "url": "http://127.0.0.1:3001/mcp/memory",
+      "headers": {
+        "Authorization": "Bearer local-mcp-key"
+      },
+      "requires_approval": false
+    },
+    "sequential-thinking": {
+      "type": "http",
+      "url": "http://127.0.0.1:3001/mcp/sequential-thinking",
+      "headers": {
+        "Authorization": "Bearer local-mcp-key"
+      },
+      "requires_approval": false
+    },
+    "qdrant": {
+      "type": "http",
+      "url": "http://127.0.0.1:3001/mcp/qdrant",
+      "headers": {
+        "Authorization": "Bearer local-mcp-key"
+      },
+      "requires_approval": false
+    },
+    "git": {
+      "type": "http",
+      "url": "http://127.0.0.1:3001/mcp/git",
+      "headers": {
+        "Authorization": "Bearer local-mcp-key"
+      },
+      "requires_approval": false
+    }
+  }
+}

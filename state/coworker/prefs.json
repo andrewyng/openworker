@@ -1,0 +1,13 @@
+{
+  "models": [
+    "ollama:qwen3.8-27b:latest"
+  ],
+  "default_model": "ollama:qwen3.8-27b:latest",
+  "provider_last_used": {
+    "ollama": 1787781957.5436277
+  },
+  "compaction_cap_tokens": 65000,
+  "scratch_base": "~/openworker-tasks",
+  "nav_layout": "grouped",
+  "brain_dir": "~/OpenWorker/knowledge"
+}

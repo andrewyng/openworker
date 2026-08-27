@@ -1,0 +1,15 @@
+{
+  "enabled": {
+    "fastchat": true,
+    "research": true,
+    "repo-ops": true,
+    "builder": true
+  },
+  "surfaced": {
+    "fastchat": true,
+    "research": true,
+    "repo-ops": true,
+    "builder": true
+  },
+  "default": "fastchat"
+}

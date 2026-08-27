@@ -1,0 +1,26 @@
+{
+  "wakes": [
+    {
+      "id": "97a3a7d6dd02406bb4c9d7e52ed7fea6",
+      "session_id": "2dfd699c-f71",
+      "kind": "timer",
+      "state": "fired",
+      "fire_at": "2026-08-21T18:28:37.503099+00:00",
+      "job_id": null,
+      "event_key": null,
+      "note": "no-op",
+      "created_at": "2026-08-21T18:28:37.503175+00:00"
+    },
+    {
+      "id": "041f239ce8a04bf7864b96a0ad798983",
+      "session_id": "c953b884-7f4",
+      "kind": "timer",
+      "state": "fired",
+      "fire_at": "2026-08-22T01:24:22.431322+00:00",
+      "job_id": null,
+      "event_key": null,
+      "note": "",
+      "created_at": "2026-08-22T01:24:21.431407+00:00"
+    }
+  ]
+}

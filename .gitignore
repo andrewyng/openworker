@@ -12,3 +12,18 @@ dist/
 
 # Unsloth writes compiled trainer stubs here on import; 3.4M of generated code.
 unsloth_compiled_cache/
+
+# --- OpenWorker state (scripts/state-sync.sh) ---------------------------------
+# state/ is COMMITTED on purpose: it is what carries personas, memory, progress
+# and automations to another box, since none of that is code. These three are
+# the exceptions and must never be committed, private repo or not -- a stray
+# `git add -A` would otherwise sweep in real credentials and a per-install
+# token that identifies this machine's sidecar.
+state/**/secrets.json
+state/**/openworker.env
+state/**/*.token
+# Local rollback copies and WAL sidecars: the databases travel as .sql dumps.
+state/**/*.bak-*
+state/**/*.db
+state/**/*-wal
+state/**/*-shm

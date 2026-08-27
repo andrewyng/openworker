@@ -1,0 +1,15 @@
+# OpenWorker global config. Layered: built-in defaults < this file < per-workspace.
+# `mode` and `auto_allow` are user-global on purpose — a workspace's own config.toml
+# can never widen them (see coworker/config.py:_GLOBAL_ONLY_FIELDS).
+
+# "custom" = interactive, plus the `auto_allow` tools below run without a prompt.
+# Chosen over "auto" so file writes and connector calls still ask; only shell is relaxed.
+mode = "custom"
+
+# run_shell auto-approves in interactive chat. The persistent-shell background helpers
+# (shell_task_output / shell_task_kill) classify as READ and were never gated.
+#
+# Deliberately NOT using `allowed_commands` for this: PermissionEngine._command_allowed
+# rejects any command containing ; & | > < ` $( ( or a newline before matching, so almost
+# nothing real would have qualified.
+auto_allow = ["run_shell"]
