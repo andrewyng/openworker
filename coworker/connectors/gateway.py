@@ -11,7 +11,8 @@ from __future__ import annotations
 import logging
 from asyncio import to_thread
 from collections import OrderedDict
-from typing import Callable, Optional
+from inspect import isawaitable
+from typing import Awaitable, Callable, Optional, Union
 from urllib.parse import urlparse
 
 from ..secrets import SecretStore
@@ -30,6 +31,10 @@ logger = logging.getLogger("coworker.connectors")
 
 _RECENT_CAP = 20  # most-recent distinct senders kept for chat-ID auto-capture
 
+# Consumes an inbound message if it resolves an Inbox item. May be sync (tests, simple
+# callers) or async — the manager's resolver awaits a durable resume before answering.
+ReplyResolver = Callable[[MessageEvent], Union[bool, Awaitable[bool]]]
+
 
 class Gateway:
     def __init__(
@@ -38,7 +43,7 @@ class Gateway:
         secrets: Optional[SecretStore] = None,
         settings: Optional[dict[str, ConnectorSettings]] = None,
         handler: Optional[MessageHandler] = None,
-        reply_resolver: Optional[Callable[[MessageEvent], bool]] = None,
+        reply_resolver: Optional[ReplyResolver] = None,
         interaction_handler: Optional[Callable] = None,
         on_unauthorized: Optional[Callable] = None,
     ) -> None:
@@ -62,9 +67,7 @@ class Gateway:
     def set_handler(self, handler: MessageHandler) -> None:
         self._handler = handler
 
-    def set_reply_resolver(
-        self, resolver: Optional[Callable[[MessageEvent], bool]]
-    ) -> None:
+    def set_reply_resolver(self, resolver: Optional[ReplyResolver]) -> None:
         self._reply_resolver = resolver
 
     def register(self, adapter: BasePlatformAdapter) -> None:
@@ -135,7 +138,10 @@ class Gateway:
         # released automatically (InboxStore.resolve fires its waiter).
         if self._reply_resolver is not None:
             try:
-                if self._reply_resolver(event):
+                consumed = self._reply_resolver(event)
+                if isawaitable(consumed):  # the manager's resolver awaits a durable resume
+                    consumed = await consumed
+                if consumed:
                     return
             except Exception:
                 logger.exception("inbox reply resolver failed")

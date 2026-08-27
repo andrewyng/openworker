@@ -120,14 +120,12 @@ def deliver(item, binding: InboxBinding, sender: Optional[Sender]) -> bool:
     return True
 
 
-def resolve_from_reply(
-    reply: str, resolve: Callable[[str, str], bool]
-) -> Optional[bool]:
-    """Correlate an inbound channel reply to its item (by the embedded id) and resolve it.
+def parse_reply(reply: str) -> Optional[tuple[str, str]]:
+    """``(item_id, resolution)`` for an inbound channel reply, or None if it isn't one.
 
-    Looks for the ``[ow:<id>]`` token (or legacy ``[ocw:…]``) and an allow/deny intent; falls back to treating the whole
-    message as a free-text answer. ``resolve(item_id, resolution)`` is the InboxStore.resolve.
-    Returns the resolve() result, or None if no item id was found."""
+    Looks for the ``[ow:<id>]`` token (or legacy ``[ocw:…]``) and an allow/deny intent; falls
+    back to treating the whole message as a free-text answer. Split out from
+    ``resolve_from_reply`` so an async caller can parse first and then await its resolve."""
     m = _ID_TOKEN.search(reply or "")
     if not m:
         return None
@@ -139,4 +137,17 @@ def resolve_from_reply(
         resolution = "deny"
     else:
         resolution = _ID_TOKEN.sub("", reply).strip()  # free-text answer to a question
-    return resolve(item_id, resolution)
+    return item_id, resolution
+
+
+def resolve_from_reply(
+    reply: str, resolve: Callable[[str, str], bool]
+) -> Optional[bool]:
+    """Correlate an inbound channel reply to its item (by the embedded id) and resolve it.
+
+    ``resolve(item_id, resolution)`` is the InboxStore.resolve. Returns the resolve() result,
+    or None if no item id was found."""
+    parsed = parse_reply(reply)
+    if parsed is None:
+        return None
+    return resolve(*parsed)

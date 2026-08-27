@@ -27,7 +27,7 @@ from ..connections import (
     SessionConnectionStore,
     effective as effective_connections,
 )
-from ..inbox import InboxStore, args_preview
+from ..inbox import KIND_DIRECTORY, KIND_PLAN, InboxStore, args_preview
 from ..inbox_routing import InboxRouting
 from ..personas import PersonaRegistry
 from ..personas.registry import set_registry as set_persona_registry
@@ -4417,33 +4417,39 @@ class SessionManager:
                 pass
 
     # -- inbox replies over messaging connectors --------------------------------
-    def _resolve_inbox_reply(self, event) -> bool:
+    async def _resolve_inbox_reply(self, event) -> bool:
         """Try to handle an inbound Slack/Telegram message as an Inbox reply. Returns True if the
         message carried an `[ow:<id>]` token (so it's consumed here, not routed as a new turn) —
-        resolving the item also releases any agent suspended on it."""
-        from ..inbox_routing import resolve_from_reply
+        resolving the item releases any agent suspended on it, and resumes one whose engine is
+        no longer live. A reply that cannot answer the item (see `_reply_answers`) is still
+        consumed, but leaves the item pending for the app."""
+        from ..inbox_routing import parse_reply
 
-        text = getattr(event, "text", "") or ""
-
-        def _resolve(item_id: str, resolution: str) -> bool:
-            item = self.inbox.get(item_id)
-            if item is None:
-                return False
-            if (
-                getattr(event.source, "platform", "") == "slack"
-                and item.kind in {"approval", "directory", "plan"}
+        parsed = parse_reply(getattr(event, "text", "") or "")
+        if parsed is None:
+            return False
+        item_id, resolution = parsed
+        item = self.inbox.get(item_id)
+        if item is None:
+            return True
+        if (
+            getattr(event.source, "platform", "") == "slack"
+            and item.kind in {"approval", "directory", "plan"}
+        ):
+            actor_id = str(getattr(event.source, "user_id", "") or "")
+            if not self._slack_actor_owns_item(
+                item,
+                actor_id=actor_id,
+                chat_id=getattr(event.source, "chat_id", "") or "",
+                team_id=getattr(event.source, "team_id", None),
             ):
-                actor_id = str(getattr(event.source, "user_id", "") or "")
-                if not self._slack_actor_owns_item(
-                    item,
-                    actor_id=actor_id,
-                    chat_id=getattr(event.source, "chat_id", "") or "",
-                    team_id=getattr(event.source, "team_id", None),
-                ):
-                    return False
-            return self.inbox.resolve(item_id, resolution)
-
-        return resolve_from_reply(text, _resolve) is not None
+                return True
+        if not _reply_answers(item, resolution):
+            return True
+        # Same path as a button click: resolving durably resumes a session whose engine was
+        # evicted (or that outlived a restart) while suspended on this item.
+        await self.resolve_inbox(item_id, resolution)
+        return True
 
     # -- self-wake resumption ---------------------------------------------------
     async def _scheduler_tick(self) -> None:
@@ -6012,6 +6018,23 @@ def _parse_inbox_json(s: str) -> dict[str, Any]:
         return v if isinstance(v, dict) else {}
     except Exception:
         return {}
+
+
+def _reply_answers(item, resolution: str) -> bool:
+    """Whether a chat reply's resolution can actually answer this item.
+
+    Directory and plan prompts carry their answer as a JSON payload (`_parse_inbox_json`),
+    but a chat reply only ever produces the bare intent words `allow` / `deny` or free text.
+    Those parse to `{}`, which both approvers read as a refusal — so replying "approve" to a
+    mirrored plan used to consume the prompt AND tell the agent the user rejected it, with no
+    way to answer it in the app afterwards. Those two kinds are deliberately in-app only
+    (`interactions.buttons_for` gives them no buttons and the mirrored text says "Open the app
+    to respond"), so leave them pending instead. A surface that does send the real JSON
+    payload still resolves them.
+    """
+    if item.kind not in (KIND_DIRECTORY, KIND_PLAN):
+        return True
+    return bool(_parse_inbox_json(resolution))
 
 
 def _epoch() -> float:
