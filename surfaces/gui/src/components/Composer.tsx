@@ -402,6 +402,11 @@ export function Composer(props: Props) {
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    // Enter confirms the active IME candidate before it means "send". WebKit may
+    // report the composition keydown with the legacy 229 key code, so keep that
+    // fallback alongside the standards-based isComposing flag.
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+
     if (slashQuery !== null) {
       if (e.key === "ArrowDown") {
         e.preventDefault();

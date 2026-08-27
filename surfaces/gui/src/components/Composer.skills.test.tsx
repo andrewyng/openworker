@@ -47,6 +47,31 @@ afterEach(() => {
 });
 
 describe("Composer / skills popup", () => {
+  it("does not send when Enter confirms IME composition", async () => {
+    stubFetch();
+    const p = props();
+    render(<Composer {...p} />);
+    fireEvent.change(box(), { target: { value: "你好" } });
+
+    fireEvent.keyDown(box(), { key: "Enter", isComposing: true });
+    expect(p.onSend).not.toHaveBeenCalled();
+    expect((box() as HTMLTextAreaElement).value).toBe("你好");
+
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(p.onSend).toHaveBeenCalledWith("你好", [], undefined));
+  });
+
+  it("does not send for WebKit's legacy IME key code", () => {
+    stubFetch();
+    const p = props();
+    render(<Composer {...p} />);
+    fireEvent.change(box(), { target: { value: "你好" } });
+
+    fireEvent.keyDown(box(), { key: "Enter", keyCode: 229 });
+    expect(p.onSend).not.toHaveBeenCalled();
+    expect((box() as HTMLTextAreaElement).value).toBe("你好");
+  });
+
   it("opens on a leading '/' and lists only enabled skills from the effective menu", async () => {
     stubFetch();
     render(<Composer {...props()} />);
