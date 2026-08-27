@@ -920,9 +920,14 @@ export function App() {
             ...p,
             {
               kind: "teamreq",
+              operation: d.operation || "create",
+              strategy: d.strategy || "parallel",
               members: Array.isArray(d.members) ? d.members : [],
+              release: Array.isArray(d.release) ? d.release : [],
               enable_chat: !!d.enable_chat,
               note: d.note || "",
+              reasons: Array.isArray(d.reasons) ? d.reasons : [],
+              integrations: Array.isArray(d.integrations) ? d.integrations : [],
             },
           ]);
           break;

@@ -45,9 +45,15 @@ class Agent:
     scheduling: bool = False
     messaging: bool = False
     connectors: bool | tuple[str, ...] = False
-    # Team identity: "lead" | "worker" | None (solo-only). Gates the board/journal
-    # toolsets and staffing eligibility — solo personas are never team-staffable.
+    # Team identity: "lead" | "worker" | None (solo-only). This is the durable
+    # *member* role once a team exists; it intentionally does not decide whether a
+    # generalist can propose staffing for the current conversation.
     team: Optional[str] = None
+    # May propose and direct a worker roster while retaining its normal direct-work
+    # tools. Existing `team: lead` manifests map to this at parse time, while Cowork
+    # uses it without becoming a pure coordination-only lead. Workers must never set
+    # it, so nested/delegated staffing fails closed.
+    can_staff: bool = False
 
     def build_tools(self, context: AgentContext) -> list:
         return list(self.tool_factory(context)) if self.tool_factory else []

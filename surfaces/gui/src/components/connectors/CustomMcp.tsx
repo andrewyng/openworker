@@ -45,6 +45,26 @@ export const MCP_PRESETS: {
     blurb: "Meeting notes & transcripts — sign in with your Granola account.",
     config: { type: "http", url: "https://mcp.granola.ai/mcp", auth: "oauth" },
   },
+  {
+    name: "flow-nexus",
+    label: "Flow Nexus",
+    blurb: "Coding challenges and progress — starts a local MCP server, then you authenticate with Flow Nexus.",
+    // This is deliberately an explicit Connect action: it may install/start the
+    // vendor's local MCP package, and never runs merely because Challenges exists.
+    config: {
+      command: "npx",
+      args: ["-y", "flow-nexus@latest", "mcp", "start"],
+      include_tools: [
+        "challenges_list", "challenge_get", "challenge_submit", "leaderboard_get",
+        "achievements_list", "auth_status", "ruv_balance", "ruv_history",
+      ],
+      read_tools: [
+        "challenges_list", "challenge_get", "leaderboard_get", "achievements_list",
+        "auth_status", "ruv_balance", "ruv_history",
+      ],
+      enabled: true,
+    },
+  },
 ];
 
 export function mcpChip(s: McpServer) {
@@ -146,7 +166,13 @@ export function CustomMcpGroup({
                       "Anotações e transcrições de reuniões — entre com sua conta Granola.",
                       "Notas y transcripciones de reuniones: inicia sesión con tu cuenta de Granola.",
                     )
-                  : p.blurb}
+                  : p.name === "flow-nexus"
+                    ? text(
+                        "Coding challenges & progress — install/connect Flow Nexus, then authenticate in its flow.",
+                        "Desafios e progresso — instale/conecte o Flow Nexus e autentique no fluxo dele.",
+                        "Desafíos y progreso: instala/conecta Flow Nexus y autentícate en su flujo.",
+                      )
+                    : p.blurb}
               </span>
             </span>
             <span

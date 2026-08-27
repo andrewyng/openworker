@@ -1508,11 +1508,22 @@ class TurnEngine:
         assign; rejection returns the user's feedback for a revised proposal."""
         args = tool_call.arguments or {}
         members = args.get("members") or []
-        if not isinstance(members, list) or not members:
+        release = args.get("release") or []
+        operation = str(args.get("operation") or "create")
+        strategy = str(args.get("strategy") or "parallel")
+        if operation not in {"create", "add", "replace", "release"}:
+            result: dict[str, Any] = {"approved": False, "error": "operation must be create, add, replace, or release"}
+        elif strategy not in {"parallel", "pipeline", "review"}:
+            result = {"approved": False, "error": "strategy must be parallel, pipeline, or review"}
+        elif not isinstance(members, list) or not isinstance(release, list):
+            result = {"approved": False, "error": "members and release must be lists"}
+        elif operation in {"create", "add", "replace"} and not members:
             result: dict[str, Any] = {
                 "approved": False,
                 "error": "propose at least one member ({persona, model?, reason?})",
             }
+        elif operation in {"replace", "release"} and not release:
+            result = {"approved": False, "error": "name at least one existing worker to release"}
         elif self.team_approver is None:
             result = {
                 "approved": False,
@@ -1522,9 +1533,14 @@ class TurnEngine:
             yield Event(
                 EventType.TEAM_PROPOSED,
                 {
+                    "operation": operation,
+                    "strategy": strategy,
                     "members": members,
+                    "release": release,
                     "enable_chat": bool(args.get("enable_chat", False)),
                     "note": str(args.get("note", "")),
+                    "reasons": [str(value) for value in args.get("reasons", []) if isinstance(value, str)],
+                    "integrations": [str(value) for value in args.get("integrations", []) if isinstance(value, str)],
                 },
             )
             self._audit(tool_call, stage="team_proposed")

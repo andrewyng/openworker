@@ -147,6 +147,20 @@ def test_create_team_fails_closed_on_solo_personas(manager, tmp_path):
     assert manager.teams.all() == []  # nothing half-created
 
 
+def test_create_team_validates_all_members_before_prespawn(manager, monkeypatch):
+    """An invalid later roster member cannot strand an earlier worker session."""
+    from coworker.agents.base import Agent
+    from coworker.sessions import SessionRecord
+
+    worker_agent = Agent(name="swe-worker", title="SWE", system_prompt="p", team="worker")
+    monkeypatch.setattr("coworker.server.manager.get_agent", lambda name: worker_agent if name == "swe-worker" else (_ for _ in ()).throw(KeyError(name)))
+    manager.session_store.save(SessionRecord(session_id="lead-sid", workspace=manager.default_workspace, model="m", mode="interactive", messages=[], agent="swe-lead"))
+    result = manager.create_team("lead-sid", [{"persona": "swe-worker"}, {"persona": "missing-worker"}])
+    assert result["approved"] is False
+    assert manager.teams.all() == []
+    assert [row for row in manager.session_store.list() if row.agent == "swe-worker"] == []
+
+
 def test_create_team_prespawns_worker_sessions(manager, monkeypatch):
     from coworker.agents.base import Agent
     from coworker.sessions import SessionRecord
@@ -189,6 +203,42 @@ def test_create_team_prespawns_worker_sessions(manager, monkeypatch):
     assert manager.create_team("lead-sid", [{"persona": "swe-worker"}])[
         "approved"
     ] is False
+
+
+def test_team_roster_add_and_release_require_idle_workers(manager, monkeypatch):
+    from coworker.agents.base import Agent
+    from coworker.sessions import SessionRecord
+
+    worker_agent = Agent(name="swe-worker", title="SWE", system_prompt="p", team="worker")
+    monkeypatch.setattr("coworker.server.manager.get_agent", lambda name: worker_agent)
+    manager.session_store.save(SessionRecord(session_id="lead-sid", workspace=manager.default_workspace, model="m", mode="interactive", messages=[], agent="swe-lead"))
+    created = manager.create_team("lead-sid", [{"persona": "swe-worker", "name": "one"}])
+    assert created["approved"] is True
+    added = manager.create_team("lead-sid", [{"persona": "swe-worker", "name": "two"}], operation="add", strategy="pipeline")
+    assert added["approved"] is True
+    assert [w["actor"] for w in added["workers"]] == ["one", "two"]
+    released = manager.create_team("lead-sid", [], operation="release", release=["one"], strategy="review")
+    assert released["approved"] is True
+    assert [w["actor"] for w in released["workers"]] == ["two"]
+    assert manager.session_store.load(created["workers"][0]["session_id"]).team == {}
+
+
+def test_team_roster_refuses_release_of_active_work(manager, monkeypatch):
+    from coworker.agents.base import Agent
+    from coworker.sessions import SessionRecord
+    from coworker.teams.model import space_for_workspace
+
+    worker_agent = Agent(name="swe-worker", title="SWE", system_prompt="p", team="worker")
+    monkeypatch.setattr("coworker.server.manager.get_agent", lambda name: worker_agent)
+    manager.session_store.save(SessionRecord(session_id="lead-sid", workspace=manager.default_workspace, model="m", mode="interactive", messages=[], agent="swe-lead"))
+    created = manager.create_team("lead-sid", [{"persona": "swe-worker", "name": "busy"}])
+    team = manager.teams.for_lead_session("lead-sid")
+    item = manager.team_store.create_item(space_for_workspace(manager.default_workspace), Actor(id=team.lead_actor, role=Role.LEAD), title="Busy", criteria="done")
+    manager.team_store.assign(team.space, Actor(id=team.lead_actor, role=Role.LEAD), item["id"], "busy")
+    manager.team_store.transition(team.space, Actor(id="busy", role=Role.WORKER), item["id"], "in_progress")
+    refused = manager.create_team("lead-sid", [], operation="release", release=["busy"])
+    assert refused["approved"] is False
+    assert "active work" in refused["error"]
 
 
 def test_staleness_digest_is_role_scoped(manager, monkeypatch):

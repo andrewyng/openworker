@@ -35,6 +35,9 @@ class MCPServerDef:
     enabled: bool = True
     include_tools: Optional[list[str]] = None
     exclude_tools: Optional[list[str]] = None
+    # A curated server may declare the small subset that is demonstrably read-only.
+    # All other (and any newly introduced vendor) tools remain approval-gated.
+    read_tools: Optional[list[str]] = None
     requires_approval: bool = True
     # "oauth" → browser OAuth 2.1 + PKCE with Dynamic Client Registration (mcp/oauth.py).
     # HTTP transport only; tokens live in the SecretStore, never in this file.
@@ -81,6 +84,7 @@ def _parse(name: str, raw: dict[str, Any], secrets: SecretStore) -> MCPServerDef
         enabled=bool(raw.get("enabled", True)),
         include_tools=raw.get("include_tools"),
         exclude_tools=raw.get("exclude_tools"),
+        read_tools=raw.get("read_tools"),
         requires_approval=bool(raw.get("requires_approval", True)),
         auth=(str(raw["auth"]).lower() if raw.get("auth") else None),
     )

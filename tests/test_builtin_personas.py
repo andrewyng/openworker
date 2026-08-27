@@ -34,6 +34,7 @@ def test_cowork_persona_matches_builder(tmp_path):
     assert _names(reg.agent("cowork"), ctx) == _names(cowork_agent(), ctx)
     a = reg.agent("cowork")
     assert a.messaging and a.connectors
+    assert a.can_staff and a.team is None
 
 
 def test_ops_persona_composes_knowledge_toolset(tmp_path):

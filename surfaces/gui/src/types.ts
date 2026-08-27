@@ -226,9 +226,14 @@ export type Item =
   | {
       // The staffing gate (agent teams): a lead proposes its worker roster.
       kind: "teamreq";
+      operation?: "create" | "add" | "replace" | "release";
+      strategy?: "parallel" | "pipeline" | "review";
       members: { persona: string; name?: string; model?: string; reason?: string }[];
+      release?: string[];
       enable_chat?: boolean;
       note?: string;
+      reasons?: string[];
+      integrations?: string[];
       resolved?: "approved" | "rejected";
     }
   | {

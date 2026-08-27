@@ -36,6 +36,11 @@ class Team:
     workers: list[TeamWorker] = field(default_factory=list)
     chat_enabled: bool = False
     chat_group: str = ""  # ChatStore group_id when chat is enabled
+    # The lead's last approved coordination mode. This is descriptive state for
+    # the UI/audit trail; the board remains the source of truth for work.
+    strategy: str = "parallel"
+    reasons: list[str] = field(default_factory=list)
+    integrations: list[str] = field(default_factory=list)
     paused: bool = False  # budget/user pause: the wake gate skips a paused team
     created_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
@@ -79,6 +84,9 @@ class TeamRegistry:
         workers: list[TeamWorker],
         chat_enabled: bool = False,
         chat_group: str = "",
+        strategy: str = "parallel",
+        reasons: Optional[list[str]] = None,
+        integrations: Optional[list[str]] = None,
     ) -> Team:
         team = Team(
             team_id=uuid.uuid4().hex[:12],
@@ -88,11 +96,48 @@ class TeamRegistry:
             workers=workers,
             chat_enabled=chat_enabled,
             chat_group=chat_group,
+            strategy=strategy,
+            reasons=list(reasons or []),
+            integrations=list(integrations or []),
         )
         with self._lock:
             self._teams[team.team_id] = team
             self._save()
         return team
+
+    def update_workers(
+        self,
+        team_id: str,
+        *,
+        add: Optional[list[TeamWorker]] = None,
+        remove_actors: Optional[list[str]] = None,
+        strategy: Optional[str] = None,
+        reasons: Optional[list[str]] = None,
+        integrations: Optional[list[str]] = None,
+    ) -> Optional[Team]:
+        """Atomically update the active roster after an approved staffing change.
+
+        Retired workers are deliberately not deleted from their session history;
+        they simply cease to be team members and therefore cannot be woken or
+        assigned by the lead's team tools.
+        """
+        with self._lock:
+            team = self._teams.get(team_id)
+            if team is None:
+                return None
+            remove = set(remove_actors or [])
+            if remove:
+                team.workers = [worker for worker in team.workers if worker.actor not in remove]
+            if add:
+                team.workers.extend(add)
+            if strategy is not None:
+                team.strategy = strategy
+            if reasons is not None:
+                team.reasons = list(reasons)
+            if integrations is not None:
+                team.integrations = list(integrations)
+            self._save()
+            return team
 
     def all(self) -> list[Team]:
         return list(self._teams.values())

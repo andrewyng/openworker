@@ -262,7 +262,9 @@ _PROPOSE_TEAM_SCHEMA = {
     "function": {
         "name": "propose_team",
         "description": (
-            "Propose the worker coworkers you need for this board. Give EACH member"
+            "Propose an approved staffing change for this board. `create` starts a"
+            " team; `add` grows it; `replace` retires the named idle workers then"
+            " adds members; `release` retires named idle workers. Give EACH new member"
             " a short unique callname (`name`, e.g. 'nia', 'webb', 'checks') — it"
             " becomes their handle for assignment and @mentions, and lets you staff"
             " two of the same coworker. The user sees the roster and approves it;"
@@ -272,6 +274,14 @@ _PROPOSE_TEAM_SCHEMA = {
         "parameters": {
             "type": "object",
             "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["create", "add", "replace", "release"],
+                },
+                "strategy": {
+                    "type": "string",
+                    "enum": ["parallel", "pipeline", "review"],
+                },
                 "members": {
                     "type": "array",
                     "items": {
@@ -285,10 +295,16 @@ _PROPOSE_TEAM_SCHEMA = {
                         "required": ["persona", "name"],
                     },
                 },
+                "release": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
                 "enable_chat": {"type": "boolean"},
                 "note": {"type": "string"},
+                "reasons": {"type": "array", "items": {"type": "string"}},
+                "integrations": {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["members"],
+            "required": ["operation"],
         },
     },
 }
@@ -358,11 +374,18 @@ def propose_work_items_tool() -> object:
 
 def propose_team_tool() -> object:
     def propose_team(
-        members: Optional[list] = None, enable_chat: bool = False, note: str = ""
+        operation: str = "create",
+        members: Optional[list] = None,
+        release: Optional[list] = None,
+        strategy: str = "parallel",
+        enable_chat: bool = False,
+        note: str = "",
+        reasons: Optional[list] = None,
+        integrations: Optional[list] = None,
     ) -> dict:
-        """Propose the worker roster for this board (the staffing gate). Each member
-        is {persona, model?, reason?}. The user approves; approval creates the
-        worker sessions and returns their actor ids for assignment."""
+        """Propose a staffing mutation. New members are {persona, name?, model?,
+        reason?}; release contains existing actor ids. Every mutation needs the
+        user's approval and new workers remain idle until assigned."""
         return {
             "approved": False,
             "error": "team staffing isn't available in this surface",

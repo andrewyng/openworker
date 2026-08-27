@@ -469,18 +469,17 @@ def build_engine(
         roots=root_list or None,
         risk_overrides=risk_overrides,
     )
-    # The plan-mode exit door — mutually exclusive with the board's decomposition
-    # gate, DERIVED from the team trait (owner call 2026-08-16): a lead never
-    # implements, so plan mode is meaningless for it, and shipping both tools made
-    # the lead pick the wrong one (dogfood-hit: propose_plan denied outside plan
-    # mode). Solo/worker personas keep propose_plan as always (mode can flip
-    # mid-session; the engine rejects the call outside plan mode).
+    # A pure lead coordinates only; an adaptive coordinator (the default Cowork)
+    # still executes straightforward work and therefore retains propose_plan.
+    # `can_staff` is intentionally orthogonal to `team`: staffing must not turn a
+    # generalist into a non-implementing lead.
     if agent.team != "lead":
         registry.register(propose_plan_tool())
 
-    # The lead's gates: propose_work_items (decomposition → items on approval, any
-    # mode) and propose_team (staffing → pre-spawn on approval).
-    if agent.team == "lead":
+    # Staffing-capable coordinators get the real board gates. Existing `team: lead`
+    # manifests continue to work unchanged; Cowork can now staff while retaining its
+    # normal direct-work tools.
+    if agent.team == "lead" or getattr(agent, "can_staff", False):
         from .teams.tools import propose_team_tool, propose_work_items_tool
 
         registry.register(propose_work_items_tool())

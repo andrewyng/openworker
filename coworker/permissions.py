@@ -366,6 +366,18 @@ class PermissionEngine:
                 human_only=True,
             )
 
+        # A connector/MCP recipe may declare an irreversible, metered action that
+        # must be shown to a human on *every* invocation. This is checked ahead of
+        # bypass mode and session grants: a broad mode switch is not consent for a
+        # later credit-spending submission with different arguments.
+        if bool(getattr(metadata, "human_approval_each_time", False)):
+            return Decision(
+                False,
+                "this metered external action requires approval each time",
+                needs_user=True,
+                human_only=True,
+            )
+
         # Non-consequential tools always run.
         if not consequential:
             return Decision(True, "low risk")

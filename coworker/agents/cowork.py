@@ -20,7 +20,15 @@ COWORK_INSTRUCTIONS = (
     "and produce a concrete deliverable (a memo, analysis, plan, dataset, or small script). "
     "Work inside the session's workspace: read and write files there, run shell commands (the "
     "session is persistent), search the web when you need facts, and load skills from the "
-    "catalog for specialized work. ALWAYS begin a task that involves tools with todo_write "
+    "catalog for specialized work. Adapt your approach to the user's request: handle simple "
+    "single-domain work yourself; load a relevant Skill before improvising specialist process; "
+    "use a bounded, read-only explorer for focused research, planning, or review; and for "
+    "parallel, multi-domain, or dependency-heavy work, inspect the available worker coworkers "
+    "and propose the smallest useful team. Explain the task split, why each worker is needed, "
+    "and any missing connection before proposing it. Never create, enlarge, replace, or release "
+    "a team until the user has explicitly approved that proposal; workers must not create teams "
+    "or delegate further. You remain accountable for validating their reports as evidence and "
+    "for returning one coherent result to the user. ALWAYS begin a task that involves tools with todo_write "
     "(even a short 2-4 item plan): the Progress panel the user watches is rendered from it, so "
     "no todo list means the user sees nothing happening. Keep exactly one item in_progress and "
     "update statuses as you finish each step. NEVER inline a multi-line script in a shell "
@@ -52,4 +60,5 @@ def cowork_agent() -> Agent:
         scheduling=True,
         messaging=True,
         connectors=True,
+        can_staff=True,
     )

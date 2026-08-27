@@ -76,6 +76,11 @@ class PersonaManifest:
     # personas are NOT team-eligible — team-awareness changes who the prompt talks
     # to, so staffing fails closed on personas without the trait.
     team: Optional[str] = None
+    # A generalist may coordinate a worker roster without becoming a pure `team:
+    # lead` persona. Omitted values retain legacy behavior: existing leads can
+    # staff, while solo and worker personas cannot. Workers are rejected if they
+    # try to opt in, preventing nested teams at the manifest boundary.
+    can_staff: bool = False
     default_permission_mode: str = "interactive"
     recommended_models: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
@@ -115,6 +120,7 @@ class PersonaManifest:
             messaging=self.messaging,
             connectors=self.connectors,
             team=self.team,
+            can_staff=self.can_staff,
         )
 
 
@@ -309,6 +315,19 @@ def parse_manifest(
             " (omit for a solo coworker)"
         )
 
+    # `can_staff` is deliberately strict instead of using bool(value): YAML/text
+    # values such as "false" must not accidentally grant coordination authority.
+    raw_can_staff = meta.get("can_staff", team_raw == "lead")
+    if not isinstance(raw_can_staff, bool):
+        raise ManifestError(
+            f"persona {persona_id!r}: `can_staff` must be a boolean"
+        )
+    can_staff = raw_can_staff
+    if team_raw == "worker" and can_staff:
+        raise ManifestError(
+            f"persona {persona_id!r}: a `team: worker` persona cannot set `can_staff`"
+        )
+
     tools = _strlist(meta, "tools")
     _validate_tools(persona_id, tools)
     recommends = _recommends(persona_id, meta)
@@ -328,6 +347,7 @@ def parse_manifest(
         messaging=bool(meta.get("messaging", False)),
         connectors=connectors,
         team=team_raw or None,
+        can_staff=can_staff,
         default_permission_mode=mode,
         recommended_models=_strlist(meta, "recommended_models"),
         skills=_strlist(meta, "skills"),

@@ -1392,6 +1392,24 @@ class SessionManager:
                     fn.__aisuite_tool_metadata__.requires_approval = approval_for_tool(
                         fn.__aisuite_tool_metadata__.name, default=True
                     )
+            elif getattr(server, "read_tools", None) is not None:
+                # Curated raw MCP recipes may explicitly designate inspected, vendor
+                # tool names as reads. This only relaxes the named allowlist; writes,
+                # credit-spending actions, and future vendor additions remain gated.
+                prefix = f"mcp__{server.name}__"
+                read_tools = set(server.read_tools)
+                for fn in callables:
+                    remote = fn.__aisuite_tool_metadata__.name.removeprefix(prefix)
+                    fn.__aisuite_tool_metadata__.requires_approval = remote not in read_tools
+            # The per-submission approval floor is independent from recipe metadata.
+            # It protects a manually added or legacy Flow Nexus config too, even when
+            # it does not yet carry the newer `read_tools` classification.
+            if server.name == "flow-nexus":
+                prefix = f"mcp__{server.name}__"
+                for fn in callables:
+                    remote = fn.__aisuite_tool_metadata__.name.removeprefix(prefix)
+                    if remote in {"challenge_submit", "app_store_complete_challenge"}:
+                        fn.__aisuite_tool_metadata__.human_approval_each_time = True
             out.extend(callables)
         return out
 
@@ -1947,6 +1965,11 @@ class SessionManager:
         actor id. OPENWORKER_TEAM_BOARD=1 keeps the phase-1 any-session-as-lead dev
         mode."""
         role = getattr(agent, "team", None)
+        # Adaptive coordinators retain their normal direct-work tools but may
+        # staff a team when the conversation calls for it. `team: lead` remains
+        # the stricter, coordination-only legacy role.
+        if role is None and getattr(agent, "can_staff", False):
+            role = "lead"
         if role is None and ws and os.environ.get("OPENWORKER_TEAM_BOARD") == "1":
             role = "lead"
         if role is None or not ws:
@@ -2069,6 +2092,7 @@ class SessionManager:
             propose_team). Only team-capable workers are listed — solo coworkers
             cannot join a team."""
             out = []
+            mcp_status = {row["name"]: row["status"] for row in manager.list_mcp()}
             # Registry entries directly — NOT list_all(), which applies the
             # ships:false visibility filter: a lead that is running (internal
             # build or user-enabled) must be able to staff its workers even
@@ -2086,6 +2110,12 @@ class SessionManager:
                         "name": m.name,
                         "tagline": m.tagline,
                         "recommended_models": list(m.recommended_models),
+                        "capabilities": sorted(capability for capability in m.tools),
+                        "required_integrations": list(getattr(m, "mcp", []) or []),
+                        "integration_status": {
+                            name: mcp_status.get(name, "not_configured")
+                            for name in (getattr(m, "mcp", []) or [])
+                        },
                     }
                 )
             return {"workers": out}
@@ -2136,11 +2166,42 @@ class SessionManager:
         )
 
     def create_team(
-        self, session_id: str, members: list[dict[str, Any]], *, enable_chat: bool = False
+        self,
+        session_id: str,
+        members: list[dict[str, Any]],
+        *,
+        enable_chat: bool = False,
+        operation: str = "create",
+        release: Optional[list[str]] = None,
+        strategy: str = "parallel",
+        reasons: Optional[list[str]] = None,
+        integrations: Optional[list[str]] = None,
     ) -> dict[str, Any]:
         """The staffing gate's approved action: PRE-SPAWN worker sessions (state on
         disk, zero tokens — the first model turn fires when the first assignment
         lands) and register the team. Fails closed on personas without `team: worker`."""
+        if operation != "create":
+            return self._mutate_team(
+                session_id, members, operation=operation, release=release or [],
+                strategy=strategy, reasons=reasons or [], integrations=integrations or [],
+            )
+        if strategy not in {"parallel", "pipeline", "review"}:
+            return {"approved": False, "error": "unknown team strategy"}
+        if len(members) > 4:
+            return {"approved": False, "error": "a team may have at most 4 active workers"}
+        for member in members:
+            if not isinstance(member, dict):
+                return {"approved": False, "error": "every team member must be an object"}
+            pid = str(member.get("persona", "")).strip()
+            try:
+                candidate = get_agent(pid)
+            except Exception:
+                return {"approved": False, "error": f"unknown coworker '{pid}' — it must be installed and enabled"}
+            if getattr(candidate, "team", None) != "worker":
+                return {"approved": False, "error": f"'{pid}' is not team-capable (needs `team: worker`)"}
+            name = str(member.get("name", "")).strip().lower()
+            if name and not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,23}", name):
+                return {"approved": False, "error": f"'{name}' isn't a usable callname — letters/digits/._- only, max 24"}
         record = self.session_store.load(session_id)
         if record is None or not record.workspace:
             return {"approved": False, "error": "the lead session has no workspace"}
@@ -2230,6 +2291,9 @@ class SessionManager:
             workers=workers,
             chat_enabled=enable_chat,
             chat_group=chat_group,
+            strategy=strategy,
+            reasons=list(reasons or []),
+            integrations=list(integrations or []),
         )
         for worker in workers:
             self.session_store.set_team(
@@ -2255,6 +2319,9 @@ class SessionManager:
         return {
             "approved": True,
             "team_id": team.team_id,
+            "operation": "create",
+            "strategy": team.strategy,
+            "integrations": team.integrations,
             "workers": [
                 {"actor": w.actor, "persona": w.persona, "session_id": w.session_id}
                 for w in workers
@@ -2265,6 +2332,123 @@ class SessionManager:
                 " yours to verify."
             ),
         }
+
+    def _mutate_team(
+        self,
+        session_id: str,
+        members: list[dict[str, Any]],
+        *,
+        operation: str,
+        release: list[str],
+        strategy: str,
+        reasons: list[str],
+        integrations: list[str],
+    ) -> dict[str, Any]:
+        """Apply an already-approved roster change. The engine/UI own consent;
+        this method owns durable constraints and leaves historical sessions intact."""
+        if operation not in {"add", "replace", "release"}:
+            return {"approved": False, "error": "unknown team operation"}
+        if strategy not in {"parallel", "pipeline", "review"}:
+            return {"approved": False, "error": "unknown team strategy"}
+        record = self.session_store.load(session_id)
+        team = self.teams.for_lead_session(session_id)
+        if record is None or team is None:
+            return {"approved": False, "error": "no active team for this session"}
+        requested_release = [str(actor).strip() for actor in release if str(actor).strip()]
+        active = {worker.actor: worker for worker in team.workers}
+        unknown = [actor for actor in requested_release if actor not in active]
+        if unknown:
+            return {"approved": False, "error": f"unknown team worker(s): {', '.join(unknown)}"}
+        # Never detach a worker that still owns in-flight work. The lead must
+        # reassign/cancel it first, giving the worker a chance to observe the event.
+        for actor in requested_release:
+            items = self.team_store.list_items(
+                team.space, TeamActor(id=team.lead_actor, role=TeamRole.LEAD), assignee=actor
+            )
+            if any(item["state"] in {"in_progress", "blocked", "review"} for item in items):
+                return {"approved": False, "error": f"'{actor}' still owns active work; reassign or cancel it before release"}
+        if operation == "add" and requested_release:
+            return {"approved": False, "error": "add cannot release workers; use replace or release"}
+        if operation == "release" and members:
+            return {"approved": False, "error": "release cannot add workers; use replace"}
+        if operation == "replace" and not requested_release:
+            return {"approved": False, "error": "replace requires workers to release"}
+        if len(team.workers) - len(requested_release) + len(members) > 4:
+            return {"approved": False, "error": "a team may have at most 4 active workers"}
+
+        new_workers = self._prespawn_team_workers(record, team, members)
+        if isinstance(new_workers, dict):
+            return new_workers
+        for actor in requested_release:
+            self.session_store.set_team(active[actor].session_id, {})
+        updated = self.teams.update_workers(
+            team.team_id, add=new_workers, remove_actors=requested_release,
+            strategy=strategy, reasons=reasons, integrations=integrations,
+        )
+        assert updated is not None
+        if updated.chat_enabled and updated.chat_group:
+            self.chat_store.set_members(
+                updated.chat_group,
+                [
+                    *({"name": w.actor, "persona": w.persona, "role": "worker"} for w in updated.workers),
+                    {"name": "lead", "persona": record.agent, "role": "lead"},
+                ],
+            )
+        for worker in new_workers:
+            self._emit_session_created(worker.session_id, worker.persona)
+        return {
+            "approved": True,
+            "team_id": updated.team_id,
+            "operation": operation,
+            "strategy": updated.strategy,
+            "integrations": updated.integrations,
+            "released": requested_release,
+            "workers": [{"actor": w.actor, "persona": w.persona, "session_id": w.session_id} for w in updated.workers],
+            "note": "team roster updated — added workers remain idle until assigned.",
+        }
+
+    def _prespawn_team_workers(self, record: SessionRecord, team: Any, members: list[dict[str, Any]]) -> list[TeamWorker] | dict[str, Any]:
+        used = {"lead", "user", "board", *(worker.actor for worker in team.workers)}
+        workers: list[TeamWorker] = []
+        # Validate the complete request before writing the first durable session.
+        # A rejected second member must not strand the valid first member outside
+        # the roster where it cannot be managed or woken.
+        for member in members:
+            if not isinstance(member, dict):
+                return {"approved": False, "error": "every team member must be an object"}
+            pid = str(member.get("persona", "")).strip()
+            try:
+                candidate = get_agent(pid)
+            except Exception:
+                return {"approved": False, "error": f"unknown coworker '{pid}' — it must be installed and enabled"}
+            if getattr(candidate, "team", None) != "worker":
+                return {"approved": False, "error": f"'{pid}' is not team-capable (needs `team: worker`)"}
+            name = str(member.get("name", "")).strip().lower()
+            if name and not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,23}", name):
+                return {"approved": False, "error": f"'{name}' isn't a usable callname — letters/digits/._- only, max 24"}
+        for member in members:
+            if not isinstance(member, dict):
+                return {"approved": False, "error": "every team member must be an object"}
+            pid = str(member.get("persona", "")).strip()
+            try:
+                agent = get_agent(pid)
+            except Exception:
+                return {"approved": False, "error": f"unknown coworker '{pid}' — it must be installed and enabled"}
+            if getattr(agent, "team", None) != "worker":
+                return {"approved": False, "error": f"'{pid}' is not team-capable (needs `team: worker`)"}
+            name = str(member.get("name", "")).strip().lower()
+            if name and not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,23}", name):
+                return {"approved": False, "error": f"'{name}' isn't a usable callname — letters/digits/._- only, max 24"}
+            actor, suffix = name or pid, 2
+            while actor in used:
+                actor, suffix = f"{name or pid}-{suffix}", suffix + 1
+            used.add(actor)
+            worker_sid = uuid.uuid4().hex[:12]
+            model = str(member.get("model") or record.model)
+            self.session_store.save(SessionRecord(session_id=worker_sid, workspace=record.workspace, model=model, mode=record.mode, messages=[], agent=pid))
+            self.session_store.set_team(worker_sid, {"team_id": team.team_id, "role": "worker", "actor": actor, "lead_session": team.lead_session, "space": team.space})
+            workers.append(TeamWorker(actor=actor, persona=pid, session_id=worker_sid, model=model, reason=str(member.get("reason", "")).strip()))
+        return workers
 
     def kick_team_tick(self) -> None:
         """Nudge the wake plumbing from outside the turn loop — e.g. after an

@@ -180,6 +180,83 @@ def test_var_resolution(tmp_path, monkeypatch):
     assert docs.headers["Authorization"] == "Bearer sekret"
 
 
+def test_curated_mcp_read_tools_survive_config_loading(tmp_path, monkeypatch):
+    """A curated recipe can relax only its named, read-only vendor verbs."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    _write_json(
+        tmp_path / "state" / "mcp.json",
+        {
+            "mcpServers": {
+                "flow-nexus": {
+                    "command": "npx",
+                    "args": ["-y", "flow-nexus@latest", "mcp", "start"],
+                    "include_tools": ["challenges_list", "challenge_submit"],
+                    "read_tools": ["challenges_list"],
+                }
+            }
+        },
+    )
+    server = load_mcp_servers(None, secrets=SecretStore())[0]
+    assert server.include_tools == ["challenges_list", "challenge_submit"]
+    assert server.read_tools == ["challenges_list"]
+
+
+@pytest.mark.asyncio
+async def test_curated_mcp_only_relaxes_named_read_tools(tmp_path, monkeypatch):
+    """Unknown and write tools remain approval-gated even in a curated MCP recipe."""
+    manager = SessionManager(data_dir=tmp_path / "data")
+    server = MCPServerDef(
+        name="flow-nexus",
+        transport="stdio",
+        include_tools=["challenges_list", "challenge_submit"],
+        read_tools=["challenges_list"],
+    )
+    monkeypatch.setattr(
+        "coworker.server.manager.load_mcp_servers", lambda *a, **k: [server]
+    )
+
+    async def ensure(_server, **_kwargs):
+        return SimpleNamespace(
+            tools=[_fake_tool("challenges_list"), _fake_tool("challenge_submit")]
+        )
+
+    monkeypatch.setattr(manager.mcp, "ensure", ensure)
+    tools = await manager.prepare_mcp_tools("flow-test", workspace=str(tmp_path), agent="cowork")
+    approvals = {tool.__name__: tool.__aisuite_tool_metadata__.requires_approval for tool in tools}
+    assert approvals["mcp__flow-nexus__challenges_list"] is False
+    assert approvals["mcp__flow-nexus__challenge_submit"] is True
+    submit = next(tool for tool in tools if tool.__name__.endswith("challenge_submit"))
+    assert submit.__aisuite_tool_metadata__.human_approval_each_time is True
+
+    from coworker.permissions import Mode, PermissionEngine
+
+    decision = PermissionEngine(
+        workspace_root=tmp_path,
+        mode=Mode.BYPASS_APPROVALS,
+    ).evaluate(submit.__name__, {}, submit.__aisuite_tool_metadata__)
+    assert decision.needs_user and decision.human_only
+
+
+@pytest.mark.asyncio
+async def test_flow_nexus_submission_is_human_gated_without_recipe_metadata(tmp_path, monkeypatch):
+    """A legacy/manual server name cannot bypass the vendor-credit approval floor."""
+    manager = SessionManager(data_dir=tmp_path / "data")
+    server = MCPServerDef(name="flow-nexus", transport="stdio")
+    monkeypatch.setattr("coworker.server.manager.load_mcp_servers", lambda *a, **k: [server])
+
+    async def ensure(_server, **_kwargs):
+        return SimpleNamespace(tools=[_fake_tool("challenge_submit")])
+
+    monkeypatch.setattr(manager.mcp, "ensure", ensure)
+    submit = (await manager.prepare_mcp_tools("legacy-flow", workspace=str(tmp_path), agent="cowork"))[0]
+    from coworker.permissions import Mode, PermissionEngine
+
+    decision = PermissionEngine(workspace_root=tmp_path, mode=Mode.BYPASS_APPROVALS).evaluate(
+        submit.__name__, {}, submit.__aisuite_tool_metadata__
+    )
+    assert decision.needs_user and decision.human_only
+
+
 # -- tool wrapping + bridge ----------------------------------------------------
 def test_tool_name_sanitizes():
     assert tool_name("fs", "read_file") == "mcp__fs__read_file"

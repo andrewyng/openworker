@@ -82,6 +82,7 @@ def test_to_agent_carries_traits_and_tools(tmp_path):
     agent = parse_manifest(VALID).to_agent()
     assert agent.name == "demo" and agent.requires_folder is False
     assert agent.messaging and agent.connectors
+    assert not agent.can_staff
     ctx = AgentContext(workspace=tmp_path, executor=object(), todo=TodoList())
     names = {getattr(t, "__name__", "") for t in agent.build_tools(ctx)}
     assert {"read_file", "grep", "run_shell", "todo_write"} <= names
@@ -116,6 +117,31 @@ Operate things.
         "---\nid: dev2\nfamily: code\nrequires_folder: false\ntools: [git]\n---\nCode."
     )
     assert mixed.requires_folder is False and mixed.subagents is True
+
+
+def test_can_staff_is_explicit_for_generalists_and_legacy_for_leads():
+    generalist = parse_manifest(
+        "---\nid: adaptive\ncan_staff: true\ntools: []\n---\nCoordinate when needed."
+    )
+    assert generalist.team is None and generalist.can_staff
+    assert generalist.to_agent().can_staff
+
+    # Existing lead bundles retain their staffability without a schema migration.
+    lead = parse_manifest("---\nid: lead\nteam: lead\ntools: []\n---\nLead.")
+    assert lead.can_staff and lead.to_agent().can_staff
+
+
+@pytest.mark.parametrize("value", ["true", 1, [], {}])
+def test_can_staff_must_be_a_boolean(value):
+    with pytest.raises(ManifestError, match="can_staff.*boolean"):
+        parse_manifest(f"---\nid: x\ncan_staff: {value!r}\ntools: []\n---\nbody")
+
+
+def test_worker_cannot_gain_staffing_authority():
+    with pytest.raises(ManifestError, match="worker.*can_staff"):
+        parse_manifest(
+            "---\nid: worker\nteam: worker\ncan_staff: true\ntools: []\n---\nbody"
+        )
 
 
 @pytest.mark.parametrize(

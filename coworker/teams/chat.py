@@ -94,6 +94,27 @@ class ChatStore:
             self._conn.commit()
         return group
 
+    def set_members(self, group_id: str, members: list[dict[str, Any]]) -> dict[str, Any]:
+        """Replace the roster of an existing team chat after approved staffing.
+
+        Messages stay immutable; removed workers simply stop receiving future
+        mentions and newly added workers start with an empty unread cursor.
+        """
+        cleaned = [
+            {"name": str(m.get("name", "")).strip(), "persona": str(m.get("persona", "")), "role": str(m.get("role", "worker"))}
+            for m in members
+        ]
+        handles = [m["name"] for m in cleaned]
+        if not handles or not all(handles) or len(handles) != len(set(handles)):
+            raise BoardError("every member needs a unique name")
+        with self._lock:
+            row = self._conn.execute("SELECT group_id FROM chat_groups WHERE group_id = ?", (group_id,)).fetchone()
+            if row is None:
+                raise BoardError("chat group not found")
+            self._conn.execute("UPDATE chat_groups SET members = ? WHERE group_id = ?", (json.dumps(cleaned), group_id))
+            self._conn.commit()
+        return self.get_group(group_id)
+
     def get_group(self, group_id: str) -> Optional[dict[str, Any]]:
         with self._lock:
             row = self._conn.execute(

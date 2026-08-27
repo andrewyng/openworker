@@ -195,6 +195,7 @@ function Buttons({
 }) {
   const copy = approvalCopy(language);
   const connector = item.category === "connector";
+  const mcp = item.category === "mcp";
   const offerStanding = !!(runTask && item.standingTarget);
   // §1.9: egress grants are destination-shaped. web_fetch offers the DOMAIN — tool-wide
   // would cover every future destination, so it's withheld (and server-refused). web_search
@@ -205,6 +206,7 @@ function Buttons({
     autoApprove ||
     offerStanding ||
     connector ||
+    mcp ||
     item.name === "run_shell" ||
     item.name === "save_skill" ||
     item.name === "web_fetch" ||

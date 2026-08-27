@@ -2378,6 +2378,8 @@ def create_app(manager: SessionManager) -> FastAPI:
             # on approval PRE-SPAWN the team (create_team fails closed on non-worker
             # personas, so a bad roster reads as a rejection with the reason).
             members = _args.get("members") or []
+            operation = str(_args.get("operation") or "create")
+            release = [str(actor) for actor in _args.get("release") or []]
             roster = "\n".join(
                 f"- {m.get('persona', '?')}"
                 + (f" · {m['model']}" if m.get("model") else "")
@@ -2387,8 +2389,8 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             item = manager.inbox.add_plan(
                 session_id,
-                "Create this team?",
-                body=roster,
+                f"Approve team {operation}?",
+                body=(roster + ("\nRelease: " + ", ".join(release) if release else "")),
                 inbox=_route(),
                 visibility=_visibility(),
                 tool_call_id=tool_call_id,
@@ -2414,6 +2416,11 @@ def create_app(manager: SessionManager) -> FastAPI:
                 session_id,
                 [m for m in members if isinstance(m, dict)],
                 enable_chat=enable_chat,
+                operation=operation,
+                release=release,
+                strategy=str(_args.get("strategy") or "parallel"),
+                reasons=[str(value) for value in _args.get("reasons") or [] if isinstance(value, str)],
+                integrations=[str(value) for value in _args.get("integrations") or [] if isinstance(value, str)],
             )
 
         async def items_approver(_args: dict, tool_call_id=None) -> dict:
