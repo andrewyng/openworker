@@ -135,6 +135,112 @@ def test_store_runs_history(tmp_path):
     assert len(runs) == 2 and runs[0].status in ("ok", "error")
 
 
+def test_store_pages_run_history(tmp_path):
+    store = TaskStore(tmp_path / "auto.db")
+    task = _task()
+    store.save(task)
+    for i in range(5):
+        store.add_run(TaskRun(task_id=task.id, started_at=float(i), result_text=str(i)))
+
+    page = store.runs(task.id, limit=2, offset=2)
+
+    assert [run.result_text for run in page] == ["2", "1"]
+    assert store.run_count(task.id) == 5
+
+
+def test_get_automation_returns_paged_run_history(tmp_path, monkeypatch):
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    task = _task()
+    manager.task_store.save(task)
+    for i in range(3):
+        manager.task_store.add_run(
+            TaskRun(task_id=task.id, started_at=float(i), result_text=str(i))
+        )
+
+    first = manager.get_automation(task.id, limit=2, offset=0)
+    second = manager.get_automation(task.id, limit=2, offset=2)
+
+    assert [run["result_text"] for run in first["runs"]] == ["2", "1"]
+    assert first["total_runs"] == 3
+    assert first["has_more"] is True
+    assert first["next_offset"] == 2
+    assert [run["result_text"] for run in second["runs"]] == ["0"]
+    assert second["has_more"] is False
+    assert second["next_offset"] is None
+
+
+def test_automation_retention_and_manual_history_cleanup(tmp_path, monkeypatch):
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    task = _task()
+    manager.task_store.save(task)
+    now = time.time()
+    old = TaskRun(
+        task_id=task.id,
+        started_at=now - 40 * 86400,
+        finished_at=now - 39 * 86400,
+        status="ok",
+    )
+    recent = TaskRun(
+        task_id=task.id,
+        started_at=now - 2 * 86400,
+        finished_at=now - 86400,
+        status="ok",
+    )
+    active = TaskRun(task_id=task.id, started_at=now, status="running")
+    for run in (old, recent, active):
+        manager.task_store.add_run(run)
+    deleted_sessions: list[str] = []
+    monkeypatch.setattr(
+        manager.session_store,
+        "delete",
+        lambda session_id: deleted_sessions.append(session_id) or True,
+    )
+
+    updated = manager.update_automation(task.id, {"run_retention_days": 30})
+    assert updated["ok"] is True
+    assert updated["task"]["run_retention_days"] == 30
+    assert {run.run_id for run in manager.task_store.runs(task.id)} == {
+        recent.run_id,
+        active.run_id,
+    }
+    assert deleted_sessions == [old.session_id]
+
+    cleared = manager.clear_automation_runs(task.id)
+    assert cleared == {"ok": True, "cleared": 1}
+    assert [run.run_id for run in manager.task_store.runs(task.id)] == [active.run_id]
+    assert deleted_sessions == [old.session_id, recent.session_id]
+
+
+def test_manual_history_cleanup_accepts_selected_completed_runs(tmp_path, monkeypatch):
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    task = _task()
+    manager.task_store.save(task)
+    selected = TaskRun(task_id=task.id, finished_at=time.time(), status="ok")
+    other = TaskRun(task_id=task.id, finished_at=time.time(), status="ok")
+    active = TaskRun(task_id=task.id, status="running")
+    for run in (selected, other, active):
+        manager.task_store.add_run(run)
+
+    cleared = manager.clear_automation_runs(
+        task.id, run_ids=[selected.run_id, active.run_id, "missing-run"]
+    )
+
+    assert cleared == {"ok": True, "cleared": 1}
+    assert {run.run_id for run in manager.task_store.runs(task.id)} == {
+        other.run_id,
+        active.run_id,
+    }
+
+
 # -- scheduler loop ------------------------------------------------------------
 async def test_scheduler_runs_due_task_and_advances(tmp_path):
     store = TaskStore(tmp_path / "auto.db")
@@ -278,12 +384,20 @@ async def test_scheduled_run_persists_continuable_session(tmp_path, monkeypatch)
         ]
     )
     manager = SessionManager(data_dir=tmp_path / "data", provider=provider)
-    task = _task(workspace=str(ws), agent="cowork")
+    task = _task(workspace=str(ws), agent="cowork", run_retention_days=30)
     manager.task_store.save(task)
+    expired = TaskRun(
+        task_id=task.id,
+        started_at=time.time() - 40 * 86400,
+        finished_at=time.time() - 39 * 86400,
+        status="ok",
+    )
+    manager.task_store.add_run(expired)
 
     run = await manager._run_scheduled_task(task, trigger="manual")
     assert run.status == "ok" and run.session_id == f"__run__{run.run_id}"
     assert run.result_text == "Daily brief: all quiet."
+    assert manager.task_store.find_run(expired.run_id) is None
 
     # the run is now a real, reopenable session with the transcript
     record = manager.session_store.load(run.session_id)
@@ -297,6 +411,40 @@ async def test_scheduled_run_persists_continuable_session(tmp_path, monkeypatch)
     async for _ in engine.run("tell me more"):
         pass
     assert _last_assistant_text(engine.messages) == "Sure — here is more detail."
+
+
+async def test_completed_scheduled_run_revokes_global_skills_root(tmp_path, monkeypatch):
+    """The global Skills root exists only while the scheduled task is executing."""
+    from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
+    from coworker.server import SessionManager
+
+    class _Provider(ProviderClient):
+        def complete(self, *, model, messages, tools=None, **settings):
+            return AssistantTurn(text="done", finish_reason="stop")
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    state = tmp_path / "state"
+    support_file = state / "skills" / "daily-brief" / "references" / "brief.md"
+    support_file.parent.mkdir(parents=True)
+    support_file.write_text("reference material", encoding="utf-8")
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(state))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manager = SessionManager(data_dir=tmp_path / "data", provider=_Provider())
+    task = _task(workspace=str(workspace), agent="cowork")
+    manager.task_store.save(task)
+
+    run = await manager._run_scheduled_task(task, trigger="manual")
+
+    record = manager.session_store.load(run.session_id)
+    assert record is not None and record.extra_roots == []
+    manager._engines.pop(run.session_id)
+    with pytest.raises(PermissionError):
+        manager.get_engine(run.session_id).registry.execute(
+            "read_file", {"path": str(support_file)}
+        )
 
 
 def test_task_engine_has_no_scheduling_tools(tmp_path, monkeypatch):
@@ -329,6 +477,101 @@ def test_task_engine_has_no_scheduling_tools(tmp_path, monkeypatch):
     assert "create_scheduled_task" not in names
     assert "update_scheduled_task" not in names
     assert "write_file" in names  # the deliverable tools are still there
+
+
+def test_task_engine_reads_global_skills_but_cannot_modify_them(tmp_path, monkeypatch):
+    """Scheduled runs receive the global Skill library as a transient read-only root."""
+    from coworker.providers import AssistantTurn as _AT, ModelCapabilities, ProviderClient
+    from coworker.server import SessionManager
+
+    class _Provider(ProviderClient):
+        def complete(self, *, model, messages, tools=None, **settings):
+            return _AT(text="ok", finish_reason="stop")
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    state = tmp_path / "state"
+    support_file = state / "skills" / "daily-brief" / "references" / "brief.md"
+    support_file.parent.mkdir(parents=True)
+    support_file.write_text("reference material", encoding="utf-8")
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(state))
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manager = SessionManager(data_dir=tmp_path / "data", provider=_Provider())
+    task = _task(workspace=str(workspace), agent="cowork")
+
+    engine = manager._build_task_engine(task, session_id="__run__skills-test")
+
+    assert engine.registry.execute("read_file", {"path": str(support_file)}) == "reference material"
+    with pytest.raises(PermissionError):
+        engine.registry.execute(
+            "write_file", {"path": str(support_file), "content": "changed"}
+        )
+    assert support_file.read_text(encoding="utf-8") == "reference material"
+
+
+def test_source_bound_task_only_gets_read_tools_for_its_sources(tmp_path, monkeypatch):
+    """Automation sources narrow integration tools without changing Cowork's own tools."""
+    from coworker.connectors.tool_defs import TOOL_DEFS
+    from coworker.providers import AssistantTurn as _AT, ModelCapabilities, ProviderClient
+    from coworker.server import SessionManager
+
+    class _Provider(ProviderClient):
+        def complete(self, *, model, messages, tools=None, **settings):
+            return _AT(text="ok", finish_reason="stop")
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        "coworker.agent._enabled_connector_tools",
+        lambda _secrets: ({"github", "gmail"}, {tool.name for tool in TOOL_DEFS}),
+    )
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    manager = SessionManager(data_dir=tmp_path / "data", provider=_Provider())
+    monkeypatch.setattr(
+        manager,
+        "effective_connectors",
+        lambda _session_id, _persona=None: {"github", "gmail"},
+    )
+    task = _task(workspace=str(ws), agent="cowork", sources=["github"])
+
+    engine = manager._build_task_engine(task, session_id="__run__source-test")
+    names = set(engine.registry.names())
+    assert "github_search" in names
+    assert "github_create_issue" not in names
+    assert "gmail_search_messages" not in names
+    assert "write_file" in names
+    assert "web_search" in names
+
+
+def test_task_delivery_is_server_owned(tmp_path, monkeypatch):
+    from coworker.connectors.base import SendResult
+    from coworker.connectors.senders import DEFAULT_SENDERS
+    from coworker.server import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    task = _task(
+        delivery={"kind": "channel", "connector": "slack", "target": "slack:C0123"}
+    )
+    run = TaskRun(task_id=task.id, result_text="Everything is green.")
+    sent: list[tuple[str, str, str]] = []
+
+    def sender(token, chat_id, text, thread):
+        sent.append((token, chat_id, text))
+        return SendResult(True, message_id="1")
+
+    monkeypatch.setattr("coworker.server.manager._resolve_token", lambda *_: "token")
+    monkeypatch.setitem(DEFAULT_SENDERS, "slack", sender)
+    manager._deliver_automation_result(task, run)
+
+    assert run.delivery_status == "sent"
+    assert sent == [("token", "C0123", "✓ Daily brief\n\nEverything is green.")]
 
 
 async def test_manual_run_prepare_and_finalize(tmp_path, monkeypatch):

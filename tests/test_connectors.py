@@ -5,15 +5,23 @@ tool, settings/authorization, and the gateway inbound loop — all offline via F
 from __future__ import annotations
 
 import asyncio
+import json
+import sys
+import threading
+import types
 
 import pytest
 
+import coworker.connectors.adapters as adapters_mod
+import coworker.connectors.senders as senders_mod
 from coworker.connectors import (
     ConnectorSettings,
     FakeAdapter,
+    FeishuAdapter,
     Gateway,
     MessageEvent,
     SessionSource,
+    feishu_event_to_event,
     format_target,
     is_authorized,
     make_send_message_tool,
@@ -62,7 +70,7 @@ def _fake_senders(record):
         )
         return SendResult(True, message_id="99")
 
-    return {"telegram": sender, "slack": sender}
+    return {"telegram": sender, "slack": sender, "feishu": sender}
 
 
 def test_send_message_success(tmp_path):
@@ -85,6 +93,195 @@ def test_send_message_missing_token(tmp_path):
     secrets = SecretStore(tmp_path / "secrets.json")
     tool = make_send_message_tool(secrets, senders=_fake_senders([]))
     assert "error" in tool(target="telegram:1", text="x")
+
+
+def test_send_message_feishu_uses_app_credentials(tmp_path):
+    secrets = SecretStore(tmp_path / "secrets.json")
+    secrets.put(
+        "feishu:default",
+        {"type": "token", "app_id": "cli_test", "app_secret": "sec", "base_url": "https://open.feishu.cn"},
+    )
+    record = []
+    tool = make_send_message_tool(secrets, senders=_fake_senders(record))
+
+    out = tool(target="feishu:oc_chat", text="hello")
+    assert out == {"ok": True, "message_id": "99", "target": "feishu:oc_chat"}
+    assert record[0]["chat_id"] == "oc_chat"
+    assert '"app_id": "cli_test"' in record[0]["token"]
+
+
+def test_feishu_reaction_card_and_patch_senders(monkeypatch):
+    import coworker.connectors.senders as senders_mod
+
+    monkeypatch.setattr(
+        senders_mod,
+        "_feishu_tenant_token",
+        lambda _app_id, _app_secret, _base_url: ("tenant-token", None),
+    )
+    token = '{"app_id":"cli_test","app_secret":"sec","base_url":"https://open.feishu.cn"}'
+    calls = []
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, data):
+            self._data = data
+
+        def json(self):
+            return self._data
+
+    def fake_post(url, **kwargs):
+        calls.append(("post", url, kwargs))
+        if url.endswith("/messages"):
+            return _Resp({"code": 0, "data": {"message_id": "om_card"}})
+        return _Resp({"code": 0})
+
+    def fake_patch(url, **kwargs):
+        calls.append(("patch", url, kwargs))
+        return _Resp({"code": 0})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "patch", fake_patch)
+
+    react = senders_mod._react_feishu_message(token, "om_in", "THUMBSUP")
+    card = senders_mod._send_feishu_interactive(
+        token, "oc_1", {"header": {"title": {"content": "任务执行中"}}}
+    )
+    patched = senders_mod._patch_feishu_message(
+        token, "om_card", {"header": {"title": {"content": "任务完成"}}}
+    )
+
+    assert react.ok
+    assert card.ok and card.message_id == "om_card"
+    assert patched.ok
+    assert calls[0][1].endswith("/open-apis/im/v1/messages/om_in/reactions")
+    assert calls[0][2]["json"] == {"reaction_type": {"emoji_type": "THUMBSUP"}}
+    assert calls[1][1].endswith("/open-apis/im/v1/messages")
+    assert calls[1][2]["json"]["msg_type"] == "interactive"
+    assert calls[2][0] == "patch"
+    assert calls[2][1].endswith("/open-apis/im/v1/messages/om_card")
+
+
+def test_feishu_send_message_uses_markdown_post(monkeypatch):
+    import coworker.connectors.senders as senders_mod
+
+    monkeypatch.setattr(
+        senders_mod,
+        "_feishu_tenant_token",
+        lambda _app_id, _app_secret, _base_url: ("tenant-token", None),
+    )
+    token = '{"app_id":"cli_test","app_secret":"sec","base_url":"https://open.feishu.cn"}'
+    calls = []
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"code": 0, "data": {"message_id": "om_post"}}
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _Resp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    result = senders_mod._send_feishu(token, "oc_1", "## 更新\n\n- A\n- B")
+
+    assert result.ok and result.message_id == "om_post"
+    payload = calls[0][1]["json"]
+    assert payload["receive_id"] == "oc_1"
+    assert payload["msg_type"] == "post"
+    assert calls[0][1]["params"] == {"receive_id_type": "chat_id"}
+    content = json.loads(payload["content"])
+    assert content["zh_cn"]["content"][0][0] == {
+        "tag": "md",
+        "text": "## 更新\n\n- A\n- B",
+    }
+
+
+def test_feishu_send_message_uses_open_id_for_personal_delivery(monkeypatch):
+    monkeypatch.setattr(
+        senders_mod,
+        "_feishu_tenant_token",
+        lambda _app_id, _app_secret, _base_url: ("tenant-token", None),
+    )
+    token = '{"app_id":"cli_test","app_secret":"sec","base_url":"https://open.feishu.cn"}'
+    calls = []
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"code": 0, "data": {"message_id": "om_personal"}}
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _Resp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    result = senders_mod._send_feishu(token, "ou_person", "Hello")
+
+    assert result.ok and result.message_id == "om_personal"
+    assert calls[0][1]["params"] == {"receive_id_type": "open_id"}
+
+
+def test_feishu_file_sender_uploads_then_sends_file(monkeypatch):
+    import coworker.connectors.senders as senders_mod
+
+    monkeypatch.setattr(
+        senders_mod,
+        "_feishu_tenant_token",
+        lambda _app_id, _app_secret, _base_url: ("tenant-token", None),
+    )
+    token = '{"app_id":"cli_test","app_secret":"sec","base_url":"https://open.feishu.cn"}'
+    calls = []
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, data):
+            self._data = data
+
+        def json(self):
+            return self._data
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        if url.endswith("/files"):
+            return _Resp({"code": 0, "data": {"file_key": "file_xxx"}})
+        return _Resp({"code": 0, "data": {"message_id": "om_file"}})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    result = senders_mod._send_feishu_file(
+        token,
+        "oc_1",
+        None,
+        "data.csv",
+        b"a,b\n1,2\n",
+        "result.csv",
+        None,
+    )
+
+    assert result.ok and result.message_id == "om_file"
+    assert calls[0][0].endswith("/open-apis/im/v1/files")
+    assert calls[0][1]["data"] == {
+        "file_type": "xls",
+        "file_name": "result.csv",
+    }
+    assert calls[0][1]["files"]["file"] == ("data.csv", b"a,b\n1,2\n")
+    payload = calls[1][1]["json"]
+    assert payload["msg_type"] == "file"
+    assert json.loads(payload["content"]) == {"file_key": "file_xxx"}
 
 
 def test_send_message_unknown_platform(tmp_path):
@@ -129,6 +326,482 @@ def test_load_settings_from_secretstore(tmp_path, monkeypatch):
     assert settings["telegram"].enabled is True
     assert settings["telegram"].allowed_users == {"u1"}
     assert settings["slack"].enabled is False  # no token
+
+
+def test_load_settings_feishu(tmp_path):
+    secrets = SecretStore(tmp_path / "secrets.json")
+    secrets.put(
+        "feishu:default",
+        {"app_id": "cli_test", "app_secret": "sec", "allowed_users": ["ou_1"]},
+    )
+    settings = __import__(
+        "coworker.connectors.config", fromlist=["load_settings"]
+    ).load_settings(secrets)
+    assert settings["feishu"].enabled is True
+    assert settings["feishu"].allowed_users == {"ou_1"}
+
+
+def test_feishu_event_to_event():
+    event = {
+        "event": {
+            "sender": {"sender_id": {"open_id": "ou_123"}},
+            "message": {
+                "message_id": "om_1",
+                "chat_id": "oc_123",
+                "chat_type": "group",
+                "message_type": "text",
+                "content": '{"text":"hello"}',
+            },
+        }
+    }
+    mapped = feishu_event_to_event(event)
+    assert mapped is not None
+    assert mapped.text == "hello"
+    assert mapped.source.platform == "feishu"
+    assert mapped.source.target == "feishu:oc_123"
+    assert mapped.source.user_id == "ou_123"
+
+
+def test_feishu_post_event_to_event():
+    event = {
+        "event": {
+            "sender": {"sender_id": {"open_id": "ou_123"}},
+            "message": {
+                "message_id": "om_1",
+                "chat_id": "oc_123",
+                "chat_type": "p2p",
+                "message_type": "post",
+                "content": '{"zh_cn":{"content":[[{"tag":"md","text":"## 标题\\n\\n- A"}]]}}',
+            },
+        }
+    }
+    mapped = feishu_event_to_event(event)
+    assert mapped is not None
+    assert mapped.text == "## 标题\n\n- A"
+
+
+def test_feishu_post_images_map_to_downloadable_attachments():
+    mapped = feishu_event_to_event(
+        {
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou_123"}},
+                "message": {
+                    "message_id": "om_post",
+                    "chat_id": "oc_123",
+                    "chat_type": "group",
+                    "message_type": "post",
+                    "content": json.dumps(
+                        {
+                            "post": {
+                                "zh_cn": {
+                                    "title": "版本记录",
+                                    "content": [
+                                        [
+                                            {"tag": "text", "text": "请分析图片："},
+                                            {"tag": "img", "image_key": "img_v3_a"},
+                                        ],
+                                        [
+                                            {"tag": "img", "image_key": "img_v3_b"},
+                                            {"tag": "a", "text": "文档", "href": "https://example.com"},
+                                        ],
+                                    ],
+                                }
+                            }
+                        }
+                    ),
+                },
+            }
+        }
+    )
+    assert mapped is not None
+    assert mapped.text == "版本记录\n请分析图片：[Image]\n[Image]文档 (https://example.com)"
+    assert [item["key"] for item in mapped.attachments] == ["img_v3_a", "img_v3_b"]
+    assert all(item["resource_type"] == "image" for item in mapped.attachments)
+
+
+def test_feishu_post_preserves_formatting_mentions_and_non_image_resources():
+    mapped = feishu_event_to_event(
+        {
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou_123"}},
+                "message": {
+                    "message_id": "om_post_rich",
+                    "chat_id": "oc_123",
+                    "chat_type": "group",
+                    "message_type": "post",
+                    "content": json.dumps(
+                        {
+                            "zh_cn": {
+                                "content": [
+                                    [
+                                        {"tag": "text", "text": "重点", "style": {"bold": True}},
+                                        {"tag": "at", "user_name": "Ada"},
+                                        {"tag": "a", "text": "设计", "href": "https://example.com/doc"},
+                                    ],
+                                    [
+                                        {"tag": "img", "image_key": "img_v3_1", "alt": "架构图"},
+                                        {"tag": "file", "file_key": "file_v3_1", "file_name": "design.md"},
+                                        {"tag": "audio", "file_key": "file_v3_2", "file_name": "memo.ogg"},
+                                    ],
+                                ]
+                            }
+                        }
+                    ),
+                },
+            }
+        }
+    )
+    assert mapped is not None
+    assert "**重点**@Ada设计 (https://example.com/doc)" in mapped.text
+    assert "[Image: 架构图]" in mapped.text
+    assert "[Attachment: design.md]" in mapped.text
+    assert [(a["key"], a["resource_type"]) for a in mapped.attachments] == [
+        ("img_v3_1", "image"),
+        ("file_v3_1", "file"),
+        ("file_v3_2", "audio"),
+    ]
+
+
+def test_feishu_event_preserves_reply_context_and_bot_policy():
+    raw = {
+        "event": {
+            "sender": {"sender_type": "bot", "sender_id": {"open_id": "ou_other_bot"}},
+            "message": {
+                "message_id": "om_reply",
+                "chat_id": "oc_123",
+                "chat_type": "group",
+                "message_type": "text",
+                "parent_id": "om_parent",
+                "root_id": "om_root",
+                "content": '{"text":"@OpenWorker 看一下"}',
+                "mentions": [{"id": {"open_id": "ou_openworker"}}],
+            },
+        }
+    }
+    assert feishu_event_to_event(raw, bot_open_id="ou_openworker") is None
+    mapped = feishu_event_to_event(
+        raw, bot_open_id="ou_openworker", allow_bots="mentions"
+    )
+    assert mapped is not None
+    assert mapped.source.thread_id == "om_root"
+    assert mapped.reply_to_message_id == "om_parent"
+    assert mapped.mentions_me is True
+    assert feishu_event_to_event(raw, bot_open_id="ou_other_bot", allow_bots="all") is None
+
+
+def test_feishu_share_unknown_bot_and_mention_messages_are_handled():
+    base = {
+        "event": {
+            "sender": {"sender_id": {"open_id": "ou_123"}},
+            "message": {
+                "message_id": "om_1",
+                "chat_id": "oc_123",
+                "chat_type": "group",
+                "message_type": "share_chat",
+                "content": '{"chat_id":"oc_shared"}',
+            },
+        }
+    }
+    assert feishu_event_to_event(base).text == "[shared chat: oc_shared]"
+
+    unknown = json.loads(json.dumps(base))
+    unknown["event"]["message"]["message_type"] = "calendar"
+    assert feishu_event_to_event(unknown).text == "[calendar]"
+
+    mentioned = json.loads(json.dumps(base))
+    mentioned["event"]["message"]["message_type"] = "text"
+    mentioned["event"]["message"]["content"] = '{"text":"hello"}'
+    mentioned["event"]["message"]["mentions"] = [{"id": {"open_id": "ou_bot"}}]
+    assert feishu_event_to_event(mentioned, bot_open_id="ou_bot").mentions_me
+
+    bot = json.loads(json.dumps(base))
+    bot["event"]["sender"]["sender_type"] = "bot"
+    assert feishu_event_to_event(bot) is None
+
+
+def test_feishu_interactive_and_merged_messages_have_readable_summaries():
+    interactive = feishu_event_to_event(
+        {
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou_123"}},
+                "message": {
+                    "message_id": "om_card",
+                    "chat_id": "oc_123",
+                    "chat_type": "group",
+                    "message_type": "interactive",
+                    "content": json.dumps(
+                        {"title": "发布审批", "elements": [{"text": "请确认发布 v1.2"}]}
+                    ),
+                },
+            }
+        }
+    )
+    assert interactive is not None
+    assert interactive.text == "[interactive message: 发布审批 | 请确认发布 v1.2]"
+
+
+def test_feishu_adapter_deduplicates_inbound_message_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        adapters_mod, "_feishu_seen_state_path", lambda _app_id: tmp_path / "seen.json"
+    )
+    adapter = FeishuAdapter({"app_id": "cli_test", "app_secret": "sec"})
+    assert not adapter._is_duplicate_message("om_1")
+    assert adapter._is_duplicate_message("om_1")
+    assert not adapter._is_duplicate_message("om_2")
+
+
+def test_feishu_adapter_persists_dedup_and_applies_group_rules(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        adapters_mod, "_feishu_seen_state_path", lambda _app_id: tmp_path / "seen.json"
+    )
+    profile = {
+        "app_id": "cli_test",
+        "app_secret": "sec",
+        "group_policy": "allowlist",
+        "allowed_group_users": ["ou_allowed"],
+        "require_mention": True,
+    }
+    first = FeishuAdapter(profile)
+    assert not first._is_duplicate_message("om_persisted")
+    second = FeishuAdapter(profile)
+    assert second._is_duplicate_message("om_persisted")
+    allowed = feishu_event_to_event(
+        {
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou_allowed"}},
+                "message": {
+                    "message_id": "om_allowed",
+                    "chat_id": "oc_group",
+                    "chat_type": "group",
+                    "message_type": "text",
+                    "content": '{"text":"hello"}',
+                    "mentions": [{"id": {"open_id": "ou_bot"}}],
+                },
+            }
+        },
+        bot_open_id="ou_bot",
+    )
+    assert allowed is not None and second._admit_feishu_event(allowed)
+    allowed.mentions_me = False
+    assert not second._admit_feishu_event(allowed)
+
+
+async def test_feishu_adapter_batches_short_text_bursts(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        adapters_mod, "_feishu_seen_state_path", lambda _app_id: tmp_path / "seen.json"
+    )
+    adapter = FeishuAdapter(
+        {"app_id": "cli_test", "app_secret": "sec", "text_batch_delay_seconds": "0.01"}
+    )
+    received: list[str] = []
+
+    async def receive(event):
+        received.append(event.text)
+
+    adapter.set_message_handler(receive)
+    source = SessionSource(platform="feishu", chat_id="oc_1", user_id="ou_1")
+    await adapter._dispatch_feishu_event(MessageEvent("第一句", source, message_id="om_1"))
+    await adapter._dispatch_feishu_event(MessageEvent("第二句", source, message_id="om_2"))
+    await asyncio.sleep(0.05)
+    assert received == ["第一句\n第二句"]
+
+
+async def test_feishu_adapter_starts_sdk_on_thread_local_loop(monkeypatch):
+    ready = threading.Event()
+    release = threading.Event()
+    seen = {}
+    main_loop = asyncio.get_running_loop()
+    client_module = types.SimpleNamespace(loop=main_loop)
+
+    registrations: list[str] = []
+
+    class _HandlerBuilder:
+        def __getattr__(self, name):
+            if not name.startswith("register_p2_"):
+                raise AttributeError(name)
+
+            def register(*_args):
+                registrations.append(name)
+                return self
+
+            return register
+
+        def build(self):
+            return object()
+
+    class _EventDispatcherHandler:
+        @staticmethod
+        def builder(_encrypt_key, _verification_token):
+            return _HandlerBuilder()
+
+    class _Client:
+        def __init__(self, _app_id, _app_secret, *, event_handler):
+            self.event_handler = event_handler
+
+        def start(self):
+            loop = client_module.loop
+            seen["loop"] = loop
+            seen["running"] = loop.is_running()
+            seen["thread"] = threading.current_thread().name
+            ready.set()
+            release.wait(timeout=2)
+
+        def stop(self):
+            release.set()
+
+    fake_lark = types.SimpleNamespace(
+        EventDispatcherHandler=_EventDispatcherHandler,
+        ws=types.SimpleNamespace(Client=_Client, client=client_module),
+    )
+    monkeypatch.setitem(sys.modules, "lark_oapi", fake_lark)
+
+    adapter = FeishuAdapter({"app_id": "cli_test", "app_secret": "sec"})
+    monkeypatch.setattr(adapter, "_resolve_bot_identity", lambda: None)
+    assert await adapter.connect() is True
+    assert ready.wait(timeout=1)
+
+    assert seen["thread"] == "feishu-ws"
+    assert seen["loop"] is not main_loop
+    assert seen["running"] is False
+    assert {
+        "register_p2_im_message_receive_v1",
+        "register_p2_im_message_message_read_v1",
+        "register_p2_im_message_reaction_created_v1",
+        "register_p2_im_message_reaction_deleted_v1",
+        "register_p2_im_chat_member_bot_added_v1",
+        "register_p2_im_chat_member_bot_deleted_v1",
+        "register_p2_im_chat_access_event_bot_p2p_chat_entered_v1",
+        "register_p2_im_message_recalled_v1",
+        "register_p2_customized_event",
+    }.issubset(registrations)
+
+    await adapter.disconnect()
+    release.set()
+
+
+def test_feishu_adapter_enriches_user_and_chat_names(monkeypatch):
+    monkeypatch.setattr(
+        adapters_mod,
+        "_feishu_tenant_token",
+        lambda _app_id, _app_secret, _base_url: ("tenant-token", None),
+    )
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, data):
+            self._data = data
+
+        def json(self):
+            return self._data
+
+    def fake_get(url, **_kwargs):
+        if "/contact/v3/users/ou_1" in url:
+            return _Resp({"code": 0, "data": {"user": {"name": "Ada Feishu"}}})
+        if "/im/v1/chats/oc_1" in url:
+            return _Resp({"code": 0, "data": {"name": "Ada DM"}})
+        return _Resp({"code": 404, "msg": "not found"})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    adapter = FeishuAdapter({"app_id": "cli_test", "app_secret": "sec"})
+    event = _feishu_event_to_event_fixture()
+
+    adapter._enrich_event(event)
+
+    assert event.source.user_name == "Ada Feishu"
+    assert event.source.chat_name == "Ada DM"
+
+
+def _feishu_event_to_event_fixture():
+    mapped = feishu_event_to_event(
+        {
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou_1"}},
+                "message": {
+                    "message_id": "om_1",
+                    "chat_id": "oc_1",
+                    "chat_type": "p2p",
+                    "message_type": "text",
+                    "content": '{"text":"hello"}',
+                },
+            }
+        }
+    )
+    assert mapped is not None
+    return mapped
+
+
+def test_feishu_file_message_maps_to_attachment_event():
+    mapped = feishu_event_to_event(
+        {
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou_1"}},
+                "message": {
+                    "message_id": "om_file",
+                    "chat_id": "oc_1",
+                    "chat_type": "p2p",
+                    "message_type": "file",
+                    "content": '{"file_key":"file_v3_123","file_name":"report.csv"}',
+                },
+            }
+        }
+    )
+    assert mapped is not None
+    assert mapped.message_type.value == "media"
+    assert mapped.attachments and mapped.attachments[0]["key"] == "file_v3_123"
+    assert mapped.attachments[0]["filename"] == "report.csv"
+
+
+def test_download_feishu_resource_uses_message_and_file_key(monkeypatch):
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        content = b"hello"
+        headers = {"Content-Disposition": "attachment; filename*=UTF-8''report.csv"}
+
+        def json(self):
+            return {}
+
+    fake_httpx = types.SimpleNamespace()
+
+    def fake_post(url, **kwargs):
+        class _TokenResp:
+            status_code = 200
+
+            def json(self):
+                return {"code": 0, "tenant_access_token": "tt", "expire": 7200}
+
+        return _TokenResp()
+
+    def fake_get(url, **kwargs):
+        captured["url"] = url
+        captured["params"] = kwargs.get("params")
+        return _Resp()
+
+    fake_httpx.post = fake_post
+    fake_httpx.get = fake_get
+    monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
+
+    data, filename = senders_mod._download_feishu_resource(
+        json.dumps(
+            {
+                "app_id": "a",
+                "app_secret": "s",
+                "base_url": "https://open.feishu.cn",
+            }
+        ),
+        "om_1",
+        "file_v3_1",
+    )
+    assert data == b"hello"
+    assert filename == "report.csv"
+    assert captured["url"].endswith(
+        "/open-apis/im/v1/messages/om_1/resources/file_v3_1"
+    )
+    assert captured["params"] == {"type": "file"}
 
 
 def test_load_settings_env_allowlist(tmp_path, monkeypatch):
@@ -307,6 +980,8 @@ def test_connector_list_descriptors(tmp_path):
     # relay (inbound mentions) but sessions can't subscribe to "GitHub channels".
     assert by_name["telegram"]["channels"] is True
     assert by_name["slack"]["channels"] is True
+    assert by_name["feishu"]["two_way"] is True
+    assert by_name["feishu"]["channels"] is True
     assert (
         by_name["github"]["two_way"] is True and by_name["github"]["channels"] is False
     )
@@ -328,6 +1003,8 @@ def test_connector_list_descriptors(tmp_path):
     # telegram exposes a bot_token field + setup instructions
     keys = {f["key"] for f in by_name["telegram"]["fields"]}
     assert "bot_token" in keys and by_name["telegram"]["instructions"]
+    feishu_keys = {f["key"] for f in by_name["feishu"]["fields"]}
+    assert {"app_id", "app_secret", "allowed_users"} <= feishu_keys
 
 
 def test_connector_list_pre_connect_copy(tmp_path):

@@ -12,6 +12,7 @@ from typing import Any
 from ..secrets import SecretStore
 from .catalog_copy import about_for, access_for
 from .descriptors import get_descriptor, list_descriptors
+from .senders import DEFAULT_SENDERS
 from .tool_defs import patch_tool_settings, tool_dicts
 
 _EXPERIMENTAL_KEY = "experimental:settings"
@@ -178,6 +179,13 @@ def connector_list(secrets: SecretStore) -> list[dict[str, Any]]:
             entry["account"] = (default_row or {}).get("name") or None
             entry["managed_profile"] = bool((default_row or {}).get("managed"))
             entry["hidden_fields"] = hubspot_portals.get_hidden_fields(secrets)
+        # Automation configuration has two separate concerns. Browser is a built-in
+        # capability rather than an external data source, while delivery is available
+        # only where the server owns a sender implementation.
+        entry["source_capable"] = d.name != "browser" and any(
+            tool["kind"] == "read" and tool["enabled"] for tool in entry["tools"]
+        )
+        entry["delivery_capable"] = d.name in DEFAULT_SENDERS
         out.append(entry)
     return out
 

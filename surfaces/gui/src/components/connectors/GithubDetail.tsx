@@ -15,6 +15,7 @@ import {
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
 import type { DetailProps } from "./ConnectorsSection";
+import { IncomingAgentBlock } from "./IncomingAgentBlock";
 import { ToolsDisclosure } from "./ToolsDisclosure";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, PILL_LINE, ROW, TAG_WARN, XBTN } from "./ui";
 
@@ -39,7 +40,7 @@ function relayHealth(gh: GithubStatus | null): { dot: string; text: string } {
   return { dot: "bg-ok", text: "Live · managed relay" };
 }
 
-export function GithubDetail({ c, cloud, onChanged }: DetailProps) {
+export function GithubDetail({ c, cloud, personas, onChanged }: DetailProps) {
   const [adding, setAdding] = useState(false);
   const [subs, setSubs] = useState<Subscription[]>([]);
   const [status, setStatus] = useState<GithubStatus | null>(null);
@@ -102,6 +103,12 @@ export function GithubDetail({ c, cloud, onChanged }: DetailProps) {
             GitHub; each installation keeps its own allow-list.
             {cloud?.signed_in ? "" : " One-click needs cloud sign-in; a PAT works without it."}
           </div>
+        </div>
+      )}
+
+      {c.connected && relay && (
+        <div className={GRP + " mb-4"}>
+          <IncomingAgentBlock c={c} personas={personas} onChanged={changed} />
         </div>
       )}
 

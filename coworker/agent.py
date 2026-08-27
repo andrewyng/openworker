@@ -131,6 +131,15 @@ workspace, connected tools — and leave the free-text answer available so the u
 type their own direction). A picked option is a clear brief: start on it. Keep it short \
 and skip all of this when the user already gave you a task."""
 
+# Image parts make direct visual analysis available to vision-capable providers.  Without an
+# explicit policy, workspace agents may mistake their local attachment copy for a text file and
+# choose read_file/OCR before looking at the image.
+_VISUAL_ATTACHMENT_GUIDANCE = """\
+Visual attachments: when a user message contains image input, analyze the image directly before \
+using tools. Do not use read_file or other text-file tools on an image. Use OCR only when the \
+user explicitly requests transcription or text extraction, or when direct visual analysis is \
+insufficient. A local attachment path, if present, is only a fallback for non-visual processing."""
+
 
 def _enabled_connector_tools(secrets: SecretStore) -> tuple[set[str], set[str]]:
     connectors = {c["name"]: c for c in connector_list(secrets)}
@@ -237,6 +246,7 @@ def build_engine(
     channel_buffer: Optional[Any] = None,
     routing_targets: Optional[list[str]] = None,
     connector_filter: Optional[set[str]] = None,
+    connector_tool_kinds: Optional[set[str]] = None,
     # A set (static snapshot) or a zero-arg callable (live, re-evaluated per load_skill).
     skill_filter: Optional[set[str] | Callable[[], set[str]]] = None,
     # Auto-Approve flags (spec Part 8 / §1.5). None ⇒ read the config.toml value; the server
@@ -322,6 +332,7 @@ def build_engine(
                 enabled_connectors=enabled_connectors,
                 enabled_tools=enabled_tools,
                 roots=root_list or None,
+                allowed_kinds=connector_tool_kinds,
             )
         )
     # Web search + fetch: research tools for every agent (keyless DuckDuckGo default).
@@ -362,7 +373,21 @@ def build_engine(
     if wake_store is not None and session_id and agent.scheduling:
         registry.register_all(selfwake_tools(wake_store, session_id))
 
-    instructions = f"{agent.system_prompt}\n\n{_NARRATION_GUIDANCE}\n\n{_FIRST_CONTACT_GUIDANCE}"
+    instructions = (
+        f"{agent.system_prompt}\n\n{_VISUAL_ATTACHMENT_GUIDANCE}\n\n"
+        f"{_NARRATION_GUIDANCE}\n\n{_FIRST_CONTACT_GUIDANCE}"
+    )
+    # Sessions persist their original system message.  Upgrade it in memory when rebuilding an
+    # existing engine so universal safety/attachment guidance takes effect without requiring a
+    # user to start a new conversation.
+    if messages and messages[0].get("role") == "system":
+        persisted_prompt = str(messages[0].get("content") or "")
+        if _VISUAL_ATTACHMENT_GUIDANCE not in persisted_prompt:
+            messages = list(messages)
+            messages[0] = {
+                **messages[0],
+                "content": f"{persisted_prompt}\n\n{_VISUAL_ATTACHMENT_GUIDANCE}",
+            }
     if ws is not None:
         instructions = f"{instructions}\n\n{environment_context(ws)}"
         conventions = load_agents_md(ws)

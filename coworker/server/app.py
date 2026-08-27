@@ -1257,6 +1257,14 @@ def create_app(manager: SessionManager) -> FastAPI:
     def connectors_list() -> dict[str, Any]:
         return {"connectors": manager.list_connectors()}
 
+    @app.put("/v1/connectors/{name}/agent-route")
+    def connector_agent_route(name: str, body: dict) -> dict[str, Any]:
+        return manager.set_connector_agent_route(name, body or {})
+
+    @app.delete("/v1/connectors/{name}/agent-route")
+    def clear_connector_agent_route(name: str) -> dict[str, Any]:
+        return manager.clear_connector_agent_route(name)
+
     async def _refresh_listeners_if_two_way(name: str) -> None:
         # New/removed creds only take effect when the platform socket reconnects (Socket Mode
         # authenticates at connect time) — hot-reload the listeners in-process so pasting
@@ -1996,12 +2004,20 @@ def create_app(manager: SessionManager) -> FastAPI:
         return manager.create_automation(body or {})
 
     @app.get("/v1/automations/{task_id}")
-    def automation_get(task_id: str) -> dict[str, Any]:
-        return manager.get_automation(task_id)
+    def automation_get(task_id: str, limit: int = 20, offset: int = 0) -> dict[str, Any]:
+        return manager.get_automation(task_id, limit=limit, offset=offset)
 
     @app.patch("/v1/automations/{task_id}")
     def automation_update(task_id: str, body: dict) -> dict[str, Any]:
         return manager.update_automation(task_id, body or {})
+
+    @app.delete("/v1/automations/{task_id}/runs")
+    def automation_runs_clear(task_id: str) -> dict[str, Any]:
+        return manager.clear_automation_runs(task_id)
+
+    @app.post("/v1/automations/{task_id}/runs/clear")
+    def automation_selected_runs_clear(task_id: str, body: dict) -> dict[str, Any]:
+        return manager.clear_automation_runs(task_id, run_ids=(body or {}).get("run_ids"))
 
     @app.delete("/v1/automations/{task_id}")
     def automation_delete(task_id: str) -> dict[str, Any]:
@@ -2047,8 +2063,14 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
 
         async def _mirror(item) -> None:
-            # Unattended items mirror to a bound channel as buttons (see mirror_inbox_item).
+            # Mirror to a bound channel, and also back to a Feishu-origin DM even while this
+            # session is attended in the UI. The Inbox item stays single-source-of-truth.
             await manager.mirror_inbox_item(item)
+
+        def _should_mirror(item) -> bool:
+            return item.visibility == VIS_INBOX or manager.has_feishu_inbound_target(
+                session_id
+            )
 
         def _route() -> str:
             return manager.inbox_routing.route_for(session_id, agent)
@@ -2080,7 +2102,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                 manager.persist_session(
                     session_id
                 )  # the pending tool call is now on disk
-                if item.visibility == VIS_INBOX:
+                if _should_mirror(item):
                     await _mirror(item)
             resolution = await manager.inbox.wait(item.id)
             # Accept every vocabulary: the live card sends once/always_tool/always_command/
@@ -2103,7 +2125,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             if item.state == "pending":
                 manager.persist_session(session_id)
-                if item.visibility == VIS_INBOX:
+                if _should_mirror(item):
                     await _mirror(item)
                 else:
                     await ws.send_json(
@@ -2199,7 +2221,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             if item.state == "pending":
                 manager.persist_session(session_id)
-                if item.visibility == VIS_INBOX:
+                if _should_mirror(item):
                     await _mirror(item)
             resp = _parse_json(
                 await manager.inbox.wait(item.id)
@@ -2277,7 +2299,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             if item.state == "pending":
                 manager.persist_session(session_id)
-                if item.visibility == VIS_INBOX:
+                if _should_mirror(item):
                     await _mirror(item)
             resp = _parse_json(
                 await manager.inbox.wait(item.id)
@@ -2445,6 +2467,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "agent": getattr(engine, "agent_name", "code"),
                     "model": engine.model,
                     "mode": engine.permissions.mode.value,
+                    "running": manager.is_running(session_id),
                     "workspace": (
                         str(getattr(engine, "executor").cwd)
                         if getattr(engine, "executor", None)

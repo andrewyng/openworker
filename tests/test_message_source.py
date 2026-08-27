@@ -254,7 +254,7 @@ def test_dm_message_source_kind_dm(tmp_path, monkeypatch):
 
     assert len(captured) == 1
     sid, message, source = captured[0]
-    assert sid == "sDM"
+    assert sid == mgr.inbound_sessions.all()[0]["session_id"]
     assert source["kind"] == "dm"
     assert source["connector"] == "slack"
     assert source["channel_id"] == "D1"

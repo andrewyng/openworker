@@ -19,6 +19,7 @@ import {
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
 import type { DetailProps } from "./ConnectorsSection";
+import { IncomingAgentBlock } from "./IncomingAgentBlock";
 import { SlackHowItWorks } from "./SlackHowItWorks";
 import { ToolsDisclosure } from "./ToolsDisclosure";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, PILL_LINE, ROW, TAG_WARN, XBTN } from "./ui";
@@ -52,7 +53,7 @@ function relayHealth(slack: SlackStatus | null): { dot: string; text: string } {
   return { dot: "bg-ok", text: "Live · managed relay" };
 }
 
-export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
+export function SlackDetail({ c, cloud, slack, personas, onChanged }: DetailProps) {
   const [adding, setAdding] = useState(false);
   const [subs, setSubs] = useState<Subscription[]>([]);
   const loadSubs = () => getSubscriptions().then(setSubs).catch(() => setSubs([]));
@@ -111,6 +112,12 @@ export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
       {/* UX-027: post-connect orientation — status line + animated how-it-works
           carousel (collapsible; collapsed state is the local "seen" flag). */}
       {relay && workspaces.length > 0 && <SlackHowItWorks workspaces={workspaces} />}
+
+      {c.connected && (
+        <div className={GRP + " mb-4"}>
+          <IncomingAgentBlock c={c} personas={personas} onChanged={changed} />
+        </div>
+      )}
 
       {relay &&
         workspaces.map((w) => (

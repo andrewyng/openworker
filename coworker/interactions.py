@@ -16,7 +16,7 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
-from .inbox import KIND_APPROVAL, KIND_QUESTION
+from .inbox import KIND_APPROVAL, KIND_DIRECTORY, KIND_PLAN, KIND_QUESTION
 from .tools.ask import option_label
 
 
@@ -53,6 +53,43 @@ def buttons_for(item) -> list[Button]:
         # Grouped questions (OPE-51): one button row can't answer 2+ questions — send plain text
         # with the open-the-app hint instead.
         return []
+    if item.kind == KIND_DIRECTORY:
+        return [
+            Button(
+                "Grant",
+                encode(item.id, json.dumps({"granted": True}, ensure_ascii=False)),
+            ),
+            Button(
+                "Deny",
+                encode(item.id, json.dumps({"granted": False}, ensure_ascii=False)),
+            ),
+        ]
+    if item.kind == KIND_PLAN:
+        return [
+            Button(
+                "Approve",
+                encode(
+                    item.id,
+                    json.dumps(
+                        {"approved": True, "mode": "interactive"},
+                        ensure_ascii=False,
+                    ),
+                ),
+            ),
+            Button(
+                "Deny",
+                encode(
+                    item.id,
+                    json.dumps(
+                        {
+                            "approved": False,
+                            "feedback": "the user rejected the plan",
+                        },
+                        ensure_ascii=False,
+                    ),
+                ),
+            ),
+        ]
     if item.kind == KIND_QUESTION and getattr(item, "options", None):
         # One button per option; the resolution IS the chosen option's label (what the agent
         # gets). Rich {label, description, …} options button as their label.

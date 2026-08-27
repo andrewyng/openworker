@@ -13,12 +13,13 @@ import {
 import { ConnectorBadge } from "../connectors/ConnectorIcon";
 import { ChannelPicker } from "./SubscriptionsChip";
 import { SelectMenu } from "./SelectMenu";
+import type { AutomationDelivery } from "../api";
 
 // The Automations quickstart (UX-DECISIONS §29): ONE template system. The former onboarding
 // recipe step (§24's role recipes) merged into the page's "Start from a template" grid — every
 // card carries §27's connector-dot vocabulary (brand = connected, grayscale = needs connecting);
 // picking a card expands the configure card below the grid: connect rows (with the lazy cloud
-// sign-in pane), channel-by-name, day × time, and the §25 consent line for write recipes.
+// sign-in pane), channel-by-name, source selection, delivery configuration, and day × time.
 // The `ob-*` testids moved here with the machinery.
 
 // "When" = day choice × free time (owner call 2026-07-11); the cron assembles from the two.
@@ -50,13 +51,12 @@ interface QuickTemplate {
   blurb: string;
   cadence: string; // the card's footer label
   conns: { name: string; why: string }[]; // [] = no connections needed
+  sources: string[];
   needsRepo?: boolean;
   needsChannel?: boolean;
-  consent?: boolean; // write recipes carry the §25 consent line; reads carry disclosure
-  deliver?: boolean; // Morning brief's deliver-to choice
   day: string;
   time: string;
-  instructions: (ctx: { repo: string; channel: string; deliver: "app" | "slack" }) => string;
+  instructions: (ctx: { repo: string; channel: string }) => string;
 }
 
 const TEMPLATES: QuickTemplate[] = [
@@ -69,15 +69,14 @@ const TEMPLATES: QuickTemplate[] = [
       { name: "slack", why: "Where the digest posts" },
       { name: "github", why: "What the digest summarizes" },
     ],
+    sources: ["github"],
     needsRepo: true,
     needsChannel: true,
-    consent: true,
     day: "mon",
     time: "09:00",
-    instructions: ({ repo, channel }) =>
+    instructions: ({ repo }) =>
       `Summarize activity since the last digest in the GitHub repository ${repo || "(the connected repository)"}: ` +
-      `merged pull requests, notable commits, and anything needing attention. ` +
-      `Post the digest to the Slack channel ${channel} using send_message.`,
+      "merged pull requests, notable commits, and anything needing attention.",
   },
   {
     key: "pipeline",
@@ -88,14 +87,13 @@ const TEMPLATES: QuickTemplate[] = [
       { name: "slack", why: "Where the digest posts" },
       { name: "hubspot", why: "Pipeline and deal activity" },
     ],
+    sources: ["hubspot"],
     needsChannel: true,
-    consent: true,
     day: "mon",
     time: "09:00",
-    instructions: ({ channel }) =>
+    instructions: () =>
       `Review HubSpot activity since the last digest: deals that changed stage, deals going ` +
-      `quiet, and deals past their close date. Post a short pipeline digest to the Slack ` +
-      `channel ${channel} using send_message.`,
+      "quiet, and deals past their close date. Post a short pipeline digest.",
   },
   {
     key: "brief",
@@ -106,13 +104,12 @@ const TEMPLATES: QuickTemplate[] = [
       { name: "google_calendar", why: "Today's meetings and gaps" },
       { name: "gmail", why: "What arrived overnight" },
     ],
-    deliver: true,
+    sources: ["google_calendar", "gmail"],
     day: "daily",
     time: "08:00",
-    instructions: ({ deliver }) =>
+    instructions: () =>
       `Prepare a short morning brief: today's calendar events and gaps, plus email that ` +
-      `arrived since yesterday evening. ` +
-      (deliver === "app" ? "Save it as the session deliverable." : "Send it to me as a Slack DM."),
+      "arrived since yesterday evening. Save it as the session deliverable.",
   },
   {
     key: "news",
@@ -120,6 +117,7 @@ const TEMPLATES: QuickTemplate[] = [
     blurb: "A 5-bullet tech & world news digest, saved as markdown.",
     cadence: "Daily",
     conns: [],
+    sources: [],
     day: "daily",
     time: "08:00",
     instructions: () =>
@@ -132,6 +130,7 @@ const TEMPLATES: QuickTemplate[] = [
     blurb: "One short digest of your unread email.",
     cadence: "Weekdays",
     conns: [{ name: "gmail", why: "Your unread email" }],
+    sources: ["gmail"],
     day: "weekdays",
     time: "09:00",
     instructions: () => "Summarize my unread email into one short digest note.",
@@ -142,6 +141,7 @@ const TEMPLATES: QuickTemplate[] = [
     blurb: "Sort recent Downloads into tidy folders by type.",
     cadence: "Weekly",
     conns: [],
+    sources: [],
     day: "fri",
     time: "17:30",
     instructions: () => "Sort my recent Downloads into tidy folders by file type.",
@@ -157,7 +157,8 @@ export function AutomationQuickstart({
     title: string;
     instructions: string;
     cron?: string;
-    permissions?: { tool: string; target: string; access: "read" | "write" }[];
+    sources: string[];
+    delivery: AutomationDelivery;
   }) => void;
 }) {
   const [pickedKey, setPickedKey] = useState<string | null>(null);
@@ -177,8 +178,6 @@ export function AutomationQuickstart({
   const [channel, setChannel] = useState("");
   const [day, setDay] = useState("mon");
   const [time, setTime] = useState("09:00");
-  const [deliver, setDeliver] = useState<"app" | "slack">("app");
-  const [consent, setConsent] = useState(true);
 
   const refresh = () => {
     getConnectors().then(setConnectors).catch(() => {});
@@ -203,15 +202,6 @@ export function AutomationQuickstart({
 
   const connState = (name: string) => connectors.find((c) => c.name === name);
   const allConnected = !picked || picked.conns.every((c) => connState(c.name)?.connected);
-  // §25 consent line shows the HUMAN name (owner catch 2026-07-14: it echoed the raw
-  // slack:T…/C… target). Names come from a picker pick (remembered per address) or the
-  // recent list; a hand-typed raw address stays raw — we never guess.
-  const [picked_names, setPickedNames] = useState<Record<string, { name: string; workspace?: string }>>({});
-  const pickedInfo = picked_names[channel];
-  const channelName = pickedInfo?.name || recent.find((c) => c.channel === channel)?.name;
-  const channelLabel = channelName ? `#${channelName}` : channel;
-  const channelWorkspace = pickedInfo?.workspace;
-
   // The poll flipping a row to ✓ is what ends its waiting state.
   useEffect(() => {
     if (connFlow && connState(connFlow.name)?.connected) setConnFlow(null);
@@ -229,7 +219,6 @@ export function AutomationQuickstart({
     setPickedKey(t.key);
     setDay(t.day);
     setTime(t.time);
-    setConsent(true);
     setConnFlow(null);
   };
 
@@ -281,12 +270,13 @@ export function AutomationQuickstart({
     if (!picked) return;
     onCreate({
       title: picked.title,
-      instructions: picked.instructions({ repo, channel, deliver }),
+      instructions: picked.instructions({ repo, channel }),
       cron: cronFor(day, time),
-      permissions:
-        picked.consent && consent && channel
-          ? [{ tool: "send_message", target: channel, access: "write" }]
-          : [],
+      sources: picked.sources,
+      delivery:
+        picked.needsChannel && channel
+          ? { kind: "channel", connector: "slack", target: channel }
+          : { kind: "app" },
     });
   };
 
@@ -489,9 +479,6 @@ export function AutomationQuickstart({
                       value={channel}
                       onChange={setChannel}
                       recent={recent}
-                      onPickName={(address, name, workspace) =>
-                        setPickedNames((m) => ({ ...m, [address]: { name, workspace } }))
-                      }
                     />
                   </div>
                   <p className="text-[11px] text-warnInk mt-1">
@@ -517,39 +504,7 @@ export function AutomationQuickstart({
                   onChange={(e) => setTime(e.target.value)}
                 />
               </div>
-              {picked.deliver && (
-                <>
-                  <label className={label}>Deliver to</label>
-                  <SelectMenu
-                    ariaLabel="Deliver to"
-                    value={deliver}
-                    options={[
-                      { value: "app", label: "In the app" },
-                      { value: "slack", label: "Slack DM (connect Slack later)" },
-                    ]}
-                    onChange={(v) => setDeliver(v as "app" | "slack")}
-                  />
-                </>
-              )}
-              {picked.consent ? (
-                <label className="flex items-start gap-2.5 mt-3.5 text-[13px] text-muted select-none">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5"
-                    checked={consent}
-                    onChange={(e) => setConsent(e.target.checked)}
-                    data-testid="ob-consent"
-                  />
-                  <span>
-                    Allow this automation to post its digest to{" "}
-                    <b className="text-ink" title={channel || undefined}>
-                      {channelLabel || "the channel"}
-                      {channelWorkspace ? ` (${channelWorkspace})` : ""}
-                    </b>{" "}
-                    without asking each time. Anything else still asks first.
-                  </span>
-                </label>
-              ) : picked.conns.length > 0 ? (
+              {picked.conns.length > 0 ? (
                 <p className="text-[13px] text-muted mt-3">
                   This automation only <b className="text-ink">reads</b> on schedule — reading
                   never needs approval.

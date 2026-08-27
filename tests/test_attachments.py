@@ -59,7 +59,10 @@ def test_image_attachment_becomes_image_url_part():
     content = build_user_content("what is this?", [{"kind": "image", "data_url": url}])
     assert isinstance(content, list)
     assert content[0] == {"type": "text", "text": "what is this?"}
-    assert content[1] == {"type": "image_url", "image_url": {"url": url}}
+    assert content[1] == {
+        "type": "image_url",
+        "image_url": {"url": url, "detail": "high"},
+    }
 
 
 def test_text_attachment_is_inlined():
@@ -92,6 +95,28 @@ def test_content_to_text_flattens_parts():
     parts = build_user_content("look at this", [{"kind": "image", "data_url": url}])
     assert content_to_text(parts) == "look at this [image]"
     assert content_to_text("plain") == "plain"
+
+
+def test_engine_instructions_prioritize_visual_attachments():
+    from coworker.agent import build_engine
+    from coworker.agents.chat import chat_agent
+
+    engine = build_engine(agent=chat_agent())
+
+    instructions = engine.messages[0]["content"]
+    assert "analyze the image directly before using tools" in instructions
+    assert "Do not use read_file" in instructions
+
+
+def test_existing_session_prompt_gains_visual_attachment_guidance():
+    from coworker.agent import build_engine
+    from coworker.agents.chat import chat_agent
+
+    persisted = [{"role": "system", "content": "legacy instructions"}]
+    engine = build_engine(agent=chat_agent(), messages=persisted)
+
+    assert "analyze the image directly before using tools" in engine.messages[0]["content"]
+    assert persisted[0]["content"] == "legacy instructions"
 
 
 # -- (2) the assumption: image reaches the provider unmodified ------------------

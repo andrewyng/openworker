@@ -68,6 +68,21 @@ def tool_turn(name, args, result):
     return [a, tool(a["tool_calls"][0]["id"], result)]
 
 
+def image_user(text, *, image_chars=32):
+    return user(
+        [
+            {"type": "text", "text": text},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/png;base64," + ("A" * image_chars),
+                    "detail": "high",
+                },
+            },
+        ]
+    )
+
+
 def convo(turns=6, bulk=2000):
     """system + N user/assistant turns with bulky assistant text."""
     msgs = [{"role": "system", "content": "You are a coworker."}]
@@ -120,6 +135,13 @@ def test_estimate_tokens_is_chars_over_four():
     assert 100 <= est <= 120  # 400 chars of content + json overhead, /4
 
 
+def test_estimate_tokens_treats_image_base64_as_flat_cost():
+    small = estimate_tokens([image_user("look", image_chars=32)])
+    large = estimate_tokens([image_user("look", image_chars=500_000)])
+    assert large == small
+    assert small >= 1500
+
+
 # -- boundary -----------------------------------------------------------------
 
 
@@ -140,6 +162,20 @@ def test_boundary_falls_inside_a_giant_final_turn():
         msgs += [a, tool(a["tool_calls"][0]["id"], {"exit_code": 0, "out": "z" * 3000})]
     boundary = pick_boundary(msgs, keep_tokens=estimate_tokens(msgs[-3:]))
     assert msgs[boundary]["role"] == "assistant"
+
+
+def test_boundary_is_unaffected_by_large_image_payloads():
+    msgs = convo(turns=6, bulk=1500)
+    msgs[3] = image_user("request 1", image_chars=32)
+    keep_tokens = estimate_tokens(msgs[-4:]) + 10
+    small_boundary = pick_boundary(msgs, keep_tokens=keep_tokens)
+
+    msgs[3] = image_user("request 1", image_chars=500_000)
+    large_boundary = pick_boundary(msgs, keep_tokens=keep_tokens)
+
+    assert small_boundary == large_boundary
+    assert small_boundary is not None
+    assert msgs[small_boundary]["role"] == "user"
 
 
 def test_boundary_none_when_nothing_to_summarize():
