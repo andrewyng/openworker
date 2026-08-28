@@ -282,13 +282,21 @@ class SessionManager:
         # and assignment feeds journal-case grants. Verbs register per-session behind
         # the persona's `team:` trait; the registry holds rosters (lead/worker
         # sessions per board) that the wake plumbing walks.
+        self.board_tokens = BoardTokens(base / "board-tokens.json")
         self.journal_store = JournalStore(base / "journal.db")
-        self.team_store = TeamStore(base / "teams.db", journal=self.journal_store)
+        self.team_store = TeamStore(
+            base / "teams.db",
+            journal=self.journal_store,
+            space_rekeys=self.board_tokens,
+        )
+        # A persisted token tombstone is the rekey intent. If a process exited
+        # after recording it but before token cleanup, replay the idempotent move.
+        for old_space, new_space in self.board_tokens.space_rekeys().items():
+            self.team_store.rekey_space(old_space, new_space)
         self.chat_store = ChatStore(base / "chat.db")
         self.teams = TeamRegistry(base / "teams.json")
-        # External board clients (OPE-100): join tokens bind actor+role; the
-        # `/v1/board` API resolves them and the store enforces authority.
-        self.board_tokens = BoardTokens(base / "board-tokens.json")
+        # External board clients (OPE-100): join tokens bind actor+role+space;
+        # `/v1/board` enforces space scope and the store enforces object authority.
         # Work-item attachments (OPE-105): content-addressed blobs next to the
         # board; the log carries only `attachment://` refs.
         self.attachment_store = AttachmentStore(base / "attachments")

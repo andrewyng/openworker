@@ -27,6 +27,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -79,11 +80,18 @@ _HASHED_FIELDS = (
 
 
 class TeamStore:
-    def __init__(self, db_path: str | Path, *, journal: Any = None) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        journal: Any = None,
+        space_rekeys: Any = None,
+    ) -> None:
         # `journal` is a teams.journal.JournalStore when wired: assignment feeds
         # case grants ("sharing rides assignment"). Optional so the board works
         # standalone (tests, boards with no journal).
         self.journal = journal
+        self._space_rekeys = space_rekeys
         self.db_path = str(db_path)
         if self.db_path != ":memory:":
             Path(self.db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
@@ -529,7 +537,9 @@ class TeamStore:
                 },
             )
             if self.journal is not None and case:
-                self.journal.ensure_case(case, actor.id)
+                self.journal.ensure_case(
+                    case, actor.id, space=space, item_id=item_id
+                )
         return self.get_item(space, item_id, actor=actor, seq=event["seq"])
 
     def list_items(
@@ -1165,6 +1175,16 @@ class TeamStore:
             ).fetchone()
         return int(row[0]) if row else 0
 
+    @contextmanager
+    def authorized_space(self, space: str):
+        """Serialize a remote operation with rekey and reject retired scopes."""
+        with self._lock:
+            if self._space_rekeys is not None and not self._space_rekeys.is_space_active(
+                space
+            ):
+                raise BoardNotFoundError("board space not found")
+            yield
+
     def rekey_space(self, old: str, new: str) -> bool:
         """Move one space's records under a new key — the twentieth-pass one-time
         path→git migration. `space` participates in the hash chain, so the chain
@@ -1174,79 +1194,138 @@ class TeamStore:
         if old == new:
             return True
         with self._lock:
+            has_old = self._conn.execute(
+                "SELECT 1 FROM team_events WHERE space = ? LIMIT 1", (old,)
+            ).fetchone()
             has_new = self._conn.execute(
                 "SELECT 1 FROM team_events WHERE space = ? LIMIT 1", (new,)
             ).fetchone()
             if has_new:
+                pending = (
+                    self._space_rekeys.space_rekeys().get(old) == new
+                    if self._space_rekeys is not None
+                    else False
+                )
+                if pending and not has_old:
+                    # The databases committed before token cleanup (for example,
+                    # a process exit at that boundary). The move is complete.
+                    self._finish_space_rekey(old, new)
+                    return True
                 return False
             rows = self._conn.execute(
                 "SELECT * FROM team_events WHERE space = ? ORDER BY seq", (old,)
             ).fetchall()
-            try:
-                prev = GENESIS
-                for row in rows:
-                    record = {
-                        "ts": row["ts"],
-                        "space": new,
-                        "kind": row["kind"],
-                        "actor": row["actor"],
-                        "actor_role": row["actor_role"],
-                        "item_id": row["item_id"],
-                        "case_id": row["case_id"],
-                        "recipient": row["recipient"],
-                        "payload": row["payload"],
-                        "taint": row["taint"],
-                        "prev_hash": prev,
-                    }
-                    record["hash"] = _hash(record)
-                    self._conn.execute(
-                        "UPDATE team_events SET space = ?, prev_hash = ?, hash = ? "
-                        "WHERE seq = ?",
-                        (new, prev, record["hash"], row["seq"]),
-                    )
-                    prev = record["hash"]
-                for table in (
-                    "team_items",
-                    "team_links",
-                    "team_attachment_refs",
-                    "team_settings",
-                ):
-                    self._conn.execute(
-                        f"UPDATE {table} SET space = ? WHERE space = ?", (new, old)
-                    )
-                # Cursor keys embed the space as a suffix ("feed:<actor>:<space>",
-                # "sub:<sub>:<space>") — rewrite the suffix, keep consumed positions.
-                cur_rows = self._conn.execute(
-                    "SELECT cursor_key FROM team_cursors WHERE cursor_key LIKE ?",
-                    ("%:" + old,),
-                ).fetchall()
-                for crow in cur_rows:
-                    new_key = crow["cursor_key"][: -len(old)] + new
-                    self._conn.execute(
-                        "UPDATE OR REPLACE team_cursors SET cursor_key = ? "
-                        "WHERE cursor_key = ?",
-                        (new_key, crow["cursor_key"]),
-                    )
-                meta = self._conn.execute(
-                    "SELECT watermark FROM team_meta WHERE space = ?", (old,)
-                ).fetchone()
-                if meta is not None and rows:
-                    self._conn.execute(
-                        "DELETE FROM team_meta WHERE space = ?", (old,)
-                    )
-                    self._conn.execute(
-                        "INSERT INTO team_meta (space, head_hash, watermark) "
-                        "VALUES (?, ?, ?) ON CONFLICT(space) DO UPDATE SET "
-                        "head_hash = excluded.head_hash, watermark = excluded.watermark",
-                        (new, prev, meta["watermark"]),
-                    )
-                elif meta is not None:
-                    self._conn.execute("DELETE FROM team_meta WHERE space = ?", (old,))
-            except Exception:
-                self._conn.rollback()
-                raise
-            self._conn.commit()
+            journal_lock = (
+                self.journal.rekey_lock() if self.journal is not None else nullcontext()
+            )
+            with journal_lock:
+                attached = False
+                created_rekey_intent = False
+                try:
+                    if self.journal is not None:
+                        if self.journal.db_path == ":memory:":
+                            raise BoardError(
+                                "coordinated space rekey requires a file-backed journal"
+                            )
+                        self._conn.execute(
+                            "ATTACH DATABASE ? AS journal_rekey",
+                            (self.journal.db_path,),
+                        )
+                        attached = True
+                    if self._space_rekeys is not None:
+                        created_rekey_intent = (
+                            self._space_rekeys.begin_space_rekey(old, new)
+                        )
+                    self._conn.execute("BEGIN IMMEDIATE")
+                    prev = GENESIS
+                    for row in rows:
+                        record = {
+                            "ts": row["ts"],
+                            "space": new,
+                            "kind": row["kind"],
+                            "actor": row["actor"],
+                            "actor_role": row["actor_role"],
+                            "item_id": row["item_id"],
+                            "case_id": row["case_id"],
+                            "recipient": row["recipient"],
+                            "payload": row["payload"],
+                            "taint": row["taint"],
+                            "prev_hash": prev,
+                        }
+                        record["hash"] = _hash(record)
+                        self._conn.execute(
+                            "UPDATE team_events SET space = ?, prev_hash = ?, hash = ? "
+                            "WHERE seq = ?",
+                            (new, prev, record["hash"], row["seq"]),
+                        )
+                        prev = record["hash"]
+                    for table in (
+                        "team_items",
+                        "team_links",
+                        "team_attachment_refs",
+                        "team_settings",
+                    ):
+                        self._conn.execute(
+                            f"UPDATE {table} SET space = ? WHERE space = ?", (new, old)
+                        )
+                    # Cursor keys embed the space as a suffix
+                    # ("feed:<actor>:<space>", "sub:<sub>:<space>").
+                    cur_rows = self._conn.execute(
+                        "SELECT cursor_key FROM team_cursors WHERE cursor_key LIKE ?",
+                        ("%:" + old,),
+                    ).fetchall()
+                    for crow in cur_rows:
+                        new_key = crow["cursor_key"][: -len(old)] + new
+                        self._conn.execute(
+                            "UPDATE OR REPLACE team_cursors SET cursor_key = ? "
+                            "WHERE cursor_key = ?",
+                            (new_key, crow["cursor_key"]),
+                        )
+                    meta = self._conn.execute(
+                        "SELECT watermark FROM team_meta WHERE space = ?", (old,)
+                    ).fetchone()
+                    if meta is not None and rows:
+                        self._conn.execute(
+                            "DELETE FROM team_meta WHERE space = ?", (old,)
+                        )
+                        self._conn.execute(
+                            "INSERT INTO team_meta (space, head_hash, watermark) "
+                            "VALUES (?, ?, ?) ON CONFLICT(space) DO UPDATE SET "
+                            "head_hash = excluded.head_hash, watermark = excluded.watermark",
+                            (new, prev, meta["watermark"]),
+                        )
+                    elif meta is not None:
+                        self._conn.execute(
+                            "DELETE FROM team_meta WHERE space = ?", (old,)
+                        )
+                    if self.journal is not None:
+                        self.journal._rekey_space_locked(
+                            self._conn, old, new, schema="journal_rekey"
+                        )
+                    self._commit_rekey()
+                except Exception:
+                    self._conn.rollback()
+                    if created_rekey_intent:
+                        self._space_rekeys.cancel_space_rekey(old, new)
+                    raise
+                finally:
+                    if attached:
+                        self._conn.execute("DETACH DATABASE journal_rekey")
+            self._finish_space_rekey(old, new)
         return True
+
+    def _commit_rekey(self) -> None:
+        self._conn.commit()
+
+    def _finish_space_rekey(self, old: str, new: str) -> None:
+        if self._space_rekeys is None:
+            return
+        try:
+            self._space_rekeys.finish_space_rekey(old, new)
+        except OSError:
+            # The persisted tombstone already denies old credentials. Startup
+            # recovery retries this token-file cleanup without risking the move.
+            pass
 
     def _head_hash(self, space: str) -> str:
         row = self._conn.execute(

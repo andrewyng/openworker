@@ -206,7 +206,9 @@ def resolve_board_space(
         try:
             team_store.rekey_space(path_key, derived)
         except Exception:
-            pass
+            # A failed cross-store move leaves the path-keyed board authoritative.
+            # Retry on the next resolution instead of selecting an empty target.
+            return path_key
     return derived
 
 

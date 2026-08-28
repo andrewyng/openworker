@@ -821,28 +821,38 @@ def create_app(manager: SessionManager) -> FastAPI:
         return {"cases": manager.journal_overview()}
 
     # ---- The open board surface (OPE-100): token-authenticated `/v1/board` API.
-    # Identity is the TOKEN (actor+role bound at mint, resolved per request, never
-    # client-asserted); authority is the STORE — the same double gate in-app agents
-    # get. This is the one wire protocol every external front door rides:
+    # Identity and board scope are the TOKEN (actor+role+space bound at mint,
+    # resolved per request, never client-asserted); object and verb authority are
+    # the STORE. This is the one wire protocol every external front door rides:
     # RemoteDialect (the `ocw` CLI, the team-board MCP server, headless instances)
     # today, a hosted board service later. Tokens are required even on loopback —
     # they carry identity, not just access.
 
-    def _board_actor(request: Request):
+    def _board_principal(request: Request):
         auth = request.headers.get("authorization", "")
         token = auth[7:] if auth.lower().startswith("bearer ") else ""
         return manager.board_tokens.resolve(token)
 
-    def _board(request: Request, handler):
-        actor = _board_actor(request)
-        if actor is None:
+    _INVALID_BOARD_SPACE = object()
+
+    def _board(request: Request, handler, *, requested_space: Any = None):
+        principal = _board_principal(request)
+        if principal is None:
             return JSONResponse(
                 {"error": "board token required (Authorization: Bearer …) — mint"
                           " one with `ocw board token` on the serving machine"},
                 status_code=401,
             )
+        if requested_space is not None and requested_space != principal.space:
+            return JSONResponse(
+                {"error": "board space not found"}, status_code=404
+            )
         try:
-            return handler(actor)
+            # The store lock makes scope validation and the complete handler one
+            # operation relative to rekey. A request authenticated just before a
+            # move either finishes before the move or observes the retired scope.
+            with manager.team_store.authorized_space(principal.space):
+                return handler(principal.actor, principal.space)
         except TeamsBoardNotFoundError as error:
             return JSONResponse({"error": str(error)}, status_code=404)
         except TeamsAuthorityError as error:
@@ -853,12 +863,17 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.get("/v1/board/whoami")
     def board_whoami(request: Request):
         return _board(
-            request, lambda actor: {"actor": actor.id, "role": actor.role.value}
+            request,
+            lambda actor, space: {
+                "actor": actor.id,
+                "role": actor.role.value,
+                "space": space,
+            },
         )
 
     @app.get("/v1/board/spaces")
     def board_spaces(request: Request):
-        return _board(request, lambda actor: {"spaces": manager.team_store.spaces()})
+        return _board(request, lambda actor, space: {"spaces": [space]})
 
     @app.get("/v1/board/items")
     def board_list_items(
@@ -866,27 +881,33 @@ def create_app(manager: SessionManager) -> FastAPI:
     ):
         return _board(
             request,
-            lambda actor: {
+            lambda actor, _: {
                 "items": manager.team_store.list_items(
                     space, actor, state=state or None, assignee=assignee or None
                 )
             },
+            requested_space=space,
         )
 
     @app.get("/v1/board/item")
     def board_get_item(request: Request, space: str, id: int):
         return _board(
             request,
-            lambda actor: manager.team_store.get_item(space, int(id), actor=actor),
+            lambda actor, _: manager.team_store.get_item(
+                space, int(id), actor=actor
+            ),
+            requested_space=space,
         )
 
     @app.post("/v1/board/items")
     def board_create_item(request: Request, body: dict):
         body = body or {}
 
-        def run(actor):
+        space = str(body.get("space", ""))
+
+        def run(actor, _):
             item = manager.team_store.create_item(
-                str(body.get("space", "")),
+                space,
                 actor,
                 title=str(body.get("title", "")),
                 criteria=str(body.get("criteria", "")),
@@ -899,15 +920,17 @@ def create_app(manager: SessionManager) -> FastAPI:
             manager.kick_team_tick()  # a new filing is lead-subscription news
             return item
 
-        return _board(request, run)
+        return _board(request, run, requested_space=space)
 
     @app.post("/v1/board/items/transition")
     def board_transition_item(request: Request, body: dict):
         body = body or {}
 
-        def run(actor):
+        space = str(body.get("space", ""))
+
+        def run(actor, _):
             item = manager.team_store.transition(
-                str(body.get("space", "")),
+                space,
                 actor,
                 int(body.get("id", 0)),
                 str(body.get("to", "")),
@@ -917,29 +940,33 @@ def create_app(manager: SessionManager) -> FastAPI:
             manager.kick_team_tick()  # review/blocked should reach the lead now
             return item
 
-        return _board(request, run)
+        return _board(request, run, requested_space=space)
 
     @app.post("/v1/board/items/comment")
     def board_comment_item(request: Request, body: dict):
         body = body or {}
+        space = str(body.get("space", ""))
         return _board(
             request,
-            lambda actor: manager.team_store.comment(
-                str(body.get("space", "")),
+            lambda actor, _: manager.team_store.comment(
+                space,
                 actor,
                 int(body.get("id", 0)),
                 str(body.get("body", "")),
                 refs=[str(ref) for ref in body.get("refs") or []],
             ),
+            requested_space=space,
         )
 
     @app.post("/v1/board/items/assign")
     def board_assign_item(request: Request, body: dict):
         body = body or {}
 
-        def run(actor):
+        space = str(body.get("space", ""))
+
+        def run(actor, _):
             item = manager.team_store.assign(
-                str(body.get("space", "")),
+                space,
                 actor,
                 int(body.get("id", 0)),
                 str(body.get("assignee", "")),
@@ -947,40 +974,46 @@ def create_app(manager: SessionManager) -> FastAPI:
             manager.kick_team_tick()  # the assignee's queue has news
             return item
 
-        return _board(request, run)
+        return _board(request, run, requested_space=space)
 
     @app.post("/v1/board/items/claim")
     def board_claim_item(request: Request, body: dict):
         body = body or {}
 
-        def run(actor):
+        space = str(body.get("space", ""))
+
+        def run(actor, _):
             item = manager.team_store.claim(
-                str(body.get("space", "")), actor, int(body.get("id", 0))
+                space, actor, int(body.get("id", 0))
             )
             manager.kick_team_tick()  # claims land in the lead's feed
             return item
 
-        return _board(request, run)
+        return _board(request, run, requested_space=space)
 
     @app.post("/v1/board/link")
     def board_link_items(request: Request, body: dict):
         body = body or {}
+        space = str(body.get("space", ""))
         return _board(
             request,
-            lambda actor: manager.team_store.link(
-                str(body.get("space", "")),
+            lambda actor, _: manager.team_store.link(
+                space,
                 actor,
                 int(body.get("src", 0)),
                 str(body.get("kind", "")),
                 int(body.get("dst", 0)),
             ),
+            requested_space=space,
         )
 
     @app.post("/v1/board/items/attach")
     def board_attach(request: Request, body: dict):
         body = body or {}
 
-        def run(actor):
+        space = str(body.get("space", ""))
+
+        def run(actor, _):
             raw = str(body.get("data_b64", ""))
             # Cheap pre-decode bound: base64 is ~4/3 of the payload, so anything
             # multiples over the cap is refused before allocating the decode.
@@ -999,7 +1032,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             filename = str(body.get("filename", ""))
             event = manager.team_store.attach_ref(
-                str(body.get("space", "")),
+                space,
                 actor,
                 int(body.get("id", 0)),
                 str(body.get("caption", "")) or f"attached {filename}",
@@ -1007,11 +1040,11 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             return {"ref": ref, "seq": event["seq"]}
 
-        return _board(request, run)
+        return _board(request, run, requested_space=space)
 
     @app.get("/v1/board/attachment")
     def board_attachment(request: Request, name: str, space: str):
-        def run(actor):
+        def run(actor, _):
             from fastapi.responses import Response
 
             manager.team_store.require_attachment_access(space, actor, name)
@@ -1021,20 +1054,26 @@ def create_app(manager: SessionManager) -> FastAPI:
                 media_type=manager.attachment_store.mime_for(name),
             )
 
-        return _board(request, run)
+        return _board(request, run, requested_space=space)
 
     @app.get("/v1/board/policy")
     def board_get_policy(request: Request, space: str):
-        return _board(request, lambda actor: manager.team_store.policy(space))
+        return _board(
+            request,
+            lambda actor, _: manager.team_store.policy(space),
+            requested_space=space,
+        )
 
     @app.post("/v1/board/policy")
     def board_set_policy(request: Request, body: dict):
         body = body or {}
+        space = str(body.get("space", ""))
         return _board(
             request,
-            lambda actor: manager.team_store.set_policy(
-                str(body.get("space", "")), actor, claims=str(body.get("claims", ""))
+            lambda actor, _: manager.team_store.set_policy(
+                space, actor, claims=str(body.get("claims", ""))
             ),
+            requested_space=space,
         )
 
     @app.get("/v1/board/pending")
@@ -1043,29 +1082,37 @@ def create_app(manager: SessionManager) -> FastAPI:
         # follows the assignment relation, same projection in-app workers use.
         return _board(
             request,
-            lambda actor: {
+            lambda actor, _: {
                 "events": manager.team_store.feed_for(
                     space, actor.id, limit=int(limit)
                 )
             },
+            requested_space=space,
         )
 
     @app.post("/v1/board/consume")
     def board_consume(request: Request, body: dict):
         body = body or {}
 
-        def run(actor):
+        space = str(body.get("space", ""))
+
+        def run(actor, _):
             manager.team_store.consume_feed(
-                str(body.get("space", "")), actor.id, int(body.get("upto_seq", 0))
+                space, actor.id, int(body.get("upto_seq", 0))
             )
             return {"ok": True}
 
-        return _board(request, run)
+        return _board(request, run, requested_space=space)
 
     @app.get("/v1/board/journal/cases")
     def board_journal_cases(request: Request):
         return _board(
-            request, lambda actor: {"cases": manager.journal_store.overview(actor)}
+            request,
+            lambda actor, space: {
+                "cases": manager.journal_store.overview(
+                    actor, scope_space=space
+                )
+            },
         )
 
     @app.get("/v1/board/journal")
@@ -1081,7 +1128,7 @@ def create_app(manager: SessionManager) -> FastAPI:
     ):
         return _board(
             request,
-            lambda actor: {
+            lambda actor, space: {
                 "entries": manager.journal_store.read(
                     actor,
                     case,
@@ -1091,6 +1138,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                     entity=entity or None,
                     include_raw=bool(include_raw),
                     limit=int(limit),
+                    scope_space=space,
                 )
             },
         )
@@ -1098,18 +1146,26 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/board/journal")
     def board_journal_append(request: Request, body: dict):
         body = body or {}
+        supplied_space = body.get("space")
+        if "space" not in body:
+            requested_space = None
+        elif isinstance(supplied_space, str):
+            requested_space = supplied_space
+        else:
+            requested_space = _INVALID_BOARD_SPACE
         return _board(
             request,
-            lambda actor: manager.journal_store.append(
+            lambda actor, space: manager.journal_store.append(
                 actor,
                 str(body.get("case", "")),
                 str(body.get("body", "")),
                 kind=str(body.get("kind") or "note"),
-                space=str(body.get("space") or "") or None,
+                space=space,
                 item=int(body["item"]) if body.get("item") is not None else None,
                 entities=[str(e) for e in body.get("entities") or []],
                 refs=[str(ref) for ref in body.get("refs") or []],
             ),
+            requested_space=requested_space,
         )
 
     @app.get("/v1/memory")
