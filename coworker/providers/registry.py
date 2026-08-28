@@ -263,7 +263,7 @@ def _compat(
     env_key: str,
     endpoint_help: str = "",
 ) -> ProviderDescriptor:
-    """Descriptor for an OpenAI-compatible vendor: key + a prefilled, editable endpoint."""
+    """Descriptor for an OpenAI-compatible vendor: key + a prefilled, editable endpoint + default model."""
     vendor = title.split(" (")[0]
     
     fields = [
@@ -624,7 +624,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         "GitHub Models",
         base_url="https://models.inference.ai.azure.com",
         recommended_model="gpt-4o",
-        env_key="GITHUB_TOKEN",
+        env_key="GITHUB_MODELS_TOKEN",
         endpoint_help="GitHub Models API endpoint. Requires a GitHub Personal Access Token (PAT).",
     ),
     _compat(
