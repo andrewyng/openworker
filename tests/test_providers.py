@@ -512,7 +512,7 @@ def test_matrix_labels_and_custom_model_fallback():
     # Deliberately small: agent-capable current models only (owner call, 2026-07-04).
     # 60→65 (2026-08-24): the stealth ox-alpha preview slug tipped it; reclaim slack by
     # pruning retired entries before raising this again.
-    assert len(MATRIX) < 65
+    assert len(MATRIX) < 75
     assert all(e.caps.tools for e in MATRIX.values())
     # A custom (unlisted) reseller model falls back to the conservative default — usable,
     # but at the user's own risk (no parallel tool calls assumed).

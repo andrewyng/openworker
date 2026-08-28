@@ -3004,9 +3004,15 @@ class SessionManager:
         self._refresh_provider(name)
         # Convenience: if the provider recommends a model and it's actually available, add it to
         # the curated list so it shows up in the composer right after configuring the provider.
-        rec = profile.get("recommended_model") or d.recommended_model
+        user_choice = profile.get("recommended_model")
+        rec = user_choice or d.recommended_model
         added: Optional[str] = None
-        if rec and rec in self._suggested_models(name):
+        
+        # If the user explicitly typed a model, always add it. 
+        # If falling back to the provider's default, only add it if the provider reports it as available.
+        should_add = bool(user_choice) or (rec and rec in self._suggested_models(name))
+        
+        if should_add and rec:
             # OpenAI models stay bare (the router's default); others carry their prefix.
             added = rec if name == "openai" else f"{name}:{rec}"
             self.add_model(added)

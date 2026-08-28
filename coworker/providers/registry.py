@@ -262,7 +262,6 @@ def _compat(
     recommended_model: str,
     env_key: str,
     endpoint_help: str = "",
-    model_choices: tuple = (),
 ) -> ProviderDescriptor:
     """Descriptor for an OpenAI-compatible vendor: key + a prefilled, editable endpoint."""
     vendor = title.split(" (")[0]
@@ -284,17 +283,15 @@ def _compat(
         ),
     ]
 
-    if model_choices:
-        fields.append(
-            ProviderField(
-                "recommended_model",
-                "Default Model",
-                required=False,
-                default=recommended_model,
-                choices=model_choices,
-                help="The model to activate as default when this provider is configured.",
-            )
+    fields.append(
+        ProviderField(
+            "recommended_model",
+            "Default Model",
+            required=False,
+            default=recommended_model,
+            help="The model to activate as default when this provider is configured. You can enter any compatible model name.",
         )
+    )
 
     return ProviderDescriptor(
         name=name,
@@ -614,11 +611,6 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="glm-5.2",
         env_key="ZAI_CODING_API_KEY",
         endpoint_help="Prefilled with Z AI's Coding Plan endpoint. Note: This requires a separate Coding Plan subscription.",
-        model_choices=(
-            {"value": "glm-5.2", "label": "GLM-5.2"},
-            {"value": "glm-4.7", "label": "GLM-4.7"},
-            {"value": "glm-4-coder", "label": "GLM-4 Coder"},
-        ),
     ),
     _compat(
         "deepseek",
@@ -626,6 +618,14 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         base_url="https://api.deepseek.com",
         recommended_model="deepseek-v4-flash",
         env_key="DEEPSEEK_API_KEY",
+    ),
+    _compat(
+        "github",
+        "GitHub Models",
+        base_url="https://models.inference.ai.azure.com",
+        recommended_model="gpt-4o",
+        env_key="GITHUB_TOKEN",
+        endpoint_help="GitHub Models API endpoint. Requires a GitHub Personal Access Token (PAT).",
     ),
     _compat(
         "kimi",
