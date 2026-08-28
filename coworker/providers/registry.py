@@ -266,7 +266,7 @@ def _compat(
 ) -> ProviderDescriptor:
     """Descriptor for an OpenAI-compatible vendor: key + a prefilled, editable endpoint."""
     vendor = title.split(" (")[0]
-    
+
     fields = [
         ProviderField(
             "api_key",
