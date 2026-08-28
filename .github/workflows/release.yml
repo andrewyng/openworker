@@ -169,33 +169,41 @@ jobs:
           merge-multiple: true
 
       - name: Compose the auto-update manifest (latest.json)
-        # Shipped apps poll releases/latest/download/latest.json (via the branded
-        # download.openworker.com redirect) — publishing this release IS pushing the
-        # update. The tag must match tauri.conf.json's version or installed apps would
-        # see a permanent phantom update; fail loudly on drift. Runs only when signed
-        # updater artifacts exist (i.e. the TAURI_SIGNING_PRIVATE_KEY secret is set).
+        # Shipped apps poll this fork's releases/latest/download/latest.json.
+        # The tag must match tauri.conf.json's version (allowing -zh.N) or installed
+        # apps would see a permanent phantom update. Runs only when signed updater
+        # artifacts exist (TAURI_SIGNING_PRIVATE_KEY secret is set).
         run: |
           TAG="${GITHUB_REF_NAME}"
           CONF_VERSION=$(python3 -c "import json; print(json.load(open('surfaces/gui/src-tauri/tauri.conf.json'))['version'])")
           TAG_VERSION="${TAG#v}"
-          case "$TAG_VERSION" in
-            "$CONF_VERSION"|"$CONF_VERSION-zh."*) ;;
-            *)
-              echo "::error::tag $TAG is not $CONF_VERSION or a $CONF_VERSION-zh.N prerelease"
-              exit 1
-              ;;
-          esac
+          # Exact match: fork tags are v0.2.1-zh.3 matching conf version 0.2.1-zh.3
+          if [ "$TAG_VERSION" != "$CONF_VERSION" ]; then
+            echo "::error::tag $TAG must equal tauri.conf.json version $CONF_VERSION"
+            exit 1
+          fi
           if ls dist/*.sig >/dev/null 2>&1; then
             python3 packaging/make_update_manifest.py \
               --version "${TAG#v}" --tag "$TAG" --repo "$GITHUB_REPOSITORY" \
               --dist dist --out dist/latest.json \
-              --notes "OpenWorker ${TAG#v}"
+              --notes "OpenWorker 简体中文 ${TAG#v}"
           else
             echo "::warning::no updater signatures in dist/ — release ships WITHOUT auto-update manifest"
+            echo "::warning::add repo secret TAURI_SIGNING_PRIVATE_KEY (see docs/FORK-MAINTENANCE.md)"
           fi
 
       - uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          # Published (not draft/prerelease) so /releases/latest/download/latest.json
+          # resolves for this fork's auto-updater endpoint.
+          draft: false
+          prerelease: false
+          make_latest: true
           files: dist/*
           generate_release_notes: true
+          body: |
+            OpenWorker 社区简体中文构建 `${{ github.ref_name }}`。
+
+            - 自动更新通道：本仓库 Releases（非官方英文版）
+            - 设置 → 常规 → 界面语言 可切换 English / 简体中文
+            - 若从未配置过 `TAURI_SIGNING_PRIVATE_KEY`，本包不含自动更新签名，请见 docs/FORK-MAINTENANCE.md

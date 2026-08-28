@@ -607,7 +607,7 @@ fn show_main(app: &tauri::AppHandle) {
 // else — no global plugin JS): check, background pre-download, install. Update
 // artifacts are minisign-verified against the pubkey in tauri.conf.json before
 // anything is installed; the manifest lives at the endpoints configured there
-// (download.openworker.com → GitHub Releases).
+// (this fork's GitHub Releases latest.json — not the upstream English channel).
 
 #[derive(serde::Serialize)]
 struct UpdateInfo {
@@ -717,6 +717,7 @@ pub fn run() {
             show_main(app);
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -738,6 +739,10 @@ pub fn run() {
             mark_dictation_test_passed,
             delete_dictation_model,
             dictation_level,
+            check_for_update,
+            download_update,
+            clear_pending_update,
+            install_update
         ])
         .setup(move |app| {
             // 1. Start the Python server sidecar on the chosen port (inherits our env).
@@ -800,6 +805,7 @@ pub fn run() {
                 None
             };
             app.manage(KeepAwake(Mutex::new(ka)));
+            app.manage(PendingUpdate(Mutex::new(None)));
             // Voice recordings are transient; only the explicitly installed local Whisper model
             // lives in the existing application state directory.
             app.manage(Arc::new(Dictation::new(state_dir().join("models"))));

@@ -23,6 +23,8 @@ import {
   getAutostart,
   getDictationStatus,
   getKeepAwake,
+  checkForUpdate,
+  installUpdate,
   isTauri,
   listenDictationDownloadProgress,
   markDictationTestPassed,
@@ -475,12 +477,15 @@ function AppearanceSection() {
         </div>
       )}
 
-      {/* Fork builds are updated manually from the Fork's Release page. */}
+      {/* First-run replay + manual update check (desktop also polls automatically). */}
       <div className={CARD + " p-4 mt-4"}>
         <div className={FIELD_LABEL + " mb-2"}>{t("settings.setupUpdates")}</div>
-        <button className={BTN_BORDERED} onClick={runSetupAgain}>
-          {t("settings.runSetupAgain")}
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button className={BTN_BORDERED} onClick={runSetupAgain}>
+            {t("settings.runSetupAgain")}
+          </button>
+          {desktop && <UpdateInline />}
+        </div>
         <div className={FIELD_HELP}>{t("settings.setupHelp")}</div>
       </div>
     </section>
@@ -539,6 +544,64 @@ function TrustedWorkspacesCard() {
         </div>
       )}
     </div>
+  );
+}
+
+function UpdateInline() {
+  const { t } = useI18n();
+  const [state, setState] = useState<"idle" | "checking" | "none" | "found" | "installing" | "error">("idle");
+  const [version, setVersion] = useState("");
+
+  const check = async () => {
+    setState("checking");
+    try {
+      const u = await checkForUpdate();
+      if (u) {
+        setVersion(u.version);
+        setState("found");
+      } else {
+        setState("none");
+      }
+    } catch {
+      setState("error");
+    }
+  };
+
+  const install = async () => {
+    setState("installing");
+    try {
+      await installUpdate(); // success restarts the app
+    } catch {
+      setState("error");
+    }
+  };
+
+  return (
+    <span className="inline-flex items-center gap-2.5">
+      {state === "found" ? (
+        <button className={BTN_BORDERED} onClick={install} data-testid="settings-update-install">
+          {t("settings.updateTo", { version })}
+        </button>
+      ) : (
+        <button
+          className={BTN_BORDERED}
+          onClick={check}
+          disabled={state === "checking" || state === "installing"}
+          data-testid="settings-update-check"
+        >
+          {state === "checking" ? t("settings.checkingUpdates") : t("settings.checkUpdates")}
+        </button>
+      )}
+      {(state === "none" || state === "error" || state === "installing") && (
+        <span className="text-[12px] text-muted">
+          {state === "none"
+            ? t("settings.upToDate")
+            : state === "error"
+              ? t("settings.updateCheckFailed")
+              : t("settings.updateDownloading")}
+        </span>
+      )}
+    </span>
   );
 }
 
