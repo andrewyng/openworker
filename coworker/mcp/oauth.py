@@ -11,9 +11,11 @@ streamable-HTTP transport. We supply its three integration points:
     single-slot pending future (one interactive sign-in at a time — the flow is
     user-driven, so concurrency is meaningless)
 
-DCR means there is no client id/secret registered anywhere up front — nothing for the
-ocw-connect broker to hold, so unlike the managed connectors this flow is fully local.
-First server: Granola (https://mcp.granola.ai/mcp).
+Servers that support DCR need no credentials up front. Servers that require a
+pre-registered OAuth application can instead take a client id/secret from the UI;
+those credentials live beside the tokens in the SecretStore, never in mcp.json.
+The whole flow remains local. First curated server: Granola
+(https://mcp.granola.ai/mcp).
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ CALLBACK_PATH = "/mcp/oauth/callback"
 FLOW_TIMEOUT_SECONDS = 300
 
 CLIENT_NAME = "OpenWorker"
+TOKEN_AUTH_METHODS = {"none", "client_secret_basic", "client_secret_post"}
 
 
 def redirect_base() -> str:
@@ -114,6 +117,66 @@ class SecretStoreTokenStorage(TokenStorage):
 
     async def set_client_info(self, info: OAuthClientInformationFull) -> None:
         self._merge({"client_info": info.model_dump(mode="json", exclude_none=True)})
+
+
+def configure_client(
+    server_name: str,
+    secrets: SecretStore,
+    *,
+    client_id: str,
+    client_secret: str = "",
+    token_endpoint_auth_method: str = "",
+) -> None:
+    """Store a pre-registered OAuth client without exposing it through mcp.json/REST.
+
+    Replacing client credentials invalidates any tokens minted for the old client, so
+    only authorization-server discovery metadata is retained. A secret defaults to
+    HTTP Basic token-endpoint auth; a public client defaults to ``none``. Providers
+    that require the secret in the form body can explicitly select
+    ``client_secret_post`` in Advanced settings.
+    """
+    client_id = client_id.strip()
+    client_secret = client_secret.strip()
+    if not client_id:
+        raise ValueError("OAuth client ID is required")
+    method = token_endpoint_auth_method.strip() or (
+        "client_secret_basic" if client_secret else "none"
+    )
+    if method not in TOKEN_AUTH_METHODS:
+        raise ValueError("unsupported OAuth token authentication method")
+    if method != "none" and not client_secret:
+        raise ValueError(
+            "OAuth client secret is required for the selected authentication method"
+        )
+    if method == "none" and client_secret:
+        raise ValueError("OAuth public clients cannot use a client secret")
+
+    info = OAuthClientInformationFull.model_validate(
+        {
+            "client_id": client_id,
+            "client_secret": client_secret or None,
+            "redirect_uris": [redirect_base() + CALLBACK_PATH],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": method,
+            "client_name": CLIENT_NAME,
+        }
+    )
+    old = secrets.get(_profile(server_name)) or {}
+    profile: dict[str, Any] = {
+        "client_source": "preregistered",
+        "client_info": info.model_dump(mode="json", exclude_none=True),
+    }
+    if old.get("oauth_metadata"):
+        profile["oauth_metadata"] = old["oauth_metadata"]
+    secrets.put(_profile(server_name), profile)
+
+
+def has_preregistered_client(server_name: str, secrets: SecretStore) -> bool:
+    data = secrets.get(_profile(server_name)) or {}
+    return data.get("client_source") == "preregistered" and bool(
+        (data.get("client_info") or {}).get("client_id")
+    )
 
 
 class InteractiveAuthRequired(RuntimeError):
@@ -345,5 +408,21 @@ def has_tokens(server_name: str, secrets: SecretStore) -> bool:
 
 
 def sign_out(server_name: str, secrets: SecretStore) -> bool:
-    """Forget tokens AND the DCR registration; next connect runs a fresh flow."""
+    """Forget tokens; keep a user-supplied client, but discard a DCR registration."""
+    data = secrets.get(_profile(server_name)) or {}
+    if data.get("client_source") == "preregistered" and data.get("client_info"):
+        had_tokens = bool(data.get("tokens"))
+        keep = {
+            "client_source": "preregistered",
+            "client_info": data["client_info"],
+        }
+        if data.get("oauth_metadata"):
+            keep["oauth_metadata"] = data["oauth_metadata"]
+        secrets.put(_profile(server_name), keep)
+        return had_tokens
+    return secrets.delete(_profile(server_name))
+
+
+def forget_server(server_name: str, secrets: SecretStore) -> bool:
+    """Delete tokens and every client registration when the server itself is removed."""
     return secrets.delete(_profile(server_name))

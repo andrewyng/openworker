@@ -2122,6 +2122,9 @@ export async function mockApi(page: import("@playwright/test").Page) {
     }
     // MCP servers — mutable so the OAuth quick-add (granola) flow reflects through the
     // UI: add → needs_auth, connect → authorizing, next poll → connected (6 tools).
+    if (p.endsWith("/v1/mcp/oauth-info") && m === "GET") {
+      return json({ redirect_uri: "http://127.0.0.1:8765/mcp/oauth/callback" });
+    }
     if (p.endsWith("/v1/mcp") && m === "GET") {
       for (const s2 of mcpServers) {
         if (s2.status === "authorizing" && s2._flip) {
@@ -2149,6 +2152,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
         transport: b.config?.url ? "http" : "stdio",
         requires_approval: true,
         auth: b.config?.auth === "oauth" ? "oauth" : null,
+        oauth_client_configured: !!b.oauth_client?.client_id,
         status: b.config?.auth === "oauth" ? "needs_auth" : "configured",
         auth_hint: false,
         last_test_at: null,

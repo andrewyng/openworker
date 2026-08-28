@@ -54,6 +54,29 @@ test("guarded server: 401 → Needs sign-in chip → OAuth switch on the detail 
   await expect(detail).toContainText("Live", { timeout: 10_000 });
 });
 
+test("advanced OAuth credentials are accepted without exposing the secret", async ({ page }) => {
+  await openConnectors(page);
+  await page.getByTestId("add-custom-server").click();
+  const modal = page.getByTestId("add-mcp-modal");
+  await modal.getByTestId("mcp-add-name").fill("private-crm");
+  await modal.getByTestId("mcp-add-url").fill("https://mcp.private.example/mcp");
+  await modal.getByTestId("mcp-add-advanced-toggle").click();
+  await expect(modal.getByTestId("mcp-add-redirect-uri")).toContainText(
+    "/mcp/oauth/callback",
+  );
+  await modal.getByTestId("mcp-add-client-id").fill("client-123");
+  await modal.getByTestId("mcp-add-client-secret").fill("secret-456");
+  await modal.getByTestId("mcp-add-token-auth").selectOption("client_secret_post");
+  await modal.getByRole("button", { name: "Add & sign in" }).click();
+
+  const row = page.getByTestId("mcp-row-private-crm");
+  await expect(row).toContainText("Live", { timeout: 10_000 });
+  await row.click();
+  const detail = page.getByTestId("mcp-detail-private-crm");
+  await expect(detail.getByTestId("mcp-oauth-client-configured")).toBeVisible();
+  await expect(detail).not.toContainText("secret-456");
+});
+
 test("JSON tab adds stdio as Not tested; detail Test flips it to Live", async ({ page }) => {
   await openConnectors(page);
   await page.getByTestId("add-custom-server").click();

@@ -1389,6 +1389,9 @@ class SessionManager:
                     ),
                     "requires_approval": bool(raw.get("requires_approval", True)),
                     "auth": "oauth" if is_oauth else None,
+                    "oauth_client_configured": mcp_oauth.has_preregistered_client(
+                        name, self.secrets
+                    ),
                     "status": status,
                     "auth_hint": name in self._mcp_auth_hints,
                     "last_test_at": self._prefs.get("mcp_last_test", {}).get(name),
@@ -1507,7 +1510,28 @@ class SessionManager:
         removed = mcp_oauth.sign_out(name, self.secrets)
         return {"ok": True, "had_tokens": removed}
 
-    def add_mcp(self, name: str, config: dict[str, Any]) -> dict[str, Any]:
+    def add_mcp(
+        self,
+        name: str,
+        config: dict[str, Any],
+        oauth_client: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        if oauth_client:
+            from ..mcp import oauth as mcp_oauth
+
+            try:
+                mcp_oauth.configure_client(
+                    name,
+                    self.secrets,
+                    client_id=str(oauth_client.get("client_id") or ""),
+                    client_secret=str(oauth_client.get("client_secret") or ""),
+                    token_endpoint_auth_method=str(
+                        oauth_client.get("token_endpoint_auth_method") or ""
+                    ),
+                )
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            config = {**config, "auth": "oauth"}
         put_global_server(name, config)
         return {"ok": True, "name": name}
 
@@ -1537,7 +1561,7 @@ class SessionManager:
                     conn.shutdown.set()
             from ..mcp import oauth as mcp_oauth
 
-            mcp_oauth.sign_out(name, self.secrets)
+            mcp_oauth.forget_server(name, self.secrets)
         return {"ok": ok, "name": name}
 
     async def mcp_tools(self, name: str) -> dict[str, Any]:

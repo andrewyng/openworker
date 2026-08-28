@@ -85,6 +85,69 @@ def test_token_storage_roundtrip(tmp_path, monkeypatch):
     assert not mcp_oauth.has_tokens("granola", secrets)
 
 
+def test_preregistered_client_is_secret_stored_and_survives_signout(tmp_path, monkeypatch):
+    _state(tmp_path, monkeypatch)
+    secrets = SecretStore()
+    mcp_oauth.configure_client(
+        "private",
+        secrets,
+        client_id="client-123",
+        client_secret="secret-456",
+        token_endpoint_auth_method="client_secret_post",
+    )
+    secrets.put(
+        "mcp-oauth:private",
+        {
+            **(secrets.get("mcp-oauth:private") or {}),
+            "tokens": {"access_token": "at"},
+        },
+    )
+
+    storage = mcp_oauth.SecretStoreTokenStorage("private", secrets)
+    info = asyncio.run(storage.get_client_info())
+    assert info.client_id == "client-123"
+    assert info.client_secret == "secret-456"
+    assert info.token_endpoint_auth_method == "client_secret_post"
+    assert str(info.redirect_uris[0]).endswith("/mcp/oauth/callback")
+    assert mcp_oauth.has_preregistered_client("private", secrets)
+
+    assert mcp_oauth.sign_out("private", secrets) is True
+    assert not mcp_oauth.has_tokens("private", secrets)
+    assert mcp_oauth.has_preregistered_client("private", secrets)
+    assert mcp_oauth.forget_server("private", secrets) is True
+    assert secrets.get("mcp-oauth:private") is None
+
+
+def test_preregistered_client_defaults_and_validation(tmp_path, monkeypatch):
+    _state(tmp_path, monkeypatch)
+    secrets = SecretStore()
+
+    mcp_oauth.configure_client("public", secrets, client_id="public-id")
+    info = asyncio.run(
+        mcp_oauth.SecretStoreTokenStorage("public", secrets).get_client_info()
+    )
+    assert info.token_endpoint_auth_method == "none"
+    assert info.client_secret is None
+
+    with pytest.raises(ValueError, match="client ID"):
+        mcp_oauth.configure_client("bad", secrets, client_id="")
+    with pytest.raises(ValueError, match="client secret"):
+        mcp_oauth.configure_client(
+            "bad",
+            secrets,
+            client_id="id",
+            token_endpoint_auth_method="client_secret_basic",
+        )
+    with pytest.raises(ValueError, match="public clients"):
+        mcp_oauth.configure_client(
+            "bad",
+            secrets,
+            client_id="id",
+            client_secret="must-not-be-stored",
+            token_endpoint_auth_method="none",
+        )
+
+
 # -- callback plumbing -----------------------------------------------------------
 
 
@@ -151,6 +214,38 @@ def test_list_mcp_oauth_statuses(tmp_path, monkeypatch):
     assert client.post("/v1/mcp/granola/signout").json()["ok"] is True
     assert not mcp_oauth.has_tokens("granola", manager.secrets)
     assert client.get("/v1/mcp").json()["servers"][0]["status"] == "needs_auth"
+
+
+def test_add_mcp_stores_oauth_secret_outside_config(tmp_path, monkeypatch):
+    _state(tmp_path, monkeypatch)
+    manager = SessionManager(data_dir=tmp_path / "data")
+    client = TestClient(create_app(manager))
+
+    response = client.post(
+        "/v1/mcp",
+        json={
+            "name": "private",
+            "config": {"type": "http", "url": "https://mcp.example/mcp"},
+            "oauth_client": {
+                "client_id": "client-id",
+                "client_secret": "client-secret",
+            },
+        },
+    ).json()
+    assert response["ok"] is True
+
+    raw = json.loads((tmp_path / "state" / "mcp.json").read_text())
+    saved = raw["mcpServers"]["private"]
+    assert saved["auth"] == "oauth"
+    assert "client_id" not in json.dumps(saved)
+    assert "client-secret" not in json.dumps(saved)
+
+    row = client.get("/v1/mcp").json()["servers"][0]
+    assert row["oauth_client_configured"] is True
+    assert "client-secret" not in json.dumps(row)
+    assert client.get("/v1/mcp/oauth-info").json()["redirect_uri"].endswith(
+        "/mcp/oauth/callback"
+    )
 
 
 def test_connect_endpoint_starts_background_flow(tmp_path, monkeypatch):

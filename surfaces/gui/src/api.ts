@@ -457,6 +457,9 @@ export interface McpServer {
   // "needs_auth" (no tokens yet) | "authorizing" (browser sign-in in flight)
   status: string;
   auth?: "oauth" | null;
+  // A pre-registered client id/secret exists in the local SecretStore. Values are
+  // deliberately never returned to the UI after save.
+  oauth_client_configured?: boolean;
   // http server whose anonymous connect hit a 401/403 — offer OAuth sign-in.
   auth_hint?: boolean;
   // Epoch seconds of the last successful explicit Test (persisted server-side).
@@ -471,11 +474,26 @@ export async function getMcpServers(): Promise<McpServer[]> {
   return (await res.json()).servers ?? [];
 }
 
-export async function addMcpServer(name: string, config: Record<string, any>) {
+export interface McpOAuthClientInput {
+  client_id: string;
+  client_secret?: string;
+  token_endpoint_auth_method?: "client_secret_basic" | "client_secret_post" | "none" | "";
+}
+
+export async function getMcpOAuthInfo(): Promise<{ redirect_uri: string }> {
+  const res = await fetch(`${httpBase()}/v1/mcp/oauth-info`);
+  return res.json();
+}
+
+export async function addMcpServer(
+  name: string,
+  config: Record<string, any>,
+  oauthClient?: McpOAuthClientInput,
+) {
   const res = await fetch(`${httpBase()}/v1/mcp`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, config }),
+    body: JSON.stringify({ name, config, ...(oauthClient ? { oauth_client: oauthClient } : {}) }),
   });
   return res.json();
 }

@@ -3,6 +3,7 @@ import {
   addMcpServer,
   connectMcp,
   deleteMcpServer,
+  getMcpOAuthInfo,
   getMcpTools,
   patchMcpServer,
   signoutMcp,
@@ -197,6 +198,11 @@ export function AddMcpModal({
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [text, setText] = useState(EXAMPLE);
+  const [advanced, setAdvanced] = useState(false);
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [tokenAuth, setTokenAuth] = useState<"" | "client_secret_basic" | "client_secret_post" | "none">("");
+  const [redirectUri, setRedirectUri] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -204,6 +210,13 @@ export function AddMcpModal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  useEffect(() => {
+    if (!advanced || redirectUri) return;
+    getMcpOAuthInfo()
+      .then((info) => setRedirectUri(info.redirect_uri || ""))
+      .catch(() => setRedirectUri(""));
+  }, [advanced, redirectUri]);
 
   const saveUrl = async () => {
     setError(null);
@@ -217,7 +230,27 @@ export function AddMcpModal({
       setError("Enter the server's full URL (https://…).");
       return;
     }
-    await addMcpServer(n, { type: "http", url: u });
+    const id = clientId.trim();
+    if (clientSecret && !id) {
+      setError("Enter the OAuth client ID that belongs with this secret.");
+      return;
+    }
+    const oauthClient = id
+      ? {
+          client_id: id,
+          client_secret: clientSecret,
+          token_endpoint_auth_method: tokenAuth,
+        }
+      : undefined;
+    const result = await addMcpServer(
+      n,
+      { type: "http", url: u, ...(oauthClient ? { auth: "oauth" } : {}) },
+      oauthClient,
+    );
+    if (!result.ok) {
+      setError(result.error || "Could not save this MCP server.");
+      return;
+    }
     // Probe anonymously right away — the row shows Testing…, then Live, an
     // error, or Needs sign-in (401 → the OAuth switch on the detail page).
     await connectMcp(n);
@@ -298,6 +331,67 @@ export function AddMcpModal({
               className={INPUT + " font-mono text-[12px]"}
               data-testid="mcp-add-url"
             />
+            <button
+              type="button"
+              className="text-[12px] text-muted hover:text-ink flex items-center gap-1.5 w-fit"
+              onClick={() => setAdvanced((v) => !v)}
+              data-testid="mcp-add-advanced-toggle"
+              aria-expanded={advanced}
+            >
+              <span className="text-[10px]">{advanced ? "▾" : "▸"}</span>
+              Advanced OAuth settings
+            </button>
+            {advanced && (
+              <div
+                className="rounded-lg border border-line bg-paper/50 px-3 py-3 space-y-2.5"
+                data-testid="mcp-add-advanced"
+              >
+                <div className="text-[12px] text-muted">
+                  For servers that require a pre-registered OAuth application. Leave blank to
+                  use automatic client registration.
+                </div>
+                <input
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  placeholder="OAuth client ID"
+                  spellCheck={false}
+                  autoComplete="off"
+                  className={INPUT + " font-mono text-[12px]"}
+                  data-testid="mcp-add-client-id"
+                />
+                <input
+                  type="password"
+                  value={clientSecret}
+                  onChange={(e) => setClientSecret(e.target.value)}
+                  placeholder="OAuth client secret (optional for public clients)"
+                  spellCheck={false}
+                  autoComplete="new-password"
+                  className={INPUT + " font-mono text-[12px]"}
+                  data-testid="mcp-add-client-secret"
+                />
+                <select
+                  value={tokenAuth}
+                  onChange={(e) => setTokenAuth(e.target.value as typeof tokenAuth)}
+                  className={INPUT}
+                  data-testid="mcp-add-token-auth"
+                >
+                  <option value="">Token authentication: automatic</option>
+                  <option value="client_secret_basic">Client secret: HTTP Basic</option>
+                  <option value="client_secret_post">Client secret: request body</option>
+                  <option value="none">Public client: no secret</option>
+                </select>
+                <div className="text-[11px] text-faint leading-relaxed">
+                  Register this callback URL with the OAuth provider:
+                  <code
+                    className="block mt-1 font-mono text-[11px] text-muted break-all select-all"
+                    data-testid="mcp-add-redirect-uri"
+                  >
+                    {redirectUri || "Loading callback URL…"}
+                  </code>
+                  The secret is saved only in OpenWorker's local secret store, never in MCP JSON.
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <>
@@ -313,7 +407,7 @@ export function AddMcpModal({
         )}
         <div className="flex items-center gap-3">
           <button className={PILL_ACCENT} onClick={tab === "url" ? saveUrl : saveJson}>
-            {tab === "url" ? "Add & test" : "Add"}
+            {tab === "url" ? (clientId.trim() ? "Add & sign in" : "Add & test") : "Add"}
           </button>
           <button className="text-[13px] text-muted hover:text-ink" onClick={onClose}>
             cancel
@@ -461,6 +555,11 @@ export function McpServerDetail({
       <div className={GRP}>
         <div className="px-4 py-3">
           <div className="text-[12px] font-semibold text-muted mb-1.5">Configuration</div>
+          {server.oauth_client_configured && (
+            <div className="text-[12px] text-muted mb-2" data-testid="mcp-oauth-client-configured">
+              OAuth client credentials saved in the local secret store.
+            </div>
+          )}
           <pre className="font-mono text-[12px] text-muted whitespace-pre-wrap break-all">
             {JSON.stringify(server.config, null, 2)}
           </pre>

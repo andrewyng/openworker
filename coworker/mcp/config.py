@@ -36,7 +36,8 @@ class MCPServerDef:
     include_tools: Optional[list[str]] = None
     exclude_tools: Optional[list[str]] = None
     requires_approval: bool = True
-    # "oauth" → browser OAuth 2.1 + PKCE with Dynamic Client Registration (mcp/oauth.py).
+    # "oauth" → browser OAuth 2.1 + PKCE, using DCR or a pre-registered client
+    # configured through the local secret store (mcp/oauth.py).
     # HTTP transport only; tokens live in the SecretStore, never in this file.
     auth: Optional[str] = None
 

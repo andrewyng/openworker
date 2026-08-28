@@ -1183,7 +1183,16 @@ def create_app(manager: SessionManager) -> FastAPI:
         config = body.get("config")
         if not name or not isinstance(config, dict):
             return {"ok": False, "error": "name and config required"}
-        return manager.add_mcp(name, config)
+        oauth_client = body.get("oauth_client")
+        if oauth_client is not None and not isinstance(oauth_client, dict):
+            return {"ok": False, "error": "oauth_client must be an object"}
+        return manager.add_mcp(name, config, oauth_client)
+
+    @app.get("/v1/mcp/oauth-info")
+    def mcp_oauth_info() -> dict[str, Any]:
+        from ..mcp import oauth as mcp_oauth
+
+        return {"redirect_uri": mcp_oauth.redirect_base() + mcp_oauth.CALLBACK_PATH}
 
     @app.patch("/v1/mcp/{name}")
     def mcp_patch(name: str, body: dict) -> dict[str, Any]:
