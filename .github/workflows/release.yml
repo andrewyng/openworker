@@ -131,13 +131,21 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp "$BUNDLE"/nsis/*.exe out/
             cp "$BUNDLE"/nsis/*.exe out/OpenWorker-windows-setup.exe
-            cp "$BUNDLE"/msi/*.msi out/
-            cp "$BUNDLE"/msi/*.msi out/OpenWorker-windows.msi
+            # MSI is optional: WiX rejects non-numeric prerelease ids (e.g. 0.2.1-zh.3).
+            if ls "$BUNDLE"/msi/*.msi >/dev/null 2>&1; then
+              cp "$BUNDLE"/msi/*.msi out/
+              cp "$BUNDLE"/msi/*.msi out/OpenWorker-windows.msi
+            fi
             # Updater signature for the NSIS installer (present only when the updater key
             # secret is configured). The .sig signs CONTENT, so the stable rename is safe.
             SIG=$(ls "$BUNDLE"/nsis/*.exe.sig 2>/dev/null | head -1 || true)
             [ -n "$SIG" ] && cp "$SIG" out/OpenWorker-windows-setup.exe.sig
           else
+            if ! ls "$BUNDLE"/dmg/*.dmg >/dev/null 2>&1; then
+              echo "::error::no .dmg under $BUNDLE/dmg"
+              ls -la "$BUNDLE" "$BUNDLE/dmg" "$BUNDLE/macos" || true
+              exit 1
+            fi
             cp "$BUNDLE"/dmg/*.dmg out/
             cp "$BUNDLE"/dmg/*.dmg out/OpenWorker-${{ matrix.slug }}.dmg
             # macOS updater artifact: the signed .app tarball the installed app swaps in.

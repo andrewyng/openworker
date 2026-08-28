@@ -236,16 +236,29 @@ OSA
   local i; for i in $(seq 1 15); do [ -f "$mnt/.DS_Store" ] && break; sleep 1; done
   [ -f "$mnt/.DS_Store" ] || { hdiutil detach "$dev" -force >/dev/null 2>&1 || true; return 1; }
   sync; sync
-  hdiutil detach "$dev" -force >/dev/null
-  hdiutil convert "$rw" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null
+  # CI runners sometimes keep Finder's hold on the RW image; retry eject before convert.
+  local d; for d in 1 2 3 4 5; do
+    hdiutil detach "$dev" -force >/dev/null 2>&1 && break
+    sleep 2
+  done
+  hdiutil convert "$rw" -format UDZO -imagekey zlib-level=9 -o "$DMG" || {
+    rm -f "$rw"
+    return 1
+  }
   rm -f "$rw"
 }
 
 if ! style_dmg; then
   echo "    (Finder styling unavailable — writing a plain .dmg)"
-  hdiutil create -volname "$APP" -srcfolder "$STAGING" -ov -format UDZO "$DMG" >/dev/null
+  hdiutil create -volname "$APP" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
 fi
 rm -rf "$STAGING"
+
+if [ ! -f "$DMG" ]; then
+  echo "error: DMG was not created at $DMG" >&2
+  ls -la "$(dirname "$DMG")" >&2 || true
+  exit 1
+fi
 
 if [ "${OCW_SKIP_NOTARIZE:-}" = "1" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   # Local-iteration escape hatch: sign (seconds) but skip the notary round-trip
