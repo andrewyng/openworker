@@ -262,29 +262,45 @@ def _compat(
     recommended_model: str,
     env_key: str,
     endpoint_help: str = "",
+    model_choices: tuple = (),
 ) -> ProviderDescriptor:
     """Descriptor for an OpenAI-compatible vendor: key + a prefilled, editable endpoint."""
     vendor = title.split(" (")[0]
+    
+    fields = [
+        ProviderField(
+            "api_key",
+            f"{vendor} API key",
+            secret=True,
+        ),
+        ProviderField(
+            "base_url",
+            "Endpoint",
+            required=False,
+            default=base_url,
+            placeholder=base_url,
+            help=endpoint_help
+            or f"Prefilled with {vendor}'s official endpoint; edit only for a regional or proxy variant.",
+        ),
+    ]
+
+    if model_choices:
+        fields.append(
+            ProviderField(
+                "recommended_model",
+                "Default Model",
+                required=False,
+                default=recommended_model,
+                choices=model_choices,
+                help="The model to activate as default when this provider is configured.",
+            )
+        )
+
     return ProviderDescriptor(
         name=name,
         title=title,
         needs_key=True,
-        fields=[
-            ProviderField(
-                "api_key",
-                f"{vendor} API key",
-                secret=True,
-            ),
-            ProviderField(
-                "base_url",
-                "Endpoint",
-                required=False,
-                default=base_url,
-                placeholder=base_url,
-                help=endpoint_help
-                or f"Prefilled with {vendor}'s official endpoint; edit only for a regional or proxy variant.",
-            ),
-        ],
+        fields=fields,
         build=_openai_compat(vendor, base_url, env_key),
         recommended_model=recommended_model,
         env_key=env_key,
@@ -590,6 +606,19 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="glm-5.2",
         env_key="ZAI_API_KEY",
         endpoint_help="Prefilled with Z AI's international endpoint. China mainland: https://open.bigmodel.cn/api/paas/v4",
+    ),
+    _compat(
+        "zai-coding",
+        "Z AI Coding Plan",
+        base_url="https://api.z.ai/api/coding/paas/v4",
+        recommended_model="glm-5.2",
+        env_key="ZAI_CODING_API_KEY",
+        endpoint_help="Prefilled with Z AI's Coding Plan endpoint. Note: This requires a separate Coding Plan subscription.",
+        model_choices=(
+            {"value": "glm-5.2", "label": "GLM-5.2"},
+            {"value": "glm-4.7", "label": "GLM-4.7"},
+            {"value": "glm-4-coder", "label": "GLM-4 Coder"},
+        ),
     ),
     _compat(
         "deepseek",
