@@ -167,10 +167,15 @@ function GenericDetail({
           <h2 className="text-[20px] font-semibold tracking-tight leading-tight">{c.title}</h2>
           <div className="text-[13px] text-muted flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-ok" />
-            {c.account || (c.auth === "none" ? "Built in" : "Connected")}
+            {c.account ||
+              (c.mcp && c.auth === "none"
+                ? "Local app"
+                : c.auth === "none"
+                  ? "Built in"
+                  : "Connected")}
           </div>
         </div>
-        {c.auth !== "none" && (
+        {(c.auth !== "none" || c.mcp) && (
           <button
             className="text-[13px] text-danger/80 hover:text-danger shrink-0"
             onClick={async () => {

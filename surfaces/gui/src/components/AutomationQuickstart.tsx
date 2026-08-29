@@ -127,6 +127,22 @@ const TEMPLATES: QuickTemplate[] = [
       "and write a concise 5-bullet briefing, saved as a markdown file.",
   },
   {
+    key: "meetingprep",
+    title: "Meeting prep",
+    blurb: "Today's meetings, who's in them, and what you owe — before you start. Needs the Inwise app running.",
+    cadence: "Weekdays",
+    conns: [{ name: "inwise", why: "Your meetings, action items, and the people in them" }],
+    day: "weekdays",
+    time: "08:00",
+    instructions: () =>
+      "Using Inwise, prepare my day. List the meetings coming up in the next 24 hours. " +
+      "For each one, build an agenda from my history with the attendees: what we last " +
+      "discussed, what was decided, and anything still open between us — cite the meeting " +
+      "behind each point, by title and date. Then list my open action items, flagging " +
+      "anything overdue. Work from summaries; don't pull full transcripts. Save it as the " +
+      "session deliverable.",
+  },
+  {
     key: "inboxdigest",
     title: "Inbox digest",
     blurb: "One short digest of your unread email.",

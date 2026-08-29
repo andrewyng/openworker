@@ -1382,10 +1382,15 @@ button.btn.ghost:hover { color: var(--ink); }
   line-height: 0;
   color: var(--brand, #6b7280);
 }
-.connector-icon > svg {
+.connector-icon > svg,
+.connector-icon > img {
   display: block;
   width: 100%;
   height: 100%;
+  object-fit: contain;
+}
+.connector-icon > img.inwise-logo {
+  transform: scale(1.28);
 }
 .connector-badge {
   display: inline-grid;

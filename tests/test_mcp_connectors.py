@@ -93,6 +93,36 @@ def test_mcp_connect_seeds_pinned_config_and_profile(tmp_path, monkeypatch):
     assert not out["ok"]
 
 
+def test_local_no_auth_mcp_is_disconnected_until_paired(tmp_path, monkeypatch):
+    """A local MCP app has no OAuth token to prove connected-ness. Its successful
+    one-click mode marker is authoritative; auth="none" alone must not make every
+    fresh install look connected before OpenWorker has reached the app."""
+    _state(tmp_path, monkeypatch)
+    manager = SessionManager(data_dir=tmp_path / "data")
+
+    row = {c["name"]: c for c in connector_list(manager.secrets)}["inwise"]
+    assert row["mcp"] is True and row["connected"] is False
+
+    async def fake_connect(name):
+        assert name == "inwise"
+        return {"ok": True, "tools": 10}
+
+    monkeypatch.setattr(manager, "connect_mcp", fake_connect)
+    out = asyncio.run(manager.mcp_connect_connector("inwise"))
+    assert out["ok"]
+
+    raw = read_global()["inwise"]
+    assert raw["url"] == "http://127.0.0.1:43117/mcp"
+    assert raw["auth"] is None
+    assert set(raw["include_tools"]) == set(mcp_pinned_tools("inwise"))
+    row = {c["name"]: c for c in connector_list(manager.secrets)}["inwise"]
+    assert row["connected"] is True and row["mode"] == "mcp"
+
+    assert disconnect_connector(manager.secrets, "inwise")["ok"]
+    row = {c["name"]: c for c in connector_list(manager.secrets)}["inwise"]
+    assert row["connected"] is False
+
+
 def test_failed_mcp_connect_removes_the_seeded_config(tmp_path, monkeypatch):
     """A one-click that fails (DCR rejected, user closed the browser) must not leave
     an enabled oauth server behind — the leftover re-arms at every session start

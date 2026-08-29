@@ -124,10 +124,11 @@ export function AddConnectionModal({
 }
 
 // One-click pane for MCP-BACKED connectors (monday, asana, jira — §42): the sidecar
-// runs a fully LOCAL OAuth flow against the vendor's hosted MCP server (DCR — no
-// client secret, no broker, no OpenWorker sign-in required). Poll until the card
-// flips to connected, then close.
+// runs either a fully local OAuth flow against the vendor's MCP server (DCR — no
+// client secret or broker) or a direct no-auth loopback connection. Poll until
+// the card flips to connected, then close.
 function McpOneClick({ c, onConnected }: { c: Connector; onConnected: () => void }) {
+  const localNoAuth = c.auth === "none";
   const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -151,9 +152,18 @@ function McpOneClick({ c, onConnected }: { c: Connector; onConnected: () => void
   return (
     <div className="px-5 py-4 space-y-3">
       <p className="text-[13px] text-muted">
-        Opens {c.title} in your browser — sign in and approve access there. No tokens
-        typed, and no OpenWorker account needed: the sign-in runs entirely on this
-        computer.
+        {localNoAuth ? (
+          <>
+            Connects directly to the {c.title} desktop app on this computer. Keep {c.title}{" "}
+            open with its AI connection enabled; no account or browser sign-in is needed.
+          </>
+        ) : (
+          <>
+            Opens {c.title} in your browser — sign in and approve access there. No tokens
+            typed, and no OpenWorker account needed: the sign-in runs entirely on this
+            computer.
+          </>
+        )}
       </p>
       <button
         className={PILL_ACCENT + " w-full !py-2"}
@@ -161,12 +171,17 @@ function McpOneClick({ c, onConnected }: { c: Connector; onConnected: () => void
         onClick={go}
         disabled={waiting}
       >
-        {waiting ? "Check your browser…" : `Connect ${c.title}`}
+        {waiting
+          ? localNoAuth
+            ? "Connecting…"
+            : "Check your browser…"
+          : `Connect ${c.title}`}
       </button>
       {error && <div className="text-[13px] text-danger">{error}</div>}
       <p className="text-[12px] text-faint text-center flex items-center justify-center gap-1.5">
         <span className={TAG_ACCENT}>Recommended</span> agents get a curated set of{" "}
-        {c.title} tools · tokens stay on this computer
+        {c.title} tools ·{" "}
+        {localNoAuth ? "read-only, with no tokens" : "tokens stay on this computer"}
       </p>
     </div>
   );

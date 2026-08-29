@@ -507,8 +507,8 @@ export function ConnectSetup({
   const mcpOneClick = async () => {
     setError(null);
     const res = await connectMcpBacked(c.name);
-    // Completion likewise arrives via the poll — the sidecar flips the connector
-    // to connected once the local OAuth flow lands.
+    // Completion likewise arrives via the poll — after local OAuth lands, or
+    // immediately after a no-auth loopback server answers.
     if (res.ok) setWaiting(true);
     else setError(res.error || "could not start the connect");
   };
@@ -519,7 +519,11 @@ export function ConnectSetup({
         /* MCP-backed one-click needs no cloud sign-in — the OAuth flow is local. */
         <div className="space-y-2" data-testid="mcp-connect">
           <button className={BTN_ACCENT} onClick={mcpOneClick} disabled={waiting}>
-            {waiting ? "Check your browser…" : `Connect ${c.title} with one click`}
+            {waiting
+              ? c.auth === "none"
+                ? "Connecting…"
+                : "Check your browser…"
+              : `Connect ${c.title} with one click`}
           </button>
           {c.fields.length > 0 && (
             <div className="text-[12px] text-faint">or connect manually:</div>
@@ -583,11 +587,13 @@ export function ConnectSetup({
           {f.help && <span className="conn-field-help">{f.help}</span>}
         </label>
       ))}
-      <div>
-        <button className={BTN_ACCENT} onClick={submit} disabled={busy}>
-          {busy ? "Validating…" : "Connect"}
-        </button>
-      </div>
+      {(!c.mcp || c.fields.length > 0) && (
+        <div>
+          <button className={BTN_ACCENT} onClick={submit} disabled={busy}>
+            {busy ? "Validating…" : "Connect"}
+          </button>
+        </div>
+      )}
       {error && <div className="text-[13px] text-danger">{error}</div>}
     </div>
   );

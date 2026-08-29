@@ -10,9 +10,11 @@
 // the same format. Brands with no published monochrome mark (Attio, Apollo.io, Hunter,
 // Amplitude, Descript, Clay, Close, Docusign — whose current post-rebrand mark no icon pack
 // ships) and the non-brand utilities (email, browser, MCP, fallback plug) keep simple custom
-// glyphs. (Filename is `.tsx` because the entries are JSX — the spec's `registry.ts` can't hold
-// JSX.)
+// glyphs. Inwise is the one full-color raster mark: its supplied owl artwork is multi-color and
+// ignores the tint (the badge background still uses `brand_color`).
+// (Filename is `.tsx` because the entries are JSX — the spec's `registry.ts` can't hold JSX.)
 
+import inwiseLogoUrl from "../assets/inwise-logo.png";
 import type { SimpleIcon } from "simple-icons";
 import {
   siAsana,
@@ -133,6 +135,13 @@ const MondayLogo = strokeLogo(
   </>,
 );
 
+// The supplied full-color Inwise owl is bundled as a transparent image so the connector uses
+// the actual brand artwork rather than a hand-drawn approximation. `brand_color` still drives
+// the badge background, so the descriptor remains the source of truth for the surrounding tint.
+const InwiseLogo: LogoComponent = () => (
+  <img className="inwise-logo" src={inwiseLogoUrl} alt="" aria-hidden="true" />
+);
+
 const AmplitudeLogo = strokeLogo(
   <>
     <path d="M2.5 13.5h4l3-8 4.5 13 3-8h4.5" />
@@ -232,6 +241,7 @@ export const CONNECTORS: Record<string, ConnectorRegistryEntry> = {
   amplitude: { label: "Amplitude", logo: AmplitudeLogo },
   apollo: { label: "Apollo.io", logo: ApolloLogo },
   hunter: { label: "Hunter", logo: HunterLogo },
+  inwise: { label: "Inwise", logo: InwiseLogo },
   // Non-brand utilities.
   email: { label: "Email", logo: EmailLogo },
   browser: { label: "Browser", logo: BrowserLogo },
