@@ -1,4 +1,5 @@
-# Desktop release builds — macOS (.dmg, arm64 + Intel) and Windows (.msi + NSIS .exe).
+# Desktop release builds — macOS (.dmg, arm64 + Intel), Windows (.msi + NSIS .exe), and
+# Linux (.deb + .AppImage, x64 + arm64).
 #
 # CI calls the SAME scripts developers run locally (packaging/build_dmg.sh and
 # build_windows.ps1); this file only provisions the toolchain (Node, Rust, a Python venv at
@@ -25,6 +26,8 @@
 #   APPLE_API_ISSUER             the API issuer id
 # When the secrets are absent (forks, scratch runs) the build degrades to unsigned —
 # installable via `xattr -cr`. Windows remains unsigned (Authenticode is a later step).
+# Linux artifacts are not code-signed at all (the platform has no equivalent); only the
+# AppImage updater tarball is minisigned, which is what the in-app updater verifies.
 
 name: Release
 
@@ -52,6 +55,13 @@ jobs:
             slug: macos-x64
           - os: windows-latest
             slug: windows
+          # Linux builds on ubuntu-22.04 (glibc 2.35), NOT the newest image: glibc is forward-
+          # but not backward-compatible, so a 24.04 build would refuse to start on Debian 12
+          # (glibc 2.36) — exactly what ChromeOS Crostini ships. See packaging/build_linux.sh.
+          - os: ubuntu-22.04
+            slug: linux-x64
+          - os: ubuntu-22.04-arm
+            slug: linux-arm64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +77,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: surfaces/gui/src-tauri
+
+      - name: Tauri system libraries (Linux)
+        if: runner.os == 'Linux'
+        # webkit2gtk/gtk are what the shell links against; patchelf + file are what the
+        # AppImage bundler shells out to; librsvg renders the icon.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
+            libayatana-appindicator3-dev patchelf file
 
       - uses: actions/setup-python@v5
         with:
@@ -114,6 +134,13 @@ jobs:
           unset APPLE_API_KEY_CONTENT
           bash packaging/build_dmg.sh
 
+      - name: Build .deb + .AppImage (Linux)
+        if: runner.os == 'Linux'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash packaging/build_linux.sh
+
       - name: Build .msi + NSIS .exe (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -126,7 +153,19 @@ jobs:
         run: |
           mkdir -p out
           BUNDLE=surfaces/gui/src-tauri/target/release/bundle
-          if [ "$RUNNER_OS" = "Windows" ]; then
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            cp "$BUNDLE"/deb/*.deb out/
+            cp "$BUNDLE"/deb/*.deb out/OpenWorker-${{ matrix.slug }}.deb
+            cp "$BUNDLE"/appimage/*.AppImage out/
+            cp "$BUNDLE"/appimage/*.AppImage out/OpenWorker-${{ matrix.slug }}.AppImage
+            # Updater artifact: the signed AppImage tarball an AppImage install swaps in.
+            # A .deb install never sees an update prompt (the package manager owns those
+            # paths), so there is deliberately no updater artifact for the .deb.
+            if ls "$BUNDLE"/appimage/*.AppImage.tar.gz >/dev/null 2>&1; then
+              cp "$BUNDLE"/appimage/*.AppImage.tar.gz out/OpenWorker-${{ matrix.slug }}.AppImage.tar.gz
+              cp "$BUNDLE"/appimage/*.AppImage.tar.gz.sig out/OpenWorker-${{ matrix.slug }}.AppImage.tar.gz.sig
+            fi
+          elif [ "$RUNNER_OS" = "Windows" ]; then
             cp "$BUNDLE"/nsis/*.exe out/
             cp "$BUNDLE"/nsis/*.exe out/OpenWorker-windows-setup.exe
             cp "$BUNDLE"/msi/*.msi out/

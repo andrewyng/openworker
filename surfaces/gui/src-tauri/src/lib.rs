@@ -8,7 +8,14 @@
 //!   3. lives in the system tray: closing the window hides it (keeps MyHelper + the scheduler
 //!      running); only tray → Quit stops the sidecar;
 //!   4. exposes native commands: folder picker, autostart (open-at-login), and keep-awake
-//!      (caffeinate, so scheduled tasks fire while the Mac is idle).
+//!      (caffeinate on macOS, SetThreadExecutionState on Windows, systemd-inhibit on Linux,
+//!      so scheduled tasks fire while the machine is idle).
+//!
+//! Platform notes. macOS and Windows always have a status area, so closing the window hides it
+//! to the tray. Linux does not: plenty of sessions (ChromeOS Crostini among them) run no
+//! StatusNotifier host at all, and there `TrayIconBuilder::build` fails. Tray creation is
+//! therefore non-fatal, and when it fails, closing the window really closes the app — hiding
+//! to a tray that isn't there would strand the user with a running, unreachable sidecar.
 //!
 //! The sidecar inherits this process's environment, so a shell-launched `npm run tauri dev`
 //! passes `OPENAI_API_KEY` through. A Finder-launched app has no shell env — there the key
@@ -16,10 +23,17 @@
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-#[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+// Voice Input ships on macOS and Windows only. On Linux the engine is swapped for the stub
+// in `dictation_stub` below: linking ocw-stt would drag whisper.cpp (cmake + a C++ toolchain)
+// and ALSA headers into every Linux build — a heavy build-time tax for a feature the released
+// .deb/AppImage don't offer. The Tauri commands are identical either way; the stub simply
+// reports "not installed" and refuses to record.
+#[cfg(target_os = "linux")]
+use dictation_stub::{Dictation, DownloadProgress};
+#[cfg(not(target_os = "linux"))]
 use ocw_stt::{Dictation, DownloadProgress};
 use serde::Serialize;
 use tauri::{
@@ -56,6 +70,15 @@ const KNOWN_TOOL_DIRS: &[&str] = &[
     "/usr/local/bin", // Intel Homebrew, most installers
     "/usr/local/sbin",
     "/opt/local/bin", // MacPorts
+    "/home/linuxbrew/.linuxbrew/bin", // Linuxbrew
+    "/snap/bin",                      // snap
+    // Home-relative (expanded against $HOME below). Debian/Ubuntu only put ~/.local/bin on
+    // PATH from ~/.profile *if it already existed at login*, so a pipx/pip --user install
+    // made after that login is invisible to a desktop-launched app without this.
+    "~/.local/bin",
+    "~/.cargo/bin",
+    "~/go/bin",
+    "~/.deno/bin",
 ];
 
 /// The environment the sidecar should run with (OPE-83).
@@ -90,7 +113,14 @@ fn sidecar_env() -> std::collections::HashMap<String, String> {
         return out;
     }
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    // Fall back to the platform's own default login shell — zsh on macOS, bash on Linux
+    // (where /bin/zsh usually does not exist, and spawning it would skip the probe entirely).
+    let default_shell = if cfg!(target_os = "macos") {
+        "/bin/zsh"
+    } else {
+        "/bin/bash"
+    };
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| default_shell.to_string());
     let script = format!("echo {START}; env; echo {END}");
     let spawned = Command::new(&shell)
         .args(["-ilc", &script])
@@ -152,9 +182,21 @@ fn sidecar_env() -> std::collections::HashMap<String, String> {
         .or_else(|| std::env::var("PATH").ok())
         .unwrap_or_default();
     let mut parts: Vec<String> = base.split(':').filter(|s| !s.is_empty()).map(String::from).collect();
+    let home = out
+        .get("HOME")
+        .cloned()
+        .or_else(|| std::env::var("HOME").ok())
+        .unwrap_or_default();
     for dir in KNOWN_TOOL_DIRS {
-        if !parts.iter().any(|p| p == dir) && std::path::Path::new(dir).is_dir() {
-            parts.push((*dir).to_string());
+        // `~/...` entries resolve against the user's home; with no HOME to resolve them
+        // against they are skipped rather than added as a literal "~" path.
+        let resolved = match dir.strip_prefix("~/") {
+            Some(rest) if !home.is_empty() => format!("{home}/{rest}"),
+            Some(_) => continue,
+            None => (*dir).to_string(),
+        };
+        if !parts.iter().any(|p| *p == resolved) && std::path::Path::new(&resolved).is_dir() {
+            parts.push(resolved);
         }
     }
     out.insert("PATH".to_string(), parts.join(":"));
@@ -169,14 +211,19 @@ fn sidecar_env() -> std::collections::HashMap<String, String> {
 
 /// Path to the server entrypoint. Resolution order:
 ///   1. `COWORKER_SERVER_BIN` env override.
-///   2. The bundled onedir sidecar shipped via Tauri `resources` (production): the
-///      `sidecar/` folder lands in Contents/Resources on macOS and in the install dir
-///      (next to the app exe) on Windows.
-///   3. Legacy onefile slot: `openworker-server[.exe]` next to the app binary (pre-onedir
+///   2. Tauri's own resource directory — `resource_dir` is what the bundler actually
+///      populated on this platform, so it is right by construction. This is the only
+///      candidate that finds the sidecar in a Linux .deb/.AppImage, where the binary lands
+///      in `/usr/bin/` and its resources in `/usr/lib/OpenWorker/` — nothing the exe-relative
+///      guesses below would ever reach.
+///   3. Exe-relative guesses, kept as-is for the layouts they already serve: the `sidecar/`
+///      folder lands in Contents/Resources on macOS and in the install dir (next to the app
+///      exe) on Windows.
+///   4. Legacy onefile slot: `openworker-server[.exe]` next to the app binary (pre-onedir
 ///      builds used Tauri externalBin).
-///   4. Dev fallback: the repo venv, relative to this crate (`src-tauri` → repo-root `.venv`;
+///   5. Dev fallback: the repo venv, relative to this crate (`src-tauri` → repo-root `.venv`;
 ///      `bin/` on POSIX, `Scripts\` on Windows).
-fn server_bin() -> PathBuf {
+fn server_bin(resource_dir: Option<PathBuf>) -> PathBuf {
     if let Ok(p) = std::env::var("COWORKER_SERVER_BIN") {
         return PathBuf::from(p);
     }
@@ -185,20 +232,22 @@ fn server_bin() -> PathBuf {
     } else {
         "openworker-server"
     };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(res) = resource_dir {
+        candidates.push(res.join("sidecar").join(exe_name));
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            // macOS: Contents/MacOS/<app> → Contents/Resources/sidecar/; Windows: resources
-            // unpack next to the exe, so <install>/sidecar/.
-            let mut candidates = vec![dir.join("sidecar").join(exe_name)];
+            candidates.push(dir.join("sidecar").join(exe_name));
             if let Some(contents) = dir.parent() {
                 candidates.push(contents.join("Resources").join("sidecar").join(exe_name));
             }
             candidates.push(dir.join(exe_name)); // legacy onefile externalBin slot
-            for c in candidates {
-                if c.exists() {
-                    return c;
-                }
-            }
+        }
+    }
+    for c in candidates {
+        if c.exists() {
+            return c;
         }
     }
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -266,7 +315,9 @@ fn write_keep_awake_pref(enabled: bool) {
 // Cross-platform behind a uniform `start_keep_awake() -> Option<KeepAwakeGuard>`; dropping the
 // guard releases the hold. macOS uses the built-in `caffeinate`; Windows uses the
 // SetThreadExecutionState API (a dedicated thread holds ES_CONTINUOUS so the state survives
-// regardless of which Tauri worker thread toggled it); other platforms are a no-op.
+// regardless of which Tauri worker thread toggled it); Linux and the other unixes use
+// `systemd-inhibit`. None → no inhibitor on this system, and the caller reports the toggle
+// as off rather than claiming a hold it never took.
 
 #[cfg(target_os = "macos")]
 struct KeepAwakeGuard(Child);
@@ -335,13 +386,75 @@ fn start_keep_awake() -> Option<KeepAwakeGuard> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-struct KeepAwakeGuard;
+struct KeepAwakeGuard(Child);
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+impl Drop for KeepAwakeGuard {
+    fn drop(&mut self) {
+        // Closing the pipe — not killing the process — is what releases the lock: `cat` reads
+        // EOF and exits, and systemd-inhibit drops the inhibitor as it reaps it. Killing
+        // systemd-inhibit instead would leave its `cat` child orphaned to init forever, and a
+        // hard-killed app releases the lock for free this way (our pipe end closes with us).
+        drop(self.0.stdin.take());
+        for _ in 0..50 {
+            match self.0.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+                Err(_) => break,
+            }
+        }
+        // Backstop: a wedged inhibitor must never hold the UI thread longer than this.
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn start_keep_awake() -> Option<KeepAwakeGuard> {
-    // No portable built-in inhibitor on Linux; keep-awake is a no-op (the toggle still reflects
-    // state so the UI behaves, but the OS sleep policy is left to the user).
-    Some(KeepAwakeGuard)
+    // logind's inhibitor lock, held for exactly as long as the command it runs. `cat` with a
+    // piped stdin is the hold (see Drop). No lock → None, and the Settings toggle stays off
+    // instead of lying.
+    //
+    // ChromeOS Crostini caveat: the lock is real inside the VM, but ChromeOS itself decides
+    // when the device suspends, and a suspended Chromebook stops the VM regardless.
+    let mut child = Command::new("systemd-inhibit")
+        .args([
+            "--what=idle:sleep",
+            "--who=OpenWorker",
+            "--why=Scheduled coworker runs",
+            "--mode=block",
+            "cat",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    // A successful spawn only proves the binary ran. systemd-inhibit ITSELF fails whenever it
+    // cannot reach logind — containers, non-systemd sessions, no session bus — printing
+    // "Failed to connect to bus" to the stderr we discarded and exiting 1 straight away. Taking
+    // the spawn as success left us holding a corpse and reporting a hold nobody held, which is
+    // the exact lie this function exists to avoid.
+    //
+    // So wait for it to fail. A working inhibitor runs `cat` until we close its stdin, i.e.
+    // forever; a broken one is gone in milliseconds. Polling caps the cost at GRACE and returns
+    // the instant it dies, which on the happy path a settings toggle will never notice.
+    const GRACE: std::time::Duration = std::time::Duration::from_millis(400);
+    const STEP: std::time::Duration = std::time::Duration::from_millis(10);
+    let deadline = std::time::Instant::now() + GRACE;
+    while std::time::Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(None) => std::thread::sleep(STEP), // still alive — the lock is real so far
+            Ok(Some(_)) => return None,           // exited: no inhibitor was ever taken
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    Some(KeepAwakeGuard(child))
 }
 
 // -- native commands (invoked from the SPA via window.__TAURI__.core.invoke) -----------------
@@ -394,6 +507,93 @@ fn set_keep_awake(state: tauri::State<KeepAwake>, enabled: bool) -> bool {
 #[tauri::command]
 fn start_window_drag(window: tauri::WebviewWindow) -> bool {
     window.start_dragging().is_ok()
+}
+
+/// Linux stand-in for the `ocw-stt` engine (see the import at the top of this file).
+///
+/// It mirrors exactly the API surface the commands below touch, so there is ONE set of Tauri
+/// commands on every platform — no per-target `#[cfg]` on twelve `#[tauri::command]`s, and no
+/// way for the two paths to drift. Every call answers the way an engine with no model installed
+/// would, and `voice_input_compatibility()` already reports `supported: false` on Linux, so the
+/// GUI dims the mic button before any of this is reachable.
+#[cfg(target_os = "linux")]
+mod dictation_stub {
+    use serde::Serialize;
+    use std::path::PathBuf;
+
+    const UNSUPPORTED: &str = "Voice Input is not available in the Linux build of OpenWorker.";
+
+    #[derive(Debug, Clone, Serialize)]
+    pub struct DictationStatus {
+        pub recording: bool,
+        pub model_installed: bool,
+        pub model_verified: bool,
+        pub test_passed: bool,
+        pub download_in_progress: bool,
+        pub model_name: &'static str,
+        pub model_bytes: u64,
+    }
+
+    #[derive(Debug, Clone, Copy, Serialize)]
+    pub struct DownloadProgress {
+        pub downloaded_bytes: u64,
+        pub total_bytes: u64,
+    }
+
+    pub struct Dictation;
+
+    impl Dictation {
+        pub fn new(_model_dir: impl Into<PathBuf>) -> Self {
+            Self
+        }
+
+        pub fn status(&self) -> DictationStatus {
+            DictationStatus {
+                recording: false,
+                model_installed: false,
+                model_verified: false,
+                test_passed: false,
+                download_in_progress: false,
+                model_name: "none",
+                model_bytes: 0,
+            }
+        }
+
+        pub fn install_default_model_with_progress(
+            &self,
+            _on_progress: impl FnMut(DownloadProgress),
+        ) -> Result<(), String> {
+            Err(UNSUPPORTED.to_owned())
+        }
+
+        pub fn verify_default_model(&self) -> Result<(), String> {
+            Err(UNSUPPORTED.to_owned())
+        }
+
+        pub fn mark_test_passed(&self) -> Result<(), String> {
+            Err(UNSUPPORTED.to_owned())
+        }
+
+        pub fn delete_default_model(&self) -> Result<(), String> {
+            Err(UNSUPPORTED.to_owned())
+        }
+
+        pub fn start(&self) -> Result<(), String> {
+            Err(UNSUPPORTED.to_owned())
+        }
+
+        pub fn stop_and_transcribe(&self) -> Result<String, String> {
+            Err(UNSUPPORTED.to_owned())
+        }
+
+        pub fn cancel_model_download(&self) {}
+
+        pub fn cancel(&self) {}
+
+        pub fn input_level(&self) -> f32 {
+            0.0
+        }
+    }
 }
 
 // -- local dictation ---------------------------------------------------------------------------
@@ -491,6 +691,8 @@ fn voice_input_compatibility() -> (bool, String, Option<String>) {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn voice_input_compatibility() -> (bool, String, Option<String>) {
+    // Not a runtime capability check: the Linux build links the `dictation_stub` engine, so
+    // there is nothing to be compatible WITH. Everything else in the app works the same.
     (
         false,
         format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH),
@@ -615,9 +817,39 @@ struct UpdateInfo {
     notes: String,
 }
 
+/// Whether this install can replace itself in place.
+///
+/// macOS and Windows always can (the .app is swapped; the NSIS installer relaunches). On Linux
+/// only an AppImage can: Tauri's Linux updater rewrites the file `$APPIMAGE` points at, and a
+/// .deb has no such file to rewrite — the system package manager owns those paths, and writing
+/// into them behind its back is how you get a half-upgraded install. So a .deb never sees an
+/// update prompt; `apt`/the download page is its upgrade path (docs/linux.md).
+fn self_update_supported() -> bool {
+    if cfg!(target_os = "linux") {
+        std::env::var_os("APPIMAGE").is_some()
+    } else {
+        true
+    }
+}
+
+const NO_SELF_UPDATE: &str =
+    "This build updates through your package manager, not from inside the app.";
+
+/// Asked once by Settings so it can drop its "Check for updates" button where checking is
+/// meaningless. Without this the button would answer "You're on the latest version" to a .deb
+/// install — a claim it has no way to make, since it never looked.
+#[tauri::command]
+fn can_self_update() -> bool {
+    self_update_supported()
+}
+
 #[tauri::command]
 async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
     use tauri_plugin_updater::UpdaterExt;
+    // No prompt where accepting it could not work — see self_update_supported().
+    if !self_update_supported() {
+        return Ok(None);
+    }
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater.check().await.map_err(|e| e.to_string())?;
     Ok(update.map(|u| UpdateInfo {
@@ -637,6 +869,9 @@ async fn download_update(
     pending: tauri::State<'_, PendingUpdate>,
 ) -> Result<(), String> {
     use tauri_plugin_updater::UpdaterExt;
+    if !self_update_supported() {
+        return Err(NO_SELF_UPDATE.to_owned());
+    }
     let updater = app.updater().map_err(|e| e.to_string())?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
         return Err("no update available".into());
@@ -671,6 +906,9 @@ async fn install_update(
     pending: tauri::State<'_, PendingUpdate>,
 ) -> Result<(), String> {
     use tauri_plugin_updater::UpdaterExt;
+    if !self_update_supported() {
+        return Err(NO_SELF_UPDATE.to_owned());
+    }
     let updater = app.updater().map_err(|e| e.to_string())?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
         return Err("no update available".into());
@@ -692,12 +930,36 @@ async fn install_update(
             .map_err(|e| e.to_string())?,
     }
     // Windows never reaches here (the NSIS installer takes over and relaunches).
-    // macOS: the .app was swapped in place — restart into the new version. The tray
-    // Exit path's sidecar kill runs via RunEvent, so no orphaned openworker-server.
+    // macOS: the .app was swapped in place — restart into the new version. Linux: same, for
+    // the AppImage. The tray Exit path's sidecar kill runs via RunEvent, so no orphaned
+    // openworker-server.
     app.restart();
 }
 
+/// ChromeOS Crostini: the container reaches the GPU through virtio-gpu and Sommelier, and
+/// WebKitGTK's DMABuf renderer (its default since 2.42) renders a BLANK WHITE WINDOW there —
+/// the app looks hung on first launch with nothing in the log to explain it. The older
+/// renderer costs nothing in a VM with no direct GPU access anyway.
+///
+/// Deliberately narrow: only on Crostini (both markers are ChromeOS-only), and only when the
+/// user has not set the variable themselves. A normal Linux desktop keeps the fast path.
+/// Must run before the webview exists, hence the top of `run()`.
+#[cfg(target_os = "linux")]
+fn apply_crostini_workarounds() {
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_some() {
+        return;
+    }
+    let crostini = std::path::Path::new("/dev/.cros_milestone").exists()
+        || std::path::Path::new("/opt/google/cros-containers").is_dir();
+    if crostini {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+}
+
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    apply_crostini_workarounds();
+
     let port = free_port();
     let api_token = launch_token();
     let http = format!("http://127.0.0.1:{port}");
@@ -739,6 +1001,7 @@ pub fn run() {
             mark_dictation_test_passed,
             delete_dictation_model,
             dictation_level,
+            can_self_update,
             check_for_update,
             download_update,
             clear_pending_update,
@@ -746,7 +1009,7 @@ pub fn run() {
         ])
         .setup(move |app| {
             // 1. Start the Python server sidecar on the chosen port (inherits our env).
-            let mut server_cmd = Command::new(server_bin());
+            let mut server_cmd = Command::new(server_bin(app.path().resource_dir().ok()));
             server_cmd
                 .args(["--host", "127.0.0.1", "--port", &port.to_string()])
                 // The user's real shell environment (PATH to their tools, AWS_PROFILE,
@@ -812,6 +1075,9 @@ pub fn run() {
 
             // 2. Build the window, injecting the sidecar endpoints before the SPA loads.
             //    Overlay title bar (macOS): traffic lights float over the edge-to-edge UI.
+            // Only the macOS block below reassigns `builder`, so everywhere else the `mut`
+            // is dead — allow it there rather than duplicating the whole builder chain.
+            #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
             let mut builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("OpenWorker")
@@ -836,12 +1102,21 @@ pub fn run() {
             }
             let win = builder.build()?;
 
-            // Close-to-tray: hide instead of quitting so the sidecar keeps running.
+            // Close-to-tray: hide instead of quitting so the sidecar keeps running — but ONLY
+            // once we know there is a tray to close TO. Set by step 3 below; the flag is read
+            // at close time, long after setup has finished.
+            let has_tray = Arc::new(AtomicBool::new(false));
             let w = win.clone();
+            let close_has_tray = has_tray.clone();
             win.on_window_event(move |event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {
-                    let _ = w.hide();
-                    api.prevent_close();
+                    if close_has_tray.load(Ordering::SeqCst) {
+                        let _ = w.hide();
+                        api.prevent_close();
+                    }
+                    // No tray: let the close through and let the app exit. Hiding would strand
+                    // the user with an invisible window and a running sidecar, reachable only
+                    // by killing the process.
                 }
             });
 
@@ -854,7 +1129,7 @@ pub fn run() {
             // A monochrome template icon (black + alpha, raw RGBA 44×44) so the menu bar tints
             // it for light/dark automatically — not the full-color app icon.
             let tray_icon = tauri::image::Image::new(include_bytes!("../icons/tray.rgba"), 44, 44);
-            TrayIconBuilder::new()
+            let tray = TrayIconBuilder::new()
                 .tooltip("OpenWorker")
                 .icon(tray_icon)
                 .icon_as_template(true)
@@ -872,7 +1147,19 @@ pub fn run() {
                     "quit" => app.exit(0),
                     _ => {}
                 })
-                .build(app)?;
+                .build(app);
+            // NOT fatal, and this used to be `?`. macOS and Windows always have a status area,
+            // but many Linux sessions run no StatusNotifier/AppIndicator host — ChromeOS
+            // Crostini has no status area at all — and there this call fails. Propagating the
+            // error aborts `setup`, so the whole app would refuse to start over a tray icon.
+            // Instead: log it, leave has_tray false, and the window close handler above turns
+            // close-to-tray back into a plain quit.
+            match tray {
+                Ok(_) => has_tray.store(true, Ordering::SeqCst),
+                Err(e) => eprintln!(
+                    "[coworker] no system tray on this desktop ({e}) — closing the window will quit"
+                ),
+            }
 
             Ok(())
         })
@@ -893,4 +1180,96 @@ pub fn run() {
                 }
             }
         });
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `COWORKER_SERVER_BIN` short-circuits resolution, so these tests are only meaningful
+    /// when it is unset — which it is everywhere except a developer's overridden shell.
+    fn env_override_set() -> bool {
+        std::env::var_os("COWORKER_SERVER_BIN").is_some()
+    }
+
+    /// The Linux .deb/.AppImage layout — binary in `/usr/bin/OpenWorker`, its resources in
+    /// `/usr/lib/OpenWorker/` — is reachable ONLY through Tauri's resource dir. Every
+    /// exe-relative guess (`<exe dir>/sidecar`, `<exe dir>/../Resources/sidecar`) misses it,
+    /// so before the resource-dir candidate existed the packaged Linux app fell all the way
+    /// through to the dev-venv path and never started its server.
+    #[test]
+    fn server_bin_prefers_the_resource_dir() {
+        if env_override_set() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("ocw-sidecar-{}", Uuid::new_v4().simple()));
+        let dir = root.join("sidecar");
+        std::fs::create_dir_all(&dir).expect("temp sidecar dir");
+        let exe = dir.join(if cfg!(windows) {
+            "openworker-server.exe"
+        } else {
+            "openworker-server"
+        });
+        std::fs::write(&exe, b"").expect("temp sidecar binary");
+
+        assert_eq!(server_bin(Some(root.clone())), exe);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A resource dir that holds no sidecar must not win by existing: resolution carries on to
+    /// the exe-relative slots and finally the dev venv, which is what `npm run tauri dev` uses.
+    #[test]
+    fn server_bin_falls_through_an_empty_resource_dir() {
+        if env_override_set() {
+            return;
+        }
+        let empty = std::env::temp_dir().join(format!("ocw-empty-{}", Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&empty).expect("temp dir");
+
+        let resolved = server_bin(Some(empty.clone()));
+        assert!(
+            resolved.to_string_lossy().contains(".venv"),
+            "expected the dev venv fallback, got {}",
+            resolved.display()
+        );
+
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    /// A keep-awake guard must represent a LIVE hold. `Command::spawn` only proves the binary
+    /// could be executed: `systemd-inhibit` itself exits non-zero when it cannot reach logind
+    /// (containers, non-systemd sessions, a session bus that isn't there), and a guard built
+    /// from that dead child would make the Settings toggle report a hold nobody is holding.
+    ///
+    /// Holds on either kind of machine: where an inhibitor can be taken this asserts the child
+    /// is alive, and where one can't, `start_keep_awake()` must return None rather than a
+    /// corpse. (Reported by a review bot; reproduced in a container where systemd-inhibit is
+    /// installed but exits 1 with "Failed to connect to bus".)
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[test]
+    fn keep_awake_never_reports_a_dead_inhibitor() {
+        if let Some(mut guard) = start_keep_awake() {
+            // A real inhibitor lives until we release it; a broken one dies within
+            // milliseconds. Checking immediately after spawn cannot tell them apart — the
+            // child has not been scheduled yet — so give it time to fail first.
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            assert!(
+                guard.0.try_wait().expect("query the inhibitor").is_none(),
+                "start_keep_awake() returned a guard whose inhibitor had already exited"
+            );
+        }
+    }
+
+    /// Voice Input is compiled out on Linux, and the GUI gates the mic button on this flag —
+    /// so it must stay false there however the stub engine answers.
+    #[test]
+    fn voice_input_is_unsupported_on_linux() {
+        let (supported, _summary, reason) = voice_input_compatibility();
+        if cfg!(target_os = "linux") {
+            assert!(!supported);
+            assert!(reason.is_some(), "an unsupported platform must say why");
+        }
+    }
 }

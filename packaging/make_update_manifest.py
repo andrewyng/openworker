@@ -9,9 +9,16 @@ Run by the release CI job after all platform builds are staged in one directory:
 Looks for the updater artifacts by their STABLE names (the same names release.yml
 uploads):
 
-    OpenWorker-macos-arm64.app.tar.gz(.sig)   -> platforms["darwin-aarch64"]
-    OpenWorker-macos-x64.app.tar.gz(.sig)     -> platforms["darwin-x86_64"]
-    OpenWorker-windows-setup.exe(.sig)        -> platforms["windows-x86_64"]
+    OpenWorker-macos-arm64.app.tar.gz(.sig)     -> platforms["darwin-aarch64"]
+    OpenWorker-macos-x64.app.tar.gz(.sig)       -> platforms["darwin-x86_64"]
+    OpenWorker-windows-setup.exe(.sig)          -> platforms["windows-x86_64"]
+    OpenWorker-linux-x64.AppImage.tar.gz(.sig)  -> platforms["linux-x86_64"]
+    OpenWorker-linux-arm64.AppImage.tar.gz(.sig) -> platforms["linux-aarch64"]
+
+On Linux only the AppImage self-updates — Tauri rewrites the file $APPIMAGE points at, and a
+.deb has no such file (its paths belong to the package manager). The .deb is therefore absent
+from this manifest ON PURPOSE, and the app never offers those installs an update; see
+`self_update_supported` in surfaces/gui/src-tauri/src/lib.rs.
 
 URLs point at the TAG-pinned GitHub download path (releases/download/<tag>/<asset>),
 never at `latest/` — a manifest must reference exactly the artifacts it shipped with,
@@ -37,6 +44,8 @@ ARTIFACTS = {
     "OpenWorker-macos-arm64.app.tar.gz": "darwin-aarch64",
     "OpenWorker-macos-x64.app.tar.gz": "darwin-x86_64",
     "OpenWorker-windows-setup.exe": "windows-x86_64",
+    "OpenWorker-linux-x64.AppImage.tar.gz": "linux-x86_64",
+    "OpenWorker-linux-arm64.AppImage.tar.gz": "linux-aarch64",
 }
 
 
