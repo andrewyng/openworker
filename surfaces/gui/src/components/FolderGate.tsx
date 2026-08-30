@@ -30,9 +30,11 @@ export function FolderGate({ onChoose, onCancel, create }: Props) {
 
   const browse = async () => {
     const picked = await chooseFolder();
-    if (picked) {
-      setPath(picked);
-      open(picked, create); // a picked folder already exists; create flag is harmless
+    // A picker that cannot open says so here; a cancel clears the field's error and stops.
+    setError(picked.error);
+    if (picked.path) {
+      setPath(picked.path);
+      open(picked.path, create); // a picked folder already exists; create flag is harmless
     }
   };
 

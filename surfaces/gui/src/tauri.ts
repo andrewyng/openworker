@@ -56,11 +56,16 @@ export async function pickFolder(): Promise<string | null> {
   return typeof path === "string" && path ? path : null;
 }
 
+// Type-only, so it is erased at build time and tauri.ts keeps its runtime independence
+// from api.ts (the value import below stays dynamic).
+import type { PickedFolder } from "./api";
+export type { PickedFolder };
+
 /** The folder picker that works EVERYWHERE: Tauri's native dialog in the desktop shell, else the
  * sidecar-opened OS dialog (the sidecar is local, so the browser GUI still gets a real picker —
  * owner report 2026-07-04: "Browse" was desktop-only and the browser had paste-a-path only). */
-export async function chooseFolder(): Promise<string | null> {
-  if (isTauri()) return pickFolder();
+export async function chooseFolder(): Promise<PickedFolder> {
+  if (isTauri()) return { path: await pickFolder(), error: "" };
   const { pickFolderViaServer } = await import("./api");
   return pickFolderViaServer();
 }

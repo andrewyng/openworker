@@ -16,10 +16,12 @@ export function DirectoryRequestCard({
 }) {
   const [path, setPath] = useState(item.path || "");
   const [writable, setWritable] = useState(!!item.writable);
+  const [pickError, setPickError] = useState("");
 
   const browse = async () => {
     const picked = await chooseFolder();
-    if (picked) setPath(picked);
+    setPickError(picked.error);
+    if (picked.path) setPath(picked.path);
   };
 
   return (
@@ -40,6 +42,7 @@ export function DirectoryRequestCard({
           <Icon name="folder" size={15} />
         </button>
       </div>
+      {pickError && <div className="roots-err">{pickError}</div>}
       <div className="dirreq-actions">
         <label className="dirreq-access">
           <input type="checkbox" checked={writable} onChange={(e) => setWritable(e.target.checked)} />

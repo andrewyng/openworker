@@ -67,15 +67,22 @@ export async function getRecentWorkspaces(): Promise<RecentWorkspace[]> {
   return (await res.json()).workspaces ?? [];
 }
 
+/** A folder-picker outcome. `path` on success; `error` when the picker could not run at all
+ * (no desktop session, zenity missing) — a plain cancel is both-empty, and says nothing. */
+export type PickedFolder = { path: string | null; error: string };
+
 /** Ask the LOCAL sidecar to open the OS folder picker — the browser GUI can't obtain absolute
- * paths from web file dialogs. Blocks until the user picks or cancels; null on cancel/unavailable. */
-export async function pickFolderViaServer(): Promise<string | null> {
+ * paths from web file dialogs. Blocks until the user picks or cancels. A failure to OPEN the
+ * picker is reported, not swallowed: it used to come back indistinguishable from a cancel, so
+ * clicking Browse on a headless-started sidecar did nothing at all and said nothing about it. */
+export async function pickFolderViaServer(): Promise<PickedFolder> {
   try {
     const res = await fetch(`${httpBase()}/v1/workspaces/pick`, { method: "POST" });
     const d = await res.json();
-    return d.ok && d.path ? d.path : null;
+    if (d.ok && d.path) return { path: d.path, error: "" };
+    return { path: null, error: d.canceled ? "" : String(d.error || "") };
   } catch {
-    return null;
+    return { path: null, error: "could not reach the folder picker" };
   }
 }
 

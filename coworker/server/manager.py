@@ -1540,6 +1540,44 @@ class SessionManager:
             )
         return out
 
+    @staticmethod
+    def _desktop_env() -> dict[str, str]:
+        """The environment a GUI subprocess needs to reach the user's display. The sidecar is
+        usually started by systemd at BOOT — before any graphical session exists — so its own
+        env has no DISPLAY, and every dialog it spawns dies with "cannot open display". The
+        user manager does gain those variables at login (`systemctl --user
+        import-environment`), so ask it rather than trusting what we inherited at start.
+        """
+        import os
+        import subprocess
+
+        env = dict(os.environ)
+        if env.get("DISPLAY") or env.get("WAYLAND_DISPLAY"):
+            return env
+        try:
+            out = subprocess.run(
+                ["systemctl", "--user", "show-environment"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return env
+        for line in (out.stdout or "").splitlines():
+            key, _, value = line.partition("=")
+            if key in ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY") and value:
+                env[key] = value
+        return env
+
+    # zenity exits 1 for a plain cancel AND for a broken environment, so the exit code alone
+    # can't tell them apart — the stderr line can, and the difference is the whole message the
+    # user sees ("you cancelled" vs "the picker is broken, paste a path instead").
+    _PICKER_BROKEN = re.compile(
+        r"cannot open display|failed to open display|unable to init server|"
+        r"no protocol specified|command not found",
+        re.I,
+    )
+
     def pick_native_folder(self) -> dict[str, Any]:
         """Open the OS folder picker FROM THE SIDECAR — the browser GUI can't obtain absolute
         paths from web file dialogs, but the sidecar is local and can (the desktop shell uses
@@ -1548,6 +1586,7 @@ class SessionManager:
         import subprocess
         import sys
 
+        env = self._desktop_env()
         if sys.platform == "darwin":
             cmd = [
                 "osascript",
@@ -1569,15 +1608,38 @@ class SessionManager:
             cmd = ["powershell.exe", "-NoProfile", "-STA", "-Command", ps]
         else:
             # Linux: zenity when present; otherwise the GUI's paste-a-path input remains.
+            if not (env.get("DISPLAY") or env.get("WAYLAND_DISPLAY")):
+                return {
+                    "ok": False,
+                    "error": "no desktop session to open a folder picker in "
+                    "— type or paste the folder path instead",
+                }
             cmd = ["zenity", "--file-selection", "--directory"]
         try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            out = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=300, env=env
+            )
+        except FileNotFoundError:
+            return {
+                "ok": False,
+                "error": f"no native folder picker available ({cmd[0]} is not installed) "
+                "— type or paste the folder path instead",
+            }
         except (OSError, subprocess.TimeoutExpired):
             return {"ok": False, "error": "no native folder picker available"}
         path = (out.stdout or "").strip()
-        if out.returncode != 0 or not path:
-            return {"ok": False, "canceled": True}
-        return {"ok": True, "path": path}
+        if out.returncode == 0 and path:
+            return {"ok": True, "path": path}
+        err = (out.stderr or "").strip()
+        if out.returncode != 0 and self._PICKER_BROKEN.search(err):
+            # A broken picker used to report itself as a cancel, so the GUI showed NOTHING at
+            # all when Browse was clicked (owner report 2026-08-30).
+            return {
+                "ok": False,
+                "error": f"folder picker failed to open: {err.splitlines()[-1].strip()} "
+                "— type or paste the folder path instead",
+            }
+        return {"ok": False, "canceled": True}
 
     def _note_provider_use(self, name: str) -> None:
         """Router on_use hook: remember when a provider last served a completion. Persisted

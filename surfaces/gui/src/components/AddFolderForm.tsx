@@ -23,17 +23,22 @@ export function AddFolderForm({
   const [open, setOpen] = useState(!!startOpen);
   const [path, setPath] = useState("");
   const [writable, setWritable] = useState(false);
+  // Why the picker could not open (no desktop session, no zenity) — never a cancel. Shown
+  // inline: silently doing nothing on Browse is indistinguishable from a broken app.
+  const [pickError, setPickError] = useState("");
 
   const reset = () => {
     setOpen(false);
     setPath("");
     setWritable(false);
+    setPickError("");
     onDismiss?.();
   };
 
   const browse = async () => {
-    const p = await chooseFolder();
-    if (p) setPath(p);
+    const picked = await chooseFolder();
+    setPickError(picked.error);
+    if (picked.path) setPath(picked.path);
   };
 
   const submit = async () => {
@@ -82,6 +87,7 @@ export function AddFolderForm({
           Add
         </button>
       </div>
+      {pickError && <div className="roots-err">{pickError}</div>}
     </div>
   );
 }
