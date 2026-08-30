@@ -541,7 +541,12 @@ def test_thinking_config_is_model_family_aware():
     """API drift (owner-hit 2026-07-23): budget_tokens 400s on the Claude 5/4.7+ family
     ('use thinking.type.adaptive'); older models still need enabled+budget. display
     must be summarized on the new family or the trace text arrives empty."""
-    for model in ("claude-fable-5", "claude-opus-4-8", "claude-sonnet-4-6"):
+    for model in (
+        "claude-opus-5",
+        "claude-fable-5",
+        "claude-opus-4-8",
+        "claude-sonnet-4-6",
+    ):
         client = _FakeClient(response=_text_response())
         AnthropicProvider(client=client, thinking_budget=8192).complete(
             model=model,

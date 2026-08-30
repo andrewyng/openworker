@@ -107,8 +107,11 @@ MATRIX: dict[str, ModelEntry] = {
     "openai-codex:gpt-5.1-codex-mini": ModelEntry(
         "GPT-5.1 Codex Mini · ChatGPT plan", _AGENTIC, 400_000
     ),
-    # Fable 5 (2026-06-09) is GA; its Mythos 5 sibling is approved-orgs-only, so it
-    # stays out of a picker meant for the public.
+    # Opus 5 (2026-07-24) and Fable 5 (2026-06-09) are GA with 1M context. Their
+    # Mythos 5 sibling is approved-orgs-only, so it stays out of the public picker.
+    "anthropic:claude-opus-5": ModelEntry(
+        "Claude Opus 5 · Anthropic", _AGENTIC_VISION, 1_000_000
+    ),
     "anthropic:claude-fable-5": ModelEntry(
         "Claude Fable 5 · Anthropic", _AGENTIC_VISION, 1_000_000
     ),
