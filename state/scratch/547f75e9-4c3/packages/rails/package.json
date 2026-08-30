@@ -1,0 +1,14 @@
+{
+  "name": "@mwb/rails",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Rail Adapter: one interface (quote/authorize/settle) with pluggable backends — x402, Cloudflare Pay Per Crawl, self-hosted 402.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@mwb/core": "0.1.0"
+  },
+  "peerDependencies": {
+    "typescript": ">=5"
+  }
+}

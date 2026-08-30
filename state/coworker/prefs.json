@@ -1,10 +1,11 @@
 {
   "models": [
-    "ollama:qwen3.8-27b:latest"
+    "openai:ornith-1.5-35b"
   ],
-  "default_model": "ollama:qwen3.8-27b:latest",
+  "default_model": "openai:ornith-1.5-35b",
   "provider_last_used": {
-    "ollama": 1787781957.5436277
+    "ollama": 1787781957.5436277,
+    "openai": 1788118211.5840113
   },
   "compaction_cap_tokens": 65000,
   "scratch_base": "~/openworker-tasks",

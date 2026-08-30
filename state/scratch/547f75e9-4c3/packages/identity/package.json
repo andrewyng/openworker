@@ -1,0 +1,14 @@
+{
+  "name": "@mwb/identity",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Identity & Attestation: Ed25519 key lifecycle (issue, rotate, tight expires), http-message-signatures directory, PACT-style token presentation.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@mwb/core": "0.1.0"
+  },
+  "peerDependencies": {
+    "typescript": ">=5"
+  }
+}

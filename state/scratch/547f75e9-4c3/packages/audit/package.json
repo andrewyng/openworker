@@ -1,0 +1,14 @@
+{
+  "name": "@mwb/audit",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Audit & Reconcile: append-only ledger of every fetch (status, price, rail, license, identity, settlement_ref), dashboards, reconciliation.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@mwb/core": "0.1.0"
+  },
+  "peerDependencies": {
+    "typescript": ">=5"
+  }
+}

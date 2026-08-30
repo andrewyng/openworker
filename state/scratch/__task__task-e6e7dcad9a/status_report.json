@@ -1,0 +1,50 @@
+{
+  "timestamp": "2026-08-27T09:30:25.741667",
+  "market_open": true,
+  "accounts": {
+    "A": {
+      "label": "Mean-Reversion",
+      "connected": true,
+      "account_number": "PA3A9D6N35PX",
+      "status": "AccountStatus.ACTIVE",
+      "equity": 4873.7,
+      "cash": 4273.7,
+      "buying_power": 17094.8,
+      "positions": 1,
+      "unrealized_pl": -10.0
+    },
+    "B": {
+      "label": "Momentum",
+      "connected": true,
+      "account_number": "PA3K04C1ILBU",
+      "status": "AccountStatus.ACTIVE",
+      "equity": 4477.84,
+      "cash": 1287.84,
+      "buying_power": 5151.36,
+      "positions": 3,
+      "unrealized_pl": 680.0
+    },
+    "C": {
+      "label": "Options/High-Vol",
+      "connected": true,
+      "account_number": "PA3IAF0QHXD1",
+      "status": "AccountStatus.ACTIVE",
+      "equity": 4961.53,
+      "cash": -219.54,
+      "buying_power": 13628.85,
+      "positions": 35,
+      "unrealized_pl": -29.66
+    }
+  },
+  "positions": 39,
+  "portfolio_value": 14313.07,
+  "trade_log_count": 0,
+  "daily_pnl": 640.34,
+  "fx_connected": true,
+  "fx_positions": 0,
+  "circuit_breaker_tripped": false,
+  "swallowed": {
+    "scanner.fetch_option_chain:alpaca | ConnectTimeout": 5,
+    "price_momentum.fetch_underlying_closes:alpaca | TypeError": 2
+  }
+}

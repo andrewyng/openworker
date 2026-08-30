@@ -1,0 +1,14 @@
+{
+  "name": "@mwb/license",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "License Engine: RSL parsing, post-fetch obligation derivation, and receipt surfacing. Compliance, not just access.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@mwb/core": "0.1.0"
+  },
+  "peerDependencies": {
+    "typescript": ">=5"
+  }
+}

@@ -2,61 +2,66 @@
   "results": {
     "stored": [
       {
-        "subject": "ROCR AsyncEventsLoop busy-spin gfx1201",
+        "subject": "Distributed Trotterization optimal entanglement cost",
+        "focus": "on",
+        "kind": "paper"
+      },
+      {
+        "subject": "TailSFT Filtered fine-tuning improves post-training performance",
+        "focus": "on",
+        "kind": "paper"
+      },
+      {
+        "subject": "How Much Rank Does LoRA Need rank-error bounds for attention",
+        "focus": "adjacent",
+        "kind": "paper"
+      },
+      {
+        "subject": "FrontierChallenge evaluating scientific workflow completion",
+        "focus": "on",
+        "kind": "paper"
+      },
+      {
+        "subject": "SwarmWorld stigmergic technological evolution in societies of LLM agents",
+        "focus": "on",
+        "kind": "paper"
+      },
+      {
+        "subject": "ollama v0.33.1 MLX-Metal housekeeping release",
         "focus": "on",
         "kind": "breakage"
       },
       {
-        "subject": "Ollama 0.33.0-RC2 local model toggle",
-        "focus": "on",
-        "kind": "news"
-      },
-      {
-        "subject": "Iran sanctions announcement scheduled",
-        "focus": "adjacent",
-        "kind": "news"
-      },
-      {
-        "subject": "liaison-agentSystem stalled 7 days",
-        "focus": "adjacent",
-        "kind": "repo"
-      },
-      {
-        "subject": "github mcp token broken",
+        "subject": "GitHub MCP gateway unreachable fetch failed 0 of 10",
         "focus": "on",
         "kind": "breakage"
+      },
+      {
+        "subject": "Flash-class models GLM-5.3-Flash and Qwen3.8-Flash-Next",
+        "focus": "adjacent",
+        "kind": "news"
       }
     ],
     "skipped": [
       {
-        "subject": "Davoudi-Stryker QCD T-gate cost",
-        "score": 0.733,
-        "stored_info": ""
+        "subject": "Certified Decoding of Quantum LDPC Codes",
+        "score": 0.752,
+        "stored_info": "arXiv:2608.25896 (Feng, Sun, Xiao, Zhao) shows product-formula nonlocal rotations get weaker but more numerous as accura"
       },
       {
-        "subject": "neural quantum states outlook",
-        "score": 0.802,
-        "stored_info": ""
+        "subject": "Asymptotically Optimal Purification of Noisy Unitary Channels",
+        "score": 0.781,
+        "stored_info": "arXiv:2608.25896 (Feng, Sun, Xiao, Zhao) shows product-formula nonlocal rotations get weaker but more numerous as accura"
       },
       {
-        "subject": "asymmetric capacity self-refinement",
-        "score": 0.745,
-        "stored_info": ""
+        "subject": "Reflection Steering disentangling reflection from reasoning",
+        "score": 0.726,
+        "stored_info": "arXiv:2608.25756 (Malladi, Jelassi, Foster, Ash, Krishnamurthy) finds RL post-training is most effective when the SFT ch"
       },
       {
-        "subject": "Granqvist judge drug discovery",
-        "score": 0.741,
-        "stored_info": ""
-      },
-      {
-        "subject": "Pratt auditable records AI scientists",
-        "score": 0.763,
-        "stored_info": ""
-      },
-      {
-        "subject": "Dral agentic computational chemistry",
-        "score": 0.754,
-        "stored_info": ""
+        "subject": "KOPE experience graph memory for hardware kernel optimization",
+        "score": 0.779,
+        "stored_info": "arXiv:2608.26052 (Conangla Planes) gives rank-error bounds for transformer-attention LoRA rather than just empirical swe"
       }
     ]
   },
@@ -64,7 +69,7 @@
     "status": "green",
     "optimizer_status": "ok",
     "indexed_vectors_count": 0,
-    "points_count": 34,
+    "points_count": 8,
     "segments_count": 8,
     "config": {
       "params": {

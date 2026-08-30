@@ -1,0 +1,11 @@
+{
+  "name": "@mwb/core",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Shared types, errors, amounts, and clock primitives for the Metered Web Broker.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "peerDependencies": {
+    "typescript": ">=5"
+  }
+}
