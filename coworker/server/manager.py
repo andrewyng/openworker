@@ -26,6 +26,7 @@ from ..connections import (
     SessionConnectionStore,
     effective as effective_connections,
 )
+from ..desktop import desktop_env
 from ..events import EventType
 from ..inbox import InboxStore, args_preview
 from ..inbox_routing import InboxRouting
@@ -1554,34 +1555,9 @@ class SessionManager:
             )
         return out
 
-    @staticmethod
-    def _desktop_env() -> dict[str, str]:
-        """The environment a GUI subprocess needs to reach the user's display. The sidecar is
-        usually started by systemd at BOOT — before any graphical session exists — so its own
-        env has no DISPLAY, and every dialog it spawns dies with "cannot open display". The
-        user manager does gain those variables at login (`systemctl --user
-        import-environment`), so ask it rather than trusting what we inherited at start.
-        """
-        import os
-        import subprocess
-
-        env = dict(os.environ)
-        if env.get("DISPLAY") or env.get("WAYLAND_DISPLAY"):
-            return env
-        try:
-            out = subprocess.run(
-                ["systemctl", "--user", "show-environment"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return env
-        for line in (out.stdout or "").splitlines():
-            key, _, value = line.partition("=")
-            if key in ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY") and value:
-                env[key] = value
-        return env
+    # Kept as a method so pick_native_folder reads the same as it did; the logic lives in
+    # coworker.desktop because headed Chromium needs exactly the same recovery.
+    _desktop_env = staticmethod(desktop_env)
 
     # zenity exits 1 for a plain cancel AND for a broken environment, so the exit code alone
     # can't tell them apart — the stderr line can, and the difference is the whole message the

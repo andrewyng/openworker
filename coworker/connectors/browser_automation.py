@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional
 
 import aisuite as ai
 
+from ..desktop import desktop_env, has_display
 from ..web.guard import check_url
 
 
@@ -120,7 +121,10 @@ def readiness() -> dict[str, Any]:
     # The browser launches HEADED (`headless=False` in page()), so on a box with no display the
     # package and the binary can both be present and every launch still fail. Reporting "ready"
     # off the install alone would move the lie one step later instead of removing it.
-    display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    # Asked through coworker.desktop, not os.environ: this process is usually the
+    # systemd-started server, which has no DISPLAY of its own and never will (2026-08-30).
+    # Reading os.environ here reported "no display" on a box whose screen was right there.
+    display = has_display()
     if chromium is None:
         # Downloaded-but-unlaunchable is the common failure, not the rare one, so say which it
         # is: "install chromium" reads like a no-op to someone who can see a chromium directory.
@@ -266,7 +270,11 @@ class _BrowserController:
                 from playwright.sync_api import sync_playwright
 
                 self._playwright = sync_playwright().start()
-                self._browser = self._playwright.chromium.launch(headless=False)
+                # Same recovery as the readiness check above: the launch inherits THIS
+                # process's environment, which is the one missing the display.
+                self._browser = self._playwright.chromium.launch(
+                    headless=False, env=desktop_env()
+                )
                 self._context = self._browser.new_context(
                     viewport={"width": 1280, "height": 900}
                 )

@@ -73,10 +73,45 @@ def test_an_empty_cache_says_nothing_is_downloaded(cache):
     assert not out["ready"] and "no Chromium build is downloaded yet" in out["detail"]
 
 
-def test_a_headed_binary_with_no_display_is_still_not_ready(cache, monkeypatch):
-    _install(cache, f"chromium-{_chromium_revision()}")
+def _no_user_session(monkeypatch):
+    """No display in this process AND none to recover from the systemd user manager.
+
+    Deleting the env vars is no longer enough on its own: since 2026-08-30 the probe asks
+    the user manager too, because the server that runs it is started at boot and never has a
+    DISPLAY of its own. "Headless" now means both doors are shut.
+    """
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+
+    class _Empty:
+        stdout = ""
+
+    monkeypatch.setattr(
+        "coworker.desktop.subprocess.run", lambda *a, **k: _Empty()
+    )
+
+
+def test_a_headed_binary_with_no_display_is_still_not_ready(cache, monkeypatch):
+    _install(cache, f"chromium-{_chromium_revision()}")
+    _no_user_session(monkeypatch)
     out = readiness()
     # The binary is real; nothing can display it. Both halves have to hold to claim ready.
     assert not out["ready"] and out["browsers"] and "display" in out["detail"]
+
+
+def test_a_display_the_process_never_inherited_still_counts(cache, monkeypatch):
+    """The 2026-08-30 case: the server is started by systemd at boot, so it has no DISPLAY of
+    its own for the whole uptime — while the user's screen is right there. Reading os.environ
+    alone reported "no display" on a box that could display it perfectly well."""
+    _install(cache, f"chromium-{_chromium_revision()}")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+
+    class _Session:
+        stdout = "LANG=en_US.UTF-8\nDISPLAY=:1\nXAUTHORITY=/run/user/1000/gdm/Xauthority\n"
+
+    monkeypatch.setattr(
+        "coworker.desktop.subprocess.run", lambda *a, **k: _Session()
+    )
+    out = readiness()
+    assert out["ready"], out["detail"]
