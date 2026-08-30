@@ -17,6 +17,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from ..agent import build_engine
 from ..agents import get_agent
@@ -118,6 +119,16 @@ def _approval_body(request) -> str:
     return "\n".join(p for p in (reason, preview) if p)
 
 
+def _is_loopback_url(url: str) -> bool:
+    """Does this base_url point at a server on THIS machine? Only those can be genuinely
+    absent while the box boots -- which is the one case the scheduler waits on."""
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
 class SessionManager:
     def __init__(
         self,
@@ -196,7 +207,10 @@ class SessionManager:
         # The scheduler also resumes self-wake'd sessions each tick (extra_tick).
         self.task_store = TaskStore(base / "automation.db")
         self.scheduler = Scheduler(
-            self.task_store, self._run_scheduled_task, extra_tick=self.resume_due_wakes
+            self.task_store,
+            self._run_scheduled_task,
+            extra_tick=self.resume_due_wakes,
+            ready_probe=self._model_backend_ready,
         )
         # Personas: registry + lifecycle state under this manager's data dir. Installed as the
         # process singleton so agents.get_agent resolves persona ids (incl. third-party) here.
@@ -1845,6 +1859,40 @@ class SessionManager:
             alive = False
         self._ollama_alive_cache = (now, alive)
         return alive
+
+    async def _model_backend_ready(self) -> bool:
+        """Is the default model's provider answering yet? Asked by the scheduler before it
+        releases runs that were missed while the server was down.
+
+        Only LOCAL providers can be genuinely absent at startup: this box boots its own model
+        server, and on 2026-08-30 the automations fired 44s before it had even started. A
+        hosted provider is reachable or it is not, and waiting on it would only delay the run
+        that would report the failure -- so those answer True and let the run make the call.
+        """
+        provider = self._model_provider(self.model or "")
+        profile = self.secrets.get(f"provider:{provider}") or {}
+        base = (profile.get("base_url") or "").strip().rstrip("/")
+        if not base or not _is_loopback_url(base):
+            return True  # hosted, or no local endpoint to wait on
+        # Ollama answers /api/tags at its root; everything else here is OpenAI-compatible and
+        # answers /models under the /v1 base. Both are cheap and neither loads a model.
+        url = (
+            base[: -len("/v1")] + "/api/tags"
+            if provider == "ollama"
+            else base + "/models"
+        )
+
+        def _probe() -> bool:
+            import httpx
+
+            try:
+                # A 4xx still means something is listening and routing; only a transport
+                # failure or a 5xx means "not up yet".
+                return httpx.get(url, timeout=3.0).status_code < 500
+            except Exception:
+                return False
+
+        return await asyncio.to_thread(_probe)
 
     def _ollama_models(self) -> list[str]:
         """Live list of models pulled into the configured Ollama server (via its native

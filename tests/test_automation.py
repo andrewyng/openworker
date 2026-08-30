@@ -167,6 +167,130 @@ async def test_scheduler_skips_overlapping_run(tmp_path):
     await first
 
 
+# -- catch-up: waits for the backend, then goes one at a time (2026-08-30) -----
+def _overdue(store, n: int) -> list:
+    """n tasks whose next_run is in the past, i.e. missed while the server was down."""
+    made = []
+    for i in range(n):
+        t = _task(title=f"missed {i}", schedule=Schedule(kind="cron", cron="* * * * *"))
+        store.save(t)
+        store._conn.execute(
+            "UPDATE scheduled_tasks SET next_run=? WHERE id=?", (float(i + 1), t.id)
+        )
+        made.append(t)
+    store._conn.commit()
+    return made
+
+
+async def test_catchup_runs_missed_tasks_one_at_a_time(tmp_path):
+    """The 2026-08-30 failure: every missed task fired at once, 1s after startup, and all of
+    them died in ~3s against a model server that had not started yet."""
+    store = TaskStore(tmp_path / "auto.db")
+    _overdue(store, 4)
+    live = 0
+    peak = 0
+
+    async def runner(task, trigger):
+        nonlocal live, peak
+        live += 1
+        peak = max(peak, live)
+        await asyncio.sleep(0.02)  # a run holds the model for a while
+        live -= 1
+        return TaskRun(task_id=task.id, status="ok", trigger=trigger)
+
+    sched = Scheduler(
+        store, runner, tick_seconds=0.01, catchup_delay_seconds=0.0
+    )
+    sched.start()
+    await asyncio.sleep(0.35)
+    await sched.stop()
+    assert peak == 1, f"catch-up ran {peak} tasks at once; the whole point is one at a time"
+    assert all(t.last_status == "ok" for t in store.list())
+
+
+async def test_catchup_waits_for_the_model_backend(tmp_path):
+    """No run may start before the backend answers — the runs that were lost had fired 44s
+    before the local model server even began loading."""
+    store = TaskStore(tmp_path / "auto.db")
+    _overdue(store, 2)
+    ready = False
+    started: list[str] = []
+
+    async def probe() -> bool:
+        return ready
+
+    async def runner(task, trigger):
+        started.append(task.id)
+        return TaskRun(task_id=task.id, status="ok", trigger=trigger)
+
+    sched = Scheduler(
+        store,
+        runner,
+        tick_seconds=0.01,
+        catchup_delay_seconds=0.0,
+        ready_probe=probe,
+        ready_poll_seconds=0.01,
+    )
+    sched.start()
+    await asyncio.sleep(0.15)
+    assert started == [], "ran before the backend was up"
+    ready = True
+    await asyncio.sleep(0.15)
+    await sched.stop()
+    assert len(started) == 2
+
+
+async def test_catchup_holds_the_queue_back_from_the_schedule_tick(tmp_path):
+    """A missed task is still `due()` until the drain reaches it. Without the claim, the 30s
+    schedule tick fires the queue concurrently and undoes the serialisation."""
+    store = TaskStore(tmp_path / "auto.db")
+    _overdue(store, 3)
+    triggers: list[str] = []
+
+    async def runner(task, trigger):
+        triggers.append(trigger)
+        await asyncio.sleep(0.02)
+        return TaskRun(task_id=task.id, status="ok", trigger=trigger)
+
+    sched = Scheduler(store, runner, tick_seconds=0.01, catchup_delay_seconds=0.0)
+    sched.start()
+    await asyncio.sleep(0.3)
+    await sched.stop()
+    assert triggers == ["catchup"] * 3, f"the tick overtook the drain: {triggers}"
+
+
+async def test_catchup_releases_the_queue_when_the_backend_never_comes_up(tmp_path):
+    """Held, not fired: on timeout the claim drops and the tasks stay due, so the normal tick
+    owns them. Firing them anyway is what consumed a morning of automations."""
+    store = TaskStore(tmp_path / "auto.db")
+    _overdue(store, 2)
+    started: list[str] = []
+
+    async def never() -> bool:
+        return False
+
+    async def runner(task, trigger):
+        started.append(task.id)
+        return TaskRun(task_id=task.id, status="ok", trigger=trigger)
+
+    sched = Scheduler(
+        store,
+        runner,
+        tick_seconds=60.0,  # no schedule tick inside the test window
+        catchup_delay_seconds=0.0,
+        ready_probe=never,
+        ready_poll_seconds=0.01,
+        ready_timeout_seconds=0.05,
+    )
+    sched.start()
+    await asyncio.sleep(0.25)
+    await sched.stop()
+    assert started == [], "fired into a backend that never answered"
+    assert sched._catchup_pending == set()
+    # still due, so nothing was consumed
+    assert len(store.due(now=9e9)) == 2
+
+
 # -- agent-facing tools --------------------------------------------------------
 def test_create_and_list_tools(tmp_path):
     store = TaskStore(tmp_path / "auto.db")
