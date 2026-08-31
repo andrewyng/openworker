@@ -5,6 +5,7 @@ from __future__ import annotations
 from .providers import (
     BraveProvider,
     DuckDuckGoProvider,
+    LinkupProvider,
     SearchResult,
     TavilyProvider,
     WebSearchProvider,
@@ -20,6 +21,7 @@ __all__ = [
     "DuckDuckGoProvider",
     "TavilyProvider",
     "BraveProvider",
+    "LinkupProvider",
     "build_provider",
     "provider_names",
     "make_web_search_tool",
