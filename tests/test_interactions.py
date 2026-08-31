@@ -5,6 +5,7 @@ import json
 
 from coworker.inbox import InboxStore
 from coworker.interactions import Button, buttons_for, decode, encode
+from coworker.tools.ask import SKIP_SENTINEL
 from coworker.connectors.base import InteractionEvent
 from coworker.connectors.senders import _slack_blocks
 from coworker.providers import ModelCapabilities, ProviderClient
@@ -39,8 +40,10 @@ def test_buttons_for_kinds(tmp_path):
 
     q = st.add_question("s1", "Which region?", options=["us-east-1", "us-west-2"])
     qb = buttons_for(q)
-    assert [b.label for b in qb] == ["us-east-1", "us-west-2"]
+    # Skip trails the options (OPE-153) — the channel gets the card's way out too.
+    assert [b.label for b in qb] == ["us-east-1", "us-west-2", "Skip"]
     assert decode(qb[0].value) == (q.id, "us-east-1")  # resolution IS the option text
+    assert decode(qb[-1].value) == (q.id, SKIP_SENTINEL)
 
     # free-text question (no options) and notifications get no buttons → "open the app"
     assert buttons_for(st.add_question("s1", "Say something")) == []
