@@ -123,7 +123,7 @@ Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gu
 | `surfaces/gui/` | Desktop app - React UI + Tauri shell that supervises the server |
 | `stt/` | Speech-to-text sidecar (Rust) for voice input |
 | `packaging/` | Installer builds (macOS DMG, Windows), auto-update manifest, dev bootstrap |
-| `docs/` | Design specs and decision logs |
+| `docs/` | Design specs, decision logs, and [connector setup guide](docs/connectors.md) |
 | `tests/` | Backend test suite |
 
 ## Built on aisuite
