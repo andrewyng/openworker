@@ -11,6 +11,8 @@ from coworker.interactions import buttons_for, decode
 from coworker.server.manager import SessionManager
 from coworker.tools.ask import (
     MAX_GROUPED_QUESTIONS,
+    SKIP_NOTE,
+    SKIP_SENTINEL,
     answer_result,
     ask_user_tool,
     normalize_option,
@@ -110,6 +112,50 @@ def test_answer_result_shapes():
     # a text-only surface answered with a bare string → attributed to the first question
     assert answer_result(grouped, "Bar") == {"answers": {"Chart": "Bar"}}
     assert answer_result(grouped, "") == {"answer": ""}  # engine reads this as denied
+
+
+# -- skipping (OPE-153) -------------------------------------------------------
+
+
+def test_skipped_single_question_answers_null_not_empty():
+    """The whole point of the sentinel: "" (no answer came back) and a skip must not
+    look alike to the agent."""
+    res = answer_result([], SKIP_SENTINEL)
+    assert res["answer"] is None
+    assert res["skipped"] is True
+    assert res["note"] == SKIP_NOTE
+    assert answer_result([], "") == {"answer": ""}  # unchanged, still not a skip
+
+
+def test_skipped_grouped_questions_name_what_was_declined():
+    grouped = [{"question": "Chart style?", "header": "Chart"}, {"question": "Colors?"}]
+    # one step skipped, one answered
+    res = answer_result(grouped, json.dumps({"Chart": SKIP_SENTINEL, "Colors?": "Blue"}))
+    assert res["answers"] == {"Chart": None, "Colors?": "Blue"}
+    assert res["skipped"] == ["Chart"]
+    assert res["note"] == SKIP_NOTE
+    # whole card skipped from the card: every question carries the sentinel
+    res = answer_result(grouped, json.dumps({"Chart": SKIP_SENTINEL, "Colors?": SKIP_SENTINEL}))
+    assert res["answers"] == {"Chart": None, "Colors?": None}
+    assert res["skipped"] == ["Chart", "Colors?"]
+    # a JSON null means the same thing (defensive — a surface may serialize it that way)
+    assert answer_result(grouped, json.dumps({"Chart": None}))["skipped"] == ["Chart"]
+
+
+def test_bare_sentinel_skips_a_whole_grouped_card():
+    """A text-only surface can't send the answer map — the bare sentinel skips everything
+    rather than being filed as the first question's answer."""
+    grouped = [{"question": "Chart style?", "header": "Chart"}, {"question": "Colors?"}]
+    res = answer_result(grouped, SKIP_SENTINEL)
+    assert res["answers"] == {"Chart": None, "Colors?": None}
+    assert res["skipped"] == ["Chart", "Colors?"]
+
+
+def test_fully_answered_card_carries_no_skip_keys():
+    """No skip → no `skipped`/`note` noise in the agent's tool result."""
+    grouped = [{"question": "Chart style?", "header": "Chart"}]
+    assert answer_result(grouped, json.dumps({"Chart": "Bar"})) == {"answers": {"Chart": "Bar"}}
+    assert answer_result([], "staging") == {"answer": "staging"}
 
 
 # -- inbox persistence + back-compat ------------------------------------------
