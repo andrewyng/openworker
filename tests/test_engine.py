@@ -319,6 +319,88 @@ def test_streaming_emits_deltas(tmp_path):
     assert events[-1].type == EventType.TURN_END
 
 
+class DyingStreamProvider(ProviderClient):
+    """Streams a delta, then dies — the shape of a provider 503 landing mid-turn."""
+
+    def __init__(self):
+        self.payloads = []
+
+    def complete(self, **kwargs):  # pragma: no cover - streamed instead
+        raise NotImplementedError
+
+    def capabilities(self, model):
+        return ModelCapabilities()
+
+    def stream(self, *, model, messages, tools=None, **settings):
+        self.payloads.append(messages)
+        yield StreamChunk(text_delta="I will request permission to ")
+        raise RuntimeError("Error code: 503 - {'error': {'type': 'overloaded_error'}}")
+
+
+def test_retry_after_mid_stream_death_does_not_replay_the_partial(tmp_path):
+    # The partial stays in the transcript so the user can see what streamed, but several
+    # providers reject a payload whose FINAL message is an assistant turn — Gemini ("Requests
+    # ending with a model turn are not supported"), Claude 4.6+ ("does not support assistant
+    # message prefill"), older Claude when it ends in whitespace. Replaying it wedges retry.
+    provider = DyingStreamProvider()
+    engine = TurnEngine(
+        provider=provider,
+        registry=ToolRegistry(),
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+    )
+    _collect(engine, "arrange my visa documents")
+
+    # kept in history (display), followed by the error notice
+    assert engine.messages[-2]["role"] == "assistant"
+    assert engine.messages[-2]["content"] == "I will request permission to "
+    assert engine.messages[-1]["role"] == "notice"
+
+    async def _retry():
+        return [ev async for ev in engine.retry()]
+
+    asyncio.run(_retry())
+
+    sent = provider.payloads[-1]
+    assert sent, "retry never reached the provider"
+    assert sent[-1]["role"] != "assistant"
+    assert all(m.get("content") != "I will request permission to " for m in sent)
+
+
+def test_completed_assistant_turn_is_never_dropped(tmp_path):
+    # The counterpart to the test above: a finished turn's assistant message is structurally
+    # identical to an abandoned partial (trailing, no tool_calls). Only the error notice tells
+    # them apart, so a completed turn with no notice after it must survive intact.
+    engine, _ = _engine(tmp_path, [_text_turn("all done")])
+    _collect(engine, "hi")
+
+    assert engine.messages[-1]["role"] == "assistant"
+    outbound = engine._outbound_messages()
+    assert outbound[-1]["role"] == "assistant"
+    assert outbound[-1]["content"] == "all done"
+
+
+def test_consecutive_deaths_do_not_stack_partials_in_the_payload(tmp_path):
+    # Each failed retry appends its own partial, so one drop is not enough.
+    provider = DyingStreamProvider()
+    engine = TurnEngine(
+        provider=provider,
+        registry=ToolRegistry(),
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+    )
+    _collect(engine, "go")
+
+    async def _retry():
+        return [ev async for ev in engine.retry()]
+
+    asyncio.run(_retry())
+    asyncio.run(_retry())
+
+    assert sum(1 for m in engine.messages if m.get("role") == "assistant") == 3
+    assert provider.payloads[-1][-1]["role"] != "assistant"
+
+
 def _pdf_file_part():
     import base64
     import io
