@@ -354,3 +354,16 @@ def test_model_context_windows_covers_verified_entries_only():
     assert windows["anthropic:claude-fable-5"] == 1_000_000
     assert "together:thinkingmachines/Inkling" not in windows  # unverified stays absent
     assert all(isinstance(v, int) and v > 0 for v in windows.values())
+
+
+def test_deepseek_v4_context_windows_match_provider_limits():
+    windows = model_context_windows()
+    expected = {
+        "deepseek:deepseek-v4-flash": 1_000_000,
+        "deepseek:deepseek-v4-pro": 1_000_000,
+        "together:deepseek-ai/DeepSeek-V4-Pro": 512_000,
+        "fireworks:accounts/fireworks/models/deepseek-v4-pro": 1_048_576,
+        "openrouter:deepseek/deepseek-v4-pro": 1_048_576,
+    }
+
+    assert {model: windows[model] for model in expected} == expected
