@@ -7,7 +7,14 @@ on: [push, pull_request]
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    # Run the backend suite on both x64 and Linux arm64 (GitHub-hosted arm
+    # runners). The Python backend has no x86 assumption; this keeps aarch64
+    # (Apple-silicon dev machines, ARM servers/CI) a supported target.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,7 +28,11 @@ jobs:
         run: pytest tests -q
 
   gui-unit:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
