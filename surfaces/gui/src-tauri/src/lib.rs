@@ -465,19 +465,22 @@ fn voice_input_compatibility() -> (bool, String, Option<String>) {
 
 #[cfg(target_os = "windows")]
 fn voice_input_compatibility() -> (bool, String, Option<String>) {
-    let version = Command::new("cmd")
-        .args(["/C", "ver"])
-        .output()
-        .ok()
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .unwrap_or_else(|| "Windows (unknown version)".to_owned());
-    let build = version
-        .split(|character: char| !character.is_ascii_digit() && character != '.')
-        .find(|part| part.matches('.').count() >= 2)
-        .and_then(|part| part.split('.').nth(2))
-        .and_then(|part| part.parse::<u32>().ok())
-        .unwrap_or(0);
-    let x64 = std::env::consts::ARCH == "x86_64";
+    // Do not spawn `cmd /C ver` here. This function runs in the synchronous
+    // `get_dictation_status` Tauri command, and process startup can stall the Windows
+    // webview event loop for several seconds while the user navigates away from Voice Input.
+    windows_voice_input_compatibility(
+        windows_version::OsVersion::current(),
+        std::env::consts::ARCH,
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn windows_voice_input_compatibility(
+    version: windows_version::OsVersion,
+    architecture: &str,
+) -> (bool, String, Option<String>) {
+    let x64 = architecture == "x86_64";
+    let build = version.build;
     let supported = x64 && build >= 19_045;
     let reason = if !x64 {
         Some("Voice Input currently requires a 64-bit x64 Windows PC.".to_owned())
@@ -486,7 +489,43 @@ fn voice_input_compatibility() -> (bool, String, Option<String>) {
     } else {
         None
     };
-    (supported, format!("{version} · x64"), reason)
+    let architecture = if x64 { "x64" } else { architecture };
+    (
+        supported,
+        format!(
+            "Windows {}.{}.{} · {architecture}",
+            version.major, version.minor, version.build
+        ),
+        reason,
+    )
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod voice_input_compatibility_tests {
+    use super::windows_voice_input_compatibility;
+    use windows_version::OsVersion;
+
+    #[test]
+    fn windows_10_22h2_x64_is_supported_without_spawning_a_process() {
+        let (supported, summary, reason) =
+            windows_voice_input_compatibility(OsVersion::new(10, 0, 0, 19_045), "x86_64");
+
+        assert!(supported);
+        assert_eq!(summary, "Windows 10.0.19045 · x64");
+        assert_eq!(reason, None);
+    }
+
+    #[test]
+    fn older_windows_builds_remain_unsupported() {
+        let (supported, _, reason) =
+            windows_voice_input_compatibility(OsVersion::new(10, 0, 0, 19_044), "x86_64");
+
+        assert!(!supported);
+        assert_eq!(
+            reason.as_deref(),
+            Some("Voice Input requires Windows 10 22H2 or Windows 11.")
+        );
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -645,7 +684,11 @@ async fn download_update(
     // (Guard scope stays sync: a std MutexGuard must not live across an await.)
     {
         let slot = pending.0.lock().unwrap();
-        if slot.as_ref().map(|(v, _)| v == &update.version).unwrap_or(false) {
+        if slot
+            .as_ref()
+            .map(|(v, _)| v == &update.version)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
     }
