@@ -1605,6 +1605,7 @@
     "choose_a_folder": "Choose a folder…"
   },
   "mcp": {
+    "preset_parallel_search_blurb": "Live web search & URL fetching. No account or API key required.",
     "preset_granola_blurb": "Meeting notes & transcripts — sign in with your Granola account.",
     "status_off": "Off",
     "status_signing_in": "Signing in…",

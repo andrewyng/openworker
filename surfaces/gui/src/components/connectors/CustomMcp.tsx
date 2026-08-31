@@ -31,8 +31,8 @@ import {
 // for a stdio entry: Live = a connection is open right now; Ready = the one-time
 // Test passed (subtitle carries "tested ⟨when⟩", persisted server-side).
 
-// Curated OAuth quick-adds: remote MCP servers with browser sign-in (OAuth 2.1 +
-// DCR) — no keys to paste, tokens stay in the local secret store.
+// Curated remote MCP quick-adds. OAuth presets keep tokens in the local secret
+// store; no-auth presets use the same explicit connection path without browser sign-in.
 // `blurb` is an i18n key, resolved at render time.
 export const MCP_PRESETS: {
   name: string;
@@ -45,6 +45,12 @@ export const MCP_PRESETS: {
     label: "Granola",
     blurb: "mcp.preset_granola_blurb",
     config: { type: "http", url: "https://mcp.granola.ai/mcp", auth: "oauth" },
+  },
+  {
+    name: "parallel-search",
+    label: "Parallel Search",
+    blurb: "mcp.preset_parallel_search_blurb",
+    config: { type: "http", url: "https://search.parallel.ai/mcp" },
   },
 ];
 
@@ -148,7 +154,7 @@ export function CustomMcpGroup({
               role="button"
               onClick={async () => {
                 await addMcpServer(p.name, p.config);
-                await connectMcp(p.name); // opens the browser sign-in right away
+                await connectMcp(p.name); // OAuth presets may open browser sign-in
                 onChanged();
               }}
             >

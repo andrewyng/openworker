@@ -1574,6 +1574,7 @@
     "choose_a_folder": "选择一个文件夹…"
   },
   "mcp": {
+    "preset_parallel_search_blurb": "实时网页搜索与 URL 内容获取。无需账户或 API 密钥。",
     "preset_granola_blurb": "会议笔记与转录——用你的 Granola 账户登录。",
     "status_off": "已关闭",
     "status_signing_in": "登录中…",
