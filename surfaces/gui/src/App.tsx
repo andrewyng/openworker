@@ -273,6 +273,10 @@ export function App() {
   // composer's "No model connected" chip. Default true so we don't flash the chip before settings
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
+  // `models` deliberately includes an unavailable default so the picker can show it. Keep
+  // the runnable set separately: sessions may select a different, ready provider (such as
+  // Ollama) without changing that global default.
+  const [readyModels, setReadyModels] = useState<string[] | null>(null);
   const [surface, setSurface] = useState<
     "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings"
   >("session");
@@ -617,6 +621,7 @@ export function App() {
         setModelContextWindows(s.model_context_windows || {});
         setContextBar(s.context_bar === true);
         setModelReady(s.model_ready);
+        setReadyModels(s.ready_models || null);
         if (s.surfaces) setSurfaces(s.surfaces);
       })
       .catch(() => {});
@@ -2075,7 +2080,7 @@ export function App() {
               running={running}
               gateOpen={!unattended && (!!pendingTeam || !!pendingItemsReq)}
               connected={connected}
-              modelReady={modelReady}
+              modelReady={readyModels === null ? modelReady : readyModels.includes(model)}
               onConnectModel={openModelSetup}
               onOpenMemory={() => openSettings("memory")}
               onConfigureVoiceInput={() => openSettings("voice")}
