@@ -15,7 +15,7 @@ from coworker.server.manager import SessionManager
 from coworker.sessions import SessionRecord
 
 BUNDLES = {
-    "security": {"semgrep-review", "secret-scan", "security-fix-pr"},
+    "security": {"semgrep-review", "secret-scan", "security-fix-pr", "threat-model"},
     "cloud-posture": {"iac-scan", "aws-posture"},
     "dep-audit": {"dependency-audit", "safe-upgrade-pr"},
 }
