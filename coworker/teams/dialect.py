@@ -87,7 +87,9 @@ class BoardDialect(Protocol):
         *,
         caption: str = "",
     ) -> dict[str, Any]: ...
-    def attachment(self, stored: str) -> tuple[bytes, str]: ...
+    def attachment(self, space: str, stored: str) -> tuple[bytes, str]:
+        """Read a blob referenced by an actor-visible item in ``space``."""
+        ...
     def policy(self, space: str) -> dict[str, Any]: ...
     def set_policy(self, space: str, *, claims: str) -> dict[str, Any]: ...
     def pending(self, space: str, *, limit: int = 200) -> list[dict[str, Any]]: ...
@@ -149,7 +151,7 @@ class LocalDialect:
         return self.store.list_items(space, self.actor, state=state, assignee=assignee)
 
     def get_item(self, space: str, item_id: int) -> dict[str, Any]:
-        return self.store.get_item(space, item_id)
+        return self.store.get_item(space, item_id, actor=self.actor)
 
     def create_item(
         self,
@@ -212,22 +214,23 @@ class LocalDialect:
         *,
         caption: str = "",
     ) -> dict[str, Any]:
-        # Attach = store blob + a normal comment event carrying the ref. Comment
+        # Attach = store blob + an attributed attachment-comment event. Comment
         # authority IS attach authority (workers attach on their slice only).
         if self.attachments is None:
             raise BoardError("no attachment store is attached to this board")
         ref = self.attachments.put(data, filename)
-        return self.store.comment(
+        return self.store.attach_ref(
             space,
             self.actor,
             item_id,
             caption or f"attached {filename}",
-            refs=[ref],
+            ref,
         )
 
-    def attachment(self, stored: str) -> tuple[bytes, str]:
+    def attachment(self, space: str, stored: str) -> tuple[bytes, str]:
         if self.attachments is None:
             raise BoardError("no attachment store is attached to this board")
+        self.store.require_attachment_access(space, self.actor, stored)
         path = self.attachments.path_for(stored)
         return path.read_bytes(), self.attachments.mime_for(stored)
 
@@ -458,8 +461,10 @@ class RemoteDialect:
             },
         )
 
-    def attachment(self, stored: str) -> tuple[bytes, str]:
-        response = self._client.get("/v1/board/attachment", params={"name": stored})
+    def attachment(self, space: str, stored: str) -> tuple[bytes, str]:
+        response = self._client.get(
+            "/v1/board/attachment", params={"space": space, "name": stored}
+        )
         if response.status_code >= 400:
             self._unwrap(response)  # raises with the server's message
         return response.content, response.headers.get(

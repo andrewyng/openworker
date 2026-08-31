@@ -579,3 +579,44 @@ async def test_notice_dedupe_survives_restart(tmp_path, monkeypatch):
     monkeypatch.setattr(reborn.mcp, "last_stderr", lambda n: None)
     await reborn.prepare_mcp_tools("s2", workspace=str(tmp_path))
     assert reborn.pop_mcp_failures("s2") == []
+
+
+@pytest.mark.asyncio
+async def test_notice_dedupe_ignores_per_process_noise(tmp_path, monkeypatch):
+    """Errors that embed per-process values (object addresses, pids) are the SAME
+    failure across relaunches — they must not re-stamp every session (owner-hit
+    2026-08-21: a botocore error with a 0x… address re-noticed on every restart)."""
+    from types import SimpleNamespace
+
+    from coworker.server import SessionManager
+
+    server = SimpleNamespace(
+        name="flaky", transport="stdio", url=None, auth=None, enabled=True, include_tools=None, exclude_tools=None, requires_approval=True
+    )
+    monkeypatch.setattr(
+        "coworker.server.manager.load_mcp_servers", lambda *a, **k: [server]
+    )
+
+    errors = ["credential process <function f at 0x102ab40f0> pid 84121"]
+
+    async def ensure(s, **kw):
+        raise RuntimeError(errors[0])
+
+    mgr = SessionManager(data_dir=tmp_path / "data")
+    monkeypatch.setattr(mgr.mcp, "ensure", ensure)
+    monkeypatch.setattr(mgr.mcp, "last_stderr", lambda n: None)
+    await mgr.prepare_mcp_tools("s1", workspace=str(tmp_path))
+    assert [n for n, _ in mgr.pop_mcp_failures("s1")] == ["flaky"]
+
+    # "Relaunch": same failure, new address + pid — still quiet.
+    errors[0] = "credential process <function f at 0x1070340f0> pid 99017"
+    reborn = SessionManager(data_dir=tmp_path / "data")
+    monkeypatch.setattr(reborn.mcp, "ensure", ensure)
+    monkeypatch.setattr(reborn.mcp, "last_stderr", lambda n: None)
+    await reborn.prepare_mcp_tools("s2", workspace=str(tmp_path))
+    assert reborn.pop_mcp_failures("s2") == []
+
+    # A genuinely different error still notices.
+    errors[0] = "connection refused"
+    await reborn.prepare_mcp_tools("s3", workspace=str(tmp_path))
+    assert [n for n, _ in reborn.pop_mcp_failures("s3")] == ["flaky"]

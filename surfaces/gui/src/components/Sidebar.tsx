@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { getI18n, useTranslation } from "react-i18next";
 import {
   announceCloudChanged,
   AUTOMATIONS_CHANGED,
@@ -45,11 +46,12 @@ const surfaceFromPersona = (p: Persona) => ({
 // Attention = Inbox items awaiting a session (an accent count that bubbles session → persona →
 // footer Inbox — all views of the one Inbox queue, never a second list).
 function AttnBadge({ n }: { n: number }) {
+  const { t } = useTranslation();
   if (!n) return null;
   return (
     <span
-      className="text-[10px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
-      title={`${n} awaiting your attention`}
+      className="text-[11px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
+      title={t("sidebar.awaiting_attention", { n })}
     >
       {n > 99 ? "99+" : n}
     </span>
@@ -60,11 +62,12 @@ function AttnBadge({ n }: { n: number }) {
 // treatment as the attention badge; failure only colors the tooltip's words, not the
 // sidebar (owner call 2026-07-20: no color, and the entry alone carries the count).
 function UnseenBadge({ n, failed }: { n: number; failed?: boolean }) {
+  const { t } = useTranslation();
   if (!n) return null;
   return (
     <span
-      className="text-[10px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
-      title={failed ? `${n} new run${n > 1 ? "s" : ""} — the latest failed` : `${n} new run${n > 1 ? "s" : ""}`}
+      className="text-[11px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
+      title={failed ? t("sidebar.unseen_failed", { count: n }) : t("sidebar.unseen_new", { count: n })}
     >
       {n > 99 ? "99+" : n}
     </span>
@@ -74,13 +77,14 @@ function UnseenBadge({ n, failed }: { n: number; failed?: boolean }) {
 // Liveness = working (in-flight turn) / sleeping (a self-wake is pending). A count-less dot that
 // never bubbles — it says "this is alive", not "this needs you".
 function LiveDot({ state }: { state?: "working" | "sleeping" | "idle" }) {
+  const { t } = useTranslation();
   if (state !== "working" && state !== "sleeping") return null;
   return state === "working" ? (
-    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" title="Working now" />
+    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" title={t("sidebar.status_working")} />
   ) : (
     <span
       className="w-1.5 h-1.5 rounded-full bg-faint/60 shrink-0"
-      title="Sleeping (will wake itself)"
+      title={t("sidebar.status_sleeping")}
     />
   );
 }
@@ -88,12 +92,13 @@ function LiveDot({ state }: { state?: "working" | "sleeping" | "idle" }) {
 // §31: a session spawned by a platform mention wears its platform's logo, right-aligned beside
 // the title cluster (owner call 2026-07-13). Slack today; the origin key is the platform id.
 function OriginIcon({ s }: { s: SessionInfo }) {
+  const { t } = useTranslation();
   if (s.origin !== "slack") return null;
   return (
     <ConnectorIcon
       connector={{ logo: "slack", brand_color: "#611f69" }}
       size={12}
-      title={s.origin_label || "From Slack"}
+      title={s.origin_label || t("sidebar.from_slack")}
     />
   );
 }
@@ -152,24 +157,26 @@ const compactAge = (iso?: string | null): string => {
   if (!iso) return "";
   const then = Date.parse(iso);
   if (Number.isNaN(then)) return "";
+  const tt = getI18n().getFixedT(null, "translation");
   const secs = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (secs < 60) return "now";
+  if (secs < 60) return tt("sidebar.age_now");
   const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m`;
+  if (mins < 60) return tt("sidebar.age_m", { n: mins });
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
+  if (hrs < 24) return tt("sidebar.age_h", { n: hrs });
   const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d`;
+  if (days < 7) return tt("sidebar.age_d", { n: days });
   const weeks = Math.floor(days / 7);
-  if (days < 30) return `${weeks}w`;
+  if (days < 30) return tt("sidebar.age_w", { n: weeks });
   const months = Math.floor(days / 30);
-  if (days < 365) return `${months}mo`;
-  return `${Math.floor(days / 365)}y`;
+  if (days < 365) return tt("sidebar.age_mo", { n: months });
+  return tt("sidebar.age_y", { n: Math.floor(days / 365) });
 };
 
 // Sessions shown per group before "Show more" comes from Settings (sessions_peek, default 5).
 
 export function Sidebar(props: Props) {
+  const { t } = useTranslation();
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
   // The account row (§26): cloud sign-in status drives the avatar/name/dot; refreshed on
@@ -351,7 +358,7 @@ export function Sidebar(props: Props) {
     <button
       className={
         "w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-left " +
-        (active ? "text-ink bg-paper" : "hover:bg-paper")
+        (active ? "text-ink bg-chromeHover" : "hover:bg-chromeHover")
       }
       onClick={() => {
         setAppMenuOpen(false);
@@ -439,7 +446,7 @@ export function Sidebar(props: Props) {
     const menuOpen = rowMenu?.id === s.session_id;
     const item = (testid: string, icon: IconName, label: string, onClick: () => void) => (
       <button
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] text-left hover:bg-paper"
+        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[13px] text-left hover:bg-paper"
         data-testid={testid}
         role="menuitem"
         onClick={() => {
@@ -458,14 +465,14 @@ export function Sidebar(props: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <button
-          title="Session actions"
-          aria-label="Session actions"
+          title={t("sidebar.session_actions")}
+          aria-label={t("sidebar.session_actions")}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           data-testid="row-menu"
           className={
-            "w-5 h-5 grid place-items-center rounded hover:bg-paper " +
-            (menuOpen ? "text-ink bg-paper" : "text-faint hover:text-ink")
+            "w-5 h-5 grid place-items-center rounded hover:bg-chromeHover " +
+            (menuOpen ? "text-ink bg-chromeHover" : "text-faint hover:text-ink")
           }
           onClick={(e) => (menuOpen ? closeRowMenu() : openRowMenu(s.session_id, e.currentTarget))}
         >
@@ -480,21 +487,21 @@ export function Sidebar(props: Props) {
               style={{ top: rowMenu!.top, left: rowMenu!.left }}
               role="menu"
             >
-              {item("row-menu-rename", "pencil", "Rename", () => {
+              {item("row-menu-rename", "pencil", t("sidebar.rename"), () => {
                 setEditingId(s.session_id);
                 setEditValue(title);
               })}
-              {item("row-menu-pin", "pin", s.pinned ? "Unpin" : "Pin", () =>
+              {item("row-menu-pin", "pin", s.pinned ? t("sidebar.unpin") : t("sidebar.pin"), () =>
                 props.onTogglePin(s.session_id, !s.pinned),
               )}
-              {item("row-menu-archive", "archive", s.archived ? "Unarchive" : "Archive", () =>
+              {item("row-menu-archive", "archive", s.archived ? t("sidebar.unarchive") : t("sidebar.archive"), () =>
                 props.onArchiveSession(s.session_id, !s.archived),
               )}
               <div className="h-px bg-line my-1 mx-2" />
               {confirmDelId === s.session_id ? (
                 <button
-                  title="Click again to permanently delete"
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] text-left font-medium text-danger hover:bg-paper"
+                  title={t("sidebar.confirm_delete")}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[13px] text-left font-medium text-danger hover:bg-paper"
                   data-testid="row-menu-delete"
                   role="menuitem"
                   onClick={() => {
@@ -503,17 +510,17 @@ export function Sidebar(props: Props) {
                   }}
                 >
                   <Icon name="trash" size={13} className="shrink-0" />
-                  <span className="flex-1">Delete?</span>
+                  <span className="flex-1">{t("sidebar.delete_confirm")}</span>
                 </button>
               ) : (
                 <button
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] text-left text-danger hover:bg-paper"
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[13px] text-left text-danger hover:bg-paper"
                   data-testid="row-menu-delete"
                   role="menuitem"
                   onClick={() => setConfirmDelId(s.session_id)}
                 >
                   <Icon name="trash" size={13} className="shrink-0" />
-                  <span className="flex-1">Delete</span>
+                  <span className="flex-1">{t("sidebar.delete")}</span>
                 </button>
               )}
             </div>
@@ -613,7 +620,7 @@ export function Sidebar(props: Props) {
           "group w-full flex items-center gap-2.5 px-2 py-2 rounded-lg cursor-pointer text-left " +
           (active
             ? "bg-ink/[0.055]"
-            : "hover:bg-paper")
+            : "hover:bg-chromeHover")
         }
         title={editing ? undefined : title}
         onClick={() => {
@@ -639,7 +646,11 @@ export function Sidebar(props: Props) {
           />
         ) : (
           <>
-            <span className="min-w-0 flex-1 block truncate text-[13px] font-medium">
+            <span
+              className={
+                "min-w-0 flex-1 block truncate text-[13px] " + (active ? "font-medium" : "")
+              }
+            >
               {title}
             </span>
             <span
@@ -665,8 +676,8 @@ export function Sidebar(props: Props) {
   const pinnedBand = () =>
     pinnedSessions.length > 0 ? (
       <div>
-        <div className="px-1.5 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">
-          Pinned
+        <div className="px-1.5 text-[11px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">
+          {t("sidebar.pinned")}
         </div>
         <div className="space-y-0.5">
           {pinnedSessions.map((s) => cardRow(s))}
@@ -680,14 +691,14 @@ export function Sidebar(props: Props) {
   const scheduledBand = () =>
     automations.length > 0 ? (
       <div data-testid="scheduled-band">
-        <div className="px-1.5 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">
-          Scheduled
+        <div className="px-1.5 text-[11px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">
+          {t("sidebar.scheduled")}
         </div>
         <div className="space-y-0.5">
           {automations.map((a) => (
             <button
               key={a.id}
-              className="w-full flex items-center gap-2 px-1.5 py-1 rounded-lg text-left hover:bg-paper"
+              className="w-full flex items-center gap-2 px-1.5 py-1 rounded-lg text-left hover:bg-chromeHover"
               data-testid={`scheduled-${a.id}`}
               title={a.title}
               onClick={() => props.onOpenAutomation(a.id)}
@@ -712,13 +723,13 @@ export function Sidebar(props: Props) {
     );
     return (
     <div className="relative flex items-center justify-between px-1.5 mb-1" data-testid="recent-header">
-      <span className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">
-        Recent
+      <span className="text-[11px] uppercase tracking-[0.07em] text-faint font-semibold">
+        {t("sidebar.recent")}
       </span>
       <button
-        className="w-6 h-6 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper -mr-1"
-        title="Group & filter conversations"
-        aria-label="Group and filter conversations"
+        className="w-6 h-6 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-chromeHover -mr-1"
+        title={t("sidebar.group_and_filter_short")}
+        aria-label={t("sidebar.group_and_filter")}
         onClick={() => setGroupMenuOpen((v) => !v)}
       >
         <Icon name="sliders" size={14} />
@@ -731,10 +742,10 @@ export function Sidebar(props: Props) {
             role="menu"
             data-testid="group-filter-menu"
           >
-            <div className="px-2 pt-1 pb-1 text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-              Group by
+            <div className="px-2 pt-1 pb-1 text-[11px] uppercase tracking-[0.06em] text-faint font-semibold">
+              {t("sidebar.group_by")}
             </div>
-            {([["grouped", "Coworker"], ["flat", "Chronological"]] as ["flat" | "grouped", string][]).map(
+            {([["grouped", t("sidebar.group_persona")], ["flat", t("sidebar.group_chrono")]] as ["flat" | "grouped", string][]).map(
               ([key, label]) => (
                 <button
                   key={key}
@@ -750,12 +761,12 @@ export function Sidebar(props: Props) {
               <>
                 <div className="my-1 border-t border-line" />
                 <div className="px-2 pt-1 pb-1 flex items-center justify-between">
-                  <span className="text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-                    Filter by coworker
+                  <span className="text-[11px] uppercase tracking-[0.06em] text-faint font-semibold">
+                    {t("sidebar.filter_coworker")}
                   </span>
                   {filterPersonas.size > 0 && (
                     <button className="text-[11px] text-accent" onClick={() => setFilterPersonas(new Set())}>
-                      Clear
+                      {t("sidebar.clear")}
                     </button>
                   )}
                 </div>
@@ -782,7 +793,7 @@ export function Sidebar(props: Props) {
                   })}
                 </div>
                 <div className="px-2 pt-1 pb-0.5 text-[11px] text-faint leading-snug">
-                  None checked shows all.
+                  {t("sidebar.filter_all_hint")}
                 </div>
               </>
             )}
@@ -870,13 +881,13 @@ export function Sidebar(props: Props) {
             {/* Codex-style Projects: a "+" header affordance, then collapsible folders whose
                 rows carry a right-aligned compact age and truncate to PROJECT_PEEK + "Show more". */}
             <div className="flex items-center justify-between px-1.5 pt-1">
-              <span className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">
-                Projects
+              <span className="text-[11px] uppercase tracking-[0.07em] text-faint font-semibold">
+                {t("sidebar.projects")}
               </span>
               <button
                 className="w-5 h-5 grid place-items-center rounded text-faint hover:text-ink hover:bg-panel"
-                title="New project"
-                aria-label="New project"
+                title={t("sidebar.new_project")}
+                aria-label={t("sidebar.new_project")}
                 onClick={() => props.onNewProject(browseKey)}
               >
                 <Icon name="folderPlus" size={14} />
@@ -885,7 +896,7 @@ export function Sidebar(props: Props) {
             <div className="space-y-0.5">
               {projectOrder.length === 0 && (
                 <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                  No projects yet — start one with the + above.
+                  {t("sidebar.no_projects_yet")}
                 </div>
               )}
               {projectOrder.map((proj) => {
@@ -912,7 +923,7 @@ export function Sidebar(props: Props) {
                       <Icon name="folder" size={15} className="shrink-0" />
                       <span
                         className={
-                          "truncate min-w-0 text-[12.5px] " + (isActive ? "font-semibold" : "font-medium")
+                          "truncate min-w-0 text-[13px] " + (isActive ? "font-semibold" : "font-medium")
                         }
                       >
                         {baseName(proj)}
@@ -935,13 +946,13 @@ export function Sidebar(props: Props) {
                               className="px-2 py-1 text-[12px] text-faint hover:text-muted"
                               onClick={() => setProjShowAll((s) => toggleSet(s, proj))}
                             >
-                              Show more ({list.length - peek})
+                              {t("sidebar.show_more_n", { n: list.length - peek })}
                             </button>
                           )}
                         </div>
                       ) : (
                         <div className="px-2 py-1.5 pl-[19px] text-[12px] text-faint leading-snug">
-                          No conversations in this project yet.
+                          {t("sidebar.no_project_convos")}
                         </div>
                       ))}
                   </div>
@@ -953,7 +964,7 @@ export function Sidebar(props: Props) {
           <div className="space-y-0.5">
             {mine.filter(matches).length === 0 ? (
               <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                {normalizedQuery ? "No matching conversations." : "No conversations yet."}
+                {normalizedQuery ? t("sidebar.no_matching") : t("sidebar.no_conversations")}
               </div>
             ) : (
               <>
@@ -966,7 +977,7 @@ export function Sidebar(props: Props) {
                     className="px-2 py-1 text-[12px] text-faint hover:text-muted"
                     onClick={() => setPersonaShowAll((s) => toggleSet(s, browseKey))}
                   >
-                    Show more ({mine.filter(matches).length - peek})
+                    {t("sidebar.show_more_n", { n: mine.filter(matches).length - peek })}
                   </button>
                 )}
               </>
@@ -981,7 +992,7 @@ export function Sidebar(props: Props) {
               onClick={() => setShowArchived((v) => !v)}
             >
               <Icon name={showArchived ? "chevronDown" : "chevronRight"} size={13} className="shrink-0" />
-              Archived ({archived.length})
+              {t("sidebar.archived_n", { n: archived.length })}
             </button>
             {showArchived && (
               <div className="space-y-0.5 mt-0.5">{archived.filter(matches).map((s) => sessionRow(s))}</div>
@@ -994,7 +1005,7 @@ export function Sidebar(props: Props) {
 
   return (
     <div
-      className="sidebar flex flex-col min-h-0 bg-panel border-r border-line"
+      className="sidebar flex flex-col min-h-0 bg-chrome border-r border-line"
       onMouseLeave={props.onPeekLeave}
     >
       {/* Header: collapse/pin control FIRST + wordmark. The pin sits at the same screen position
@@ -1005,26 +1016,26 @@ export function Sidebar(props: Props) {
         {/* Collapse (dock) / pin the sidebar. ⌘B mirrors this. */}
         {props.onCollapse && (
           <button
-            className="nav-pin-btn w-7 h-7 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper shrink-0"
-            title={props.collapsed ? "Dock sidebar (⌘B)" : "Collapse sidebar (⌘B)"}
-            aria-label={props.collapsed ? "Dock sidebar" : "Collapse sidebar"}
+            className="nav-pin-btn w-7 h-7 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-chromeHover shrink-0"
+            title={props.collapsed ? t("sidebar.dock") + " (⌘B)" : t("sidebar.collapse") + " (⌘B)"}
+            aria-label={props.collapsed ? t("sidebar.dock") : t("sidebar.collapse")}
             onClick={props.onCollapse}
           >
             <Icon name="sidebar" size={16} />
           </button>
         )}
-        <div className="brand-wordmark text-[15px]">OpenWorker<span className="beta-tag">BETA</span></div>
+        <div className="brand-wordmark text-[14px]">OpenWorker<span className="beta-tag">BETA</span></div>
       </div>
 
-      {/* New session: a plain button — the coworker pick moved to the composer's setup
-          row (UX-029), so the old ▾ persona menu is gone. Starts the last-used persona;
-          the setup row re-targets the draft in place. */}
-      <div className="px-3 pt-2">
+      {/* New session: a quiet nav row like its siblings (UX-040 — the filled accent block
+          shouted over the whole panel). The coworker pick lives in the composer's setup
+          row (UX-029); this starts the last-used persona. */}
+      <div className="px-2.5 pt-2">
         <button
-          className="w-full text-left px-3 py-2 rounded-lg bg-accent text-white text-[13px] font-medium hover:opacity-95 flex items-center gap-2"
+          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left font-medium text-ink hover:bg-chromeHover"
           onClick={() => props.onNewSession(props.agent)}
         >
-          <Icon name="plus" size={15} className="shrink-0" /> New session
+          <Icon name="plus" size={15} className="shrink-0" /> {t("sidebar.new_session")}
         </button>
       </div>
 
@@ -1032,10 +1043,10 @@ export function Sidebar(props: Props) {
           SearchModal over the whole app. Matches the bottom-nav rows to reduce the boxy look. */}
       <div className="px-2.5 mt-1">
         <button
-          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left text-muted hover:bg-paper hover:text-ink"
+          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left text-muted hover:bg-chromeHover hover:text-ink"
           onClick={() => setSearchModalOpen(true)}
         >
-          <Icon name="search" size={15} className="shrink-0" /> Search
+          <Icon name="search" size={15} className="shrink-0" /> {t("sidebar.search")}
         </button>
       </div>
 
@@ -1044,21 +1055,22 @@ export function Sidebar(props: Props) {
       <div className="px-2.5 mt-1">
         <button
           className={
-            "w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left hover:bg-paper hover:text-ink " +
-            (props.scheduledActive ? "text-ink bg-paper" : "text-muted")
+            "w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left hover:bg-chromeHover hover:text-ink " +
+            (props.scheduledActive ? "text-ink bg-chromeHover" : "text-muted")
           }
           data-testid="nav-automations"
           onClick={props.onOpenScheduled}
         >
           <Icon name="clock" size={15} className="shrink-0" />
-          <span className="flex-1">Automations</span>
+          <span className="flex-1">{t("sidebar.automations")}</span>
         </button>
       </div>
 
       {/* Scroll area: Pinned band + the RECENT header (with group/filter control), then the body —
           grouped (per-persona accordion) or flat (chronological list). */}
-      <div className="flex-1 overflow-y-auto px-2.5 mt-3 pb-2">
-        <div className="space-y-4">
+      {/* UX-040 rhythm: clear air between the fixed nav block and the content bands. */}
+      <div className="flex-1 overflow-y-auto px-2.5 mt-[22px] pb-2">
+        <div className="space-y-5">
           {pinnedBand()}
           {scheduledBand()}
           <div>
@@ -1072,7 +1084,7 @@ export function Sidebar(props: Props) {
                   // the block with its sessions (one connected group). Collapsed = a plain row.
                   <div
                     key={s.key}
-                    className={expanded ? "rounded-xl bg-paper/70 overflow-hidden" : ""}
+                    className={expanded ? "rounded-xl bg-chromeHover/70 overflow-hidden" : ""}
                   >
                     <div
                       className={
@@ -1080,8 +1092,8 @@ export function Sidebar(props: Props) {
                         (expanded
                           ? ""
                           : isCurrent(s.key)
-                            ? "rounded-lg bg-paper"
-                            : "rounded-lg hover:bg-paper")
+                            ? "rounded-lg bg-chromeHover"
+                            : "rounded-lg hover:bg-chromeHover")
                       }
                       onClick={() => onHeaderClick(s.key)}
                     >
@@ -1112,7 +1124,7 @@ export function Sidebar(props: Props) {
             <div className="space-y-0.5">
               {recentSessions.length === 0 ? (
                 <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
-                  {normalizedQuery ? "No matching conversations." : "No conversations yet."}
+                  {normalizedQuery ? t("sidebar.no_matching") : t("sidebar.no_conversations")}
                 </div>
               ) : (
                 <>
@@ -1126,8 +1138,8 @@ export function Sidebar(props: Props) {
                       onClick={() => setRecentExpanded((v) => !v)}
                     >
                       {recentExpanded
-                        ? "Show less"
-                        : `Show ${recentSessions.length - RECENT_PEEK} more`}
+                        ? t("sidebar.show_less")
+                        : t("sidebar.show_n_more", { n: recentSessions.length - RECENT_PEEK })}
                     </button>
                   )}
                 </>
@@ -1162,7 +1174,7 @@ export function Sidebar(props: Props) {
                 ) : (
                   <>
                     <div className="px-3 py-1.5 text-[11px] text-faint border-b border-line">
-                      Not signed in — one-click connections need OpenWorker Cloud
+                      {t("sidebar.not_signed_in")}
                     </div>
                     <button
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 mb-1 text-[13px] text-left text-accent hover:bg-paper"
@@ -1180,33 +1192,32 @@ export function Sidebar(props: Props) {
                         });
                       }}
                     >
-                      <Icon name="plug" size={15} className="shrink-0" /> Sign in to OpenWorker
-                      Cloud
+                      <Icon name="plug" size={15} className="shrink-0" /> {t("sidebar.sign_in")}
                     </button>
                   </>
                 )}
                 {appMenuItem(
                   "inbox",
-                  "Inbox",
+                  t("nav.inbox"),
                   props.onOpenInbox,
                   props.inboxActive,
                   <AttnBadge n={totalAttention} />,
                 )}
-                {appMenuItem("plug", "Connectors", props.onOpenIntegrations, props.integrationsActive)}
+                {appMenuItem("plug", t("nav.connectors"), props.onOpenIntegrations, props.integrationsActive)}
                 <div className="h-px bg-line my-1 mx-2" />
                 {appMenuItem(
                   "gear",
-                  "Settings",
+                  t("nav.settings"),
                   props.onManage,
                   false,
                   <span className="text-[11px] text-faint">⌘ ,</span>,
                 )}
                 {/* No Automations here — the sidebar's top nav already carries it. */}
-                {appMenuItem("audit", "Activity", props.onOpenAudit, props.auditActive)}
+                {appMenuItem("audit", t("nav.activity"), props.onOpenAudit, props.auditActive)}
                 {cloud?.signed_in && (
                   <>
                     <div className="h-px bg-line my-1 mx-2" />
-                    {appMenuItem("signOut", "Sign out", async () => {
+                    {appMenuItem("signOut", t("sidebar.sign_out"), async () => {
                       await cloudLogout().catch(() => {});
                       announceCloudChanged();
                     })}
@@ -1219,7 +1230,7 @@ export function Sidebar(props: Props) {
           <button
             className={
               "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] text-left " +
-              (appMenuOpen ? "bg-paper text-ink" : "hover:bg-paper")
+              (appMenuOpen ? "bg-chromeHover text-ink" : "hover:bg-chromeHover")
             }
             data-testid="account-row"
             onClick={() => {
@@ -1228,26 +1239,26 @@ export function Sidebar(props: Props) {
             }}
             aria-haspopup="menu"
             aria-expanded={appMenuOpen}
-            aria-label={cloud?.signed_in ? `Account: ${accountEmail}` : "Account: not signed in"}
+            aria-label={cloud?.signed_in ? t("sidebar.account_aria", { email: accountEmail }) : t("sidebar.account_not_signed_in_aria")}
           >
             <span
               className={
-                "w-6 h-6 rounded-full grid place-items-center text-[10.5px] font-semibold shrink-0 " +
+                "w-6 h-6 rounded-full grid place-items-center text-[11px] font-semibold shrink-0 " +
                 (cloud?.signed_in
                   ? "bg-accentSoft text-accent"
-                  : "bg-paper text-faint border border-line")
+                  : "bg-panel text-faint border border-line")
               }
               aria-hidden
             >
               {cloud?.signed_in ? accountName.slice(0, 1).toUpperCase() : "?"}
             </span>
             <span className={"truncate " + (cloud?.signed_in ? "" : "text-muted")}>
-              {cloud?.signed_in ? accountName : "Not signed in"}
+              {cloud?.signed_in ? accountName : t("sidebar.not_signed_in_row")}
             </span>
             {cloud?.signed_in && (
               <span
                 className="w-[7px] h-[7px] rounded-full bg-ok shrink-0"
-                title="Signed in to OpenWorker Cloud"
+                title={t("sidebar.signed_in_tooltip")}
                 aria-hidden
               />
             )}
@@ -1255,7 +1266,7 @@ export function Sidebar(props: Props) {
             {inboxUnlocked && (
               <span
                 className={
-                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] shrink-0 cursor-pointer " +
+                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] shrink-0 cursor-pointer " +
                   (totalAttention > 0
                     ? "bg-accentSoft text-accent font-semibold"
                     : "text-faint hover:text-ink")
@@ -1263,9 +1274,9 @@ export function Sidebar(props: Props) {
                 data-testid="inbox-chip"
                 role="button"
                 aria-label={
-                  totalAttention > 0 ? `Inbox — ${totalAttention} items need you` : "Inbox"
+                  totalAttention > 0 ? t("sidebar.inbox_chip_pending", { n: totalAttention }) : t("nav.inbox")
                 }
-                title={totalAttention > 0 ? `Inbox — ${totalAttention} items need you` : "Inbox"}
+                title={totalAttention > 0 ? t("sidebar.inbox_chip_pending", { n: totalAttention }) : t("nav.inbox")}
                 onClick={(e) => {
                   // The chip goes STRAIGHT to Inbox — the menu is the row's target, not the chip's.
                   e.stopPropagation();

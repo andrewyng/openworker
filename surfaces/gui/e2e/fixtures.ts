@@ -24,6 +24,7 @@ const HEALTH = { status: "ok", default_workspace: null, model: "anthropic:claude
 
 const SETTINGS = {
   provider: "openai",
+  auto_approve: true, // surfaces the Auto-approve mode entry (reviewer feature flag)
   model: "anthropic:claude-opus-4-8",
   models: ["anthropic:claude-opus-4-8", "gpt-5.5", "gpt-4o", "gpt-4o-mini", "o3-mini"],
   has_key: true,
@@ -123,6 +124,25 @@ const OPS_SESSION = {
   archived: false,
   attention: 0,
   liveness: "idle",
+  subscriptions: [],
+};
+
+// A session whose turn is LIVE on the server — its ws `ready` carries running:true, the
+// reconnect-mid-turn case (owner catch 2026-08-24): Stop + waiting row must show without
+// a local turn_start. Older than the pinned session so boot-resume stays deterministic.
+const LIVE_SESSION = {
+  session_id: "resume-live-1",
+  title: "Long audit",
+  workspace: "",
+  agent: "cowork",
+  model: "anthropic:claude-opus-4-8",
+  mode: "interactive",
+  updated_at: "2026-06-20 10:00:00",
+  messages: 2,
+  pinned: false,
+  archived: false,
+  attention: 0,
+  liveness: "working",
   subscriptions: [],
 };
 
@@ -350,6 +370,9 @@ const PROVIDERS = [
   // ollama: keyless local provider — "configured" without proving anything runs; the
   // onboarding gallery shows "No key needed" and its form is endpoint + Detect (§39).
   { name: "ollama", title: "Ollama (local models)", needs_key: false, fields: [{ key: "base_url", label: "Endpoint", secret: false, required: false, help: "", placeholder: "http://127.0.0.1:11434", default: "http://127.0.0.1:11434" }], configured: true, values: {}, suggested_models: ["qwen3-coder:30b"], key_set_at: null, last_used_at: null },
+  // openai-codex: the subscription OAuth provider — no key form; the gallery card and
+  // form render sign-in state instead (auth: "oauth"). Starts signed out.
+  { name: "openai-codex", title: "ChatGPT subscription", needs_key: false, auth: "oauth", signed_in: false, account: null, authorizing: false, last_error: null, blurb: "Sign in with your ChatGPT plan and run OpenAI models through your subscription — no API key. Tokens stay on this machine.", fields: [], configured: false, values: {}, suggested_models: ["gpt-5.6-sol"], key_set_at: null, last_used_at: null },
 ];
 
 /** Install the API + WebSocket mocks on a page. Returns handles for assertions/seed data. */
@@ -539,10 +562,20 @@ export async function mockApi(page: import("@playwright/test").Page) {
   // Installed personas — mutable so enable/surface/delete round-trip through the UI.
   const personas: any[] = PERSONAS.personas.map((p) => ({ ...p }));
   // Sessions — mutable so archive (PATCH), rename (PATCH), and delete round-trip.
+  // UX-044: mutable binding state for the project-menu mocks.
+  const projectBindings: Record<string, string> = {};
+  const projectNames: Record<string, { name: string; key: string }[]> = {
+    memory: [
+      { name: "openworker", key: "/k/openworker" },
+      { name: "personal-ops", key: "/k/ops" },
+    ],
+    board: [{ name: "aicreator-ops", key: "/k/aico" }],
+  };
   const sessions: any[] = [
     { ...PINNED_SESSION },
     ...EXTRA_SESSIONS.map((s) => ({ ...s })),
     { ...OPS_SESSION },
+    { ...LIVE_SESSION },
     { ...SLACK_SESSION },
   ];
   // Inbox items + the outbound routing binding — mutable for resolve + the inline Slack config.
@@ -642,7 +675,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // The page's session id, from the socket URL — team approval stamps THIS session
     // as the lead (the active conversation IS the lead; workers hang off it).
     const sid = ws.url().split("/ws/session/")[1]?.split("?")[0] || "sess-lead";
-    send("ready");
+    send("ready", sid === "resume-live-1" ? { running: true } : {});
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
     let hadTurn = false; // a user_message landed — set_model is now a mid-session switch
@@ -656,6 +689,31 @@ export async function mockApi(page: import("@playwright/test").Page) {
           input: msg.text,
           ...(msg.skill ? { display: `/${msg.skill}${msg.text ? ` ${msg.text}` : ""}` } : {}),
         });
+        if (/trip the reviewer/i.test(msg.text)) {
+          send("tool_proposed", { name: "run_shell", arguments: { command: "semgrep scan" } });
+          send("tool_finished", {
+            name: "run_shell",
+            status: "denied",
+            reason: "blocked by the safety reviewer",
+            reviewer_reason: "This creates files even though you asked not to.",
+            allow_anyway: true,
+            reviewer_paused:
+              "Auto-approve is paused for the rest of this turn — the reviewer blocked 5 actions in a row, so approvals now come to you.",
+          });
+          return; // turn stays open: the pause is a mid-turn state
+        }
+        if (/run an unsure tool/i.test(msg.text)) {
+          // The Auto-Approve reviewer answered `unsure`: the card carries its reason.
+          pendingTool = "run_shell";
+          send("tool_proposed", { name: "run_shell", arguments: { command: "python3 helper.py" } });
+          send("permission_required", {
+            name: "run_shell",
+            arguments: { command: "python3 helper.py" },
+            reason: "requires approval",
+            reviewer_unsure: "This runs a newly created script whose effects cannot be determined from the command.",
+          });
+          return; // suspended on the approval
+        }
         if (/run a tool/i.test(msg.text)) {
           pendingTool = "run_shell";
           send("tool_proposed", { name: "run_shell", arguments: { command: "ls" } });
@@ -1016,6 +1074,29 @@ export async function mockApi(page: import("@playwright/test").Page) {
         }
         send("interrupted", {});
         send("turn_done");
+      } else if (msg.type === "set_mode") {
+        // Mirrors the server: full explainer the FIRST time a session enters
+        // Auto-Approve, a one-line marker for every later change.
+        const anyWs = ws as any;
+        if (msg.mode === "auto-approve" && !anyWs.__modeNoticeShown) {
+          anyWs.__modeNoticeShown = true;
+          send("mode_notice", {
+            title: "Auto-approve is on.",
+            text:
+              "Auto-approve uses a model to let routine actions through without asking; " +
+              "anything it isn't sure about still comes to you. It cuts interruptions but " +
+              "still carries some risk i.e. a command it allows still reaches anything you " +
+              "can. These are model judgments, and not guarantees.",
+          });
+        } else {
+          const labels: Record<string, string> = {
+            discuss: "Discuss",
+            interactive: "Ask for approval",
+            "bypass-approvals": "Bypass approvals",
+            "auto-approve": "Auto-approve",
+          };
+          send("mode_notice", { text: `${labels[msg.mode] || msg.mode} is on.` });
+        }
       } else if (msg.type === "set_model") {
         // Mid-session switch: the server applies it and broadcasts the persisted marker.
         // Like the real server, the FIRST bind (fresh session) is silent.
@@ -1051,6 +1132,32 @@ export async function mockApi(page: import("@playwright/test").Page) {
         return json({ ok: true });
       }
       return json(connections);
+    }
+    // UX-044 project bindings: stateful per-run so specs can bind/unbind/name.
+    if (/\/v1\/sessions\/[^/]+\/project-menu$/.test(p)) {
+      const kind = new URL(req.url()).searchParams.get("kind") || "memory";
+      return json({
+        kind,
+        bound: projectBindings[kind] ?? null,
+        derived: {
+          kind: "folder",
+          label: "~/fleet/ro4d/demo-universe/notes",
+          full: "/Users/u/fleet/ro4d/demo-universe/notes",
+          key: "/Users/u/fleet/ro4d/demo-universe/notes",
+        },
+        named: projectNames[kind] || [],
+      });
+    }
+    if (/\/v1\/sessions\/[^/]+\/bindings$/.test(p) && m === "PUT") {
+      const b = req.postDataJSON() || {};
+      if (b.name) projectBindings[b.kind] = b.name;
+      else delete projectBindings[b.kind];
+      return json({ ok: true, bindings: projectBindings });
+    }
+    if (/\/v1\/sessions\/[^/]+\/project-name$/.test(p) && m === "POST") {
+      const b = req.postDataJSON() || {};
+      (projectNames[b.kind] ||= []).unshift({ name: b.name, key: "/Users/u/fleet/ro4d/demo-universe/notes" });
+      return json({ ok: true, kind: b.kind, name: b.name });
     }
     if (/\/v1\/sessions\/[^/]+\/roots$/.test(p)) {
       if (m === "POST") {
@@ -1856,6 +1963,36 @@ export async function mockApi(page: import("@playwright/test").Page) {
       prov.key_set_at = null;
       return json({ ok: true, provider: name });
     }
+    // Subscription OAuth sign-in (openai-codex): the flow "completes" instantly —
+    // signin flips the row to signed in; status mirrors it; signout clears it.
+    if (p.endsWith("/v1/providers/openai-codex/signin") && m === "POST") {
+      const prov = providers.find((x) => x.name === "openai-codex");
+      if (prov) {
+        prov.signed_in = true;
+        prov.configured = true;
+        prov.account = "rohit@example.com";
+      }
+      return json({ ok: true, started: true });
+    }
+    if (p.endsWith("/v1/providers/openai-codex/status")) {
+      const prov = providers.find((x) => x.name === "openai-codex");
+      return json({
+        signed_in: !!prov?.signed_in,
+        account: prov?.account || null,
+        authorizing: false,
+        last_error: null,
+        authorize_url: null,
+      });
+    }
+    if (p.endsWith("/v1/providers/openai-codex/signout") && m === "POST") {
+      const prov = providers.find((x) => x.name === "openai-codex");
+      if (prov) {
+        prov.signed_in = false;
+        prov.configured = false;
+        prov.account = null;
+      }
+      return json({ ok: true, had_tokens: true });
+    }
     if (p.endsWith("/v1/providers")) return json(providers);
     if (p.endsWith("/v1/channels/recent"))
       return json({
@@ -2097,6 +2234,27 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // Anything else: an empty-but-valid body. GET list endpoints read `?? []`/`?? {}` fallbacks.
     return json({});
   });
+}
+
+/** Seed a replayed transcript for one session. The shared mock answers every
+ * GET /v1/sessions/{id}/messages with `[]`, so reopening a session always starts blank;
+ * this registers a LATER route (later routes win) that stages rich history for that one
+ * session — replayed tool calls with results, connector-sourced messages, notices,
+ * reasoning — so specs can assert the reopen path (itemsFromMessages) directly instead
+ * of driving every turn live through the fake agent. Call after the page has the mock
+ * (any time before the session is opened). */
+export async function seedSessionMessages(
+  page: Page,
+  sessionId: string,
+  messages: Record<string, unknown>[],
+): Promise<void> {
+  await page.route(new RegExp(`/v1/sessions/${sessionId}/messages$`), (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ messages }),
+    }),
+  );
 }
 
 // A `test` whose page has the API mocked before navigation.

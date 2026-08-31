@@ -1,4 +1,5 @@
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import { useTranslation } from "react-i18next";
 import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
 
@@ -29,6 +30,7 @@ function BoardChip({ label }: { label: string }) {
 }
 
 function ArtifactChip({ path, title }: { path: string; title: string }) {
+  const { t } = useTranslation();
   const file = path.split("/").pop() || path;
   return (
     <button
@@ -46,7 +48,7 @@ function ArtifactChip({ path, title }: { path: string; title: string }) {
         <b>{title || file}</b>
         {title && title !== file && <span>{file}</span>}
       </span>
-      <span className="art-chip-open">Open ›</span>
+      <span className="art-chip-open">{t("rail.open")} ›</span>
     </button>
   );
 }

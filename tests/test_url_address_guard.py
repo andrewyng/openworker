@@ -244,3 +244,90 @@ def test_browser_open_url_is_guarded_and_never_launches(monkeypatch):
     out = open_url("http://169.254.169.254/latest/meta-data/")
     assert "link-local" in out["error"]
     assert out.get("ok") is None
+
+
+# -- redirects: the address that actually loads (OPE-124) -------------------------
+# check_url vets the URL the model supplied. Playwright then follows redirects, so the hop
+# that really loads is an address the guard never saw — and the user's approval was for the
+# first URL, not that one.
+
+
+def _refusal(requested, final):
+    from coworker.connectors.browser_automation import redirect_refusal
+
+    return redirect_refusal(requested, final)
+
+
+@pytest.mark.parametrize(
+    "landed",
+    [
+        "http://169.254.169.254/latest/meta-data/",  # cloud metadata / credentials
+        "http://192.168.1.1/admin",  # router admin page
+        "http://127.0.0.1:8765/v1/health",  # OpenWorker's own sidecar
+        "http://10.0.0.5/internal",  # private network
+    ],
+)
+def test_a_public_link_that_lands_somewhere_internal_is_refused(landed):
+    assert _refusal("https://short.link/x", landed)
+
+
+def test_a_redirect_to_another_public_page_is_fine():
+    assert _refusal("https://short.link/x", "https://example.com/article") is None
+
+
+def test_no_redirect_costs_no_second_check():
+    # Same address in and out: already vetted before navigation, so nothing to re-check.
+    assert _refusal("https://example.com/", "https://example.com/") is None
+
+
+def test_a_missing_final_url_is_not_treated_as_a_violation():
+    # A navigation that reports no URL is a browser failure, not a redirect to somewhere
+    # forbidden — the caller surfaces its own error rather than a misleading one.
+    assert _refusal("https://example.com/", "") is None
+
+
+def test_the_refusal_names_where_it_landed():
+    # The user approved one URL and ended up at another; the message has to say which,
+    # or the card they approved and the error they see cannot be reconciled.
+    reason = _refusal("https://short.link/x", "http://169.254.169.254/")
+    assert "169.254.169.254" in reason
+
+
+class _FakePage:
+    """A page that redirects: goto(url) lands on whatever `lands_on` maps it to."""
+
+    def __init__(self, lands_on):
+        self.lands_on = lands_on
+        self.url = ""
+        self.visited = []
+
+    def goto(self, url, **_kw):
+        self.visited.append(url)
+        self.url = self.lands_on.get(url, url)
+
+
+def _open_url_with(monkeypatch, page):
+    from coworker.connectors import browser_automation as ba
+
+    monkeypatch.setattr(ba._BROWSER, "call", lambda _action, fn: fn(page))
+    tools = {t.__name__: t for t in ba.make_browser_automation_tools()}
+    return tools["browser_open_url"]
+
+
+def test_open_url_refuses_and_blanks_the_page_after_a_bad_redirect(monkeypatch):
+    page = _FakePage({"https://short.link/x": "http://169.254.169.254/latest/meta-data/"})
+    result = _open_url_with(monkeypatch, page)("https://short.link/x")
+
+    assert "error" in result and "169.254.169.254" in result["error"]
+    # Containment: the request already went out, so what matters is that nothing readable
+    # is left behind for browser_read_page to lift off.
+    assert page.visited[-1] == "about:blank"
+    assert page.url == "about:blank"
+
+
+def test_open_url_keeps_a_harmless_redirect(monkeypatch):
+    page = _FakePage({"https://short.link/x": "https://example.com/article"})
+    result = _open_url_with(monkeypatch, page)("https://short.link/x")
+
+    assert result.get("ok") and result["url"] == "https://example.com/article"
+    assert "about:blank" not in page.visited

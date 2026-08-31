@@ -87,7 +87,13 @@ from ..sessions import SessionRecord
 from ..teams import Actor as TeamActor
 from ..teams import BoardError as TeamsBoardError
 from ..teams import JournalStore, Role as TeamRole, TeamStore, board_tools, journal_tools
-from ..teams.model import space_for_workspace
+from ..projects import (
+    project_key,
+    project_label,
+    project_presence,
+    resolve_board_space,
+    resolve_memory_key,
+)
 from ..teams.chat import ChatStore
 from ..teams.registry import TeamRegistry, TeamWorker
 from ..teams.attachments import AttachmentStore
@@ -117,6 +123,43 @@ def _grants_of(engine) -> dict[str, Any]:
     return out
 
 
+def _grant_offered(outcome, request) -> bool:
+    """Whether a persistent grant is legitimately offered for this tool — the server-side
+    mirror of what the approval card actually renders (`ApprovalCard.tsx`).
+
+    - ALWAYS_TOOL is tool-wide and argument-unbounded, so it is withheld from run_shell (the
+      command-scoped grant is the narrower option), from save_skill (every skill proposal
+      gets its own review), from anything that reaches off the machine — connectors and
+      MCP tools alike, where "always allow send_message" would cover every future recipient —
+      and from URL-carrying egress (§1.9): "always allow web_fetch" would cover every future
+      destination, and the domain-scoped grant is the one the card offers. Fixed-destination
+      egress (web_search: no url argument) keeps it — tool-wide IS provider-wide there.
+    - ALWAYS_COMMAND only means anything for the shell tool.
+    - ALWAYS_DOMAIN only means anything for a tool carrying a url.
+    """
+    from ..engine import ApprovalOutcome
+    from ..risk import RiskClass, classify
+
+    name = getattr(request, "tool_name", "")
+    metadata = getattr(request, "metadata", None)
+    args = getattr(request, "arguments", None) or {}
+    risk = classify(name, metadata)
+
+    if outcome is ApprovalOutcome.ALWAYS_COMMAND:
+        return risk is RiskClass.EXEC
+    if outcome is ApprovalOutcome.ALWAYS_DOMAIN:
+        return risk is RiskClass.EGRESS and bool(args.get("url"))
+    if outcome is ApprovalOutcome.ALWAYS_TOOL:
+        if risk in (RiskClass.EXEC, RiskClass.EXTERNAL):
+            return False
+        if risk is RiskClass.EGRESS and args.get("url"):
+            return False
+        if getattr(metadata, "category", "") == "connector":
+            return False
+        return name != "save_skill"
+    return True
+
+
 def _approval_body(request) -> str:
     """Approval card body: the tool's reason (if any) plus a compact preview of its args, so a
     mirrored 'Run `write_file`?' shows the path/content rather than just the tool name.
@@ -124,6 +167,14 @@ def _approval_body(request) -> str:
     reason = (getattr(request, "reason", "") or "").strip()
     preview = args_preview(getattr(request, "arguments", None))
     return "\n".join(p for p in (reason, preview) if p)
+
+
+def _stable_error(error: str) -> str:
+    """An error string with per-process noise removed, for change detection only:
+    hex object addresses and long digit runs (pids, ports, timestamps) vary between
+    identical failures across relaunches."""
+    stable = re.sub(r"0x[0-9a-fA-F]+", "0xADDR", error or "")
+    return re.sub(r"\d{4,}", "N", stable)
 
 
 class SessionManager:
@@ -172,6 +223,12 @@ class SessionManager:
         self._autotitle_inflight: set[str] = set()
         self._autotitle_tasks: set[asyncio.Task] = set()
         self._autotitle_attempts: dict[str, int] = {}
+        # Opener-count signature of the last attempt: titling fires at TURN START (owner
+        # catch 2026-08-24 — waiting for an agentic turn to COMPLETE left sessions
+        # untitled for however long the scan ran), and the completion hook still covers
+        # background turns; this guard keeps the two trigger points from burning
+        # duplicate attempts on the same openers.
+        self._autotitle_sig: dict[str, int] = {}
         self.workspace_trust = WorkspaceTrustStore()
         self.secrets = SecretStore()
         # No explicit provider injected → route by the model's `provider:` prefix (OpenAI default,
@@ -186,6 +243,10 @@ class SessionManager:
         # feeds list_mcp's status so the GUI can show "authorizing…" and failures.
         self._mcp_authorizing: set[str] = set()
         self._mcp_errors: dict[str, str] = {}
+        # ChatGPT-subscription provider sign-in in flight / its last error — feeds
+        # the providers list + status route so the GUI can show "authorizing…".
+        self._codex_authorizing = False
+        self._codex_error: Optional[str] = None
         # http servers whose anonymous connect came back 401/403 — the failure is
         # "needs sign-in", so the GUI offers the OAuth switch instead of a raw error.
         self._mcp_auth_hints: set[str] = set()
@@ -595,6 +656,7 @@ class SessionManager:
             # and stay usable, only the write tools go. Read at build time; running
             # sessions finish under the mode they started with.
             memory_store=self.memory_store,
+            memory_workspace=self._memory_key_for(record, ws),
             memory_off=not self.memory_settings.enabled,
             # LIVE, not a snapshot: turning saving off mid-conversation must take
             # effect at once (owner-hit 2026-07-28 — a running session kept saving).
@@ -643,6 +705,10 @@ class SessionManager:
             extra_skill_dirs=(
                 [d] if (d := self.persona_skill_scope(agent_name)[0]) is not None else None
             ),
+            # Auto-Approve (spec §1.5): prefs-backed, so the Settings toggle takes effect on
+            # the next session build without a config.toml edit.
+            auto_approve=self.auto_approve(),
+            auto_approve_shadow=self.auto_approve_shadow(),
         )
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
@@ -1255,11 +1321,15 @@ class SessionManager:
     def _should_notify_mcp_failure(self, name: str, error: str) -> bool:
         """True once per failure episode: the first session after `name` starts
         failing (or its error text changes) notices; unchanged-broken stays quiet.
-        Persisted in prefs so an app relaunch doesn't re-stamp the same complaint."""
+        Persisted in prefs so an app relaunch doesn't re-stamp the same complaint.
+        Compared on a NORMALIZED error: stderr often embeds per-process values
+        (0x… object addresses, pids), which made "the same" failure look new on
+        every relaunch and re-stamp every session (owner-hit 2026-08-21)."""
+        stable = _stable_error(error)
         notified = self._prefs.setdefault("mcp_notified_errors", {})
-        if notified.get(name) == error:
+        if notified.get(name) == stable:
             return False
-        notified[name] = error
+        notified[name] = stable
         self._save_prefs()
         return True
 
@@ -1588,13 +1658,46 @@ class SessionManager:
 
     # ------------------------------------------------------------- agent teams (OPE-96)
 
+    # ------------------------------------------------- project identity (pass 20)
+
+    def _memory_key_for(self, record, ws: Optional[str]) -> Optional[str]:
+        """Binding > git > path, with the one-time path→git re-key on the way."""
+        binding = ((record.bindings if record else {}) or {}).get("memory")
+        return resolve_memory_key(
+            ws,
+            binding=binding,
+            names=self.session_store.names(),
+            memory_store=self.memory_store,
+        )
+
+    def _space_for(self, record, ws: Optional[str]) -> Optional[str]:
+        """Board-space twin of _memory_key_for — same ladder, board collision rule."""
+        binding = ((record.bindings if record else {}) or {}).get("board")
+        return resolve_board_space(
+            ws,
+            binding=binding,
+            names=self.session_store.names(),
+            team_store=self.team_store,
+        )
+
     def _board_space(self, session_id: str) -> Optional[str]:
         record = self.session_store.load(session_id)
         workspace = (record.workspace if record else None) or self.default_workspace
-        return space_for_workspace(workspace) if workspace else None
+        return self._space_for(record, workspace) if workspace else None
 
     def _user_actor(self) -> TeamActor:
         return TeamActor(id="user", role=TeamRole.USER)
+
+    def board_attachment(self, session_id: str, stored: str) -> tuple[bytes, str]:
+        """Read an attachment referenced by the session's board as the user."""
+        space = self._board_space(session_id)
+        if space is None:
+            raise TeamsBoardError("attachment not found")
+        self.team_store.require_attachment_access(
+            space, self._user_actor(), stored
+        )
+        path = self.attachment_store.path_for(stored)
+        return path.read_bytes(), self.attachment_store.mime_for(stored)
 
     def board_item_detail(self, session_id: str, item_id: int) -> dict[str, Any]:
         """One item in full, with its TIMELINE — creations, assignments,
@@ -1605,7 +1708,9 @@ class SessionManager:
         if space is None:
             return {"error": "no board for this session"}
         try:
-            item = self.team_store.get_item(space, int(item_id))
+            item = self.team_store.get_item(
+                space, int(item_id), actor=self._user_actor()
+            )
         except TeamsBoardError as error:
             return {"error": str(error)}
         timeline: list[dict[str, Any]] = []
@@ -1701,7 +1806,7 @@ class SessionManager:
         record = self.session_store.load(session_id)
         if record is None or not record.workspace:
             return {"approved": False, "error": "the session has no workspace"}
-        space = space_for_workspace(record.workspace)
+        space = self._space_for(record, record.workspace)
         actor = TeamActor(
             id=f"{record.agent}:{session_id[:8]}",
             role=TeamRole.LEAD,
@@ -1782,7 +1887,7 @@ class SessionManager:
             role = "lead"
         if role is None or not ws:
             return []
-        space = space_for_workspace(ws)
+        space = self._space_for(record, ws)
         if role == "worker":
             info = (record.team if record is not None else {}) or {}
             actor = TeamActor(
@@ -1977,7 +2082,7 @@ class SessionManager:
             return {"approved": False, "error": "the lead session has no workspace"}
         if self.teams.for_lead_session(session_id) is not None:
             return {"approved": False, "error": "this session already leads a team"}
-        space = space_for_workspace(record.workspace)
+        space = self._space_for(record, record.workspace)
         workers: list[TeamWorker] = []
         used: set[str] = {"lead", "user", "board"}  # reserved handles
         for member in members:
@@ -2203,7 +2308,9 @@ class SessionManager:
         # item's ASSIGNEE — a filer merely hears about it.
         def _holds(event) -> bool:
             try:
-                item = self.team_store.get_item(team.space, int(event["item_id"]))
+                item = self.team_store.get_item(
+                    team.space, int(event["item_id"]), actor=self._user_actor()
+                )
             except Exception:
                 return False
             return item["assignee"] == actor
@@ -2296,7 +2403,9 @@ class SessionManager:
             item = None
             if item_id is not None:
                 try:
-                    item = self.team_store.get_item(team.space, int(item_id))
+                    item = self.team_store.get_item(
+                        team.space, int(item_id), actor=self._user_actor()
+                    )
                 except Exception:
                     item = None
             title = f"#{item_id} {item['title']}" if item else f"#{item_id}"
@@ -2744,10 +2853,18 @@ class SessionManager:
 
         if provider not in provider_names():
             return {"ok": False, "error": f"unknown provider: {provider}"}
+        before = self.get_web_search()["provider"]
         profile: dict[str, Any] = {"provider": provider}
         if api_key:
             profile["api_key"] = api_key
         self.secrets.put("web_search:default", profile)
+        # §1.9: "Always allow searches this session" is consent to a NAMED destination —
+        # the card says which provider the queries go to. A new provider is a new
+        # destination, so every live session's grant dies with the old one. (Scheduled
+        # tasks that name-allow web_search are unaffected: their approver re-allows.)
+        if provider != before:
+            for engine in self._engines.values():
+                engine.permissions.session_allow_tools.discard("web_search")
         return {"ok": True, "provider": provider}
 
     # -- model providers (OpenAI, Ollama, …) ------------------------------------
@@ -2764,21 +2881,30 @@ class SessionManager:
                 for f in d.fields
                 if not f.secret and profile.get(f.key)
             }
-            out.append(
-                {
-                    **d.to_dict(),
-                    "configured": configured,
-                    "values": values,
-                    "suggested_models": self._suggested_models(d.name),
-                    # Key hygiene for the Settings pane: when the key was saved (date, stamped
-                    # by set_provider) and when the provider last served a completion (epoch,
-                    # stamped by the router's on_use hook). Absent for env-only config.
-                    "key_set_at": profile.get("key_set_at"),
-                    "last_used_at": (self._prefs.get("provider_last_used") or {}).get(
-                        d.name
-                    ),
-                }
-            )
+            row = {
+                **d.to_dict(),
+                "configured": configured,
+                "values": values,
+                "suggested_models": self._suggested_models(d.name),
+                # Key hygiene for the Settings pane: when the key was saved (date, stamped
+                # by set_provider) and when the provider last served a completion (epoch,
+                # stamped by the router's on_use hook). Absent for env-only config.
+                "key_set_at": profile.get("key_set_at"),
+                "last_used_at": (self._prefs.get("provider_last_used") or {}).get(
+                    d.name
+                ),
+            }
+            if d.auth == "oauth":
+                # Sign-in state instead of key state; the token values themselves
+                # never leave the SecretStore.
+                row["signed_in"] = configured
+                row["account"] = profile.get("account_email") or profile.get(
+                    "account_id"
+                )
+                if d.name == "openai-codex":
+                    row["authorizing"] = self._codex_authorizing
+                    row["last_error"] = self._codex_error
+            out.append(row)
         return out
 
     def pick_native_folder(self) -> dict[str, Any]:
@@ -2919,6 +3045,58 @@ class SessionManager:
         self._refresh_provider(name)
         return {"ok": True, "provider": name}
 
+    # -- ChatGPT-subscription provider (OAuth, no key) ---------------------------
+    def begin_codex_signin(self) -> None:
+        """Flag `authorizing` BEFORE the background sign-in task starts, so the GUI's
+        first poll after the button press already shows it (same reasoning as
+        begin_mcp_connect)."""
+        self._codex_authorizing = True
+        self._codex_error = None
+
+    async def codex_signin(self) -> dict[str, Any]:
+        """Run the interactive browser sign-in and store the tokens. Long-running
+        (the user completes it in the browser) — routes run it as a background task
+        and the GUI polls codex_status for the flip."""
+        from ..providers import codex_auth
+
+        self._codex_authorizing = True
+        self._codex_error = None
+        try:
+            result = await codex_auth.sign_in(self.secrets)
+        except Exception as exc:
+            self._codex_error = str(exc)
+            return {"ok": False, "error": str(exc)}
+        finally:
+            self._codex_authorizing = False
+        self._refresh_provider("openai-codex")
+        # Same convenience as set_provider: surface the recommended model right away,
+        # and win the default when the current default's provider isn't usable.
+        added = "openai-codex:gpt-5.6-sol"
+        self.add_model(added)
+        if not self._provider_configured(self._model_provider(self.model)):
+            self.set_default_model(added)
+        return result
+
+    def codex_status(self) -> dict[str, Any]:
+        from ..providers import codex_auth
+
+        store = codex_auth.CodexTokenStore(self.secrets)
+        return {
+            "signed_in": store.signed_in(),
+            "account": store.account_label(),
+            "authorizing": self._codex_authorizing,
+            "last_error": self._codex_error,
+            "authorize_url": codex_auth.last_authorize_url,
+        }
+
+    def codex_signout(self) -> dict[str, Any]:
+        from ..providers import codex_auth
+
+        had_tokens = codex_auth.CodexTokenStore(self.secrets).clear()
+        self._codex_error = None
+        self._refresh_provider("openai-codex")
+        return {"ok": True, "had_tokens": had_tokens}
+
     def verify_provider(
         self, name: str, fields: Optional[dict[str, Any]]
     ) -> dict[str, Any]:
@@ -2930,6 +3108,11 @@ class SessionManager:
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
+        if d.auth == "oauth":
+            # No key form — verify from the stored token set (signed-out / expired / OK).
+            from ..providers import codex_auth
+
+            return codex_auth.verify(self.secrets)
         fields = fields or {}
         profile = self.secrets.get(f"provider:{name}") or {}
         merged = {}
@@ -3142,6 +3325,10 @@ class SessionManager:
             "nav_layout": self._nav_layout(),
             "sessions_peek": self.sessions_peek(),
             "context_bar": self.context_bar(),
+            # Auto-Approve feature flag + its shadow-eval sibling (spec §1.5). Drive the
+            # Settings toggles and gate the composer's Auto-Approve mode entry.
+            "auto_approve": self.auto_approve(),
+            "auto_approve_shadow": self.auto_approve_shadow(),
             "scratch_base": self._prefs.get("scratch_base")
             or self.DEFAULT_SCRATCH_BASE,
             # Real on-disk secrets location, so the UI shows the OS-native path instead of a
@@ -3210,6 +3397,42 @@ class SessionManager:
         self._prefs["context_bar"] = bool(shown)
         self._save_prefs()
         return {"ok": True, "context_bar": self.context_bar()}
+
+    # -- Auto-Approve (spec §1.5, Part 6 step 3) --------------------------------
+    # The feature flag and its shadow-eval sibling live in prefs (GUI-writable), falling
+    # back to the config.toml value a power user may have hand-set. Prefs is user-global,
+    # so a cloned repo still can't enable either — same guarantee as the config path.
+    def auto_approve(self) -> bool:
+        from ..config import load_config
+
+        if "auto_approve" in self._prefs:
+            return bool(self._prefs["auto_approve"])
+        return bool(load_config().auto_approve)
+
+    def auto_approve_shadow(self) -> bool:
+        from ..config import load_config
+
+        if "auto_approve_shadow" in self._prefs:
+            return bool(self._prefs["auto_approve_shadow"])
+        return bool(load_config().auto_approve_shadow)
+
+    def set_auto_approve(self, on: Any) -> dict[str, Any]:
+        self._prefs["auto_approve"] = bool(on)
+        self._save_prefs()
+        return {
+            "ok": True,
+            "auto_approve": self.auto_approve(),
+            "auto_approve_shadow": self.auto_approve_shadow(),
+        }
+
+    def set_auto_approve_shadow(self, on: Any) -> dict[str, Any]:
+        self._prefs["auto_approve_shadow"] = bool(on)
+        self._save_prefs()
+        return {
+            "ok": True,
+            "auto_approve": self.auto_approve(),
+            "auto_approve_shadow": self.auto_approve_shadow(),
+        }
 
     # -- PDF attachments / token savings (owner ask, 2026-07-17) ----------------
     DEFAULT_PDF_MAX_PAGES = 20
@@ -3948,26 +4171,111 @@ class SessionManager:
     def approval_outcome(self, resolution: str, request, session_id: str):
         """Map an approval resolution (from any surface) to an ApprovalOutcome, handling
         the task-persistent "always_task" vocabulary alongside the session-scoped ones.
+
+        Server-side validated, not trusted from the caller: a grant that no UI offers for
+        this tool is downgraded to a one-time approval rather than honoured. The GUI already
+        hides the broad "always allow" for run_shell / connectors / save_skill, and Slack
+        mirrors only ever render approve/deny — but `POST /v1/inbox/{id}/resolve` takes a raw
+        string, so without this check any local API caller could mint a session-wide
+        any-argument shell grant. Same philosophy as mint_task_rule: validate here, don't
+        trust the card.
         """
         from ..engine import ApprovalOutcome
 
         if resolution == "always_task":
-            self.mint_task_rule(
+            minted = self.mint_task_rule(
                 session_id,
                 request.tool_name,
                 getattr(request, "arguments", None),
                 getattr(request, "metadata", None),
             )
+            if not minted:
+                self._audit_grant_refused(session_id, request, resolution)
             return ApprovalOutcome.ONCE
         try:
-            return ApprovalOutcome(resolution)
+            outcome = ApprovalOutcome(resolution)
         except ValueError:
-            pass
-        if resolution == "allow":
+            if resolution == "allow":
+                return ApprovalOutcome.ONCE
+            if resolution == "always":
+                outcome = ApprovalOutcome.ALWAYS_TOOL
+            else:
+                return ApprovalOutcome.DENY
+        if outcome in (
+            ApprovalOutcome.ALWAYS_TOOL,
+            ApprovalOutcome.ALWAYS_COMMAND,
+            ApprovalOutcome.ALWAYS_DOMAIN,
+        ) and not _grant_offered(outcome, request):
+            self._audit_grant_refused(session_id, request, resolution)
             return ApprovalOutcome.ONCE
-        if resolution == "always":
-            return ApprovalOutcome.ALWAYS_TOOL
-        return ApprovalOutcome.DENY
+        return outcome
+
+    def audit_autonomy_change(
+        self, session_id: str, kind: str, before: Any, after: Any
+    ) -> None:
+        """Record a change to how much the agent may do unsupervised — the permission mode,
+        or the attended/unattended toggle. Without this, "who turned on auto mode, and when"
+        is unanswerable from the audit store, which is at odds with the per-call trail the
+        rest of the engine keeps. Raising autonomy is flagged so it can be filtered."""
+        # AUTO_APPROVE sits above interactive (turning the reviewer on means fewer human
+        # checks — that IS raising autonomy) and below bypass, which removes checks
+        # entirely. "auto" is the legacy spelling of "bypass-approvals".
+        order = {
+            "discuss": 0,
+            "plan": 1,
+            "interactive": 2,
+            "custom": 2,
+            "auto-approve": 3,
+            "auto": 4,
+            "bypass-approvals": 4,
+        }
+        raised = (
+            order.get(str(after), 0) > order.get(str(before), 0)
+            if kind == "mode"
+            else bool(after) and not bool(before)
+        )
+        try:
+            self.audit_store.append(
+                {
+                    "session_id": session_id,
+                    "tool": "",
+                    "arguments": {},
+                    "stage": f"{kind}_changed",
+                    "status": "raised" if raised else "lowered",
+                    "reason": f"{kind}: {before} → {after}",
+                }
+            )
+        except Exception:
+            pass
+
+    def set_unattended(self, session_id: str, on: bool) -> dict[str, Any]:
+        """Flip the attended/unattended toggle, with an audit row. Note this changes only
+        WHERE the human is reached, never the autonomy ceiling (that's the mode) — but it is
+        still worth recording, since an unattended session routes prompts away from the
+        screen the user is looking at."""
+        before = self.unattended.is_unattended(session_id)
+        self.unattended.set(session_id, on)
+        if before != on:
+            self.audit_autonomy_change(session_id, "unattended", before, on)
+        return {"ok": True, "session_id": session_id, "unattended": on}
+
+    def _audit_grant_refused(self, session_id: str, request, resolution: str) -> None:
+        try:
+            self.audit_store.append(
+                {
+                    "session_id": session_id,
+                    "tool": getattr(request, "tool_name", ""),
+                    "arguments": getattr(request, "arguments", None) or {},
+                    "stage": "grant_refused",
+                    "status": "downgraded",
+                    "reason": (
+                        f"resolution {resolution!r} is not offered for this tool — "
+                        "applied as a one-time approval"
+                    ),
+                }
+            )
+        except Exception:
+            pass
 
     def _scheduled_approver(self, task, session_id: str):
         from ..engine import ApprovalOutcome
@@ -4020,6 +4328,7 @@ class SessionManager:
             approver=self._scheduled_approver(task, session_id),
             provider=self.provider,
             memory_store=self.memory_store,
+            memory_workspace=self._memory_key_for(None, task.workspace),
             memory_off=not self.memory_settings.enabled,
             memory_saving_enabled=lambda: self.memory_settings.enabled,
             # Callable, not a snapshot: editing your instructions in Settings applies
@@ -4714,7 +5023,7 @@ class SessionManager:
             self.task_store.save(task)
         return {"ok": True, "run": run.to_dict()}
 
-    def save(self, session_id: str, engine: TurnEngine) -> None:
+    def save(self, session_id: str, engine: TurnEngine, touch: bool = True) -> None:
         executor = getattr(engine, "executor", None)
         workspace = os.path.realpath(str(executor.cwd)) if executor else ""
         self.session_store.save(
@@ -4733,7 +5042,8 @@ class SessionManager:
                     if getattr(engine, "compaction_state", None)
                     else {}
                 ),
-            )
+            ),
+            touch=touch,
         )
 
     @staticmethod
@@ -4768,10 +5078,12 @@ class SessionManager:
 
     # -- LLM auto-titles (FB-010) -------------------------------------------------
     _AUTOTITLE_PROMPT = (
-        "You title chat sessions. Given the user's opening message(s), reply with ONLY "
-        "a 4-5 word title for the session — no quotes or punctuation wrapping it. If "
-        'the opening is merely a greeting or small-talk with no topic ("hey", '
-        '"how are you", "hi there"), reply with exactly: small-talk'
+        "You title chat sessions. Given the user's opening message(s) — and, when "
+        "present, the assistant's first reply for context — reply with ONLY a 4-5 word "
+        "title for the session, named after what the session is actually about — no "
+        "quotes or punctuation wrapping it. If there is no topic at all ("
+        '"hey", "how are you", "hi there" and a generic reply), reply with exactly: '
+        "small-talk"
     )
 
     def _maybe_autotitle(self, session_id: str) -> None:
@@ -4789,7 +5101,11 @@ class SessionManager:
             return
         if self.task_store.task_for_run_session(session_id) is not None:
             return  # automation runs are titled by their task
-        if self._autotitle_attempts.get(session_id, 0) >= 2:
+        # Three windows, not two (owner ruling 2026-08-24): opener-only at turn 1 start,
+        # opener+assistant-reply at turn 1 end (titles a "hey"-then-real-work session),
+        # and both-openers at turn 2 start. The signature guard makes each fire at most
+        # once; sessions with a meaty first message still title on attempt 1.
+        if self._autotitle_attempts.get(session_id, 0) >= 3:
             return
         users = [m for m in engine.messages if m.get("role") == "user"]
         if not users:
@@ -4806,6 +5122,28 @@ class SessionManager:
         ][:2]
         if not openers:
             return
+        # The agent's first reply is fair evidence for a TITLE (unlike the reviewer,
+        # naming a session is not a security boundary — owner ruling 2026-08-24): it is
+        # what turns "hey" + a generic ask into "Semgrep security review".
+        assistant = next(
+            (
+                text
+                for m in engine.messages
+                if m.get("role") == "assistant"
+                and (
+                    text := content_to_text(
+                        m.get("content"), image_placeholder=""
+                    ).strip()
+                )
+            ),
+            "",
+        )[:400]
+        # Same evidence as the last attempt → nothing new to say; skip WITHOUT burning an
+        # attempt (this is how the turn-start and turn-end triggers coexist).
+        sig = (len(openers), bool(assistant))
+        if self._autotitle_sig.get(session_id) == sig:
+            return
+        self._autotitle_sig[session_id] = sig
         self._autotitle_attempts[session_id] = (
             self._autotitle_attempts.get(session_id, 0) + 1
         )
@@ -4816,12 +5154,18 @@ class SessionManager:
         self._autotitle_inflight.add(session_id)
         # Retain the task: the loop holds only a weak ref, and a GC'd task would both
         # kill the title mid-flight and strand the inflight guard.
-        task = loop.create_task(self._generate_autotitle(session_id, engine, openers))
+        task = loop.create_task(
+            self._generate_autotitle(session_id, engine, openers, assistant)
+        )
         self._autotitle_tasks.add(task)
         task.add_done_callback(self._autotitle_tasks.discard)
 
     async def _generate_autotitle(
-        self, session_id: str, engine: TurnEngine, openers: list[str]
+        self,
+        session_id: str,
+        engine: TurnEngine,
+        openers: list[str],
+        assistant: str = "",
     ) -> None:
         """One cheap non-streaming completion on the session's own provider/model. Every
         failure (provider error, empty, absurdly long) is swallowed — the title_from
@@ -4833,7 +5177,15 @@ class SessionManager:
                 model=engine.model,
                 messages=[
                     {"role": "system", "content": self._AUTOTITLE_PROMPT},
-                    {"role": "user", "content": "\n\n".join(openers)},
+                    {
+                        "role": "user",
+                        "content": "\n\n".join(openers)
+                        + (
+                            f"\n\n[the assistant's first reply]\n{assistant}"
+                            if assistant
+                            else ""
+                        ),
+                    },
                 ],
                 temperature=0.2,
                 # Reasoning-routed models spend hidden tokens BEFORE emitting text; a
@@ -4869,7 +5221,10 @@ class SessionManager:
             # A failed title must never surface as a session error — but it must
             # not be invisible either (a silent provider 400 hid the max_tokens
             # rejection for a whole owner test pass, 2026-07-20).
-            logger.debug("autotitle failed for %s", session_id, exc_info=True)
+            # warning, not debug: debug was invisible in packaged builds, which re-hid
+            # exactly the class of failure this comment warns about (2026-08-24: the plan
+            # backend 400-ing on max_output_tokens went unseen for a whole test pass).
+            logger.warning("autotitle failed for %s", session_id, exc_info=True)
         finally:
             self._autotitle_inflight.discard(session_id)
 
@@ -5034,7 +5389,32 @@ class SessionManager:
                 ],
             )
         self.session_store.touch_workspace(str(resolved))
-        return {"ok": True, "roots": self.get_roots(session_id)}
+        # Grant-time notice (pass 20): if this directory's project already has
+        # memory or a board, say so — one line, pointer only, to agent + user.
+        notice = self._project_notice(str(resolved))
+        engine = self._engines.get(session_id)
+        if notice and engine is not None:
+            engine._append_notice("project_presence", notice)
+        return {"ok": True, "roots": self.get_roots(session_id), "notice": notice}
+
+    def _project_notice(self, path: str) -> Optional[str]:
+        """One-line presence pointer for a newly granted directory, or None."""
+        try:
+            key = project_key(path)
+            pres = project_presence(
+                key, memory_store=self.memory_store, team_store=self.team_store
+            )
+        except Exception:
+            return None
+        parts = []
+        if pres["memories"]:
+            parts.append(f"project memory ({pres['memories']} entries)")
+        if pres["board_items"]:
+            parts.append("a board")
+        if not parts:
+            return None
+        label = project_label(key)["label"]
+        return f"“{label}” already has {' and '.join(parts)} — bind it by name or start a session there to use it."
 
     def remove_root(self, session_id: str, path: str) -> dict[str, Any]:
         """Revoke a previously-added folder. The primary scratch cannot be removed."""
@@ -5522,6 +5902,71 @@ class SessionManager:
                 pass
 
         return notify
+
+    # -- project bindings (pass 20 / UX-044) -------------------------------------
+
+    def project_menu(self, session_id: str, kind: str) -> dict[str, Any]:
+        """The submenu payload: the session's derived project (pinned, labeled per
+        the UX-044 rules) + named entries MRU-ordered. The GUI shows 5 and grows a
+        filter at 6+; the full named list ships so the filter reaches everything."""
+        record = self.session_store.load(session_id)
+        ws = (record.workspace if record else None) or self.default_workspace
+        derived_key = project_key(ws) if ws else None
+        names = self.session_store.names()
+        bound = ((record.bindings if record else {}) or {}).get(kind)
+        named = names.list(kind)
+        return {
+            "kind": kind,
+            "bound": bound,
+            "derived": (
+                {**project_label(derived_key), "key": derived_key}
+                if derived_key
+                else None
+            ),
+            "named": [{"name": n["name"], "key": n["key"]} for n in named],
+        }
+
+    def set_binding(
+        self, session_id: str, kind: str, name: Optional[str]
+    ) -> dict[str, Any]:
+        """Bind (or unbind, name=None) a named project for this session. Takes
+        effect at the next engine build — the running engine keeps the knowledge
+        it started with (same doctrine as memory deletions)."""
+        if kind not in ("memory", "board"):
+            return {"ok": False, "error": f"unknown kind {kind!r}"}
+        if self.is_running(session_id):
+            return {"ok": False, "error": "wait for the current task to finish first"}
+        if name and self.session_store.names().resolve(kind, name) is None:
+            return {"ok": False, "error": f"no {kind} named {name!r}"}
+        record = self.session_store.load(session_id)
+        bindings = dict((record.bindings if record else {}) or {})
+        if name:
+            bindings[kind] = name
+        else:
+            bindings.pop(kind, None)
+        if record is None:
+            return {"ok": False, "error": "unknown session"}
+        self.session_store.set_bindings(session_id, bindings)
+        # Rebind applies from the next engine build; drop the cached engine so the
+        # next turn rebuilds with the new key (messages persist via the record).
+        self._engines.pop(session_id, None)
+        return {"ok": True, "bindings": bindings}
+
+    def name_current_project(
+        self, session_id: str, kind: str, name: str
+    ) -> dict[str, Any]:
+        """Give the session's derived project a user name (UX-044 'Name current…')."""
+        record = self.session_store.load(session_id)
+        ws = (record.workspace if record else None) or self.default_workspace
+        if not ws:
+            return {"ok": False, "error": "session has no workspace"}
+        try:
+            entry = self.session_store.names().name_current(
+                kind, name, project_key(ws)
+            )
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, **entry}
 
     def list_memory(self) -> list[dict[str, Any]]:
         return [

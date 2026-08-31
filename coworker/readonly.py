@@ -156,3 +156,96 @@ def is_readonly_command(command: str) -> bool:
     if stages is None:
         return False
     return all(_stage_ok(s) for s in stages)
+
+
+# -- read targets (OPE-130) ------------------------------------------------------------
+# The classifier above decides what a command may DO. It says nothing about what the
+# command may READ, so a session grant meant for "stop asking about my project files" also
+# covered ~/.aws/credentials, ~/.ssh/id_rsa and OpenWorker's own secrets file. These
+# helpers name the file operands so the caller can hold them to the session's roots — the
+# same shape as the fix for browser uploads in OPE-122.
+#
+# Extracting read targets from arbitrary shell is not possible in general; it is tractable
+# here only because the classifier has already narrowed the input to the verbs above.
+
+# Operands are not paths: arguments are strings, charsets, or command names.
+_NO_PATH_OPERANDS = {
+    "echo", "printf", "pwd", "whoami", "id", "date", "uname", "true", "false",
+    "which", "basename", "dirname", "tr", "command", "env",
+}
+# The FIRST non-flag operand is a pattern/program, not a path; the rest are files.
+_PATTERN_FIRST = {"grep", "egrep", "fgrep", "rg", "ugrep", "jq", "awk", "gawk", "mawk", "nawk", "sed"}
+# Flags whose VALUE is a path, for the commands that accept them.
+_PATH_VALUE_FLAGS = {"-f", "--file", "--exclude-from", "--include-from"}
+# `head -n 5`, `cut -f 1`, `sed -n 2p`: a bare number is some flag's count, never a file
+# worth scoping. Dropping them keeps the target list honest without a per-flag table.
+_NUMERIC = re.compile(r"^[0-9]+([,:.-][0-9]+)*[a-zA-Z]?$")
+
+
+def _stage_targets(argv: list[str]) -> list[str]:
+    """File operands of one accepted pipeline stage."""
+    i = 0
+    while i < len(argv) and _ENV_ASSIGN.match(argv[i]):
+        i += 1
+    argv = argv[i:]
+    if not argv:
+        return []
+    head, args = argv[0], argv[1:]
+    if head in _NO_PATH_OPERANDS:
+        return []
+
+    if head == "git":
+        # Only `-C <dir>` escapes the working directory; everything else the classifier
+        # accepts reads the repo already in scope. Operands after `--` are pathspecs.
+        out: list[str] = []
+        for j, tok in enumerate(args):
+            if tok == "-C" and j + 1 < len(args):
+                out.append(args[j + 1])
+            elif tok == "--":
+                out.extend(t for t in args[j + 1 :] if not t.startswith("-"))
+                break
+        return out
+
+    out = []
+    skip_next = False
+    seen_operand = False
+    for tok in args:
+        if skip_next:
+            # `-f` is a pattern FILE for grep but a field NUMBER for cut; the numeric test
+            # separates them without needing a per-command flag table.
+            if not _NUMERIC.match(tok):
+                out.append(tok)
+            # `grep -f patterns.txt build.log`: the pattern came from the flag, so the
+            # first positional is already a FILE and must not be skipped as the pattern.
+            seen_operand = True
+            skip_next = False
+            continue
+        if tok.startswith("-"):
+            if tok in _PATH_VALUE_FLAGS:
+                skip_next = True
+            elif head == "find":
+                break  # find's predicates start here; paths precede them
+            continue
+        if head in _PATTERN_FIRST and not seen_operand:
+            seen_operand = True  # the pattern/script/filter, not a file
+            continue
+        seen_operand = True
+        if not _NUMERIC.match(tok):
+            out.append(tok)
+    return out
+
+
+def read_targets(command: str) -> list[str]:
+    """Every file operand `command` would read, for scoping against the session's roots.
+
+    Only meaningful for commands `is_readonly_command` accepts — it assumes that vetting.
+    Errs toward naming MORE operands: an extra one costs a manual approval, a missed one
+    is an unscoped read, and that asymmetry decides the edge cases here as it does above.
+
+    Known limit: a path reached through a flag this table does not list is not returned.
+    The positional operands that carry the real exposure are covered.
+    """
+    stages = _stages(str(command or ""))
+    if stages is None:
+        return []
+    return [t for stage in stages for t in _stage_targets(stage)]

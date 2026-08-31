@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from .model import BoardError
+from .model import BoardError, BoardNotFoundError
 
 ATTACHMENT_SCHEME = "attachment://"
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
@@ -69,12 +69,10 @@ class AttachmentStore:
     def path_for(self, stored: str) -> Path:
         """Resolve a stored name (`<sha256>.<ext>`) to its file. The strict name
         check is the traversal guard — nothing else reaches the filesystem."""
-        stored = stored.strip()
-        if not _STORED_NAME.fullmatch(stored):
-            raise BoardError(f"not an attachment name: {stored!r}")
+        stored = validate_stored_name(stored)
         path = self.root / stored
         if not path.exists():
-            raise BoardError(f"no attachment {stored}")
+            raise BoardNotFoundError("attachment not found")
         return path
 
     def mime_for(self, stored: str) -> str:
@@ -86,6 +84,14 @@ def stored_name(ref: str) -> Optional[str]:
     if not ref.startswith(ATTACHMENT_SCHEME):
         return None
     return ref[len(ATTACHMENT_SCHEME):].split("#", 1)[0]
+
+
+def validate_stored_name(stored: str) -> str:
+    """Return one normalized stored name, rejecting malformed input."""
+    stored = stored.strip()
+    if not _STORED_NAME.fullmatch(stored):
+        raise BoardError(f"not an attachment name: {stored!r}")
+    return stored
 
 
 def _validate(data: bytes, filename: str) -> str:

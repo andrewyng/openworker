@@ -1,3 +1,4 @@
+import { Trans, useTranslation } from "react-i18next";
 import type { Item } from "../types";
 import { Icon } from "./Icon";
 
@@ -13,17 +14,26 @@ export function ToolRequestCard({
   item: ToolReqItem;
   onRespond: (approved: boolean) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="dirreq-card">
       <div className="dirreq-head">
         <Icon name="wrench" size={16} className="ico" />
         <span>
-          The coworker needs <code>{item.tool}</code>
+          <Trans
+            i18nKey="toolreq.needs"
+            values={{ tool: item.tool }}
+            components={{ code: <code /> }}
+          />
         </span>
       </div>
       {item.reason && (
         <div className="dirreq-reason">
-          <span className="toolreq-label">Reason:</span> “{item.reason}”
+          <Trans
+            i18nKey="toolreq.reason_line"
+            values={{ reason: item.reason }}
+            components={{ label: <span className="toolreq-label" /> }}
+          />
         </div>
       )}
       {/* The fact strip is the PRODUCT speaking (registry metadata), styled apart from the
@@ -38,23 +48,20 @@ export function ToolRequestCard({
             {item.summary && <span className="toolreq-fact">{item.summary}</span>}
           </div>
           <div className="toolreq-explain">
-            OpenWorker installs its own verified copy
-            {item.source ? ` from ${item.source}` : ""} — or install it yourself and
-            continue.
+            {item.source
+              ? t("toolreq.installs_with_source", { source: item.source })
+              : t("toolreq.installs")}
           </div>
         </div>
       ) : (
         <div className="toolreq-facts">
-          <div className="toolreq-explain">
-            OpenWorker has no verified build for this machine — install it yourself if you
-            want this check, or continue and the coworker will note the gap.
-          </div>
+          <div className="toolreq-explain">{t("toolreq.no_build")}</div>
         </div>
       )}
       <div className="dirreq-actions">
         <span className="spacer" />
         <button className="btn" data-testid="toolreq-skip" onClick={() => onRespond(false)}>
-          Continue without it
+          {t("toolreq.skip")}
         </button>
         <button
           className="btn primary"
@@ -62,7 +69,7 @@ export function ToolRequestCard({
           disabled={!item.installable}
           onClick={() => onRespond(true)}
         >
-          Install
+          {t("toolreq.install")}
         </button>
       </div>
     </div>

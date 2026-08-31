@@ -95,7 +95,10 @@ def test_rebuild_reproduces_the_projection(store):
     assert after[0]["state"] == "in_progress"
     assert after[0]["assignee"] == "worker-1"
     # created_ts comes from the event, so replay is deterministic
-    assert store.get_item("proj", item["id"])["created_ts"] == item["created_ts"]
+    assert (
+        store.get_item("proj", item["id"], actor=USER)["created_ts"]
+        == item["created_ts"]
+    )
 
 
 def test_taint_travels_with_the_record(store):

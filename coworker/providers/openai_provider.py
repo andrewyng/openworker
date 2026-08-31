@@ -361,6 +361,45 @@ _PARAM_BLOCK = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# A `<function=NAME>` that never closes — the model ran out of tokens (or drifted) partway
+# through writing the call. Anchored to end-of-text so it only matches a genuinely unfinished
+# tail, never a well-formed block earlier in the message. Small local models hit this often on
+# a large tool schema, and the turn used to end silently on the leftover text.
+_FUNCTION_OPEN_TRUNCATED = re.compile(
+    r"<function\s*=\s*(?P<name>[^>\s]+)\s*>(?P<body>(?:(?!</function\s*>).)*)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Markers that mean "this text IS a tool call the endpoint failed to parse", used to tell a
+# real answer from a leaked one. Fenced code is stripped first: a model *explaining* tool-call
+# syntax in a ``` block is answering, not calling.
+_LEAKED_TOOL_SYNTAX = (
+    "<tool_call>",
+    "</tool_call>",
+    "<function=",
+    "</function>",
+    "<parameter=",
+    "</parameter>",
+    "<function_calls>",
+    "<invoke ",
+)
+_FENCED = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
+
+
+def looks_like_unparsed_tool_call(
+    text: Optional[str], tools: Optional[list[dict[str, Any]]] = None
+) -> bool:
+    """True when assistant text still carries tool-call markup that salvage couldn't turn into
+    a call — i.e. the model tried to call a tool and the syntax was mangled or cut off.
+
+    Only meaningful when tools were actually offered, and only over OpenAI-compatible endpoints
+    that parse tool calls out of the model's raw output (LM Studio, Ollama, vLLM). The caller
+    uses it to end the turn as a retriable error instead of presenting the fragment as an answer.
+    """
+    if not tools or not text:
+        return False
+    return any(m in _FENCED.sub("", text).lower() for m in _LEAKED_TOOL_SYNTAX)
+
 
 def _coerce_param(raw: str) -> Any:
     """Keep free-text verbatim (the common case: file content), but recover real JSON values when
@@ -532,6 +571,22 @@ def _salvage_tool_calls_from_text(
         calls.append(ToolCall(id="", name=name, arguments=args))
     if calls:
         return _renumber(calls)
+
+    # 1c) A TRUNCATED XML call: `<function=NAME>` with no closing tag, because the model ran
+    # out of tokens mid-call. Take the name plus every parameter that DID close; a trailing
+    # unterminated `<parameter=…>` is dropped rather than guessed, so a half-written path or
+    # file body can never reach a tool. If that leaves a required argument missing the call
+    # fails validation and the model gets a corrective tool error — which is the agent loop
+    # working, and strictly better than the turn ending on the leftover fragment.
+    tm = _FUNCTION_OPEN_TRUNCATED.search(text)
+    if tm:
+        name = tm.group("name").strip()
+        if names is None or name in names:
+            args = {
+                pm.group("key").strip(): _coerce_param(pm.group("val"))
+                for pm in _PARAM_BLOCK.finditer(tm.group("body"))
+            }
+            return _renumber([ToolCall(id="", name=name, arguments=args)])
 
     # 2) Embedded {"name": …, "arguments": …} objects, even surrounded by prose.
     for sub in _iter_top_objects(text):

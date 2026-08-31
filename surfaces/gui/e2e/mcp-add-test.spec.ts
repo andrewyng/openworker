@@ -80,3 +80,18 @@ test("JSON tab adds stdio as Not tested; detail Test flips it to Live", async ({
   await detail.getByTestId("mcp-remove-files").click();
   await expect(page.getByTestId("mcp-row-files")).toHaveCount(0);
 });
+
+test("the name field prefills from the URL's distinctive host label", async ({ page }) => {
+  await openConnectors(page);
+  await page.getByTestId("add-custom-server").click();
+  const modal = page.getByTestId("add-mcp-modal");
+
+  // Generic labels (mcp/api/data/www) are skipped; the first distinctive one wins.
+  await modal.getByTestId("mcp-add-url").fill("https://data.dlai.link/api/mcp");
+  await expect(modal.getByTestId("mcp-add-name")).toHaveValue("dlai");
+
+  // Never overwrite what the user typed.
+  await modal.getByTestId("mcp-add-name").fill("warehouse");
+  await modal.getByTestId("mcp-add-url").fill("https://mcp.linear.app/mcp");
+  await expect(modal.getByTestId("mcp-add-name")).toHaveValue("warehouse");
+});

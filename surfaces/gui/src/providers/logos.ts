@@ -28,6 +28,9 @@ import meta from "./logos/meta.svg";
 export const PROVIDER_LOGOS: Record<string, string> = {
   anthropic,
   openai,
+  // The subscription provider wears the same vendor mark — it's the same models,
+  // different billing (owner call 2026-08-21: no bare-letter monogram).
+  "openai-codex": openai,
   gemini,
   ark: byteplus,
   "ark-agent-plan-cn": volcengine,

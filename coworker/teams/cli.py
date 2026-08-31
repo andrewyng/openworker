@@ -356,7 +356,7 @@ def _cmd_attachment(args) -> int:
     from .attachments import stored_name
 
     stored = stored_name(args.ref) or args.ref
-    data, _mime = _dialect(args).attachment(stored)
+    data, _mime = _dialect(args).attachment(_space(args), stored)
     out = Path(args.out) if args.out else Path(
         args.ref.rsplit("#", 1)[-1] if "#" in args.ref else stored
     )

@@ -264,6 +264,78 @@ describe("ApprovalCard — save_skill (SKILLS-SPEC §5.2)", () => {
   });
 });
 
+describe("ApprovalCard — §1.9 egress cards", () => {
+  const fetchApproval = (extra: Partial<ApprovalItem> = {}): ApprovalItem => ({
+    kind: "approval",
+    name: "web_fetch",
+    args: { url: "https://www.bbc.com/news/article-1" },
+    reason: "requires approval",
+    category: undefined,
+    ...extra,
+  });
+
+  it("web_fetch offers the DOMAIN grant (www-stripped), never a tool-wide always", () => {
+    const onApprove = vi.fn();
+    render(<ApprovalCard item={fetchApproval()} onApprove={onApprove} />);
+    // The grant button names exactly what it covers — the spelling the server mints.
+    fireEvent.click(screen.getByText("Always allow bbc.com this session"));
+    expect(onApprove).toHaveBeenCalledWith("always_domain");
+    expect(screen.queryByText("Always allow")).toBeNull(); // no tool-wide button
+    expect(screen.getByText(/leaves this computer → bbc\.com/)).toBeTruthy();
+  });
+
+  it("web_fetch with an unparseable url falls back to once/deny only", () => {
+    render(<ApprovalCard item={fetchApproval({ args: { url: "not a url" } })} onApprove={vi.fn()} />);
+    expect(screen.queryByText(/Always allow/)).toBeNull();
+    expect(screen.getByText("Allow once")).toBeTruthy();
+  });
+
+  it("web_search offers the searches grant and names the LIVE provider", () => {
+    const onApprove = vi.fn();
+    render(
+      <ApprovalCard
+        item={fetchApproval({
+          name: "web_search",
+          args: { query: "H-1B visa rule change" },
+          searchProvider: "duckduckgo",
+        })}
+        onApprove={onApprove}
+      />,
+    );
+    expect(
+      screen.getByText(/Queries go to your configured search provider \(currently: duckduckgo\)\./),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByText("Always allow searches this session"));
+    expect(onApprove).toHaveBeenCalledWith("always_tool"); // tool-wide IS provider-wide here
+    expect(screen.getByText(/leaves this computer → your search provider/)).toBeTruthy();
+  });
+
+  it("Auto-Approve fall-through cards hide every session 'always' (§1.5: grants don't skip the reviewer)", () => {
+    render(<ApprovalCard item={fetchApproval()} onApprove={vi.fn()} autoApprove />);
+    expect(screen.queryByText(/Always allow/)).toBeNull();
+    cleanup();
+    render(
+      <ApprovalCard
+        item={fetchApproval({ name: "web_search", args: { query: "x" } })}
+        onApprove={vi.fn()}
+        autoApprove
+      />,
+    );
+    expect(screen.queryByText(/Always allow/)).toBeNull();
+    cleanup();
+    render(
+      <ApprovalCard
+        item={fetchApproval({ name: "run_shell", args: { command: "ls" } })}
+        onApprove={vi.fn()}
+        autoApprove
+      />,
+    );
+    expect(screen.queryByText("Always allow this command")).toBeNull();
+    expect(screen.getByText("Allow once")).toBeTruthy();
+    expect(screen.getByText("Deny")).toBeTruthy();
+  });
+});
+
 describe("InboxItemCard — parked save_skill proposals (SKILLS-SPEC §5.2)", () => {
   const parked = (): InboxItem => ({
     id: "i9",
@@ -332,5 +404,48 @@ describe("ApprovalCard — session read-only grant", () => {
       />,
     );
     expect(screen.queryByTestId("allow-readonly-session")).toBeNull();
+  });
+});
+
+// The provenance line (OPE-114 §1): the one fact about a shell command that cannot be read
+// off its text — that the agent itself made the file it is about to run. Rendered on the
+// card as well as sent to the reviewer, because a human approving is just as blind to a
+// script's contents as the reviewer is.
+describe("ApprovalCard — file provenance", () => {
+  const shell = (extra: Partial<ApprovalItem> = {}): ApprovalItem => ({
+    kind: "approval",
+    name: "run_shell",
+    args: { command: "python scripts/setup.py" },
+    reason: "requires approval",
+    category: "shell",
+    ...extra,
+  });
+
+  it("shows the warning when the agent created the file this command runs", () => {
+    render(
+      <ApprovalCard
+        item={shell({ provenance: "scripts/setup.py was created by the agent 3 steps ago" })}
+        onApprove={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/created by the agent 3 steps ago/)).toBeTruthy();
+  });
+
+  it("says nothing about provenance for an ordinary command", () => {
+    render(<ApprovalCard item={shell()} onApprove={vi.fn()} />);
+    expect(screen.queryByText(/by the agent/)).toBeNull();
+  });
+
+  it("shows it for downloaded files too, since that is the sharper case", () => {
+    render(
+      <ApprovalCard
+        item={shell({
+          args: { command: "bash install.sh" },
+          provenance: "install.sh was downloaded by the agent 1 step ago",
+        })}
+        onApprove={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/downloaded by the agent/)).toBeTruthy();
   });
 });

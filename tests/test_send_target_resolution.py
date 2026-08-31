@@ -30,12 +30,17 @@ def test_integration_tools_reads_are_free_writes_gate(tmp_path):
         tools["github_list_commits"].__aisuite_tool_metadata__.requires_approval
         is False
     )
+    # OPE-111: a model-chosen URL fetch is egress, not a read — it gates like web_fetch.
     assert (
         tools["browser_read_page"].__aisuite_tool_metadata__.requires_approval is False
     )
     assert (
         tools["github_create_issue"].__aisuite_tool_metadata__.requires_approval is True
     )
+    # github_clone and github_pull write to disk (clone creates a directory, pull
+    # fast-forwards an existing repo), so they must gate despite being GitHub tools.
+    assert tools["github_clone"].__aisuite_tool_metadata__.requires_approval is True
+    assert tools["github_pull"].__aisuite_tool_metadata__.requires_approval is True
 
 
 def test_browser_automation_reads_are_free_interactions_gate():
@@ -45,8 +50,9 @@ def test_browser_automation_reads_are_free_interactions_gate():
     assert (
         tools["browser_read_page"].__aisuite_tool_metadata__.requires_approval is False
     )
+    # OPE-111: opening a model-chosen URL is egress, not a read — it gates.
     assert (
-        tools["browser_open_url"].__aisuite_tool_metadata__.requires_approval is False
+        tools["browser_open_url"].__aisuite_tool_metadata__.requires_approval is True
     )
     assert tools["browser_click"].__aisuite_tool_metadata__.requires_approval is True
     assert tools["browser_type"].__aisuite_tool_metadata__.requires_approval is True

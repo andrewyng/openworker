@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import type { InboxItem } from "../api";
 import type { QuestionOption } from "../types";
 import { humanizeApprovalTitle } from "../humanize";
@@ -20,13 +21,13 @@ import {
 // Shared styles (mock parity — same language as SourcesDrawer/PersonaView).
 const SEC = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
 const BTN_PRIMARY =
-  "px-3 py-1.5 rounded-lg bg-accent text-white text-[12.5px] font-medium hover:brightness-105 disabled:opacity-40 disabled:hover:brightness-100";
+  "px-3 py-1.5 rounded-lg bg-accent text-white text-[13px] font-medium hover:brightness-105 disabled:opacity-40 disabled:hover:brightness-100";
 const BTN_BORDERED =
-  "px-3 py-1.5 rounded-lg border border-line bg-paper text-[12.5px] hover:border-lineStrong";
+  "px-3 py-1.5 rounded-lg border border-line bg-paper text-[13px] hover:border-lineStrong";
 // §35 approval buttons: blue border for the primary, quiet Deny (matches ApprovalCard).
 const BTN_ACCENT =
-  "px-3 py-1.5 rounded-lg border border-accent text-accent text-[12.5px] font-semibold hover:bg-accentSoft";
-const BTN_QUIET = "px-3 py-1.5 text-[12.5px] text-faint hover:text-danger";
+  "px-3 py-1.5 rounded-lg border border-accent text-accent text-[13px] font-semibold hover:bg-accentSoft";
+const BTN_QUIET = "px-3 py-1.5 text-[13px] text-faint hover:text-danger";
 const OPT_BASE =
   "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[13px] transition-colors";
 const OPT_OFF = "border-line bg-paper text-ink hover:border-accent hover:bg-accentSoft/50";
@@ -90,6 +91,7 @@ function specsFor(item: InboxItem): QSpec[] {
 // -- one question (options + free-text escape) --------------------------------
 
 function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) => void }) {
+  const { t } = useTranslation();
   const [selected, setSelected] = useState<string[]>([]);
   const [text, setText] = useState("");
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -111,8 +113,8 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
   const preview = previewIdx >= 0 ? options[previewIdx].preview : "";
 
   const recommendedTag = (
-    <span className="text-[10px] uppercase tracking-[0.04em] font-semibold text-ok bg-okSoft border border-okLine rounded-full px-1.5 py-px shrink-0">
-      Recommended
+    <span className="text-[11px] uppercase tracking-[0.04em] font-semibold text-ok bg-okSoft border border-okLine rounded-full px-1.5 py-px shrink-0">
+      {t("inbox.recommended")}
     </span>
   );
 
@@ -189,7 +191,7 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
             disabled={!selected.length}
             onClick={() => onAnswer(selected.join(", "))}
           >
-            Send{selected.length ? ` (${selected.length})` : ""}
+            {selected.length ? t("inbox.send_count", { count: selected.length }) : t("common.send")}
           </button>
         </div>
       )}
@@ -197,7 +199,7 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
         <div className="flex items-center gap-2 mt-2.5">
           <input
             className={INPUT}
-            placeholder={options.length ? "Or type your own answer…" : "Your answer…"}
+            placeholder={options.length ? t("inbox.or_type_answer") : t("inbox.your_answer")}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
@@ -205,7 +207,7 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
             }}
           />
           <button className={BTN_PRIMARY} disabled={!text.trim()} onClick={() => onAnswer(text)}>
-            Send
+            {t("common.send")}
           </button>
         </div>
       )}
@@ -224,6 +226,7 @@ function QuestionCard({
   onResolve: (id: string, resolution: string) => void;
   chip?: ReactNode;
 }) {
+  const { t } = useTranslation();
   const specs = specsFor(item);
   const grouped = (item.questions?.length ?? 0) > 0;
   const [step, setStep] = useState(0);
@@ -252,32 +255,31 @@ function QuestionCard({
         {grouped && step > 0 && (
           <button
             className="text-faint hover:text-ink leading-none text-[13px]"
-            title="Previous question"
-            aria-label="Previous question"
+            title={t("inbox.previous_question")}
+            aria-label={t("inbox.previous_question")}
             onClick={() => setStep(step - 1)}
           >
             ‹
           </button>
         )}
         <span className={grouped ? "text-accent" : undefined}>
-          {spec.header || (grouped ? `Question ${step + 1}` : "question")}
+          {spec.header ||
+            (grouped ? t("inbox.question_n", { n: step + 1 }) : t("inbox.question_label"))}
         </span>
         {grouped && (
           <>
             <span>·</span>
-            <span>
-              {step + 1} of {specs.length}
-            </span>
+            <span>{t("inbox.step_of", { step: step + 1, total: specs.length })}</span>
             {next && (
               <>
                 <span>·</span>
-                <span>{(next.header || `Question ${step + 2}`) + " ›"}</span>
+                <span>{(next.header || t("inbox.question_n", { n: step + 2 })) + " ›"}</span>
               </>
             )}
           </>
         )}
       </div>
-      <div className="text-[15px] font-semibold mt-0.5 leading-snug">{spec.question}</div>
+      <div className="text-[14px] font-semibold mt-0.5 leading-snug">{spec.question}</div>
       {item.body ? (
         <div className="text-[13px] text-muted mt-1 whitespace-pre-wrap">{item.body}</div>
       ) : null}
@@ -299,6 +301,7 @@ export function InboxItemCard({
   chip?: ReactNode; // optional "go to session" affordance (shown in the Inbox list, not inline)
   compact?: boolean;
 }) {
+  const { t } = useTranslation();
   const isQuestion = item.kind === "question";
   return (
     <div
@@ -326,7 +329,7 @@ export function InboxItemCard({
       ) : isQuestion ? null : ( // QuestionCard owns its header + title (stepper needs them)
         <>
           <div className={SEC}>{item.kind}</div>
-          <div className="text-[15px] font-semibold mt-0.5 leading-snug">{item.title}</div>
+          <div className="text-[14px] font-semibold mt-0.5 leading-snug">{item.title}</div>
         </>
       )}
       {item.kind === "approval" && item.data?.tool === "save_skill" ? (
@@ -346,7 +349,7 @@ export function InboxItemCard({
             className={item.data?.tool ? BTN_ACCENT : BTN_PRIMARY}
             onClick={() => onResolve(item.id, "allow")}
           >
-            {item.data?.tool ? approvalActionLabels(item.data.tool).allow : "Approve"}
+            {item.data?.tool ? approvalActionLabels(item.data.tool).allow : t("inbox.approve")}
           </button>
           {/* Task-persistent standing grant (§25) — present only when the approval was
               raised inside an automation run AND the call can carry a tool+target rule.
@@ -354,17 +357,20 @@ export function InboxItemCard({
           {item.data?.task_id && item.data?.standing_target && (
             <button
               className={BTN_BORDERED}
-              title={`Always allow against ${item.data.standing_target} for “${item.data.task_title || "this automation"}” — revoke any time on its Automations page`}
+              title={t("inbox.always_task_title", {
+                target: item.data.standing_target,
+                task: item.data.task_title || t("approval.btn.this_automation"),
+              })}
               onClick={() => onResolve(item.id, "always_task")}
             >
-              Allow every time
+              {t("approval.btn.allow_every_time")}
             </button>
           )}
           <button
             className={item.data?.tool ? BTN_QUIET : BTN_BORDERED}
             onClick={() => onResolve(item.id, "deny")}
           >
-            {item.data?.tool ? approvalActionLabels(item.data.tool).deny : "Deny"}
+            {item.data?.tool ? approvalActionLabels(item.data.tool).deny : t("approval.deny")}
           </button>
         </div>
       ) : isQuestion ? (
@@ -374,7 +380,7 @@ export function InboxItemCard({
           <button
             className={BTN_PRIMARY}
             disabled={!item.data?.path}
-            title={item.data?.path || "No folder was suggested"}
+            title={item.data?.path || t("inbox.no_folder_suggested")}
             onClick={() =>
               onResolve(
                 item.id,
@@ -388,12 +394,12 @@ export function InboxItemCard({
           >
             {item.data?.path
               ? item.data?.primary
-                ? "Make workspace"
-                : "Grant"
-              : "Grant (no folder)"}
+                ? t("inbox.make_workspace")
+                : t("inbox.grant")
+              : t("inbox.grant_no_folder")}
           </button>
           <button className={BTN_BORDERED} onClick={() => onResolve(item.id, JSON.stringify({ granted: false }))}>
-            Deny
+            {t("approval.deny")}
           </button>
         </div>
       ) : item.kind === "plan" ? (
@@ -402,19 +408,19 @@ export function InboxItemCard({
             className={BTN_PRIMARY}
             onClick={() => onResolve(item.id, JSON.stringify({ approved: true, mode: "interactive" }))}
           >
-            Approve
+            {t("inbox.approve")}
           </button>
           <button
             className={BTN_BORDERED}
             onClick={() => onResolve(item.id, JSON.stringify({ approved: false, feedback: "" }))}
           >
-            Reject
+            {t("inbox.reject")}
           </button>
         </div>
       ) : (
         <div className="flex items-center gap-2 mt-2.5">
           <button className={BTN_BORDERED} onClick={() => onResolve(item.id, "seen")}>
-            Dismiss
+            {t("inbox.dismiss")}
           </button>
         </div>
       )}

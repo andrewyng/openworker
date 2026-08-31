@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
+import { useTranslation } from "react-i18next";
 import {
   announceInboxUnlock,
   createTempWorkspace,
@@ -87,10 +88,12 @@ import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
 const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
 
-const SUGGESTIONS = [
-  { ico: "⚙", text: "Run the test suite and summarize any failures." },
-  { ico: "✦", text: "Read the project and give me a 5-bullet overview." },
-  { ico: "↻", text: "Find and fix the failing build." },
+// Hero task suggestions — translated at call time (module scope can't see React hooks).
+// Keys live under `hero.suggest_*`; resolved in the component via useTranslation.
+const SUGGESTION_KEYS = [
+  { ico: "⚙", key: "hero.suggest_tests" },
+  { ico: "✦", key: "hero.suggest_overview" },
+  { ico: "↻", key: "hero.suggest_fix_build" },
 ];
 
 // Tools whose success means a new/changed file should show up under Artifacts right away.
@@ -171,12 +174,19 @@ function fallbackWorkspace(current: string | null, projects: RecentWorkspace[]):
 }
 
 export function App() {
+  const { t } = useTranslation();
   const [workspace, setWorkspace] = useState<string | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
   // UX-029: the active session runs in a temporary folder (never show its raw path —
   // the header says "Temporary folder" and offers Save as project…). Set locally when a
   // temp dir is created at send, corrected by every `ready` event (server truth).
   const [tempWorkspace, setTempWorkspace] = useState(false);
+  // The draft folder came from the user's own chip pick (not boot-resume or scratch
+  // adoption). Only such a pick survives a coworker change (owner catch 2026-08-24).
+  const [draftFolderPicked, setDraftFolderPicked] = useState(false);
+  // §8.4 breaker tripped this turn — the mode chip shows "· paused" until the turn ends
+  // or an ask_user answer resets the reviewer's denial streak (engine semantics).
+  const [reviewerPaused, setReviewerPaused] = useState(false);
   // UX-029 send-time folder enforcement: the stashed message while the folder dialog is
   // up. The message goes out the moment the dialog resolves; Escape restores the draft.
   const [sendGate, setSendGate] = useState<{
@@ -215,6 +225,13 @@ export function App() {
   const [streaming, setStreamingState] = useState("");
   // Ref mirror of `streaming`: the WS handler closure is built once per socket and can't read
   // fresh state — the interrupted/error flush below needs the live buffer at event time.
+  // Mode markers in the transcript: which session has already seen the full Auto-approve
+  // explanation, and what mode the transcript last recorded (so a switch can be told apart
+  // Which session the current `mode` value is CONFIRMED for. On a session switch, `mode`
+  // still holds the previous session's value until the server's `ready` event delivers the
+  // real one — announcing anything in that window posts the old session's banner into the
+  // new transcript (seen 2026-08-22: a fresh Ask-for-approval session opened with the
+  // Auto-approve banner, then a stray "Ask for approval is on." marker when `ready` landed).
   const streamingRef = useRef("");
   const setStreaming = (value: string | ((s: string) => string)) => {
     streamingRef.current = typeof value === "function" ? value(streamingRef.current) : value;
@@ -330,7 +347,10 @@ export function App() {
       navBeforePreview.current = null;
     }
   }, []);
-  useEffect(() => {
+  // Layout effect on purpose: a passive effect registers after paint, leaving a boot-splash
+  // window where the app is visible but ⌘B/⌘, are dead (input arriving right after load was
+  // dropped). Registering at commit closes that gap.
+  useLayoutEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
         e.preventDefault();
@@ -377,6 +397,8 @@ export function App() {
   // expanded sidebar owns its own instance; this one exists so search never disappears with it.
   const [searchOpen, setSearchOpen] = useState(false);
   // A pending composer prefill (text + attachments) pushed from the session start panel.
+  // Auto-Approve metering (§1.7): live reviewer counts for the composer badge. Polled with
+  // the session inbox; null until the first fetch (badge hidden).
   const [composerPrefill, setComposerPrefill] = useState<{ text: string; attachments?: Attachment[]; nonce: number }>();
 
   // Persona metadata drives workspace behavior by FAMILY, not by hardcoded id (so a DevOps/SecOps
@@ -681,9 +703,13 @@ export function App() {
           if (d.workspace) setWorkspace((cur) => cur || d.workspace);
           // UX-029: server truth on whether this session runs in a temporary folder.
           if (typeof d.temp_workspace === "boolean") setTempWorkspace(d.temp_workspace);
+          // Server truth on a live turn: a reconnect mid-turn never sees turn_start, so
+          // without this the Stop button and waiting row vanish (owner catch 2026-08-24).
+          if (typeof d.running === "boolean") setRunning(d.running);
           break;
         case "turn_start":
           setRunning(true);
+          setReviewerPaused(false); // a fresh user message resets the denial streak
           setStreaming("");
           setReasoningStream("");
           // Background-delivered turns (channel message, self-wake, durable resume) have no local
@@ -759,6 +785,9 @@ export function App() {
               reason: d.reason,
               category: d.category,
               standingTarget: d.standing_target || undefined,
+              searchProvider: d.search_provider || undefined,
+              provenance: d.provenance || undefined,
+              reviewerUnsure: d.reviewer_unsure || undefined,
               readonlyOk: !!d.readonly_ok,
             },
           ]);
@@ -839,8 +868,19 @@ export function App() {
               d.result_preview || d.reason,
               d.display?.hidden_by_filters,
               d.standing_rule,
+              d.reviewer_reason,
+              d.allow_anyway,
+              d.approval_origin,
+              d.approval_note,
             ),
           );
+          // §8.4 breaker: the reviewer paused itself for the rest of the turn — say so
+          // where the user is looking (persisted server-side for reloads) and on the
+          // composer's mode chip.
+          if (d.reviewer_paused) {
+            setReviewerPaused(true);
+            setItems((p) => [...p, { kind: "notice", tone: "info", text: String(d.reviewer_paused) }]);
+          }
           // Refresh the right rail when something it shows may have changed: browser state, or a
           // file write that should appear under Artifacts immediately (not only after the turn).
           if (String(d.name || "").startsWith("browser_") || FILE_WRITE_TOOLS.has(d.name)) {
@@ -849,13 +889,21 @@ export function App() {
           break;
         case "turn_end":
           if (d.status === "max_iterations_exceeded")
-            setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Stopped: max iterations reached." }]);
+            setItems((p) => [...p, { kind: "notice", tone: "warn", text: t("app.notice.max_iterations") }]);
+          break;
+        case "mode_notice":
+          // Server-authored + persisted (owner ruling 2026-08-24): the Auto-Approve
+          // explainer once per session ever, one-line markers for later switches.
+          setItems((p) => [
+            ...p,
+            { kind: "notice", tone: "info", ...(d.title ? { title: d.title } : {}), text: d.text || "" },
+          ]);
           break;
         case "model_changed":
           // Mid-session switch (server-applied): update the header fact and drop the
           // persisted marker into the live transcript (replay renders it from history).
           if (d.model) setModel(d.model);
-          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || "Model switched" }]);
+          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || t("app.notice.model_switched") }]);
           break;
         case "memory_saved":
           // §5.1 save notice — inline in the transcript, where the user is already
@@ -881,27 +929,28 @@ export function App() {
         case "compacted":
           // Auto-compaction marker (OPE-27): outbound-only — the transcript stays intact,
           // this divider just shows where the model's memory was summarized.
-          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || "Context compacted" }]);
+          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || t("app.notice.context_compacted") }]);
           break;
         case "interrupted":
           flushPartialStream();
-          setItems((p) => [...p, { kind: "notice", tone: "warn", text: "Interrupted." }]);
+          setItems((p) => [...p, { kind: "notice", tone: "warn", text: t("app.notice.interrupted") }]);
           break;
         case "error":
           flushPartialStream();
           setItems((p) => [
             ...p,
-            { kind: "notice", tone: "warn", text: "Error: " + (d.error || "unknown"), retriable: true },
+            { kind: "notice", tone: "warn", text: t("app.notice.error") + (d.error || t("app.notice.unknown")), retriable: true },
           ]);
           break;
         case "input_rejected":
           setItems((p) => [
             ...p,
-            { kind: "notice", tone: "warn", text: d.error || "That message was rejected." },
+            { kind: "notice", tone: "warn", text: d.error || t("app.notice.input_rejected") },
           ]);
           break;
         case "turn_done":
           setRunning(false);
+          setReviewerPaused(false); // the pause is scoped to the turn
           refreshSessions();
           // Catch-all artifact refresh: files created via shell or on a brand-new session (whose
           // record only exists after the first save) appear once the turn completes.
@@ -997,6 +1046,7 @@ export function App() {
     atBottomRef.current = true;
     setFollowing(true);
   }, [sessionId]);
+
   useEffect(() => {
     if (atBottomRef.current) scrollToBottom();
   }, [items, streaming]);
@@ -1089,6 +1139,13 @@ export function App() {
   // the 4s poll restores anything genuinely still pending.
   const dropSessionInbox = (kind: string) =>
     setSessionInbox((cur) => cur.filter((it) => it.kind !== kind));
+  // §8.4 "Allow anyway" on a reviewer-denied tool: register the one-shot exact-action
+  // approval, then send a visible user message so the agent retries. The engine runs the
+  // identical re-proposal without the reviewer or a card; anything different still asks.
+  const allowAnyway = (name: string, args: any) => {
+    sessionRef.current?.allowAnyway(name, args);
+    send(t("app.allow_anyway_message", { name }));
+  };
   const approve = (decision: ApprovalDecision) => {
     setItems((p) => resolveLastApproval(p, decision));
     dropSessionInbox("approval");
@@ -1122,6 +1179,7 @@ export function App() {
     sessionRef.current?.respondTool(approved);
   };
   const answerQuestion = (answer: string) => {
+    setReviewerPaused(false); // an answered question resets the reviewer's streak
     setItems((p) => resolveLastQuestion(p, answer));
     dropSessionInbox("question");
     sessionRef.current?.respondQuestion(answer);
@@ -1172,6 +1230,7 @@ export function App() {
       setWorkspace(null);
       setBranch(null);
     }
+    setDraftFolderPicked(false);
     setTempWorkspace(false);
     setSessionId(newId());
   };
@@ -1182,8 +1241,13 @@ export function App() {
   const pickCoworker = (id: string) => {
     if (id === agent) return;
     setAgent(id);
-    setWorkspace(null);
-    setBranch(null);
+    // An explicit draft folder pick survives a coworker change (owner catch
+    // 2026-08-24). Anything inherited — boot-resume, scratch adoption, temp
+    // dirs — still resets; the "never inherit" rule exists for those.
+    if (!gatesWorkspace(id) || tempWorkspace || !draftFolderPicked || !workspace) {
+      setWorkspace(null);
+      setBranch(null);
+    }
     setTempWorkspace(false);
     setShowGate(false);
     setSessionId(newId());
@@ -1193,6 +1257,7 @@ export function App() {
   const pickDraftFolder = (path: string, b?: string | null) => {
     setWorkspace(path);
     setBranch(b ?? null);
+    setDraftFolderPicked(true);
     setTempWorkspace(false);
     setSessionId(newId());
     getRecentWorkspaces().then(setProjects).catch(() => {});
@@ -1220,7 +1285,7 @@ export function App() {
       setSendGate(null);
       setItems((p) => [
         ...p,
-        { kind: "notice", tone: "warn", text: res.error || "Could not create a temporary folder." },
+        { kind: "notice", tone: "warn", text: res.error || t("app.temp_folder_failed") },
       ]);
       prefillComposer(gate.skill ? `/${gate.skill} ${gate.text}` : gate.text, gate.attachments);
       return;
@@ -1232,7 +1297,7 @@ export function App() {
     pendingPromptRef.current = {
       ...gate,
       model,
-      notice: res.git ? "Temporary folder created · git initialized" : "Temporary folder created",
+      notice: res.git ? t("app.temp_folder_created_git") : t("app.temp_folder_created"),
     };
     setSessionId(sid);
   };
@@ -1252,7 +1317,7 @@ export function App() {
     if (!res.ok || !res.path) {
       setItems((p) => [
         ...p,
-        { kind: "notice", tone: "warn", text: res.error || "Could not save as a project." },
+        { kind: "notice", tone: "warn", text: res.error || t("app.save_project_failed") },
       ]);
       return;
     }
@@ -1262,7 +1327,7 @@ export function App() {
     setTempWorkspace(false);
     setItems((p) => [
       ...p,
-      { kind: "notice", tone: "info", text: `Saved as a project — now working in ${baseName(newPath)}.` },
+      { kind: "notice", tone: "info", text: t("app.saved_as_project", { name: baseName(newPath) }) },
     ]);
     setConnectNonce((n) => n + 1);
     refreshSessions();
@@ -1279,7 +1344,7 @@ export function App() {
       if (msg.type !== "automation_run_started") return;
       const d = (msg.data ?? {}) as Record<string, string>;
       setRunToast({
-        title: d.task_title || "Automation",
+        title: d.task_title || t("toast.automation_fallback"),
         sessionId: d.session_id || "",
         workspace: d.workspace || "",
         agent: d.agent || "cowork",
@@ -1314,6 +1379,8 @@ export function App() {
     setStreaming("");
     setRunning(false);
     if (ag) setAgent(ag);
+    setReviewerPaused(false);
+    setDraftFolderPicked(false); // a resumed session's folder is inherited, not a pick
     setTempWorkspace(false); // the `ready` event restores the truth for temp sessions
     if (!gatesWorkspace(ag)) setShowGate(false);
     if (ws && ws !== workspace) {
@@ -1333,6 +1400,7 @@ export function App() {
   const switchAgent = async (name: string) => {
     setSurface("session");
     if (name === agent) return;
+    setDraftFolderPicked(false); // leaving the draft — any pick belonged to it
     rememberLastSession(agent, sessionId, workspace);
     const knownSessions = sessions.length ? sessions : await getSessions().catch(() => []);
     const knownProjects = projects.length ? projects : await getRecentWorkspaces().catch(() => []);
@@ -1477,7 +1545,9 @@ export function App() {
     openRunSession(r.session_id, r.workspace, r.agent, { id: taskId, title: title || "" });
   };
 
-  const idle = items.length === 0 && !streaming;
+  // `running` too: a mid-turn reconnect may land before any item is rebuilt — a live
+  // session must show the transcript (waiting row, Stop), never the intro hero.
+  const idle = items.length === 0 && !streaming && !running;
   const pendingApproval = [...items].reverse().find((i) => i.kind === "approval" && !i.resolved);
   const pendingDirReq = [...items].reverse().find((i) => i.kind === "dirreq" && !i.resolved);
   const pendingToolReq = [...items].reverse().find((i) => i.kind === "toolreq" && !i.resolved);
@@ -1499,10 +1569,10 @@ export function App() {
   // path never shows — "Temporary folder" + the Save as project… affordance instead.
   const subtitleParts = [fullPersonaName(personaOf(agent)?.name, agent), modelDisplay];
   if (isProjectScoped(personaOf(agent)) && workspace)
-    subtitleParts.push(tempWorkspace ? "Temporary folder" : baseName(workspace));
+    subtitleParts.push(tempWorkspace ? t("root.temporary_space") : baseName(workspace));
   const showSaveAsProject = hasHistory && tempWorkspace && isProjectScoped(personaOf(agent));
   const activeInfo = sessions.find((s) => s.session_id === sessionId);
-  const activeTitle = activeInfo?.title || "New session";
+  const activeTitle = activeInfo?.title || t("sidebar.new_session");
 
   const desktop = isTauri();
   // Dev-only: `?overlay=1` simulates the desktop overlay layout in the browser (adds the
@@ -1541,7 +1611,7 @@ export function App() {
           <Icon name="logo" size={38} />
         </div>
         <div className="boot-text">
-          {resumedExisting ? "Restoring your session…" : "Starting OpenWorker…"}
+          {resumedExisting ? t("boot.restoring") : t("boot.starting")}
           <span className="beta-tag">BETA</span>
         </div>
       </div>
@@ -1572,28 +1642,28 @@ export function App() {
           className="fixed top-3 right-3 z-[45] w-[290px] bg-panel border border-line rounded-xl shadow-lg px-3.5 pt-3 pb-2.5"
           data-testid="automation-toast"
         >
-          <div className="flex items-center gap-2 text-[12.5px] font-semibold">
+          <div className="flex items-center gap-2 text-[13px] font-semibold">
             <span className="w-[7px] h-[7px] rounded-full bg-faint toast-pulse" />
-            Automation started
+            {t("toast.automation_started")}
           </div>
-          <div className="text-[12.5px] text-muted mt-0.5 ml-[15px] truncate">
-            {runToast.title} · {runToast.time} run
+          <div className="text-[13px] text-muted mt-0.5 ml-[15px] truncate">
+            {runToast.title} · {runToast.time} {t("toast.run_count")}
           </div>
           <div className="flex items-center justify-between ml-[15px] mt-1.5">
             <button
-              className="text-[12.5px] text-accent font-medium"
+              className="text-[13px] text-accent font-medium"
               data-testid="toast-view-run"
               onClick={() => {
                 selectSession(runToast.sessionId, runToast.workspace, runToast.agent);
                 setRunToast(null);
               }}
             >
-              View run ›
+              {t("toast.view_run")} ›
             </button>
             <button
               className="text-[12px] text-faint px-0.5"
               data-testid="toast-dismiss"
-              title="Dismiss"
+              title={t("common.dismiss")}
               onClick={() => setRunToast(null)}
             >
               ✕
@@ -1620,8 +1690,8 @@ export function App() {
           className="nav-reveal-btn"
           onClick={toggleNav}
           onMouseEnter={() => setNavPeek(true)}
-          title="Show sidebar (⌘B)"
-          aria-label="Show sidebar"
+          title={t("topbar.show_sidebar")}
+          aria-label={t("topbar.show_sidebar_short")}
         >
           <Icon name="sidebar" size={16} />
         </button>
@@ -1702,8 +1772,8 @@ export function App() {
             startNewSession();
             prefillComposer(
               description
-                ? `Build a new skill for me: ${description}`
-                : "Build a new skill for me: (describe what the skill should do)",
+                ? t("app.build_skill_prefill", { description })
+                : t("app.build_skill_prefill_empty"),
             );
           }}
         />
@@ -1735,24 +1805,24 @@ export function App() {
                 <button
                   className="topbar-icon-btn"
                   onClick={toggleNav}
-                  aria-label="Show sidebar"
-                  title="Show sidebar (⌘B)"
+                  aria-label={t("topbar.show_sidebar_short")}
+                  title={t("topbar.show_sidebar")}
                 >
                   <Icon name="sidebar" size={16} />
                 </button>
                 <button
                   className="topbar-icon-btn"
                   onClick={() => startNewSession()}
-                  aria-label="New session"
-                  title="New session"
+                  aria-label={t("sidebar.new_session")}
+                  title={t("sidebar.new_session")}
                 >
                   <Icon name="plus" size={16} />
                 </button>
                 <button
                   className="topbar-icon-btn"
                   onClick={() => setSearchOpen(true)}
-                  aria-label="Search"
-                  title="Search"
+                  aria-label={t("topbar.search")}
+                  title={t("topbar.search")}
                 >
                   <Icon name="search" size={16} />
                 </button>
@@ -1786,7 +1856,7 @@ export function App() {
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={() => void saveAsProject()}
                     >
-                      Save as project…
+                      {t("app.save_as_project")}
                     </button>
                   </>
                 )}
@@ -1801,10 +1871,10 @@ export function App() {
                 className="topbar-artifacts-btn"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setRailHidden(false)}
-                title="Show files this conversation produced"
+                title={t("topbar.show_artifacts")}
               >
                 <Icon name="file" size={14} />
-                <span>Artifacts</span>
+                <span>{t("topbar.artifacts")}</span>
                 <span className="topbar-artifacts-count">{artifactCount}</span>
               </button>
             )}
@@ -1815,8 +1885,8 @@ export function App() {
                 className="topbar-icon-btn"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setRailHiddenPersist(!railHidden)}
-                aria-label={railHidden ? "Show side panel" : "Hide side panel"}
-                title={railHidden ? "Show side panel" : "Hide side panel"}
+                aria-label={railHidden ? t("topbar.show_side_panel") : t("topbar.hide_side_panel")}
+                title={railHidden ? t("topbar.show_side_panel") : t("topbar.hide_side_panel")}
               >
                 <Icon name="sidebarRight" size={16} />
               </button>
@@ -1836,19 +1906,19 @@ export function App() {
                 it underneath the topbar; owner-reported CSS bug). */}
             {sessionId.startsWith("__run__") && (
               <div
-                className="flex items-center gap-2 px-4 py-2 mb-1 rounded-lg text-[12.5px] border border-line bg-accentSoft/40"
+                className="flex items-center gap-2 px-4 py-2 mb-1 rounded-lg text-[13px] border border-line bg-accentSoft/40"
                 data-testid="run-banner"
               >
                 <Icon name="clock" size={14} className="text-accent shrink-0" />
                 <span className="truncate text-muted">
-                  Scheduled run
+                  {t("run_banner.scheduled_run")}
                   {runContext?.title ? (
                     <>
                       {" — "}
                       <span className="text-ink font-medium">{runContext.title}</span>
                     </>
                   ) : null}{" "}
-                  · started by an automation
+                  {t("run_banner.started_by_automation")}
                 </span>
                 <button
                   className="ml-auto shrink-0 text-accent font-medium hover:underline"
@@ -1857,7 +1927,7 @@ export function App() {
                     setSurface("scheduled");
                   }}
                 >
-                  ← Back to runs
+                  {t("run_banner.back_to_runs")}
                 </button>
               </div>
             )}
@@ -1873,15 +1943,15 @@ export function App() {
                   <div className="hero">
                     <h1 className="greeting">
                       <span className="mark">✦</span>
-                      {agent === "chat" ? "How can I help?" : "Let's build something."}
+                      {agent === "chat" ? t("hero.chat_greeting") : t("hero.build_greeting")}
                     </h1>
                     {(
                       <div className="suggestions">
-                        <div className="suggest-head">Try a task</div>
-                        {SUGGESTIONS.map((s, i) => (
-                          <div className="suggest" key={i} onClick={() => workspace && send(s.text)}>
+                        <div className="suggest-head">{t("hero.try_a_task")}</div>
+                        {SUGGESTION_KEYS.map((s, i) => (
+                          <div className="suggest" key={i} onClick={() => workspace && send(t(s.key))}>
                             <span className="ico">{s.ico}</span>
-                            {s.text}
+                            {t(s.key)}
                           </div>
                         ))}
                       </div>
@@ -1895,6 +1965,8 @@ export function App() {
                     onApprove={approve}
                     running={running}
                     onRetry={retry}
+                    onOpenConnectors={() => setSurface("integrations")}
+                    onAllowAnyway={allowAnyway}
                     onUndoMemory={(id, previous) => void undoMemorySave(id, previous)}
                     // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
                     // group (header when collapsed, quiet line when expanded) — never as a
@@ -1911,7 +1983,7 @@ export function App() {
                   )}
                   {/* Compaction runs between provider turns (nothing streams during it), so
                       the transient takes over the waiting slot with a specific label. */}
-                  {running && compacting && <WaitingForAgent label="Compacting context…" />}
+                  {running && compacting && <WaitingForAgent label={t("app.compacting_context")} />}
                   {running &&
                     !compacting &&
                     !reasoningStream &&
@@ -1920,7 +1992,7 @@ export function App() {
                   {streaming && streamMode(streaming, items, running) === "answer" && (
                     <div className="transcript">
                       <div className="bubble-assistant">
-                        <div className="who">assistant</div>
+                        <div className="who">{t("transcript.who_assistant")}</div>
                         <Markdown text={streaming} />
                         <span className="stream-cursor">▍</span>
                       </div>
@@ -1941,7 +2013,7 @@ export function App() {
                   onClick={followLatest}
                 >
                   <Icon name="chevronDown" size={13} />
-                  Jump to latest
+                  {t("app.jump_to_latest")}
                 </button>
               </div>
             )}
@@ -1975,25 +2047,23 @@ export function App() {
               <div className="sleep-strip" data-testid="sleep-strip">
                 <span className="sleep-dot" />
                 <span className="sleep-text">
-                  Sleeping
+                  {t("app.sleep.label")}
                   {activeInfo.sleeping_until
-                    ? ` until ${new Date(activeInfo.sleeping_until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+                    ? t("app.sleep.until", {
+                        time: new Date(activeInfo.sleeping_until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+                      })
                     : ""}
                   {activeInfo.team?.role === "lead"
-                    ? " while the team works — it also wakes on board activity."
-                    : " — it wakes on its trigger."}{" "}
-                  Talk to it anytime.
+                    ? t("app.sleep.team_clause")
+                    : t("app.sleep.trigger_clause")}{" "}
+                  {t("app.sleep.talk_anytime")}
                 </span>
                 <button
                   className="btn sm"
                   data-testid="sleep-status-btn"
-                  onClick={() =>
-                    send(
-                      "Quick status check, please — what's moving, what's blocked, and does anything need me?",
-                    )
-                  }
+                  onClick={() => send(t("app.sleep.status_prompt"))}
                 >
-                  Ask for a status
+                  {t("app.sleep.ask_status")}
                 </button>
               </div>
             )}
@@ -2007,6 +2077,7 @@ export function App() {
               connected={connected}
               modelReady={modelReady}
               onConnectModel={openModelSetup}
+              onOpenMemory={() => openSettings("memory")}
               onConfigureVoiceInput={() => openSettings("voice")}
               onSend={send}
               onInterrupt={interrupt}
@@ -2021,12 +2092,13 @@ export function App() {
               usage={usage}
               contextWindow={modelContextWindows[model]}
               contextBar={contextBar}
+              reviewerPaused={reviewerPaused}
               placeholder={
                 agent === "code"
-                  ? "Ask the coder to build, fix, or explain…  (drop or paste files)"
+                  ? t("composer.placeholder_code")
                   : agent === "chat"
-                    ? "Ask anything…  (drop or paste files)"
-                    : "Ask the coworker…  (drop or paste files)"
+                    ? t("composer.placeholder_chat")
+                    : t("composer.placeholder_cowork")
               }
               approvalSlot={
                 // Live inline cards are for ATTENDED sessions only; when Unattended the prompt is
@@ -2042,7 +2114,13 @@ export function App() {
                 ) : !unattended && pendingDirReq?.kind === "dirreq" ? (
                   <DirectoryRequestCard item={pendingDirReq} onRespond={respondDirectory} />
                 ) : !unattended && pendingApproval?.kind === "approval" ? (
-                  <ApprovalCard item={pendingApproval} onApprove={approve} runTask={runContext} compact />
+                  <ApprovalCard
+                    item={pendingApproval}
+                    onApprove={approve}
+                    runTask={runContext}
+                    autoApprove={mode === "auto-approve"}
+                    compact
+                  />
                 ) : !unattended && pendingQuestion?.kind === "question" ? (
                   // Live ask_user in an attended session — answer inline (reuses the Inbox card UI).
                   <InboxItemCard
@@ -2205,11 +2283,12 @@ function lastItemIsAssistant(items: Item[]): boolean {
 }
 
 function WaitingForAgent({ label }: { label?: string }) {
+  const { t } = useTranslation();
   return (
     <div className="waiting-transcript">
       <div className="waiting-row" aria-live="polite">
         <span className="waiting-spinner" />
-        <span>{label || "Waiting for agent..."}</span>
+        <span>{label || t("app.waiting_for_agent")}</span>
       </div>
     </div>
   );
@@ -2222,6 +2301,10 @@ function updateLastTool(
   preview?: string,
   hidden?: number,
   standingRule?: string,
+  reviewerReason?: string,
+  allowAnyway?: boolean,
+  approvalOrigin?: string,
+  approvalNote?: string,
 ): Item[] {
   const copy = [...items];
   for (let i = copy.length - 1; i >= 0; i--) {
@@ -2233,6 +2316,10 @@ function updateLastTool(
         preview,
         ...(hidden ? { hidden } : {}),
         ...(standingRule ? { standingRule } : {}),
+        ...(reviewerReason ? { reviewerReason } : {}),
+        ...(allowAnyway ? { allowAnyway } : {}),
+        ...(approvalOrigin ? { approvalOrigin } : {}),
+        ...(approvalNote ? { approvalNote } : {}),
       };
       break;
     }

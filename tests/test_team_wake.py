@@ -413,6 +413,91 @@ def test_item_detail_timeline_and_blocker_fact(manager):
     assert blocked["blocker"] == "need the staging tfvars"
 
 
+def test_session_attachment_read_is_scoped_to_its_board(manager):
+    from coworker.sessions import SessionRecord
+    from coworker.teams import BoardError
+    from coworker.teams.attachments import stored_name
+
+    space = str(manager.default_workspace)
+    manager.session_store.save(
+        SessionRecord(
+            session_id="sid",
+            workspace=space,
+            model="m",
+            mode="interactive",
+            messages=[],
+            agent="cowork",
+        )
+    )
+    other = manager.team_store.create_item(
+        "other-space", LEAD, title="Other board", criteria="c"
+    )
+    ref = manager.attachment_store.put(
+        b"\x89PNG\r\n\x1a\nprivate", "private.png"
+    )
+    manager.team_store.attach_ref(
+        "other-space", LEAD, other["id"], "private", ref
+    )
+
+    with pytest.raises(BoardError, match="attachment not found"):
+        manager.board_attachment("sid", stored_name(ref))
+
+
+def test_session_attachment_route_uses_the_session_board(manager, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from coworker.server.app import create_app
+    from coworker.sessions import SessionRecord
+    from coworker.teams.attachments import stored_name
+
+    monkeypatch.delenv("COWORKER_API_TOKEN", raising=False)
+    space = str(manager.default_workspace)
+    manager.session_store.save(
+        SessionRecord(
+            session_id="sid",
+            workspace=space,
+            model="m",
+            mode="interactive",
+            messages=[],
+            agent="cowork",
+        )
+    )
+    other = manager.team_store.create_item(
+        "other-space", LEAD, title="Other board", criteria="c"
+    )
+    ref = manager.attachment_store.put(
+        b"\x89PNG\r\n\x1a\nprivate", "private.png"
+    )
+    manager.team_store.attach_ref(
+        "other-space", LEAD, other["id"], "private", ref
+    )
+    client = TestClient(create_app(manager))
+
+    response = client.get(
+        "/v1/sessions/sid/board/attachment",
+        params={"name": stored_name(ref)},
+    )
+    assert response.status_code == 404
+    assert response.json() == {"error": "attachment not found"}
+
+    item = manager.team_store.create_item(
+        space, LEAD, title="This board", criteria="c"
+    )
+    visible = manager.attachment_store.put(
+        b"\x89PNG\r\n\x1a\nvisible", "visible.png"
+    )
+    manager.team_store.attach_ref(space, LEAD, item["id"], "visible", visible)
+    allowed = client.get(
+        "/v1/sessions/sid/board/attachment",
+        params={"name": stored_name(visible)},
+    )
+    client.close()
+
+    assert allowed.status_code == 200
+    assert allowed.content == b"\x89PNG\r\n\x1a\nvisible"
+    assert allowed.headers["content-type"] == "image/png"
+
+
 def test_feed_interest_follows_the_assignment_relation(store):
     """Owner ruling 2026-08-17: no per-event addressing — a worker is subscribed
     to everything on its slice. Send-backs, comment ANSWERS (the silently broken

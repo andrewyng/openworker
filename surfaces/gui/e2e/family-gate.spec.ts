@@ -93,3 +93,38 @@ test("escape restores the draft instead of losing it", async ({ page }) => {
   await expect(page.getByTestId("send-folder-dialog")).toHaveCount(0);
   await expect(box).toHaveValue("precious draft");
 });
+
+test("an explicit folder pick survives a coworker change; menu copy matches state", async ({
+  page,
+}) => {
+  // Owner catch 2026-08-24 (v0.2.0 walkthrough): picking a folder and THEN picking the
+  // coworker silently reset the folder. The user's own chip pick must survive; only
+  // inherited folders (boot-resume, scratch) still clear on a coworker change.
+  await page.goto("/");
+  await page.getByText("New session").first().click();
+
+  // No folder yet — the menu's browse action reads "Choose a folder…", not "another".
+  await page.getByTestId("folder-chip").click();
+  const browseBtn = page.locator(".setup-menu").getByRole("button", { name: /Choose a(nother)? folder…/ });
+  await expect(browseBtn).toHaveText(/Choose a folder…/);
+  await browseBtn.click(); // native pick is mocked server-side → /tmp/picked-folder
+  await expect(page.getByTestId("folder-chip")).toContainText("picked-folder");
+
+  // With a folder bound, the same action offers "another".
+  await page.getByTestId("folder-chip").click();
+  await expect(
+    page.locator(".setup-menu").getByRole("button", { name: /Choose a(nother)? folder…/ }),
+  ).toHaveText(/Choose another folder…/);
+  await page.mouse.click(10, 10); // scrim click closes the menu
+
+  // Re-target the draft to a folder-gated coworker — the pick survives…
+  await page.getByTestId("coworker-chip").click();
+  await page.locator(".setup-menu").getByRole("button", { name: /Security Coworker/ }).click();
+  await expect(page.getByTestId("folder-chip")).toContainText("picked-folder");
+
+  // …and the send goes straight through, no folder dialog.
+  await page.getByPlaceholder(/Ask the coworker/).fill("scan here");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText(/Echo: scan here/)).toBeVisible();
+  await expect(page.getByTestId("send-folder-dialog")).toHaveCount(0);
+});

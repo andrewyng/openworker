@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { updateConnectorTools, type Connector } from "../../api";
 import { GRP, ROW, TAG_QUIET, TAG_WARN } from "./ui";
 
@@ -5,15 +6,16 @@ import { GRP, ROW, TAG_QUIET, TAG_WARN } from "./ui";
 // (UX-DECISIONS §21): the lever exists everywhere but stays quiet — expanding
 // shows one row per tool with its read/write tag; writes always ask first.
 export function ToolsDisclosure({ c, onChanged }: { c: Connector; onChanged: () => void }) {
+  const { t } = useTranslation();
   if (!c.tools?.length) return null;
-  const enabled = c.tools.filter((t) => t.enabled).length;
+  const enabled = c.tools.filter((tool) => tool.enabled).length;
   return (
     <div className={GRP + " mt-6"}>
       <details>
         <summary className={ROW + " cursor-pointer hover:bg-paper/60 list-none [&::-webkit-details-marker]:hidden"}>
-          <span className="text-[12.5px] text-muted w-24 shrink-0">› Tools</span>
-          <span className="min-w-0 flex-1 text-[12.5px] text-muted">
-            {enabled} of {c.tools.length} enabled
+          <span className="text-[13px] text-muted w-24 shrink-0">{t("connector.tools_label")}</span>
+          <span className="min-w-0 flex-1 text-[13px] text-muted">
+            {t("connector.tools_enabled", { enabled, total: c.tools.length })}
           </span>
         </summary>
         {c.tools.map((tool) => (
@@ -28,7 +30,7 @@ export function ToolsDisclosure({ c, onChanged }: { c: Connector; onChanged: () 
             />
             <span className="min-w-0 flex-1 text-[13px] font-medium">{tool.label}</span>
             <span className={tool.kind === "write" ? TAG_WARN : TAG_QUIET}>
-              {tool.kind === "write" ? "asks first" : "read"}
+              {tool.kind === "write" ? t("connector.asks_first") : t("connector.read")}
             </span>
           </label>
         ))}

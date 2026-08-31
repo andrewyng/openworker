@@ -164,6 +164,7 @@ from ..providers import AssistantTurn
 from .. import toolchain
 from ..teams.model import AuthorityError as TeamsAuthorityError
 from ..teams.model import BoardError as TeamsBoardError
+from ..teams.model import BoardNotFoundError as TeamsBoardNotFoundError
 from .manager import SessionManager
 
 
@@ -394,12 +395,17 @@ def create_app(manager: SessionManager) -> FastAPI:
     def get_unattended(session_id: str) -> dict[str, Any]:
         return {"unattended": manager.unattended.is_unattended(session_id)}
 
+    @app.get("/v1/sessions/{session_id}/reviewer-stats")
+    def get_reviewer_stats(session_id: str) -> dict[str, Any]:
+        # Auto-Approve metering (§1.7): checks/verdicts/tokens from the durable audit rows.
+        # Drives the composer's "Auto-Approve · N checks" badge and the mode-menu summary.
+        return manager.audit_store.reviewer_stats(session_id)
+
     @app.post("/v1/sessions/{session_id}/unattended")
     def set_unattended(session_id: str, body: dict) -> dict[str, Any]:
-        # The GUI gates the on-transition behind a one-tap confirm.
-        on = bool(body.get("unattended"))
-        manager.unattended.set(session_id, on)
-        return {"ok": True, "session_id": session_id, "unattended": on}
+        # The GUI gates the on-transition behind a one-tap confirm; the manager records the
+        # transition either way, so the change is answerable from the audit store.
+        return manager.set_unattended(session_id, bool(body.get("unattended")))
 
     @app.get("/v1/sessions/{session_id}/skills")
     def session_skills(session_id: str, workspace: str = "") -> dict[str, Any]:
@@ -777,12 +783,12 @@ def create_app(manager: SessionManager) -> FastAPI:
         from fastapi.responses import Response
 
         try:
-            path = manager.attachment_store.path_for(name)
+            data, mime = manager.board_attachment(session_id, name)
         except TeamsBoardError as error:
             return JSONResponse({"error": str(error)}, status_code=404)
         return Response(
-            content=path.read_bytes(),
-            media_type=manager.attachment_store.mime_for(name),
+            content=data,
+            media_type=mime,
         )
 
     @app.post("/v1/sessions/{session_id}/board/comment")
@@ -837,6 +843,8 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
         try:
             return handler(actor)
+        except TeamsBoardNotFoundError as error:
+            return JSONResponse({"error": str(error)}, status_code=404)
         except TeamsAuthorityError as error:
             return JSONResponse({"error": str(error)}, status_code=403)
         except (TeamsBoardError, ValueError) as error:
@@ -868,7 +876,8 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.get("/v1/board/item")
     def board_get_item(request: Request, space: str, id: int):
         return _board(
-            request, lambda actor: manager.team_store.get_item(space, int(id))
+            request,
+            lambda actor: manager.team_store.get_item(space, int(id), actor=actor),
         )
 
     @app.post("/v1/board/items")
@@ -989,22 +998,23 @@ def create_app(manager: SessionManager) -> FastAPI:
                 data, str(body.get("filename", ""))
             )
             filename = str(body.get("filename", ""))
-            event = manager.team_store.comment(
+            event = manager.team_store.attach_ref(
                 str(body.get("space", "")),
                 actor,
                 int(body.get("id", 0)),
                 str(body.get("caption", "")) or f"attached {filename}",
-                refs=[ref],
+                ref,
             )
             return {"ref": ref, "seq": event["seq"]}
 
         return _board(request, run)
 
     @app.get("/v1/board/attachment")
-    def board_attachment(request: Request, name: str):
+    def board_attachment(request: Request, name: str, space: str):
         def run(actor):
             from fastapi.responses import Response
 
+            manager.team_store.require_attachment_access(space, actor, name)
             path = manager.attachment_store.path_for(name)
             return Response(
                 content=path.read_bytes(),
@@ -1137,6 +1147,27 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.delete("/v1/memory")
     def memory_delete_all() -> dict[str, Any]:
         return manager.delete_all_memory()
+
+    # -- project bindings (pass 20 / UX-044) --------------------------------------
+
+    @app.get("/v1/sessions/{session_id}/project-menu")
+    def project_menu(session_id: str, kind: str = "memory") -> dict[str, Any]:
+        return manager.project_menu(session_id, kind)
+
+    @app.put("/v1/sessions/{session_id}/bindings")
+    def put_binding(session_id: str, body: dict) -> dict[str, Any]:
+        body = body or {}
+        name = body.get("name")
+        return manager.set_binding(
+            session_id, str(body.get("kind", "")), str(name) if name else None
+        )
+
+    @app.post("/v1/sessions/{session_id}/project-name")
+    def name_project(session_id: str, body: dict) -> dict[str, Any]:
+        body = body or {}
+        return manager.name_current_project(
+            session_id, str(body.get("kind", "")), str(body.get("name", ""))
+        )
 
     @app.post("/v1/chat/completions")
     def chat_completions(body: dict) -> dict[str, Any]:
@@ -1811,6 +1842,24 @@ def create_app(manager: SessionManager) -> FastAPI:
             manager.verify_provider, name, (body or {}).get("fields")
         )
 
+    @app.post("/v1/providers/openai-codex/signin")
+    async def codex_signin() -> dict[str, Any]:
+        # Opens the system browser and waits on the loopback callback — that can
+        # take minutes, so it runs as a background task; the GUI polls the status
+        # route for the flip (authorizing → signed_in | last_error). Same shape as
+        # the MCP OAuth connect route.
+        manager.begin_codex_signin()
+        asyncio.create_task(manager.codex_signin())
+        return {"ok": True, "started": True}
+
+    @app.get("/v1/providers/openai-codex/status")
+    def codex_status() -> dict[str, Any]:
+        return manager.codex_status()
+
+    @app.post("/v1/providers/openai-codex/signout")
+    def codex_signout() -> dict[str, Any]:
+        return manager.codex_signout()
+
     # -- settings (model API key) -----------------------------------------------
     @app.get("/v1/settings")
     def settings_get() -> dict[str, Any]:
@@ -1862,6 +1911,19 @@ def create_app(manager: SessionManager) -> FastAPI:
     def settings_set_context_bar(body: dict) -> dict[str, Any]:
         # Composer: show the context-window fill bar, or just the popover (owner ask).
         return manager.set_context_bar((body or {}).get("context_bar", True))
+
+    @app.post("/v1/settings/auto-approve")
+    def settings_set_auto_approve(body: dict) -> dict[str, Any]:
+        # Auto-Approve feature flag (spec §1.5): when on, Mode.AUTO_APPROVE gets an LLM
+        # reviewer. Takes effect on the next session build. Turning it off leaves any
+        # shadow-eval setting alone (they are independent switches).
+        return manager.set_auto_approve((body or {}).get("auto_approve", False))
+
+    @app.post("/v1/settings/auto-approve-shadow")
+    def settings_set_auto_approve_shadow(body: dict) -> dict[str, Any]:
+        # Shadow evaluation (Part 6 step 3): the reviewer records what it WOULD decide on
+        # every approval card while the human still decides. Independent of the live flag.
+        return manager.set_auto_approve_shadow((body or {}).get("auto_approve_shadow", False))
 
     @app.post("/v1/settings/pdf")
     def settings_set_pdf(body: dict) -> dict[str, Any]:
@@ -2365,10 +2427,13 @@ def create_app(manager: SessionManager) -> FastAPI:
         # them (drill 2026-08-20: three silent startup failures in a row).
         for name, err in manager.pop_mcp_failures(session_id):
             detail = f": {err}" if err else ""
+            # `server` makes the notice structured: the GUI renders one quiet line
+            # with the full error behind a disclosure + an Open-Connectors action
+            # (owner ruling 2026-08-21) instead of a wall of stderr.
             engine._append_notice(
                 "mcp_error",
-                f"MCP server “{name}” failed to start{detail}"[:300]
-                + " — see Settings ▸ Connectors",
+                f"MCP server “{name}” failed to start{detail}"[:500],
+                server=name,
             )
         # Auto-compaction failure prompt (OPE-27): only an ATTENDED session may be asked
         # Retry/Trim — unattended runs auto-trim (the policy in engine._compact_now).
@@ -2378,6 +2443,10 @@ def create_app(manager: SessionManager) -> FastAPI:
                 "type": "ready",
                 "data": {
                     "session_id": session_id,
+                    # A reconnect can land MID-TURN (sidebar revisit, app relaunch, WS
+                    # drop). Without server truth the GUI never learns a turn is live —
+                    # no Stop button, no waiting row (owner catch 2026-08-24).
+                    "running": manager.is_running(session_id),
                     "agent": getattr(engine, "agent_name", "code"),
                     "model": engine.model,
                     "mode": engine.permissions.mode.value,
@@ -2430,6 +2499,10 @@ def create_app(manager: SessionManager) -> FastAPI:
                     )
                     if event.type.value in _CHECKPOINTS:
                         manager.save(session_id, engine)
+                    if event.type.value == "turn_start":
+                        # Title on the user's words the moment they land — never behind
+                        # a long agentic turn (owner catch 2026-08-24).
+                        manager._maybe_autotitle(session_id)
             finally:
                 manager.mark_idle(session_id)
                 manager.save(session_id, engine)
@@ -2440,6 +2513,24 @@ def create_app(manager: SessionManager) -> FastAPI:
         # This socket is now a live view of the session; background turns (channel delivery,
         # self-wake, durable resume) broadcast here too, not just locally driven run_turns.
         manager.register_session_client(session_id, ws.send_json)
+        if engine.permissions.mode is Mode.AUTO_APPROVE and not any(
+            m.get("kind") == "mode_notice" for m in engine.messages
+        ):
+            from coworker.permissions import AUTO_APPROVE_NOTICE
+
+            engine._append_notice(
+                "mode_notice", AUTO_APPROVE_NOTICE, title="Auto-approve is on."
+            )
+            manager.save(session_id, engine, touch=False)  # migration ≠ activity
+            await ws.send_json(
+                {
+                    "type": "mode_notice",
+                    "data": {
+                        "title": "Auto-approve is on.",
+                        "text": AUTO_APPROVE_NOTICE,
+                    },
+                }
+            )
         inbound_times: deque[float] = deque()
 
         async def reject_input(reason: str) -> None:
@@ -2524,6 +2615,19 @@ def create_app(manager: SessionManager) -> FastAPI:
                     )
                 elif kind == "question_response":
                     _resolve_pending(str(message.get("answer", "")))
+                elif kind == "allow_anyway":
+                    # §8.4: the user clicked "Allow anyway" on a reviewer-denied tool card.
+                    # Registers a ONE-SHOT exact-action approval on the engine; the GUI then
+                    # sends its canned retry message through the normal user_message path,
+                    # and the re-proposed identical action runs without the reviewer/card.
+                    name = message.get("name")
+                    arguments = message.get("arguments")
+                    if not isinstance(name, str) or not name:
+                        await reject_input("Invalid allow_anyway: missing tool name.")
+                    elif arguments is not None and not isinstance(arguments, dict):
+                        await reject_input("Invalid allow_anyway: arguments must be an object.")
+                    else:
+                        engine.approve_action_once(name, arguments or {})
                 elif kind == "interrupt":
                     engine.request_interrupt()
                 elif kind == "retry":
@@ -2532,9 +2636,56 @@ def create_app(manager: SessionManager) -> FastAPI:
                     await claim_turn(retry=True)
                 elif kind == "set_mode":
                     try:
-                        engine.permissions.mode = Mode(message.get("mode"))
+                        new_mode = Mode(message.get("mode"))
                     except (TypeError, ValueError):
                         pass
+                    else:
+                        previous = engine.permissions.mode
+                        engine.permissions.mode = new_mode
+                        if previous is not new_mode:
+                            manager.audit_autonomy_change(
+                                session_id, "mode", previous.value, new_mode.value
+                            )
+                            # The transcript records which mode each exchange ran under
+                            # (owner ruling 2026-08-24): full explainer the first time a
+                            # session enters Auto-Approve, a one-line marker otherwise.
+                            # Server-authored + persisted, so reloads show it in place
+                            # exactly once instead of re-announcing on every restart.
+                            from coworker.permissions import (
+                                AUTO_APPROVE_NOTICE,
+                                MODE_LABELS,
+                            )
+
+                            if new_mode is Mode.AUTO_APPROVE and not any(
+                                m.get("kind") == "mode_notice"
+                                for m in engine.messages
+                            ):
+                                engine._append_notice(
+                                    "mode_notice",
+                                    AUTO_APPROVE_NOTICE,
+                                    title="Auto-approve is on.",
+                                )
+                                notice_data = {
+                                    "title": "Auto-approve is on.",
+                                    "text": AUTO_APPROVE_NOTICE,
+                                }
+                            else:
+                                label = MODE_LABELS.get(
+                                    new_mode.value, new_mode.value
+                                )
+                                engine._append_notice(
+                                    "mode_switch", f"{label} is on."
+                                )
+                                notice_data = {"text": f"{label} is on."}
+                            # A mode switch with no accompanying message is bookkeeping,
+                            # not activity (owner ruling 2026-08-24): the transcript
+                            # records it, Recents doesn't reorder. The next real turn's
+                            # checkpoint save bumps recency as usual.
+                            manager.save(session_id, engine, touch=False)
+                            await manager.broadcast_session(
+                                session_id,
+                                {"type": "mode_notice", "data": notice_data},
+                            )
                 elif kind == "set_model":
                     model = message.get("model")
                     if model is not None and not isinstance(model, str):

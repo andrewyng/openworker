@@ -50,8 +50,11 @@ _ASK_SCHEMA = {
         "name": "ask_user",
         "description": (
             "Ask the user one or more questions and wait for their answer. Use for decisions or "
-            "information only the user can provide. Group related questions (up to "
-            f"{MAX_GROUPED_QUESTIONS}) into one call via `questions` instead of asking serially."
+            "information only the user can provide. Do not use it to ask permission for a "
+            "specific action you are about to take — propose the action instead; the approval "
+            "flow shows the user exactly what would run and does the asking. Group related "
+            f"questions (up to {MAX_GROUPED_QUESTIONS}) into one call via `questions` instead "
+            "of asking serially."
         ),
         "parameters": {
             "type": "object",
@@ -132,6 +135,10 @@ def ask_user_tool() -> object:
         decision or information you can't infer (a preference, a missing fact, a choice between real
         alternatives). Prefer this over guessing or stalling.
 
+        Never use it to ask permission for a specific action you are about to take ("shall I
+        open a PR?") — propose the action instead: the approval flow shows the user the exact
+        command/arguments and does the asking, which is stronger consent than a chat yes.
+
         Single form returns `{"answer": "..."}` — the chosen option label(s) or the typed text.
         Grouped form (`questions`) returns `{"answers": {"<header or question>": "..."}}` — one
         entry per question. Don't ask what you can reasonably decide yourself; reserve this for
@@ -152,7 +159,8 @@ def ask_user_tool() -> object:
             capabilities=["ask_user"],
             description=(
                 "Ask the user a question (free-text or multiple-choice) and wait for their answer. "
-                "Use for decisions or information only the user can provide."
+                "Use for decisions or information only the user can provide — never to ask "
+                "permission for a specific action; propose the action and let the approval flow ask."
             ),
         ),
     )

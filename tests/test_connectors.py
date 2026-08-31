@@ -258,7 +258,8 @@ def test_engine_connector_tools_are_cowork_scoped(tmp_path):
     assert "browser_open_url" not in helper.registry.names()
 
     # §36: browser READS (registry kind) are free; interactions still gate.
-    assert cowork.registry.get("browser_open_url").metadata.requires_approval is False
+    # OPE-111: open_url is egress (model-chosen URL), so it gates like an interaction.
+    assert cowork.registry.get("browser_open_url").metadata.requires_approval is True
     assert cowork.registry.get("browser_read_page").metadata.requires_approval is False
     assert cowork.registry.get("browser_click").metadata.requires_approval is True
     assert cowork.registry.get("browser_type").metadata.requires_approval is True

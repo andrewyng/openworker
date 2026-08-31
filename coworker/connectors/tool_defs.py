@@ -27,9 +27,11 @@ class ConnectorToolDef:
 TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
     ConnectorToolDef(
         "browser",
+        # Egress, not a read: the URL is model-chosen, so the request itself can carry
+        # data off-machine (same reasoning as web_fetch, OPE-111).
         "browser_open_url",
         "Open URL",
-        "read",
+        "write",
         "Open a URL in the Playwright browser.",
     ),
     ConnectorToolDef(
@@ -72,9 +74,11 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
     ),
     ConnectorToolDef(
         "browser",
+        # Writes an image file to a resolved path (creating parents) — a local write,
+        # whatever the pane shows (OPE-111).
         "browser_screenshot",
         "Screenshot",
-        "read",
+        "write",
         "Capture a browser screenshot.",
     ),
     ConnectorToolDef(
@@ -128,16 +132,18 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
     ),
     ConnectorToolDef(
         "github",
+        # Writes a whole tree to local disk — reading GitHub, writing the machine (OPE-111).
         "github_clone",
         "Clone a repo",
-        "read",
+        "write",
         "Clone a repository into a session folder to explore the code.",
     ),
     ConnectorToolDef(
         "github",
+        # Mutates an existing working tree (OPE-111).
         "github_pull",
         "Update a clone",
-        "read",
+        "write",
         "Fast-forward an existing clone to the latest commits.",
     ),
     ConnectorToolDef(
@@ -827,42 +833,42 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "apollo",
         "apollo_enrich_person",
         "Enrich person",
-        "read",
+        "write",
         "Enrich a person by email or name.",
     ),
     ConnectorToolDef(
         "apollo",
         "apollo_enrich_company",
         "Enrich company",
-        "read",
+        "write",
         "Enrich a company by domain.",
     ),
     ConnectorToolDef(
         "apollo",
         "apollo_search_people",
         "Search people",
-        "read",
+        "write",
         "Keyword-search Apollo's B2B database.",
     ),
     ConnectorToolDef(
         "hunter",
         "hunter_domain_search",
         "Domain search",
-        "read",
+        "write",
         "Find published emails for a domain.",
     ),
     ConnectorToolDef(
         "hunter",
         "hunter_find_email",
         "Find email",
-        "read",
+        "write",
         "Find a person's likely email address.",
     ),
     ConnectorToolDef(
         "hunter",
         "hunter_verify_email",
         "Verify email",
-        "read",
+        "write",
         "Check whether an email is deliverable.",
     ),
     ConnectorToolDef(

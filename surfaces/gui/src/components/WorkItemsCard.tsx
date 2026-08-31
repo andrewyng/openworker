@@ -3,6 +3,7 @@
 // acceptance criteria as the primary text, 3 visible + expander with the true
 // count in the header, no in-card reply surface (editing happens by replying).
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { Item } from "../types";
 import { Icon } from "./Icon";
 
@@ -19,6 +20,7 @@ export function WorkItemsCard({
   item: Extract<Item, { kind: "itemsreq" }>;
   onRespond: (approved: boolean, feedback?: string) => void;
 }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [openCriteria, setOpenCriteria] = useState<Record<number, boolean>>({});
   const visible = expanded ? item.items : item.items.slice(0, 3);
@@ -28,7 +30,7 @@ export function WorkItemsCard({
       <div className="itemsreq-head">
         <Icon name="table" size={15} />
         <span className="itemsreq-title">
-          Proposed work items — {item.items.length}
+          {t("team.proposed_items", { count: item.items.length })}
         </span>
       </div>
       {item.note && <div className="itemsreq-note">{item.note}</div>}
@@ -42,7 +44,7 @@ export function WorkItemsCard({
               <span className="itemsreq-body">
                 <span className="itemsreq-item-title">{entry.title}</span>
                 <span className={"itemsreq-ac" + (long && !open ? " clamped" : "")}>
-                  <b>Done when:</b> {entry.criteria}
+                  <b>{t("team.items_done_when")}</b> {entry.criteria}
                 </span>
                 {long && (
                   <button
@@ -50,7 +52,7 @@ export function WorkItemsCard({
                     data-testid={`itemsreq-ac-toggle-${i}`}
                     onClick={() => setOpenCriteria((s) => ({ ...s, [i]: !s[i] }))}
                   >
-                    {open ? "Show less" : "Show full criteria"}
+                    {open ? t("team.show_less") : t("team.show_full_criteria")}
                   </button>
                 )}
               </span>
@@ -59,25 +61,23 @@ export function WorkItemsCard({
         })}
         {hidden > 0 && (
           <button className="itemsreq-more" onClick={() => setExpanded(true)}>
-            ＋ {hidden} more item{hidden === 1 ? "" : "s"}
+            {t("team.more_items", { count: hidden })}
             <Icon name="chevronDown" size={12} />
           </button>
         )}
       </div>
       <div className="dirreq-actions">
-        <span className="itemsreq-grant">
-          Reply to edit the split; approval creates these on the board.
-        </span>
+        <span className="itemsreq-grant">{t("team.items_grant")}</span>
         <span className="spacer" />
         <button className="btn" onClick={() => onRespond(false)}>
-          Not now
+          {t("team.not_now")}
         </button>
         <button
           className="btn primary"
           data-testid="itemsreq-approve"
           onClick={() => onRespond(true)}
         >
-          Approve items
+          {t("team.approve_items")}
         </button>
       </div>
     </div>

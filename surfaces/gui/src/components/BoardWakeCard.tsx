@@ -5,10 +5,25 @@
 // card: a connector message is a foreign message, a board wake is a report —
 // different shape, different affordances (they only share the visual family).
 import { useState } from "react";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import type { BoardWakeRow, MessageSource } from "../api";
 import { Icon } from "./Icon";
 
-function summarize(rows: BoardWakeRow[]): { text: string; attention: boolean } {
+// Summary buckets → plural-aware catalog keys ("1 review", "2 reviews", …).
+const WAKE_COUNT_KEYS: Record<string, string> = {
+  review: "board.wake_review",
+  blocked: "board.wake_blocked",
+  canceled: "board.wake_canceled",
+  move: "board.wake_move",
+  filing: "board.wake_filing",
+  claim: "board.wake_claim",
+  assignment: "board.wake_assignment",
+  comment: "board.wake_comment",
+  chat: "board.wake_chat_message",
+};
+
+function summarize(t: TFunction, rows: BoardWakeRow[]): { text: string; attention: boolean } {
   const counts: Record<string, number> = {};
   const bump = (key: string) => (counts[key] = (counts[key] || 0) + 1);
   for (const row of rows) {
@@ -20,34 +35,35 @@ function summarize(rows: BoardWakeRow[]): { text: string; attention: boolean } {
     else if (row.kind === "claimed") bump("claim");
     else if (row.kind === "assigned") bump("assignment");
     else if (row.kind === "comment") bump("comment");
-    else if (row.kind === "chat") bump("chat message");
+    else if (row.kind === "chat") bump("chat");
   }
-  const parts = Object.entries(counts).map(
-    ([label, n]) => `${n} ${label}${n === 1 ? "" : "s"}`
+  const parts = Object.entries(counts).map(([bucket, n]) =>
+    t(WAKE_COUNT_KEYS[bucket], { count: n })
   );
   // reviews/blocked demand a decision — those tint the collapsed line amber
   const attention = (counts.review || 0) + (counts.blocked || 0) > 0;
-  return { text: parts.join(", ") || "update", attention };
+  return { text: parts.join(", ") || t("board.wake_update"), attention };
 }
 
-function rowText(row: BoardWakeRow): string {
+function rowText(t: TFunction, row: BoardWakeRow): string {
   const item = row.item != null ? `#${row.item}` : "";
   const title = row.title ? ` ${row.title}` : "";
+  const ref = `${item}${title}`;
   switch (row.kind) {
     case "moved":
-      return `${item}${title} → ${row.to} by ${row.actor}`;
+      return t("board.wake_moved", { ref, to: row.to, actor: row.actor });
     case "filed":
-      return `${row.actor} filed ${item}${title}`;
+      return t("board.wake_filed", { ref, actor: row.actor });
     case "claimed":
-      return `${row.actor} claimed ${item}${title}`;
+      return t("board.wake_claimed", { ref, actor: row.actor });
     case "assigned":
-      return `${item}${title} assigned to you`;
+      return t("board.wake_assigned", { ref });
     case "comment":
-      return `${row.actor} commented on ${item}${title}`;
+      return t("board.wake_commented", { ref, actor: row.actor });
     case "chat":
-      return `# team chat — ${row.actor}`;
+      return t("board.wake_chat", { actor: row.actor });
     default:
-      return `${item}${title}`;
+      return ref;
   }
 }
 
@@ -60,10 +76,11 @@ function stateDot(row: BoardWakeRow): string {
 }
 
 export function BoardWakeCard({ source }: { source: MessageSource }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [openNotes, setOpenNotes] = useState<Record<number, boolean>>({});
   const rows = source.board?.rows || [];
-  const { text, attention } = summarize(rows);
+  const { text, attention } = summarize(t, rows);
   return (
     <div
       className={"boardwake" + (attention ? " attention" : "")}
@@ -76,7 +93,7 @@ export function BoardWakeCard({ source }: { source: MessageSource }) {
         aria-expanded={open}
       >
         <Icon name="table" size={14} />
-        <span className="boardwake-title">Board wake</span>
+        <span className="boardwake-title">{t("board.wake_title")}</span>
         <span className="boardwake-summary">{text}</span>
         <span className="spacer" />
         <span className={"boardwake-chevron" + (open ? " open" : "")}>
@@ -89,7 +106,7 @@ export function BoardWakeCard({ source }: { source: MessageSource }) {
             <div className="boardwake-row" key={i}>
               <span className={stateDot(row)} />
               <span className="boardwake-row-main">
-                <span className="boardwake-row-text">{rowText(row)}</span>
+                <span className="boardwake-row-text">{rowText(t, row)}</span>
                 {row.note &&
                   (openNotes[i] ? (
                     <span className="boardwake-note">{row.note}</span>
@@ -99,8 +116,8 @@ export function BoardWakeCard({ source }: { source: MessageSource }) {
                       onClick={() => setOpenNotes((s) => ({ ...s, [i]: true }))}
                     >
                       {row.kind === "chat" || row.kind === "comment"
-                        ? "show message"
-                        : "show hand-off"}
+                        ? t("board.wake_show_message")
+                        : t("board.wake_show_handoff")}
                     </button>
                   ))}
               </span>

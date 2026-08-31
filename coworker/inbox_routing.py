@@ -23,9 +23,6 @@ DEFAULT_INBOX = "default"
 # to OpenWorker (2026-07-22); the legacy [ocw:…] spelling stays parseable so replies to
 # messages sent before the rename still resolve.
 _ID_TOKEN = re.compile(r"\[o(?:c)?w:([0-9a-f]{6,})\]")
-# Whole words only — substring matching resolved "disallow" as allow and "note" as deny.
-_ALLOW_WORDS = re.compile(r"\b(?:approve|approved|allow|allowed|yes)\b")
-_DENY_WORDS = re.compile(r"\b(?:deny|denied|reject|rejected|no)\b")
 
 
 @dataclass
@@ -120,23 +117,48 @@ def deliver(item, binding: InboxBinding, sender: Optional[Sender]) -> bool:
     return True
 
 
+# Decision keywords for a channel reply. Matched against the reply's LEADING word/emoji
+# only (see _reply_intent). Substring matching turned "disallow" into allow and "note"
+# into deny; whole-word matching anywhere (the interim fix) still inverted negated
+# replies — "I cannot approve this yet" matched \bapprove\b and, with allow checked
+# first, executed the declined action. Leading-word intent keeps "Yes, go ahead" /
+# "No." / "👍" working; everything else is a free-text answer, which the approval path
+# already maps to deny — the safe default for an approval gate.
+_ALLOW_WORDS = frozenset({"approve", "approved", "allow", "allowed", "yes"})
+_DENY_WORDS = frozenset({"deny", "denied", "reject", "rejected", "no"})
+_ALLOW_EMOJI = ("👍", "✅")
+_DENY_EMOJI = ("👎", "❌")
+_TOKEN_TRIM = ".,!?:;'\"()"
+
+
+def _reply_intent(text: str) -> Optional[str]:
+    """Allow/deny intent from the first word (or emoji) of a reply, else None."""
+    first = text.split()[0] if text.split() else ""
+    if first.startswith(_ALLOW_EMOJI):  # startswith: tolerate skin-tone modifiers
+        return "allow"
+    if first.startswith(_DENY_EMOJI):
+        return "deny"
+    word = first.strip(_TOKEN_TRIM).lower()
+    if word in _ALLOW_WORDS:
+        return "allow"
+    if word in _DENY_WORDS:
+        return "deny"
+    return None
+
+
 def resolve_from_reply(
     reply: str, resolve: Callable[[str, str], bool]
 ) -> Optional[bool]:
     """Correlate an inbound channel reply to its item (by the embedded id) and resolve it.
 
-    Looks for the ``[ow:<id>]`` token (or legacy ``[ocw:…]``) and an allow/deny intent; falls back to treating the whole
-    message as a free-text answer. ``resolve(item_id, resolution)`` is the InboxStore.resolve.
+    Looks for the ``[ow:<id>]`` token (or legacy ``[ocw:…]``) and an allow/deny intent in the
+    reply's leading word; falls back to treating the whole message as a free-text answer.
+    ``resolve(item_id, resolution)`` is the InboxStore.resolve.
     Returns the resolve() result, or None if no item id was found."""
     m = _ID_TOKEN.search(reply or "")
     if not m:
         return None
     item_id = m.group(1)
-    lowered = reply.lower()
-    if _ALLOW_WORDS.search(lowered) or "👍" in reply or "✅" in reply:
-        resolution = "allow"
-    elif _DENY_WORDS.search(lowered) or "👎" in reply or "❌" in reply:
-        resolution = "deny"
-    else:
-        resolution = _ID_TOKEN.sub("", reply).strip()  # free-text answer to a question
+    text = _ID_TOKEN.sub("", reply).strip()
+    resolution = _reply_intent(text) or text  # free-text answer to a question
     return resolve(item_id, resolution)
