@@ -29,13 +29,23 @@ def test_detect_provider(key, expected):
 
 
 # -- verify_provider_key: status-code mapping + per-provider request shape -------
-def _patch_get(monkeypatch, status=200, capture=None, raise_exc=None):
+def _patch_get(monkeypatch, status=200, capture=None, raise_exc=None, route_status=None):
+    """Patch httpx.get. `status` answers the first (probe) request; `route_status`
+    (defaulting to `status`) answers the OpenAI-compatible completions-route check."""
+
     def fake_get(url, **kwargs):
         if capture is not None:
-            capture["url"] = url
-            capture.update(kwargs)
+            if "calls" not in capture:
+                capture["calls"] = []
+            capture["calls"].append({"url": url, **kwargs})
+            # Keep the pre-existing single-call shape for the probe request.
+            if "/chat/completions" not in url:
+                capture.update(kwargs)
+                capture["url"] = url
         if raise_exc is not None:
             raise raise_exc
+        if "/chat/completions" in url:
+            return SimpleNamespace(status_code=route_status or status)
         return SimpleNamespace(status_code=status)
 
     monkeypatch.setattr("httpx.get", fake_get)
@@ -59,6 +69,11 @@ def test_verify_openai_ok(monkeypatch):
     assert verify_provider_key("openai", api_key="sk-x") == {"ok": True}
     assert cap["url"] == "https://api.openai.com/v1/models"
     assert cap["headers"]["Authorization"] == "Bearer sk-x"
+    # The completions-route probe follows the /models reachability check.
+    assert [c["url"] for c in cap["calls"]] == [
+        "https://api.openai.com/v1/models",
+        "https://api.openai.com/v1/chat/completions",
+    ]
 
 
 def test_verify_openai_custom_endpoint(monkeypatch):
@@ -69,6 +84,19 @@ def test_verify_openai_custom_endpoint(monkeypatch):
     )
     # trailing slash trimmed, /models appended to the custom endpoint
     assert cap["url"] == "https://gw.example/openai/v1/models"
+    assert cap["calls"][1]["url"] == "https://gw.example/openai/v1/chat/completions"
+
+
+def test_verify_openai_completions_route_404_is_clear(monkeypatch):
+    """A base URL that answers /models but 404s on /chat/completions (missing /v1 path
+    segment) must fail the Test with a path-specific message, not report success and
+    then hang on every task (#431)."""
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, route_status=404, capture=cap)
+    res = verify_provider_key("openai", api_key="sk-x", base_url="http://127.0.0.1:1234")
+    assert res["ok"] is False
+    assert "completions route 404s" in res["error"]
+    assert "v1" in res["error"]
 
 
 def test_verify_bad_key_is_invalid(monkeypatch):
