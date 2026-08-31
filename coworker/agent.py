@@ -119,6 +119,18 @@ you're doing and why (e.g. "Checking what merged since yesterday's digest."). It
 to the user as live progress. Don't narrate trivial single-call follow-ups, don't repeat \
 the previous line, and never let narration replace your final answer."""
 
+# A bare "hey" answered with a bare "hey" makes a specialist read as an empty chat box
+# (owner catch 2026-08-24). First contact is the one moment to show what this coworker
+# is for — after that, greetings stay lightweight.
+_FIRST_CONTACT_GUIDANCE = """\
+First contact: if the user's first message is a simple hello or open-ended ("hey", "what \
+can you do?") rather than a task, don't just say hello back — say in one or two \
+sentences what you do in this role, then offer two or three concrete starting points as \
+an ask_user question (short option labels, phrased for this session's context — \
+workspace, connected tools — and leave the free-text answer available so the user can \
+type their own direction). A picked option is a clear brief: start on it. Keep it short \
+and skip all of this when the user already gave you a task."""
+
 
 def _enabled_connector_tools(secrets: SecretStore) -> tuple[set[str], set[str]]:
     connectors = {c["name"]: c for c in connector_list(secrets)}
@@ -350,7 +362,7 @@ def build_engine(
     if wake_store is not None and session_id and agent.scheduling:
         registry.register_all(selfwake_tools(wake_store, session_id))
 
-    instructions = f"{agent.system_prompt}\n\n{_NARRATION_GUIDANCE}"
+    instructions = f"{agent.system_prompt}\n\n{_NARRATION_GUIDANCE}\n\n{_FIRST_CONTACT_GUIDANCE}"
     if ws is not None:
         instructions = f"{instructions}\n\n{environment_context(ws)}"
         conventions = load_agents_md(ws)

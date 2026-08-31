@@ -65,7 +65,10 @@ async def test_title_set_after_first_turn(tmp_path):
     await _turn(mgr, "s1", "help me plan a trip to japan")
 
     assert len(provider.title_calls) == 1
-    assert provider.title_calls[0][-1]["content"] == "help me plan a trip to japan"
+    # The agent's first reply rides along as titling evidence (owner ruling 2026-08-24).
+    assert provider.title_calls[0][-1]["content"] == (
+        "help me plan a trip to japan\n\n[the assistant's first reply]\nsure"
+    )
     assert mgr.session_store.title_state("s1")["auto_title"] == (
         "Japan Trip Planning Help"
     )
@@ -146,3 +149,27 @@ async def test_sanitizes_and_rejects_absurd_output(tmp_path):
     mgr2, _ = _mgr(tmp_path / "b", [_text("ok")], ["x" * 90])
     await _turn(mgr2, "s8", "the login page 500s")
     assert mgr2.session_store.title_state("s8")["auto_title"] is None
+
+
+def test_turn_start_titles_before_the_turn_completes(tmp_path):
+    # Owner catch 2026-08-24: titling used to ride ONLY turn completion, so a long
+    # agentic turn left the session titled by its first message for the whole run. The
+    # turn-start hook titles on the user's words the moment they land.
+    async def go():
+        mgr, provider = _mgr(tmp_path, [_text("working on it…")], ["Scan the API for secrets"])
+        sid = "early1"
+        engine = mgr.get_engine(sid, agent="chat")
+        engine.messages.append({"role": "user", "content": "scan code for vuln and secrets"})
+        mgr.save(sid, engine)
+        mgr.mark_running(sid)  # the turn is RUNNING — no completion in sight
+        mgr._maybe_autotitle(sid)  # the app's turn_start hook
+        deadline = time.time() + 5.0
+        while sid in mgr._autotitle_inflight and time.time() < deadline:
+            await asyncio.sleep(0.005)
+        state = mgr.session_store.title_state(sid)
+        assert state["auto_title"] == "Scan the API for secrets"
+        # The completion hook later, same openers: skipped WITHOUT burning attempt 2.
+        mgr.mark_idle(sid)
+        assert mgr._autotitle_attempts[sid] == 1
+
+    asyncio.run(go())

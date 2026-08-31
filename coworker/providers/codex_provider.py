@@ -87,6 +87,13 @@ class CodexProvider(OpenAIResponsesProvider):
         kwargs = super()._request_kwargs(
             model=model, messages=messages, tools=tools, settings=settings
         )
+        # This backend 400s ("Unsupported parameter") on standard sampling/cap knobs —
+        # max_output_tokens and temperature confirmed live, top_p same family — which
+        # silently killed every autotitle attempt on plan sessions (owner catch
+        # 2026-08-24). Callers may pass them freely; they just cannot ride to this
+        # backend.
+        for unsupported in ("max_output_tokens", "temperature", "top_p"):
+            kwargs.pop(unsupported, None)
         # Unlike stock /v1/responses, this backend honors a reasoning effort knob.
         effort = settings.get("reasoning_effort")
         if isinstance(effort, str) and effort:

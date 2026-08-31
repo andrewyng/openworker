@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   codexAuthStatus,
   codexSignin,
@@ -58,16 +60,17 @@ export function ProviderMark({ name, title, size = 32 }: { name: string; title: 
   );
 }
 
-/** "2h ago"-style label for a provider's last completion (null when never used). */
-export function relTime(epoch?: number | null): string | null {
+/** "2h ago"-style label for a provider's last completion (null when never used).
+ *  Pass a translation function to localize; omit for the legacy English fallback. */
+export function relTime(epoch?: number | null, t?: TFunction): string | null {
   if (!epoch) return null;
   const secs = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
-  if (secs < 90) return "just now";
+  if (secs < 90) return t ? t("provider.just_now") : "just now";
   const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return t ? t("provider.minutes_ago", { count: mins }) : `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 48) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
+  if (hrs < 48) return t ? t("provider.hours_ago", { count: hrs }) : `${hrs}h ago`;
+  return t ? t("provider.days_ago", { count: Math.floor(hrs / 24) }) : `${Math.floor(hrs / 24)}d ago`;
 }
 
 export interface ProviderSetupState {
@@ -100,6 +103,7 @@ export interface ProviderSetupState {
 }
 
 export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetupState {
+  const { t } = useTranslation();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   // null = the gallery; a provider name = that provider's key form.
   const [sel, setSel] = useState<string | null>(null);
@@ -159,9 +163,9 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   const runTestAndSave = async (): Promise<boolean> => {
     if (!sel) return false;
     setVerify({ state: "testing" });
-    const res = await verifyProvider(sel, fields).catch(() => ({ ok: false, error: "unreachable" }));
+    const res = await verifyProvider(sel, fields).catch(() => ({ ok: false, error: t("provider.err_unreachable") }));
     if (!res.ok) {
-      setVerify({ state: "error", msg: res.error || "couldn't verify" });
+      setVerify({ state: "error", msg: res.error || t("provider.err_couldnt_verify") });
       return false;
     }
     if (dirty || !info?.configured) await setProvider(sel, fields).catch(() => {});
@@ -224,24 +228,24 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
       // The card keeps just the state — the account email truncated badly at card
       // width (owner-hit 2026-08-21); the detail pane shows who is signed in.
       if (p.signed_in)
-        return <span className="block text-[12px] text-ok font-medium truncate">✓ Signed in</span>;
-      return <span className="block text-[12px] text-faint truncate">Sign in with your plan</span>;
+        return <span className="block text-[12px] text-ok font-medium truncate">{t("provider.signed_in")}</span>;
+      return <span className="block text-[12px] text-faint truncate">{t("provider.sign_in_with_plan")}</span>;
     }
     if (p.configured && p.needs_key) {
-      const used = o?.lastUsed ? relTime(p.last_used_at) : null;
+      const used = o?.lastUsed ? relTime(p.last_used_at, t) : null;
       return (
         <span className="block text-[12px] text-ok font-medium truncate">
-          ✓ Connected{used ? <span className="text-muted font-normal"> · used {used}</span> : ""}
+          {t("provider.connected_ok")}{used ? <span className="text-muted font-normal">{t("provider.used_suffix", { time: used })}</span> : ""}
         </span>
       );
     }
     if (!p.needs_key)
       return (
         <span className="block text-[12px] text-faint truncate">
-          {keylessOk.has(p.name) ? <span className="text-ok font-medium">✓ Running</span> : "No key needed"}
+          {keylessOk.has(p.name) ? <span className="text-ok font-medium">{t("provider.running")}</span> : t("provider.no_key_needed")}
         </span>
       );
-    return <span className="block text-[12px] text-faint truncate">Not set up</span>;
+    return <span className="block text-[12px] text-faint truncate">{t("provider.not_set_up")}</span>;
   };
 
   return {
@@ -295,6 +299,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
  * Signin runs server-side in the background; this polls the status route until the
  * flow flips to signed-in or reports an error. Tokens never reach the GUI. */
 function OAuthSignIn({ info, tp, onChanged }: { info: ProviderInfo; tp: string; onChanged: () => Promise<void> }) {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState(!!info.authorizing);
   const [error, setError] = useState<string | null>(info.last_error || null);
   const [reopenUrl, setReopenUrl] = useState<string | null>(null);
@@ -325,7 +330,7 @@ function OAuthSignIn({ info, tp, onChanged }: { info: ProviderInfo; tp: string; 
   const start = async () => {
     setBusy(true);
     setError(null);
-    await codexSignin().catch(() => setError("Couldn't start the sign-in."));
+    await codexSignin().catch(() => setError(t("provider.oauth_start_error")));
     void poll();
   };
 
@@ -334,7 +339,7 @@ function OAuthSignIn({ info, tp, onChanged }: { info: ProviderInfo; tp: string; 
       <div className="mt-4">
         <div className="flex items-center gap-2.5 rounded-xl border border-okLine bg-okSoft px-3 py-2.5">
           <span className="text-[13px] text-ink min-w-0 flex-1 truncate" data-testid={`${tp}-oauth-account`}>
-            ✓ Signed in{info.account ? ` as ${info.account}` : ""}
+            {info.account ? t("provider.signed_in_as", { account: info.account }) : t("provider.signed_in")}
           </span>
           <button
             className="shrink-0 rounded-lg border border-line bg-panel px-3 py-1.5 text-[13px] text-ink hover:border-lineStrong"
@@ -344,11 +349,11 @@ function OAuthSignIn({ info, tp, onChanged }: { info: ProviderInfo; tp: string; 
               await onChanged();
             }}
           >
-            Sign out
+            {t("provider.sign_out")}
           </button>
         </div>
         <p className="text-[12px] text-faint mt-2">
-          Usage draws on the plan's rolling window, not per-token billing. Sign-in stays on this computer.
+          {t("provider.oauth_plan_note")}
         </p>
       </div>
     );
@@ -361,11 +366,11 @@ function OAuthSignIn({ info, tp, onChanged }: { info: ProviderInfo; tp: string; 
         disabled={busy}
         data-testid={`${tp}-oauth-signin`}
       >
-        {busy ? "Waiting for the browser…" : "Sign in with ChatGPT"}
+        {busy ? t("provider.oauth_waiting") : t("provider.sign_in_chatgpt")}
       </button>
       {busy && (
         <p className="text-[12px] text-faint mt-2">
-          Finish signing in in the browser window.
+          {t("provider.oauth_finish_browser")}
           {reopenUrl && (
             <>
               {" "}
@@ -373,7 +378,7 @@ function OAuthSignIn({ info, tp, onChanged }: { info: ProviderInfo; tp: string; 
                 className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
                 onClick={() => openExternal(reopenUrl)}
               >
-                Reopen the sign-in page
+                {t("provider.oauth_reopen")}
               </button>
             </>
           )}
@@ -432,6 +437,7 @@ export function ProviderForm({
   tp: string;
   footer?: ReactNode;
 }) {
+  const { t } = useTranslation();
   const { info, sel } = ps;
   const label = "block text-[12px] text-muted mt-3 mb-1";
   const input =
@@ -475,7 +481,7 @@ export function ProviderForm({
               className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
               data-testid={`${tp}-field-saved-${f.key}`}
             >
-              ✓ Saved
+              {t("provider.saved_pill")}
             </span>
           )}
           {/* §39: state lives IN the field — no status lines below. */}
@@ -484,7 +490,7 @@ export function ProviderForm({
               className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
               data-testid={`${tp}-saved-pill`}
             >
-              {info?.needs_key ? <>✓ Tested &amp; saved</> : <>✓ Detected</>}
+              {info?.needs_key ? t("provider.tested_saved_pill") : t("provider.detected_pill")}
             </span>
           )}
         </div>
@@ -495,7 +501,7 @@ export function ProviderForm({
             disabled={ps.verify.state === "testing" || (!ps.secretFilled && !ps.credentialed)}
             data-testid={`${tp}-test`}
           >
-            {ps.verify.state === "testing" ? "…" : info?.needs_key ? "Test" : "Detect"}
+            {ps.verify.state === "testing" ? "…" : info?.needs_key ? t("provider.test_btn") : t("provider.detect_btn")}
           </button>
         )}
       </div>
@@ -506,7 +512,7 @@ export function ProviderForm({
   return (
     <div>
       <button className="text-[13px] text-muted hover:text-ink" onClick={ps.backToGallery} data-testid={`${tp}-back`}>
-        ‹ All providers
+        {t("provider.all_providers")}
       </button>
       <div className="flex items-center gap-3 mt-3 mb-1">
         <ProviderMark name={info?.name || ""} title={info?.title || ""} size={36} />
@@ -572,7 +578,7 @@ export function ProviderForm({
               <button
                 className="mt-2.5 inline-flex items-center gap-2 rounded-lg border border-line bg-panel px-2.5 py-1.5 text-[12px] font-mono text-ink hover:border-lineStrong"
                 onClick={() => void navigator.clipboard?.writeText(selected.command || "")}
-                title="Copy command"
+                title={t("provider.copy_command")}
                 data-testid={`${tp}-cmd-copy`}
               >
                 {selected.command}
@@ -583,10 +589,10 @@ export function ProviderForm({
             <div className="mt-3.5 flex items-center justify-between gap-3 border-t border-line pt-3">
               {ps.savedState ? (
                 <span className="text-[12px] font-medium text-ok" data-testid={`${tp}-saved-pill`}>
-                  ✓ Tested &amp; saved
+                  {t("provider.tested_saved_pill")}
                 </span>
               ) : (
-                <span className="text-[12px] text-faint">Runs one read-only check, then saves.</span>
+                <span className="text-[12px] text-faint">{t("provider.test_save_hint")}</span>
               )}
               <button
                 className="shrink-0 rounded-lg border border-accent bg-accent px-4 py-1.5 text-[13px] font-medium text-white hover:brightness-105 disabled:opacity-40"
@@ -594,7 +600,7 @@ export function ProviderForm({
                 disabled={ps.verify.state === "testing"}
                 data-testid={`${tp}-test`}
               >
-                {ps.verify.state === "testing" ? "…" : <>Test &amp; save</>}
+                {ps.verify.state === "testing" ? "…" : t("provider.test_save_btn")}
               </button>
             </div>
           </div>
@@ -603,24 +609,24 @@ export function ProviderForm({
 
       {info?.needs_key && KEY_HELP[sel] && (
         <p className="text-[12px] text-faint mt-2">
-          No key yet?{" "}
+          {t("provider.no_key_yet")}{" "}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
             onClick={() => openExternal(KEY_HELP[sel].url)}
           >
-            Create one at {KEY_HELP[sel].label} ↗
+            {t("provider.create_key_at", { label: KEY_HELP[sel].label })} ↗
           </button>{" "}
-          — takes about a minute.
+          {t("provider.takes_a_minute")}
         </p>
       )}
       {info && !info.needs_key && info.auth !== "oauth" && (
         <p className="text-[12px] text-faint mt-2">
-          No API key needed — Ollama runs models on this computer.{" "}
+          {t("provider.no_key_needed_desc")}{" "}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
             onClick={() => openExternal("https://ollama.com/download")}
           >
-            Install Ollama ↗
+            {t("provider.install_ollama")} ↗
           </button>
         </p>
       )}
@@ -639,7 +645,7 @@ export function ProviderForm({
               onClick={() => ps.setShowEndpoint(true)}
               data-testid={`${tp}-endpoint-link`}
             >
-              Custom endpoint ⌄
+              {t("provider.custom_endpoint")} ⌄
             </button>
           );
         return (
@@ -660,7 +666,7 @@ export function ProviderForm({
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
                   data-testid={`${tp}-field-saved-${ep.key}`}
                 >
-                  ✓ Saved
+                  {t("provider.saved_pill")}
                 </span>
               )}
             </div>

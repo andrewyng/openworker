@@ -188,6 +188,28 @@ from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOO
 )
 
 
+# The transcript's full Auto-Approve explainer (owner copy 2026-08-24). Persisted as a
+# `mode_notice` message the FIRST time a session enters Auto-Approve — server-authored so
+# it appears exactly once, in place, and survives reloads (the old client-side banner
+# re-announced on every restart).
+AUTO_APPROVE_NOTICE = (
+    "Auto-approve uses a model to let routine actions through without asking; anything "
+    "it isn't sure about still comes to you. It cuts interruptions but still carries "
+    "some risk i.e. a command it allows still reaches anything you can. These are model "
+    "judgments, and not guarantees."
+)
+
+# Human labels for the one-line persisted switch markers ("Ask for approval is on.").
+MODE_LABELS = {
+    "discuss": "Discuss",
+    "plan": "Plan",
+    "interactive": "Ask for approval",
+    "auto": "Bypass approvals",
+    "bypass-approvals": "Bypass approvals",
+    "auto-approve": "Auto-approve",
+}
+
+
 class Mode(str, Enum):
     DISCUSS = "discuss"  # read-only conversation: no edits, no planning workflow
     PLAN = (

@@ -7,6 +7,7 @@
 // surface). Project memory only — global memory never appears here.
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { getProjectMenu, nameCurrentProject, setProjectBinding } from "../api";
 import type { ProjectMenu } from "../api";
 import { Icon } from "./Icon";
@@ -28,6 +29,7 @@ export function ProjectBindMenu(props: {
   onOpenMemory?: () => void;
 }) {
   const { sessionId, kind } = props;
+  const { t } = useTranslation();
   const [menu, setMenu] = useState<ProjectMenu | null>(null);
   const [filter, setFilter] = useState("");
   const [naming, setNaming] = useState(false);
@@ -46,7 +48,7 @@ export function ProjectBindMenu(props: {
   const bind = async (name: string | null) => {
     const res = await setProjectBinding(sessionId, kind, name);
     if (!res.ok) {
-      setError(res.error || "could not bind");
+      setError(res.error || t("bindmenu.bind_error"));
       return;
     }
     props.onClose();
@@ -57,7 +59,7 @@ export function ProjectBindMenu(props: {
     if (!name) return;
     const res = await nameCurrentProject(sessionId, kind, name);
     if (!res.ok) {
-      setError(res.error || "could not name");
+      setError(res.error || t("bindmenu.name_error"));
       return;
     }
     setNaming(false);
@@ -70,7 +72,7 @@ export function ProjectBindMenu(props: {
   const shown = q
     ? named.filter((n) => n.name.toLowerCase().includes(q))
     : named.slice(0, MRU_VISIBLE);
-  const title = kind === "memory" ? "Project memory" : "Board";
+  const title = kind === "memory" ? t("composer.bind_memory") : t("composer.bind_board");
 
   const radioRow = (
     active: boolean,
@@ -108,7 +110,7 @@ export function ProjectBindMenu(props: {
           <Icon name="search" size={12} className="text-faint shrink-0" />
           <input
             className="w-full bg-transparent text-[12.5px] outline-none"
-            placeholder="Filter…"
+            placeholder={t("bindmenu.filter_placeholder")}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
@@ -116,7 +118,7 @@ export function ProjectBindMenu(props: {
       )}
       {kind === "board" &&
         !q &&
-        radioRow(!menu?.bound && !menu?.derived, "none", () => bind(null), "none")}
+        radioRow(!menu?.bound && !menu?.derived, t("bindmenu.none"), () => bind(null), "none")}
       {menu?.derived &&
         !q &&
         radioRow(
@@ -133,7 +135,7 @@ export function ProjectBindMenu(props: {
           ),
           () => bind(null),
           "derived",
-          menu.derived.kind === "git" ? "this repo" : "this folder",
+          menu.derived.kind === "git" ? t("bindmenu.this_repo") : t("bindmenu.this_folder"),
         )}
       {shown.map((n) =>
         radioRow(
@@ -141,11 +143,11 @@ export function ProjectBindMenu(props: {
           n.name,
           () => bind(n.name),
           n.name,
-          menu?.bound === n.name ? "bound" : undefined,
+          menu?.bound === n.name ? t("bindmenu.bound") : undefined,
         ),
       )}
       {q && shown.length === 0 && (
-        <div className="px-3 py-1.5 text-[12px] text-faint">no matches</div>
+        <div className="px-3 py-1.5 text-[12px] text-faint">{t("bindmenu.no_matches")}</div>
       )}
       <div className="my-1 border-t border-line" />
       {naming ? (
@@ -153,7 +155,9 @@ export function ProjectBindMenu(props: {
           <input
             ref={nameInput}
             className="w-full rounded-lg border border-line bg-transparent px-2 py-1 text-[12.5px] outline-none"
-            placeholder={`Name this ${kind}…`}
+            placeholder={
+              kind === "memory" ? t("bindmenu.name_placeholder_memory") : t("bindmenu.name_placeholder_board")
+            }
             value={nameDraft}
             onChange={(e) => setNameDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -167,7 +171,8 @@ export function ProjectBindMenu(props: {
           className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[12.5px] text-left text-muted hover:bg-paper"
           onClick={() => setNaming(true)}
         >
-          <Icon name="pencil" size={13} className="shrink-0" /> Name current {kind}…
+          <Icon name="pencil" size={13} className="shrink-0" />{" "}
+          {kind === "memory" ? t("bindmenu.name_current_memory") : t("bindmenu.name_current_board")}
         </button>
       )}
       {kind === "memory" && props.onOpenMemory && (
@@ -178,7 +183,7 @@ export function ProjectBindMenu(props: {
             props.onOpenMemory?.();
           }}
         >
-          <Icon name="sliders" size={13} className="shrink-0" /> View &amp; edit…
+          <Icon name="sliders" size={13} className="shrink-0" /> {t("bindmenu.view_edit")}
         </button>
       )}
       {error && <div className="px-3 py-1 text-[11.5px] text-red-500">{error}</div>}

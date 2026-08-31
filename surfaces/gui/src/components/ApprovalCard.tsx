@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getI18n, useTranslation } from "react-i18next";
 import type { ApprovalDecision, Item } from "../types";
 import { humanizeApprovalTitle, type HumanLine } from "../humanize";
 import { Icon } from "./Icon";
@@ -15,14 +16,15 @@ export function shortArgs(args: any): string {
 }
 
 // Human verbs kept for the §25 grant lines (the card title now comes from humanize.ts).
+// Values are i18n keys resolved at render time.
 const TOOL_VERBS: Record<string, string> = {
-  write_file: "Write a file",
-  replace_in_file: "Edit a file",
-  apply_patch: "Apply a patch",
-  apply_unified_diff: "Apply a patch",
-  run_shell: "Run a command",
-  send_message: "Send a message",
-  send_file: "Send a file",
+  write_file: "approval.verbs.write_file",
+  replace_in_file: "approval.verbs.edit_file",
+  apply_patch: "approval.verbs.apply_patch",
+  apply_unified_diff: "approval.verbs.apply_patch",
+  run_shell: "approval.verbs.run_command",
+  send_message: "approval.verbs.send_message",
+  send_file: "approval.verbs.send_file",
 };
 
 // §35: routine workspace writes render as a compact ROW; everything else is a full card.
@@ -35,9 +37,10 @@ type ApprovalItem = Extract<Item, { kind: "approval" }>;
 // Per-tool button copy (§7): a skill proposal is an "add", not an "allow". Shared with the
 // parked Inbox card so both dialects match.
 export function approvalActionLabels(name?: string): { allow: string; deny: string } {
+  const tt = getI18n().getFixedT(null, "translation");
   return name === "save_skill"
-    ? { allow: "Add to my skills", deny: "Not now" }
-    : { allow: "Allow once", deny: "Deny" };
+    ? { allow: tt("approval.btn.add_to_skills"), deny: tt("approval.btn.not_now") }
+    : { allow: tt("approval.allow_once"), deny: tt("approval.btn.deny") };
 }
 
 // save_skill's review surface (SKILLS-SPEC §5.2): description, the full instructions
@@ -45,6 +48,7 @@ export function approvalActionLabels(name?: string): { allow: string; deny: stri
 // answers "added WHERE, available WHEN". Shared verbatim with the parked Inbox card —
 // one decision, one dialect.
 export function SaveSkillPreview({ args }: { args: any }) {
+  const { t } = useTranslation();
   return (
     <>
       {args?.description && <div className="approval-with">{String(args.description)}</div>}
@@ -61,10 +65,7 @@ export function SaveSkillPreview({ args }: { args: any }) {
           ))}
         </div>
       )}
-      <div className="approval-with">
-        Approving adds it to your skills on this computer — usable in every conversation from
-        then on.
-      </div>
+      <div className="approval-with">{t("approval.save_skill_footer")}</div>
     </>
   );
 }
@@ -109,27 +110,39 @@ export function grantHost(url: any): string {
 
 // Plain-words scope note (replaces the "local action" badge): where does this act?
 // Shared with the parked-approval card (InboxItemCard) so both dialects match (§35).
+// Uses the fixed-T form because this helper is also called from non-component modules.
 export function scopeNote(
   name: string,
   args: any,
   category?: string,
 ): { text: string; external: boolean } {
+  const tt = getI18n().getFixedT(null, "translation");
   // save_skill's corner answers WHERE (SKILLS-SPEC §5.2): the exact place to find, edit,
   // or turn off the skill afterwards.
-  if (name === "save_skill") return { text: "saves to Settings ▸ Skills", external: false };
-  if (category === "connector") return { text: "acts on a connected service", external: true };
+  if (name === "save_skill") return { text: tt("approval.scope.save_skill"), external: false };
+  if (category === "connector") return { text: tt("approval.scope.connector"), external: true };
   // Egress (§1.9): the request itself reaches the network — never "stays on this computer".
   if (name === "web_fetch")
-    return { text: `leaves this computer → ${grantHost(args?.url) || "the web"}`, external: true };
+    return {
+      text: tt("approval.scope.leaves_mac", { dest: grantHost(args?.url) || tt("approval.scope.web_fallback") }),
+      external: true,
+    };
   if (name === "web_search")
-    return { text: "leaves this computer → your search provider", external: true };
+    return {
+      text: tt("approval.scope.leaves_mac", { dest: tt("approval.scope.search_provider_dest") }),
+      external: true,
+    };
   if (EXTERNAL.has(name)) {
     const platform = String(args?.target ?? "").split(":")[0];
     const names: Record<string, string> = { slack: "Slack", telegram: "Telegram" };
-    return { text: `leaves this computer → ${names[platform] || platform || "a connected chat"}`, external: true };
+    const dest = names[platform] || platform || tt("approval.scope.connected_chat_fallback");
+    return { text: tt("approval.scope.leaves_mac", { dest }), external: true };
   }
   const overwrite = name === "write_file" && args?.overwrite;
-  return { text: "stays on this computer" + (overwrite ? " · overwrites the existing file" : ""), external: false };
+  return {
+    text: tt("approval.scope.stays_mac") + (overwrite ? " " + tt("approval.scope.overwrite_suffix") : ""),
+    external: false,
+  };
 }
 
 // The proposed content/command, straight from the tool call's ARGS — the file/action
@@ -140,6 +153,7 @@ const PREVIEW_LINES = 5;
 const PREVIEW_CHARS = 420;
 
 export function PreviewBlock({ text, mono = true }: { text: string; mono?: boolean }) {
+  const { t } = useTranslation();
   const [all, setAll] = useState(false);
   const lines = text.split("\n");
   const clipped = lines.length > PREVIEW_LINES || text.length > PREVIEW_CHARS;
@@ -154,10 +168,10 @@ export function PreviewBlock({ text, mono = true }: { text: string; mono?: boole
       {clipped && (
         <button className="approval-prev-more" onClick={() => setAll((v) => !v)}>
           {all
-            ? "show less"
+            ? t("approval.preview_less")
             : lines.length > PREVIEW_LINES
-              ? `show all ${lines.length} lines`
-              : "show the full message"}
+              ? t("approval.preview_all_lines", { n: lines.length })
+              : t("approval.preview_full")}
         </button>
       )}
     </div>
@@ -182,7 +196,7 @@ function Buttons({
   onApprove,
   runTask,
   primaryLabel,
-  denyLabel = "Deny",
+  denyLabel,
   autoApprove = false,
 }: {
   item: ApprovalItem;
@@ -195,8 +209,11 @@ function Buttons({
   // than none. Allow once / Deny only.
   autoApprove?: boolean;
 }) {
+  const { t } = useTranslation();
   const connector = item.category === "connector";
   const offerStanding = !!(runTask && item.standingTarget);
+  const verbKey = TOOL_VERBS[item.name];
+  const verbName = verbKey ? t(verbKey).toLowerCase() : item.name;
   // §1.9: egress grants are destination-shaped. web_fetch offers the DOMAIN — tool-wide
   // would cover every future destination, so it's withheld (and server-refused). web_search
   // has a fixed destination (the configured provider), so tool-wide IS provider-wide and
@@ -218,10 +235,10 @@ function Buttons({
       {offerStanding && (
         <button
           className="btn"
-          title={`Always allow ${item.name} → ${item.standingTarget} for “${runTask?.title || "this automation"}” — revoke any time on its Automations page`}
+          title={t("approval.btn.always_task_title", { name: item.name, target: item.standingTarget, task: runTask?.title || t("approval.btn.this_automation") })}
           onClick={() => onApprove("always_task")}
         >
-          Allow every time
+          {t("approval.btn.allow_every_time")}
         </button>
       )}
       {/* In a run context the task-persistent grant replaces the session-scoped one —
@@ -234,33 +251,33 @@ function Buttons({
       {!noSessionGrant && (
         <button
           className="btn"
-          title={`Always allow ${TOOL_VERBS[item.name]?.toLowerCase() || item.name} for this session`}
+          title={t("approval.btn.always_tool_title", { name: verbName })}
           onClick={() => onApprove("always_tool")}
         >
-          Always allow
+          {t("approval.btn.always_allow")}
         </button>
       )}
       {!autoApprove && !offerStanding && item.name === "web_fetch" && fetchHost && (
         <button
           className="btn"
-          title={`Every fetch to ${fetchHost} (and its subdomains) runs without asking for the rest of this session`}
+          title={t("approval.btn.always_domain_title", { host: fetchHost })}
           onClick={() => onApprove("always_domain")}
         >
-          Always allow {fetchHost} this session
+          {t("approval.btn.always_domain", { host: fetchHost })}
         </button>
       )}
       {!autoApprove && !offerStanding && item.name === "web_search" && (
         <button
           className="btn"
-          title="Every web search runs without asking for the rest of this session — the grant ends if you change the search provider"
+          title={t("approval.btn.always_search_title")}
           onClick={() => onApprove("always_tool")}
         >
-          Always allow searches this session
+          {t("approval.btn.always_search")}
         </button>
       )}
       {!autoApprove && item.name === "run_shell" && (
         <button className="btn" onClick={() => onApprove("always_command")}>
-          Always allow this command
+          {t("approval.btn.always_command")}
         </button>
       )}
       {/* Session-wide read-only grant (owner ask 2026-08-11): offered only when the
@@ -271,15 +288,15 @@ function Buttons({
         <button
           className="btn"
           data-testid="allow-readonly-session"
-          title="Auto-allow read-only commands (local reads and pipelines only — no network, writes, or interpreters) for the rest of this session"
+          title={t("approval.btn.readonly_session_title")}
           onClick={() => onApprove("readonly_session")}
         >
-          Allow read-only commands
+          {t("approval.btn.readonly_session")}
         </button>
       )}
       <span className="spacer" />
       <button className="btn quiet-deny" onClick={() => onApprove("deny")}>
-        {denyLabel}
+        {denyLabel ?? t("approval.btn.deny")}
       </button>
     </div>
   );
@@ -302,6 +319,7 @@ export function ApprovalCard({
   // grants wouldn't skip the reviewer anyway (§1.5), so the "always" buttons are hidden.
   autoApprove?: boolean;
 }) {
+  const { t } = useTranslation();
   const [peek, setPeek] = useState(false);
   const title = humanizeApprovalTitle(item.name, item.args);
   const scope = scopeNote(item.name, item.args, item.category);
@@ -317,6 +335,12 @@ export function ApprovalCard({
       <span>{item.provenance}</span>
     </div>
   ) : null;
+  // Quiet, not a warning: the reviewer hesitating is context, not danger.
+  const reviewerUnsure = item.reviewerUnsure ? (
+    <div className="text-[12px] text-muted mt-1" data-testid="approval-reviewer-unsure">
+      {t("approval.reviewer_unsure", { note: item.reviewerUnsure })}
+    </div>
+  ) : null;
 
   // §35 compact row: routine workspace writes — one line, preview expands inline from the
   // tool args. Standing/grant flows keep the full card (they carry §25 consent weight).
@@ -328,7 +352,7 @@ export function ApprovalCard({
           <TitleText line={title} />
           {content && (
             <button className="approval-peek" onClick={() => setPeek((v) => !v)}>
-              preview {peek ? "▴" : "▾"}
+              {t("approval.preview_label")} {peek ? "▴" : "▾"}
             </button>
           )}
           <span className="spacer" />
@@ -336,12 +360,13 @@ export function ApprovalCard({
             item={item}
             onApprove={onApprove}
             runTask={runTask}
-            primaryLabel="Allow"
+            primaryLabel={t("approval.allow")}
             autoApprove={autoApprove}
           />
         </div>
         {peek && content && <PreviewBlock text={content} />}
         {provenance}
+        {reviewerUnsure}
         {reason && <div className="approval-reason">{reason}</div>}
       </div>
     );
@@ -351,7 +376,7 @@ export function ApprovalCard({
     <div className={"approval" + (scope.external ? " approval-external" : "") + dock}>
       <div className="approval-top">
         <div className="approval-heading">
-          <span className="approval-ico" title={`Tool: ${item.name}`}>
+          <span className="approval-ico" title={t("approval.tool_title", { name: item.name })}>
             <Icon name="shield" size={15} />
           </span>
           <TitleText line={title} />
@@ -370,11 +395,11 @@ export function ApprovalCard({
             <span className="ico">
               <Icon name="file" size={13} />
             </span>
-            {String(item.args?.path ?? "").split("/").pop() || "file"}
-            {item.args?.as_screenshot ? " · as a PNG screenshot" : ""}
+            {String(item.args?.path ?? "").split("/").pop() || t("approval.file_fallback")}
+            {item.args?.as_screenshot ? t("approval.as_png_screenshot") : ""}
           </span>
           {item.args?.comment && (
-            <MessagePreview text={String(item.args.comment)} label="With the message" />
+            <MessagePreview text={String(item.args.comment)} label={t("approval.with_message")} />
           )}
         </>
       )}
@@ -387,26 +412,30 @@ export function ApprovalCard({
           because the card must show the setting as it stands right now. */}
       {item.name === "web_search" && (
         <div className="approval-with">
-          Queries go to your configured search provider
-          {item.searchProvider ? ` (currently: ${item.searchProvider})` : ""}.
+          {item.searchProvider
+            ? t("approval.search_note_current", { provider: item.searchProvider })
+            : t("approval.search_note")}
         </div>
       )}
 
       {grants.length > 0 && (
         <div className="approval-grants" data-testid="approval-grants">
-          {grants.map((g, i) => (
-            <div className="approval-grant" key={i} data-access={g.access}>
-              <span className={"grant-mark" + (g.access === "write" ? " write" : "")}>
-                {g.access === "write" ? "✓" : "·"}
-              </span>
-              <span className="grant-line">
-                {TOOL_VERBS[g.tool] || g.tool} <code className="approval-tool">{g.target}</code>
-                <span className="grant-note">
-                  {g.access === "write" ? " — always allowed once you approve" : " — read-only"}
+          {grants.map((g, i) => {
+            const verbKey = TOOL_VERBS[g.tool];
+            return (
+              <div className="approval-grant" key={i} data-access={g.access}>
+                <span className={"grant-mark" + (g.access === "write" ? " write" : "")}>
+                  {g.access === "write" ? "✓" : "·"}
                 </span>
-              </span>
-            </div>
-          ))}
+                <span className="grant-line">
+                  {verbKey ? t(verbKey) : g.tool} <code className="approval-tool">{g.target}</code>
+                  <span className="grant-note">
+                    {g.access === "write" ? t("approval.grant.always_after_approve") : t("approval.grant.read_only")}
+                  </span>
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
       {/* Long-tail tools: no bespoke preview — fall back to the compact args line. */}
@@ -415,10 +444,11 @@ export function ApprovalCard({
         !grants.length &&
         shortArgs(item.args) && <div className="approval-rest">{shortArgs(item.args)}</div>}
       {provenance}
+      {reviewerUnsure}
       {reason && <div className="approval-reason">{reason}</div>}
 
       {item.resolved ? (
-        <div className="resolved">Approved: {item.resolved.replace("_", " ")}</div>
+        <div className="resolved">{t("approval.resolved_prefix", { state: item.resolved.replace(/_/g, " ") })}</div>
       ) : (
         <Buttons
           item={item}

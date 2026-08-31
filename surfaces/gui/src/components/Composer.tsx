@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { getI18n, useTranslation } from "react-i18next";
 import type { Attachment, SessionUsage } from "../types";
 import { isPdfFile, readFile } from "../attach";
 import { ProjectBindMenu } from "./ProjectBindMenu";
@@ -31,23 +32,22 @@ type ModeOption = Option & { caution?: boolean; gated?: boolean };
 
 // "auto" is the legacy wire value for Bypass approvals (server: Mode.BYPASS_APPROVALS).
 // Auto-approve is `gated`: shown only when getSettings().auto_approve is true (the feature
-// flag, off by default). Copy (owner, 2026-08-22): imperative like the sibling entries;
-// "your session model" carries the who-judges fact inline; per-check cost is logged, not
-// picker text.
+// flag, off by default).
+// Labels/descriptions are i18n keys (resolved at render via t()); kept as keys here so the
+// module-level constant stays outside the component without losing translation.
 const PERMISSION_OPTIONS: ModeOption[] = [
-  { value: "discuss", label: "Discuss", description: "Chat and explore — no edits or commands" },
-  { value: "interactive", label: "Ask for approval", description: "Ask before edits and commands" },
+  { value: "discuss", label: "composer.mode.discuss", description: "composer.mode.discuss_desc" },
+  { value: "interactive", label: "composer.mode.interactive", description: "composer.mode.interactive_desc" },
   {
     value: "auto-approve",
-    label: "Auto-approve",
-    description:
-      "Let your session model classify actions and handle approvals, prompting you for anything it's unsure about",
+    label: "composer.mode.auto_approve",
+    description: "composer.mode.auto_approve_desc",
     gated: true,
   },
   {
     value: "auto",
-    label: "Bypass approvals",
-    description: "Run everything without asking — approvals off",
+    label: "composer.mode.auto",
+    description: "composer.mode.auto_desc",
     caution: true,
   },
 ];
@@ -55,7 +55,8 @@ const PERMISSION_OPTIONS: ModeOption[] = [
 /** The picker's label for a mode value ("auto-approve" -> "Auto-approve"). Exported so the
  * transcript's mode markers read the same names the user just chose from. */
 export function modeLabel(value: string): string {
-  return PERMISSION_OPTIONS.find((o) => o.value === value)?.label || value;
+  const option = PERMISSION_OPTIONS.find((o) => o.value === value);
+  return option ? getI18n().t(option.label) : value;
 }
 
 // No hardcoded model fallback: until the server supplies the list (a few seconds after a
@@ -129,9 +130,13 @@ interface Props {
   contextWindow?: number;
   // Settings toggle (default off): true shows the fill bar instead of the session total.
   contextBar?: boolean;
+  // §8.4 breaker tripped this turn: the mode chip says so quietly until the turn ends
+  // or an ask_user answer resets the streak.
+  reviewerPaused?: boolean;
 }
 
 export function Composer(props: Props) {
+  const { t } = useTranslation();
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   // "/" force-run (SKILLS-SPEC §4.1 #3). The popup derives from the draft: it is open while
@@ -335,7 +340,7 @@ export function Composer(props: Props) {
     for (const file of list) {
       if (isPdfFile(file) && file.size > maxMb * 1024 * 1024) {
         showAttachNotice(
-          `${file.name} skipped — ${(file.size / 1024 / 1024).toFixed(1)} MB is over your ${maxMb} MB limit (Settings → Token savings)`,
+          t("composer.pdf_too_big", { name: file.name, mb: (file.size / 1024 / 1024).toFixed(1), limit: maxMb }),
         );
         continue;
       }
@@ -348,12 +353,12 @@ export function Composer(props: Props) {
         const info = await inspectPdf(a.data_url).catch(() => null);
         if (info?.ok && (info.pages ?? 0) > maxPages) {
           showAttachNotice(
-            `${a.name} skipped — ${info.pages} pages is over your ${maxPages}-page limit (Settings → Token savings)`,
+            t("composer.pdf_too_many_pages", { name: a.name, pages: info.pages, limit: maxPages }),
           );
           continue;
         }
         if (info && !info.ok) {
-          showAttachNotice(`${a.name} skipped — ${info.error || "could not read PDF"}`);
+          showAttachNotice(t("composer.pdf_unreadable", { name: a.name, error: info.error || t("composer.pdf_could_not_read") }));
           continue;
         }
       }
@@ -377,11 +382,11 @@ export function Composer(props: Props) {
     // While the "/" popup is open the draft is a query, not a message — never send it.
     if (slashQuery !== null) return;
     // The visible "/name " prefix is UI state, not message text — strip it for the send;
-    // the skill rides as its own field.
+    // the skill rides as its own field. (Named `body`, not `t`, so it can't shadow i18n's t.)
     const skill = prefixIntact ? pendingSkill!.name : undefined;
-    const t = (skill ? text.slice(skill.length + 1) : text).trim();
+    const body = (skill ? text.slice(skill.length + 1) : text).trim();
     if (
-      (!t && attachments.length === 0 && !skill) ||
+      (!body && attachments.length === 0 && !skill) ||
       (props.running && !props.gateOpen) ||
       dictation?.recording ||
       dictationBusy
@@ -392,7 +397,7 @@ export function Composer(props: Props) {
       props.onConnectModel?.();
       return;
     }
-    props.onSend(t, attachments, skill);
+    props.onSend(body, attachments, skill);
     setText("");
     setAttachments([]);
     setPendingSkill(null);
@@ -444,9 +449,9 @@ export function Composer(props: Props) {
     setDictationError(null);
     try {
       if (dictation?.recording) {
-        setDictationBusy("Transcribing…");
+        setDictationBusy(t("composer.starting_transcribe"));
         const transcript = await stopDictation();
-        if (transcript === null) throw new Error("Could not transcribe your recording.");
+        if (transcript === null) throw new Error(t("composer.err_transcribe"));
         if (transcript.trim()) {
           setText((draft) => (draft.trim() ? `${draft.trimEnd()} ${transcript.trim()}` : transcript.trim()));
         }
@@ -456,17 +461,17 @@ export function Composer(props: Props) {
       }
 
       const status = dictation || (await getDictationStatus());
-      if (!status) throw new Error("Voice dictation is unavailable.");
+      if (!status) throw new Error(t("composer.err_dictation_unavailable"));
       if (!status.supported || !status.model_verified || !status.test_passed) {
         props.onConfigureVoiceInput?.();
         return;
       }
-      setDictationBusy("Starting microphone…");
+      setDictationBusy(t("composer.starting_mic"));
       const recording = await startDictation();
-      if (!recording?.recording) throw new Error("Could not start the microphone.");
+      if (!recording?.recording) throw new Error(t("composer.err_mic_start"));
       setDictation(recording);
     } catch (error) {
-      setDictationError(error instanceof Error ? error.message : "Voice dictation is unavailable.");
+      setDictationError(error instanceof Error ? error.message : t("composer.err_dictation_unavailable"));
       const status = await getDictationStatus();
       if (status) setDictation(status);
     } finally {
@@ -511,7 +516,7 @@ export function Composer(props: Props) {
           <button
             className="shrink-0 opacity-60 hover:opacity-100"
             onClick={() => setAttachNotice(null)}
-            title="Dismiss"
+            title={t("common.dismiss")}
           >
             ✕
           </button>
@@ -579,8 +584,8 @@ export function Composer(props: Props) {
           className="w-full block px-3.5 pt-3.5 pb-1.5 text-[14px]"
           placeholder={
             props.gateOpen
-              ? "Reply to adjust the proposal — or use the buttons above"
-              : props.placeholder || "Ask the coworker…  (drop or paste files)"
+              ? t("composer.placeholder_gate")
+              : props.placeholder || t("composer.placeholder")
           }
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -595,8 +600,8 @@ export function Composer(props: Props) {
           <div className="relative">
             <button
               className={iconBtn + (attachMenuOpen ? " bg-paper text-ink" : "")}
-              title="Attach"
-              aria-label="Attach"
+              title={t("composer.attach")}
+              aria-label={t("composer.attach")}
               onClick={() => setAttachMenuOpen((v) => !v)}
             >
               <Icon name="plus" size={17} />
@@ -613,24 +618,24 @@ export function Composer(props: Props) {
                 <div className="absolute z-40 bottom-full mb-1 left-0 min-w-[200px] rounded-xl border border-line bg-panel shadow-2xl py-1.5">
                   {sessionRows && (
                     <div className="px-3 pt-1 pb-0.5 text-[10.5px] font-semibold tracking-wide uppercase text-faint">
-                      This message
+                      {t("composer.attach_this_message")}
                     </div>
                   )}
-                  {attachItem("image", "Photo or image", () => pickFiles("image/*"))}
+                  {attachItem("image", t("composer.attach_image"), () => pickFiles("image/*"))}
                   {attachItem("file", "PDF", () => pickFiles("application/pdf,.pdf"))}
                   {attachItem(
                     "fileCode",
-                    "Other files",
+                    t("composer.attach_other"),
                     () => pickFiles("text/*,.md,.csv,.json,.yaml,.yml,.log,.py,.ts,.tsx,.js,.rs,.go,.toml"),
                   )}
                   {sessionRows && (
                     <>
                       <div className="my-1 border-t border-line" />
                       <div className="px-3 pt-0.5 pb-0.5 text-[10.5px] font-semibold tracking-wide uppercase text-faint">
-                        This session
+                        {t("composer.attach_this_session")}
                       </div>
-                      {bindRow("book", "Project memory", "memory")}
-                      {bindRow("table", "Board", "board")}
+                      {bindRow("book", t("composer.bind_memory"), "memory")}
+                      {bindRow("table", t("composer.bind_board"), "board")}
                     </>
                   )}
                 </div>
@@ -674,6 +679,7 @@ export function Composer(props: Props) {
             </div>
           ) : props.workspace !== undefined ? (
             <ModeMenu
+              reviewerPaused={props.reviewerPaused}
               mode={props.mode}
               onModeChange={props.onModeChange}
               unattended={props.unattended}
@@ -681,7 +687,7 @@ export function Composer(props: Props) {
             />
           ) : null}
 
-          {dictationBusy === "Transcribing…" && <span className="text-[12px] text-accent">Transcribing…</span>}
+          {dictationBusy === t("composer.starting_transcribe") && <span className="text-[12px] text-accent">{dictationBusy}</span>}
 
           <span className="ml-auto" />
 
@@ -705,10 +711,10 @@ export function Composer(props: Props) {
             <button
               className="pill model-warn chip"
               onClick={() => props.onConnectModel?.()}
-              title="Connect a model"
-              aria-label="No model connected — connect a model"
+              title={t("composer.model.connect")}
+              aria-label={t("composer.model.none_aria")}
             >
-              <span className="pill-label">No model</span>
+              <span className="pill-label">{t("composer.model.none")}</span>
               <span className="model-warn-ico" aria-hidden>⚠</span>
             </button>
           ) : modelsLoaded ? (
@@ -718,9 +724,9 @@ export function Composer(props: Props) {
               className="pill chip text-faint cursor-default"
               disabled
               data-testid="models-loading"
-              title="Fetching the model list from the server"
+              title={t("composer.model.loading_title")}
             >
-              <span className="pill-label">Loading models…</span>
+              <span className="pill-label">{t("composer.model.loading")}</span>
             </button>
           ))}
 
@@ -738,12 +744,12 @@ export function Composer(props: Props) {
               title={
                 dictationBusy ||
                 (dictation?.recording
-                  ? "Stop recording and transcribe"
+                  ? t("composer.voice.stop_transcribe")
                   : voiceReady
-                    ? "Start local voice dictation"
-                    : "Configure Voice Input in Settings")
+                    ? t("composer.voice.start_dictation")
+                    : t("composer.voice.configure"))
               }
-              aria-label={dictation?.recording ? "Stop dictation" : voiceReady ? "Start dictation" : "Configure Voice Input in Settings"}
+              aria-label={dictation?.recording ? t("composer.voice.stop_dictation") : voiceReady ? t("composer.voice.start_dictation_btn") : t("composer.voice.configure")}
               aria-disabled={!voiceReady && !dictation?.recording}
             >
               <Icon name={dictation?.recording ? "stop" : "mic"} size={16} />
@@ -753,7 +759,7 @@ export function Composer(props: Props) {
           {/* send / stop — a pending gate re-opens Send: the reply resolves it */}
           {props.running && !props.gateOpen ? (
             <button className="btn danger" onClick={props.onInterrupt}>
-              ⏹ Stop
+              {t("composer.stop")}
             </button>
           ) : (
             <button
@@ -765,8 +771,8 @@ export function Composer(props: Props) {
               }
               onClick={submit}
               disabled={!props.connected || !!dictation?.recording || !!dictationBusy}
-              title={needsModel ? "Connect a model to send" : undefined}
-              aria-label="Send"
+              title={needsModel ? t("composer.connect_to_send") : undefined}
+              aria-label={t("common.send")}
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M12 19V5M5 12l7-7 7 7" />
@@ -776,7 +782,7 @@ export function Composer(props: Props) {
         </div>
       </div>
       <span className="sr-only" role="status" aria-live="polite">
-        {dictation?.recording ? `Listening, ${recordingTime}` : dictationBusy || ""}
+        {dictation?.recording ? t("composer.listening_sr", { time: recordingTime }) : dictationBusy || ""}
       </span>
     </div>
   );
@@ -806,6 +812,10 @@ function UsageChip({
     : null;
   // Settings can hide the bar; without a known window there is nothing to fill either.
   const showBar = pct !== null && contextBar === true;
+  // Release hold (owner call 2026-08-24): cumulative session totals need more vetting
+  // before they ship — cache-read sums across turns read like a bill. Until then the
+  // chip and popover speak context-window only. Flip this to restore the breakdown.
+  const SHOW_SESSION_TOTALS = false;
   const labelFor = (id: string) =>
     id === "unknown" ? "Unknown model" : modelLabels?.[id] || shortModel(id);
   // One field per line, session-summed (owner ask 2026-07-28). Values are cumulative
@@ -826,15 +836,15 @@ function UsageChip({
         aria-expanded={open}
         aria-label="Token usage"
         title={
-          showBar
-            ? `Context window ${pct}% full · ${formatTokens(total)} tokens this session`
-            : `Token usage this session: ${formatTokens(total)}`
+          pct !== null
+            ? `Context window ${pct}% full — ${formatTokens(usage.context)} of ${formatTokens(contextWindow as number)}`
+            : `In context now: ${formatTokens(usage.context)} tokens`
         }
         data-testid="usage-chip"
       >
-        {/* The bar is the context-window fill; pairing it with the session TOTAL read as
-            "total is N% of the window", which it never was. Bar alone when we have a
-            window, the session total only when we don't (so the chip is never empty). */}
+        {/* The bar is the context-window fill. With totals on release hold, the numeric
+            fallback is the in-context size — the one figure we trust — never the
+            cumulative session total. */}
         {showBar ? (
           <span className="w-12 h-1.5 rounded-full bg-line overflow-hidden" aria-hidden="true">
             <span
@@ -843,7 +853,9 @@ function UsageChip({
             />
           </span>
         ) : (
-          <span className="tabular-nums">{formatTokens(total)}</span>
+          <span className="tabular-nums">
+            {SHOW_SESSION_TOTALS ? formatTokens(total) : formatTokens(usage.context)}
+          </span>
         )}
       </button>
       {open && (
@@ -874,6 +886,7 @@ function UsageChip({
                 In context now: {formatTokens(usage.context)} tokens
               </div>
             ) : null}
+            {SHOW_SESSION_TOTALS && (<>
             <div className="text-[11px] uppercase tracking-[0.06em] text-faint font-semibold mb-1">
               Session totals
             </div>
@@ -907,6 +920,7 @@ function UsageChip({
               <span className="text-faint">Total</span>
               <span className="text-ink tabular-nums">{formatTokens(total)} tokens</span>
             </div>
+            </>)}
             {model && !modelLabels?.[model] && contextWindow === undefined && (
               <div className="mt-1 text-[11px] text-faint leading-snug">
                 Context meter unavailable for custom models.
@@ -927,12 +941,15 @@ function ModeMenu({
   onModeChange,
   unattended,
   onUnattendedChange,
+  reviewerPaused,
 }: {
   mode: string;
   onModeChange: (mode: string) => void;
   unattended?: boolean;
   onUnattendedChange?: (on: boolean) => void;
+  reviewerPaused?: boolean;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   // The Auto-Approve entry is gated on the server flag. Fetch once on first open; a session
   // already IN auto-approve mode always shows its own entry so the current mode is legible
@@ -958,13 +975,17 @@ function ModeMenu({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Mode"
+        aria-label={t("composer.mode_label")}
         title={
-          `Mode: ${current?.label || mode}` +
-          (unattended ? " · approvals go to the Inbox" : "")
+          `${t("composer.mode_label")}: ${current ? t(current.label) : mode}` +
+          (reviewerPaused && mode === "auto-approve" ? " · " + t("composer.reviewer_paused_tip") : "") +
+          (unattended ? " · " + t("composer.approvals_to_inbox") : "")
         }
       >
-        {current?.label || mode}
+        {current ? t(current.label) : mode}
+        {reviewerPaused && mode === "auto-approve" && (
+          <span className="text-[11px] text-warnInk" data-testid="mode-paused">· {t("composer.paused")}</span>
+        )}
         <Icon name="chevronDown" size={11} className="text-faint" />
       </button>
       {open && (
@@ -993,10 +1014,10 @@ function ModeMenu({
                   {o.caution && (
                     <Icon name="warning" size={13} className="mr-1.5 shrink-0 text-warnInk" />
                   )}
-                  {o.label}
+                  {t(o.label)}
                   {o.value === mode && <span className="ml-1.5">✓</span>}
                 </span>
-                <span className="text-[11px] text-faint leading-snug">{o.description}</span>
+                <span className="text-[11px] text-faint leading-snug">{t(o.description ?? "")}</span>
               </button>
             ))}
             {onUnattendedChange && (
@@ -1004,15 +1025,15 @@ function ModeMenu({
                 <div className="my-1 border-t border-line" />
                 <div className="flex items-center gap-2 px-2.5 py-1.5">
                   <span className="flex-1 min-w-0">
-                    <span className="block text-[13px] text-ink">Send approvals to Inbox</span>
+                    <span className="block text-[13px] text-ink">{t("composer.approvals_to_inbox")}</span>
                     <span className="block text-[11px] text-faint leading-snug">
-                      Approvals &amp; questions go to the Inbox; the agent keeps working.
+                      {t("composer.approvals_to_inbox_help")}
                     </span>
                   </span>
                   <Toggle
                     checked={!!unattended}
                     onChange={onUnattendedChange}
-                    title="Send approvals to the Inbox"
+                    title={t("composer.send_approvals_to_inbox")}
                   />
                 </div>
               </>
@@ -1037,6 +1058,7 @@ function attachItem(icon: "image" | "file" | "fileCode", label: string, onClick:
 }
 
 function AttachChip({ a, onRemove }: { a: Attachment; onRemove: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className={"attach-chip" + (a.kind === "image" ? " img" : "")}>
       {a.kind === "image" ? (
@@ -1047,7 +1069,7 @@ function AttachChip({ a, onRemove }: { a: Attachment; onRemove: () => void }) {
           <span className="attach-name">{a.name}</span>
         </>
       )}
-      <button className="attach-x" onClick={onRemove} title="Remove">
+      <button className="attach-x" onClick={onRemove} title={t("common.remove")}>
         ✕
       </button>
     </div>

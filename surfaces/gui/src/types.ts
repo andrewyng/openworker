@@ -21,6 +21,7 @@ export type EventType =
   | "input_rejected"
   | "interrupted"
   | "model_changed"
+  | "mode_notice"
   | "memory_saved"
   | "compacting"
   | "compacted"
@@ -134,7 +135,10 @@ export type Item =
   // `reviewerReason` + `allowAnyway` = an Auto-Approve reviewer deny (spec 8.4): the full
   // reason is user-facing only (the agent got a terse refusal), and allowAnyway offers the
   // one-shot exact-action override.
-  | { kind: "tool"; id: string; name: string; args: any; status: string; preview?: string; hidden?: number; standingRule?: string; reviewerReason?: string; allowAnyway?: boolean }
+  // `approvalOrigin` = why the call ran without a card: "reviewer" (auto-approved by the
+  // Auto-Approve reviewer; `approvalNote` carries its one-line reason) or "bypass"
+  // (bypass-approvals mode). Rendered as a quiet debugging chip, deliberately subtle.
+  | { kind: "tool"; id: string; name: string; args: any; status: string; preview?: string; hidden?: number; standingRule?: string; reviewerReason?: string; allowAnyway?: boolean; approvalOrigin?: string; approvalNote?: string; approvalGrant?: string }
   | {
       kind: "approval";
       name: string;
@@ -152,6 +156,9 @@ export type Item =
       // one fact that cannot be read off the command text. Engine-authored, fixed
       // vocabulary — never file contents.
       provenance?: string;
+      // The Auto-Approve reviewer answered `unsure` and raised this card: its one-line
+      // reason, rendered quietly so "why am I being asked?" is answered in place.
+      reviewerUnsure?: string;
       // Server-classified: this shell command only reads locally, so the card may offer
       // the session-wide "Allow read-only commands" grant.
       readonlyOk?: boolean;

@@ -423,6 +423,11 @@ def test_ws_allows_only_one_inflight_turn_per_session(tmp_path):
             self.max_active = 0
 
         def complete(self, *, model, messages, tools=None, **settings):
+            # The fire-and-forget auto-title completion legitimately runs CONCURRENTLY
+            # with the chat turn (it fires at turn start, owner catch 2026-08-24) — the
+            # invariant under test is one CHAT turn at a time, so exclude title calls.
+            if messages and "title chat sessions" in str(messages[0].get("content", "")):
+                return _text("A Title")
             with self._lock:
                 self.active += 1
                 self.max_active = max(self.max_active, self.active)
@@ -1103,3 +1108,68 @@ def test_mcp_connect_route_flags_authorizing_immediately(tmp_path, monkeypatch):
     monkeypatch.setattr("coworker.server.manager.load_mcp_servers", lambda *a, **k: [])
     res = asyncio.run(mgr.connect_mcp("sales-db"))
     assert not res["ok"] and "sales-db" not in mgr._mcp_authorizing
+
+
+def test_ws_ready_reports_live_turn(tmp_path):
+    # A reconnect can land mid-turn (sidebar revisit, relaunch, dropped socket). `ready`
+    # must carry server truth on the running turn or the GUI loses Stop + the waiting row
+    # (owner catch 2026-08-24, v0.2.0 walkthrough).
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([_text("hi")]))
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/live1") as ws:
+        assert ws.receive_json()["data"]["running"] is False
+
+    manager.mark_running("live1")
+    try:
+        with client.websocket_connect("/ws/session/live1") as ws:
+            assert ws.receive_json()["data"]["running"] is True
+    finally:
+        manager.mark_idle("live1")
+
+
+def test_set_mode_persists_notice_once_then_markers(tmp_path):
+    # Owner ruling 2026-08-24: the Auto-Approve explainer is server-authored and persisted
+    # ONCE per session; later switches persist one-line markers. Restarts re-show nothing.
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([_text("hi")]))
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/modes1") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "set_mode", "mode": "auto-approve"})
+        ev = ws.receive_json()
+        assert ev["type"] == "mode_notice"
+        assert ev["data"]["title"] == "Auto-approve is on."
+        assert "uses a model" in ev["data"]["text"]
+        ws.send_json({"type": "set_mode", "mode": "interactive"})
+        assert ws.receive_json()["data"] == {"text": "Ask for approval is on."}
+        # Re-entering auto-approve: marker, never the banner again.
+        ws.send_json({"type": "set_mode", "mode": "auto-approve"})
+        assert ws.receive_json()["data"] == {"text": "Auto-approve is on."}
+
+    engine = manager._engines["modes1"]
+    kinds = [m.get("kind") for m in engine.messages if m.get("role") == "notice"]
+    assert kinds.count("mode_notice") == 1
+    assert kinds.count("mode_switch") == 2
+
+
+def test_connect_banners_a_session_already_in_auto_approve(tmp_path):
+    from coworker.permissions import Mode
+
+    manager = SessionManager(
+        workspace=tmp_path,
+        provider=ScriptedProvider([_text("hi")]),
+        mode=Mode("auto-approve"),
+    )
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/modes2") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ev = ws.receive_json()
+        assert ev["type"] == "mode_notice" and ev["data"]["title"] == "Auto-approve is on."
+    # A reconnect stays quiet: the banner is persisted (asserted below), not re-announced —
+    # a set_mode echo of the SAME mode also stays silent (previous is new_mode).
+    with client.websocket_connect("/ws/session/modes2") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "set_mode", "mode": "interactive"})
+        assert ws.receive_json()["data"] == {"text": "Ask for approval is on."}
+    engine = manager._engines["modes2"]
+    kinds = [m.get("kind") for m in engine.messages if m.get("role") == "notice"]
+    assert kinds.count("mode_notice") == 1

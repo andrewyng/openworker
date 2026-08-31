@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getI18n, useTranslation } from "react-i18next";
 import {
   addMcpServer,
   connectMcp,
@@ -32,6 +33,7 @@ import {
 
 // Curated OAuth quick-adds: remote MCP servers with browser sign-in (OAuth 2.1 +
 // DCR) — no keys to paste, tokens stay in the local secret store.
+// `blurb` is an i18n key, resolved at render time.
 export const MCP_PRESETS: {
   name: string;
   label: string;
@@ -41,27 +43,30 @@ export const MCP_PRESETS: {
   {
     name: "granola",
     label: "Granola",
-    blurb: "Meeting notes & transcripts — sign in with your Granola account.",
+    blurb: "mcp.preset_granola_blurb",
     config: { type: "http", url: "https://mcp.granola.ai/mcp", auth: "oauth" },
   },
 ];
 
 export function mcpChip(s: McpServer) {
+  const t = getI18n().t;
   const isOauth = s.auth === "oauth";
-  if (!s.enabled) return <span className={CHIP_OFF}>● Off</span>;
+  if (!s.enabled) return <span className={CHIP_OFF}>● {t("mcp.status_off")}</span>;
   if (s.status === "authorizing")
-    return <span className={CHIP_WARN}>● {isOauth ? "Signing in…" : "Testing…"}</span>;
-  if (s.status === "connected") return <span className={CHIP_OK}>● Live</span>;
+    return <span className={CHIP_WARN}>● {isOauth ? t("mcp.status_signing_in") : t("mcp.status_testing")}</span>;
+  if (s.status === "connected") return <span className={CHIP_OK}>● {t("connector.live")}</span>;
   if (s.auth_hint || s.status === "needs_auth")
-    return <span className={CHIP_WARN}>● Needs sign-in</span>;
-  if (s.status === "error") return <span className={CHIP_ERR}>● Error</span>;
-  if (s.last_test_at) return <span className={CHIP_OK}>● Ready</span>;
-  return <span className={CHIP_OFF}>● Not tested</span>;
+    return <span className={CHIP_WARN}>● {t("mcp.status_needs_sign_in")}</span>;
+  if (s.status === "error") return <span className={CHIP_ERR}>● {t("mcp.status_error")}</span>;
+  if (s.last_test_at) return <span className={CHIP_OK}>● {t("connector.ready")}</span>;
+  return <span className={CHIP_OFF}>● {t("mcp.status_not_tested")}</span>;
 }
 
 export function mcpStatusLine(s: McpServer): string {
+  const t = getI18n().t;
   const bits: string[] = [s.transport];
-  if (s.status === "connected" && s.tool_count != null) bits.push(`${s.tool_count} tools`);
+  if (s.status === "connected" && s.tool_count != null)
+    bits.push(t("mcp.tool_count", { count: s.tool_count }));
   else if (s.transport === "http" && s.config?.url) {
     try {
       bits.push(new URL(s.config.url).host);
@@ -73,7 +78,7 @@ export function mcpStatusLine(s: McpServer): string {
   // something (it re-round-trips the connection and refreshes the tool count).
   if (s.last_test_at) {
     const rel = relTime(s.last_test_at);
-    if (rel) bits.push(`tested ${rel}`);
+    if (rel) bits.push(t("mcp.tested_rel", { rel }));
   }
   return bits.join(" · ");
 }
@@ -96,6 +101,7 @@ export function CustomMcpGroup({
   onOpen: (name: string) => void;
   onChanged: () => void;
 }) {
+  const { t } = useTranslation();
   const servers = serversProp;
   // A probe in flight ("Testing…" / "Signing in…") settles server-side within seconds,
   // but this page has no standing MCP poll — the chip froze on Testing forever
@@ -112,7 +118,7 @@ export function CustomMcpGroup({
 
   return (
     <>
-      <div className={GRP_H}>Custom · MCP</div>
+      <div className={GRP_H}>{t("mcp.group_custom")}</div>
       <div className={GRP} data-testid="custom-mcp-group">
         {servers.map((s) => (
           <button
@@ -135,7 +141,7 @@ export function CustomMcpGroup({
             <McpGlyph />
             <span className="min-w-0 flex-1">
               <span className="font-medium text-[13px]">{p.label}</span>
-              <span className="block text-[12px] text-muted truncate">{p.blurb}</span>
+              <span className="block text-[12px] text-muted truncate">{t(p.blurb)}</span>
             </span>
             <span
               className={PILL_QUIET + " cursor-pointer"}
@@ -146,7 +152,7 @@ export function CustomMcpGroup({
                 onChanged();
               }}
             >
-              Connect
+              {t("connector.connect")}
             </span>
           </div>
         ))}
@@ -193,6 +199,7 @@ export function AddMcpModal({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<"url" | "json">("url");
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -210,11 +217,11 @@ export function AddMcpModal({
     const n = name.trim();
     const u = url.trim();
     if (!n) {
-      setError("Give the server a name.");
+      setError(t("mcp.err_name"));
       return;
     }
     if (!/^https?:\/\/\S+$/.test(u)) {
-      setError("Enter the server's full URL (https://…).");
+      setError(t("mcp.err_url"));
       return;
     }
     await addMcpServer(n, { type: "http", url: u });
@@ -231,7 +238,7 @@ export function AddMcpModal({
     try {
       parsed = JSON.parse(text);
     } catch (e: any) {
-      setError("Invalid JSON: " + e.message);
+      setError(t("mcp.err_invalid_json", { message: e.message }));
       return;
     }
     // Accept either {mcpServers:{...}}, {name:{...}}, or a single bare config.
@@ -239,7 +246,7 @@ export function AddMcpModal({
     const entries =
       map && typeof map === "object" && !map.command && !map.url ? Object.entries(map) : null;
     if (!entries || entries.length === 0) {
-      setError('Paste a `{ "<name>": { … } }` object (or a full mcpServers block).');
+      setError(t("mcp.err_json_shape"));
       return;
     }
     for (const [n, config] of entries) {
@@ -258,29 +265,26 @@ export function AddMcpModal({
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
       <div className="absolute left-1/2 top-24 -translate-x-1/2 w-[540px] max-w-[92vw] rounded-xl2 border border-line bg-panel shadow-xl p-5 space-y-3">
         <div className="flex items-center justify-between">
-          <div className="text-[14px] font-semibold">Add custom MCP server</div>
+          <div className="text-[14px] font-semibold">{t("mcp.add_title")}</div>
           <button className="text-faint hover:text-ink text-[16px] leading-none" onClick={onClose}>
             ×
           </button>
         </div>
         <div className="flex items-center gap-1.5">
           <button className={tabBtn(tab === "url")} onClick={() => setTab("url")} data-testid="mcp-add-tab-url">
-            Remote URL
+            {t("mcp.tab_remote_url")}
           </button>
           <button className={tabBtn(tab === "json")} onClick={() => setTab("json")} data-testid="mcp-add-tab-json">
-            JSON
+            {t("mcp.tab_json")}
           </button>
         </div>
         {tab === "url" ? (
           <>
-            <div className="text-[13px] text-muted">
-              Connect a hosted MCP server. If it needs sign-in, the row will offer it after the
-              first test.
-            </div>
+            <div className="text-[13px] text-muted">{t("mcp.add_url_blurb")}</div>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Name (shown in the connectors list)"
+              placeholder={t("mcp.add_name_ph")}
               spellCheck={false}
               className={INPUT}
               data-testid="mcp-add-name"
@@ -301,7 +305,7 @@ export function AddMcpModal({
           </>
         ) : (
           <>
-            <div className="text-[13px] text-muted">Paste server JSON (name → config):</div>
+            <div className="text-[13px] text-muted">{t("mcp.add_json_blurb")}</div>
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -313,10 +317,10 @@ export function AddMcpModal({
         )}
         <div className="flex items-center gap-3">
           <button className={PILL_ACCENT} onClick={tab === "url" ? saveUrl : saveJson}>
-            {tab === "url" ? "Add & test" : "Add"}
+            {tab === "url" ? t("mcp.add_and_test") : t("manage.add_btn")}
           </button>
           <button className="text-[13px] text-muted hover:text-ink" onClick={onClose}>
-            cancel
+            {t("manage.cancel")}
           </button>
         </div>
         {error && <div className="text-[13px] text-danger">{error}</div>}
@@ -336,6 +340,7 @@ export function McpServerDetail({
   onChanged: () => void;
   onGone: () => void;
 }) {
+  const { t } = useTranslation();
   const [tools, setTools] = useState<{ name: string; description: string }[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [toolErr, setToolErr] = useState<string | null>(null);
@@ -368,7 +373,7 @@ export function McpServerDetail({
     const res = await getMcpTools(server.name);
     setBusy(false);
     if (res.ok) setTools(res.tools);
-    else setToolErr(res.error || "failed to connect");
+    else setToolErr(res.error || t("mcp.err_failed_connect"));
   };
 
   return (
@@ -384,22 +389,20 @@ export function McpServerDetail({
 
       <div className={GRP}>
         <div className={ROW}>
-          <span className="text-[13px] flex-1">Enabled</span>
+          <span className="text-[13px] flex-1">{t("persona.enabled")}</span>
           <Toggle
             checked={server.enabled}
             onChange={async () => {
               await patchMcpServer(server.name, { enabled: !server.enabled });
               onChanged();
             }}
-            title="Enable this server"
+            title={t("mcp.enable_title")}
           />
         </div>
         <div className={ROW}>
           <span className="text-[13px] flex-1">
-            Test connection
-            <span className="block text-[12px] text-faint">
-              Starts the server and lists its tools — without opening a session.
-            </span>
+            {t("mcp.test_connection")}
+            <span className="block text-[12px] text-faint">{t("mcp.test_desc")}</span>
           </span>
           {server.auth_hint && !isOauth ? (
             <span
@@ -408,7 +411,7 @@ export function McpServerDetail({
               onClick={signInWithOauth}
               data-testid={`mcp-authfix-${server.name}`}
             >
-              Sign in
+              {t("gallery.sign_in")}
             </span>
           ) : isOauth && server.status === "needs_auth" ? (
             <span
@@ -417,7 +420,7 @@ export function McpServerDetail({
               onClick={runTest}
               data-testid={`mcp-signin-${server.name}`}
             >
-              Sign in
+              {t("gallery.sign_in")}
             </span>
           ) : (
             <span
@@ -426,7 +429,7 @@ export function McpServerDetail({
               onClick={authorizing ? undefined : runTest}
               data-testid={`mcp-test-${server.name}`}
             >
-              {authorizing ? "Testing…" : "Test"}
+              {authorizing ? t("mcp.status_testing") : t("provider.test_btn")}
             </span>
           )}
         </div>
@@ -436,15 +439,15 @@ export function McpServerDetail({
           </div>
         )}
         <div className={ROW}>
-          <span className="text-[13px] flex-1">Tools</span>
+          <span className="text-[13px] flex-1">{t("available.tools")}</span>
           <button className="text-[13px] text-muted hover:text-ink" onClick={loadTools} disabled={busy}>
-            {busy ? "…" : tools ? "hide" : "show"}
+            {busy ? "…" : tools ? t("mcp.hide") : t("mcp.show")}
           </button>
         </div>
         {toolErr && <div className="px-4 py-2.5 text-[13px] text-danger">{toolErr}</div>}
         {tools && (
           <div className="px-4 py-3 flex flex-wrap gap-1.5">
-            {tools.length === 0 && <div className="text-[12px] text-faint">No tools.</div>}
+            {tools.length === 0 && <div className="text-[12px] text-faint">{t("manage.mcp_no_tools")}</div>}
             {tools.map((t) => (
               <span
                 key={t.name}
@@ -460,7 +463,7 @@ export function McpServerDetail({
 
       <div className={GRP}>
         <div className="px-4 py-3">
-          <div className="text-[12px] font-semibold text-muted mb-1.5">Configuration</div>
+          <div className="text-[12px] font-semibold text-muted mb-1.5">{t("mcp.configuration")}</div>
           <pre className="font-mono text-[12px] text-muted whitespace-pre-wrap break-all">
             {JSON.stringify(server.config, null, 2)}
           </pre>
@@ -477,7 +480,7 @@ export function McpServerDetail({
             }}
             data-testid={`mcp-signout-${server.name}`}
           >
-            Sign out
+            {t("sidebar.sign_out")}
           </button>
         )}
         <button
@@ -489,7 +492,7 @@ export function McpServerDetail({
           }}
           data-testid={`mcp-remove-${server.name}`}
         >
-          Remove server
+          {t("mcp.remove_server")}
         </button>
       </div>
     </div>

@@ -15,7 +15,10 @@ from coworker.providers import (
     capabilities_for,
 )
 from coworker.providers.registry import _normalize_ollama_url, build_provider_client
-from coworker.providers.openai_provider import _salvage_tool_calls_from_text
+from coworker.providers.openai_provider import (
+    _salvage_tool_calls_from_text,
+    looks_like_unparsed_tool_call,
+)
 
 
 # -- base_url passthrough -------------------------------------------------------
@@ -219,6 +222,21 @@ _TODO_TOOLS = [
 ]
 
 
+_GREP_TOOL = [
+    {
+        "type": "function",
+        "function": {
+            "name": "grep",
+            "parameters": {
+                "type": "object",
+                "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}},
+                "required": ["pattern"],
+            },
+        },
+    }
+]
+
+
 def test_salvage_mixed_prose_and_object():
     # The model wrote prose THEN a bare-JSON tool call in one message.
     text = 'It seems the workspace is empty. {"name": "list_files", "arguments": {"recursive": true}}'
@@ -252,6 +270,39 @@ def test_salvage_filters_unknown_tool_name():
     # A {name,arguments} object whose name isn't an offered tool must NOT be salvaged.
     text = '{"name": "rm_rf", "arguments": {"path": "/"}}'
     assert _salvage_tool_calls_from_text(text, _TODO_TOOLS) == []
+
+
+def test_salvage_truncated_xml_call_keeps_only_complete_parameters():
+    """A local model that runs out of tokens mid-call leaves `<function=…>` unclosed. Take the
+    name and every parameter that DID close; NEVER the half-written trailing one — a truncated
+    path or file body reaching a tool is worse than no call at all."""
+    text = "<tool_call>\n<function=grep>\n<parameter=pattern>TODO</parameter>\n<parameter=path>sr"
+    calls = _salvage_tool_calls_from_text(text, _TODO_TOOLS + _GREP_TOOL)
+    assert len(calls) == 1 and calls[0].name == "grep"
+    assert calls[0].arguments == {"pattern": "TODO"}  # the partial `path` is gone
+
+
+def test_salvage_truncated_xml_prefers_a_complete_call_and_filters_unknown_names():
+    complete_then_cut = (
+        "<tool_call><function=list_files><parameter=recursive>true</parameter>"
+        "</function></tool_call>\n<tool_call>\n<function=grep>"
+    )
+    calls = _salvage_tool_calls_from_text(complete_then_cut, _TODO_TOOLS + _GREP_TOOL)
+    assert [c.name for c in calls] == ["list_files"]  # the finished one wins
+    # An unfinished call naming something we never offered stays text (no false positives).
+    assert _salvage_tool_calls_from_text("<function=rm_rf>\n<parameter=p>/", _TODO_TOOLS) == []
+
+
+def test_looks_like_unparsed_tool_call_ignores_code_and_needs_tools():
+    """Distinguishes a leaked call from a model *explaining* tool syntax — the latter is a real
+    answer and must not be turned into an error."""
+    leaked = "Let me read the files.\n</parameter>\n</function>\n</tool_call>"
+    assert looks_like_unparsed_tool_call(leaked, _TODO_TOOLS) is True
+    assert looks_like_unparsed_tool_call("A CLI that greets people.", _TODO_TOOLS) is False
+    fenced = "Qwen writes calls like:\n```\n<tool_call><function=x>\n```\nThat's the shape."
+    assert looks_like_unparsed_tool_call(fenced, _TODO_TOOLS) is False
+    assert looks_like_unparsed_tool_call("The `<tool_call>` wrapper.", _TODO_TOOLS) is False
+    assert looks_like_unparsed_tool_call(leaked, None) is False  # no tools offered → not a call
 
 
 def test_salvage_nested_braces_in_tag():

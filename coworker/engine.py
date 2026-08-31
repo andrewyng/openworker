@@ -25,9 +25,19 @@ from . import provenance
 from . import session_facts
 from . import toolchain as _toolchain
 from .events import Event, EventType
+
+# §8.4 retry guard: the reviewer pauses for the rest of the turn after this many denials
+# IN A ROW (2→5 + streak semantics, owner ruling 2026-08-24 — a cumulative 2 silently
+# downgraded long agentic turns to hand-approval after one over-strict pair).
+_REVIEWER_TRIP = 5
+_REVIEWER_PAUSED_TEXT = (
+    "Auto-approve is paused for the rest of this turn — the reviewer blocked "
+    f"{_REVIEWER_TRIP} actions in a row, so approvals now come to you."
+)
 from .permissions import Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
 from .providers.errors import friendly_model_error
+from .providers.openai_provider import looks_like_unparsed_tool_call
 from .tools import ToolRegistry
 
 logger = logging.getLogger("coworker.engine")
@@ -161,10 +171,19 @@ class TurnEngine:
         # behaves exactly like INTERACTIVE. Consulted only on decisions the gate marked
         # needs_user, only in AUTO_APPROVE mode, only when the session is attended (an
         # unset is_attended counts as NOT attended here — automations never set it), and
-        # only until two denials in a turn (§8.4 retry guard).
+        # only until _REVIEWER_TRIP denials IN A ROW (§8.4 retry guard). Consecutive, not
+        # cumulative: an allow/unsure verdict or an ask_user answer resets the streak —
+        # the owner-hit 2026-08-24 was a 2-denial cumulative trip silently downgrading a
+        # long agentic turn to hand-approval for everything after one over-strict pair.
         self.reviewer: Optional[Any] = None
         self._reviewer_denials = 0
         self._reviewer_verdicts: dict[str, Any] = {}
+        # (c) How each consequential call got cleared, keyed by tool_call id:
+        # {"origin": "reviewer"|"bypass"|"user", "note": <reviewer reasoning>, "grant":
+        # <user outcome>}. Consumed by _record_result into the TOOL_FINISHED event AND
+        # into the tool message's `_display` sidecar, so the quiet provenance chips
+        # survive reload (owner ruling 2026-08-24) — display-only, never provider-visible.
+        self._approval_origins: dict[str, dict[str, str]] = {}
         # Shadow evaluation (spec Part 6 step 3): when True and a reviewer is attached, the
         # reviewer records what it WOULD have decided on each approval card while the human
         # still decides. Fire-and-forget — the card is never delayed, no decision is ever
@@ -188,7 +207,7 @@ class TurnEngine:
         # (anchor, text) where anchor = how many user messages existed at capture, so the
         # merge in `_user_history` stays chronological. Runtime-only on purpose: a restart
         # costs the reviewer context (more cards), never correctness.
-        self._ask_replies: list[tuple[int, str]] = []
+        self._ask_replies: list[tuple[int, str, str]] = []  # (anchor, answer, question)
         # Extra user-facing fields for a tool's approval card, merged into the
         # PERMISSION_REQUIRED payload — e.g. web_search's live provider name, so the card
         # can say where queries actually go (§1.9). Set post-construction by the surface
@@ -558,6 +577,25 @@ class TurnEngine:
                 if self._steering:
                     self._inject_steering()
                     continue
+                # The model tried to call a tool and the syntax never parsed — salvage already
+                # had its go. Ending as "completed" here would present a half-written call as
+                # the answer, which is indistinguishable from the model deciding it was done;
+                # the user just sees narration trailing off into stray tags. Fail loudly
+                # instead, on the error path so the GUI offers Retry — this is drift, not a
+                # deterministic failure, so retrying the same model usually works.
+                if looks_like_unparsed_tool_call(turn.text, self.registry.schemas() or None):
+                    message = (
+                        f"{self.model} replied with a tool call this endpoint couldn't parse, "
+                        "so the turn was stopped rather than answered from a partial call. "
+                        "Retry, or switch to a larger model — smaller local models drift off "
+                        "the tool-call format, especially with many tools in play."
+                    )
+                    self._append_notice("error", message)
+                    yield Event(
+                        EventType.ERROR,
+                        {"error": message, "error_type": "UnparsedToolCall"},
+                    )
+                    return
                 yield Event(
                     EventType.TURN_END,
                     {"status": "completed", "iterations": iterations},
@@ -929,7 +967,7 @@ class TurnEngine:
             and self.permissions.mode is Mode.AUTO_APPROVE
             and self.is_attended is not None
             and self.is_attended()
-            and self._reviewer_denials < 2
+            and self._reviewer_denials < _REVIEWER_TRIP
         )
 
     def _user_history(self) -> tuple[str, list[dict[str, Any]]]:
@@ -955,19 +993,24 @@ class TurnEngine:
             if text:
                 texts.append(text)
         if not texts:
-            return "", [{"text": t, "is_reply": True} for _, t in self._ask_replies]
+            return "", [
+                {"text": t, "is_reply": True, **({"question": q} if q else {})}
+                for _, t, q in self._ask_replies
+            ]
         history: list[dict[str, Any]] = []
         for i, t in enumerate(texts[:-1], start=1):
             history.append({"text": t})
             history.extend(
-                {"text": r, "is_reply": True} for a, r in self._ask_replies if a == i
+                {"text": r, "is_reply": True, **({"question": q} if q else {})}
+                for a, r, q in self._ask_replies
+                if a == i
             )
         # Replies captured during the current turn (anchor == len(texts)) — or after an
         # anchor message that was itself empty/skipped — land at the tail, so a same-turn
         # consent is already visible to the reviewer for the very next action.
         history.extend(
-            {"text": r, "is_reply": True}
-            for a, r in self._ask_replies
+            {"text": r, "is_reply": True, **({"question": q} if q else {})}
+            for a, r, q in self._ask_replies
             if a >= len(texts)
         )
         return texts[-1], history
@@ -1177,6 +1220,11 @@ class TurnEngine:
                 tool_call, stage="auto_allowed", status="allowed", reason=reason
             )
 
+        # (c) Bypass mode ran a consequential call no other rule allowed: annotate it.
+        # "full access" is the exact reason string of permissions.py's bypass branch.
+        if allowed and decision.reason == "full access":
+            self._approval_origins[tool_call.id] = {"origin": "bypass"}
+
         if not allowed and decision.needs_user and self._consume_allow_anyway(tool_call):
             # §8.4 "Allow anyway": the human already approved this exact action from the
             # deny card. One-shot — consumed above; a different action never matches.
@@ -1185,6 +1233,7 @@ class TurnEngine:
             self._audit(tool_call, stage="auto_allowed", status="allowed", reason=reason)
 
         consulted_live = False
+        unsure_note = ""  # the reviewer's hesitation, when an unsure verdict raised the card
         if (
             not allowed
             and decision.needs_user
@@ -1210,6 +1259,10 @@ class TurnEngine:
             )
             if verdict.verdict == "allow":
                 allowed = True
+                self._reviewer_denials = 0  # streak semantics: any non-deny resets
+                self._approval_origins[tool_call.id] = {
+                    "origin": "reviewer", "note": verdict.reason
+                }
                 reason = f"allowed by reviewer: {verdict.reason}"
             elif verdict.verdict == "deny":
                 # §8.4 deny asymmetry — full reason to the USER (event + audit above),
@@ -1218,6 +1271,11 @@ class TurnEngine:
                 from .reviewer import AGENT_DENY_MESSAGE
 
                 self._reviewer_denials += 1
+                tripped = self._reviewer_denials == _REVIEWER_TRIP
+                if tripped:
+                    # (a) The breaker must never trip silently (owner catch 2026-08-24):
+                    # persist a notice so reloads see it too.
+                    self._append_notice("reviewer_paused", _REVIEWER_PAUSED_TEXT)
                 yield Event(
                     EventType.TOOL_FINISHED,
                     {
@@ -1226,11 +1284,15 @@ class TurnEngine:
                         "reason": "blocked by the safety reviewer",
                         "reviewer_reason": verdict.reason,
                         "allow_anyway": True,
+                        **({"reviewer_paused": _REVIEWER_PAUSED_TEXT} if tripped else {}),
                     },
                 )
-                self.messages.append(
-                    _tool_error_message(tool_call, AGENT_DENY_MESSAGE)
-                )
+                deny_msg = _tool_error_message(tool_call, AGENT_DENY_MESSAGE)
+                deny_msg["_display"] = {
+                    "approval_origin": "reviewer_denied",
+                    "approval_note": verdict.reason,
+                }
+                self.messages.append(deny_msg)
                 self._audit(
                     tool_call,
                     stage="finished",
@@ -1240,6 +1302,9 @@ class TurnEngine:
                 yield False
                 return
             # "unsure" falls through to today's card — the human decides.
+            if verdict.verdict == "unsure":
+                self._reviewer_denials = 0  # streak semantics: any non-deny resets
+                unsure_note = verdict.reason
 
         if not allowed and decision.needs_user:
             # Shadow evaluation: record what the reviewer would have said about this card.
@@ -1253,6 +1318,13 @@ class TurnEngine:
                     "name": tool_call.name,
                     "arguments": tool_call.arguments,
                     "reason": decision.reason,
+                    # An `unsure` verdict raised this card: the reviewer's one-line reason
+                    # answers "why am I being asked?" in place (owner ask 2026-08-24).
+                    **(
+                        {"reviewer_unsure": verdict.reason}
+                        if consulted_live and verdict.verdict == "unsure"
+                        else {}
+                    ),
                     "category": getattr(metadata, "category", ""),
                     # The exact target a standing rule could pin, or None when the call
                     # isn't eligible (no declared target arg / exec risk). Surfaces use it
@@ -1299,6 +1371,11 @@ class TurnEngine:
                     False,
                     "interrupted by user" if self._cancel.is_set() else "denied by user",
                 )
+                self._approval_origins[tool_call.id] = {
+                    "origin": "user",
+                    "grant": "deny",
+                    **({"note": unsure_note} if unsure_note else {}),
+                }
                 self._audit(
                     tool_call,
                     stage="approval_resolved",
@@ -1321,6 +1398,11 @@ class TurnEngine:
                 elif outcome is ApprovalOutcome.READONLY_SESSION:
                     self.permissions.allow_readonly_for_session()
                 allowed, reason = True, "approved by user"
+                self._approval_origins[tool_call.id] = {
+                    "origin": "user",
+                    "grant": outcome.value,
+                    **({"note": unsure_note} if unsure_note else {}),
+                }
                 self._audit(
                     tool_call,
                     stage="approval_resolved",
@@ -1333,7 +1415,15 @@ class TurnEngine:
         if not allowed:
             if spec is None:
                 reason = f"unknown tool: {tool_call.name}"
-            self.messages.append(_tool_error_message(tool_call, reason))
+            err_msg = _tool_error_message(tool_call, reason)
+            origin = self._approval_origins.pop(tool_call.id, None)
+            if origin:
+                err_msg["_display"] = {
+                    "approval_origin": origin.get("origin", ""),
+                    **({"approval_note": origin["note"]} if origin.get("note") else {}),
+                    **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
+                }
+            self.messages.append(err_msg)
             yield Event(
                 EventType.TOOL_FINISHED,
                 {"name": tool_call.name, "status": "denied", "reason": reason},
@@ -1378,6 +1468,17 @@ class TurnEngine:
         if isinstance(result, dict) and "_display" in result:
             display = result.get("_display") or None
             result = {k: v for k, v in result.items() if k != "_display"}
+        origin = self._approval_origins.pop(tool_call.id, None)
+        if origin:
+            # Provenance survives reload via the same display-only sidecar as the privacy
+            # counts (owner ruling 2026-08-24) — `_outbound_messages` strips it, so no
+            # provider ever sees it.
+            display = {
+                **(display or {}),
+                "approval_origin": origin.get("origin", ""),
+                **({"approval_note": origin["note"]} if origin.get("note") else {}),
+                **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
+            }
         message = _tool_result_message(tool_call, result)
         if display:
             message["_display"] = display
@@ -1414,6 +1515,16 @@ class TurnEngine:
                 "result_preview": _preview(result),
                 **({"display": display} if display else {}),
                 **({"standing_rule": rule} if rule else {}),
+                # (c) quiet provenance chip — same fields the `_display` sidecar persists.
+                **(
+                    {
+                        "approval_origin": origin.get("origin", ""),
+                        **({"approval_note": origin["note"]} if origin.get("note") else {}),
+                        **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
+                    }
+                    if origin
+                    else {}
+                ),
             },
         )
 
@@ -1806,7 +1917,7 @@ class TurnEngine:
 
         status = "ok" if (result.get("answer") or result.get("answers")) else "denied"
         if status == "ok":
-            self._note_ask_replies(result)
+            self._note_ask_replies(result, question)
         self.messages.append(_tool_result_message(tool_call, result))
         self._audit(
             tool_call,
@@ -1824,11 +1935,19 @@ class TurnEngine:
             },
         )
 
-    def _note_ask_replies(self, result: dict[str, Any]) -> None:
-        """Record the user's ask_user answer(s) for the reviewer's history (§8.2). Values
-        only — a grouped form's keys are the agent's own question headers, and agent text
-        never enters the judge's view. Anchored to the number of user messages present now,
-        so the merge stays chronological however the session continues."""
+    def _note_ask_replies(
+        self, result: dict[str, Any], question: str = ""
+    ) -> None:
+        """Record the user's ask_user answer(s) for the reviewer's history (§8.2),
+        together with the agent's question — shown to the judge explicitly framed as
+        agent-authored data (same Rule-3 discipline as tool arguments), so a structured
+        answer counts as evidence for exactly the question's scope (owner ruling
+        2026-08-24). Anchored to the number of user messages present now, so the merge
+        stays chronological however the session continues.
+
+        A fresh answer also resets the §8.4 denial streak: the user is present and just
+        gave direction — the reviewer deserves a fresh look at what follows."""
+        self._reviewer_denials = 0
         anchor = sum(1 for m in self.messages if m.get("role") == "user")
         answers = result.get("answers")
         values = (
@@ -1836,10 +1955,11 @@ class TurnEngine:
             if isinstance(answers, dict)
             else [str(result.get("answer") or "")]
         )
+        q = (question or "").strip()
         for text in values:
             text = text.strip()
             if text:
-                self._ask_replies.append((anchor, text))
+                self._ask_replies.append((anchor, text, q))
 
     def _inject_steering(self) -> None:
         for text, source in self._steering:

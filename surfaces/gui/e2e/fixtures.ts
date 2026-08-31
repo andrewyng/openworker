@@ -24,6 +24,7 @@ const HEALTH = { status: "ok", default_workspace: null, model: "anthropic:claude
 
 const SETTINGS = {
   provider: "openai",
+  auto_approve: true, // surfaces the Auto-approve mode entry (reviewer feature flag)
   model: "anthropic:claude-opus-4-8",
   models: ["anthropic:claude-opus-4-8", "gpt-5.5", "gpt-4o", "gpt-4o-mini", "o3-mini"],
   has_key: true,
@@ -123,6 +124,25 @@ const OPS_SESSION = {
   archived: false,
   attention: 0,
   liveness: "idle",
+  subscriptions: [],
+};
+
+// A session whose turn is LIVE on the server — its ws `ready` carries running:true, the
+// reconnect-mid-turn case (owner catch 2026-08-24): Stop + waiting row must show without
+// a local turn_start. Older than the pinned session so boot-resume stays deterministic.
+const LIVE_SESSION = {
+  session_id: "resume-live-1",
+  title: "Long audit",
+  workspace: "",
+  agent: "cowork",
+  model: "anthropic:claude-opus-4-8",
+  mode: "interactive",
+  updated_at: "2026-06-20 10:00:00",
+  messages: 2,
+  pinned: false,
+  archived: false,
+  attention: 0,
+  liveness: "working",
   subscriptions: [],
 };
 
@@ -555,6 +575,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
     { ...PINNED_SESSION },
     ...EXTRA_SESSIONS.map((s) => ({ ...s })),
     { ...OPS_SESSION },
+    { ...LIVE_SESSION },
     { ...SLACK_SESSION },
   ];
   // Inbox items + the outbound routing binding — mutable for resolve + the inline Slack config.
@@ -654,7 +675,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // The page's session id, from the socket URL — team approval stamps THIS session
     // as the lead (the active conversation IS the lead; workers hang off it).
     const sid = ws.url().split("/ws/session/")[1]?.split("?")[0] || "sess-lead";
-    send("ready");
+    send("ready", sid === "resume-live-1" ? { running: true } : {});
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
     let hadTurn = false; // a user_message landed — set_model is now a mid-session switch
@@ -668,6 +689,31 @@ export async function mockApi(page: import("@playwright/test").Page) {
           input: msg.text,
           ...(msg.skill ? { display: `/${msg.skill}${msg.text ? ` ${msg.text}` : ""}` } : {}),
         });
+        if (/trip the reviewer/i.test(msg.text)) {
+          send("tool_proposed", { name: "run_shell", arguments: { command: "semgrep scan" } });
+          send("tool_finished", {
+            name: "run_shell",
+            status: "denied",
+            reason: "blocked by the safety reviewer",
+            reviewer_reason: "This creates files even though you asked not to.",
+            allow_anyway: true,
+            reviewer_paused:
+              "Auto-approve is paused for the rest of this turn — the reviewer blocked 5 actions in a row, so approvals now come to you.",
+          });
+          return; // turn stays open: the pause is a mid-turn state
+        }
+        if (/run an unsure tool/i.test(msg.text)) {
+          // The Auto-Approve reviewer answered `unsure`: the card carries its reason.
+          pendingTool = "run_shell";
+          send("tool_proposed", { name: "run_shell", arguments: { command: "python3 helper.py" } });
+          send("permission_required", {
+            name: "run_shell",
+            arguments: { command: "python3 helper.py" },
+            reason: "requires approval",
+            reviewer_unsure: "This runs a newly created script whose effects cannot be determined from the command.",
+          });
+          return; // suspended on the approval
+        }
         if (/run a tool/i.test(msg.text)) {
           pendingTool = "run_shell";
           send("tool_proposed", { name: "run_shell", arguments: { command: "ls" } });
@@ -1028,6 +1074,29 @@ export async function mockApi(page: import("@playwright/test").Page) {
         }
         send("interrupted", {});
         send("turn_done");
+      } else if (msg.type === "set_mode") {
+        // Mirrors the server: full explainer the FIRST time a session enters
+        // Auto-Approve, a one-line marker for every later change.
+        const anyWs = ws as any;
+        if (msg.mode === "auto-approve" && !anyWs.__modeNoticeShown) {
+          anyWs.__modeNoticeShown = true;
+          send("mode_notice", {
+            title: "Auto-approve is on.",
+            text:
+              "Auto-approve uses a model to let routine actions through without asking; " +
+              "anything it isn't sure about still comes to you. It cuts interruptions but " +
+              "still carries some risk i.e. a command it allows still reaches anything you " +
+              "can. These are model judgments, and not guarantees.",
+          });
+        } else {
+          const labels: Record<string, string> = {
+            discuss: "Discuss",
+            interactive: "Ask for approval",
+            "bypass-approvals": "Bypass approvals",
+            "auto-approve": "Auto-approve",
+          };
+          send("mode_notice", { text: `${labels[msg.mode] || msg.mode} is on.` });
+        }
       } else if (msg.type === "set_model") {
         // Mid-session switch: the server applies it and broadcasts the persisted marker.
         // Like the real server, the FIRST bind (fresh session) is silent.

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { getRecentWorkspaces, openWorkspace, type Persona, type RecentWorkspace } from "../api";
 import { chooseFolder } from "../tauri";
 import { fullPersonaName } from "../personaScope";
@@ -27,6 +28,7 @@ interface Props {
 }
 
 export function SessionSetupRow(props: Props) {
+  const { t } = useTranslation();
   const [openMenu, setOpenMenu] = useState<"coworker" | "folder" | null>(null);
   const [recents, setRecents] = useState<RecentWorkspace[] | null>(null);
   const [error, setError] = useState("");
@@ -44,7 +46,7 @@ export function SessionSetupRow(props: Props) {
   const pickFolder = async (path: string) => {
     const res = await openWorkspace(path);
     if (!res.ok) {
-      setError(res.error || "could not open that folder");
+      setError(res.error || t("folder_gate.open_error"));
       return;
     }
     setOpenMenu(null);
@@ -100,7 +102,7 @@ export function SessionSetupRow(props: Props) {
                   props.onImport();
                 }}
               >
-                Import coworker…
+                {t("setup.import_coworker")}
               </button>
               <button
                 className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-paper text-[12px] text-accent"
@@ -109,7 +111,7 @@ export function SessionSetupRow(props: Props) {
                   props.onManage();
                 }}
               >
-                Manage coworkers…
+                {t("setup.manage_coworkers")}
               </button>
             </div>
           </div>
@@ -121,7 +123,9 @@ export function SessionSetupRow(props: Props) {
         <div className="relative">
           <button className={chip} data-testid="folder-chip" onClick={() => toggle("folder")}>
             <Icon name="folder" size={13} />
-            <span className="max-w-[220px] truncate">{props.folderName || "Choose folder"}</span>
+            <span className="max-w-[220px] truncate">
+              {props.folderName || t("setup.choose_folder")}
+            </span>
             <Icon name="chevronDown" size={12} className="text-faint" />
           </button>
           {openMenu === "folder" && (
@@ -148,7 +152,7 @@ export function SessionSetupRow(props: Props) {
                   className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-paper text-[12px] text-accent"
                   onClick={() => void browse()}
                 >
-                  Choose another folder…
+                  {props.folderName ? t("setup.choose_another_folder") : t("setup.choose_a_folder")}
                 </button>
               </div>
               {error && <div className="px-2.5 py-1 text-[12px] text-warnInk">{error}</div>}

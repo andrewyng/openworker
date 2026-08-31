@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { getRecentWorkspaces, openWorkspace, type RecentWorkspace } from "../api";
 import { chooseFolder } from "../tauri";
 import { baseName } from "../paths";
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export function SendFolderDialog({ coworkerName, onPick, onTemp, onCancel }: Props) {
+  const { t } = useTranslation();
   const [recents, setRecents] = useState<RecentWorkspace[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -36,7 +38,7 @@ export function SendFolderDialog({ coworkerName, onPick, onTemp, onCancel }: Pro
     setError("");
     const res = await openWorkspace(path);
     if (res.ok) onPick(res.path, res.git_branch);
-    else setError(res.error || "could not open that folder");
+    else setError(res.error || t("folder_gate.open_error"));
   };
 
   const browse = async () => {
@@ -52,11 +54,9 @@ export function SendFolderDialog({ coworkerName, onPick, onTemp, onCancel }: Pro
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="text-[14px] font-semibold text-ink mb-1">
-          Where should {coworkerName} work?
+          {t("folder_gate.where_work", { name: coworkerName })}
         </h3>
-        <p className="text-[13px] text-muted mb-3">
-          Code work happens inside a folder — pick your project, or start somewhere temporary.
-        </p>
+        <p className="text-[13px] text-muted mb-3">{t("folder_gate.send_sub")}</p>
         {recents
           .filter((w) => w.exists)
           .slice(0, 4)
@@ -78,7 +78,7 @@ export function SendFolderDialog({ coworkerName, onPick, onTemp, onCancel }: Pro
             onClick={() => void browse()}
             disabled={busy}
           >
-            Choose a folder…
+            {t("folder_gate.choose_a_folder")}
           </button>
           <button
             className="flex-1 text-center text-[13px] px-2.5 py-2 rounded-lg bg-accent text-white font-semibold hover:opacity-95"
@@ -90,14 +90,11 @@ export function SendFolderDialog({ coworkerName, onPick, onTemp, onCancel }: Pro
             }}
             disabled={busy}
           >
-            Use temporary folder
+            {t("folder_gate.use_temp")}
           </button>
         </div>
         {error && <div className="mt-2 text-[12px] text-warnInk">{error}</div>}
-        <p className="text-[11px] text-faint mt-2.5">
-          A temporary folder is created only when you send, with git ready — you can save it as a
-          project later. Your message sends as soon as you choose.
-        </p>
+        <p className="text-[11px] text-faint mt-2.5">{t("folder_gate.temp_note")}</p>
       </div>
     </div>
   );

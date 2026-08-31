@@ -165,12 +165,12 @@ def board_tools(
         except (BoardError, ValueError) as error:
             return {"error": str(error)}
         return _call(
-            store.comment,
+            store.attach_ref,
             space,
             actor,
             item,
             caption or f"attached {source.name}",
-            refs=[ref],
+            ref,
             taint=taint(),
         )
 

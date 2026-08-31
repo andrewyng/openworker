@@ -563,3 +563,23 @@ async def test_manager_signin_failure_lands_in_status(tmp_path, monkeypatch):
     status = client.get("/v1/providers/openai-codex/status").json()
     assert "1455" in status["last_error"]
     assert status["authorizing"] is False
+
+
+def test_request_strips_backend_unsupported_params(tmp_path):
+    # The plan backend 400s on standard sampling/cap knobs ("Unsupported parameter:
+    # max_output_tokens" / "temperature") — which silently killed every autotitle attempt
+    # on plan sessions (owner catch 2026-08-24). The provider strips them; the reasoning
+    # effort knob still rides.
+    from coworker.secrets import SecretStore
+
+    provider = CodexProvider(secrets=SecretStore(tmp_path / "s.json"))
+    kwargs = provider._request_kwargs(
+        model="gpt-5.6-sol",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        settings={"max_tokens": 64, "temperature": 0.2, "top_p": 0.9, "reasoning_effort": "none"},
+    )
+    assert "max_output_tokens" not in kwargs
+    assert "temperature" not in kwargs
+    assert "top_p" not in kwargs
+    assert kwargs["reasoning"]["effort"] == "none"

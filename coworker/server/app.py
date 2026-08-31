@@ -167,6 +167,7 @@ from ..providers import AssistantTurn
 from .. import toolchain
 from ..teams.model import AuthorityError as TeamsAuthorityError
 from ..teams.model import BoardError as TeamsBoardError
+from ..teams.model import BoardNotFoundError as TeamsBoardNotFoundError
 from .manager import SessionManager
 
 
@@ -789,12 +790,12 @@ def create_app(manager: SessionManager) -> FastAPI:
         from fastapi.responses import Response
 
         try:
-            path = manager.attachment_store.path_for(name)
+            data, mime = manager.board_attachment(session_id, name)
         except TeamsBoardError as error:
             return JSONResponse({"error": str(error)}, status_code=404)
         return Response(
-            content=path.read_bytes(),
-            media_type=manager.attachment_store.mime_for(name),
+            content=data,
+            media_type=mime,
         )
 
     @app.post("/v1/sessions/{session_id}/board/comment")
@@ -849,6 +850,8 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
         try:
             return handler(actor)
+        except TeamsBoardNotFoundError as error:
+            return JSONResponse({"error": str(error)}, status_code=404)
         except TeamsAuthorityError as error:
             return JSONResponse({"error": str(error)}, status_code=403)
         except (TeamsBoardError, ValueError) as error:
@@ -880,7 +883,8 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.get("/v1/board/item")
     def board_get_item(request: Request, space: str, id: int):
         return _board(
-            request, lambda actor: manager.team_store.get_item(space, int(id))
+            request,
+            lambda actor: manager.team_store.get_item(space, int(id), actor=actor),
         )
 
     @app.post("/v1/board/items")
@@ -1001,22 +1005,23 @@ def create_app(manager: SessionManager) -> FastAPI:
                 data, str(body.get("filename", ""))
             )
             filename = str(body.get("filename", ""))
-            event = manager.team_store.comment(
+            event = manager.team_store.attach_ref(
                 str(body.get("space", "")),
                 actor,
                 int(body.get("id", 0)),
                 str(body.get("caption", "")) or f"attached {filename}",
-                refs=[ref],
+                ref,
             )
             return {"ref": ref, "seq": event["seq"]}
 
         return _board(request, run)
 
     @app.get("/v1/board/attachment")
-    def board_attachment(request: Request, name: str):
+    def board_attachment(request: Request, name: str, space: str):
         def run(actor):
             from fastapi.responses import Response
 
+            manager.team_store.require_attachment_access(space, actor, name)
             path = manager.attachment_store.path_for(name)
             return Response(
                 content=path.read_bytes(),
@@ -2537,6 +2542,10 @@ def create_app(manager: SessionManager) -> FastAPI:
                 "type": "ready",
                 "data": {
                     "session_id": session_id,
+                    # A reconnect can land MID-TURN (sidebar revisit, app relaunch, WS
+                    # drop). Without server truth the GUI never learns a turn is live —
+                    # no Stop button, no waiting row (owner catch 2026-08-24).
+                    "running": manager.is_running(session_id),
                     "agent": getattr(engine, "agent_name", "code"),
                     "model": engine.model,
                     "mode": engine.permissions.mode.value,
@@ -2589,6 +2598,10 @@ def create_app(manager: SessionManager) -> FastAPI:
                     )
                     if event.type.value in _CHECKPOINTS:
                         manager.save(session_id, engine)
+                    if event.type.value == "turn_start":
+                        # Title on the user's words the moment they land — never behind
+                        # a long agentic turn (owner catch 2026-08-24).
+                        manager._maybe_autotitle(session_id)
             finally:
                 manager.mark_idle(session_id)
                 manager.save(session_id, engine)
@@ -2599,6 +2612,24 @@ def create_app(manager: SessionManager) -> FastAPI:
         # This socket is now a live view of the session; background turns (channel delivery,
         # self-wake, durable resume) broadcast here too, not just locally driven run_turns.
         manager.register_session_client(session_id, ws.send_json)
+        if engine.permissions.mode is Mode.AUTO_APPROVE and not any(
+            m.get("kind") == "mode_notice" for m in engine.messages
+        ):
+            from coworker.permissions import AUTO_APPROVE_NOTICE
+
+            engine._append_notice(
+                "mode_notice", AUTO_APPROVE_NOTICE, title="Auto-approve is on."
+            )
+            manager.save(session_id, engine, touch=False)  # migration ≠ activity
+            await ws.send_json(
+                {
+                    "type": "mode_notice",
+                    "data": {
+                        "title": "Auto-approve is on.",
+                        "text": AUTO_APPROVE_NOTICE,
+                    },
+                }
+            )
         inbound_times: deque[float] = deque()
 
         async def reject_input(reason: str) -> None:
@@ -2713,6 +2744,46 @@ def create_app(manager: SessionManager) -> FastAPI:
                         if previous is not new_mode:
                             manager.audit_autonomy_change(
                                 session_id, "mode", previous.value, new_mode.value
+                            )
+                            # The transcript records which mode each exchange ran under
+                            # (owner ruling 2026-08-24): full explainer the first time a
+                            # session enters Auto-Approve, a one-line marker otherwise.
+                            # Server-authored + persisted, so reloads show it in place
+                            # exactly once instead of re-announcing on every restart.
+                            from coworker.permissions import (
+                                AUTO_APPROVE_NOTICE,
+                                MODE_LABELS,
+                            )
+
+                            if new_mode is Mode.AUTO_APPROVE and not any(
+                                m.get("kind") == "mode_notice"
+                                for m in engine.messages
+                            ):
+                                engine._append_notice(
+                                    "mode_notice",
+                                    AUTO_APPROVE_NOTICE,
+                                    title="Auto-approve is on.",
+                                )
+                                notice_data = {
+                                    "title": "Auto-approve is on.",
+                                    "text": AUTO_APPROVE_NOTICE,
+                                }
+                            else:
+                                label = MODE_LABELS.get(
+                                    new_mode.value, new_mode.value
+                                )
+                                engine._append_notice(
+                                    "mode_switch", f"{label} is on."
+                                )
+                                notice_data = {"text": f"{label} is on."}
+                            # A mode switch with no accompanying message is bookkeeping,
+                            # not activity (owner ruling 2026-08-24): the transcript
+                            # records it, Recents doesn't reorder. The next real turn's
+                            # checkpoint save bumps recency as usual.
+                            manager.save(session_id, engine, touch=False)
+                            await manager.broadcast_session(
+                                session_id,
+                                {"type": "mode_notice", "data": notice_data},
                             )
                 elif kind == "set_model":
                     model = message.get("model")

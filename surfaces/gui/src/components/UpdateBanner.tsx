@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   checkForUpdate,
   clearPendingUpdate,
@@ -31,6 +32,7 @@ const RECHECK_MS = 30 * 60_000;
 type Phase = "downloading" | "ready" | "fallback" | "installing" | "error";
 
 export function UpdateBanner() {
+  const { t } = useTranslation();
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [phase, setPhase] = useState<Phase>("downloading");
   // Per-run, per-version dismissal — no localStorage, so a restart re-offers, and a
@@ -88,13 +90,13 @@ export function UpdateBanner() {
       role="status"
       data-testid="update-banner"
     >
-      <div className="text-[13px] font-semibold">Update available</div>
+      <div className="text-[13px] font-semibold">{t("update.banner_title")}</div>
       <div className="text-[12px] text-muted mt-0.5">
-        OpenWorker v{update.version} is ready to install.
+        {t("update.ready", { version: update.version })}
       </div>
       {phase === "error" && (
         <div className="text-[12px] text-warnInk mt-1.5">
-          The update couldn't be installed — it will be offered again next launch.
+          {t("update.install_failed")}
         </div>
       )}
       <div className="flex items-center gap-2 mt-2.5">
@@ -104,7 +106,7 @@ export function UpdateBanner() {
           disabled={busy}
           data-testid="update-install"
         >
-          {busy ? "Downloading…" : "Restart to update"}
+          {busy ? t("update.downloading") : t("update.restart_to_update")}
         </button>
         <button
           className="px-2 py-1.5 text-[13px] text-faint hover:text-muted"
@@ -119,7 +121,7 @@ export function UpdateBanner() {
           disabled={phase === "installing"}
           data-testid="update-later"
         >
-          Later
+          {t("update.later")}
         </button>
       </div>
     </div>

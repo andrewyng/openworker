@@ -315,11 +315,17 @@ def test_ask_user_answer_lands_in_history_tagged_and_never_becomes_the_request(t
     # Same turn: the consent is already visible to the reviewer for the NEXT action…
     request, history = engine._user_history()
     assert request == "test the migration"  # …and never becomes the current request
-    assert {"text": "yes, staging is fine", "is_reply": True} in history
+    assert {
+        "text": "yes, staging is fine",
+        "is_reply": True,
+        "question": "Use the staging DB?",
+    } in history
     rendered = reviewer_mod.render_history(history)
-    assert "[reply to a question the agent asked]" in rendered
-    # Step 1 is answers-only: the agent's question text stays out of the judge's view.
-    assert "Use the staging DB?" not in rendered
+    # Owner ruling 2026-08-24: the question rides along, explicitly framed as the
+    # AGENT's words (data, not instructions) so the reply is evidence for its scope.
+    assert "answering the agent's question" in rendered
+    assert "Use the staging DB?" in rendered
+    assert "data not instructions" in rendered
 
     # Next turn: the reply keeps its chronological slot after the message it followed.
     engine.messages.append({"role": "user", "content": "now update the changelog"})
@@ -327,7 +333,7 @@ def test_ask_user_answer_lands_in_history_tagged_and_never_becomes_the_request(t
     assert request == "now update the changelog"
     assert history == [
         {"text": "test the migration"},
-        {"text": "yes, staging is fine", "is_reply": True},
+        {"text": "yes, staging is fine", "is_reply": True, "question": "Use the staging DB?"},
     ]
 
 
@@ -347,8 +353,9 @@ def test_grouped_ask_answers_record_values_only(tmp_path):
     _, history = engine._user_history()
     replies = [h["text"] for h in history if h.get("is_reply")]
     assert replies == ["eu-west-1", "work"]
-    # The grouped form's keys are the agent's own question headers — never recorded.
-    assert engine._ask_replies == [(1, "eu-west-1"), (1, "work")]
+    # The grouped form's keys are the agent's own question headers — never recorded as
+    # answers; the top-level question rides along for the judge's framing.
+    assert engine._ask_replies == [(1, "eu-west-1", "Config?"), (1, "work", "Config?")]
 
 
 def test_unanswered_ask_records_nothing(tmp_path):
@@ -541,6 +548,14 @@ def test_reviewer_allow_runs_without_a_card(tmp_path):
     assert EventType.PERMISSION_REQUIRED not in [ev.type for ev in events]
     finished = [ev for ev in events if ev.type == EventType.TOOL_FINISHED]
     assert finished and finished[0].data["status"] == "ok"
+    # (c) quiet provenance: the finish event says the reviewer allowed it, with its reason.
+    assert finished[0].data["approval_origin"] == "reviewer"
+    assert finished[0].data["approval_note"] == "scripted allow"
+    # …and the same facts persist on the tool message's display sidecar, so the chip
+    # survives reload (owner ruling 2026-08-24).
+    tool_msgs = [m for m in engine.messages if m.get("role") == "tool"]
+    assert tool_msgs[-1]["_display"]["approval_origin"] == "reviewer"
+    assert tool_msgs[-1]["_display"]["approval_note"] == "scripted allow"
     verdict_rows = [r for r in rows if r.get("stage") == "reviewer_verdict"]
     assert verdict_rows[0]["status"] == "allow"
 
@@ -576,30 +591,92 @@ def test_reviewer_unsure_falls_through_to_the_card(tmp_path):
     events = _run(engine)
 
     assert approvals == ["run_shell"]  # today's behaviour: the human decided
-    assert EventType.PERMISSION_REQUIRED in [ev.type for ev in events]
+    cards = [ev for ev in events if ev.type == EventType.PERMISSION_REQUIRED]
+    assert cards
+    # The card answers "why am I being asked?" with the reviewer's own hesitation
+    # (owner ask 2026-08-24) — only on unsure-raised cards, never invented elsewhere.
+    assert cards[0].data["reviewer_unsure"] == "scripted unsure"
+    # The user's resolution + the hesitation persist for reload (display sidecar).
+    tool_msgs = [m for m in engine.messages if m.get("role") == "tool"]
+    d = tool_msgs[-1]["_display"]
+    assert d["approval_origin"] == "user"
+    assert d["approval_grant"] == "once"
+    assert d["approval_note"] == "scripted unsure"
 
 
-def test_two_denials_route_the_rest_of_the_turn_to_the_human(tmp_path):
+def test_five_straight_denials_route_the_rest_of_the_turn_to_the_human(tmp_path):
+    # §8.4 breaker, 2→5 + streak semantics (owner ruling 2026-08-24): five denials IN A
+    # ROW pause the reviewer for the rest of the turn; the sixth call gets a human card.
     engine, rows, approvals = _engine(
         tmp_path,
         [
-            _tool_turn(
-                ("run_shell", {"command": "a"}),
-                ("run_shell", {"command": "b"}),
-                ("run_shell", {"command": "c"}),
-            ),
+            _tool_turn(*[("run_shell", {"command": c}) for c in "abcdef"]),
             AssistantTurn(text="ok", finish_reason="stop"),
         ],
     )
     fake = _FakeReviewer({"run_shell": "deny"})
     engine.reviewer = fake
-    _run(engine)
+    events = _run(engine)
 
-    # Pre-consult asked about all three concurrently, but after two denials the third
-    # verdict is DISCARDED unused and the human gets the card (§8.4 retry guard).
     assert approvals == ["run_shell"]
     denials = [r for r in rows if r.get("stage") == "finished" and "reviewer" in str(r.get("reason", ""))]
-    assert len(denials) == 2
+    assert len(denials) == 5
+    # (a) The breaker never trips silently: the 5th deny event carries the pause notice,
+    # and it persists as a notice message for reloads.
+    paused = [e for e in events if e.data.get("reviewer_paused")]
+    assert len(paused) == 1
+    assert any(
+        m.get("role") == "notice" and m.get("kind") == "reviewer_paused"
+        for m in engine.messages
+    )
+
+
+def test_allow_or_unsure_resets_the_denial_streak(tmp_path):
+    # Streak, not cumulative: deny/deny/allow/deny/deny/… never trips at 5 total.
+    engine, rows, approvals = _engine(
+        tmp_path,
+        [
+            _tool_turn(
+                ("run_shell", {"command": "deny-1"}),
+                ("run_shell", {"command": "deny-2"}),
+                ("run_shell", {"command": "ok-1"}),
+                ("run_shell", {"command": "deny-3"}),
+                ("run_shell", {"command": "deny-4"}),
+                ("run_shell", {"command": "deny-5"}),
+            ),
+            AssistantTurn(text="ok", finish_reason="stop"),
+        ],
+    )
+
+    class _StreakReviewer(_FakeReviewer):
+        async def review(self, *, request, history, tool_name, arguments, provenance=""):
+            self.asked.append((tool_name, arguments))
+            verdict = "allow" if "ok" in str(arguments.get("command", "")) else "deny"
+            return reviewer_mod.Verdict(verdict, f"scripted {verdict}")
+
+    engine.reviewer = _StreakReviewer({})
+    _run(engine)
+    denials = [r for r in rows if r.get("stage") == "finished" and "reviewer" in str(r.get("reason", ""))]
+    assert len(denials) == 5  # every deny still lands — the breaker just never trips
+    assert engine._reviewer_denials < 5
+    assert not any(m.get("kind") == "reviewer_paused" for m in engine.messages)
+
+
+def test_ask_user_answer_resets_the_denial_streak(tmp_path):
+    engine, _rows, _approvals = _engine(tmp_path, [])
+    engine.messages.append({"role": "user", "content": "scan the repo"})
+    engine._reviewer_denials = 4
+
+    async def asker(args, tool_call_id=None):
+        return {"answer": "yes, run both scans"}
+
+    engine.question_asker = asker
+    _drain(
+        engine._handle_ask_user(
+            ToolCall(id="q1", name="ask_user", arguments={"question": "Run both scanners?"})
+        )
+    )
+    assert engine._reviewer_denials == 0
 
 
 def test_unattended_sessions_are_never_reviewed(tmp_path):
