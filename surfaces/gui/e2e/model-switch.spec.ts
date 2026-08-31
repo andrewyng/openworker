@@ -31,3 +31,47 @@ test("mid-session model switch shows the marker and later turns use the new mode
     page.getByText("Echo: after the switch [model=gpt-5.5]", { exact: false }).first(),
   ).toBeVisible();
 });
+
+test("the picker accepts a model id typed by hand and remembers it", async ({ page }) => {
+  // #120: the curated list is a shortlist, not an allow-list — the server takes any model
+  // string. Before this, a freshly pulled Ollama tag was unreachable from the composer.
+  await page.goto("/");
+  await page.getByText("Draft the launch note").first().click();
+  const box = page.getByPlaceholder(/Ask the coworker/);
+  await box.fill("hello there");
+  await box.press("Enter");
+  await expect(page.getByText("Echo: hello there", { exact: false }).first()).toBeVisible();
+
+  const picker = page.locator(".dd").filter({ hasText: "Claude Opus 4.8" });
+  await picker.locator(".pill").click();
+  await page.getByTestId("dd-filter").fill("ollama:qwen3-coder:30b");
+  await page.getByTestId("dd-use-custom").click();
+
+  // The switch took effect…
+  await expect(page.getByText(/Model switched to ollama:qwen3-coder:30b/).first()).toBeVisible();
+  await box.fill("after the switch");
+  await box.press("Enter");
+  await expect(
+    page.getByText("Echo: after the switch [model=ollama:qwen3-coder:30b]", { exact: false }).first(),
+  ).toBeVisible();
+
+  // …and the typed id joined the shortlist, so it's one click away next time.
+  await page.locator(".dd").first().locator(".pill").click();
+  await expect(
+    page.locator(".dd-item").filter({ hasText: "qwen3-coder:30b" }).first(),
+  ).toBeVisible();
+});
+
+test("typing filters the list and Escape closes without switching", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Draft the launch note").first().click();
+
+  const picker = page.locator(".dd").filter({ hasText: "Claude Opus 4.8" });
+  await picker.locator(".pill").click();
+  await page.getByTestId("dd-filter").fill("gpt");
+  await expect(page.locator(".dd-item").filter({ hasText: "Claude Opus 4.8" })).toHaveCount(0);
+
+  await page.getByTestId("dd-filter").press("Escape");
+  await expect(page.getByTestId("dd-filter")).toHaveCount(0);
+  await expect(picker).toBeVisible(); // still on the original model
+});

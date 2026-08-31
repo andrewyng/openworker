@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  addModel,
   announceInboxUnlock,
   createTempWorkspace,
   finalizeAutomationRun,
@@ -1200,6 +1201,19 @@ export function App() {
     if (running) return; // the server refuses mid-turn rebinds — don't let the header lie
     setModel(m);
     sessionRef.current?.setModel(m);
+    // A model typed into the picker isn't in the curated list yet. Persist it so it survives
+    // a reload and shows up in Settings → Models (where it can be removed); the switch itself
+    // already happened above, so a failure here costs nothing but the shortlist entry.
+    if (m && !models.includes(m)) {
+      void addModel(m)
+        .then((s) => {
+          if (s?.ok) {
+            setModels(s.models || []);
+            setModelLabels(s.model_labels || {});
+          }
+        })
+        .catch(() => {});
+    }
   };
 
   const startNewSession = (forAgent?: string) => {
