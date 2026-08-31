@@ -310,6 +310,9 @@ def test_connector_list_descriptors(tmp_path):
     assert (
         by_name["github"]["two_way"] is True and by_name["github"]["channels"] is False
     )
+    # WeChat ClawBot is DM-only (no channel subscriptions).
+    assert by_name["weixin"]["two_way"] is True and by_name["weixin"]["channels"] is False
+    assert by_name["weixin"]["auth"] == "qrcode"
     assert (
         by_name["gmail"]["available"] is True and by_name["gmail"]["connected"] is False
     )
@@ -609,13 +612,16 @@ def test_slack_event_mapper_and_loop_guard():
 
 def test_make_adapter():
     from coworker.connectors import SlackAdapter, TelegramAdapter, make_adapter
+    from coworker.connectors.weixin_adapter import WeixinAdapter
 
     assert isinstance(make_adapter("telegram", {"bot_token": "T"}), TelegramAdapter)
     assert isinstance(
         make_adapter("slack", {"bot_token": "x", "app_token": "y"}), SlackAdapter
     )
+    assert isinstance(make_adapter("weixin", {"bot_token": "W"}), WeixinAdapter)
     assert make_adapter("slack", {"bot_token": "x"}) is None  # app_token missing
     assert make_adapter("telegram", {}) is None
+    assert make_adapter("weixin", {}) is None
 
 
 async def test_slack_resolves_and_caches_display_name():

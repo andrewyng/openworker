@@ -779,6 +779,37 @@ export async function connectConnector(
   return res.json();
 }
 
+/** Start WeChat ClawBot (iLink) QR login. */
+export async function startWeixinQr(): Promise<{
+  ok: boolean;
+  qrcode?: string;
+  /** PNG data URL for <img src> (iLink payload encoded server-side). */
+  qrcode_data_url?: string;
+  /** @deprecated alias of qrcode_data_url */
+  qrcode_url?: string;
+  qrcode_img_content?: string;
+  error?: string;
+}> {
+  const res = await fetch(`${httpBase()}/v1/connectors/weixin/qrcode`, { method: "POST" });
+  return res.json();
+}
+
+/** Poll WeChat QR status; on confirmed the server saves credentials and reloads listeners. */
+export async function pollWeixinQrStatus(qrcode: string): Promise<{
+  ok: boolean;
+  status?: string;
+  connected?: boolean;
+  account?: string;
+  error?: string;
+}> {
+  const res = await fetch(`${httpBase()}/v1/connectors/weixin/qrcode/status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ qrcode }),
+  });
+  return res.json();
+}
+
 export async function disconnectConnector(name: string): Promise<{ ok: boolean }> {
   const res = await fetch(`${httpBase()}/v1/connectors/${encodeURIComponent(name)}/disconnect`, {
     method: "POST",

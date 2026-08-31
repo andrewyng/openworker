@@ -38,6 +38,7 @@ import {
   siQuickbooks,
   siStripe,
   siTelegram,
+  siWechat,
   siWhatsapp,
   siZendesk,
 } from "simple-icons";
@@ -215,6 +216,7 @@ export const CONNECTORS: Record<string, ConnectorRegistryEntry> = {
   quickbooks: brand(siQuickbooks),
   stripe: brand(siStripe),
   telegram: brand(siTelegram),
+  weixin: brand(siWechat),
   whatsapp: brand(siWhatsapp),
   zendesk: brand(siZendesk),
   // Real brand marks vendored from simple-icons v9.
