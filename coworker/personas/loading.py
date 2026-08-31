@@ -69,13 +69,35 @@ def capability_set(m: PersonaManifest) -> set[str]:
     return caps
 
 
+def validate_git_url(url: str) -> str:
+    """Reject persona URLs that git would treat as a command instead of a fetch.
+
+    Install is meant to be a *light* trust event (a persona ships no executable code), but
+    ``git clone`` runs arbitrary code before that consent gate if the URL is hostile:
+    ``ext::sh -c <cmd>`` executes via the ext transport, and a URL starting with ``-`` is
+    parsed as an option (``--upload-pack=<cmd>``). Allow only ``https://`` so neither reaches
+    git. Returns the URL unchanged when valid; raises ValueError otherwise.
+    """
+    if not isinstance(url, str) or not url.startswith("https://"):
+        raise ValueError("persona git_url must be an https:// URL")
+    return url
+
+
 def git_clone(
     url: str, dest: Path
 ) -> None:  # pragma: no cover - exercised via injection
     """Shallow-clone a persona repo. Injectable so tests don't touch the network."""
+    validate_git_url(url)
     dest.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
-        ["git", "clone", "--depth", "1", url, str(dest)],
+        # protocol.*.allow pins the transport to https (blocks ext::/file:/etc. even via a
+        # redirect); "--" ends option parsing so a "-"-leading URL can't become a git flag.
+        [
+            "git",
+            "-c", "protocol.allow=never",
+            "-c", "protocol.https.allow=always",
+            "clone", "--depth", "1", "--", url, str(dest),
+        ],
         check=True,
         capture_output=True,
     )
@@ -95,6 +117,10 @@ def clone_persona_repo(
     url: str, base: Path, *, clone: Callable[[str, Path], None] = git_clone
 ) -> Path:
     """Clone (or reuse) a persona repo under ``base`` and return its directory."""
+    # Validate here too, not just in git_clone: this is the chokepoint every install path
+    # reaches, so a hostile URL is rejected before cache_dir_for/clone even when the caller
+    # injects its own clone. A trusted injected clone (tests) still passes on valid https.
+    validate_git_url(url)
     dest = cache_dir_for(url, base)
     if not dest.is_dir():
         clone(url, dest)
