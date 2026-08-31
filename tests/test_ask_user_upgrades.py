@@ -11,6 +11,8 @@ from coworker.interactions import buttons_for, decode
 from coworker.server.manager import SessionManager
 from coworker.tools.ask import (
     MAX_GROUPED_QUESTIONS,
+    SKIP_NOTE,
+    SKIP_SENTINEL,
     answer_result,
     ask_user_tool,
     normalize_option,
@@ -112,6 +114,50 @@ def test_answer_result_shapes():
     assert answer_result(grouped, "") == {"answer": ""}  # engine reads this as denied
 
 
+# -- skipping (OPE-153) -------------------------------------------------------
+
+
+def test_skipped_single_question_answers_null_not_empty():
+    """The whole point of the sentinel: "" (no answer came back) and a skip must not
+    look alike to the agent."""
+    res = answer_result([], SKIP_SENTINEL)
+    assert res["answer"] is None
+    assert res["skipped"] is True
+    assert res["note"] == SKIP_NOTE
+    assert answer_result([], "") == {"answer": ""}  # unchanged, still not a skip
+
+
+def test_skipped_grouped_questions_name_what_was_declined():
+    grouped = [{"question": "Chart style?", "header": "Chart"}, {"question": "Colors?"}]
+    # one step skipped, one answered
+    res = answer_result(grouped, json.dumps({"Chart": SKIP_SENTINEL, "Colors?": "Blue"}))
+    assert res["answers"] == {"Chart": None, "Colors?": "Blue"}
+    assert res["skipped"] == ["Chart"]
+    assert res["note"] == SKIP_NOTE
+    # whole card skipped from the card: every question carries the sentinel
+    res = answer_result(grouped, json.dumps({"Chart": SKIP_SENTINEL, "Colors?": SKIP_SENTINEL}))
+    assert res["answers"] == {"Chart": None, "Colors?": None}
+    assert res["skipped"] == ["Chart", "Colors?"]
+    # a JSON null means the same thing (defensive — a surface may serialize it that way)
+    assert answer_result(grouped, json.dumps({"Chart": None}))["skipped"] == ["Chart"]
+
+
+def test_bare_sentinel_skips_a_whole_grouped_card():
+    """A text-only surface can't send the answer map — the bare sentinel skips everything
+    rather than being filed as the first question's answer."""
+    grouped = [{"question": "Chart style?", "header": "Chart"}, {"question": "Colors?"}]
+    res = answer_result(grouped, SKIP_SENTINEL)
+    assert res["answers"] == {"Chart": None, "Colors?": None}
+    assert res["skipped"] == ["Chart", "Colors?"]
+
+
+def test_fully_answered_card_carries_no_skip_keys():
+    """No skip → no `skipped`/`note` noise in the agent's tool result."""
+    grouped = [{"question": "Chart style?", "header": "Chart"}]
+    assert answer_result(grouped, json.dumps({"Chart": "Bar"})) == {"answers": {"Chart": "Bar"}}
+    assert answer_result([], "staging") == {"answer": "staging"}
+
+
 # -- inbox persistence + back-compat ------------------------------------------
 
 
@@ -155,8 +201,28 @@ def test_buttons_use_rich_option_labels(tmp_path):
         options=["staging", {"label": "prod", "description": "the real one"}],
     )
     btns = buttons_for(item)
-    assert [b.label for b in btns] == ["staging", "prod"]
+    assert [b.label for b in btns] == ["staging", "prod", "Skip"]
     assert decode(btns[1].value) == (item.id, "prod")  # resolution IS the label
+
+
+def test_mirrored_question_offers_a_skip_button(tmp_path):
+    """OPE-153 — the channel gets the same way out the card has. Skip trails the options and
+    carries the sentinel, which answer_result() turns into a null answer."""
+    store = InboxStore(tmp_path / "inbox.json")
+    item = store.add_question("s1", "Env?", options=["staging", "prod"])
+    skip = buttons_for(item)[-1]
+    assert skip.label == "Skip"
+    assert decode(skip.value) == (item.id, SKIP_SENTINEL)
+    # and that resolution is what the agent ends up seeing
+    assert answer_result(item.questions, SKIP_SENTINEL)["answer"] is None
+
+
+def test_questions_without_options_get_no_buttons(tmp_path):
+    """A free-text question still mirrors as plain text — no lone Skip button, since the
+    "(Open the app to respond.)" fallback is the only way to answer it at all."""
+    store = InboxStore(tmp_path / "inbox.json")
+    item = store.add_question("s1", "What should I name it?")
+    assert buttons_for(item) == []
 
 
 def test_grouped_questions_get_no_buttons(tmp_path):

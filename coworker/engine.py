@@ -1837,7 +1837,17 @@ class TurnEngine:
                 "error": "no response",
             }
 
-        status = "ok" if (result.get("answer") or result.get("answers")) else "denied"
+        # A skipped question answers None (OPE-153), so an all-skipped card is "denied" like an
+        # unanswered one — `answers` being non-empty isn't enough on its own.
+        replies = result.get("answers")
+        status = (
+            "ok"
+            if (
+                result.get("answer")
+                or (isinstance(replies, dict) and any(v is not None for v in replies.values()))
+            )
+            else "denied"
+        )
         if status == "ok":
             self._note_ask_replies(result, question)
         self.messages.append(_tool_result_message(tool_call, result))
@@ -1872,8 +1882,10 @@ class TurnEngine:
         self._reviewer_denials = 0
         anchor = sum(1 for m in self.messages if m.get("role") == "user")
         answers = result.get("answers")
+        # Skipped questions answer None (OPE-153) — dropped here, else str(None) files "None"
+        # as something the user actually said.
         values = (
-            [str(v) for v in answers.values()]
+            [str(v) for v in answers.values() if v is not None]
             if isinstance(answers, dict)
             else [str(result.get("answer") or "")]
         )

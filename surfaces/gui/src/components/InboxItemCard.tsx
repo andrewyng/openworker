@@ -28,6 +28,10 @@ const BTN_BORDERED =
 const BTN_ACCENT =
   "px-3 py-1.5 rounded-lg border border-accent text-accent text-[13px] font-semibold hover:bg-accentSoft";
 const BTN_QUIET = "px-3 py-1.5 text-[13px] text-faint hover:text-danger";
+// Skip (OPE-153) is an escape, not a rejection — quiet like Deny, without the danger red. Uses
+// `muted` rather than Deny's `faint`: a borderless text button is already secondary next to the
+// option pills, and this one has to be FOUND (faint is only ~3:1 on the dark panel).
+const BTN_SKIP = "px-3 py-1.5 text-[13px] text-muted hover:text-ink";
 const OPT_BASE =
   "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[13px] transition-colors";
 const OPT_OFF = "border-line bg-paper text-ink hover:border-accent hover:bg-accentSoft/50";
@@ -38,6 +42,11 @@ const INPUT =
 const ROW_BASE = "w-full text-left rounded-lg border px-3 py-2 transition-colors";
 const ROW_OFF = "border-line bg-paper hover:border-accent hover:bg-accentSoft/50";
 const ROW_ON = "border-accent bg-accentSoft";
+
+// The resolution a card sends when the user declines to answer (OPE-153). Mirrors
+// SKIP_SENTINEL in coworker/tools/ask.py, which turns it back into a null answer —
+// keep the two constants in step.
+const SKIP = "__ocw_skip__";
 
 // -- question normalization ---------------------------------------------------
 
@@ -248,6 +257,25 @@ function QuestionCard({
     else onResolve(item.id, JSON.stringify(all));
   };
 
+  // Skipping ONE question is just answering it with the sentinel — the stepper advances (or the
+  // card resolves on the last step) exactly as a real answer would.
+  const skipStep = () => submit(SKIP);
+
+  // Skipping the WHOLE card resolves it now, marking every question the user never got to.
+  // Answers already given are kept: "skip all" means "don't ask me the rest", not "discard".
+  const skipAll = () => {
+    if (!grouped) {
+      onResolve(item.id, SKIP);
+      return;
+    }
+    const all = { ...answers };
+    for (let i = step; i < specs.length; i++) {
+      const k = keyFor(specs[i]);
+      if (!(k in all)) all[k] = SKIP;
+    }
+    onResolve(item.id, JSON.stringify(all));
+  };
+
   return (
     <>
       {/* Stepper chips (grouped): "Chart style · 1 of 2 · Distribution ›" — ‹ steps back. */}
@@ -286,6 +314,18 @@ function QuestionCard({
       {chip}
       {/* key={step} resets selection/text/hover state when the stepper advances */}
       <QuestionBlock key={step} spec={spec} onAnswer={submit} />
+      {/* OPE-153: the way out. Always present — a card with exhaustive options and
+          allow_text:false is exactly where the user would otherwise be stuck. */}
+      <div className="flex items-center gap-1 mt-1.5" data-testid="question-skip">
+        <button className={BTN_SKIP} onClick={skipStep}>
+          {grouped ? t("inbox.skip_question") : t("inbox.skip")}
+        </button>
+        {grouped && step + 1 < specs.length && (
+          <button className={BTN_SKIP} onClick={skipAll}>
+            {t("inbox.skip_all")}
+          </button>
+        )}
+      </div>
     </>
   );
 }
