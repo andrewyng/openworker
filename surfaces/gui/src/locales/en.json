@@ -385,7 +385,10 @@
     "personas_desc": "Coworkers are agents specialized for a particular role or task. They come equipped with the tools and skills to be successful in that role. Enabling a coworker lets you pick it when starting a conversation.",
     "composer_section": "Composer",
     "context_bar_title": "Show the context window bar",
-    "context_bar_desc": "A small meter showing how full the model’s context window is. Turn it off to show the same thing as a number instead."
+    "context_bar_desc": "A small meter showing how full the model’s context window is. Turn it off to show the same thing as a number instead.",
+    "intent_analysis_title": "Explain commands before I approve them",
+    "intent_analysis_label": "AI command explanations on approval prompts",
+    "intent_analysis_desc": "Before a command asks for approval, the model adds two plain-language bullets explaining what it will do — so you can decide even if you can't read the command. One extra model call per approval prompt."
   },
   "cloud": {
     "check_browser": "Check your browser…",

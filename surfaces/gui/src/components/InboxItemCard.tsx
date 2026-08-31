@@ -8,8 +8,7 @@ import {
   PreviewBlock,
   SaveSkillPreview,
   scopeNote,
-  TitleText,
-} from "./ApprovalCard";
+  TitleText, renderIntentText } from "./ApprovalCard";
 
 // One Inbox item, rendered identically in the Inbox list and inline in its own session view
 // (answer-in-context). Resolving either place hits the same item id — first responder wins.
@@ -331,6 +330,16 @@ export function InboxItemCard({
           <div className={SEC}>{item.kind}</div>
           <div className="text-[14px] font-semibold mt-0.5 leading-snug">{item.title}</div>
         </>
+      )}
+      {item.kind === "approval" && item.data?.intent && (
+        <ul className="approval-intent">
+          {String(item.data.intent).split("\n").map((line, i) => (
+            <li key={i}>
+              <span className="approval-intent-dot" aria-hidden={true} />
+              <span>{renderIntentText(line)}</span>
+            </li>
+          ))}
+        </ul>
       )}
       {item.kind === "approval" && item.data?.tool === "save_skill" ? (
         // Parked skill proposals wear the same review surface as the live card (§5.2).

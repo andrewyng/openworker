@@ -377,7 +377,10 @@
     "personas_desc": "同事是专精于特定角色或任务的 agent，自带胜任该角色所需的工具与技能。启用同事后，即可在开始会话时选择它。",
     "composer_section": "输入框",
     "context_bar_title": "显示上下文窗口占用条",
-    "context_bar_desc": "一个小指示条，显示模型上下文窗口的占用程度。关闭后将改为以数字形式显示。"
+    "context_bar_desc": "一个小指示条，显示模型上下文窗口的占用程度。关闭后将改为以数字形式显示。",
+    "intent_analysis_title": "审批前解释命令意图",
+    "intent_analysis_label": "审批卡上的 AI 命令解释",
+    "intent_analysis_desc": "命令请求批准前，模型会用两条通俗的要点说明它将做什么——即使看不懂命令也能做出判断。每次审批提示额外消耗一次模型调用。"
   },
   "cloud": {
     "check_browser": "请查看你的浏览器…",

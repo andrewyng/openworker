@@ -239,6 +239,9 @@ def build_engine(
     connector_filter: Optional[set[str]] = None,
     # A set (static snapshot) or a zero-arg callable (live, re-evaluated per load_skill).
     skill_filter: Optional[set[str] | Callable[[], set[str]]] = None,
+    # Optional approval-prompt intent analyzer (dependency injection): None = off
+    # (upstream behavior unchanged).
+    intent_analyzer: Optional[Callable] = None,
     # Auto-Approve flags (spec Part 8 / §1.5). None ⇒ read the config.toml value; the server
     # passes its prefs-backed booleans so the GUI Settings toggle takes effect. Both stores
     # are user-global, preserving the "a repo can't enable this" invariant.
@@ -542,6 +545,7 @@ def build_engine(
         tool_requester=tool_requester,
         team_approver=team_approver,
         items_approver=items_approver,
+        intent_analyzer=intent_analyzer,
     )
     engine.executor = executor  # type: ignore[attr-defined]
     engine.todo = todo  # type: ignore[attr-defined]

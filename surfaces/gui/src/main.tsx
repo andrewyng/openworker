@@ -26,3 +26,16 @@ initI18n().finally(() => {
     </React.StrictMode>,
   );
 });
+
+// Intent analysis (this PR): the approval annotation language must follow the UI
+// language. When the user switches languages with the feature on, re-post the pref.
+import { setIntentAnalysis } from "./api";
+import { getSettings } from "./api";
+import i18n from "i18next";
+i18n.on("languageChanged", (lng) => {
+  getSettings()
+    .then((s) => {
+      if (s.intent_analysis) return setIntentAnalysis(true, lng || "en");
+    })
+    .catch(() => {});
+});

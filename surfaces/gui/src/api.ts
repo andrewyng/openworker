@@ -890,6 +890,10 @@ export interface ModelSettings {
   // hides the Auto-Approve mode entry unless auto_approve is explicitly true.
   auto_approve?: boolean;
   auto_approve_shadow?: boolean;
+  // Approval-prompt intent analysis (this PR): off by default; the annotation language
+  // follows the UI language.
+  intent_analysis?: boolean;
+  intent_analysis_lang?: string;
   // Curated-matrix display names ({full id → "GLM-5.2 · via Together"}); custom models absent.
   model_labels?: Record<string, string>;
   // {full id → context window in tokens}, verified matrix entries only — drives the
@@ -974,6 +978,20 @@ type AutoApproveResult = {
   auto_approve_shadow?: boolean;
   error?: string;
 };
+
+/** Toggle approval-prompt intent analysis; `language` is the annotation language
+ * (pass the current UI language so the annotation matches the interface). */
+export async function setIntentAnalysis(
+  enabled: boolean,
+  language: string = "en",
+): Promise<{ ok: boolean; intent_analysis?: boolean; intent_analysis_lang?: string; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/intent-analysis`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled, language }),
+  });
+  return res.json();
+}
 
 /** Toggle the Auto-Approve feature flag (spec §1.5); applies to the next session build. */
 export async function setAutoApprove(on: boolean): Promise<AutoApproveResult> {

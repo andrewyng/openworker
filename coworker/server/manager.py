@@ -646,6 +646,13 @@ class SessionManager:
             else:
                 # A session id we won't put in a filesystem path: primary root only.
                 roots = [{"path": ws, "writable": True, "label": "workspace"}, *extra]
+        # Intent analysis (this PR): injected when the pref is on; the wrapper binds the
+        # annotation language stored beside the pref (follows the UI language, "en" default).
+        intent_analyzer = None
+        if self._prefs.get("intent_analysis"):
+            from ..intent_analysis.analyzer import analyze
+            _lang = str(self._prefs.get("intent_analysis_lang") or "en")
+            intent_analyzer = lambda tc, prov, mdl: analyze(tc, prov, mdl, language=_lang)
         engine = build_engine(
             agent=ag,
             workspace=ws,
@@ -690,6 +697,7 @@ class SessionManager:
             tool_requester=tool_requester,
             team_approver=team_approver,
             items_approver=items_approver,
+            intent_analyzer=intent_analyzer,
             subscription_store=self.subscriptions,
             channel_buffer=self.channel_buffer,
             routing_targets=self._routing_targets(session_id, agent),
@@ -1962,6 +1970,7 @@ class SessionManager:
             metadata=ai.ToolMetadata(
                 category="team", risk_level="low", capabilities=["team"]
             ),
+            intent_analyzer=intent_analyzer,
         )
 
     def _chat_identity(self, session_id: str, role: str):
@@ -3325,6 +3334,10 @@ class SessionManager:
             "nav_layout": self._nav_layout(),
             "sessions_peek": self.sessions_peek(),
             "context_bar": self.context_bar(),
+            # Approval-prompt intent analysis (this PR): off by default; when on, the
+            # annotation language follows the UI language (stored beside the flag).
+            "intent_analysis": self._prefs.get("intent_analysis", False),
+            "intent_analysis_lang": self._prefs.get("intent_analysis_lang", "en"),
             # Auto-Approve feature flag + its shadow-eval sibling (spec §1.5). Drive the
             # Settings toggles and gate the composer's Auto-Approve mode entry.
             "auto_approve": self.auto_approve(),
@@ -3362,6 +3375,19 @@ class SessionManager:
         """Sidebar layout: ``"flat"`` (default) or ``"grouped"`` (by persona). Persisted in
         prefs (UI-REFRESH §7)."""
         return "grouped" if self._prefs.get("nav_layout") == "grouped" else "flat"
+
+    def set_intent_analysis(self, enabled: bool, language: str = "en") -> dict[str, Any]:
+        """Toggle approval-prompt intent analysis. `language` sets the annotation
+        language (the GUI passes its current UI language). Applies on the next
+        session build."""
+        self._prefs["intent_analysis"] = bool(enabled)
+        self._prefs["intent_analysis_lang"] = str(language or "en")[:8]
+        self._save_prefs()
+        return {
+            "ok": True,
+            "intent_analysis": bool(enabled),
+            "intent_analysis_lang": self._prefs["intent_analysis_lang"],
+        }
 
     def set_nav_layout(self, nav_layout: str) -> dict[str, Any]:
         """Set + persist the sidebar layout. Unknown values fall back to ``"flat"``."""
@@ -4120,6 +4146,9 @@ class SessionManager:
             "tool": request.tool_name,
             "arguments": getattr(request, "arguments", None) or {},
         }
+        intent = getattr(request, "intent", None)
+        if intent:
+            data["intent"] = intent
         task = self.task_store.task_for_run_session(session_id)
         if task is None:
             return data
@@ -4320,6 +4349,11 @@ class SessionManager:
     def _build_task_engine(self, task, *, session_id: str) -> TurnEngine:
         ag = get_agent(task.agent)
         Path(task.workspace).mkdir(parents=True, exist_ok=True)
+        intent_analyzer = None
+        if self._prefs.get("intent_analysis"):
+            from ..intent_analysis.analyzer import analyze
+            _lang = str(self._prefs.get("intent_analysis_lang") or "en")
+            intent_analyzer = lambda tc, prov, mdl: analyze(tc, prov, mdl, language=_lang)
         engine = build_engine(
             agent=ag,
             workspace=task.workspace,
