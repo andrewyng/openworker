@@ -2972,6 +2972,99 @@ class SessionManager:
         "qwen": ["qwen3-max", "qwen3-coder-plus", "qwen-plus"],
         "xai": ["grok-4.3", "grok-4"],
         "mistral": ["mistral-large-latest", "mistral-small-latest"],
+        # OpenCode (Zen = credit-tier aggregator; Go = flat-rate subscription). They are
+        # listed as independent providers; refresh the rosters against https://opencode.ai/zen
+        # alongside the curated matrix.
+        "opencode_zen": [
+            # 60 models currently served by https://opencode.ai/zen/v1/models
+            # (verified 2026-07-24 — refresh when OpenCode rotates its catalog).
+            "claude-fable-5",
+            "claude-opus-5",
+            "claude-opus-4-8",
+            "claude-opus-4-7",
+            "claude-opus-4-6",
+            "claude-opus-4-5",
+            "claude-opus-4-1",
+            "claude-sonnet-5",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5",
+            "claude-sonnet-4",
+            "claude-haiku-4-5",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.1-pro",
+            "gemini-3-flash",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+            "gpt-5.5-pro",
+            "gpt-5.4",
+            "gpt-5.4-pro",
+            "gpt-5.4-mini",
+            "gpt-5.4-nano",
+            "gpt-5.3-codex-spark",
+            "gpt-5.3-codex",
+            "gpt-5.2",
+            "gpt-5.2-codex",
+            "gpt-5.1",
+            "gpt-5.1-codex-max",
+            "gpt-5.1-codex",
+            "gpt-5.1-codex-mini",
+            "gpt-5",
+            "gpt-5-codex",
+            "gpt-5-nano",
+            "grok-build-0.1",
+            "grok-4.5",
+            "deepseek-v4-pro",
+            "deepseek-v4-flash",
+            "deepseek-v4-flash-free",
+            "glm-5.2",
+            "glm-5.1",
+            "glm-5",
+            "minimax-m3",
+            "minimax-m2.7",
+            "minimax-m2.5",
+            "kimi-k2.7-code",
+            "kimi-k2.6",
+            "kimi-k2.5",
+            "qwen3.6-plus",
+            "qwen3.5-plus",
+            "big-pickle",
+            "mimo-v2.5-free",
+            "ling-3.0-flash-free",
+            "nemotron-3-ultra-free",
+            "north-mini-code-free",
+            "laguna-s-2.1-free",
+        ],
+        "opencode_go": [
+            # 23 models currently served by https://opencode.ai/zen/go/v1/models
+            # (verified 2026-07-24 — refresh when OpenCode rotates its catalog).
+            "minimax-m3",
+            "minimax-m2.7",
+            "minimax-m2.5",
+            "kimi-k3",
+            "kimi-k2.7-code",
+            "kimi-k2.6",
+            "kimi-k2.5",
+            "glm-5.2",
+            "glm-5.1",
+            "glm-5",
+            "deepseek-v4-pro",
+            "deepseek-v4-flash",
+            "qwen3.7-max",
+            "qwen3.7-plus",
+            "qwen3.6-plus",
+            "qwen3.5-plus",
+            "mimo-v2-pro",
+            "mimo-v2-omni",
+            "mimo-v2.5-pro",
+            "mimo-v2.5",
+            "hy3",
+            "hy3-preview",
+            "grok-4.5",
+        ],
     }
 
     def _suggested_models(self, name: str) -> list[str]:
@@ -2992,12 +3085,14 @@ class SessionManager:
         self, name: str, fields: Optional[dict[str, Any]]
     ) -> dict[str, Any]:
         """Store a provider's config in its `provider:<name>` SecretStore profile and rebuild
-        its cached client. Merges provided fields into any existing profile."""
+        its cached client. Merges provided fields into any existing profile.
+        """
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
         fields = fields or {}
-        profile = dict(self.secrets.get(f"provider:{name}") or {})
+        own_key = f"provider:{name}"
+        own = dict(self.secrets.get(own_key) or {})
         for f in d.fields:
             if f.key not in fields:
                 continue
@@ -3005,10 +3100,11 @@ class SessionManager:
             if isinstance(val, str):
                 val = val.strip()
             if val:
-                profile[f.key] = val
+                own[f.key] = val
             elif not f.required:
-                profile.pop(f.key, None)
-        missing = [f.label for f in d.fields if f.required and not profile.get(f.key)]
+                own.pop(f.key, None)
+
+        missing = [f.label for f in d.fields if f.required and not own.get(f.key)]
         if missing:
             return {"ok": False, "error": "missing: " + ", ".join(missing)}
         # A (re)pasted key stamps its save date — Settings shows "key added <date>" so stale
@@ -3016,8 +3112,8 @@ class SessionManager:
         if isinstance(fields.get("api_key"), str) and fields["api_key"].strip():
             from datetime import date
 
-            profile["key_set_at"] = date.today().isoformat()
-        self.secrets.put(f"provider:{name}", profile)
+            own["key_set_at"] = date.today().isoformat()
+        self.secrets.put(own_key, own)
         self._refresh_provider(name)
         # Convenience: if the provider recommends a model and it's actually available, add it to
         # the curated list so it shows up in the composer right after configuring the provider.
@@ -3037,7 +3133,7 @@ class SessionManager:
     def remove_provider(self, name: str) -> dict[str, Any]:
         """Forget a provider's stored config (Settings ▸ Models "Remove key"). The whole
         `provider:<name>` profile goes — key, endpoint, key_set_at — so the provider reads
-        as never configured. Curated models stay; they just gray out until a new key."""
+        as never configured."""
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}

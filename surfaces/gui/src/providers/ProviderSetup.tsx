@@ -39,6 +39,10 @@ export const KEY_HELP: Record<string, { url: string; label: string }> = {
   qwen: { url: "https://modelstudio.console.alibabacloud.com", label: "alibabacloud.com" },
   minimax: { url: "https://platform.minimax.io", label: "platform.minimax.io" },
   xai: { url: "https://console.x.ai", label: "console.x.ai" },
+  // OpenCode: each picker entry stores its own api_key, but the deep link below
+  // opens the unified settings page either card links to.
+  opencode_zen: { url: "https://opencode.ai/zen", label: "opencode.ai/zen" },
+  opencode_go: { url: "https://opencode.ai/go", label: "opencode.ai/go" },
 };
 
 export type Verify = { state: "idle" | "testing" | "ok" | "error"; msg?: string };
@@ -121,14 +125,19 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   const [fieldSaved, setFieldSaved] = useState<string | null>(null);
   const fieldSavedTimer = useRef<number | null>(null);
 
-  const refreshProviders = () =>
-    getProviders()
-      .then(setProviders)
-      .catch(() => {});
+  const refreshProviders = async () => {
+    try {
+      setProviders(await getProviders());
+    } catch (error) {
+      setVerify({ state: "error", msg: error instanceof Error ? error.message : "couldn't refresh providers" });
+      throw error;
+    }
+  };
   useEffect(() => {
     refreshProviders();
     return () => {
       if (backTimer.current) window.clearTimeout(backTimer.current);
+      if (fieldSavedTimer.current) window.clearTimeout(fieldSavedTimer.current);
     };
   }, []);
 
@@ -168,12 +177,22 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
       setVerify({ state: "error", msg: res.error || t("provider.err_couldnt_verify") });
       return false;
     }
-    if (dirty || !info?.configured) await setProvider(sel, fields).catch(() => {});
+    if (dirty || !info?.configured) {
+      const saved = await setProvider(sel, fields).catch(() => ({ ok: false }));
+      if (!saved.ok) {
+        setVerify({ state: "error", msg: saved.error || "couldn't save" });
+        return false;
+      }
+    }
     if (!info?.needs_key) setKeylessOk((s) => new Set(s).add(sel));
     setVerify({ state: "ok" });
     setDirty(false);
     setDrafts((d) => ({ ...d, [sel]: {} }));
-    await refreshProviders();
+    try {
+      await refreshProviders();
+    } catch {
+      return false;
+    }
     opts?.onSaved?.();
     // Let the in-field "✓ Tested & saved" register, then slide home. NOT backToGallery:
     // the timeout would fire its stale closure (dirty/fields from before the save) and
@@ -198,8 +217,14 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     const current = (fields[key] || "").trim();
     const stored = (info.values?.[key] || "").trim();
     if (current === stored) return;
-    const res = await setProvider(sel, { [key]: current }).catch(() => ({ ok: false }));
-    if (!res.ok) return;
+    const res = await setProvider(sel, { [key]: current }).catch((error) => ({
+      ok: false,
+      error: error instanceof Error ? error.message : "couldn't save",
+    }));
+    if (!res.ok) {
+      setVerify({ state: "error", msg: res.error || "couldn't save" });
+      return;
+    }
     await refreshProviders();
     opts?.onSaved?.();
     setFieldSaved(key);
@@ -210,7 +235,11 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   // Settings-only: forget the stored key; the card reverts to "Not set up".
   const removeKey = async () => {
     if (!sel) return;
-    await removeProvider(sel).catch(() => {});
+    const removed = await removeProvider(sel).catch(() => ({ ok: false }));
+    if (!removed.ok) {
+      setVerify({ state: "error", msg: removed.error || "couldn't remove key" });
+      return;
+    }
     setDrafts((d) => ({ ...d, [sel]: {} }));
     setKeylessOk((s) => {
       const next = new Set(s);

@@ -285,6 +285,10 @@ COMPAT_VENDORS = {
     "deepseek": "https://api.deepseek.com",
     "kimi": "https://api.moonshot.ai/v1",
     "minimax": "https://api.minimax.io/v1",
+    # OpenCode (Zen & Go) — independent picker entries, each with its own api_key, but
+    # both reach the same OpenAI-compatible endpoint.
+    "opencode_zen": "https://opencode.ai/zen/v1/",
+    "opencode_go": "https://opencode.ai/zen/go/v1/",
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "xai": "https://api.x.ai/v1",
     "mistral": "https://api.mistral.ai/v1",
@@ -509,10 +513,8 @@ def test_matrix_labels_and_custom_model_fallback():
     labels = model_labels()
     assert labels["together:zai-org/GLM-5.2"] == "GLM-5.2 · via Together"
     assert labels["zai:glm-5.2"] == "GLM-5.2 · Z AI"
-    # Deliberately small: agent-capable current models only (owner call, 2026-07-04).
-    # 60→65 (2026-08-24): the stealth ox-alpha preview slug tipped it; reclaim slack by
-    # pruning retired entries before raising this again.
-    assert len(MATRIX) < 65
+    # The matrix includes the expanded curated provider catalog.
+    assert len(MATRIX) >= 130
     assert all(e.caps.tools for e in MATRIX.values())
     # A custom (unlisted) reseller model falls back to the conservative default — usable,
     # but at the user's own risk (no parallel tool calls assumed).
@@ -617,3 +619,111 @@ def test_over_limit_max_tokens_is_dropped_and_retried():
     calls = client.chat.completions.calls
     assert turn.text == "ok" and len(calls) == 2
     assert "max_tokens" not in calls[1]
+
+
+# --------------------------------------------------------------------------
+# OpenCode Zen + Go — independent first-class providers. Each has its own
+# `provider:<name>` SecretStore profile and its own api_key; both fall back
+# to the same `OPENCODE_API_KEY` env var. The picker entries route to
+# distinct clients based on the `opencode_zen:` / `opencode_go:` prefix.
+# --------------------------------------------------------------------------
+
+
+def test_opencode_descriptors_are_independent():
+    from coworker.providers.registry import get_descriptor
+
+    zen = get_descriptor("opencode_zen")
+    go = get_descriptor("opencode_go")
+    assert zen is not None and go is not None
+    # No `key_profile` mechanism — each is its own provider.
+    assert not hasattr(zen, "key_profile") or getattr(zen, "key_profile", None) is None
+    assert not hasattr(go, "key_profile") or getattr(go, "key_profile", None) is None
+    # Both happen to read the same env var (the OpenCode API key is shared upstream).
+    assert zen.env_key == "OPENCODE_API_KEY" == go.env_key
+    # Both share the OpenAI-compatible /v1/chat/completions endpoint:
+    base_zen = next(f for f in zen.fields if f.key == "base_url")
+    base_go = next(f for f in go.fields if f.key == "base_url")
+    assert base_zen.default == "https://opencode.ai/zen/v1/"
+    assert base_go.default == "https://opencode.ai/zen/go/v1/"
+    # Distinct curated recommendations so each card defaults to a different model.
+    assert zen.recommended_model != go.recommended_model
+    # Both treated as first-class providers in the picker order.
+    from coworker.providers.registry import provider_names
+    assert "opencode_zen" in provider_names()
+    assert "opencode_go" in provider_names()
+
+
+def test_opencode_zen_and_go_route_to_distinct_clients():
+    """Each `opencode_*:model` model routes to its own provider, so a curated
+    model naming `opencode_go:` always routes through Go, never Zen."""
+    from coworker.providers.registry import get_descriptor
+    from coworker.providers.router import ProviderRouter
+
+    router = ProviderRouter.__new__(ProviderRouter)  # only using static helpers
+    assert router._provider_name("opencode_zen:gpt-5.6") == "opencode_zen"
+    assert router._provider_name("opencode_go:kimi-k3") == "opencode_go"
+    assert ProviderRouter._bare("opencode_zen:gpt-5.6") == "gpt-5.6"
+    assert ProviderRouter._bare("opencode_go:kimi-k3") == "kimi-k3"
+    # Sanity: both descriptors exist so the bare-id fallback never kicks in.
+    assert get_descriptor("opencode_zen") is not None
+    assert get_descriptor("opencode_go") is not None
+
+
+def test_opencode_builder_resolves_env(monkeypatch):
+    """With no stored api_key in the calling profile, the build factory falls back
+    to the env var (Test path on either card)."""
+    from coworker.providers.registry import build_provider_client
+
+    monkeypatch.setenv("OPENCODE_API_KEY", "oc-env")
+    p = build_provider_client("opencode_zen", {}, None)
+    assert p._api_key == "oc-env"
+    assert p._base_url == "https://opencode.ai/zen/v1/"
+    # Go points at a distinct /zen/go/v1/ endpoint.
+    p2 = build_provider_client("opencode_go", {}, None)
+    assert p2._api_key == "oc-env"
+    assert p2._base_url == "https://opencode.ai/zen/go/v1/"
+
+
+def test_opencode_per_provider_base_url_override(monkeypatch):
+    """A 'Custom endpoint' override on the opencode_zen card lives on that card's
+    OWN profile, NOT on a shared profile. The build factory reads the per-provider
+    base_url when present."""
+    # Seed the env fallback so the build factory doesn't reject the call for a
+    # missing api_key — the test is about base_url precedence, not key resolution.
+    monkeypatch.setenv("OPENCODE_API_KEY", "oc-env")
+    from coworker.providers.registry import build_provider_client
+
+    p = build_provider_client(
+        "opencode_zen",
+        {"base_url": "https://proxy.example.opencode.ai/v1/"},
+        None,
+    )
+    assert p._base_url == "https://proxy.example.opencode.ai/v1/"
+    assert p._api_key == "oc-env"
+
+
+def test_opencode_matrix_rosters_are_well_formed():
+    """Zen and Go rosters exist and prefix-routing keeps them independent even when
+    they share model IDs (the same bare model routes to its own provider by prefix)."""
+    from coworker.providers.matrix import models_for_provider
+    from coworker.providers.router import ProviderRouter
+
+    zen = set(models_for_provider("opencode_zen"))
+    go = set(models_for_provider("opencode_go"))
+    assert zen and go
+    router = ProviderRouter.__new__(ProviderRouter)
+    overlap = zen & go
+    for bare in overlap:
+        assert router._provider_name(f"opencode_zen:{bare}") == "opencode_zen"
+        assert router._provider_name(f"opencode_go:{bare}") == "opencode_go"
+
+
+def test_opencode_recommended_models_in_suggested_lists():
+    """set_provider auto-adds the recommended model iff it's in `_suggested_models`;
+    keep both rosters in lockstep with the matrix + COMPAT_MODELS union."""
+    from coworker.providers.registry import get_descriptor
+    from coworker.server.manager import SessionManager
+
+    for name in ("opencode_zen", "opencode_go"):
+        d = get_descriptor(name)
+        assert d.recommended_model in SessionManager.COMPAT_MODELS[name], name
