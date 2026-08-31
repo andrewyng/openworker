@@ -39,13 +39,47 @@ const BEDROCK: ProviderInfo = {
   ],
 };
 
-function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): ProviderSetupState {
+const OPENAI: ProviderInfo = {
+  name: "openai",
+  title: "OpenAI",
+  needs_key: true,
+  configured: false,
+  values: {},
+  suggested_models: [],
+  recommended_model: "gpt-5.6-sol",
+  fields: [
+    {
+      key: "auth_method",
+      label: "Connect with",
+      secret: false,
+      required: false,
+      help: "",
+      placeholder: "",
+      default: "api_key",
+      choices: [
+        { value: "api_key", label: "API key" },
+        { value: "azure_ad", label: "Microsoft Entra ID" },
+      ],
+    },
+    { key: "api_key", label: "OpenAI API key", secret: true, required: true, help: "", placeholder: "sk-…", show_when: { auth_method: "api_key" } },
+    { key: "tenant_id", label: "Tenant ID", secret: false, required: true, help: "", placeholder: "", show_when: { auth_method: "azure_ad" } },
+    { key: "client_id", label: "Client ID", secret: false, required: true, help: "", placeholder: "", show_when: { auth_method: "azure_ad" } },
+    { key: "client_secret", label: "Client secret", secret: true, required: true, help: "", placeholder: "", show_when: { auth_method: "azure_ad" } },
+    { key: "base_url", label: "Custom endpoint (optional)", secret: false, required: false, help: "", placeholder: "https://…/openai/v1" },
+  ],
+};
+
+function makePs(
+  fields: Record<string, string>,
+  setFieldValue = vi.fn(),
+  provider: ProviderInfo = BEDROCK,
+): ProviderSetupState {
   return {
-    providers: [BEDROCK],
-    ordered: [BEDROCK],
+    providers: [provider],
+    ordered: [provider],
     refreshProviders: async () => {},
-    sel: "bedrock",
-    info: BEDROCK,
+    sel: provider.name,
+    info: provider,
     fields,
     setFieldValue,
     dirty: false,
@@ -54,6 +88,7 @@ function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): Provid
     setShowEndpoint: () => {},
     keylessOk: new Set(),
     credentialed: false,
+    activeCredentialed: false,
     savedState: false,
     secretFilled: true,
     openProvider: () => {},
@@ -92,6 +127,32 @@ describe("ProviderForm auth-method choice", () => {
     render(<ProviderForm ps={makePs({ auth_method: "iam" })} tp="t" />);
     expect(screen.getByTestId("t-field-aws_secret_access_key")).toBeTruthy();
     expect(screen.queryByTestId("t-field-bedrock_api_key")).toBeNull();
+  });
+});
+
+describe("ProviderForm Microsoft Entra ID choice", () => {
+  it("keeps the existing API-key form as the default", () => {
+    render(<ProviderForm ps={makePs({ auth_method: "api_key" }, vi.fn(), OPENAI)} tp="t" />);
+    expect(screen.getByTestId("t-field-api_key")).toBeTruthy();
+    expect(screen.queryByTestId("t-field-tenant_id")).toBeNull();
+    expect(screen.getByText(/Create one at platform\.openai\.com/)).toBeTruthy();
+  });
+
+  it("shows only service-principal fields for Microsoft Entra ID", () => {
+    render(<ProviderForm ps={makePs({ auth_method: "azure_ad" }, vi.fn(), OPENAI)} tp="t" />);
+    expect(screen.getByTestId("t-field-tenant_id")).toBeTruthy();
+    expect(screen.getByTestId("t-field-client_id")).toBeTruthy();
+    expect(screen.getByTestId("t-field-client_secret")).toBeTruthy();
+    expect(screen.queryByTestId("t-field-api_key")).toBeNull();
+    expect(screen.queryByText(/Create one at platform\.openai\.com/)).toBeNull();
+    expect(screen.getByTestId("t-endpoint-link")).toBeTruthy();
+  });
+
+  it("does not enable Test & save while the active required secret is empty", () => {
+    const ps = makePs({ auth_method: "azure_ad" }, vi.fn(), OPENAI);
+    ps.secretFilled = false;
+    render(<ProviderForm ps={ps} tp="t" />);
+    expect(screen.getByTestId("t-test").hasAttribute("disabled")).toBe(true);
   });
 });
 

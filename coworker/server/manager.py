@@ -79,6 +79,8 @@ from ..providers import (
     ProviderRouter,
     descriptor_configured,
     get_descriptor,
+    provider_active_fields,
+    provider_missing_fields,
     provider_descriptors,
     verify_provider_key,
 )
@@ -3008,7 +3010,7 @@ class SessionManager:
                 profile[f.key] = val
             elif not f.required:
                 profile.pop(f.key, None)
-        missing = [f.label for f in d.fields if f.required and not profile.get(f.key)]
+        missing = provider_missing_fields(d, profile)
         if missing:
             return {"ok": False, "error": "missing: " + ", ".join(missing)}
         # A (re)pasted key stamps its save date — Settings shows "key added <date>" so stale
@@ -3125,13 +3127,15 @@ class SessionManager:
         api_key = merged.get("api_key", "")
         if not api_key and d.env_key:
             api_key = os.environ.get(d.env_key, "").strip()
-        has_key_field = any(f.key == "api_key" for f in d.fields)
+        has_key_field = any(
+            f.key == "api_key" for f in provider_active_fields(d, merged)
+        )
         if d.needs_key and has_key_field and not api_key:
             return {"ok": False, "error": "Enter an API key to test."}
         if d.needs_key and not has_key_field:
             # Multi-field cloud providers (Bedrock): required fields must be present;
             # actual credentials may be ambient (~/.aws, env) and are checked by the call.
-            missing = [f.label for f in d.fields if f.required and not merged.get(f.key)]
+            missing = provider_missing_fields(d, merged)
             if missing:
                 return {"ok": False, "error": "missing: " + ", ".join(missing)}
         return verify_provider_key(

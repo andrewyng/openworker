@@ -8,7 +8,10 @@ version = "0.0.0"
 description = "Agent coworker platform — provider-agnostic agentic coworker runtime"
 requires-python = ">=3.10"
 dependencies = [
-    "openai>=1.0",
+    # 1.106 added callable API keys, which Azure OpenAI's v1 endpoint uses for
+    # automatically refreshed Microsoft Entra bearer tokens.
+    "openai>=1.106.0",
+    "azure-identity>=1.17",  # Azure OpenAI service-principal auth + token refresh
     "anthropic>=0.40",  # native Claude Messages API provider
     "google-genai>=1.0",  # native Gemini provider
     "google-auth>=2.23",  # Vertex credentials (service account / ADC / MaaS bearer)

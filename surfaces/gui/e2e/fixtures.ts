@@ -358,7 +358,17 @@ const baseName = (p: string) => p.split("/").filter(Boolean).pop() || p;
 
 const PROVIDERS = [
   // openai: configured + used (drives the "Last used" sub-line and the status dot).
-  { name: "openai", title: "OpenAI", needs_key: true, fields: [{ key: "api_key", label: "OpenAI API key", secret: true, required: true, help: "", placeholder: "sk-…" }], configured: true, values: {}, suggested_models: ["gpt-5.5"], key_set_at: "2026-06-12", last_used_at: Math.floor(Date.now() / 1000) - 7200 },
+  { name: "openai", title: "OpenAI", needs_key: true, blurb: "OpenAI by default; custom endpoints can use an API key or Microsoft Entra ID.", fields: [
+    { key: "auth_method", label: "Connect with", secret: false, required: false, help: "", placeholder: "", default: "api_key", choices: [
+      { value: "api_key", label: "API key", tag: "Default", desc: "Use an OpenAI key, or a key accepted by your custom OpenAI-compatible endpoint." },
+      { value: "azure_ad", label: "Microsoft Entra ID", desc: "Use an Azure service principal. Set its Azure /openai/v1 endpoint under Custom endpoint below; tokens refresh automatically." },
+    ] },
+    { key: "api_key", label: "OpenAI API key", secret: true, required: true, help: "", placeholder: "sk-…", show_when: { auth_method: "api_key" } },
+    { key: "tenant_id", label: "Tenant ID", secret: false, required: true, help: "", placeholder: "00000000-0000-0000-0000-000000000000", show_when: { auth_method: "azure_ad" } },
+    { key: "client_id", label: "Client ID", secret: false, required: true, help: "", placeholder: "00000000-0000-0000-0000-000000000000", show_when: { auth_method: "azure_ad" } },
+    { key: "client_secret", label: "Client secret", secret: true, required: true, help: "", placeholder: "", show_when: { auth_method: "azure_ad" } },
+    { key: "base_url", label: "Custom endpoint", secret: false, required: false, help: "Required for Microsoft Entra ID.", placeholder: "https://…/openai/v1" },
+  ], configured: true, values: { auth_method: "api_key" }, suggested_models: ["gpt-5.5"], key_set_at: "2026-06-12", last_used_at: Math.floor(Date.now() / 1000) - 7200 },
   // anthropic: configured but never used ("Not used yet").
   { name: "anthropic", title: "Claude (Anthropic)", needs_key: true, fields: [{ key: "api_key", label: "API key", secret: true, required: true, help: "", placeholder: "sk-…" }], configured: true, values: {}, suggested_models: ["claude-opus-4-8"], key_set_at: null, last_used_at: null },
   // zai: an OpenAI-compatible vendor — unconfigured, with a prefilled editable endpoint + blurb.
@@ -1942,13 +1952,14 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const b = req.postDataJSON();
       const prov = providers.find((x) => x.name === b.name);
       if (!prov) return json({ ok: false, error: `unknown provider: ${b.name}` });
-      if (b.fields?.api_key) {
+      const secretKeys = new Set(prov.fields.filter((f) => f.secret).map((f) => f.key));
+      if (Object.entries(b.fields || {}).some(([k, v]) => secretKeys.has(k) && v)) {
         prov.configured = true;
         prov.key_set_at = "2026-07-05";
       }
       // Backend parity: non-secret fields merge into `values` (empty clears them).
       for (const [k, v] of Object.entries(b.fields || {})) {
-        if (k === "api_key") continue;
+        if (secretKeys.has(k)) continue;
         if (v) prov.values = { ...prov.values, [k]: v };
         else if (prov.values) delete prov.values[k];
       }

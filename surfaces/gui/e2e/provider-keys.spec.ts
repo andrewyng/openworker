@@ -53,6 +53,32 @@ test("a configured provider's form opens with the saved state, no plaintext key"
   await expect(page.getByTestId("set-field-api_key")).toHaveAttribute("placeholder", "••••••••");
 });
 
+test("OpenAI switches from API key to Microsoft Entra ID and saves that method", async ({
+  page,
+}) => {
+  await openModels(page);
+  await page.getByTestId("set-provider-openai").click();
+  await page.getByTestId("set-choice-auth_method-azure_ad").click();
+
+  await expect(page.getByTestId("set-field-api_key")).toHaveCount(0);
+  await expect(page.getByTestId("set-field-tenant_id")).toBeVisible();
+  await expect(page.getByTestId("set-field-client_id")).toBeVisible();
+  await expect(page.getByTestId("set-field-client_secret")).toBeVisible();
+  await expect(page.getByTestId("set-test")).toBeDisabled();
+
+  await page.getByTestId("set-field-tenant_id").fill("00000000-0000-0000-0000-000000000001");
+  await page.getByTestId("set-field-client_id").fill("00000000-0000-0000-0000-000000000002");
+  await page.getByTestId("set-field-client_secret").fill("entra-client-secret");
+  await page.getByTestId("set-endpoint-link").click();
+  await page.getByTestId("set-field-base_url").fill("https://contoso.openai.azure.com/openai/v1");
+  await page.getByTestId("set-test").click();
+
+  await expect(page.getByTestId("set-saved-pill")).toContainText("Tested & saved");
+  await expect(page.getByTestId("set-provider-openai")).toContainText("✓ Connected", {
+    timeout: 5_000,
+  });
+});
+
 test("non-secret fields blur-save on a configured provider (ollama endpoint)", async ({
   page,
 }) => {

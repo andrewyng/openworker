@@ -62,7 +62,15 @@ if not INCLUDE_EXPERIMENTAL:
 # collect it explicitly or the packaged relay adapter fails to open its socket.
 # `pypdf`/`pypdfium2` are lazy-imported the same way (pdf_support.py) — and pypdfium2
 # carries the libpdfium binary, which collect_all is what actually stages.
-for pkg in ("uvicorn", "certifi", "anyio", "websockets", "pypdf", "pypdfium2"):
+for pkg in (
+    "uvicorn",
+    "certifi",
+    "anyio",
+    "websockets",
+    "pypdf",
+    "pypdfium2",
+    "azure.identity",
+):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
