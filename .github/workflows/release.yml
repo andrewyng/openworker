@@ -9,10 +9,12 @@
 #                      (review, then publish by hand).
 #   - manual run     → builds and uploads workflow artifacts only (no release).
 #
-# Each installer is uploaded twice: once with its versioned name (archive) and once with a
-# stable name (OpenWorker-macos-arm64.dmg, …) so the website can link to
+# Each installer is uploaded ONCE, under a stable name (OpenWorker-macos-arm64.dmg, …) so
+# links to
 #   github.com/<repo>/releases/latest/download/<stable-name>
-# and never need updating.
+# never need updating. Upstream also attaches a versioned copy of every installer; this
+# fork drops it — the bytes are identical and it doubled the release page to ~200 MB of
+# duplicates. The tag itself already records which version an asset came from.
 #
 # macOS signing + notarization: Tauri's bundler handles both during `tauri build` when the
 # APPLE_* env vars are present (import cert → sign app + sidecar with hardened runtime →
@@ -124,16 +126,14 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: ./packaging/build_windows.ps1
 
-      - name: Stage artifacts (versioned + stable names)
+      - name: Stage artifacts (stable names)
         run: |
           mkdir -p out
           BUNDLE=surfaces/gui/src-tauri/target/release/bundle
           if [ "$RUNNER_OS" = "Windows" ]; then
-            cp "$BUNDLE"/nsis/*.exe out/
             cp "$BUNDLE"/nsis/*.exe out/OpenWorker-windows-setup.exe
             # MSI is optional: WiX rejects non-numeric prerelease ids (e.g. 0.2.1-zh.3).
             if ls "$BUNDLE"/msi/*.msi >/dev/null 2>&1; then
-              cp "$BUNDLE"/msi/*.msi out/
               cp "$BUNDLE"/msi/*.msi out/OpenWorker-windows.msi
             fi
             # Updater signature for the NSIS installer (present only when the updater key
@@ -146,7 +146,6 @@ jobs:
               ls -la "$BUNDLE" "$BUNDLE/dmg" "$BUNDLE/macos" || true
               exit 1
             fi
-            cp "$BUNDLE"/dmg/*.dmg out/
             cp "$BUNDLE"/dmg/*.dmg out/OpenWorker-${{ matrix.slug }}.dmg
             # macOS updater artifact: the signed .app tarball the installed app swaps in.
             if [ -f "$BUNDLE"/macos/OpenWorker.app.tar.gz ]; then
