@@ -204,10 +204,10 @@ class RelayHub:
                 )
             try:
                 await asyncio.wait_for(self._progress.wait(), timeout=remaining)
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError as exc:
                 raise TimeoutError(
                     f"only {self._dispatched} frames dispatched (< {at_least})"
-                )
+                ) from exc
 
     # -- default transport ---------------------------------------------------
     def _default_transport_factory(self) -> RelayTransport:
