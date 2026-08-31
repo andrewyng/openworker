@@ -11,6 +11,7 @@ owns the wake records + the due/complete logic; the scheduler tick consumes ``du
 from __future__ import annotations
 
 import json
+import os
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -50,20 +51,31 @@ class WakeStore:
         self._lock = threading.Lock()
         self._wakes: dict[str, Wake] = {}
         if self.path and self.path.is_file():
-            for raw in json.loads(self.path.read_text(encoding="utf-8")).get(
-                "wakes", []
-            ):
-                w = Wake(**raw)
+            # A corrupt/partial file must not crash startup — better to lose pending
+            # wakes than wedge the whole server on every launch.
+            try:
+                raw_wakes = json.loads(self.path.read_text(encoding="utf-8")).get(
+                    "wakes", []
+                )
+            except (OSError, json.JSONDecodeError):
+                raw_wakes = []
+            for raw in raw_wakes:
+                try:
+                    w = Wake(**raw)
+                except TypeError:
+                    continue
                 self._wakes[w.id] = w
 
     def _save(self) -> None:
         if not self.path:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(
             json.dumps({"wakes": [asdict(w) for w in self._wakes.values()]}, indent=2),
             encoding="utf-8",
         )
+        os.replace(tmp, self.path)
 
     def add_timer(self, session_id: str, fire_at: datetime, *, note: str = "") -> Wake:
         w = Wake(
@@ -99,8 +111,10 @@ class WakeStore:
     def due(self, now: Optional[datetime] = None) -> list[Wake]:
         """Timer wakes whose fire time has passed, plus completion/event wakes marked due."""
         now = now or _now()
+        with self._lock:
+            wakes = list(self._wakes.values())
         out = []
-        for w in self._wakes.values():
+        for w in wakes:
             if w.state != STATE_PENDING and w.state != STATE_DUE:
                 continue
             if (
@@ -144,9 +158,11 @@ class WakeStore:
                 self._save()
 
     def pending(self, session_id: Optional[str] = None) -> list[Wake]:
+        with self._lock:
+            wakes = list(self._wakes.values())
         return [
             w
-            for w in self._wakes.values()
+            for w in wakes
             if w.state != STATE_FIRED
             and (session_id is None or w.session_id == session_id)
         ]
