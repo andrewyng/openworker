@@ -65,6 +65,10 @@ export function SearchModal({
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    // Enter confirms the highlighted candidate while a CJK IME is composing. Let the input
+    // method handle that keystroke instead of opening the highlighted chat and closing search.
+    // keyCode 229 covers older WebKit and Windows IMEs that report "being processed".
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") {
       e.preventDefault();
       onClose();
