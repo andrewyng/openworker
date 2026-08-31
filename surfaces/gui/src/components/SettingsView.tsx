@@ -16,8 +16,7 @@ import {
   type CompactionSettings,
   type ModelSettings,
   type PdfSettings,
-  type WorkspaceCommandTrust,
-} from "../api";
+  type WorkspaceCommandTrust, setIntentAnalysis } from "../api";
 import {
   cancelDictationModelDownload,
   deleteDictationModel,
@@ -473,6 +472,7 @@ function AppearanceSection() {
 
       <ContextBarCard />
 
+      <IntentAnalysisCard />
       <AutoApproveCard />
 
       <FilesCard />
@@ -879,6 +879,46 @@ function ContextBarCard() {
 // to the composer's mode picker, plus its shadow-evaluation sibling. Both default off and are
 // user-global (a cloned repo can't turn either on). Shadow is nested under the main flag — it
 // only makes sense to measure the reviewer once you know what it is.
+// Approval-prompt intent analysis (this PR): the model explains, in a couple of plain
+// bullets, what an operation will do right on the approval card. Off by default; the
+// annotation language follows the UI language at toggle time (and re-syncs when the
+// UI language changes — see the languageChanged listener in main.tsx).
+function IntentAnalysisCard() {
+  const { t, i18n } = useTranslation();
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => setEnabled(s.intent_analysis === true))
+      .catch(() => setEnabled(false));
+  }, []);
+
+  const save = async (next: boolean) => {
+    setEnabled(next);
+    await setIntentAnalysis(next, i18n.language || "en");
+  };
+
+  if (enabled === null) return null;
+  return (
+    <div className={CARD + " p-4 mb-4"} data-testid="intent-analysis-card">
+      <div className={FIELD_LABEL}>{t("settings.intent_analysis_title")}</div>
+      <label className="flex items-start gap-3 mt-2.5">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          data-testid="intent-analysis-toggle"
+          checked={enabled}
+          onChange={(e) => save(e.target.checked)}
+        />
+        <span>
+          <span className="block text-[13px] text-ink">{t("settings.intent_analysis_label")}</span>
+          <span className="block text-[12px] text-muted">{t("settings.intent_analysis_desc")}</span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
 function AutoApproveCard() {
   const [on, setOn] = useState<boolean | null>(null);
   const [shadow, setShadow] = useState(false);

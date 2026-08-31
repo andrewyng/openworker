@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from . import compaction as _compaction
+
+logger = logging.getLogger(__name__)
 from . import provenance
 from . import session_facts
 from . import toolchain as _toolchain
@@ -66,6 +69,7 @@ class PermissionRequest:
     metadata: Any
     reason: str
     tool_call_id: Optional[str] = None  # for durable resume (idempotent inbox item)
+    intent: Optional[str] = None  # plain-language consequences, for the approval card
 
 
 Approver = Callable[[PermissionRequest], Awaitable[ApprovalOutcome]]
@@ -111,10 +115,18 @@ class TurnEngine:
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
         interrupt_hooks: Optional[list[Callable[[], None]]] = None,
+    
+        # Optional approval-prompt intent analyzer (off unless injected). None keeps
+        # upstream behavior exactly; injected analyzers run one extra single-turn
+        # provider.complete per approval card.
+        intent_analyzer: Optional[Callable] = None,
+        intent_analyzer_timeout: float = 20.0,
     ) -> None:
         self.provider = provider
         self.registry = registry
         self.permissions = permissions
+        self.intent_analyzer = intent_analyzer  # None = feature off
+        self.intent_analyzer_timeout = intent_analyzer_timeout
         self.model = model
         self.approver = approver or _deny_all
         self.max_iterations = max_iterations
@@ -1234,6 +1246,49 @@ class TurnEngine:
             # to the card is already audited as reviewer_verdict — no double spend).
             if not consulted_live:
                 self._spawn_shadow_review(tool_call)
+
+            # Intent analysis (this PR): runs ONLY when a card will actually be shown —
+            # the reviewer above already resolved allowed/denied cases, so the extra
+            # round trip is never wasted. None ⇒ feature off (upstream behavior
+            # unchanged). Stop/timeout/exceptions degrade to intent=None and never
+            # break _authorize.
+            intent: Optional[str] = None
+            if self.intent_analyzer:
+                async def _do_analyze():
+                    return await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.intent_analyzer, tool_call, self.provider, self.model
+                        ),
+                        timeout=self.intent_analyzer_timeout,  # covers cloud-model tail latency
+                    )
+                # wait_for re-raises TimeoutError via task.result(); _interruptible does
+                # not swallow it, so this try/except is load-bearing.
+                try:
+                    intent = await self._interruptible(_do_analyze(), interrupted=None)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "intent_analysis: timed out (%.0fs); the card will render without the annotation. tool=%s",
+                        self.intent_analyzer_timeout,
+                        getattr(tool_call, "name", "?"),
+                    )
+                    intent = None
+                except Exception:
+                    # The analyzer logs its own failures; this is only a floor guard.
+                    intent = None
+
+                # A user Stop during the analysis must not flash a card that is about to
+                # die: go straight to the interrupted-denial path.
+                if self._cancel.is_set():
+                    self.messages.append(_tool_error_message(tool_call, "interrupted by user"))
+                    self._audit(
+                        tool_call, stage="finished", status="interrupted", reason="user stop"
+                    )
+                    yield Event(
+                        EventType.TOOL_FINISHED,
+                        {"name": tool_call.name, "status": "interrupted", "reason": "stopped"},
+                    )
+                    yield False
+                    return
             yield Event(
                 EventType.PERMISSION_REQUIRED,
                 {
@@ -1263,6 +1318,8 @@ class TurnEngine:
                     # True when this shell command classifies as read-only — the card
                     # offers "Allow read-only commands for this session" only then.
                     "readonly_ok": _readonly_ok(tool_call.arguments),
+                    # The plain-language annotation for the card; null = render without it.
+                    "intent": intent,
                     **(
                         self.approval_extras(tool_call.name, tool_call.arguments)
                         if self.approval_extras

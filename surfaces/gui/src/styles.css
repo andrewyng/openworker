@@ -2059,3 +2059,34 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
   font-family: var(--mono); font-size: var(--fs-mono); line-height: 1.5;
   color: var(--muted); white-space: pre-wrap; text-align: left;
 }
+
+/* Approval-prompt intent annotation (this PR): a restrained explanation block between
+   the command preview and the buttons — transparent background, small dot, secondary
+   grey, bolded critical terms. */
+.approval-intent {
+  margin: 10px 0 2px;
+  padding: 0;
+  list-style: none;
+}
+.approval-intent li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+  color: var(--ink-2, #66707a);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.approval-intent-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 9999px;
+  background: var(--accent, #8b5cf6);
+  opacity: 0.85;
+  transform: translateY(-2px);
+}
+.approval-intent-em {
+  color: var(--ink, #23282e);
+  font-weight: 600;
+}
