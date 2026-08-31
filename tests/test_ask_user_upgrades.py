@@ -201,8 +201,28 @@ def test_buttons_use_rich_option_labels(tmp_path):
         options=["staging", {"label": "prod", "description": "the real one"}],
     )
     btns = buttons_for(item)
-    assert [b.label for b in btns] == ["staging", "prod"]
+    assert [b.label for b in btns] == ["staging", "prod", "Skip"]
     assert decode(btns[1].value) == (item.id, "prod")  # resolution IS the label
+
+
+def test_mirrored_question_offers_a_skip_button(tmp_path):
+    """OPE-153 — the channel gets the same way out the card has. Skip trails the options and
+    carries the sentinel, which answer_result() turns into a null answer."""
+    store = InboxStore(tmp_path / "inbox.json")
+    item = store.add_question("s1", "Env?", options=["staging", "prod"])
+    skip = buttons_for(item)[-1]
+    assert skip.label == "Skip"
+    assert decode(skip.value) == (item.id, SKIP_SENTINEL)
+    # and that resolution is what the agent ends up seeing
+    assert answer_result(item.questions, SKIP_SENTINEL)["answer"] is None
+
+
+def test_questions_without_options_get_no_buttons(tmp_path):
+    """A free-text question still mirrors as plain text — no lone Skip button, since the
+    "(Open the app to respond.)" fallback is the only way to answer it at all."""
+    store = InboxStore(tmp_path / "inbox.json")
+    item = store.add_question("s1", "What should I name it?")
+    assert buttons_for(item) == []
 
 
 def test_grouped_questions_get_no_buttons(tmp_path):
