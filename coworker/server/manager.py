@@ -3713,6 +3713,42 @@ class SessionManager:
                 return False
         return bool(actor_id) and actor_id in self.slack_approval_owner_ids(owner_team)
 
+    # Protected item kinds: resolving one runs a consequential action / grants a filesystem
+    # root / commits a plan, so only an authorized owner may resolve it — never a bare
+    # allow-listed chat member. Questions and free-text answers are NOT protected.
+    _PROTECTED_ITEM_KINDS = {"approval", "directory", "plan"}
+
+    def _actor_owns_protected_item(
+        self,
+        item,
+        *,
+        platform: str,
+        actor_id: str,
+        chat_id: str,
+        team_id: Optional[str],
+    ) -> bool:
+        """Authorize a protected-item resolution over ANY transport.
+
+        The owner check used to run only on the Slack lane, so a Telegram reply (or button)
+        resolved protected approval/directory/plan items with no owner or channel-binding
+        validation at all — and items mirrored to Slack were resolvable from Telegram,
+        bypassing Slack's enforcement. This gates every transport:
+
+        - cross-transport is refused: an item bound to one channel can only be resolved from
+          that same channel (an in-app-only item is not remotely resolvable at all);
+        - Slack defers to the existing owner + bound-channel check;
+        - no other transport (e.g. Telegram) has an approval-owner model, so it cannot
+          resolve protected items remotely — they stay pending for in-app resolution.
+        """
+        binding = self.inbox_routing.binding_for(item.inbox)
+        if binding.channel and binding.channel != platform:
+            return False
+        if platform == "slack":
+            return self._slack_actor_owns_item(
+                item, actor_id=actor_id, chat_id=chat_id, team_id=team_id
+            )
+        return False
+
     def set_inbox_binding(
         self, name: str, *, channel: Optional[str], target: str
     ) -> dict[str, Any]:
@@ -4400,15 +4436,11 @@ class SessionManager:
         item = self.inbox.get(item_id)
         if item is None:
             return
-        protected_kinds = {"approval", "directory", "plan"}
-        if (
-            getattr(event, "platform", "") == "slack"
-            and item.kind in protected_kinds
-        ):
-            actor_id = str(getattr(event, "user_id", "") or "")
-            if not self._slack_actor_owns_item(
+        if item.kind in self._PROTECTED_ITEM_KINDS:
+            if not self._actor_owns_protected_item(
                 item,
-                actor_id=actor_id,
+                platform=str(getattr(event, "platform", "") or ""),
+                actor_id=str(getattr(event, "user_id", "") or ""),
                 chat_id=getattr(event, "chat_id", "") or "",
                 team_id=getattr(event, "team_id", None),
             ):
@@ -4446,14 +4478,11 @@ class SessionManager:
             item = self.inbox.get(item_id)
             if item is None:
                 return False
-            if (
-                getattr(event.source, "platform", "") == "slack"
-                and item.kind in {"approval", "directory", "plan"}
-            ):
-                actor_id = str(getattr(event.source, "user_id", "") or "")
-                if not self._slack_actor_owns_item(
+            if item.kind in self._PROTECTED_ITEM_KINDS:
+                if not self._actor_owns_protected_item(
                     item,
-                    actor_id=actor_id,
+                    platform=str(getattr(event.source, "platform", "") or ""),
+                    actor_id=str(getattr(event.source, "user_id", "") or ""),
                     chat_id=getattr(event.source, "chat_id", "") or "",
                     team_id=getattr(event.source, "team_id", None),
                 ):
