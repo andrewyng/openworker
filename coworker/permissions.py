@@ -178,6 +178,24 @@ def write_paths(tool_name: str, arguments: dict[str, Any]) -> tuple[list[str], b
     # its path, so it cannot be auto-scoped.
     return ([], False)
 
+
+# `C:\dir` / `C:/dir` - a drive-qualified path, which carries no separator of its own.
+_WIN_DRIVE = re.compile(r"\A[A-Za-z]:[\\/]")
+
+
+def _looks_like_path(token: str) -> bool:
+    """Whether an argument names a filesystem location rather than a pattern, a
+    subcommand or a value. Intentionally narrow: a bare word like `status`, `install` or
+    `'*.py'` is not treated as a path, so only arguments that genuinely point somewhere
+    are scope-checked."""
+    return (
+        token in (".", "..")
+        or token.startswith(("/", "~", "./", "../", "\\"))
+        or "/" in token
+        or "\\" in token
+        or bool(_WIN_DRIVE.match(token))
+    )
+
 from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
     SHELL_TOOL,
     WRITE_TOOLS,
@@ -418,7 +436,12 @@ class PermissionEngine:
         honor_session_grants = self.mode is not Mode.AUTO_APPROVE
         if is_shell:
             command = str(arguments.get("command", ""))
-            if self._command_allowed(command):
+            # Being on the allowlist says the PROGRAM is safe to run unattended. It says
+            # nothing about where that program is pointed, and `read_file` already refuses
+            # to leave the granted roots ("path escapes the workspace"), so auto-running
+            # `cat ~/.ssh/id_rsa` would hand back through the shell exactly what the file
+            # tool declines to read. Keep the same boundary on both paths.
+            if self._command_allowed(command) and not self._path_outside_roots(command):
                 return Decision(True, "command on allowlist")
             if (
                 honor_session_grants
@@ -500,6 +523,34 @@ class PermissionEngine:
         # Relative paths resolve against the primary (workspace_root); absolute/`~` taken as-is.
         p = Path(path).expanduser()
         return p.resolve() if p.is_absolute() else (self.workspace_root / p).resolve()
+
+    def _path_outside_roots(self, command: str) -> Optional[str]:
+        """The first argument of `command` naming a location outside every granted root,
+        or None if nothing does.
+
+        Only argument tokens that actually look like paths are considered, so patterns
+        and subcommands (`'*.py'`, `status`, `install`) are ignored. A relative path is
+        resolved against the workspace and therefore stays inside it unless it climbs
+        out with `..`; `_under_root` resolves symlinks, so a link planted in the
+        workspace does not launder a target outside it.
+        """
+        try:
+            argv = shlex.split(command)
+        except ValueError:
+            return None  # unparsable; _command_allowed already refuses these
+        for token in argv[1:]:
+            if token.startswith("-"):
+                # `--file=/etc/passwd` carries the path on the right of the `=`; a bare
+                # flag carries none.
+                _, sep, value = token.partition("=")
+                if not sep or not value:
+                    continue
+                token = value
+            if not _looks_like_path(token):
+                continue
+            if not self._under_root(token):
+                return token
+        return None
 
     def _under_root(self, path: str) -> bool:
         candidate = self._candidate(path)
