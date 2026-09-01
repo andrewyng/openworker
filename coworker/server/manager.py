@@ -1858,15 +1858,37 @@ class SessionManager:
             else base + "/models"
         )
 
+        want = (self.model or "").split(":", 1)[-1]
+
         def _probe() -> bool:
             import httpx
 
             try:
                 # A 4xx still means something is listening and routing; only a transport
                 # failure or a 5xx means "not up yet".
-                return httpx.get(url, timeout=3.0).status_code < 500
+                r = httpx.get(url, timeout=3.0)
             except Exception:
                 return False
+            if r.status_code >= 500:
+                return False
+            # Listening is not the same as able to serve. The local shim in front of the
+            # model answers /v1/models the moment IT starts -- about a second after boot,
+            # while the engine behind it is still loading a 35B and cannot complete a
+            # single request. Judging on the status code alone is what released the whole
+            # catch-up batch into a dead backend on the 2026-08-29 and 2026-08-30 boots:
+            # 13 automations, every one "run ended as unknown", no output.
+            #
+            # So ask the question that actually matters -- is the model I am about to use
+            # in the list? An unparseable or model-less body is "not yet", not "ready".
+            try:
+                served = {m.get("id") for m in (r.json().get("data") or [])}
+            except Exception:
+                return False
+            if not served:
+                return False
+            # Some shims expose aliases; accept an exact id, else any model at all only
+            # when the configured id is not something the endpoint enumerates.
+            return want in served if want else True
 
         return await asyncio.to_thread(_probe)
 
