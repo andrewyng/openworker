@@ -76,6 +76,13 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
     ),
     ConnectorToolDef(
         "browser",
+        "browser_submit",
+        "Submit form",
+        "write",
+        "Send a filled form — the irreversible click, gated on its own.",
+    ),
+    ConnectorToolDef(
+        "browser",
         "browser_upload_file",
         "Upload file",
         "write",

@@ -6,6 +6,7 @@ tools return a clear setup error instead of breaking engine construction.
 
 from __future__ import annotations
 
+import os
 import re
 import tempfile
 import threading
@@ -18,6 +19,7 @@ from typing import Any, Callable, Optional
 import aisuite as ai
 
 from ..desktop import desktop_env, has_display
+from ..secrets import state_dir
 from ..web.guard import check_url
 
 
@@ -166,6 +168,71 @@ def readiness() -> dict[str, Any]:
     }
 
 
+def browser_profile_dir() -> Path:
+    """The Chromium user-data directory the browser session reuses across runs.
+
+    A fresh `new_context()` per session meant every run started logged out, which is fine
+    for reading a public page and fatal for anything behind a sign-in — an application
+    portal, a job board account. Sessions that survive a restart are the difference between
+    "read the web" and "act on the web as me", so the profile is persisted here, next to the
+    rest of coworker's state, and never inside a task workspace (a task workspace is handed
+    to an agent; a cookie jar with live sessions in it is not).
+    """
+    override = os.environ.get("COWORKER_BROWSER_PROFILE")
+    path = Path(override).expanduser() if override else state_dir() / "browser-profile"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+# A final "send it" control. Filling a form is reversible; submitting it is not — the
+# application lands in someone's ATS under the user's name and cannot be recalled. So the
+# two are different tools with different names, and an automation can be granted the first
+# without the second (`always_allowed_tools`), which is the whole point of splitting them.
+#
+# Over-trigger on purpose: a false positive costs one extra tool call (the refusal names
+# the tool to call instead), a false negative sends an application nobody approved. So
+# "send" and "finish" count, not just "submit".
+#
+# "apply" is deliberately NOT a trigger: on a listing page the Apply button *opens* the
+# form, and gating that would park an approval on a plain navigation.
+_SUBMIT_TEXT = re.compile(
+    r"\b(submit|send|finish|complete\s+application)\b", re.I
+)
+
+_SUBMIT_PROBE = """
+(el) => {
+  if (!el) return null;
+  const tag = el.tagName.toLowerCase();
+  const type = (el.getAttribute('type') || '').toLowerCase();
+  const role = (el.getAttribute('role') || '').toLowerCase();
+  const buttonish = tag === 'button' || role === 'button' ||
+                    (tag === 'input' && ['submit', 'button', 'image'].includes(type));
+  const text = [el.innerText, el.value, el.getAttribute('aria-label'),
+                el.getAttribute('title')].filter(Boolean).join(' ').trim().slice(0, 200);
+  return { tag, type, buttonish, text };
+}
+"""
+
+
+def _submit_intent(loc) -> str:
+    """The submit label this element carries, or "" — never raises.
+
+    A detached or unreadable element answers "not a submit" rather than blowing up the
+    click: the guard exists to add a stop, not a new failure mode.
+    """
+    try:
+        info = loc.evaluate(_SUBMIT_PROBE)
+    except Exception:
+        return ""
+    if not info or not info.get("buttonish"):
+        return ""
+    if info.get("tag") == "input" and info.get("type") == "submit" and not info.get("text"):
+        return "submit"
+    text = str(info.get("text") or "")
+    match = _SUBMIT_TEXT.search(text)
+    return (match.group(0) if match else "").strip()
+
+
 def _meta(
     name: str, *, approval: bool = False, capabilities: Optional[list[str]] = None
 ):
@@ -272,13 +339,22 @@ class _BrowserController:
                 self._playwright = sync_playwright().start()
                 # Same recovery as the readiness check above: the launch inherits THIS
                 # process's environment, which is the one missing the display.
-                self._browser = self._playwright.chromium.launch(
-                    headless=False, env=desktop_env()
+                #
+                # Persistent, not `launch()` + `new_context()`: a throwaway context logs
+                # out at the end of every run, so anything behind a sign-in was reachable
+                # only by a human sitting there re-authenticating. There is no separate
+                # Browser object in this mode — the context owns the process — which
+                # `_close_locked` already tolerates (it null-checks `self._browser`).
+                self._context = self._playwright.chromium.launch_persistent_context(
+                    str(browser_profile_dir()),
+                    headless=False,
+                    env=desktop_env(),
+                    viewport={"width": 1280, "height": 900},
+                    accept_downloads=True,
                 )
-                self._context = self._browser.new_context(
-                    viewport={"width": 1280, "height": 900}
-                )
-                self._page = self._context.new_page()
+                self._browser = None
+                pages = list(self._context.pages)
+                self._page = pages[0] if pages else self._context.new_page()
                 self._touch(
                     open=True, status="open", last_action="open browser", last_error=""
                 )
@@ -559,13 +635,27 @@ def make_browser_automation_tools() -> list[Callable[..., Any]]:
     )
 
     def browser_click(target: str) -> dict[str, Any]:
-        return _BROWSER.call(
-            "click",
-            lambda page: (
-                _target_locator(page, target).click(timeout=10000),
-                {"ok": True, "url": page.url},
-            )[1],
-        )
+        def run(page):
+            loc = _target_locator(page, target)
+            label = _submit_intent(loc)
+            if label:
+                # Refuse rather than click: this is the one control on a form whose effect
+                # cannot be undone, and it is owned by browser_submit so it can be approved
+                # (or granted) on its own. The refusal names the tool to call, so the cost
+                # of a false positive is one extra tool call, not a stuck run.
+                return {
+                    "error": (
+                        f"'{target}' looks like a final submit control ({label!r}). "
+                        "Clicking it would send the form. Use browser_submit(target) for "
+                        "this one action — it is approved separately, on purpose."
+                    ),
+                    "needs": "browser_submit",
+                    "target": target,
+                }
+            loc.click(timeout=10000)
+            return {"ok": True, "url": page.url}
+
+        return _BROWSER.call("click", run)
 
     browser_click.__name__ = "browser_click"
     tools.append(
@@ -573,7 +663,50 @@ def make_browser_automation_tools() -> list[Callable[..., Any]]:
             browser_click,
             _schema(
                 "browser_click",
-                "Click a visible page element by CSS selector, text=label, role=button:Name, or text fallback. Requires approval.",
+                "Click a visible page element by CSS selector, text=label, role=button:Name, or text fallback. Refuses final submit controls — use browser_submit for those. Requires approval.",
+                {"target": {"type": "string"}},
+                ["target"],
+            ),
+            approval=True,
+        )
+    )
+
+    def browser_submit(target: str) -> dict[str, Any]:
+        """The irreversible click, as its own tool so it can be gated on its own."""
+
+        def run(page):
+            before = page.url
+            loc = _target_locator(page, target)
+            text = ""
+            try:
+                text = (loc.inner_text(timeout=2000) or "").strip()[:120]
+            except Exception:
+                pass
+            loc.click(timeout=15000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            return {
+                "ok": True,
+                "submitted": True,
+                "control": text or target,
+                "url_before": before,
+                "url": page.url,
+                "title": _safe_call(lambda: page.title()) or "",
+            }
+
+        return _BROWSER.call("submit", run)
+
+    browser_submit.__name__ = "browser_submit"
+    tools.append(
+        _attach(
+            browser_submit,
+            _schema(
+                "browser_submit",
+                "Click a form's final submit button and wait for the result. THIS SENDS THE "
+                "FORM and cannot be undone — screenshot and re-read the filled form first. "
+                "Requires approval.",
                 {"target": {"type": "string"}},
                 ["target"],
             ),
