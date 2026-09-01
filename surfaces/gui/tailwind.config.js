@@ -18,6 +18,9 @@ export default {
       colors: {
         paper: tok("--paper"),
         panel: tok("--panel"),
+        canvas: tok("--canvas"),
+        chrome: tok("--chrome"),
+        chromeHover: tok("--chrome-hover"),
         ink: tok("--ink"),
         muted: tok("--muted"),
         faint: tok("--faint"),

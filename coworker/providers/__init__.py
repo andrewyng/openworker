@@ -8,6 +8,7 @@ from .base import (
     ToolCall,
 )
 from .capabilities import capabilities_for
+from .codex_provider import CodexProvider
 from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider, resolve_api_key
 from .openai_responses import OpenAIResponsesProvider
@@ -33,6 +34,7 @@ __all__ = [
     "ToolCall",
     "AnthropicProvider",
     "BedrockProvider",
+    "CodexProvider",
     "GeminiProvider",
     "OpenAIProvider",
     "OpenAIResponsesProvider",

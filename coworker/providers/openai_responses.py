@@ -1,4 +1,4 @@
-"""OpenAI Responses provider — native OpenAI models via `/v1/responses`.
+"""OpenAI Responses provider — native and compatible models via `/responses`.
 
 Chat Completions rejects function tools combined with any `reasoning_effort` other than
 `none` on GPT-5.6+ ("use /v1/responses"), which had reasoning pinned OFF for native OpenAI
@@ -8,9 +8,10 @@ reasoning + tools at real effort levels, streamed reasoning summaries (→ the s
 chain-of-thought continuity across tool round-trips via `store: false` +
 `include: ["reasoning.encrypted_content"]` — nothing retained server-side.
 
-Routing: the `openai` provider entry with NO custom base_url builds this class; a custom
-endpoint (Azure, vLLM, any OpenAI-compatible gateway) and every compat vendor keep the
-Chat Completions `OpenAIProvider` (registry.py).
+Routing: the `openai` provider entry with NO custom base_url builds this class. Most custom
+endpoints (Azure, vLLM, and the existing compat vendors) keep the Chat Completions
+`OpenAIProvider`; vendors that explicitly implement the Responses wire can opt into this
+class with their own base URL (registry.py).
 
 Like the other native providers, this is mostly a pair of pure converters from the
 canonical OpenAI-chat-shaped history to Responses `input` items. What the converters
@@ -40,6 +41,7 @@ from .base import (
     ModelCapabilities,
     ProviderClient,
     StreamChunk,
+    TokenUsage,
     ToolCall,
 )
 from .capabilities import capabilities_for
@@ -233,6 +235,24 @@ def _sidecar_extras(items: list[dict[str, Any]]) -> dict[str, Any]:
     return {}
 
 
+def _usage_from(usage: Any) -> Optional[TokenUsage]:
+    """Responses-API usage → normalized counts (OPE-101). `input_tokens` INCLUDES the
+    cached share, so fresh input = input_tokens − cached_tokens (the same convention as
+    the Chat Completions and Anthropic adapters); `output_tokens` already includes
+    reasoning tokens (billed as output). Defensive reads throughout — compat/older
+    servers may omit `input_tokens_details`."""
+    if usage is None:
+        return None
+    prompt = int(getattr(usage, "input_tokens", 0) or 0)
+    details = getattr(usage, "input_tokens_details", None)
+    cached = int(getattr(details, "cached_tokens", 0) or 0)
+    return TokenUsage(
+        input=max(prompt - cached, 0),
+        output=int(getattr(usage, "output_tokens", 0) or 0),
+        cache_read=cached,
+    )
+
+
 def _parse_response(response: Any) -> AssistantTurn:
     """One Responses result → an AssistantTurn (+ `_openai` extras)."""
     items = [_dump(item) for item in getattr(response, "output", None) or []]
@@ -278,6 +298,7 @@ def _parse_response(response: Any) -> AssistantTurn:
         raw=response,
         reasoning="".join(summaries) or None,
         extras=_sidecar_extras(items),
+        usage=_usage_from(getattr(response, "usage", None)),
     )
 
 
@@ -289,14 +310,20 @@ class OpenAIResponsesProvider(ProviderClient):
         default_model: str = "gpt-5.6-sol",
         api_key: Optional[str] = None,
         secrets: Any = None,
+        base_url: Optional[str] = None,
+        reasoning_summary: bool = True,
     ):
         # Same deferred-client contract as OpenAIProvider: built lazily so an engine can be
         # assembled before any key exists; key resolves at call time (explicit → env →
-        # SecretStore). Tests inject a `client` directly. No base_url — a custom endpoint
-        # routes to the Chat Completions provider instead (registry.py).
+        # SecretStore). Tests inject a `client` directly. `base_url` is opt-in: stock OpenAI
+        # leaves it unset, while Responses-compatible vendors can supply their own endpoint.
         self._client = client
         self._api_key = api_key
         self._secrets = secrets
+        self._base_url = (base_url or "").strip().rstrip("/") or None
+        if not isinstance(reasoning_summary, bool):
+            raise TypeError("reasoning_summary must be a bool")
+        self._reasoning_summary = reasoning_summary
         self.default_model = default_model
 
     def _ensure_client(self) -> Any:
@@ -310,7 +337,10 @@ class OpenAIResponsesProvider(ProviderClient):
                     "No model API key configured. Set OPENAI_API_KEY in the environment, "
                     "or add your key in Manage → Settings."
                 )
-            self._client = OpenAI(api_key=key)
+            kwargs = {"api_key": key}
+            if self._base_url:
+                kwargs["base_url"] = self._base_url
+            self._client = OpenAI(**kwargs)
         return self._client
 
     def _request_kwargs(
@@ -331,9 +361,10 @@ class OpenAIResponsesProvider(ProviderClient):
             # `_openai` sidecar instead, and summaries feed the GUI's thinking display.
             "store": False,
             "include": ["reasoning.encrypted_content"],
-            "reasoning": {"summary": "auto"},
             **{k: v for k, v in settings.items() if k in _SETTINGS_WHITELIST},
         }
+        if self._reasoning_summary:
+            kwargs["reasoning"] = {"summary": "auto"}
         if instructions:
             kwargs["instructions"] = instructions
         if tools:
@@ -385,6 +416,7 @@ class OpenAIResponsesProvider(ProviderClient):
 
         text_parts: list[str] = []
         reasoning_parts: list[str] = []
+        done_items: list[Any] = []
         final: Optional[Any] = None
         for event in events:
             kind = getattr(event, "type", None)
@@ -398,13 +430,29 @@ class OpenAIResponsesProvider(ProviderClient):
                 if delta:
                     reasoning_parts.append(delta)
                     yield StreamChunk(reasoning_delta=delta)
+            elif kind == "response.output_item.done":
+                item = getattr(event, "item", None)
+                if item is not None:
+                    done_items.append(item)
             elif kind in ("response.completed", "response.incomplete", "response.failed"):
                 final = getattr(event, "response", None)
 
         if final is not None:
             # The terminal event carries the full response — parse it whole so tool
             # calls, finish reason, and the `_openai` sidecar come from one place.
-            yield StreamChunk(turn=_parse_response(final))
+            # Some Responses-compatible backends (the subscription backend) leave the
+            # terminal response's `output` EMPTY — the items only ever stream — so
+            # graft the streamed output_item.done items back on before parsing, or a
+            # turn's text and tool calls silently vanish.
+            if not (getattr(final, "output", None) or []) and done_items:
+                try:
+                    final.output = done_items
+                except Exception:
+                    pass
+            turn = _parse_response(final)
+            if turn.text is None and not turn.tool_calls and text_parts:
+                turn.text = "".join(text_parts)
+            yield StreamChunk(turn=turn)
         else:
             yield StreamChunk(
                 turn=AssistantTurn(

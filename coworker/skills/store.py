@@ -31,6 +31,7 @@ from ..secrets import state_dir
 from .base import Skill, _parse_skill
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_UPLOAD_TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
 _MAX_NAME = 64
 GLOBAL_SCOPE = "global"
 PROJECT_SCOPE = "project"
@@ -277,6 +278,22 @@ class SkillStore:
             )
 
     # -- uploads: stage → preview → confirm -----------------------------------------
+    def _staged_upload_path(self, token: str) -> Path:
+        """Resolve one server-minted upload token without leaving the staging root."""
+        token = str(token)
+        if not _UPLOAD_TOKEN_RE.fullmatch(token):
+            raise ValueError("Unknown or expired upload.")
+        try:
+            staging_root = self._staging_dir.resolve()
+            staged = (staging_root / token).resolve()
+        except (OSError, RuntimeError):
+            raise ValueError("Unknown or expired upload.") from None
+        # The shape check blocks path separators; this second check also rejects a
+        # valid-looking token whose staging entry is a symlink/junction to elsewhere.
+        if staged.parent != staging_root:
+            raise ValueError("Unknown or expired upload.")
+        return staged
+
     def stage_upload(self, data: bytes, filename: str = "") -> dict[str, Any]:
         """Stage an upload and return the parsed preview. Accepts a ``.zip`` (folder skill)
         or a bare ``SKILL.md`` with YAML frontmatter. Nothing is installed until
@@ -376,7 +393,7 @@ class SkillStore:
         scope: str = GLOBAL_SCOPE,
         workspace: Optional[str | Path] = None,
     ) -> dict[str, Any]:
-        staged = self._staging_dir / str(token)
+        staged = self._staged_upload_path(token)
         if not (staged / "SKILL.md").is_file():
             raise ValueError("Unknown or expired upload.")
         skill = _parse_skill(staged / "SKILL.md")
@@ -399,7 +416,7 @@ class SkillStore:
         return {"name": name, "scope": scope, "path": str(folder)}
 
     def discard_upload(self, token: str) -> None:
-        staged = self._staging_dir / str(token)
+        staged = self._staged_upload_path(token)
         shutil.rmtree(staged, ignore_errors=True)
 
 

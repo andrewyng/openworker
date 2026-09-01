@@ -555,7 +555,7 @@ def make_email_tools(
                     while target.exists():
                         target = (
                             scratch.path
-                            / f"{target.stem.rstrip('-0123456789') or 'attachment'}-{counter}{target.suffix}"
+                            / f"{re.sub(r'-[0-9]+$', '', target.stem) or 'attachment'}-{counter}{target.suffix}"
                         )
                         counter += 1
                     target.write_bytes(payload)

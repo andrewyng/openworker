@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
+import { Markdown, OPEN_ARTIFACT_EVENT, OPEN_BOARD_EVENT } from "./Markdown";
 
 afterEach(cleanup);
 
@@ -46,5 +46,21 @@ describe("Markdown artifact links", () => {
     expect(seen).toEqual(["新闻摘要.md"]);
 
     window.removeEventListener(OPEN_ARTIFACT_EVENT, listener);
+  });
+
+  // Seventeenth pass: the lead's one-time board mention — [Board · 5 items](board:)
+  // renders as an inline pill that opens the drawer on its Board section.
+  it("renders a board: link as a pill and dispatches the open-board event", () => {
+    let fired = 0;
+    const listener = () => fired++;
+    window.addEventListener(OPEN_BOARD_EVENT, listener);
+
+    render(<Markdown text="Plan approved — [Board · 5 items](board:) if you want to watch." />);
+    const chip = screen.getByTestId("board-chip");
+    expect(chip.textContent).toContain("Board · 5 items");
+    fireEvent.click(chip);
+    expect(fired).toBe(1);
+
+    window.removeEventListener(OPEN_BOARD_EVENT, listener);
   });
 });

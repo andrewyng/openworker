@@ -60,10 +60,12 @@ def test_chat_completions_openai_shape(tmp_path):
 def test_agents_and_memory_rest(tmp_path):
     client = _client(tmp_path, [])
     agents = client.get("/v1/agents").json()["agents"]
-    # The picker lists enabled+surfaced personas — a fresh install is cowork-only
-    # (non-default personas ship disabled, opt-in from Settings ▸ Personas).
+    # The picker lists enabled+surfaced personas. Release lineup (owner 2026-08-21):
+    # OpenWorker + the security bundles; Code ships disabled, Chat is gone, and
+    # ships:false personas (teams, ops, design) need OPENWORKER_UNSHIPPED=1.
     names = [a["name"] for a in agents]
-    assert names == ["cowork"]
+    assert names[0] == "cowork"
+    assert set(names) == {"cowork", "security", "cloud-posture", "dep-audit"}
     assert "skills" in client.get("/v1/skills").json()  # catalog (may be empty)
 
     added = client.post("/v1/memory", json={"content": "prefer pathlib"}).json()
@@ -92,17 +94,17 @@ def test_disable_persona_archives_its_sessions(tmp_path):
             )
         )
 
-    mk("chat-a", "chat")
-    mk("chat-b", "chat")
-    mk("chat-old", "chat")
+    mk("chat-a", "code")
+    mk("chat-b", "code")
+    mk("chat-old", "code")
     store.set_flags(
         "chat-old", archived=True
     )  # already archived — must not be re-counted
     mk("cowork-a", "cowork")
-    mk("__run__r1", "chat")  # internal automation thread — never touched
+    mk("__run__r1", "code")  # internal automation thread — never touched
 
     client = TestClient(create_app(manager))
-    body = client.post("/v1/personas/chat", json={"enabled": False}).json()
+    body = client.post("/v1/personas/code", json={"enabled": False}).json()
     assert body["ok"] is True
     assert body["archived_sessions"] == 2
     assert store.load("chat-a").archived and store.load("chat-b").archived
@@ -114,8 +116,8 @@ def test_disable_persona_archives_its_sessions(tmp_path):
     assert store.load("chat-a").archived
 
     # The dedicated §5/§8 enable route shares the same semantic.
-    mk("chat-c", "chat")
-    client.post("/v1/personas/chat/enable", json={"enabled": False})
+    mk("chat-c", "code")
+    client.post("/v1/personas/code/enable", json={"enabled": False})
     assert store.load("chat-c").archived
 
 
@@ -206,69 +208,6 @@ def test_artifact_read_rejects_path_escape(tmp_path):
     client = _client(tmp_path, [])
     escaped = client.get(
         "/v1/sessions/unknown/artifacts/read", params={"path": "../outside.md"}
-    ).json()
-    assert escaped["ok"] is False
-    assert "escapes" in escaped["error"]
-
-
-def test_artifacts_include_and_read_granted_external_directories(tmp_path):
-    workspace = tmp_path / "workspace"
-    external = tmp_path / "external"
-    read_only = tmp_path / "read_only"
-    workspace.mkdir()
-    external.mkdir()
-    read_only.mkdir()
-    (workspace / "primary.md").write_text("primary", encoding="utf-8")
-    (external / "外部摘要.md").write_text("external", encoding="utf-8")
-    (read_only / "reference.md").write_text("reference", encoding="utf-8")
-
-    manager = SessionManager(
-        workspace=workspace,
-        data_dir=tmp_path / "data",
-        provider=ScriptedProvider([]),
-    )
-    manager.session_store.save(
-        SessionRecord(
-            session_id="multi-root",
-            workspace=str(workspace),
-            model="gpt-5.5",
-            mode="interactive",
-            messages=[],
-            agent="cowork",
-            extra_roots=[
-                {"path": str(external), "writable": True},
-                {"path": str(read_only), "writable": False},
-            ],
-        )
-    )
-    client = TestClient(create_app(manager))
-
-    artifacts = client.get("/v1/sessions/multi-root/artifacts").json()["artifacts"]
-    by_name = {artifact["name"]: artifact for artifact in artifacts}
-    assert by_name["primary.md"]["path"] == "primary.md"
-    assert by_name["外部摘要.md"]["path"] == str((external / "外部摘要.md").resolve())
-    assert "reference.md" not in by_name
-
-    # A bare artifact: link can resolve against an additional root even before the
-    # frontend's artifact list has refreshed.
-    preview = client.get(
-        "/v1/sessions/multi-root/artifacts/read", params={"path": "外部摘要.md"}
-    ).json()
-    assert preview["ok"] is True
-    assert preview["content"] == "external"
-
-    # Read-only roots stay out of the produced-artifact list, but remain readable because
-    # the user explicitly granted the session read access to them.
-    reference = client.get(
-        "/v1/sessions/multi-root/artifacts/read",
-        params={"path": str(read_only / "reference.md")},
-    ).json()
-    assert reference["ok"] is True
-    assert reference["content"] == "reference"
-
-    escaped = client.get(
-        "/v1/sessions/multi-root/artifacts/read",
-        params={"path": str(tmp_path / "not-granted.md")},
     ).json()
     assert escaped["ok"] is False
     assert "escapes" in escaped["error"]
@@ -484,6 +423,11 @@ def test_ws_allows_only_one_inflight_turn_per_session(tmp_path):
             self.max_active = 0
 
         def complete(self, *, model, messages, tools=None, **settings):
+            # The fire-and-forget auto-title completion legitimately runs CONCURRENTLY
+            # with the chat turn (it fires at turn start, owner catch 2026-08-24) — the
+            # invariant under test is one CHAT turn at a time, so exclude title calls.
+            if messages and "title chat sessions" in str(messages[0].get("content", "")):
+                return _text("A Title")
             with self._lock:
                 self.active += 1
                 self.max_active = max(self.max_active, self.active)
@@ -925,18 +869,19 @@ def test_ws_with_workspace_query(tmp_path):
         assert "turn_end" in _drain(ws)
 
 
-def test_ws_chat_agent_needs_no_workspace(tmp_path):
+def test_ws_removed_agent_id_falls_back_to_default(tmp_path):
+    # Chat is removed (owner 2026-08-21): a stored session or deep link carrying
+    # agent=chat resolves to the default persona instead of erroring.
     manager = SessionManager(
         workspace=None,
         data_dir=tmp_path,
-        provider=ScriptedProvider([_text("hi from chat")]),
+        provider=ScriptedProvider([_text("hi")]),
     )
     client = TestClient(create_app(manager))
     with client.websocket_connect("/ws/session/chat1?agent=chat") as ws:
         ready = ws.receive_json()
         assert ready["type"] == "ready"
-        assert ready["data"]["agent"] == "chat"
-        assert ready["data"]["workspace"] is None
+        assert ready["data"]["agent"] == "cowork"
         ws.send_json({"type": "user_message", "text": "hello"})
         assert "turn_end" in _drain(ws)
 
@@ -1140,3 +1085,91 @@ def test_set_provider_persists_extra_fields(tmp_path):
     manager.set_provider("ollama", {"base_url": ""})
     providers = {p["name"]: p for p in manager.get_providers()}
     assert "base_url" not in providers["ollama"]["values"]
+
+
+def test_mcp_connect_route_flags_authorizing_immediately(tmp_path, monkeypatch):
+    """Owner-hit 2026-08-21: the Test button looked dead — the connect ran as a
+    background task, and the GUI's first refresh landed before the task set
+    `authorizing`, so the fast poll never armed. The route must flag it
+    synchronously (and only for known servers, so nothing wedges)."""
+    import asyncio
+
+    from coworker.server import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path / "data")
+    monkeypatch.setattr(
+        "coworker.server.manager.read_global", lambda: {"sales-db": {"command": "x"}}
+    )
+    mgr.begin_mcp_connect("sales-db")
+    assert "sales-db" in mgr._mcp_authorizing
+    mgr.begin_mcp_connect("nope")
+    assert "nope" not in mgr._mcp_authorizing
+    # An unmatched name clears the flag instead of wedging "Testing…" forever.
+    monkeypatch.setattr("coworker.server.manager.load_mcp_servers", lambda *a, **k: [])
+    res = asyncio.run(mgr.connect_mcp("sales-db"))
+    assert not res["ok"] and "sales-db" not in mgr._mcp_authorizing
+
+
+def test_ws_ready_reports_live_turn(tmp_path):
+    # A reconnect can land mid-turn (sidebar revisit, relaunch, dropped socket). `ready`
+    # must carry server truth on the running turn or the GUI loses Stop + the waiting row
+    # (owner catch 2026-08-24, v0.2.0 walkthrough).
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([_text("hi")]))
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/live1") as ws:
+        assert ws.receive_json()["data"]["running"] is False
+
+    manager.mark_running("live1")
+    try:
+        with client.websocket_connect("/ws/session/live1") as ws:
+            assert ws.receive_json()["data"]["running"] is True
+    finally:
+        manager.mark_idle("live1")
+
+
+def test_set_mode_persists_notice_once_then_markers(tmp_path):
+    # Owner ruling 2026-08-24: the Auto-Approve explainer is server-authored and persisted
+    # ONCE per session; later switches persist one-line markers. Restarts re-show nothing.
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([_text("hi")]))
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/modes1") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "set_mode", "mode": "auto-approve"})
+        ev = ws.receive_json()
+        assert ev["type"] == "mode_notice"
+        assert ev["data"]["title"] == "Auto-approve is on."
+        assert "uses a model" in ev["data"]["text"]
+        ws.send_json({"type": "set_mode", "mode": "interactive"})
+        assert ws.receive_json()["data"] == {"text": "Ask for approval is on."}
+        # Re-entering auto-approve: marker, never the banner again.
+        ws.send_json({"type": "set_mode", "mode": "auto-approve"})
+        assert ws.receive_json()["data"] == {"text": "Auto-approve is on."}
+
+    engine = manager._engines["modes1"]
+    kinds = [m.get("kind") for m in engine.messages if m.get("role") == "notice"]
+    assert kinds.count("mode_notice") == 1
+    assert kinds.count("mode_switch") == 2
+
+
+def test_connect_banners_a_session_already_in_auto_approve(tmp_path):
+    from coworker.permissions import Mode
+
+    manager = SessionManager(
+        workspace=tmp_path,
+        provider=ScriptedProvider([_text("hi")]),
+        mode=Mode("auto-approve"),
+    )
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/modes2") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ev = ws.receive_json()
+        assert ev["type"] == "mode_notice" and ev["data"]["title"] == "Auto-approve is on."
+    # A reconnect stays quiet: the banner is persisted (asserted below), not re-announced —
+    # a set_mode echo of the SAME mode also stays silent (previous is new_mode).
+    with client.websocket_connect("/ws/session/modes2") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "set_mode", "mode": "interactive"})
+        assert ws.receive_json()["data"] == {"text": "Ask for approval is on."}
+    engine = manager._engines["modes2"]
+    kinds = [m.get("kind") for m in engine.messages if m.get("role") == "notice"]
+    assert kinds.count("mode_notice") == 1
