@@ -248,6 +248,31 @@ describe("New-session split button", () => {
     expect(baseProps.onManagePersonas).toHaveBeenCalled();
   });
 
+  it("keeps an enabled-but-unsurfaced persona out of the New Session menu", async () => {
+    // "In picker" off must remove it from the picker — that is the toggle's whole name.
+    // It stays enabled, so anything that still names it (an automation) keeps resolving.
+    localStorage.setItem("ocw.flag.personas", "1");
+    stubFetch([
+      {
+        match: "/v1/personas",
+        method: "GET",
+        json: {
+          personas: PERSONAS.personas.map((p) =>
+            p.id === "code" ? { ...p, enabled: true, surfaced: false } : p,
+          ),
+        },
+      },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+    ]);
+    render(<Sidebar {...baseProps} />);
+    await screen.findByLabelText("Group and filter conversations");
+    fireEvent.click(screen.getByLabelText("Choose a persona"));
+    const menu = (await screen.findByText("Start a session as")).closest(".newsplit-menu") as HTMLElement;
+    const w = within(menu);
+    expect(w.queryByText("Code")).toBeNull();
+    expect(w.getByText("Ops")).toBeTruthy();  // the control: surfaced siblings still listed
+  });
+
   it("hides Manage personas… while the launch flag is off (the default)", async () => {
     localStorage.removeItem("ocw.flag.personas");
     stubFetch([

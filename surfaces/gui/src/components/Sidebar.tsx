@@ -1341,7 +1341,11 @@ function NewSessionSplit({
   onManage: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const enabled = (personas || []).filter((p) => p.enabled);
+  // `surfaced` IS the "In picker" toggle (the Personas tab labels it that, and the registry
+  // comments call it that) — so it has to bite here, not only in the accordion list below.
+  // Filtering on `enabled` alone meant unticking "In picker" removed a persona from the
+  // sidebar and left it in this menu, which is the one place the toggle is named for.
+  const enabled = (personas || []).filter((p) => p.enabled && p.surfaced);
   // Resolved over ALL installed personas, not just the enabled ones, so a persona's tile keeps
   // its colour when a disabled sibling is switched back on.
   const accents = useMemo(() => accentMap(personas), [personas]);
