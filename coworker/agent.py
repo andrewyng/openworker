@@ -22,7 +22,7 @@ from .connectors import (
     make_send_message_tool,
 )
 from .engine import Approver, TurnEngine
-from .environment import environment_context
+from .environment import environment_context, environment_live
 from .memory import (
     MemoryStore,
     Scope,
@@ -431,6 +431,12 @@ def build_engine(
 
     def context_provider() -> str:
         parts = []
+        # Date and git state, recomputed per turn. Deliberately HERE and not in the
+        # system prompt: this is the text that changes every time the agent writes a
+        # file or commits, and in the prefix it invalidated the cache for everything
+        # behind it. See coworker/environment.py.
+        if ws is not None:
+            parts.append(environment_live(ws))
         if permissions.mode is Mode.PLAN:
             parts.append(_PLAN_MODE_CONTEXT)
         elif permissions.mode is Mode.DISCUSS:

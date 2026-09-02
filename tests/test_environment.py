@@ -1,11 +1,17 @@
-"""Tests for the session environment context block (system-prompt injection)."""
+"""Tests for the session environment blocks.
+
+Split in two (see coworker/environment.py): `environment_context` is the stable half that
+goes in the cached system prompt, `environment_live` is the volatile half delivered per
+turn. These tests pin which facts live on which side — putting git state back in the
+stable half would silently cost the prefix cache, and nothing else would notice.
+"""
 
 from __future__ import annotations
 
 import subprocess
 import sys
 
-from coworker.environment import environment_context
+from coworker.environment import environment_context, environment_live
 
 
 def _git_repo(tmp_path):
@@ -23,31 +29,38 @@ def _git_repo(tmp_path):
     return ws
 
 
-def test_context_includes_workspace_platform_and_date(tmp_path):
+def test_stable_block_has_workspace_and_platform(tmp_path):
     block = environment_context(tmp_path)
     assert str(tmp_path.resolve()) in block
     assert sys.platform in block
-    assert "Today's date:" in block
     assert "<environment>" in block and "</environment>" in block
 
 
-def test_context_outside_git_repo(tmp_path):
-    assert "not a git repository" in environment_context(tmp_path)
+def test_stable_block_carries_no_volatile_facts(tmp_path):
+    """The cached prefix must not move when the clock or the repo does."""
+    block = environment_context(_git_repo(tmp_path))
+    assert "Today's date:" not in block
+    assert "Git branch" not in block and "Git status" not in block
 
 
-def test_context_with_git_repo(tmp_path):
+def test_live_block_outside_git_repo(tmp_path):
+    assert "not a git repository" in environment_live(tmp_path)
+
+
+def test_live_block_with_git_repo(tmp_path):
     ws = _git_repo(tmp_path)
-    block = environment_context(ws)
+    block = environment_live(ws)
+    assert "Today's date:" in block
     assert "Git branch: main" in block
     assert "Git status: clean" in block
     assert "first commit" in block
 
 
-def test_context_shows_dirty_status(tmp_path):
+def test_live_block_shows_dirty_status(tmp_path):
     ws = _git_repo(tmp_path)
     (ws / "f.txt").write_text("2", encoding="utf-8")
     (ws / "new.txt").write_text("x", encoding="utf-8")
-    block = environment_context(ws)
+    block = environment_live(ws)
     assert "Git status (2 changed):" in block
     assert "f.txt" in block and "new.txt" in block
 
