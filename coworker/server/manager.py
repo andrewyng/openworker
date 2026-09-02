@@ -1886,9 +1886,25 @@ class SessionManager:
                 return False
             if not served:
                 return False
-            # Some shims expose aliases; accept an exact id, else any model at all only
-            # when the configured id is not something the endpoint enumerates.
-            return want in served if want else True
+            # A non-empty list IS the readiness signal: the proxy in front of the engine
+            # returns 503 with no models until its upstream can actually serve (see
+            # decode_proxy.py), so "it enumerated something" already means the 35B is
+            # loaded. Do NOT also require `want` to be in the list.
+            #
+            # `want` comes from the manager's DEFAULT model, which is not necessarily any
+            # task's model — on this box the default is `gpt-5.6-sol` while the local
+            # endpoint serves `ornith-vllm`/`ornith-1.5-35b`. Gating on the match meant the
+            # probe answered "not ready" forever and catch-up runs waited out the full
+            # timeout on a backend that was up the whole time. A model id the endpoint does
+            # not serve is a configuration error: it should surface as the run's own 404,
+            # immediately, not as an indefinite wait.
+            if want and want not in served:
+                logger.info(
+                    "backend is up but does not serve %r (has: %s) — releasing anyway; "
+                    "a run naming it will fail fast instead of waiting",
+                    want, ", ".join(sorted(served)),
+                )
+            return True
 
         return await asyncio.to_thread(_probe)
 
