@@ -403,6 +403,7 @@ def build_engine(
             allowed_commands if allowed_commands is not None else config.allowed_commands
         ),
         auto_allow_tools=set(config.auto_allow),
+        gated_commands=list(config.gated_commands),
         roots=root_list or None,
         risk_overrides=risk_overrides,
     )

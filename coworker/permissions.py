@@ -24,6 +24,75 @@ _SHELL_OPERATORS = (";", "&", "|", ">", "<", "`", "$(", "(", "\n", "\r")
 def _has_shell_operators(command: str) -> bool:
     return any(op in command for op in _SHELL_OPERATORS)
 
+
+def _command_segments(command: str) -> Optional[list[list[str]]]:
+    """Split a shell command into its argv segments, respecting quotes.
+
+    `cd repo && git push` is two segments. Returns None when the text cannot be parsed
+    (unbalanced quotes) — a caller proving something is SAFE must treat that as failure,
+    and a caller proving something is GATED must fall back to a raw scan.
+    """
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token and all(ch in ";&|()<>\n\r" for ch in token):
+            if current:
+                segments.append(current)
+                current = []
+            continue
+        current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+# Commands whose string argument is itself a command to run: `bash -lc "git push"` and
+# `ssh host "git push"` must trip the same gate the bare command does. Kept narrow on
+# purpose — scanning every quoted argument gated `echo 'git push'`, which is just text.
+_SHELL_RUNNERS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "fish", "ssh"})
+
+# Commands that run another command with the same effect: the gate has to see through
+# them to the real one, or `sudo git push` walks straight past `git push`.
+_WRAPPERS = frozenset(
+    {"sudo", "doas", "env", "nohup", "nice", "ionice", "time", "stdbuf", "timeout"}
+)
+
+
+def _unwrap(argv: list[str]) -> list[str]:
+    """Strip leading wrapper commands, their flags, and any `VAR=value` assignments."""
+    out = list(argv)
+    while out and Path(out[0]).name in _WRAPPERS:
+        out = out[1:]
+        while out and (out[0].startswith("-") or "=" in out[0].split(" ")[0]):
+            out = out[1:]
+    return out
+
+
+def _argv_matches(argv: list[str], want: list[str]) -> bool:
+    """Whether one argv triggers a gate pattern.
+
+    The pattern's first token must be the command itself (by basename, so `/usr/bin/git`
+    counts), and its remaining tokens must appear in order among the arguments. That is
+    what makes `git push` catch `git -C /repo push --force` — matching only a literal
+    prefix would let an interposed flag walk straight through the gate.
+    """
+    if not argv or not want:
+        return False
+    if Path(argv[0]).name != want[0]:
+        return False
+    rest = argv[1:]
+    for token in want[1:]:
+        if token not in rest:
+            return False
+        rest = rest[rest.index(token) + 1 :]
+    return True
+
 from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
     SHELL_TOOL,
     WRITE_TOOLS,
@@ -88,6 +157,9 @@ class PermissionEngine:
     auto_allow_tools: set[str] = field(default_factory=set)
     session_allow_tools: set[str] = field(default_factory=set)
     session_allow_commands: set[str] = field(default_factory=set)
+    # Commands that ALWAYS require the user, in every mode and past every allowlist.
+    # Matched per segment against the whole command; see `_gated`.
+    gated_commands: list[str] = field(default_factory=list)
     # Task-scoped standing rules (§25): {tool: {allowed targets}}, seeded from the owning
     # ScheduledTask's target-shaped entries. Kept by reference and re-read every check, so a
     # rule minted mid-run ("Allow every time") applies to the run's next call too.
@@ -142,6 +214,19 @@ class PermissionEngine:
         # Non-consequential tools always run.
         if not consequential:
             return Decision(True, "low risk")
+
+        # Gated commands always ask. Deliberately ahead of AUTO mode, the command
+        # allowlist, the session allowlist and custom-mode auto-allow: these are the
+        # irreversible acts (publishing, deploying, force-resetting), everything else a
+        # run does is recoverable from git, and no permission accumulated during a run
+        # should be able to widen quietly into them. Default is empty — a machine only
+        # gets this by asking for it in config.
+        if is_shell:
+            gate = self._gated(str(arguments.get("command", "")))
+            if gate:
+                return Decision(
+                    False, f"{gate!r} always needs approval", needs_user=True
+                )
 
         # Full access.
         if self.mode is Mode.AUTO:
@@ -212,6 +297,54 @@ class PermissionEngine:
             except ValueError:
                 continue
         return False
+
+    def _gated(self, command: str) -> str:
+        """The gate pattern this command trips, or "" if none.
+
+        Every segment is checked, so chaining (`cd x && git push`) cannot slip past, and
+        so is every quoted argument that parses as a command of its own, which is what
+        catches `bash -lc "git push"`. Unparseable text falls back to a raw substring
+        scan: a command we cannot read is the last thing to auto-approve.
+        """
+        if not self.gated_commands or not command.strip():
+            return ""
+        patterns: list[list[str]] = []
+        for pattern in self.gated_commands:
+            try:
+                tokens = shlex.split(pattern)
+            except ValueError:
+                continue
+            if tokens:
+                patterns.append(tokens)
+        if not patterns:
+            return ""
+
+        segments = _command_segments(command)
+        if segments is None:
+            for tokens in patterns:
+                if all(token in command for token in tokens):
+                    return " ".join(tokens)
+            return ""
+
+        for tokens in patterns:
+            for raw in segments:
+                argv = _unwrap(raw)
+                if not argv:
+                    continue
+                if _argv_matches(argv, tokens):
+                    return " ".join(tokens)
+                # `bash -lc "git push"` carries the real command as one string token.
+                if Path(argv[0]).name not in _SHELL_RUNNERS:
+                    continue
+                for arg in argv[1:]:
+                    if " " not in arg:
+                        continue
+                    nested = _command_segments(arg)
+                    if nested and any(
+                        _argv_matches(_unwrap(a), tokens) for a in nested
+                    ):
+                        return " ".join(tokens)
+        return ""
 
     def _command_allowed(self, command: str) -> bool:
         # An allowlist entry auto-runs a command WITHOUT approval, so prefix matching is

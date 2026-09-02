@@ -38,6 +38,9 @@ class Config:
     # In "custom" permission mode, these tools are auto-approved (e.g. file edits)
     # while everything else still asks.
     auto_allow: list[str] = field(default_factory=list)
+    # Commands that always require approval, ahead of every allowlist and of "auto" mode.
+    # Empty by default: this is the user drawing their own line, not a shipped policy.
+    gated_commands: list[str] = field(default_factory=list)
     host: str = "127.0.0.1"
     port: int = 8765
     # Web search provider: "duckduckgo" (keyless default) | "tavily" | "brave" (need a key).
@@ -67,6 +70,7 @@ _FIELDS = {
     "max_iterations",
     "allowed_commands",
     "auto_allow",
+    "gated_commands",
     "host",
     "port",
     "web_search_provider",
@@ -80,7 +84,10 @@ _FIELDS = {
 # These fields change what consequential actions can run without a prompt, so the normal
 # workspace override pass never applies them. `allowed_commands` is added separately only
 # for a canonically trusted workspace; `auto_allow` remains user-global only.
-_GLOBAL_ONLY_FIELDS = {"allowed_commands", "auto_allow"}
+_GLOBAL_ONLY_FIELDS = {"allowed_commands", "auto_allow", "gated_commands"}
+# `gated_commands` is global-only for the opposite reason to the other two: they must
+# not be WIDENED per workspace, and this one must not be NARROWED. A repo that could
+# edit its own config.toml could otherwise un-gate its own deploy.
 _WORKSPACE_FIELDS = _FIELDS - _GLOBAL_ONLY_FIELDS
 
 
