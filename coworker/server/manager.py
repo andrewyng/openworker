@@ -3612,11 +3612,33 @@ class SessionManager:
             # a silently truncated context — be filed as a success: `status = "ok"` then
             # meant only "did not raise". Keep the last one and judge the run on it.
             terminal = ""
-            async for _event in engine.run(opening):
-                if _event.type is EventType.TURN_END:
-                    terminal = str((_event.data or {}).get("status") or "")
-                elif _event.type is EventType.INTERRUPTED:
-                    terminal = "interrupted"
+            # WALL-CLOCK DEADLINE. `engine.run` had no timeout of any kind, so a run that
+            # got stuck on one step looped until something outside killed it — which,
+            # unattended at 07:15, is nothing. Measured 2026-09-01: an applier run spent
+            # 21 minutes retrying a single dropdown and wrote no output at all, and a
+            # second went 26 minutes the same way. Both were filed "incomplete" only
+            # because a human restarted the server.
+            #
+            # An automation nobody is watching has to be able to stop itself. The task
+            # keeps whatever it produced up to the cut, the finally-block below still
+            # records the run, and the scheduler is free for the next one. A run that
+            # ends at the deadline is reported as exactly that, never as a success.
+            deadline = float(os.environ.get("COWORKER_RUN_TIMEOUT_S", "900"))
+            timed_out = False
+            try:
+                async with asyncio.timeout(deadline):
+                    async for _event in engine.run(opening):
+                        if _event.type is EventType.TURN_END:
+                            terminal = str((_event.data or {}).get("status") or "")
+                        elif _event.type is EventType.INTERRUPTED:
+                            terminal = "interrupted"
+            except TimeoutError:
+                timed_out = True
+                terminal = "timed out"
+                logger.warning(
+                    "scheduled run %s hit the %.0fs limit and was stopped",
+                    run.run_id, deadline,
+                )
             run.result_text = _last_assistant_text(engine.messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
             produced = bool((run.result_text or "").strip() or run.artifacts)
@@ -3627,7 +3649,10 @@ class SessionManager:
                 # Surfaced so six quiet mornings of half-run automations can't look green.
                 run.status = "incomplete"
                 run.error = (
-                    f"run ended as {terminal or 'unknown'}"
+                    f"stopped at the {deadline:.0f}s limit — it was still working and did "
+                    f"not finish; whatever it produced before the cut is kept"
+                    if timed_out
+                    else f"run ended as {terminal or 'unknown'}"
                     if terminal != "completed"
                     else "run completed but produced no output"
                 )
