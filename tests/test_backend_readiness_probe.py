@@ -65,10 +65,22 @@ def test_the_configured_model_being_served_is_ready(monkeypatch):
     assert _probe_with(monkeypatch, _Resp(200, payload)) is True
 
 
-def test_a_different_model_being_served_is_not_ready(monkeypatch):
-    """A backend serving something else cannot run this automation."""
+def test_a_different_model_being_served_is_still_ready(monkeypatch):
+    """Deliberately reversed 2026-09-02.
+
+    This used to assert False on the reasoning that "a backend serving something else
+    cannot run this automation". True, but readiness is the wrong place to enforce it: the
+    id compared here is a Settings value and the served ids are whatever the local endpoint
+    exposes, and the two are not required to match. When they did not, the probe answered
+    "not ready" forever and the catch-up drain waited out its whole timeout against a
+    backend that was up. A model the endpoint does not serve is a configuration error, and
+    it should surface as the run's own fast 404 rather than an indefinite wait.
+
+    The condition the probe actually exists for — a shim answering 200 with an empty list
+    while the engine loads — is unchanged and covered directly above.
+    """
     payload = {"data": [{"id": "some-other-model"}]}
-    assert _probe_with(monkeypatch, _Resp(200, payload)) is False
+    assert _probe_with(monkeypatch, _Resp(200, payload)) is True
 
 
 def test_a_5xx_is_not_ready(monkeypatch):

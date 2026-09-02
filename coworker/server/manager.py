@@ -130,6 +130,34 @@ def _is_loopback_url(url: str) -> bool:
     return host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 
+def run_failure_message(
+    terminal: str,
+    failure: str,
+    *,
+    produced: bool,
+    timed_out: bool,
+    deadline: float,
+) -> Optional[str]:
+    """Why a scheduled run is not "ok", in the words the user will read. None => ok.
+
+    Module-level so the classification is testable on its own: when this lived inline in
+    the run loop the only way to cover it was to restate it in the test, which is a test
+    that cannot fail when the real code changes.
+    """
+    if terminal == "completed" and produced:
+        return None
+    if timed_out:
+        return (
+            f"stopped at the {deadline:.0f}s limit — it was still working and did "
+            f"not finish; whatever it produced before the cut is kept"
+        )
+    if terminal == "error" and failure:
+        return f"the model provider failed — {failure}"
+    if terminal != "completed":
+        return f"run ended as {terminal or 'unknown'}"
+    return "run completed but produced no output"
+
+
 class SessionManager:
     def __init__(
         self,
@@ -3628,6 +3656,13 @@ class SessionManager:
             # a silently truncated context — be filed as a success: `status = "ok"` then
             # meant only "did not raise". Keep the last one and judge the run on it.
             terminal = ""
+            # The provider-failure path yields ERROR and returns WITHOUT a TURN_END, so
+            # watching only for TURN_END/INTERRUPTED left `terminal` empty and filed the
+            # run as "run ended as unknown" — 20 of 28 recorded failures on this machine,
+            # all of them a provider error whose message the engine had already built and
+            # this loop then dropped. Keep it: "unknown" is not a diagnosis, and it is the
+            # difference between a fixable failure and a mystery.
+            failure = ""
             # WALL-CLOCK DEADLINE. `engine.run` had no timeout of any kind, so a run that
             # got stuck on one step looped until something outside killed it — which,
             # unattended at 07:15, is nothing. Measured 2026-09-01: an applier run spent
@@ -3648,6 +3683,12 @@ class SessionManager:
                             terminal = str((_event.data or {}).get("status") or "")
                         elif _event.type is EventType.INTERRUPTED:
                             terminal = "interrupted"
+                        elif _event.type is EventType.ERROR:
+                            terminal = "error"
+                            data = _event.data or {}
+                            kind = str(data.get("error_type") or "").strip()
+                            text = str(data.get("error") or "").strip()
+                            failure = f"{kind}: {text}" if kind and text else (text or kind)
             except TimeoutError:
                 timed_out = True
                 terminal = "timed out"
@@ -3664,13 +3705,12 @@ class SessionManager:
                 # Distinct from "error": nothing threw, the agent just never finished.
                 # Surfaced so six quiet mornings of half-run automations can't look green.
                 run.status = "incomplete"
-                run.error = (
-                    f"stopped at the {deadline:.0f}s limit — it was still working and did "
-                    f"not finish; whatever it produced before the cut is kept"
-                    if timed_out
-                    else f"run ended as {terminal or 'unknown'}"
-                    if terminal != "completed"
-                    else "run completed but produced no output"
+                run.error = run_failure_message(
+                    terminal,
+                    failure,
+                    produced=produced,
+                    timed_out=timed_out,
+                    deadline=deadline,
                 )
             if task.notify_on_completion:
                 await self._notify_task_done(task, run)
