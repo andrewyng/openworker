@@ -8,21 +8,175 @@ prefixes) and a session allowlist. The engine only *decides*; the turn engine ro
 
 from __future__ import annotations
 
+import re
 import shlex
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
-# Shell metacharacters that turn one "allowlisted" command into several. Any of these in a
-# command disqualifies it from allowlist auto-run — approval is required instead. Covers
-# chaining (`;` `&` `&&` `||`), pipes (`|`), redirection (`>` `<`), command substitution
-# (`` ` `` `$(`), process substitution / grouping (`(`), and newlines.
-_SHELL_OPERATORS = (";", "&", "|", ">", "<", "`", "$(", "(", "\n", "\r")
+# Constructs whose *contents* we cannot evaluate, so a command carrying one is never
+# eligible for prefix auto-run: command/process substitution, redirection (writes anywhere
+# the allowlist never vetted), and variable expansion (the value was set out of view).
+_OPAQUE_CONSTRUCTS = ("`", "$(", "$", ">", "<", "(")
+
+# Separators that chain several commands into one string. Each part is checked independently
+# against the allowlist — the old behaviour rejected the whole command outright, which both
+# refused harmless `git status && git diff` and (because `-exec` needs no separator) still
+# auto-allowed `find . -exec rm {} +` under a `find` prefix.
+_SEPARATORS = ("&&", "||", ";", "|&", "|", "&", "\n", "\r")
+
+# Programs that run *another* program named in their arguments. A prefix rule on the outer
+# program can never vouch for the inner one, so these always fall through to approval.
+_ARG_EXECUTORS = {
+    "xargs", "env", "nohup", "nice", "stdbuf", "timeout", "watch", "sudo", "doas",
+    "ssh", "docker", "podman", "kubectl", "npx", "pnpx", "bunx", "uvx",
+}
+# Interpreters carrying inline code, e.g. `python -c "..."`, `node -e "..."`.
+_INLINE_CODE_FLAGS = {"-c", "-e", "--eval", "--command", "-Command", "-EncodedCommand"}
+_INTERPRETERS = {
+    "sh", "bash", "zsh", "dash", "ksh", "fish", "powershell", "pwsh", "cmd",
+    "python", "python3", "node", "deno", "bun", "ruby", "perl", "php",
+}
+# Flags that turn a search/list tool into an execution or deletion tool.
+_DANGEROUS_FLAGS = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprintf"}
 
 
-def _has_shell_operators(command: str) -> bool:
-    return any(op in command for op in _SHELL_OPERATORS)
+def _split_commands(command: str) -> list[str]:
+    """Split a compound command on its separators. Longest separators first so `&&` isn't
+    read as two `&`. Purely textual — quoted separators are not respected, which is
+    deliberate: over-splitting only ever produces MORE parts to justify, never fewer."""
+    parts = [command]
+    for sep in _SEPARATORS:
+        parts = [chunk for part in parts for chunk in part.split(sep)]
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _is_prefix_eligible(argv: list[str]) -> bool:
+    """False when a parsed command can never be vouched for by a prefix rule, because it
+    runs code the rule never saw: another program named in its arguments, inline source, or
+    an execution/deletion flag."""
+    if not argv:
+        return False
+    program = Path(argv[0]).name.lower()
+    program = program[:-4] if program.endswith(".exe") else program
+    if program in _ARG_EXECUTORS:
+        return False
+    if program in _INTERPRETERS and any(a in _INLINE_CODE_FLAGS for a in argv[1:]):
+        return False
+    if any(a.lower() in _DANGEROUS_FLAGS for a in argv[1:]):
+        return False
+    return True
+
+
+# Tools granting authority that OUTLIVES this session: instructions the agent will follow
+# in later conversations, or a task that runs on its own afterwards (OPE-117). The reviewer
+# never clears these — the same floor as deferred-execution files, for the same reason: the
+# effect lands after the conversation that authorised it has ended, so the person who bears
+# it is not in the room. `create_scheduled_task` states the contract in its own comment
+# ("the human granted them by approving this gated call"); this makes that true again.
+#
+# `update_` is included because it can rewrite the instructions and schedule of a task the
+# user already approved while keeping its existing grants; `delete_` because tampering with
+# standing configuration the user personally set up is the same class of harm, in reverse.
+# Narrowing an update is floored along with broadening it: telling the two apart means
+# judging intent, which is exactly what a floor exists to avoid.
+PERSISTENT_AUTHORITY_TOOLS = {
+    "save_skill",
+    "create_scheduled_task",
+    "update_scheduled_task",
+    "delete_scheduled_task",
+}
+
+
+def protected_paths() -> list[Path]:
+    """Files that govern the permission system itself. Nothing the agent does may write
+    these — in any mode, through any tool. The escalation this blocks is: approve one
+    ordinary-looking command, it quietly appends to the rule file, every future session is
+    more permissive. That happens in the DEFAULT interactive mode, so this cannot be a
+    property of a sandbox or of any one mode; it is a floor."""
+    from .secrets import state_dir
+
+    base = state_dir()
+    return [
+        base / "config.toml",
+        base / "risk_overrides.json",
+        base / "workspace_trust.json",
+        base / "unattended.json",
+        base / "coworker.db",  # session records carry the saved "always allow" grants
+        base / "secrets.json",
+        base / "inbox_routing.json",
+    ]
+
+
+# Files INSIDE a workspace that execute on a later, innocuous-looking action. An edit here
+# is a deferred command: writing `.git/hooks/pre-commit` and then running `git commit` runs
+# it. They stay writable, but never WITHOUT a human — no auto-approve path may clear them.
+_PROTECTED_IN_PROJECT = (
+    ".git/hooks/",
+    ".github/workflows/",
+    ".gitlab-ci.yml",
+    ".vscode/tasks.json",
+    ".coworker/",  # workspace policy + skills the agent would otherwise self-grant
+)
+
+
+def _is_protected_in_project(candidate: Path) -> bool:
+    posix = candidate.as_posix()
+    return any(
+        (f"/{marker}" in posix or posix.startswith(marker))
+        if marker.endswith("/")
+        else posix.endswith("/" + marker)
+        for marker in _PROTECTED_IN_PROJECT
+    )
+
+
+def _host_of(url_or_domain: str) -> str:
+    """The lowercased host of a URL, or a bare domain as-is. `''` when there's nothing
+    usable. Accepts both `https://docs.python.org/x` and `docs.python.org`."""
+    s = (url_or_domain or "").strip().lower()
+    if not s:
+        return ""
+    if "://" in s:
+        return urlsplit(s).hostname or ""
+    return urlsplit("//" + s).hostname or s
+
+
+# The argument that names a write tool's target path, when it's a single top-level field.
+# Patch/diff tools carry their paths inside the blob instead — extracted in `write_paths`.
+_PATH_ARG: dict[str, str] = {"write_file": "path", "replace_in_file": "path"}
+# apply_patch (Codex format) file headers, and unified-diff `+++ b/<path>` headers.
+_APPLY_PATCH_FILE = re.compile(
+    r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE
+)
+_APPLY_PATCH_MOVE = re.compile(r"^\*\*\* Move to: (.+)$", re.MULTILINE)
+_UNIFIED_DIFF_FILE = re.compile(r"^\+\+\+ (?:b/)?(.+?)\s*$", re.MULTILINE)
+
+
+def write_paths(tool_name: str, arguments: dict[str, Any]) -> tuple[list[str], bool]:
+    """Every filesystem path a write tool would touch, for root scoping.
+
+    Returns ``(paths, located)``. ``located`` is False when the path can't be determined
+    (an unknown write tool, or a patch/diff blob with no parseable file header) — the caller
+    must then fail closed rather than skip scoping, so an unscoped write can't slip through
+    auto/custom mode.
+    """
+    arg = _PATH_ARG.get(tool_name)
+    if arg is not None:
+        value = arguments.get(arg)
+        return ([str(value)], True) if value else ([], False)
+    if tool_name == "apply_patch":
+        blob = str(arguments.get("patch", ""))
+        paths = _APPLY_PATCH_FILE.findall(blob) + _APPLY_PATCH_MOVE.findall(blob)
+        return ([p.strip() for p in paths], bool(paths))
+    if tool_name == "apply_unified_diff":
+        blob = str(arguments.get("diff", ""))
+        paths = [p for p in _UNIFIED_DIFF_FILE.findall(blob) if p and p != "/dev/null"]
+        return (paths, bool(paths))
+    # Unknown write tool (e.g. one promoted to write via a user override): we cannot locate
+    # its path, so it cannot be auto-scoped.
+    return ([], False)
 
 from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
     SHELL_TOOL,
@@ -34,14 +188,52 @@ from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOO
 )
 
 
+# The transcript's full Auto-Approve explainer (owner copy 2026-08-24). Persisted as a
+# `mode_notice` message the FIRST time a session enters Auto-Approve — server-authored so
+# it appears exactly once, in place, and survives reloads (the old client-side banner
+# re-announced on every restart).
+AUTO_APPROVE_NOTICE = (
+    "Auto-approve uses a model to let routine actions through without asking; anything "
+    "it isn't sure about still comes to you. It cuts interruptions but still carries "
+    "some risk i.e. a command it allows still reaches anything you can. These are model "
+    "judgments, and not guarantees."
+)
+
+# Human labels for the one-line persisted switch markers ("Ask for approval is on.").
+MODE_LABELS = {
+    "discuss": "Discuss",
+    "plan": "Plan",
+    "interactive": "Ask for approval",
+    "auto": "Bypass approvals",
+    "bypass-approvals": "Bypass approvals",
+    "auto-approve": "Auto-approve",
+}
+
+
 class Mode(str, Enum):
     DISCUSS = "discuss"  # read-only conversation: no edits, no planning workflow
     PLAN = (
         "plan"  # read-only + the planning contract (explore → propose_plan → execute)
     )
     INTERACTIVE = "interactive"  # ask for approval (default)
-    AUTO = "auto"  # full access
+    # Renamed from "auto" (spec §1.5, 2026-08-12): "bypass" names the action — switching a
+    # safety system off — and can't be confused with AUTO_APPROVE in a picker. Deliberately
+    # NOT "bypass-ALL-approvals": Phase 1's floors (settings files, out-of-root writes,
+    # `.git/hooks`) still hold in this mode, so "all" would be a false promise.
+    BYPASS_APPROVALS = "bypass-approvals"  # full access (minus the hard floors)
+    # Interactive, but an LLM reviewer judges each would-be approval card first: clear
+    # allows run without a prompt, everything else still reaches the human. The reviewer
+    # can only turn "ask" into "allow", never "blocked" into "allow" (spec §1.2). With no
+    # reviewer plugged into the engine this mode behaves exactly like INTERACTIVE.
+    AUTO_APPROVE = "auto-approve"
     CUSTOM = "custom"  # interactive + auto-allow the config's `auto_allow` tools
+
+    @classmethod
+    def _missing_(cls, value: object) -> "Mode | None":
+        # Legacy spelling from configs, saved sessions, and older UIs.
+        if value == "auto":
+            return cls.BYPASS_APPROVALS
+        return None
 
 
 # Modes whose enforcement is read-only. DISCUSS and PLAN share the same gate; they differ
@@ -54,6 +246,12 @@ class Decision:
     allowed: bool
     reason: str = ""
     needs_user: bool = False  # True → surface should prompt the user for approval
+    # True → this ask is reserved for a HUMAN: the Auto-Approve reviewer must not be
+    # consulted and cannot clear it. Set on decisions whose entire point is that a person
+    # sees them — protected in-project files that execute later (git hooks, CI configs:
+    # "never WITHOUT a human — no auto-approve path may clear them") and writes whose path
+    # could not be located for scoping (an allow would bypass root scoping unverified).
+    human_only: bool = False
     # Set when a task-scoped standing rule allowed the call ("tool → target") so the
     # engine can audit the exact rule and the tool card can say so (§25).
     rule: str = ""
@@ -88,6 +286,14 @@ class PermissionEngine:
     auto_allow_tools: set[str] = field(default_factory=set)
     session_allow_tools: set[str] = field(default_factory=set)
     session_allow_commands: set[str] = field(default_factory=set)
+    # Egress domains that auto-run without a prompt: `allowed_domains` from user config, plus
+    # `session_allow_domains` minted by "Always allow this domain". Matched by exact host or
+    # subdomain suffix (see `_domain_allowed`).
+    allowed_domains: list[str] = field(default_factory=list)
+    session_allow_domains: set[str] = field(default_factory=set)
+    # Session-wide read-only grant (owner ask 2026-08-11): auto-allow shell commands the
+    # conservative classifier (coworker/readonly.py) accepts. User-elected per session.
+    session_readonly: bool = False
     # Task-scoped standing rules (§25): {tool: {allowed targets}}, seeded from the owning
     # ScheduledTask's target-shaped entries. Kept by reference and re-read every check, so a
     # rule minted mid-run ("Allow every time") applies to the run's next call too.
@@ -125,7 +331,21 @@ class PermissionEngine:
         risk = classify(tool_name, metadata, self.risk_overrides)
         is_write = risk is RiskClass.WRITE_LOCAL
         is_shell = risk is RiskClass.EXEC
+        is_egress = risk is RiskClass.EGRESS
         consequential = is_consequential(risk)
+
+        # SELF-PROTECTION FLOOR — runs before mode, allowlists and every auto-approve path,
+        # because the escalation it blocks happens in the DEFAULT mode. No verdict below can
+        # reach these files, and no human click in the flow can grant it either: loosening
+        # requires editing the files out-of-band.
+        if is_write or is_shell:
+            hit = self._touches_protected(tool_name, arguments, is_shell)
+            if hit is not None:
+                return Decision(
+                    False,
+                    f"refusing to modify OpenWorker's own settings: {hit}",
+                    needs_user=False,
+                )
 
         # Discuss / plan modes: read-only.
         if self.mode in READ_ONLY_MODES and consequential:
@@ -133,28 +353,102 @@ class PermissionEngine:
                 False, f"{self.mode.value} mode is read-only", needs_user=False
             )
 
-        # Path scoping for writes that name a path (all modes): must land in a writable root.
+        # Path scoping for writes (all modes): every path the write touches must land in a
+        # writable root. A write whose path can't be located is not scoped-able, so it fails
+        # closed to approval rather than slipping through auto/custom unscoped.
+        needs_human_for_protected = False
         if is_write:
-            path = arguments.get("path")
-            if path is not None and not self._under_writable_root(path):
-                return Decision(False, f"path is not in a writable directory: {path}")
+            paths, located = write_paths(tool_name, arguments)
+            if not located:
+                return Decision(
+                    False,
+                    "cannot determine the write path to scope",
+                    needs_user=True,
+                    human_only=True,  # an unscopable write must reach a person, not the reviewer
+                )
+            for path in paths:
+                if not self._under_writable_root(path):
+                    return Decision(
+                        False, f"path is not in a writable directory: {path}"
+                    )
+                # In-project files that run on a later action (git hooks, CI configs) may be
+                # edited, but never by an auto-approve path — a human must see it.
+                if _is_protected_in_project(self._candidate(path)):
+                    needs_human_for_protected = True
+
+        # Authority outliving the session reaches a person, over the reviewer and over
+        # every allowlist below (OPE-117). Placed ahead of the non-consequential return on
+        # purpose: these tools are consequential today, but a metadata slip must not be
+        # able to switch the floor off. Read-only modes still hard-deny above this.
+        if tool_name in PERSISTENT_AUTHORITY_TOOLS:
+            return Decision(
+                False,
+                "this outlives the session — approval required",
+                needs_user=True,
+                human_only=True,
+            )
 
         # Non-consequential tools always run.
         if not consequential:
             return Decision(True, "low risk")
 
+        # A protected in-project target (git hooks, CI config) skips every auto-approve path
+        # below — including auto mode and the session/config allowlists — and asks.
+        if needs_human_for_protected:
+            return Decision(
+                False,
+                "this file runs automatically later — approval required",
+                needs_user=True,
+                human_only=True,  # deferred-execution files: a human sees every one (§ floor)
+            )
+
         # Full access.
-        if self.mode is Mode.AUTO:
+        if self.mode is Mode.BYPASS_APPROVALS:
             return Decision(True, "full access")
 
-        # interactive / custom: allowlists.
+        # interactive / custom / auto-approve: allowlists.
+        #
+        # In AUTO_APPROVE, session grants ("always allow this …" clicks) deliberately do
+        # NOT auto-allow (spec §1.5): out-of-band standing policy — the user-settings
+        # allowlists checked via `_command_allowed` / config `allowed_domains` — may skip
+        # the judge, but an in-flow click may not. A domain grant matches on host only and
+        # is blind to the path and query string (where exfiltration rides), and command
+        # grants replay as exact text; both are precisely what the reviewer should see.
+        # The skipped checks return `needs_user` instead, which routes to the reviewer.
+        honor_session_grants = self.mode is not Mode.AUTO_APPROVE
         if is_shell:
             command = str(arguments.get("command", ""))
             if self._command_allowed(command):
                 return Decision(True, "command on allowlist")
-            if command and command in self.session_allow_commands:
+            if (
+                honor_session_grants
+                and command
+                and command in self.session_allow_commands
+            ):
                 return Decision(True, "command allowed for session")
-        if tool_name in self.session_allow_tools and not is_connector:
+            # Also a session grant, so §1.5 applies: in Auto-Approve the reviewer judges
+            # these rather than the classifier waving them through.
+            if honor_session_grants and self.session_readonly and command:
+                from .readonly import is_readonly_command, read_targets
+
+                # The classifier vets what a command DOES; the roots vet what it READS
+                # (OPE-130). Without the second half, a grant the user reads as "stop
+                # asking about my project files" also covers ~/.aws/credentials, another
+                # repo's history, and OpenWorker's own secrets file — none of which the
+                # self-protection floor catches, since that guards writes, not reads.
+                if is_readonly_command(command) and all(
+                    self._under_root(t) for t in read_targets(command)
+                ):
+                    return Decision(True, "read-only command (session grant)")
+        if is_egress:
+            url = str(arguments.get("url", ""))
+            if self._domain_allowed(url, include_session=honor_session_grants):
+                return Decision(True, "domain on allowlist")
+        if (
+            honor_session_grants
+            and tool_name in self.session_allow_tools
+            and not is_connector
+        ):
             return Decision(True, "tool allowed for session")
 
         # Task-scoped standing rules (§25): tool + exact target, owned by the automation.
@@ -185,6 +479,22 @@ class PermissionEngine:
         if command:
             self.session_allow_commands.add(command)
 
+    def allow_readonly_for_session(self) -> None:
+        self.session_readonly = True
+
+    def allow_domain_for_session(self, url_or_domain: str) -> None:
+        """Remember an egress destination for this session ("Always allow this domain").
+
+        A leading `www.` is stripped at minting (§1.9): `bbc.com` and `www.bbc.com` are one
+        site in every user's mental model, and the suffix match in `_domain_allowed` already
+        treats `www.bbc.com` as a subdomain of `bbc.com`. Pure spelling only — never eTLD+1
+        or any broader normalisation, which would silently widen the grant."""
+        host = _host_of(url_or_domain)
+        if host.startswith("www."):
+            host = host[4:]
+        if host:
+            self.session_allow_domains.add(host)
+
     # -- helpers ----------------------------------------------------------------
     def _candidate(self, path: str) -> Path:
         # Relative paths resolve against the primary (workspace_root); absolute/`~` taken as-is.
@@ -213,26 +523,101 @@ class PermissionEngine:
                 continue
         return False
 
+    def _touches_protected(
+        self, tool_name: str, arguments: dict[str, Any], is_shell: bool
+    ) -> Optional[str]:
+        """The protected settings path this call would modify, or None.
+
+        For writes we resolve the real target. For shell we can only inspect the command
+        text — parser depth, so it stops accidents and casual attempts, not a determined
+        adversary (that needs the OS sandbox). Cheap and worth having regardless.
+
+        Shell matching is on the FULL path only, never a bare filename: matching
+        `secrets.json` anywhere in a command would refuse unrelated work that merely
+        mentions the name. A command naming the real settings path is refused whether it
+        reads or writes — we cannot tell which from text, and the conservative direction is
+        the right one for these files.
+        """
+        targets = [str(p) for p in protected_paths()]
+        if is_shell:
+            command = str(arguments.get("command", ""))
+            if not command:
+                return None
+            lowered = command.replace("\\", "/").lower()
+            for target in targets:
+                if target.replace("\\", "/").lower() in lowered:
+                    return target
+            return None
+        paths, located = write_paths(tool_name, arguments)
+        if not located:
+            return None  # unlocatable writes are already failed closed by the caller
+        resolved = {str(self._candidate(p)) for p in paths}
+        for target in targets:
+            if str(Path(target).resolve()) in resolved:
+                return target
+        return None
+
+    def _domain_allowed(self, url: str, *, include_session: bool = True) -> bool:
+        """True when the URL's host is an allowed egress destination — an exact match or a
+        subdomain of an allowed domain (so `docs.python.org` matches `python.org`, but
+        `evil-python.org` never matches `python.org`).
+
+        `include_session=False` (AUTO_APPROVE mode) checks the user-settings list only:
+        mid-session "always allow this domain" clicks don't bypass the reviewer there."""
+        host = _host_of(url)
+        if not host:
+            return False
+        allowed = {d for d in (_host_of(x) for x in self.allowed_domains) if d}
+        if include_session:
+            allowed |= self.session_allow_domains
+        for dom in allowed:
+            if host == dom or host.endswith("." + dom):
+                return True
+        return False
+
     def _command_allowed(self, command: str) -> bool:
-        # An allowlist entry auto-runs a command WITHOUT approval, so prefix matching is
-        # unsafe: `git status` would auto-approve `git status && rm -rf ~`. Reject anything
-        # carrying shell operators (chaining/redirection/substitution) up front, then match
-        # the parsed argv against each entry — the entry's own tokens must be an exact
-        # prefix of the command's tokens (so `git status` matches `git status -s` but never
-        # `git statusfoo` or a bare `git`).
-        if _has_shell_operators(command):
+        """True only when EVERY part of a (possibly compound) command is independently
+        covered by an allowlist entry.
+
+        An allowlist entry auto-runs without approval, and a prefix rule can only vouch for
+        the words it matched — everything after is unexamined. So this does two jobs:
+        guarantee the unexamined tail can only be arguments, then match the beginning.
+
+        - Constructs whose contents we can't evaluate (substitution, redirection, variable
+          expansion) disqualify the whole command.
+        - Compound commands are split and each part checked on its own, so
+          `git status && git diff` runs when both are allowed, while
+          `git status && rm -rf ~` does not.
+        - Parts that run code named in their arguments (`xargs`, `sh -c`, `find -exec`,
+          `-delete`) are never prefix-eligible: a `find` rule must not auto-run
+          `find . -exec rm {} +`.
+        - Matching is on parsed words, not text, so `git status` covers `git status -s` but
+          never `git statusfoo` or a bare `git`.
+        """
+        if not command.strip():
             return False
-        try:
-            argv = shlex.split(command)
-        except ValueError:
-            return False  # unbalanced quotes etc. — treat as not-allowlisted
-        if not argv:
+        if any(tok in command for tok in _OPAQUE_CONSTRUCTS):
             return False
+        parts = _split_commands(command)
+        if not parts:
+            return False
+        prefixes: list[list[str]] = []
         for allowed in self.allowed_commands:
             try:
                 prefix = shlex.split(allowed)
             except ValueError:
                 continue
-            if prefix and argv[: len(prefix)] == prefix:
-                return True
-        return False
+            if prefix:
+                prefixes.append(prefix)
+        if not prefixes:
+            return False
+        for part in parts:
+            try:
+                argv = shlex.split(part)
+            except ValueError:
+                return False  # unbalanced quotes etc. — treat as not-allowlisted
+            if not argv or not _is_prefix_eligible(argv):
+                return False
+            if not any(argv[: len(p)] == p for p in prefixes):
+                return False
+        return True

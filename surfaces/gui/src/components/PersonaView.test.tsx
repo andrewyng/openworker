@@ -27,7 +27,12 @@ const DETAIL = {
   icon: "🛠️",
   tagline: "Operate and investigate",
   description: "A careful, methodical operations engineer.",
+  media: [],
+  builtin: true,
+  group: "general",
   enabled: true,
+  surfaced: true,
+  default: false,
   tools: ["files", "search", "shell"],
   recommended_models: ["claude-opus-4-8", "gpt-5.5"],
   default_permission_mode: "interactive",
@@ -67,10 +72,12 @@ describe("PersonaView", () => {
     expect(await screen.findByText("Ops Coworker")).toBeTruthy();
     expect(screen.getByText("Operate and investigate")).toBeTruthy();
     expect(screen.getByText("A careful, methodical operations engineer.")).toBeTruthy();
-    // tools rendered as chips
-    expect(screen.getByText("shell")).toBeTruthy();
-    // a connected recommend shows "connected"; an unconnected one offers Connect/Add
-    expect(screen.getByText("connected")).toBeTruthy();
+    // tool calls sit behind a collapsed Advanced disclosure (UX-035)
+    expect(screen.queryByText(/shell/)).toBeNull();
+    fireEvent.click(screen.getByTestId("tool-calls-disclosure"));
+    expect(screen.getByText(/files · search · shell/)).toBeTruthy();
+    // a connected row shows the Ready chip; unconnected ones offer Connect/Add
+    expect(screen.getAllByText(/Ready/).length).toBeGreaterThan(0);
     expect(screen.getByText("Connect")).toBeTruthy(); // datadog (core, not connected)
     expect(screen.getByText("Add")).toBeTruthy(); // filesystem (mcp, not connected)
     // defaults footer

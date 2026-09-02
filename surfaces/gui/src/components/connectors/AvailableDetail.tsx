@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { type CloudStatus, type Connector } from "../../api";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
@@ -19,6 +20,7 @@ export function AvailableDetail({
   cloud: CloudStatus | null;
   onChanged: () => void;
 }) {
+  const { t: tt } = useTranslation();
   const [connecting, setConnecting] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const tools = c.tools || [];
@@ -29,14 +31,14 @@ export function AvailableDetail({
         <ConnectorBadge connector={c} size={44} title={c.title} />
         <div className="min-w-0 flex-1">
           <h2 className="text-[20px] font-semibold tracking-tight leading-tight">{c.title}</h2>
-          <div className="text-[12.5px] text-muted">{c.blurb}</div>
+          <div className="text-[13px] text-muted">{c.blurb}</div>
         </div>
         <button
           className={PILL_ACCENT}
           data-testid="available-connect"
           onClick={() => setConnecting(true)}
         >
-          Connect
+          {tt("available.connect")}
         </button>
       </div>
 
@@ -44,7 +46,7 @@ export function AvailableDetail({
 
       {(c.access?.length ?? 0) > 0 && (
         <>
-          <div className={GRP_H}>Access</div>
+          <div className={GRP_H}>{tt("available.access")}</div>
           <div className={GRP} data-testid="available-access">
             {c.access!.map((line) => (
               <div key={line} className={ROW + " !min-h-[36px] !py-2 text-[13px]"}>
@@ -53,14 +55,14 @@ export function AvailableDetail({
             ))}
           </div>
           <div className={FOOT}>
-            Keys and tokens are stored only on this computer. Disconnect anytime.
+            {tt("available.access_foot")}
           </div>
         </>
       )}
 
       {tools.length > 0 && (
         <>
-          <div className={GRP_H}>Tools</div>
+          <div className={GRP_H}>{tt("available.tools")}</div>
           <div className={GRP}>
             <button
               className={ROW + " w-full text-left hover:bg-paper/60 text-[13px]"}
@@ -68,18 +70,18 @@ export function AvailableDetail({
               onClick={() => setShowTools((v) => !v)}
             >
               <span className="min-w-0 flex-1 text-muted">
-                {tools.length} tool{tools.length === 1 ? "" : "s"} this connector adds
+                {tt("available.tools_added", { count: tools.length })}
               </span>
-              <span className="text-faint text-[13px] shrink-0">{showTools ? "Hide" : "View"}</span>
+              <span className="text-faint text-[13px] shrink-0">{showTools ? tt("available.hide") : tt("available.view")}</span>
             </button>
             {showTools &&
-              tools.map((t) => (
-                <div key={t.name} className={ROW + " !min-h-[38px]"}>
+              tools.map((tool) => (
+                <div key={tool.name} className={ROW + " !min-h-[38px]"}>
                   <span className="min-w-0 flex-1">
-                    <span className="text-[13px]">{t.label}</span>
-                    <span className="block text-[12px] text-muted">{t.description}</span>
+                    <span className="text-[13px]">{tool.label}</span>
+                    <span className="block text-[12px] text-muted">{tool.description}</span>
                   </span>
-                  {t.kind !== "read" && <span className={TAG_QUIET}>asks first</span>}
+                  {tool.kind !== "read" && <span className={TAG_QUIET}>{tt("available.asks_first")}</span>}
                 </div>
               ))}
           </div>

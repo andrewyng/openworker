@@ -128,6 +128,21 @@ class SQLiteMemoryStore(MemoryStore):
             self._conn.commit()
         return cursor.rowcount
 
+    def rekey_workspace(self, old: str, new: str) -> int:
+        """Re-key workspace-scoped memories from one project key to another — the
+        twentieth-pass one-time path→git migration. Rows are independent, so a
+        collision with existing rows under `new` is just a union. Returns the
+        number of rows moved."""
+        if old == new:
+            return 0
+        with self._lock:
+            cursor = self._conn.execute(
+                "UPDATE memories SET workspace = ? WHERE workspace = ? AND scope = ?",
+                (new, old, Scope.WORKSPACE.value),
+            )
+            self._conn.commit()
+        return cursor.rowcount
+
     def close(self) -> None:
         self._conn.close()
 

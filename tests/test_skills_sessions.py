@@ -149,11 +149,11 @@ def test_live_load_skill_semantics(manager):
       disable applies to RUNNING sessions; delete ≡ disable to the model);
     · the ONLY thing that persists is what a conversation already loaded (history)."""
     from coworker.agent import build_engine
-    from coworker.agents.registry import get_agent
+    from coworker.agents.chat import chat_agent
 
     _skill(manager.skill_store.global_dir, "early", body="early body")
     engine = build_engine(
-        agent=get_agent("chat"),
+        agent=chat_agent(),  # workspace-free agent (persona retired; builder remains)
         provider=ScriptedProvider(),
         skill_filter=lambda: manager.effective_skill_names("s1"),
     )
@@ -198,12 +198,12 @@ def test_disable_countermand_for_loaded_skills(manager):
     import json as _json
 
     from coworker.agent import build_engine
-    from coworker.agents.registry import get_agent
+    from coworker.agents.chat import chat_agent
 
     _skill(manager.skill_store.global_dir, "used-one", body="used body")
     _skill(manager.skill_store.global_dir, "unused-one", body="never loaded")
     engine = build_engine(
-        agent=get_agent("chat"),
+        agent=chat_agent(),  # workspace-free agent (persona retired; builder remains)
         provider=ScriptedProvider(),
         skill_filter=lambda: manager.effective_skill_names("s1"),
     )

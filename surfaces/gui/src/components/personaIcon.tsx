@@ -39,24 +39,24 @@ export function isEmojiIcon(icon?: string): boolean {
   return !!icon && /[^\x00-\x7F]/.test(icon);
 }
 
-export function personaGlyph(icon?: string, family?: string): IconName {
+export function personaGlyph(icon?: string, folderScoped?: boolean): IconName {
   if (icon && NAMED.has(icon)) return icon as IconName;
   if (icon && LEGACY[icon]) return LEGACY[icon];
-  return family === "code" ? "code" : "sparkle";
+  return folderScoped ? "code" : "sparkle";
 }
 
 /** Renders a persona's icon: an emoji as text, otherwise the resolved line glyph. */
 export function PersonaGlyph({
   icon,
-  family,
+  folderScoped,
   size = 14,
 }: {
   icon?: string;
-  family?: string;
+  folderScoped?: boolean;
   size?: number;
 }) {
   if (isEmojiIcon(icon)) {
     return <span style={{ fontSize: size, lineHeight: 1 }}>{icon}</span>;
   }
-  return <Icon name={personaGlyph(icon, family)} size={size} />;
+  return <Icon name={personaGlyph(icon, folderScoped)} size={size} />;
 }
