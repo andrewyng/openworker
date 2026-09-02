@@ -21,6 +21,7 @@ import { ConnectorsList } from "./ConnectorsList";
 import { GithubDetail } from "./GithubDetail";
 import { GmailDetail } from "./GmailDetail";
 import { HubSpotDetail } from "./HubSpotDetail";
+import { MatrixDetail } from "./MatrixDetail";
 import { SlackDetail } from "./SlackDetail";
 import { GRP } from "./ui";
 
@@ -39,6 +40,7 @@ export interface DetailProps {
 // Bespoke pages register here; everything else gets GenericDetail below.
 const DETAIL_PAGES: Record<string, (p: DetailProps) => JSX.Element> = {
   slack: (p) => <SlackDetail {...p} />,
+  matrix: (p) => <MatrixDetail {...p} />,
   gmail: (p) => <GmailDetail {...p} />,
   google_calendar: (p) => <CalendarDetail {...p} />,
   hubspot: (p) => <HubSpotDetail {...p} />,

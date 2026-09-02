@@ -562,7 +562,7 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
             "Create a dedicated bot user on your Synapse or ESS homeserver.",
             "Sign in with Element, open Settings → Help & About → Access Token.",
             "Export your security recovery key (Settings → Security & Privacy) — required for E2EE.",
-            "Install libolm on this machine: brew install libolm (macOS) or apt install libolm-dev (Linux).",
+            "Install libolm on this machine: brew install libolm (macOS) or apt install libolm-dev (Linux). CI installs libolm-dev on Ubuntu.",
             "Invite the bot to encrypted rooms; it auto-accepts invites.",
             "After connecting, message the bot once, then use Capture to grab your Matrix user ID.",
         ],

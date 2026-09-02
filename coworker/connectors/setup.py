@@ -129,6 +129,10 @@ def connector_list(secrets: SecretStore) -> list[dict[str, Any]]:
                 a["email"] == default_email and a["managed"] for a in accounts
             )
             entry["filters"] = gmail_accounts.get_filters(secrets)
+        if d.name == "matrix" and connected:
+            from .matrix_profile import matrix_settings_public
+
+            entry["matrix_settings"] = matrix_settings_public(profile)
         if d.name == "google_calendar":
             # Multi-account, same shape as gmail: each `google_calendar:account:*`
             # profile is one Google account; :default is just the default pointer.

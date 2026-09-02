@@ -22,6 +22,11 @@ class MatrixSettings:
     ignore_user_patterns: list[re.Pattern[str]] = field(default_factory=list)
     require_mention: bool = True
     auto_thread: bool = True
+    session_scope: str = "auto"  # auto | room | thread
+    dm_mention_threads: bool = False
+    dm_auto_thread: bool = True
+    group_sessions_per_user: bool = True
+    lifecycle_reactions: bool = True
     e2ee_mode: str = "required"
     max_message_length: int = 4000
     max_media_bytes: int = 104_857_600
@@ -55,6 +60,11 @@ class MatrixSettings:
             ignore_user_patterns=patterns,
             require_mention=bool(profile.get("require_mention", True)),
             auto_thread=bool(profile.get("auto_thread", True)),
+            session_scope=str(profile.get("session_scope") or "auto"),
+            dm_mention_threads=bool(profile.get("dm_mention_threads", False)),
+            dm_auto_thread=bool(profile.get("dm_auto_thread", True)),
+            group_sessions_per_user=bool(profile.get("group_sessions_per_user", True)),
+            lifecycle_reactions=bool(profile.get("lifecycle_reactions", True)),
             e2ee_mode=str(profile.get("e2ee_mode") or "required"),
             max_message_length=int(profile.get("max_message_length") or 4000),
             max_media_bytes=int(profile.get("max_media_bytes") or 104_857_600),

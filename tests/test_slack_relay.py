@@ -21,8 +21,7 @@ from coworker.secrets import SecretStore
 @pytest.fixture(autouse=True)
 def _no_slack_network(monkeypatch):
     """Name/channel resolution is best-effort; unstubbed lookups must fail
-    instantly at a dead loopback port, never reach slack.com — a slow real
-    answer was blowing the 2s wait_dispatched window intermittently."""
+    quickly at a dead loopback port, never reach slack.com."""
     monkeypatch.setenv("SLACK_API_URL", "http://127.0.0.1:9/")
 
 

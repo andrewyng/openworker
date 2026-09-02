@@ -166,6 +166,7 @@ class MatrixAdapter(BasePlatformAdapter):
         self._joined_threads: set[tuple[str, str]] = set()
         self._dm_rooms: set[str] = set()
         self._dm_rooms_path: Optional[Path] = None
+        self._lifecycle_event: dict[str, str] = {}  # room_id -> inbound event_id
 
     def _note_thread(self, room_id: str, thread_id: Optional[str]) -> None:
         if thread_id:
@@ -347,7 +348,15 @@ class MatrixAdapter(BasePlatformAdapter):
             if media is not None:
                 mapped.agent_content = media
                 mapped.message_type = MessageType.MEDIA
-            await self.handle_message(mapped)
+            if mapped.message_id and self.settings.lifecycle_reactions:
+                await self._lifecycle_react(room.room_id, mapped.message_id, "👀")
+                self._lifecycle_event[room.room_id] = mapped.message_id
+            try:
+                await self.handle_message(mapped)
+            except Exception:
+                if self.settings.lifecycle_reactions and mapped.message_id:
+                    await self._lifecycle_react(room.room_id, mapped.message_id, "❌")
+                raise
 
         async def _on_room_message(room, event):
             if self._is_dm(room):
@@ -409,6 +418,23 @@ class MatrixAdapter(BasePlatformAdapter):
         if chat_type == "dm" or room_id in self._dm_rooms:
             return True
         return room_id in allowed_rooms
+
+    async def _lifecycle_react(self, room_id: str, event_id: str, emoji: str) -> None:
+        if self._client is None:
+            return
+        content = {
+            "m.relates_to": {
+                "rel_type": "m.annotation",
+                "event_id": event_id,
+                "key": emoji,
+            }
+        }
+        try:
+            await self._client.room_send(
+                room_id, "m.reaction", content, ignore_unverified_devices=True
+            )
+        except Exception:
+            logger.debug("matrix lifecycle reaction %s failed", emoji, exc_info=True)
 
     async def _media_agent_content(self, room_id: str, event: Any) -> Any | None:
         """Download mxc media and build multimodal agent content, or None for text-only."""
@@ -523,6 +549,9 @@ class MatrixAdapter(BasePlatformAdapter):
             self._note_thread(chat_id, thread_id)
             if self.settings.auto_thread and not thread_id and event_id:
                 self._note_thread(chat_id, event_id)
+            pending = self._lifecycle_event.pop(chat_id, None)
+            if pending and self.settings.lifecycle_reactions:
+                await self._lifecycle_react(chat_id, pending, "✅")
             return SendResult(True, message_id=event_id)
         except Exception as exc:
             return SendResult(False, error=str(exc))

@@ -3183,6 +3183,31 @@ class SessionManager:
         self._save_prefs()
         return {"ok": True, "dm_session": self.dm_session()}
 
+    def _matrix_settings(self):
+        from ..connectors.matrix_settings import MatrixSettings
+
+        profile = self.secrets.get("matrix:default") or {}
+        return MatrixSettings.from_profile(profile)
+
+    @staticmethod
+    def _platform_label(platform: str) -> str:
+        return {"slack": "Slack", "matrix": "Matrix", "telegram": "Telegram"}.get(
+            platform, platform.title()
+        )
+
+    def _mention_thread_target(self, event) -> str:
+        from ..connectors.base import format_target
+
+        src = event.source
+        thread_key = src.thread_id or getattr(event, "message_id", None)
+        if src.platform == "matrix":
+            from ..connectors.matrix_routing import mention_thread_target
+
+            return mention_thread_target(
+                self._matrix_settings(), src, getattr(event, "message_id", None)
+            )
+        return format_target(src.platform, src.chat_id, thread_key)
+
     def _ollama_alive(self) -> bool:
         """Best-effort local-Ollama liveness, cached 30s (get_settings runs on every GUI
         fetch — no 2s probe inline). Keyless is not the same as PRESENT: `ollama:*` picker
@@ -4642,6 +4667,18 @@ class SessionManager:
                 return
             return  # channel with no subscribers — nobody is listening
         # DM (or any non-channel): route to the designated session, else park it for visibility.
+        if src.platform == "matrix":
+            from ..connectors.matrix_routing import dm_mention_routes_to_thread
+
+            if dm_mention_routes_to_thread(
+                self._matrix_settings(),
+                mentions_me=bool(getattr(event, "mentions_me", False)),
+                is_dm=True,
+            ):
+                await self._route_mention(
+                    event, ms, self.subscriptions.for_channel(channel)
+                )
+                return
         dm = self.dm_session()
         agent_msg = (
             event.agent_content
@@ -4665,14 +4702,10 @@ class SessionManager:
         """@OpenWorker tagged in a channel. A subscribed (user-connected) coworker owns the channel
         and must answer; otherwise the per-thread coworker session handles it — spawned on the
         first tag, steered by follow-ups (deduped on the thread target)."""
-        from ..connectors.base import format_target
-
         src = event.source
-        # Slack semantics: replying to a top-level message threads on THAT message's ts, so a
-        # top-level tag (no thread_ts) keys — and is answered — on its own ts.
-        thread_key = src.thread_id or getattr(event, "message_id", None)
-        thread_target = format_target(src.platform, src.chat_id, thread_key)
+        thread_target = self._mention_thread_target(event)
         who = src.user_name or src.user_id or "?"
+        plat = self._platform_label(src.platform)
         chan = f"#{src.chat_name}" if src.chat_name else src.chat_id
         if subs:
             # The user connected a coworker to this channel — it answers tags; no spawn.
@@ -4696,7 +4729,7 @@ class SessionManager:
         if sid and self.session_store.load(sid) is not None:
             # Follow-up tag in a thread we already own → steer the same session.
             msg = (
-                f"💬 Follow-up in your Slack thread ({chan}) from {who}: {event.text}\n"
+                f"💬 Follow-up in your {plat} thread ({chan}) from {who}: {event.text}\n"
                 f'(Reply in the thread with the send_message tool, target "{thread_target}" '
                 f"— replies there are pre-approved.)"
             )
@@ -4715,6 +4748,7 @@ class SessionManager:
 
         src = event.source
         who = src.user_name or src.user_id or "?"
+        plat = self._platform_label(src.platform)
         chan = f"#{src.chat_name}" if src.chat_name else src.chat_id
         sid = uuid.uuid4().hex
         engine = self.get_engine(sid, agent=self.personas.default_id())
@@ -4740,16 +4774,25 @@ class SessionManager:
         self.session_store.rename(sid, f"{ask} — {chan}" if ask else chan)
         label = chan + (f" · {src.team_id}" if src.team_id else "")
         self.session_store.set_origin(sid, src.platform, label)
+        if src.platform == "matrix":
+            from ..connectors.matrix_routing import effective_session_scope
+            from ..connectors.matrix_sessions import MatrixSessionStore
+            from ..secrets import state_dir
+
+            if effective_session_scope(self._matrix_settings()) == "room":
+                store = MatrixSessionStore(state_dir() / "matrix" / "room_sessions.json")
+                uid = src.user_id or "" if self._matrix_settings().group_sessions_per_user else ""
+                store.set(src.chat_id, sid, user_id=uid)
         # Up to 6 lines of channel context, minus the tag itself (it's the opening line).
         recent = self.channel_buffer.recent(f"{src.platform}:{src.chat_id}", 7)[:-1]
         context = "\n".join(f"- {m['from']}: {m['text']}" for m in recent)
         opening = (
-            f"🔔 You were mentioned on Slack in {chan} by {who}: {event.text}\n\n"
-            f"You own this Slack thread. Reply in the thread using the send_message tool "
+            f"🔔 You were mentioned on {plat} in {chan} by {who}: {event.text}\n\n"
+            f"You own this {plat} thread. Reply in the thread using the send_message tool "
             f'with target "{thread_target}" — replies to this thread are pre-approved and '
             f"never prompt the user. Anything else (other channels, files, external "
             f"actions) asks for approval as usual. Keep replies concise and "
-            f"Slack-appropriate."
+            f"{plat}-appropriate."
             + (f"\n\nRecent channel context:\n{context}" if context else "")
         )
         try:
