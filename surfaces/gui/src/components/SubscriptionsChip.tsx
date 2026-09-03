@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   getConnectors,
   getRecentChannels,
@@ -40,6 +41,7 @@ export function ChannelPicker({
 }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement | null>(null);
+  const { t: tt } = useTranslation();
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
@@ -143,7 +145,7 @@ export function ChannelPicker({
       <input
         ref={inputRef}
         className="chan-input w-full"
-        placeholder="slack:C0123 or channel link"
+        placeholder={tt("inbox.channel_picker_placeholder")}
         value={display}
         title={value || undefined}
         onChange={(e) => {
@@ -186,7 +188,7 @@ export function ChannelPicker({
                 inputRef.current?.blur();
               }}
             >
-              <span className="text-[12.5px] text-ink">
+              <span className="text-[13px] text-ink">
                 {c.name ? `#${c.name}` : c.channel}
               </span>
               {c.name && <span className="ml-1.5 text-[11px] text-faint">{c.channel}</span>}
@@ -205,7 +207,7 @@ export function ChannelPicker({
               className="px-3 py-1.5 text-[12px] text-faint"
               data-testid="roster-searching"
             >
-              searching your workspace’s channels…
+              {tt("inbox.searching_channels")}
             </div>
           )}
           {/* Live workspace-roster hits: type the NAME, we resolved the id. */}
@@ -226,7 +228,7 @@ export function ChannelPicker({
                 inputRef.current?.blur();
               }}
             >
-              <span className="text-[12.5px] text-ink">
+              <span className="text-[13px] text-ink">
                 {r.is_private ? "🔒 " : "#"}
                 {r.name}
               </span>
@@ -235,7 +237,7 @@ export function ChannelPicker({
               )}
               {!r.is_member && (
                 <span className="block text-[11px] text-warnInk">
-                  invite @ocw to this channel in Slack so it can listen
+                  {tt("inbox.invite_to_listen")}
                 </span>
               )}
             </button>
@@ -261,6 +263,7 @@ export function SubscriptionsChip({
   const [recent, setRecent] = useState<RecentChannel[]>([]);
   const [draft, setDraft] = useState("");
   const ref = useRef<HTMLDivElement | null>(null);
+  const { t } = useTranslation();
 
   useEffect(() => {
     if (!open) return;
@@ -288,23 +291,23 @@ export function SubscriptionsChip({
     <div className="sub-chip-wrap" ref={ref}>
       <button
         className={"wschip sub-chip" + (open ? " active" : "")}
-        title="Channels this session listens to"
+        title={t("inbox.channels_this_session")}
         onClick={() => setOpen((v) => !v)}
       >
         <Icon name="plug" size={12} /> {channels.length || "+"}
       </button>
       {open && (
         <div className="sub-pop" onMouseDown={(e) => e.stopPropagation()}>
-          <div className="sub-pop-head">Channels this session listens to</div>
+          <div className="sub-pop-head">{t("inbox.channels_this_session")}</div>
           {channels.length === 0 ? (
-            <div className="dim sub-pop-empty">Not subscribed to any channel.</div>
+            <div className="dim sub-pop-empty">{t("inbox.not_subscribed")}</div>
           ) : (
             channels.map((c) => {
               const nm = recent.find((r) => r.channel === c)?.name;
               return (
               <div className="sub-pop-row" key={c}>
                 <span className="sub-pop-chan" title={c}>{nm ? `#${nm}` : c}</span>
-                <button className="sub-pop-x" title="Unsubscribe" onClick={() => remove(c)}>
+                <button className="sub-pop-x" title={t("inbox.unsubscribe")} onClick={() => remove(c)}>
                   ×
                 </button>
               </div>
@@ -314,7 +317,7 @@ export function SubscriptionsChip({
           <div className="sub-pop-add">
             <ChannelPicker value={draft} onChange={setDraft} recent={recent} onSubmit={add} />
             <button className="btn-primary sm" disabled={!draft.trim()} onClick={add}>
-              Add
+              {t("inbox.add")}
             </button>
           </div>
         </div>

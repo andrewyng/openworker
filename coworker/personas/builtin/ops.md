@@ -1,9 +1,9 @@
 ---
+ships: false
 id: ops
 name: Ops Coworker
 icon: wrench
 tagline: Operate and investigate — runbooks, logs, infrastructure
-family: knowledge
 tools: [files, search, shell, todo]
 messaging: true
 connectors: true
