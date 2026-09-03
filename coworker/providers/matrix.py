@@ -161,6 +161,9 @@ MATRIX: dict[str, ModelEntry] = {
         ),
     ),
     "zai:glm-5.2": ModelEntry("GLM-5.2 · Z AI", _AGENTIC, 128_000),
+    "zai-coding:glm-5.2": ModelEntry("GLM-5.2 · Z AI Coding Plan", _AGENTIC, 128_000),
+    "zai-coding:glm-4.7": ModelEntry("GLM-4.7 · Z AI Coding Plan", _AGENTIC, 128_000),
+    "zai-coding:glm-4-coder": ModelEntry("GLM-4 Coder · Z AI Coding Plan", _AGENTIC, 128_000),
     "deepseek:deepseek-v4-flash": ModelEntry(
         "DeepSeek V4 Flash · DeepSeek", _AGENTIC, 128_000
     ),
