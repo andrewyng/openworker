@@ -20,29 +20,24 @@ test("usage chip appears after a turn and opens the breakdown popover", async ({
     timeout: 10_000,
   });
 
-  // Default: no bar (owner ask 2026-07-30) — the chip states the session total
-  // (1k + 200 + 8k + 800 = 10k). The bar is opt-in via Settings.
+  // Default: no bar — the chip states the in-context size (prompt side of the last
+  // turn: 1k + 8k + 800 = 9.8k). Session totals are on release hold (owner call
+  // 2026-08-24): context-window figures only, everywhere.
   const chip = page.getByTestId("usage-chip");
-  await expect(chip).toContainText("10k");
+  await expect(chip).toContainText("9.8k");
 
-  // Popover: context fill (9.8k prompt-side of 200k = 5%) + per-model breakdown.
+  // Popover: context fill only (9.8k prompt-side of 200k = 5%) — no totals breakdown.
   await chip.click();
   const pop = page.getByTestId("usage-popover");
   await expect(pop).toBeVisible();
   await expect(pop).toContainText("Context window");
   await expect(pop).toContainText("9.8k of 200k · 5%");
-  await expect(pop).toContainText("Session totals");
-  await expect(pop).toContainText("Claude Opus 4.8 · Anthropic");
-  // Cache split present → the input rows read as components of Total input.
-  await expect(pop).toContainText("Uncached input");
-  await expect(pop).toContainText("Cache reads");
-  await expect(pop).toContainText("Cache writes");
-  // Total input = fresh 1k + cache_read 8k + cache_write 800 (cumulative billed input).
-  await expect(pop).toContainText("Total input");
-  await expect(pop).toContainText("9.8k");
-  await expect(pop).toContainText("10k tokens");
+  await expect(pop).not.toContainText("Session totals");
+  await expect(pop).not.toContainText("Uncached input");
+  await expect(pop).not.toContainText("tokens");
 
-  // Second turn accumulates (totals double), and the scrim click closes the popover.
+  // Context is a level, not a sum — a second identical turn leaves the chip unchanged.
+  // The scrim click closes the popover.
   await page.mouse.click(10, 10);
   await expect(pop).toHaveCount(0);
   await box.fill("again");
@@ -50,7 +45,7 @@ test("usage chip appears after a turn and opens the breakdown popover", async ({
   await expect(page.getByText("Echo: again", { exact: false }).first()).toBeVisible({
     timeout: 10_000,
   });
-  await expect(chip).toContainText("20k");
+  await expect(chip).toContainText("9.8k");
 });
 
 test("usage resets on a new session", async ({ page }) => {
@@ -66,14 +61,14 @@ test("usage resets on a new session", async ({ page }) => {
   await expect(page.getByTestId("usage-chip")).toHaveCount(0);
 });
 
-test("Settings toggle turns the context bar on; default is the session total", async ({ page }) => {
+test("Settings toggle turns the context bar on; default is the in-context number", async ({ page }) => {
   await page.goto("/");
   await page.getByText("Draft the launch note").first().click();
   const box = page.getByPlaceholder(/Ask the coworker/);
   await box.fill("hello");
   await box.press("Enter");
   const chip = page.getByTestId("usage-chip");
-  await expect(chip).toContainText("10k", { timeout: 10_000 }); // default: total, no bar
+  await expect(chip).toContainText("9.8k", { timeout: 10_000 }); // default: in-context size, no bar
 
   // Turn the bar ON in Settings -> General.
   await page.getByTestId("account-row").click();
@@ -94,6 +89,6 @@ test("Settings toggle turns the context bar on; default is the session total", a
   await page.getByPlaceholder(/Ask the coworker/).press("Enter");
   const bar = page.getByTestId("usage-chip");
   await expect(bar).toBeVisible({ timeout: 10_000 });
-  await expect(bar).not.toContainText("10k");
+  await expect(bar).not.toContainText("9.8k");
   await expect(bar).toHaveAttribute("title", /Context window 5% full/);
 });

@@ -45,7 +45,7 @@ test("signed out: chip and status line say Sign-in needed", async ({ page }) => 
 test("signed in + live socket: Live everywhere", async ({ page }) => {
   await forceStatus(page, {});
   await openConnectors(page);
-  await expect(page.getByTestId("connector-slack")).toContainText("Live");
+  await expect(page.getByTestId("connector-slack")).toContainText("Ready");
   await page.getByTestId("connector-slack").click();
   await expect(page.getByTestId("slack-mode-badge")).toContainText("Live · managed relay");
 });

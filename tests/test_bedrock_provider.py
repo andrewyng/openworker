@@ -576,3 +576,34 @@ def test_verify_bedrock_maps_client_errors(monkeypatch):
         "bedrock", fields={"region": "us-east-1", "auth_method": "profile"}
     )
     assert not out["ok"] and "rejected" in out["error"]
+
+
+def test_verify_bedrock_maps_modeled_client_error_subclasses(monkeypatch):
+    # Live boto3 raises MODELED subclasses (class name "AccessDeniedException", not
+    # "ClientError"). The old name-based check sent these to the generic "Couldn't reach"
+    # fallback and hid the specific guidance (owner report 2026-08-17, real Bedrock key).
+    from botocore.exceptions import ClientError
+
+    from coworker.providers.registry import verify_provider_key
+
+    modeled_cls = type("AccessDeniedException", (ClientError,), {})
+    denied = modeled_cls(
+        {"Error": {"Code": "AccessDeniedException", "Message": "no"}},
+        "ListFoundationModels",
+    )
+    _patch_session(monkeypatch, _FakeBedrockControl(exc=denied), {})
+    out = verify_provider_key(
+        "bedrock", fields={"region": "us-east-1", "auth_method": "profile"}
+    )
+    assert not out["ok"] and "Bedrock access" in out["error"]
+    assert "Couldn't reach" not in out["error"]
+
+    expired = type("ExpiredTokenException", (ClientError,), {})(
+        {"Error": {"Code": "ExpiredTokenException", "Message": "no"}},
+        "ListFoundationModels",
+    )
+    _patch_session(monkeypatch, _FakeBedrockControl(exc=expired), {})
+    out = verify_provider_key(
+        "bedrock", fields={"region": "us-east-1", "auth_method": "profile"}
+    )
+    assert not out["ok"] and "expired" in out["error"]

@@ -32,6 +32,9 @@ jobs:
       - name: npm ci
         working-directory: surfaces/gui
         run: npm ci
+      - name: Typecheck
+        working-directory: surfaces/gui
+        run: npx tsc --noEmit
       - name: Unit tests
         working-directory: surfaces/gui
         run: npm test

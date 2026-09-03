@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional
 
 class RiskClass(str, Enum):
     READ = "read"  # no side effects — always allowed
+    EGRESS = "egress"  # reaches the network — the request itself can carry data off-machine
     WRITE_LOCAL = "write_local"  # mutates the workspace — path-scoped + mode-gated
     EXEC = "exec"  # runs commands — mode-gated
     EXTERNAL = "external"  # side effects off the machine — the unattended Inbox hook
@@ -25,27 +26,115 @@ class RiskClass(str, Enum):
 # Built-in tools whose risk is fixed by name (the old WRITE_TOOLS / SHELL_TOOL, as data).
 WRITE_TOOLS = {"write_file", "replace_in_file", "apply_patch", "apply_unified_diff"}
 SHELL_TOOL = "run_shell"
+# Model-chosen network egress. `web_fetch` takes a URL straight from the model and the
+# URL's path/query can carry data outbound, so it is NOT a pure read — it must reach the
+# gate. `web_search` reaches a FIXED destination (the configured provider), but its query
+# is model-chosen free text — the same outbound channel — so it gates too (spec §2.2).
+# `browser_open_url` is the same channel by another name (OPE-111): classifying it here
+# gives it the full egress treatment (domain allowlist, host-named cards) instead of a bare
+# approval gate. Its old sibling `browser_read_url` was retired upstream; what replaced it,
+# `browser_read_page`, takes no URL and only reads the already-open page, so it is a
+# genuine read and stays out.
+# Contact-enrichment lookups are the `web_search` case with worse payloads: a fixed
+# destination (Apollo/Hunter), a model-chosen query — except the query IS someone's name
+# and email, and the someone is a third party who never agreed to it. Catalogued as reads
+# they ran with no card at all, including in Discuss mode (OPE-117 review follow-up).
+_ENRICHMENT_TOOLS = {
+    "apollo_enrich_person",
+    "apollo_enrich_company",
+    "apollo_search_people",
+    "hunter_domain_search",
+    "hunter_find_email",
+    "hunter_verify_email",
+}
+EGRESS_TOOLS = {
+    "web_fetch",
+    "web_search",
+    "browser_open_url",
+} | _ENRICHMENT_TOOLS
 
 _BASE: dict[str, RiskClass] = {
     **{name: RiskClass.WRITE_LOCAL for name in WRITE_TOOLS},
     SHELL_TOOL: RiskClass.EXEC,
+    **{name: RiskClass.EGRESS for name in EGRESS_TOOLS},
+}
+
+# How much attention each class demands, for the override-tightening rule below. Higher =
+# stricter. EXEC and WRITE_LOCAL are the crown jewels (path scoping / command gating).
+_STRICTNESS: dict[RiskClass, int] = {
+    RiskClass.READ: 0,
+    RiskClass.EGRESS: 1,
+    RiskClass.EXTERNAL: 2,
+    RiskClass.WRITE_LOCAL: 3,
+    RiskClass.EXEC: 3,
 }
 
 # A user-local override resolver: tool name -> RiskClass (or None to defer to the base).
-# Wired in Phase 2 (mainly to relax MCP's conservative default); always None until then.
 RiskOverrides = Callable[[str], Optional["RiskClass"]]
+
+
+def _catalog_floor(tool_name: str) -> Optional[RiskClass]:
+    """The floor a connector-catalog tool must not be relaxed below. Catalog writes are
+    EXTERNAL by construction (`approval_for_tool` → `requires_approval=True`), and letting
+    an override drop one to READ would switch off approval, the Auto-Approve reviewer, and
+    read-only mode in a single step (OPE-111). Lazy import: risk.py must stay importable
+    without the connectors package."""
+    try:
+        from .connectors.tool_defs import _KIND_BY_NAME
+    except ImportError:  # pragma: no cover - connectors always ship, but fail open to base
+        return None
+    kind = _KIND_BY_NAME.get(tool_name)
+    return RiskClass.EXTERNAL if kind is not None and kind != "read" else None
+
+
+def _mcp_floor(tool_name: str, metadata: Any) -> Optional[RiskClass]:
+    """The floor for third-party MCP tools (OPE-136): EXTERNAL, always.
+
+    An MCP tool's effects are a stranger's claim — we cannot tell its reads from a write
+    wearing a read's name — so no config value may drop one into the never-checked READ
+    tier. Before this floor, `requires_approval: false` in mcp.json reclassified a whole
+    server's tools to READ, which skipped not just the approval card but the Discuss-mode
+    denial, the Auto-approve reviewer, and the audit trail in one step. The flag now only
+    ever waives the *card* (see permissions.evaluate's trusted-MCP branch); the class is
+    welded on.
+
+    Keyed on `category == "mcp"`, not the name prefix: the first-party MCP-backed
+    connectors (§42 one-click jira/monday/asana) share the `mcp__*` naming but are
+    re-labelled `category="connector"` at wiring (server/manager.py) because their
+    read/write kinds are pinned in the catalog — first-hand knowledge, so §36's
+    "connector reads never gate" keeps applying to them. That relabel also closes the
+    reverse name-collision: a CUSTOM server that happens to reuse a catalog name still
+    carries category "mcp" and lands on this floor. The name-prefix check only backstops
+    the metadata-less case (a bare name reaching classify without its registration
+    sticker fails closed)."""
+    if getattr(metadata, "category", "") == "mcp":
+        return RiskClass.EXTERNAL
+    if metadata is None and tool_name.startswith("mcp__"):
+        return RiskClass.EXTERNAL
+    return None
 
 
 def classify(
     tool_name: str, metadata: Any = None, overrides: Optional[RiskOverrides] = None
 ) -> RiskClass:
-    """Effective risk of a tool call. ``overrides`` (user-local) wins, then the by-name base
-    table, then aisuite metadata (`requires_approval` → external), else read."""
+    """Effective risk of a tool call. A user override may *relax* a metadata tool (the
+    intended use — quieting an over-cautious plug-in), but may only ever **tighten** a
+    built-in write/exec/egress tool, a connector-catalog write, or a third-party MCP tool
+    (OPE-136), never loosen one. Downgrading a write to a read would switch off path
+    scoping AND the read-only gate at once, so it is refused here. Precedence otherwise:
+    the by-name base table, then aisuite metadata (`requires_approval` → external),
+    else read."""
+    base = (
+        _BASE.get(tool_name)
+        or _catalog_floor(tool_name)
+        or _mcp_floor(tool_name, metadata)
+    )
     if overrides is not None:
         ov = overrides(tool_name)
         if ov is not None:
-            return ov
-    base = _BASE.get(tool_name)
+            if base is None or _STRICTNESS[ov] >= _STRICTNESS[base]:
+                return ov
+            # A loosening override on a floored tool is ignored: fall through to the base.
     if base is not None:
         return base
     if bool(getattr(metadata, "requires_approval", False)):

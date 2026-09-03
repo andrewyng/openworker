@@ -25,7 +25,7 @@ def test_code_persona_matches_builder(tmp_path):
     reg = PersonaRegistry()
     ctx = _ctx(tmp_path)
     assert _names(reg.agent("code"), ctx) == _names(code_agent(), ctx)
-    assert reg.agent("code").family == "code"
+    assert reg.agent("code").requires_folder and reg.agent("code").subagents
 
 
 def test_cowork_persona_matches_builder(tmp_path):
@@ -42,8 +42,8 @@ def test_ops_persona_composes_knowledge_toolset(tmp_path):
     # Ops uses the same capability list as Cowork (files/search/shell/todo).
     assert _names(reg.agent("ops"), ctx) == _names(cowork_agent(), ctx)
     a = reg.agent("ops")
-    assert a.family == "knowledge" and a.messaging and a.connectors
-    assert "read_file_lines" in _names(a, ctx)  # multi-root knowledge files
+    assert not a.requires_folder and a.scheduling and a.messaging and a.connectors
+    assert "read_file" in _names(a, ctx)  # windowed reader, multi-root aware
 
 
 def test_code_keeps_single_root_file_tools(tmp_path):

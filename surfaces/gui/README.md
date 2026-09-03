@@ -5,23 +5,23 @@ Same codebase runs in a browser (dev) and as the OpenWorker desktop app.
 
 ## First time: bootstrap the Python backend
 
-A fresh checkout has no server to run — create the venv both flows below expect:
+A fresh checkout has no server to run — create the venv both flows below expect
+(from the repo root):
 
 ```bash
-bash platform/packaging/setup_dev_env.sh   # → platform/.venv (server + this repo's aisuite)
+bash packaging/setup_dev_env.sh   # → .venv (server + aisuite)
 ```
 
 ## Run it (browser, two terminals)
 
 1. **Start the server** (needs a model key, e.g. `OPENAI_API_KEY`, in the environment —
-   or add one later in the app's Settings):
+   or add one later in the app's Settings), from the repo root:
    ```bash
-   cd platform
    ./.venv/bin/openworker-server --cwd /path/to/your/project --port 8765
    ```
 2. **Start the UI:**
    ```bash
-   cd platform/surfaces/gui
+   cd surfaces/gui
    npm install      # first time
    npm run dev      # → http://localhost:5173
    ```
@@ -35,11 +35,11 @@ Vite if the server is restarted.
 
 The Tauri shell wraps the same UI and supervises the Python server itself — no separate
 terminal. It needs the Rust toolchain (`rustup`) plus the venv from the bootstrap step;
-in dev it finds the server at `platform/.venv/bin/openworker-server` automatically (a
-packaged sidecar binary is only produced by the release scripts in `platform/packaging/`).
+in dev it finds the server at `.venv/bin/openworker-server` automatically (a
+packaged sidecar binary is only produced by the release scripts in `packaging/`).
 
 ```bash
-cd platform/surfaces/gui
+cd surfaces/gui
 npm install        # first time
 npm run tauri dev  # builds the shell, launches the window, starts the server
 ```

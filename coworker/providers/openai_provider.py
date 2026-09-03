@@ -1,7 +1,11 @@
-"""OpenAI provider — the v1 model access implementation.
+"""OpenAI Chat Completions provider — the compat workhorse.
 
-Uses the OpenAI Python SDK `chat.completions` API only (no Responses/Assistants), so
-the later swap to aisuite (OpenAI-API-shaped) stays a near drop-in.
+Uses the OpenAI Python SDK `chat.completions` API only, which is what the entire
+OpenAI-compatible world implements: the compat vendors (DeepSeek, Z AI, Kimi, …),
+resellers, Ollama, custom endpoints (Azure OpenAI, vLLM), and the Bedrock/Vertex MaaS
+paths. Native OpenAI models (the `openai` provider with no custom endpoint) route to
+`openai_responses.OpenAIResponsesProvider` instead — Chat Completions rejects function
+tools combined with reasoning on GPT-5.6+, so reasoning + tools needs `/v1/responses`.
 """
 
 from __future__ import annotations
@@ -40,10 +44,12 @@ def resolve_api_key(secrets: Any = None) -> Optional[str]:
 
 # GPT-5.6 (2026-07) defaults reasoning_effort to "medium" server-side, and
 # /v1/chat/completions rejects function tools combined with any effort other than
-# "none" ("use /v1/responses"). Until we grow a Responses API path, pin effort to
-# none whenever tools ride along on these models — and when the API rejects a call
-# with that exact complaint anyway (a future generation, an alias we didn't list),
-# retry once at effort none so the user gets a working turn instead of a 400.
+# "none" ("use /v1/responses"). Native OpenAI now routes to the Responses provider,
+# but GPT-5.6 can still land here through a custom endpoint (Azure OpenAI serves the
+# same wire), so keep pinning effort to none whenever tools ride along on these
+# models — and when the API rejects a call with that exact complaint anyway (a future
+# generation, an alias we didn't list), retry once at effort none so the user gets a
+# working turn instead of a 400.
 _EFFORT_ERROR = "function tools with reasoning_effort are not supported"
 
 
@@ -76,6 +82,12 @@ def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, An
 
 _MAX_TOKENS_ERROR = "'max_tokens' is not supported"
 
+# Ceiling, not a spend target — same rationale as the Anthropic provider's default: a
+# coworker writing a report ships the whole file inside one tool call's arguments, and
+# compat servers left to their OWN defaults cap completions absurdly low (observed
+# 2026-08-15: Together defaulted Kimi K3 to ~2k tokens — every ~5KB write truncated).
+DEFAULT_MAX_TOKENS = 32000
+
 
 def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
     """Kwargs for the one retry an unsupported-parameter error earns, or re-raise.
@@ -96,6 +108,14 @@ def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
         # Older compat servers don't know the usage opt-in; drop it, lose only metering.
         fixed = dict(kwargs)
         fixed.pop("stream_options")
+        return fixed
+    if ("max_tokens" in msg or "max_new_tokens" in msg) and "max_tokens" in kwargs:
+        # Our 32k default exceeded this model's completion limit (each server words the
+        # 400 differently, so no number parsing) — drop the param and retry on the
+        # server's own default rather than surfacing the 400. Worst case is exactly
+        # yesterday's behavior; best case the server allows far more once asked.
+        fixed = dict(kwargs)
+        fixed.pop("max_tokens")
         return fixed
     raise exc
 
@@ -173,11 +193,13 @@ class OpenAIProvider(ProviderClient):
         }
         if tools:
             kwargs["tools"] = tools
+        kwargs.setdefault("max_tokens", DEFAULT_MAX_TOKENS)
         _pin_reasoning_effort(kwargs)
 
         client = self._ensure_client()
-        # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
-        for _ in range(2):
+        # Up to three param-fix retries: effort, the max_tokens rename, and the
+        # max_tokens over-limit drop can ALL need fixing on one call.
+        for _ in range(3):
             try:
                 response = client.chat.completions.create(**kwargs)
                 break
@@ -221,6 +243,7 @@ class OpenAIProvider(ProviderClient):
         }
         if tools:
             kwargs["tools"] = tools
+        kwargs.setdefault("max_tokens", DEFAULT_MAX_TOKENS)
         _pin_reasoning_effort(kwargs)
         client = self._ensure_client()
 
@@ -230,8 +253,9 @@ class OpenAIProvider(ProviderClient):
         finish_reason = None
         usage: Optional[TokenUsage] = None
 
-        # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
-        for _ in range(2):
+        # Up to three param-fix retries: effort, the max_tokens rename, and the
+        # max_tokens over-limit drop can ALL need fixing on one call.
+        for _ in range(3):
             try:
                 chunks = client.chat.completions.create(**kwargs)
                 break
@@ -336,6 +360,45 @@ _PARAM_BLOCK = re.compile(
     r"<parameter\s*=\s*(?P<key>[^>\s]+)\s*>(?P<val>.*?)</parameter\s*>",
     re.IGNORECASE | re.DOTALL,
 )
+
+# A `<function=NAME>` that never closes — the model ran out of tokens (or drifted) partway
+# through writing the call. Anchored to end-of-text so it only matches a genuinely unfinished
+# tail, never a well-formed block earlier in the message. Small local models hit this often on
+# a large tool schema, and the turn used to end silently on the leftover text.
+_FUNCTION_OPEN_TRUNCATED = re.compile(
+    r"<function\s*=\s*(?P<name>[^>\s]+)\s*>(?P<body>(?:(?!</function\s*>).)*)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Markers that mean "this text IS a tool call the endpoint failed to parse", used to tell a
+# real answer from a leaked one. Fenced code is stripped first: a model *explaining* tool-call
+# syntax in a ``` block is answering, not calling.
+_LEAKED_TOOL_SYNTAX = (
+    "<tool_call>",
+    "</tool_call>",
+    "<function=",
+    "</function>",
+    "<parameter=",
+    "</parameter>",
+    "<function_calls>",
+    "<invoke ",
+)
+_FENCED = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
+
+
+def looks_like_unparsed_tool_call(
+    text: Optional[str], tools: Optional[list[dict[str, Any]]] = None
+) -> bool:
+    """True when assistant text still carries tool-call markup that salvage couldn't turn into
+    a call — i.e. the model tried to call a tool and the syntax was mangled or cut off.
+
+    Only meaningful when tools were actually offered, and only over OpenAI-compatible endpoints
+    that parse tool calls out of the model's raw output (LM Studio, Ollama, vLLM). The caller
+    uses it to end the turn as a retriable error instead of presenting the fragment as an answer.
+    """
+    if not tools or not text:
+        return False
+    return any(m in _FENCED.sub("", text).lower() for m in _LEAKED_TOOL_SYNTAX)
 
 
 def _coerce_param(raw: str) -> Any:
@@ -508,6 +571,22 @@ def _salvage_tool_calls_from_text(
         calls.append(ToolCall(id="", name=name, arguments=args))
     if calls:
         return _renumber(calls)
+
+    # 1c) A TRUNCATED XML call: `<function=NAME>` with no closing tag, because the model ran
+    # out of tokens mid-call. Take the name plus every parameter that DID close; a trailing
+    # unterminated `<parameter=…>` is dropped rather than guessed, so a half-written path or
+    # file body can never reach a tool. If that leaves a required argument missing the call
+    # fails validation and the model gets a corrective tool error — which is the agent loop
+    # working, and strictly better than the turn ending on the leftover fragment.
+    tm = _FUNCTION_OPEN_TRUNCATED.search(text)
+    if tm:
+        name = tm.group("name").strip()
+        if names is None or name in names:
+            args = {
+                pm.group("key").strip(): _coerce_param(pm.group("val"))
+                for pm in _PARAM_BLOCK.finditer(tm.group("body"))
+            }
+            return _renumber([ToolCall(id="", name=name, arguments=args)])
 
     # 2) Embedded {"name": …, "arguments": …} objects, even surrounded by prose.
     for sub in _iter_top_objects(text):

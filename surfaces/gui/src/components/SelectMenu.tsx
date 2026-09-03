@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Icon } from "./Icon";
 
 // A form-styled custom select (the native <select> can't carry status dots or sub-lines and
@@ -23,6 +24,7 @@ export function SelectMenu({
   onChange: (value: string) => void;
   ariaLabel: string;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (!open) return;
@@ -61,7 +63,7 @@ export function SelectMenu({
                 o.group && o.group !== options[i - 1]?.group ? (
                   <div
                     className={
-                      "px-2.5 pb-1 text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold " +
+                      "px-2.5 pb-1 text-[11px] uppercase tracking-[0.06em] text-faint font-semibold " +
                       (i === 0 ? "pt-1" : "pt-2.5 mt-1.5 border-t border-line")
                     }
                   >
@@ -92,14 +94,14 @@ export function SelectMenu({
                     >
                       {o.label}
                     </span>
-                    {o.sub && <span className="block text-[11.5px] text-faint truncate">{o.sub}</span>}
+                    {o.sub && <span className="block text-[12px] text-faint truncate">{o.sub}</span>}
                   </span>
                   {sel && <span className="text-accent text-[12px] shrink-0">✓</span>}
                   <span
                     className={
                       "w-1.5 h-1.5 rounded-full shrink-0 " + (o.dot ? "bg-ok" : "bg-transparent")
                     }
-                    title={o.dot ? "Key set" : undefined}
+                    title={o.dot ? t("models.key_set") : undefined}
                   />
                   </button>
                 </div>

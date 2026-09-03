@@ -33,7 +33,7 @@ test("top-left cluster renders only while the sidebar is collapsed", async ({ pa
   await expect(page.getByTestId("topbar-cluster")).toHaveCount(0);
 });
 
-test("facts subtitle: absent on a fresh session, model-only after the first turn, inert", async ({
+test("facts subtitle: absent on a fresh session, coworker + model after the first turn, inert", async ({
   page,
 }) => {
   await page.goto("/");
@@ -51,10 +51,10 @@ test("facts subtitle: absent on a fresh session, model-only after the first turn
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText(/Echo: hello/)).toBeVisible();
 
-  // Model only — no persona name (owner ask 2026-07-22: personas are hidden this release),
-  // and the subtitle is a plain fact line, not a button to the persona page.
+  // Coworker + model (UX-029 restored the coworker name — the picker shipped), and the
+  // subtitle is a plain fact line, not a button to the persona page.
   const sub = page.getByTestId("session-subtitle");
-  await expect(sub).toHaveText("Claude Opus 4.8");
+  await expect(sub).toHaveText("Coworker · Claude Opus 4.8");
   await expect(page.locator(".dd").filter({ hasText: "Claude Opus 4.8" })).toBeVisible();
   await sub.click();
   await expect(page.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);

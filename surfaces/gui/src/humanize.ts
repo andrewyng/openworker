@@ -88,6 +88,10 @@ export function humanizeTool(name: string, args: any): HumanLine {
     }
     case "explore":
       return { pre: "Sent a sub-agent to explore — ", obj: `“${trunc(String(a.task ?? a.prompt ?? ""), 60)}”` };
+    case "load_skill":
+      // SKILLS-SPEC §4.1 #4 — the trust line: the transcript always shows the moment a
+      // skill's instructions were picked up, model-invoked or forced via /skill.
+      return { pre: "Used skill: ", obj: String(a.name ?? "") };
     case "ask_user":
       return { pre: "Asked you a question" };
     case "propose_plan":
@@ -131,6 +135,24 @@ export function humanizeApprovalTitle(name: string, args: any): HumanLine {
       return a.title
         ? { pre: "Create the automation ", obj: `“${trunc(String(a.title), 60)}”` }
         : { pre: "Create an automation" };
+    case "save_skill":
+      // SKILLS-SPEC §5.2/§7: "Add", never "install"; destination is "your skills".
+      return a.name
+        ? { pre: "Add skill ", obj: String(a.name), post: " to your skills" }
+        : { pre: "Add a skill to your skills" };
+    // Egress cards (OPE-136 finding 5): name the destination in the headline; the full
+    // URL/query renders in the card's expandable preview.
+    case "web_fetch": {
+      let host = "";
+      try {
+        host = new URL(String(a.url ?? "")).host;
+      } catch {
+        /* unparseable url → generic title; the preview still shows the raw string */
+      }
+      return host ? { pre: "Fetch from ", obj: host } : { pre: "Fetch a web page" };
+    }
+    case "web_search":
+      return { pre: "Search the web" };
     default:
       return { pre: `Use ${name}` };
   }

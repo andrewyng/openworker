@@ -35,6 +35,10 @@
 # Experimental (use-at-your-own-risk) connectors are EXCLUDED from this build by default —
 # the spec strips coworker.connectors.experimental. Self-builders can opt in with:
 #   COWORKER_EXPERIMENTAL=1 ./build_dmg.sh
+# VENV PREREQS (a fresh worktree's venv, discovered the hard way 2026-08-21):
+#   .venv/bin/pip install -e ".[dev,messaging,browser,bedrock]" pyinstaller typer
+# (`typer` because PyInstaller's submodule collection imports mcp.cli, which
+# sys.exit(1)s without it.)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
