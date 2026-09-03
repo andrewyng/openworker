@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from conftest import assert_user_only
 from fastapi.testclient import TestClient
 
 from coworker.providers import (
@@ -511,7 +512,7 @@ def test_standalone_server_token_file_is_user_only(tmp_path, monkeypatch):
         assert path == tmp_path / "coworker-state" / "sidecar-9876.token"
         assert path.read_text().strip() == os.environ["COWORKER_API_TOKEN"]
         assert len(path.read_text().strip()) == 64
-        assert (path.stat().st_mode & 0o777) == 0o600
+        assert_user_only(path)
     finally:
         path.unlink(missing_ok=True)
         os.environ.pop("COWORKER_API_TOKEN", None)
