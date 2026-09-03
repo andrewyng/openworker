@@ -14,12 +14,14 @@ def test_new_flagships_in_matrix_with_labels():
         "gpt-5.6-sol": "GPT-5.6 Sol · OpenAI",
         "gpt-5.6-terra": "GPT-5.6 Terra · OpenAI",
         "gpt-5.6-luna": "GPT-5.6 Luna · OpenAI",
+        "anthropic:claude-opus-5": "Claude Opus 5 · Anthropic",
         "anthropic:claude-fable-5": "Claude Fable 5 · Anthropic",
     }.items():
         assert MATRIX[mid].label == label
         assert MATRIX[mid].caps.tools and MATRIX[mid].caps.vision
 
     assert "gpt-5.6-sol" in models_for_provider("openai")
+    assert "claude-opus-5" in models_for_provider("anthropic")
     assert "claude-fable-5" in models_for_provider("anthropic")
 
 
