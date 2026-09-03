@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "surfaces/gui"],
+      "port": 1420
+    },
+    {
+      "name": "server",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "coworker.server.run", "--cwd", "."],
+      "port": 8765
+    }
+  ]
+}

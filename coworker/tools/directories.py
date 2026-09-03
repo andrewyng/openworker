@@ -12,12 +12,17 @@ from aisuite.agents import ToolMetadata, tool
 
 
 def request_directory_tool() -> object:
-    def request_directory(reason: str, path: str = "", writable: bool = False) -> dict:
+    def request_directory(
+        reason: str, path: str = "", writable: bool = False, primary: bool = False
+    ) -> dict:
         """Ask the user for access to a directory when the task needs files outside the current
         ones (e.g. to read a project the user mentioned, or to save a deliverable somewhere
         specific). Explain why in `reason`; optionally suggest a `path` and whether you need
-        `writable` access. The user picks/approves the folder; the result says whether it was
-        granted. Do not use this to escape sandboxing — only to serve the user's request.
+        `writable` access. Set `primary=true` only when the granted folder should become the
+        session's main workspace (the project the whole conversation is about) — allowed once,
+        and only while the session is still running on its scratch directory. The user
+        picks/approves the folder; the result says whether it was granted. Do not use this to
+        escape sandboxing — only to serve the user's request.
         """
         # Real handling lives in the engine (it needs the out-of-band GUI round-trip). This body
         # only runs if no requester is wired (e.g. a headless surface).

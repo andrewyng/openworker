@@ -7,8 +7,7 @@ import { test } from "./fixtures";
 
 async function openAutomations(page) {
   await page.goto("/");
-  await page.getByTestId("account-row").click();
-  await page.getByTestId("account-menu").getByRole("button", { name: "Automations", exact: true }).click();
+  await page.getByTestId("nav-automations").click();
   await expect(page.getByText("Recurring tasks OpenWorker runs on a schedule.")).toBeVisible();
 }
 
