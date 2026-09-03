@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -38,6 +39,8 @@ from .providers import AssistantTurn, ProviderClient, ToolCall
 from .providers.errors import friendly_model_error
 from .providers.openai_provider import looks_like_unparsed_tool_call
 from .tools import ToolRegistry
+
+logger = logging.getLogger("coworker.engine")
 
 
 class ApprovalOutcome(str, Enum):
@@ -249,6 +252,12 @@ class TurnEngine:
         # TOOL_FINISHED event can carry the note to the tool card (§25).
         self._standing_notes: dict[str, str] = {}
         self._interrupt_hooks: list[Callable[[], None]] = list(interrupt_hooks or [])
+        # Inbound-message auto-send (§37): when a connector mention is delivered to this
+        # session, set a target here. If the model finishes a turn WITHOUT calling
+        # `send_message` to that target, the engine wraps the assistant's text reply as
+        # a synthetic `send_message` tool call and executes it — guarantees the chat
+        # on the other end sees an answer even if the model ignores the prompt framing.
+        self._auto_send_target: Optional[str] = None
 
     # -- external controls ------------------------------------------------------
     def request_interrupt(self) -> None:
@@ -285,6 +294,18 @@ class TurnEngine:
         self, text: str, source: Optional[dict[str, Any]] = None
     ) -> None:
         self._steering.append((text, source))
+
+    def require_send_message(self, target: str) -> None:
+        """Set the connector target that any turn-final plain-text reply MUST be sent to.
+
+        Called by manager._route_mention when a connector @-mention is delivered to a
+        subscribed session. The check fires at the end of every assistant turn: if the
+        model didn't call `send_message` to `target` and left any text reply behind, the
+        engine synthesises a `send_message` tool call around that reply and executes it.
+        Set on first mention only — turn-loop tracks consumption explicitly.
+        """
+        if self._auto_send_target is None:
+            self._auto_send_target = target
 
     # -- main loop --------------------------------------------------------------
     async def run(
@@ -562,6 +583,18 @@ class TurnEngine:
             yield Event(EventType.ASSISTANT_MESSAGE, payload)
 
             if not turn.tool_calls:
+                # §37 connector auto-send: if a connector @-mention pinned a target
+                # onto this turn and the model finished without sending, wrap the
+                # text reply into a `send_message` tool call and execute it. Guarded
+                # by text-presence so an empty response doesn't blast the channel.
+                if self._auto_send_target and (turn.text or "").strip():
+                    async for _event in self._auto_send_for_connector(turn):
+                        yield _event
+                    yield Event(
+                        EventType.TURN_END,
+                        {"status": "completed", "iterations": iterations},
+                    )
+                    return
                 if self._steering:
                     self._inject_steering()
                     continue
@@ -749,6 +782,51 @@ class TurnEngine:
                 raise payload
             else:
                 return
+
+    async def _auto_send_for_connector(
+        self, turn: AssistantTurn
+    ) -> AsyncIterator[Event]:
+        """§37 connector auto-send: the model produced text but didn't call `send_message`.
+        Synthesise a tool call around the reply, append it to the just-persisted assistant
+        message so the transcript stays honest, then execute it. Consumes the auto-send
+        target so a later turn isn't force-fed the same delivery.
+        """
+        target = self._auto_send_target
+        if not target:
+            return
+        self._auto_send_target = None
+        text = (turn.text or "").strip()
+        if not text:
+            return
+        synthetic = ToolCall(
+            id=f"auto_send_{int(time.time() * 1000)}",
+            name="send_message",
+            arguments={"target": target, "text": text},
+        )
+        # Patch the trailing assistant message with the synthetic tool call so the
+        # history reflects what actually ran (no orphan plain-text → tool-call gap).
+        if self.messages and self.messages[-1].get("role") == "assistant":
+            self.messages[-1].setdefault("tool_calls", []).append(
+                {
+                    "id": synthetic.id,
+                    "type": "function",
+                    "function": {
+                        "name": synthetic.name,
+                        "arguments": json.dumps(synthetic.arguments),
+                    },
+                }
+            )
+        logger.info(
+            "engine auto-sending assistant reply to %s (%d chars)",
+            target,
+            len(text),
+        )
+        async for event in self._handle_tool_calls([synthetic]):
+            yield event
+        yield Event(
+            EventType.ITERATION_END,
+            {"iteration": "_auto_send", "auto_send": True},
+        )
 
     async def _handle_tool_calls(
         self, tool_calls: list[ToolCall]

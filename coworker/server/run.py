@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import secrets
 import sys
@@ -109,6 +110,24 @@ def build_app(workspace: str | None, model: str, mode: str):
     return create_app(manager)
 
 
+def _configure_logging() -> None:
+    """Make sure `coworker.*` loggers at INFO are visible in the server console.
+
+    Uvicorn only configures its own loggers; the default root logger stays at
+    WARNING, which silently drops our INFO diagnostics from `coworker.connectors`.
+    This sets the `coworker` logger to INFO and attaches a fallback handler when
+    nothing else is configured.
+    """
+    coworker_logger = logging.getLogger("coworker")
+    coworker_logger.setLevel(logging.INFO)
+    if not coworker_logger.handlers and not logging.getLogger().handlers:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+        )
+        coworker_logger.addHandler(handler)
+
+
 def _ensure_ca_bundle() -> None:
     """Point SSL at certifi's CA bundle if the interpreter has none configured. macOS framework
     Python ships without a usable system trust store for `aiohttp` (it builds an `ssl` context with
@@ -137,6 +156,7 @@ def _ensure_api_token(port: int) -> Path | None:
 
 
 def main(argv=None) -> None:
+    _configure_logging()
     _ensure_ca_bundle()
     cfg = load_config()  # global config supplies defaults
     parser = argparse.ArgumentParser(prog="openworker-server")

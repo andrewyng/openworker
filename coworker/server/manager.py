@@ -27,8 +27,15 @@ from ..connections import (
     SessionConnectionStore,
     effective as effective_connections,
 )
-from ..inbox import InboxStore, args_preview
-from ..inbox_routing import InboxRouting
+from ..inbox import (
+    KIND_APPROVAL,
+    KIND_DIRECTORY,
+    KIND_PLAN,
+    STATE_PENDING,
+    InboxStore,
+    args_preview,
+)
+from ..inbox_routing import DEFAULT_INBOX, InboxRouting
 from ..personas import PersonaRegistry
 from ..personas.registry import set_registry as set_persona_registry
 from ..selfwake import WakeStore
@@ -3859,6 +3866,12 @@ class SessionManager:
                         "routing Inbox requests there."
                     ),
                 }
+        if channel == "dingtalk":
+            settings = load_settings(self.secrets).get("dingtalk")
+            if settings is None or not settings.enabled:
+                return {"ok": False, "error": "DingTalk is not connected."}
+            if not target:
+                return {"ok": False, "error": "Choose a destination conversation."}
         self.inbox_routing.set_binding(name, channel=channel, target=target)
         return {"ok": True, "bindings": self.inbox_routing.bindings()}
 
@@ -4508,6 +4521,15 @@ class SessionManager:
                 return
         target = f"{binding.channel}:{binding.target}"
         body = "\n".join(p for p in (item.title, item.body) if p).strip()
+        # Text-only adapters (DingTalk session webhook, etc.) cannot render buttons, so we
+        # include the correlation token and reply instructions inline.
+        if binding.channel == "dingtalk":
+            if item.kind in {KIND_APPROVAL, KIND_DIRECTORY, KIND_PLAN}:
+                body = (
+                    f"{body}\n\nReply with 'allow' or 'deny' [ow:{item.id}]"
+                ).strip()
+            else:
+                body = f"{body}\n\n[ow:{item.id}]".strip()
         buttons = buttons_for(item)
         try:
             if buttons:
@@ -4569,9 +4591,10 @@ class SessionManager:
 
     # -- inbox replies over messaging connectors --------------------------------
     def _resolve_inbox_reply(self, event) -> bool:
-        """Try to handle an inbound Slack/Telegram message as an Inbox reply. Returns True if the
-        message carried an `[ow:<id>]` token (so it's consumed here, not routed as a new turn) —
-        resolving the item also releases any agent suspended on it."""
+        """Try to handle an inbound Slack/Telegram/DingTalk message as an Inbox reply. Returns
+        True if the message carried an `[ow:<id>]` token (or a bare DingTalk "allow"/"deny"
+        reply to the most recent pending item in this conversation) so it's consumed here,
+        not routed as a new turn — resolving the item also releases any agent suspended on it."""
         from ..inbox_routing import resolve_from_reply
 
         text = getattr(event, "text", "") or ""
@@ -4580,10 +4603,8 @@ class SessionManager:
             item = self.inbox.get(item_id)
             if item is None:
                 return False
-            if (
-                getattr(event.source, "platform", "") == "slack"
-                and item.kind in {"approval", "directory", "plan"}
-            ):
+            platform = getattr(event.source, "platform", "")
+            if platform == "slack" and item.kind in {"approval", "directory", "plan"}:
                 actor_id = str(getattr(event.source, "user_id", "") or "")
                 if not self._slack_actor_owns_item(
                     item,
@@ -4592,9 +4613,35 @@ class SessionManager:
                     team_id=getattr(event.source, "team_id", None),
                 ):
                     return False
+            # For non-Slack platforms (DingTalk, Telegram, etc.), gateway.is_authorized
+            # already verified the sender before this resolver runs.
             return self.inbox.resolve(item_id, resolution)
 
-        return resolve_from_reply(text, _resolve) is not None
+        if resolve_from_reply(text, _resolve) is not None:
+            return True
+
+        # DingTalk fallback: users typically reply "allow" or "deny" without copying the
+        # [ow:<id>] token. In that case, resolve the most recent pending approval/plan/directory
+        # item in this conversation's bound inbox.
+        platform = getattr(event.source, "platform", "")
+        chat_id = getattr(event.source, "chat_id", "") or ""
+        if platform == "dingtalk" and chat_id:
+            lowered = text.strip().lower()
+            if lowered in {"allow", "deny"}:
+                inbox_name = f"dingtalk-{chat_id}"
+                pending = self.inbox.list(
+                    inbox=inbox_name,
+                    state=STATE_PENDING,
+                )
+                pending = [
+                    i
+                    for i in pending
+                    if i.kind in {KIND_APPROVAL, KIND_DIRECTORY, KIND_PLAN}
+                ]
+                if pending:
+                    return self.inbox.resolve(pending[-1].id, lowered)
+
+        return False
 
     # -- self-wake resumption ---------------------------------------------------
     async def _scheduler_tick(self) -> None:
@@ -4677,10 +4724,50 @@ class SessionManager:
         by self-wake and channel-subscription delivery. `source` is the display-only MessageSource
         sidecar for connector messages (framed `message` stays the model-facing text).
         """
+        logger.info(
+            "deliver_to_session session_id=%s message_len=%d", session_id, len(message)
+        )
         engine = self.get_engine(session_id)
         if engine is None:
+            logger.info("deliver_to_session %s: get_engine returned None", session_id)
             return
+        # §37 connector auto-send: when a connector message arrives (source sidecar
+        # populated by `_dispatch_inbound`), pin the platform target so the engine can
+        # wrap any plain-text reply into a `send_message` tool call. The flag is
+        # consumed on the first turn that produces text (see engine._loop); a model
+        # that *did* call send_message naturally bypasses the fallback.
+        if source:
+            connector = str(source.get("connector") or "").strip()
+            chat_id = str(source.get("channel_id") or source.get("dm_id") or "").strip()
+            if connector and chat_id:
+                from ..connectors.base import format_target
+
+                target = format_target(connector, chat_id)
+                engine.require_send_message(target)
+                if connector == "dingtalk":
+                    # If the session is already blocked on an approval/plan/directory,
+                    # don't start a new turn that just repeats "waiting for confirmation".
+                    # Reply inline so the user knows to answer the existing request.
+                    pending = self.inbox.pending(session_id)
+                    blocking_kinds = {KIND_APPROVAL, KIND_DIRECTORY, KIND_PLAN}
+                    blocking = [it for it in pending if it.kind in blocking_kinds]
+                    if blocking:
+                        await self.gateway.deliver(
+                            target,
+                            "⏳ 我正在等待你处理上一条请求。请直接回复 `allow` 或 `deny`，"
+                            "或在桌面端审批后继续。",
+                        )
+                        return
+                    # Route this session's Inbox approvals back to the same DingTalk chat so
+                    # mobile users can reply 'allow' / 'deny' without opening the desktop app.
+                    if not self.inbox_routing.has_session_override(session_id):
+                        inbox_name = f"dingtalk-{chat_id}"
+                        self.inbox_routing.set_binding(
+                            inbox_name, channel="dingtalk", target=chat_id
+                        )
+                        self.inbox_routing.set_session_override(session_id, inbox_name)
         if not self.try_mark_running(session_id):
+            logger.info("deliver_to_session %s: session busy, queueing steering", session_id)
             engine.queue_steering(message, source)
             return
         try:
@@ -4717,6 +4804,14 @@ class SessionManager:
         fanned out to every subscribed session; a DM (or any non-channel) goes to the user-designated
         DM session (delivered like any background turn) or, if none is set, is parked as unrouted.
         """
+        print(f"[MANAGER] _dispatch_inbound entered platform={event.source.platform} chat_id={event.source.chat_id} user_id={event.source.user_id} mentions_me={getattr(event, 'mentions_me', False)}", flush=True)
+        logger.info(
+            "[MANAGER] _dispatch_inbound entered platform=%s chat_id=%s user_id=%s mentions_me=%s",
+            event.source.platform,
+            event.source.chat_id,
+            event.source.user_id,
+            getattr(event, "mentions_me", False),
+        )
         src = event.source
         text = getattr(event, "text", "") or ""
         who = src.user_name or src.user_id or "?"
@@ -4739,6 +4834,12 @@ class SessionManager:
                 channel, who, text, name=src.chat_name
             )  # buffer all, even unsubscribed
             subs = self.subscriptions.for_channel(channel)
+            logger.info(
+                "dispatch inbound channel=%s mentions_me=%s n_subs=%d",
+                channel,
+                getattr(event, "mentions_me", False),
+                len(subs),
+            )
             # §31 mention router: a direct @-mention of the bot outranks the passive fan-out —
             # subscribed sessions must answer it; an unsubscribed channel spawns (or steers)
             # the per-thread coworker session.
@@ -4794,35 +4895,103 @@ class SessionManager:
         src = event.source
         # Slack semantics: replying to a top-level message threads on THAT message's ts, so a
         # top-level tag (no thread_ts) keys — and is answered — on its own ts.
-        thread_key = src.thread_id or getattr(event, "message_id", None)
+        # DingTalk has no thread concept; replies go to the conversation itself, so the
+        # thread target is just "dingtalk:<conversationId>" and follow-ups reuse it.
+        thread_key = src.thread_id
+        if not thread_key and src.platform == "slack":
+            thread_key = getattr(event, "message_id", None)
         thread_target = format_target(src.platform, src.chat_id, thread_key)
         who = src.user_name or src.user_id or "?"
         chan = f"#{src.chat_name}" if src.chat_name else src.chat_id
+        platform_name = "Slack" if src.platform == "slack" else "DingTalk"
+        thread_or_chat = "thread" if src.platform == "slack" else "conversation"
+        logger.info(
+            "route mention platform=%s chat_id=%s thread_target=%s n_subs=%s",
+            src.platform,
+            src.chat_id,
+            thread_target,
+            len(subs),
+        )
+
+        def _seed_send_grant(session_id: str) -> None:
+            """Make send_message to this exact thread/conversation pre-approved.
+
+            Subscriptions may reference sessions that are not (yet) materialized;
+            skip those instead of auto-provisioning a phantom workspace.
+            """
+            if self.session_store.load(session_id) is None:
+                logger.info(
+                    "seed_send_grant skip %s: session not materialized", session_id
+                )
+                return
+            try:
+                engine = self.get_engine(session_id)
+                if engine is None:
+                    logger.info("seed_send_grant skip %s: get_engine returned None", session_id)
+                    return
+                engine.permissions.task_rules.setdefault("send_message", set()).add(
+                    thread_target
+                )
+                self.save(session_id, engine)
+                logger.info(
+                    "seed_send_grant ok %s -> send_message target %s",
+                    session_id,
+                    thread_target,
+                )
+            except Exception:
+                logger.exception(
+                    "failed to seed send_message grant for %s target %s",
+                    session_id,
+                    thread_target,
+                )
+
         if subs:
             # The user connected a coworker to this channel — it answers tags; no spawn.
+            # The subscribed session needs the same standing grant as a spawned mention
+            # session, otherwise its send_message call parks in the Inbox and the chat
+            # never sees the answer.
+            for sub in subs:
+                allowed = self._inbound_connector_allowed(sub.session_id, src.platform)
+                logger.info(
+                    "route mention sub session_id=%s allowed=%s", sub.session_id, allowed
+                )
+                if not allowed:
+                    continue
+                _seed_send_grant(sub.session_id)
             msg = (
-                f"🔔 You were tagged by {who} in {chan}: {event.text}\n"
-                f"(You are subscribed to this channel and were mentioned directly — you must "
-                f"respond. Reply in the thread with the send_message tool, target "
-                f'"{thread_target}".)'
+                f"🔔 You were tagged on {platform_name} in {chan} by {who}: {event.text}\n\n"
+                f"You are subscribed to this channel and were mentioned directly — you MUST "
+                f"reply using the send_message tool with target \"{thread_target}\". "
+                f"Replies to this {thread_or_chat} are pre-approved and never prompt the user. "
+                f"If you do not use send_message, the user will not see your answer. "
+                f"Keep replies concise and {platform_name.lower()}-appropriate."
             )
             for sub in subs:
                 if not self._inbound_connector_allowed(sub.session_id, src.platform):
                     continue
+                logger.info(
+                    "delivering mention to subscribed session %s", sub.session_id
+                )
                 try:
                     await self.deliver_to_session(
                         sub.session_id, msg, source=ms.to_dict()
                     )
                 except Exception:
-                    pass
+                    logger.exception(
+                        "deliver_to_session failed for %s", sub.session_id
+                    )
             return
         sid = self.mention_sessions.get(thread_target)
         if sid and self.session_store.load(sid) is not None:
             # Follow-up tag in a thread we already own → steer the same session.
+            # Re-seed the grant: old sessions may pre-date the correct DingTalk target
+            # shape, and loaded engines rebuild grants from the durable thread map.
+            _seed_send_grant(sid)
             msg = (
-                f"💬 Follow-up in your Slack thread ({chan}) from {who}: {event.text}\n"
-                f'(Reply in the thread with the send_message tool, target "{thread_target}" '
-                f"— replies there are pre-approved.)"
+                f"💬 Follow-up on {platform_name} in {chan} from {who}: {event.text}\n\n"
+                f'Reply using the send_message tool with target "{thread_target}". '
+                f"Replies to this {thread_or_chat} are pre-approved and never prompt the user. "
+                f"If you do not use send_message, the user will not see your answer."
             )
             await self.deliver_to_session(sid, msg, source=ms.to_dict())
             return
@@ -4867,13 +5036,16 @@ class SessionManager:
         # Up to 6 lines of channel context, minus the tag itself (it's the opening line).
         recent = self.channel_buffer.recent(f"{src.platform}:{src.chat_id}", 7)[:-1]
         context = "\n".join(f"- {m['from']}: {m['text']}" for m in recent)
+        # Platform-aware wording: Slack uses threads; DingTalk uses conversations.
+        platform_name = "Slack" if src.platform == "slack" else "DingTalk"
+        thread_or_chat = "thread" if src.platform == "slack" else "conversation"
         opening = (
-            f"🔔 You were mentioned on Slack in {chan} by {who}: {event.text}\n\n"
-            f"You own this Slack thread. Reply in the thread using the send_message tool "
-            f'with target "{thread_target}" — replies to this thread are pre-approved and '
-            f"never prompt the user. Anything else (other channels, files, external "
-            f"actions) asks for approval as usual. Keep replies concise and "
-            f"Slack-appropriate."
+            f"🔔 You were mentioned on {platform_name} in {chan} by {who}: {event.text}\n\n"
+            f"You own this {thread_or_chat}. You MUST reply using the send_message tool "
+            f'with target "{thread_target}" — replies to this {thread_or_chat} are pre-approved and '
+            f"never prompt the user. If you do not use send_message, the user will not see your answer. "
+            f"Anything else (other channels, files, external actions) asks for approval as usual. "
+            f"Keep replies concise and {platform_name.lower()}-appropriate."
             + (f"\n\nRecent channel context:\n{context}" if context else "")
         )
         try:

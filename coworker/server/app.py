@@ -11,6 +11,7 @@ import asyncio
 import base64
 import binascii
 import json
+import logging
 import os
 import re
 import secrets
@@ -19,6 +20,8 @@ from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger("coworker.server")
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -191,6 +194,10 @@ def create_app(manager: SessionManager) -> FastAPI:
         "/auth/callback",
         "/mcp/oauth/callback",
         "/oauth/callback",
+        # Local-only diagnostics for connector setup; the server binds 127.0.0.1.
+        "/v1/connectors/dingtalk/status",
+        "/v1/connectors/dingtalk/test-credentials",
+        "/v1/connectors/dingtalk/reconnect",
     }
 
     def _request_authenticated(request: Request) -> bool:
@@ -1345,6 +1352,98 @@ def create_app(manager: SessionManager) -> FastAPI:
     async def slack_status() -> dict[str, Any]:
         """Slack health, three layers: relay socket / cloud sign-in / per-team tokens."""
         return manager.slack_status()
+
+    @app.post("/v1/connectors/dingtalk/webhook")
+    async def dingtalk_webhook(request: Request) -> dict[str, Any]:
+        """DingTalk group-bot / enterprise-bot inbound webhook. Ack immediately
+        and dispatch the message to the gateway so a slow reply never times out
+        DingTalk."""
+        from ..connectors import DingTalkAdapter
+
+        try:
+            payload = await request.json()
+        except Exception:
+            logger.warning("dingtalk webhook received invalid json")
+            return {"errcode": 400, "errmsg": "invalid json"}
+
+        logger.debug("dingtalk webhook payload: %s", payload)
+        adapter = None
+        if manager.gateway is not None:
+            adapter = manager.gateway._adapters.get("dingtalk")
+        if adapter is None or not isinstance(adapter, DingTalkAdapter):
+            logger.info(
+                "dingtalk webhook ignored: no gateway adapter (gateway=%s)",
+                manager.gateway is not None,
+            )
+            return {"errcode": 0, "errmsg": "ok"}
+
+        event = adapter.receive_webhook(payload)
+        if event is not None:
+            logger.info(
+                "dingtalk inbound from %s (%s): %s",
+                event.source.user_name,
+                event.source.user_id,
+                event.text[:80],
+            )
+            # Fire-and-forget: DingTalk needs a fast ack; the agent turn may take seconds.
+            asyncio.create_task(adapter.handle_message(event))
+        else:
+            logger.debug("dingtalk webhook produced no event from payload")
+        return {"errcode": 0, "errmsg": "ok"}
+
+    @app.get("/v1/connectors/dingtalk/status")
+    def dingtalk_status() -> dict[str, Any]:
+        """Runtime state of the DingTalk adapter — useful when @-mentions produce no log."""
+        from ..connectors import DingTalkAdapter
+
+        adapter = None
+        if manager.gateway is not None:
+            adapter = manager.gateway._adapters.get("dingtalk")
+        if adapter is None or not isinstance(adapter, DingTalkAdapter):
+            return {
+                "ok": False,
+                "connected": False,
+                "error": "DingTalk adapter is not registered",
+            }
+        return {"ok": True, **adapter.status()}
+
+    @app.post("/v1/connectors/dingtalk/reconnect")
+    async def dingtalk_reconnect() -> dict[str, Any]:
+        """Disconnect and reconnect the DingTalk adapter (Stream mode)."""
+        from ..connectors import DingTalkAdapter
+
+        adapter = None
+        if manager.gateway is not None:
+            adapter = manager.gateway._adapters.get("dingtalk")
+        if adapter is None or not isinstance(adapter, DingTalkAdapter):
+            return {"ok": False, "error": "DingTalk adapter is not registered"}
+        await adapter.disconnect()
+        ok = await adapter.connect()
+        return {"ok": ok, "state": adapter.status()}
+
+    @app.post("/v1/connectors/dingtalk/test-credentials")
+    async def dingtalk_test_credentials(body: dict) -> dict[str, Any]:
+        """Validate ClientId + ClientSecret against DingTalk without starting Stream."""
+        client_id = str(body.get("client_id", "") or "").strip()
+        client_secret = str(body.get("client_secret", "") or "").strip()
+        if not client_id or not client_secret:
+            return {"ok": False, "error": "client_id and client_secret are required"}
+        try:
+            import dingtalk_stream
+        except ImportError:
+            return {
+                "ok": False,
+                "error": "dingtalk-stream SDK is not installed",
+            }
+        try:
+            credential = dingtalk_stream.Credential(client_id, client_secret)
+            client = dingtalk_stream.DingTalkStreamClient(credential)
+            token = await asyncio.to_thread(client.get_access_token)
+        except Exception as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        if token:
+            return {"ok": True, "access_token_prefix": token[:8] + "..."}
+        return {"ok": False, "error": "no access_token returned"}
 
     @app.post("/v1/connectors/github/installations/{installation_id}/disconnect")
     async def github_installation_disconnect(installation_id: str) -> dict[str, Any]:
