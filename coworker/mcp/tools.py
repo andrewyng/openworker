@@ -68,9 +68,22 @@ def build_callables(
         name = tool_name(server.name, mcp_tool.name)
         remote = mcp_tool.name
 
-        def _invoke(_remote: str = remote, **kwargs: Any) -> Any:
-            future = asyncio.run_coroutine_threadsafe(call_async(_remote, kwargs), loop)
-            return future.result(timeout)
+        # Bind `remote` in a dedicated closure rather than a default argument. The
+        # default-argument form (`_remote=remote`) also defeats late binding, but it
+        # exposes the routing target as a caller-overridable keyword: a model-supplied
+        # `_remote` in the tool-call arguments would then re-route an approved, filtered
+        # call to any other tool on this server, since the approval gate and the
+        # include/exclude filter only ever see the visible tool name.
+        def _make_invoke(remote: str) -> Callable[..., Any]:
+            def _invoke(**kwargs: Any) -> Any:
+                future = asyncio.run_coroutine_threadsafe(
+                    call_async(remote, kwargs), loop
+                )
+                return future.result(timeout)
+
+            return _invoke
+
+        _invoke = _make_invoke(remote)
 
         # We attach the schema + metadata explicitly (rather than via `ai.tool`, which would
         # try to derive a schema from this `**kwargs` wrapper): the registry reads both attrs.
