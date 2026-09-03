@@ -1,0 +1,85 @@
+<svg viewBox="0 0 960 520" width="960" height="520" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Mandatory authorization gate — models come in, raw data never leaves">
+      <defs>
+        <marker id="arrT" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#38e0b0"/></marker>
+        <marker id="arrP" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7c5cff"/></marker>
+      </defs>
+      <style>.t{font-family:'Segoe UI',system-ui,-apple-system,sans-serif}.m{font-family:'Cascadia Code',Consolas,'Courier New',monospace}</style>
+
+      <path d="M 400 110 C 360 35, 240 35, 152 62" fill="none" stroke="#7c5cff" stroke-width="2" marker-end="url(#arrP)"/>
+      <text x="275" y="18" class="m" font-size="11" fill="#7c5cff" text-anchor="middle">signed inference output</text>
+      <text x="275" y="34" class="t" font-size="10" fill="#93a0ba" text-anchor="middle">the model leaves with conclusions, not data</text>
+
+      <rect x="20" y="55" width="250" height="345" rx="12" fill="#111623" stroke="#232c44"/>
+      <text x="145" y="79" class="m" font-size="11" fill="#7c5cff" text-anchor="middle" letter-spacing="2">EXTERNAL MODELS</text>
+      <text x="145" y="97" class="t" font-size="10.5" fill="#93a0ba" text-anchor="middle">external models · bring-your-own (BYOM)</text>
+      <rect x="42" y="112" width="206" height="58" rx="8" fill="#161d2e" stroke="#232c44"/>
+      <text x="145" y="137" class="t" font-size="13" font-weight="700" fill="#e8edf7" text-anchor="middle">insurer · underwriting model</text>
+      <text x="145" y="155" class="t" font-size="10" fill="#93a0ba" text-anchor="middle">risk evaluation</text>
+      <rect x="42" y="182" width="206" height="58" rx="8" fill="#161d2e" stroke="#232c44"/>
+      <text x="145" y="207" class="t" font-size="13" font-weight="700" fill="#e8edf7" text-anchor="middle">third-party · evaluation models</text>
+      <text x="145" y="225" class="t" font-size="10" fill="#93a0ba" text-anchor="middle">health / safety / maintenance</text>
+      <rect x="42" y="262" width="206" height="46" rx="8" fill="none" stroke="#ff6b81" stroke-dasharray="4 3" opacity="0.6"/>
+      <text x="145" y="283" class="t" font-size="11.5" font-weight="700" fill="#ff6b81" text-anchor="middle">✗ direct API call</text>
+      <text x="145" y="299" class="t" font-size="9.5" fill="#ff6b81" opacity="0.75" text-anchor="middle">no consent card, no call</text>
+      <rect x="42" y="320" width="206" height="46" rx="8" fill="none" stroke="#ff6b81" stroke-dasharray="4 3" opacity="0.6"/>
+      <text x="145" y="341" class="t" font-size="11.5" font-weight="700" fill="#ff6b81" text-anchor="middle">✗ unreviewed model</text>
+      <text x="145" y="357" class="t" font-size="9.5" fill="#ff6b81" opacity="0.75" text-anchor="middle">rejected at onboarding</text>
+
+      <rect x="330" y="55" width="300" height="345" rx="12" fill="#111623" stroke="#232c44"/>
+      <text x="480" y="79" class="m" font-size="11" fill="#7c5cff" text-anchor="middle" letter-spacing="2">MANDATORY AUTH GATE</text>
+      <text x="480" y="97" class="t" font-size="10.5" fill="#93a0ba" text-anchor="middle">mandatory authorization gate · hardware-enforced</text>
+      <rect x="355" y="112" width="250" height="228" rx="10" fill="#161d2e" stroke="#7c5cff" stroke-width="2"/>
+      <rect x="355" y="112" width="10" height="228" rx="3" fill="#7c5cff" opacity="0.3"/>
+      <rect x="595" y="112" width="10" height="228" rx="3" fill="#7c5cff" opacity="0.3"/>
+      <circle cx="480" cy="152" r="24" fill="#141026" stroke="#38e0b0" stroke-width="2"/>
+      <path d="M 469 152 L 477 160 L 492 144" fill="none" stroke="#38e0b0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="480" y="196" class="t" font-size="12" font-weight="700" fill="#38e0b0" text-anchor="middle">physical Approve button</text>
+      <line x1="375" y1="208" x2="585" y2="208" stroke="#232c44"/>
+      <rect x="380" y="218" width="200" height="62" rx="8" fill="#0d1420" stroke="#38e0b0" stroke-opacity="0.45"/>
+      <text x="480" y="242" class="t" font-size="12.5" font-weight="700" fill="#e8edf7" text-anchor="middle">sandbox — isolated execution</text>
+      <text x="480" y="260" class="t" font-size="10.5" fill="#93a0ba" text-anchor="middle">consented fields only · overreach rejected</text>
+      <text x="480" y="302" class="t" font-size="12" font-weight="700" fill="#ff6b81" text-anchor="middle">no consent card → call rejected</text>
+      <text x="480" y="320" class="t" font-size="10.5" fill="#93a0ba" text-anchor="middle">no bypass · no direct path · hardware-level</text>
+      <text x="480" y="336" class="t" font-size="10.5" fill="#ffb454" text-anchor="middle">revocation → next call fails immediately</text>
+      <text x="480" y="368" class="t" font-size="10" fill="#93a0ba" opacity="0.75" text-anchor="middle">authorization checks run inside the secure element, not bypassable software</text>
+
+      <rect x="690" y="55" width="250" height="345" rx="12" fill="#111623" stroke="#232c44"/>
+      <text x="815" y="79" class="m" font-size="11" fill="#7c5cff" text-anchor="middle" letter-spacing="2">LOCAL DATA</text>
+      <text x="815" y="97" class="t" font-size="10.5" fill="#93a0ba" text-anchor="middle">local data · raw never leaves</text>
+      <rect x="712" y="112" width="206" height="70" rx="8" fill="#161d2e" stroke="#7c5cff" stroke-width="1.5"/>
+      <rect x="726" y="126" width="28" height="28" rx="3" fill="none" stroke="#7c5cff" stroke-width="1.5"/>
+      <rect x="733" y="129" width="14" height="9" fill="#7c5cff" opacity="0.55"/>
+      <rect x="733" y="144" width="14" height="6" fill="none" stroke="#7c5cff" stroke-width="1" opacity="0.5"/>
+      <text x="766" y="138" class="t" font-size="13" font-weight="700" fill="#e8edf7">privacy cartridge</text>
+      <text x="766" y="155" class="t" font-size="10" fill="#93a0ba">AES-256 · key lives in the cartridge</text>
+      <rect x="712" y="196" width="206" height="74" rx="8" fill="#161d2e" stroke="#232c44"/>
+      <rect x="724" y="216" width="16" height="20" rx="2" fill="none" stroke="#7c5cff" opacity="0.5"/>
+      <rect x="732" y="212" width="16" height="20" rx="2" fill="none" stroke="#7c5cff" opacity="0.7"/>
+      <rect x="740" y="208" width="16" height="20" rx="2" fill="#141026" stroke="#7c5cff"/>
+      <text x="766" y="218" class="t" font-size="12.5" font-weight="700" fill="#e8edf7">consent cards</text>
+      <text x="766" y="235" class="t" font-size="10" fill="#93a0ba">which data · which institution · how long</text>
+      <text x="766" y="251" class="t" font-size="10" fill="#38e0b0">button-activated · revocable anytime</text>
+      <rect x="712" y="284" width="206" height="62" rx="8" fill="#161d2e" stroke="#232c44"/>
+      <rect x="726" y="298" width="26" height="26" rx="3" fill="none" stroke="#38e0b0" stroke-width="1.5"/>
+      <rect x="732" y="304" width="14" height="14" fill="none" stroke="#38e0b0" opacity="0.5"/>
+      <text x="766" y="310" class="t" font-size="12.5" font-weight="700" fill="#e8edf7">local model</text>
+      <text x="766" y="327" class="t" font-size="10" fill="#93a0ba">digests · risk tiers</text>
+      <text x="815" y="372" class="t" font-size="10" fill="#93a0ba" opacity="0.75" text-anchor="middle">raw data and intermediate features stay local</text>
+
+      <line x1="248" y1="141" x2="347" y2="141" stroke="#38e0b0" stroke-width="2" marker-end="url(#arrT)"/>
+      <line x1="248" y1="211" x2="347" y2="211" stroke="#38e0b0" stroke-width="2" marker-end="url(#arrT)"/>
+      <text x="301" y="172" class="t" font-size="11" font-weight="700" fill="#38e0b0" text-anchor="middle">post-compliance</text>
+      <text x="301" y="187" class="t" font-size="9.5" fill="#38e0b0" opacity="0.8" text-anchor="middle">onboarding-reviewed</text>
+      <line x1="609" y1="247" x2="706" y2="247" stroke="#38e0b0" stroke-width="2" marker-end="url(#arrT)"/>
+      <text x="657" y="234" class="t" font-size="10.5" font-weight="700" fill="#38e0b0" text-anchor="middle">consented fields only</text>
+      <text x="657" y="264" class="t" font-size="9.5" fill="#38e0b0" opacity="0.8" text-anchor="middle">nothing beyond the card</text>
+
+      <line x1="110" y1="428" x2="850" y2="428" stroke="#ff6b81" stroke-width="1.5" stroke-dasharray="6 5" opacity="0.55"/>
+      <line x1="470" y1="418" x2="490" y2="438" stroke="#ff6b81" stroke-width="3" stroke-linecap="round"/>
+      <line x1="490" y1="418" x2="470" y2="438" stroke="#ff6b81" stroke-width="3" stroke-linecap="round"/>
+      <text x="480" y="452" class="t" font-size="11" fill="#ff6b81" text-anchor="middle">no direct path · no bypass · no API around — this architecture has no such route</text>
+
+      <rect x="20" y="464" width="920" height="46" rx="10" fill="#0d1420" stroke="#232c44"/>
+      <text x="480" y="483" class="m" font-size="11" fill="#93a0ba" text-anchor="middle">audit · one record per call — which model · read what · when · under which consent card</text>
+      <text x="480" y="500" class="m" font-size="10" fill="#ffb454" text-anchor="middle">revocation · withdraw consent → the model's next call fails immediately</text>
+</svg>

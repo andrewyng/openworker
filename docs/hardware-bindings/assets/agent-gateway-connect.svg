@@ -1,0 +1,69 @@
+<svg viewBox="0 0 920 400" width="920" height="400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The agent's hardware connect — agent binds the gateway, the gateway reaches field devices">
+  <defs>
+    <marker id="cgA" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7c5cff"/></marker>
+    <marker id="cgB" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#38e0b0"/></marker>
+  </defs>
+  <style>.t{font-family:'Segoe UI',system-ui,sans-serif}.m{font-family:'Cascadia Code',Consolas,monospace}</style>
+
+  <rect x="20" y="30" width="200" height="120" rx="12" fill="#111623" stroke="#7c5cff" stroke-width="1.5"/>
+  <text x="120" y="58" class="m" font-size="11" fill="#7c5cff" text-anchor="middle" letter-spacing="2">AGENT</text>
+  <text x="120" y="82" class="t" font-size="14" font-weight="700" fill="#e8edf7" text-anchor="middle">OpenWorker coworker</text>
+  <text x="120" y="102" class="t" font-size="11" fill="#93a0ba" text-anchor="middle">any MHS-compatible agent</text>
+  <text x="120" y="122" class="t" font-size="10" fill="#93a0ba" text-anchor="middle">thinks · requests · never touches machines</text>
+
+  <rect x="360" y="16" width="200" height="148" rx="12" fill="#111623" stroke="#38e0b0" stroke-width="2"/>
+  <text x="460" y="44" class="m" font-size="11" fill="#38e0b0" text-anchor="middle" letter-spacing="2">HARDWARE CONNECT</text>
+  <text x="460" y="68" class="t" font-size="14" font-weight="700" fill="#e8edf7" text-anchor="middle">OpenWorker Deck</text>
+  <text x="460" y="88" class="t" font-size="11" fill="#93a0ba" text-anchor="middle">physical gateway · MHS-native</text>
+  <rect x="380" y="100" width="70" height="26" rx="6" fill="#161d2e" stroke="#38e0b0" stroke-opacity="0.4"/>
+  <text x="415" y="117" class="t" font-size="10" fill="#38e0b0" text-anchor="middle">Approve key</text>
+  <rect x="470" y="100" width="80" height="26" rx="6" fill="#161d2e" stroke="#7c5cff" stroke-opacity="0.4"/>
+  <text x="510" y="117" class="t" font-size="10" fill="#7c5cff" text-anchor="middle">encrypted cartridge</text>
+  <text x="460" y="150" class="t" font-size="10" fill="#93a0ba" text-anchor="middle">MQTT broker · TLS 1.3 · sandbox</text>
+
+  <rect x="700" y="16" width="200" height="148" rx="12" fill="#111623" stroke="#232c44"/>
+  <text x="800" y="44" class="m" font-size="11" fill="#93a0ba" text-anchor="middle" letter-spacing="2">FIELD</text>
+  <text x="800" y="66" class="t" font-size="11.5" fill="#e8edf7" text-anchor="middle">field devices</text>
+  <rect x="716" y="78" width="168" height="24" rx="6" fill="#161d2e" stroke="#232c44"/>
+  <text x="800" y="94" class="m" font-size="10" fill="#93a0ba" text-anchor="middle">Modbus RTU / TCP</text>
+  <rect x="716" y="106" width="168" height="24" rx="6" fill="#161d2e" stroke="#232c44"/>
+  <text x="800" y="122" class="m" font-size="10" fill="#93a0ba" text-anchor="middle">CAN/J1939 · OBD-II</text>
+  <rect x="716" y="134" width="168" height="24" rx="6" fill="#161d2e" stroke="#232c44"/>
+  <text x="800" y="150" class="m" font-size="10" fill="#93a0ba" text-anchor="middle">BLE 5.2 · LoRa · 1-Wire</text>
+
+  <path d="M 222 62 C 290 62, 300 62, 356 62" fill="none" stroke="#7c5cff" stroke-width="2.5" marker-end="url(#cgA)"/>
+  <text x="288" y="50" class="m" font-size="10" fill="#7c5cff" text-anchor="middle">BIND</text>
+  <text x="288" y="80" class="m" font-size="9" fill="#93a0ba" text-anchor="middle">challenge-response</text>
+
+  <path d="M 562 62 C 620 62, 640 62, 696 62" fill="none" stroke="#38e0b0" stroke-width="2.5" marker-end="url(#cgB)"/>
+  <text x="630" y="50" class="m" font-size="10" fill="#38e0b0" text-anchor="middle">REACH</text>
+  <text x="630" y="80" class="m" font-size="9" fill="#93a0ba" text-anchor="middle">zero integration</text>
+
+  <path d="M 222 110 C 290 110, 300 100, 356 92" fill="none" stroke="#7c5cff" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#cgA)"/>
+  <text x="288" y="128" class="m" font-size="9" fill="#7c5cff" text-anchor="middle">read req · write req (gated)</text>
+  <path d="M 562 110 C 620 110, 640 118, 696 124" fill="none" stroke="#38e0b0" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#cgB)"/>
+  <text x="630" y="140" class="m" font-size="9" fill="#38e0b0" text-anchor="middle">telemetry · fault codes</text>
+  <path d="M 356 130 C 300 138, 290 130, 224 124" fill="none" stroke="#38e0b0" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#cgB)"/>
+  <text x="288" y="152" class="m" font-size="9" fill="#38e0b0" text-anchor="middle">readings return · signed output</text>
+
+  <rect x="20" y="190" width="880" height="180" rx="12" fill="#111623" stroke="#232c44"/>
+  <text x="460" y="218" class="m" font-size="11" fill="#7c5cff" text-anchor="middle" letter-spacing="2">THREE DISCIPLINES OF THE CONNECT</text>
+
+  <rect x="40" y="236" width="270" height="116" rx="10" fill="#161d2e" stroke="#7c5cff" stroke-opacity="0.5"/>
+  <text x="175" y="262" class="t" font-size="12.5" font-weight="700" fill="#e8edf7" text-anchor="middle">Reads — safe by default</text>
+  <text x="175" y="284" class="t" font-size="10.5" fill="#93a0ba" text-anchor="middle">fault codes · hour meters · sensor values</text>
+  <text x="175" y="302" class="t" font-size="10.5" fill="#93a0ba" text-anchor="middle">no approval needed · everything timestamped</text>
+  <text x="175" y="326" class="m" font-size="9.5" fill="#38e0b0" text-anchor="middle">mhs/&lt;deck&gt;/device/&lt;dev&gt;/read</text>
+
+  <rect x="326" y="236" width="270" height="116" rx="10" fill="#161d2e" stroke="#ffb454" stroke-opacity="0.5"/>
+  <text x="461" y="262" class="t" font-size="12.5" font-weight="700" fill="#e8edf7" text-anchor="middle">Writes — gated by button</text>
+  <text x="461" y="284" class="t" font-size="10.5" fill="#93a0ba" text-anchor="middle">resets · calibrations · actuator tests</text>
+  <text x="461" y="302" class="t" font-size="10.5" fill="#ffb454" text-anchor="middle">no software authorization path · human key only</text>
+  <text x="461" y="326" class="m" font-size="9.5" fill="#38e0b0" text-anchor="middle">gate/request → gate/decision</text>
+
+  <rect x="612" y="236" width="270" height="116" rx="10" fill="#161d2e" stroke="#ff6b81" stroke-opacity="0.5"/>
+  <text x="747" y="262" class="t" font-size="12.5" font-weight="700" fill="#e8edf7" text-anchor="middle">Never — defeat an interlock</text>
+  <text x="747" y="284" class="t" font-size="10.5" fill="#93a0ba" text-anchor="middle">safety limits · e-stops · guards</text>
+  <text x="747" y="302" class="t" font-size="10.5" fill="#93a0ba" text-anchor="middle">stated in plain-language MHS safety labels</text>
+  <text x="747" y="326" class="m" font-size="9.5" fill="#ff6b81" text-anchor="middle">never written, period</text>
+</svg>
