@@ -4903,58 +4903,69 @@ class SessionManager:
             task_id=task.id, trigger=trigger
         )  # __post_init__ sets run.session_id
         self.task_store.add_run(run)  # mark "running"
-        # UX-026: tell every open app window a SCHEDULED run just started (the 5s
-        # top-right toast). Manual runs never come through here — the user is
-        # already watching those live.
-        await self.broadcast_event(
-            {
-                "type": "automation_run_started",
-                "data": {
-                    "task_id": task.id,
-                    "task_title": task.title,
-                    "session_id": run.session_id,
-                    "workspace": task.workspace,
-                    "agent": task.agent,
-                    "trigger": trigger,
-                },
-            }
-        )
-        # Each run is a real, persisted conversation thread: it runs the instructions under its
-        # own session id, then saves the transcript. The user can reopen that session and ask a
-        # follow-up — the scheduled agent is no longer fire-and-forget.
-        engine = self._build_task_engine(task, session_id=run.session_id)
-        # Register the live engine up-front: a parked approval persists the session
-        # mid-run (durable suspend), and resolving from the Inbox must find this engine.
-        self._engines[run.session_id] = engine
-        # The first turn is the task itself. The framing matters: instructions often restate the
-        # schedule ("every day at 5:32pm…"), so make explicit that the schedule already fired and
-        # the job now is to execute, not to (re)schedule.
-        opening = (
-            f"⏰ Scheduled run — {task.title}\n\n"
-            "This automation is due now: carry out the task below immediately and produce the "
-            "result. The schedule already exists — do not create or modify any scheduled tasks.\n\n"
-            f"{task.instructions}"
-        )
+        engine = None
         try:
+            # UX-026: tell every open app window a SCHEDULED run just started (the 5s
+            # top-right toast). Manual runs never come through here — the user is
+            # already watching those live.
+            await self.broadcast_event(
+                {
+                    "type": "automation_run_started",
+                    "data": {
+                        "task_id": task.id,
+                        "task_title": task.title,
+                        "session_id": run.session_id,
+                        "workspace": task.workspace,
+                        "agent": task.agent,
+                        "trigger": trigger,
+                    },
+                }
+            )
+            # Each run is a real, persisted conversation thread: it runs the instructions under
+            # its own session id, then saves the transcript. The user can reopen that session and
+            # ask a follow-up — the scheduled agent is no longer fire-and-forget.
+            engine = self._build_task_engine(task, session_id=run.session_id)
+            # Register the live engine up-front: a parked approval persists the session
+            # mid-run (durable suspend), and resolving from the Inbox must find this engine.
+            self._engines[run.session_id] = engine
+            # Instructions often restate the schedule, so make explicit that it already fired.
+            opening = (
+                f"⏰ Scheduled run — {task.title}\n\n"
+                "This automation is due now: carry out the task below immediately and produce "
+                "the result. The schedule already exists — do not create or modify any "
+                "scheduled tasks.\n\n"
+                f"{task.instructions}"
+            )
             async for _event in engine.run(opening):
                 pass
             run.result_text = _last_assistant_text(engine.messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
             run.status = "ok"
-            if task.notify_on_completion:
-                await self._notify_task_done(task, run)
+        except asyncio.CancelledError:
+            if engine is not None:
+                engine.request_interrupt()
+            run.status, run.error = "error", "cancelled during scheduler shutdown"
+            raise
         except Exception as exc:
             run.status, run.error = "error", str(exc)
         finally:
             run.finished_at = _epoch()
             # Persist the run as a continuable session + keep the live engine for an immediate
             # follow-up; record the run (now carrying its session_id).
-            try:
-                self.save(run.session_id, engine)
-                self._engines[run.session_id] = engine
-            except Exception:
-                pass
+            if engine is not None:
+                try:
+                    self.save(run.session_id, engine)
+                    self._engines[run.session_id] = engine
+                except Exception:
+                    pass
             self.task_store.add_run(run)
+        if task.notify_on_completion and run.status == "ok":
+            try:
+                await self._notify_task_done(task, run)
+            except asyncio.CancelledError:
+                # Execution and persistence completed. Preserve success so Scheduler.run_task
+                # advances the task instead of repeating side effects after restart.
+                pass
         return run
 
     async def _notify_task_done(self, task, run: TaskRun) -> None:
