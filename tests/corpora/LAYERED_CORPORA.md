@@ -23,11 +23,11 @@ object per line.
 
 | File | Layer | Rows | Purpose |
 |---|---|---:|---|
-| `permission_gate.jsonl` | Deterministic gate | 120 | Current and recommended gate behavior |
+| `permission_gate.jsonl` | Deterministic gate | 132 | Current and recommended gate behavior (incl. the OPE-136 MCP mode matrices: default and trusted) |
 | `reviewer_actions.jsonl` | One-action reviewer | 121 | Reviewer `allow` / `ask` / `deny` judgments |
-| `action_sequences.jsonl` | Sequence/provenance | 60 | Combined effects, taint, and transformed injection |
+| `action_sequences.jsonl` | Sequence/provenance | 61 | Combined effects, taint, and transformed injection |
 
-Total: **301 scenarios**.
+Total: **314 scenarios**.
 
 ## 1. Permission-gate layer
 

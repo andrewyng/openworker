@@ -149,6 +149,17 @@ def _grant_offered(outcome, request) -> bool:
         return risk is RiskClass.EXEC
     if outcome is ApprovalOutcome.ALWAYS_DOMAIN:
         return risk is RiskClass.EGRESS and bool(args.get("url"))
+    if outcome is ApprovalOutcome.ALWAYS_TRUST:
+        # OPE-136 §4: durable per-tool trust is the MCP family's sanctioned lever —
+        # the coarsest grant knowledge allows there, and offered nowhere else
+        # (connectors have target-scoped standing rules; built-ins their own grants).
+        return getattr(metadata, "category", "") == "mcp"
+    if outcome is ApprovalOutcome.THIS_RUN:
+        # OPE-136 run grant: EXTERNAL only — the loop/retry/pagination shapes live
+        # there, and the ladder's once-or-forever hole drains fatigue into durable
+        # grants. EXEC keeps its command-scoped instruments (tool-wide shell is a
+        # blank check at any duration); EGRESS keeps the domain-scoped grant.
+        return risk is RiskClass.EXTERNAL
     if outcome is ApprovalOutcome.ALWAYS_TOOL:
         if risk in (RiskClass.EXEC, RiskClass.EXTERNAL):
             return False
@@ -163,8 +174,12 @@ def _grant_offered(outcome, request) -> bool:
 def _approval_body(request) -> str:
     """Approval card body: the tool's reason (if any) plus a compact preview of its args, so a
     mirrored 'Run `write_file`?' shows the path/content rather than just the tool name.
+    "requires approval" is the engine's default boilerplate — the live card filters it
+    (ApprovalCard.tsx), so the parked/mirrored body must not bake it in either (§35).
     """
     reason = (getattr(request, "reason", "") or "").strip()
+    if reason == "requires approval":
+        reason = ""
     preview = args_preview(getattr(request, "arguments", None))
     return "\n".join(p for p in (reason, preview) if p)
 
@@ -1311,10 +1326,18 @@ class SessionManager:
                 # Per-tool approval from the pinned read/write classification
                 # (server-level requires_approval is off for backed servers);
                 # anything unclassified stays approval-gated — fail closed.
+                # Category flips to "connector" (OPE-136): these are FIRST-PARTY tools
+                # whose kinds the catalog pins with first-hand knowledge, so §36's
+                # "connector reads never gate" applies — while the MCP floor in
+                # risk.classify (which keys on category "mcp") stays reserved for
+                # third-party servers. This also closes the reverse name-collision:
+                # a custom server reusing a catalog name keeps category "mcp" and
+                # gets floored, instead of inheriting the catalog's read verdict.
                 for fn in callables:
                     fn.__aisuite_tool_metadata__.requires_approval = approval_for_tool(
                         fn.__aisuite_tool_metadata__.name, default=True
                     )
+                    fn.__aisuite_tool_metadata__.category = "connector"
             out.extend(callables)
         return out
 
@@ -1538,7 +1561,101 @@ class SessionManager:
             from ..mcp import oauth as mcp_oauth
 
             mcp_oauth.sign_out(name, self.secrets)
+            # OPE-136 owner-hit 2026-08-30: trust rules live in a DIFFERENT store
+            # (risk_overrides.json) keyed by name — leaving them behind let a future
+            # server added under the same name inherit don't-ask rules sight unseen
+            # (the reverse name-collision this issue exists to close). GONE means
+            # gone: revoke every rule scoped to this server's prefix. Broader
+            # hand-written globs (e.g. "mcp__*") are not this server's rules and
+            # stay. Sign-out deliberately does NOT do this — tokens only; a
+            # sign-out isn't the user saying the server is gone.
+            store = self._override_store()
+            prefix = f"mcp__{name}__"
+            for pattern in store.trust_patterns():
+                if pattern.startswith(prefix):
+                    store.revoke_trust(pattern)
         return {"ok": ok, "name": name}
+
+    def reveal_mcp_config(self) -> dict[str, Any]:
+        """Select the global mcp.json in the OS file manager (owner call
+        2026-08-30: ONE file for all servers, revealed from one common place —
+        the per-server Configuration mirror is gone; the file IS the ground
+        truth for headers/stdio commands/hand edits). Reveal, never auto-open:
+        the default app for .json is a lottery across machines. Same
+        local-machine rationale as reveal_artifact/reveal_skill."""
+        import subprocess
+        import sys
+
+        from ..mcp.config import global_mcp_path
+
+        target = global_mcp_path()
+        if not target.exists():
+            return {"ok": False, "error": "mcp.json does not exist yet"}
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(
+                    ["open", "-R", str(target)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            elif sys.platform == "win32":
+                # Explorer wants the path glued to the switch: /select,<path>
+                subprocess.Popen(["explorer", f"/select,{target}"])
+            else:  # Linux/BSD: no portable select — open the containing folder
+                subprocess.Popen(
+                    ["xdg-open", str(target.parent)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "path": str(target)}
+
+    # -- OPE-136 durable MCP trust (server detail page) --------------------------
+    def _override_store(self):
+        """A fresh view of the user-local override store — the FILE is the source of
+        truth (sessions hold their own instances; a fresh read here always agrees
+        with disk)."""
+        from ..overrides import RiskOverrideStore
+        from ..secrets import state_dir
+
+        return RiskOverrideStore(state_dir() / "risk_overrides.json")
+
+    def mcp_trust(self, name: str) -> dict[str, Any]:
+        """The trusted tools of one server (exact rules under its prefix) + whether the
+        legacy server-wide don't-ask flag is still present in its config."""
+        prefix = f"mcp__{name}__"
+        store = self._override_store()
+        tools = [p[len(prefix):] for p in store.trust_patterns() if p.startswith(prefix)]
+        raw = read_global().get(name) or {}
+        return {
+            "ok": True,
+            "tools": tools,
+            "legacy_dont_ask": raw.get("requires_approval") is False,
+        }
+
+    def revoke_mcp_trust(self, name: str, tool: str) -> dict[str, Any]:
+        self._override_store().revoke_trust(f"mcp__{name}__{tool}")
+        return {"ok": True}
+
+    async def convert_mcp_trust(self, name: str) -> dict[str, Any]:
+        """Migrate the legacy server-wide flag to named per-tool trust rules: one rule
+        per tool the server CURRENTLY lists (post include_tools filtering — trust only
+        what exists), then drop `requires_approval` from the entry. Same behavior
+        today; bounded tomorrow — a tool the server ships later will ask, because no
+        rule names it."""
+        listing = await self.mcp_tools(name)
+        if not listing.get("ok"):
+            return {"ok": False, "error": listing.get("error", "server unreachable")}
+        raw = read_global().get(name) or {}
+        include = raw.get("include_tools")
+        offered = [t["name"] for t in listing["tools"]]
+        covered = [t for t in offered if include is None or t in include]
+        store = self._override_store()
+        for tool in covered:
+            store.set_trust(f"mcp__{name}__{tool}")
+        patch_global_server(name, {"requires_approval": None})
+        return {"ok": True, "trusted": covered}
 
     async def mcp_tools(self, name: str) -> dict[str, Any]:
         """Connect one server and list its tools (name + description)."""
@@ -4120,6 +4237,18 @@ class SessionManager:
             "tool": request.tool_name,
             "arguments": getattr(request, "arguments", None) or {},
         }
+        # §35 parity (OPE-136 found-in-testing): the parked card must show the same
+        # scope chip and reason the live card would — carry the tool category, the
+        # MCP destination stamped on the request, and any non-boilerplate reason.
+        category = getattr(getattr(request, "metadata", None), "category", "")
+        if category:
+            data["category"] = category
+        dest = getattr(request, "mcp_destination", None)
+        if dest:
+            data["mcp_destination"] = dest
+        reason = (getattr(request, "reason", "") or "").strip()
+        if reason and reason != "requires approval":
+            data["reason"] = reason
         task = self.task_store.task_for_run_session(session_id)
         if task is None:
             return data
@@ -4205,6 +4334,11 @@ class SessionManager:
             ApprovalOutcome.ALWAYS_TOOL,
             ApprovalOutcome.ALWAYS_COMMAND,
             ApprovalOutcome.ALWAYS_DOMAIN,
+            # ALWAYS_TRUST was unlisted (a raw resolve could mint an inert-but-real
+            # trust rule for a non-MCP tool — evaluate ignores those, but the store
+            # shouldn't carry them); THIS_RUN validates like every grant.
+            ApprovalOutcome.ALWAYS_TRUST,
+            ApprovalOutcome.THIS_RUN,
         ) and not _grant_offered(outcome, request):
             self._audit_grant_refused(session_id, request, resolution)
             return ApprovalOutcome.ONCE

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { InboxItem } from "../api";
-import type { QuestionOption } from "../types";
+import type { Item, QuestionOption } from "../types";
 import { humanizeApprovalTitle } from "../humanize";
 import {
   approvalActionLabels,
@@ -38,6 +38,29 @@ const INPUT =
 const ROW_BASE = "w-full text-left rounded-lg border px-3 py-2 transition-colors";
 const ROW_OFF = "border-line bg-paper hover:border-accent hover:bg-accentSoft/50";
 const ROW_ON = "border-accent bg-accentSoft";
+
+// Rebuild a LIVE approval item from a parked Inbox row, so the session view can
+// render the real ApprovalCard for it — ONE renderer, no second dress to drift
+// (OPE-136 found-in-testing: the redelivered parked card kept losing the live
+// card's upgrades — first evidence, then the trust ladder). Returns null for
+// legacy rows without tool data (they keep this file's lean treatment) — and the
+// cross-session Inbox list keeps the lean card on purpose: standing grants are
+// not offered out of context. The decision vocabulary the ApprovalCard sends
+// ("once" / "always_*" / "deny") resolves through the same server-side
+// approval_outcome() as the live path, validation included.
+export function approvalItemFromParked(item: InboxItem): Extract<Item, { kind: "approval" }> | null {
+  const d = item.data;
+  if (item.kind !== "approval" || !d?.tool) return null;
+  return {
+    kind: "approval",
+    name: String(d.tool),
+    args: d.arguments ?? {},
+    reason: typeof d.reason === "string" ? d.reason : "",
+    ...(d.category ? { category: String(d.category) } : {}),
+    ...(d.standing_target ? { standingTarget: String(d.standing_target) } : {}),
+    ...(d.mcp_destination ? { mcpDestination: d.mcp_destination } : {}),
+  };
+}
 
 // -- question normalization ---------------------------------------------------
 
@@ -318,7 +341,15 @@ export function InboxItemCard({
         <div className="flex items-center justify-between gap-3">
           <TitleText line={humanizeApprovalTitle(item.data.tool, item.data.arguments)} />
           {(() => {
-            const s = scopeNote(item.data.tool, item.data.arguments);
+            // OPE-136 §35 parity: the parked chip gets the same category + MCP
+            // destination the live card gets — "leaves this computer → host", not
+            // the vague fallback. Older parked rows lack both and fall back honestly.
+            const s = scopeNote(
+              item.data.tool,
+              item.data.arguments,
+              item.data.category,
+              item.data.mcp_destination,
+            );
             return (
               <span className={"text-[11px] whitespace-nowrap pt-0.5 " + (s.external ? "text-warnInk" : "text-faint")}>
                 {s.text}
@@ -339,8 +370,22 @@ export function InboxItemCard({
         <PreviewBlock text={item.data.arguments.content} />
       ) : item.kind === "approval" && item.data?.tool && typeof item.data.arguments?.command === "string" ? (
         <PreviewBlock text={item.data.arguments.command} />
+      ) : item.kind === "approval" &&
+        item.data?.tool?.startsWith("mcp__") &&
+        item.data.arguments &&
+        Object.keys(item.data.arguments).length > 0 ? (
+        // MCP arguments (OPE-136 finding 5, same rule as the live card): for a
+        // stranger's tool the arguments are the only evidence there is — the full
+        // envelope in an expandable block, never the one-line truncated preview
+        // (the body, subsumed by this block, is skipped for this branch).
+        <PreviewBlock text={JSON.stringify(item.data.arguments, null, 2)} />
       ) : !isQuestion && item.body ? (
         <div className="text-[13px] text-muted mt-1 whitespace-pre-wrap">{item.body}</div>
+      ) : null}
+      {/* A real (non-boilerplate) reason travels in data — the body may be skipped
+          above, and the reason must survive that (e.g. a reviewer-unsure note). */}
+      {item.kind === "approval" && item.data?.reason ? (
+        <div className="text-[12px] text-muted mt-1">{item.data.reason}</div>
       ) : null}
       {!isQuestion && chip}
       {item.kind === "approval" ? (

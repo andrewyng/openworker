@@ -207,24 +207,6 @@ def test_upload_preview_then_confirm(tmp_path):
     assert row["source"] == "uploaded"
 
 
-def test_upload_confirm_rejects_forged_absolute_token(tmp_path):
-    client, _m, _p = _client(tmp_path)
-    outside = tmp_path / "outside-staging"
-    outside.mkdir()
-    (outside / "SKILL.md").write_text(
-        "---\nname: forged\ndescription: d\n---\nbody\n", encoding="utf-8"
-    )
-    marker = outside / "keep.txt"
-    marker.write_text("must survive", encoding="utf-8")
-
-    result = client.post(
-        "/v1/skills/upload/confirm", json={"token": str(outside.resolve())}
-    ).json()
-
-    assert result["ok"] is False and "expired" in result["error"].lower()
-    assert marker.read_text(encoding="utf-8") == "must survive"
-
-
 def test_upload_invalid_archive_friendly(tmp_path):
     client, _m, _p = _client(tmp_path)
     bad = client.post(

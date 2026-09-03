@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next";
 import { type CloudStatus, type Connector } from "../../api";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
-import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_QUIET } from "./ui";
+import { ApprovalChip } from "./ToolReview";
+import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW } from "./ui";
 
 // Pre-connect detail page (UX-DECISIONS §38): what a connector is for and what
 // access it gets, BEFORE any credentials exist. About paragraph, honest Access
@@ -81,7 +82,8 @@ export function AvailableDetail({
                     <span className="text-[13px]">{tool.label}</span>
                     <span className="block text-[12px] text-muted">{tool.description}</span>
                   </span>
-                  {tool.kind !== "read" && <span className={TAG_QUIET}>{tt("available.asks_first")}</span>}
+                  {/* Same chip, same tooltip, as the connected page's tool list. */}
+                  <ApprovalChip kind={tool.kind !== "read" ? "asks_first" : "read"} />
                 </div>
               ))}
           </div>

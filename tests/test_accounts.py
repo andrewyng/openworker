@@ -175,3 +175,4 @@ def test_generic_account_routes(acme, secrets, tmp_path, monkeypatch):
 
     out = client.post("/v1/connectors/linear/accounts/x/default").json()
     assert not out["ok"] and "not a multi-account" in out["error"]
+

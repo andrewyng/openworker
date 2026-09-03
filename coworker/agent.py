@@ -433,9 +433,13 @@ def build_engine(
         )
     )
 
-    # User-local risk overrides (mainly to relax MCP's conservative default). Empty store →
-    # no-op; never written by persona loading (the no-self-grant rule).
-    risk_overrides = RiskOverrideStore(state_dir() / "risk_overrides.json").resolver()
+    # User-local risk overrides (relax a plugin / tighten anything) + OPE-136 trust
+    # rules (per-MCP-tool "don't ask", durable). One store, never written by persona
+    # loading (the no-self-grant rule). The same instance serves the read side
+    # (classify + the trusted branch) and the write side ("Always allow this tool"),
+    # so a rule minted mid-session quiets THIS session immediately and every later
+    # one via the file.
+    override_store = RiskOverrideStore(state_dir() / "risk_overrides.json")
     permissions = PermissionEngine(
         workspace_root=ws or (root_list[0].path if root_list else Path.cwd()),
         mode=mode,
@@ -446,7 +450,9 @@ def build_engine(
         auto_allow_tools=set(config.auto_allow),
         allowed_domains=list(config.allowed_domains),
         roots=root_list or None,
-        risk_overrides=risk_overrides,
+        risk_overrides=override_store.resolver(),
+        trust_overrides=override_store.trusted,
+        grant_trust=override_store.set_trust,
     )
     # The plan-mode exit door — mutually exclusive with the board's decomposition
     # gate, DERIVED from the team trait (owner call 2026-08-16): a lead never

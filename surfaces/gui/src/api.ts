@@ -501,6 +501,40 @@ export async function getMcpTools(
   return res.json();
 }
 
+// OPE-136 §4/§5: the server's standing trust — which tools carry a durable "don't ask"
+// rule, plus whether the legacy server-wide requires_approval:false is still present.
+export async function getMcpTrust(
+  name: string,
+): Promise<{ ok: boolean; tools: string[]; legacy_dont_ask: boolean }> {
+  const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}/trust`);
+  return res.json();
+}
+
+export async function revokeMcpTrust(name: string, tool: string) {
+  const res = await fetch(
+    `${httpBase()}/v1/mcp/${encodeURIComponent(name)}/trust/${encodeURIComponent(tool)}`,
+    { method: "DELETE" },
+  );
+  return res.json();
+}
+
+/** Migrate the legacy server-wide don't-ask flag to named per-tool trust rules. */
+export async function convertMcpTrust(
+  name: string,
+): Promise<{ ok: boolean; error?: string; trusted?: string[] }> {
+  const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}/trust/convert`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
+/** Reveal the global mcp.json in the OS file manager — the ONE file every custom
+ * server lives in (the per-server Configuration mirror was removed in its favor). */
+export async function revealMcpConfig(): Promise<{ ok: boolean; error?: string; path?: string }> {
+  const res = await fetch(`${httpBase()}/v1/mcp/config/reveal`, { method: "POST" });
+  return res.json();
+}
+
 export async function reloadMcp() {
   const res = await fetch(`${httpBase()}/v1/mcp/reload`, { method: "POST" });
   return res.json();

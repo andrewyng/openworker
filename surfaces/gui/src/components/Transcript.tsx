@@ -179,7 +179,20 @@ function originChip(origin: string | undefined, note: string | undefined, grant?
       </span>
     );
   }
-  if (origin !== "reviewer" && origin !== "bypass") return null;
+  // Two DIFFERENT standing sources can waive an MCP card, and the chip must name the
+  // right one: a per-tool rule the USER minted ("Always allow this tool" — undo lives
+  // on the server's tool page) vs the legacy server-wide don't-ask flag (undo lives in
+  // mcp.json / the Convert banner). One generic label misled a real user into thinking
+  // the server had marked their own rule (owner-hit 2026-08-30). Plain "trusted" is
+  // the pre-split origin persisted in old transcripts — kept as a generic fallback.
+  const TRUST_ORIGINS = new Set(["trusted", "trusted_rule", "trusted_server"]);
+  if (
+    origin !== "reviewer" &&
+    origin !== "bypass" &&
+    origin !== "run_grant" &&
+    !TRUST_ORIGINS.has(origin ?? "")
+  )
+    return null;
   return (
     <span
       className="text-[11px] text-faint shrink-0"
@@ -187,10 +200,28 @@ function originChip(origin: string | undefined, note: string | undefined, grant?
       title={
         origin === "reviewer"
           ? note || t("transcript.approval.reviewer_allowed_title")
-          : t("transcript.approval.bypass_title")
+          : origin === "trusted_rule"
+            ? t("transcript.approval.trusted_rule_title")
+            : origin === "trusted_server"
+              ? t("transcript.approval.trusted_title")
+              : origin === "trusted"
+                ? t("transcript.approval.trusted_generic_title")
+                : origin === "run_grant"
+                  ? t("transcript.approval.run_grant_title")
+                  : t("transcript.approval.bypass_title")
       }
     >
-      {origin === "reviewer" ? t("transcript.approval.auto_approved") : t("transcript.approval.bypassed")}
+      {origin === "reviewer"
+        ? t("transcript.approval.auto_approved")
+        : origin === "trusted_rule"
+          ? t("transcript.approval.trusted_rule")
+          : origin === "trusted_server"
+            ? t("transcript.approval.trusted")
+            : origin === "trusted"
+              ? t("transcript.approval.trusted_generic")
+              : origin === "run_grant"
+                ? t("transcript.approval.run_grant")
+                : t("transcript.approval.bypassed")}
     </span>
   );
 }

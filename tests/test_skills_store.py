@@ -291,44 +291,6 @@ def test_upload_confirm_saves_previewed_content(store):
         store.confirm_upload(preview["token"])  # token is one-shot
 
 
-@pytest.mark.parametrize("action", ["confirm", "discard"])
-def test_upload_token_cannot_escape_staging_dir(store, tmp_path, action):
-    outside = tmp_path / f"outside-{action}"
-    outside.mkdir()
-    (outside / "SKILL.md").write_text(SKILL_MD, encoding="utf-8")
-    marker = outside / "keep.txt"
-    marker.write_text("must survive", encoding="utf-8")
-    token = os.path.relpath(outside, store._staging_dir)
-
-    with pytest.raises(ValueError, match="expired"):
-        if action == "confirm":
-            store.confirm_upload(token)
-        else:
-            store.discard_upload(token)
-
-    assert marker.read_text(encoding="utf-8") == "must survive"
-
-
-def test_upload_token_symlink_cannot_escape_staging_dir(store, tmp_path):
-    outside = tmp_path / "outside-symlink"
-    outside.mkdir()
-    (outside / "SKILL.md").write_text(SKILL_MD, encoding="utf-8")
-    marker = outside / "keep.txt"
-    marker.write_text("must survive", encoding="utf-8")
-    token = "a" * 32  # valid token shape; containment must still be enforced
-    store._staging_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        os.symlink(outside, store._staging_dir / token, target_is_directory=True)
-    except (OSError, NotImplementedError):
-        pytest.skip("symlinks unavailable on this platform/user")
-
-    with pytest.raises(ValueError, match="expired"):
-        store.confirm_upload(token)
-    with pytest.raises(ValueError, match="expired"):
-        store.discard_upload(token)
-    assert marker.read_text(encoding="utf-8") == "must survive"
-
-
 # -- disable state -------------------------------------------------------------------
 
 

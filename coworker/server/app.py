@@ -158,14 +158,14 @@ from ..attachments import (
     build_user_content,
 )
 from ..engine import ApprovalOutcome
-from ..inbox import VIS_INBOX, VIS_INLINE, args_preview
+from ..inbox import VIS_INBOX, VIS_INLINE
 from ..permissions import Mode
 from ..providers import AssistantTurn
 from .. import toolchain
 from ..teams.model import AuthorityError as TeamsAuthorityError
 from ..teams.model import BoardError as TeamsBoardError
 from ..teams.model import BoardNotFoundError as TeamsBoardNotFoundError
-from .manager import SessionManager
+from .manager import SessionManager, _approval_body
 
 
 def create_app(manager: SessionManager) -> FastAPI:
@@ -1198,9 +1198,28 @@ def create_app(manager: SessionManager) -> FastAPI:
     def mcp_delete(name: str) -> dict[str, Any]:
         return manager.delete_mcp(name)
 
+    @app.post("/v1/mcp/config/reveal")
+    def mcp_config_reveal() -> dict[str, Any]:
+        return manager.reveal_mcp_config()
+
     @app.get("/v1/mcp/{name}/tools")
     async def mcp_tools(name: str) -> dict[str, Any]:
         return await manager.mcp_tools(name)
+
+    # OPE-136 §4/§5: the server detail page's trust surface — which tools carry a
+    # standing "don't ask" rule, revoke one, and the one-click migration off the
+    # legacy server-wide requires_approval flag.
+    @app.get("/v1/mcp/{name}/trust")
+    def mcp_trust(name: str) -> dict[str, Any]:
+        return manager.mcp_trust(name)
+
+    @app.delete("/v1/mcp/{name}/trust/{tool}")
+    def mcp_trust_revoke(name: str, tool: str) -> dict[str, Any]:
+        return manager.revoke_mcp_trust(name, tool)
+
+    @app.post("/v1/mcp/{name}/trust/convert")
+    async def mcp_trust_convert(name: str) -> dict[str, Any]:
+        return await manager.convert_mcp_trust(name)
 
     @app.post("/v1/mcp/{name}/connect")
     async def mcp_connect(name: str) -> dict[str, Any]:
@@ -2064,14 +2083,9 @@ def create_app(manager: SessionManager) -> FastAPI:
             item = manager.inbox.add_approval(
                 session_id,
                 f"Run `{_request.tool_name}`?",
-                body="\n".join(
-                    p
-                    for p in (
-                        (getattr(_request, "reason", "") or "").strip(),
-                        args_preview(getattr(_request, "arguments", None)),
-                    )
-                    if p
-                ),
+                # Shared with inbox_approver so parked/mirrored bodies match the live
+                # card's dialect (boilerplate-reason filtering included, §35).
+                body=_approval_body(_request),
                 inbox=_route(),
                 visibility=_visibility(),
                 # Automation-run context (manual "Run now" rides this socket): lets the

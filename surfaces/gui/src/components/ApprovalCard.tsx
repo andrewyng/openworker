@@ -115,12 +115,29 @@ export function scopeNote(
   name: string,
   args: any,
   category?: string,
+  mcpDest?: { transport: string; host?: string },
 ): { text: string; external: boolean } {
   const tt = getI18n().getFixedT(null, "translation");
   // save_skill's corner answers WHERE (SKILLS-SPEC §5.2): the exact place to find, edit,
   // or turn off the skill afterwards.
   if (name === "save_skill") return { text: tt("approval.scope.save_skill"), external: false };
   if (category === "connector") return { text: tt("approval.scope.connector"), external: true };
+  // MCP tools (OPE-136 finding 4): the one family the old fallthrough mislabeled
+  // "stays on this computer". The destination comes from the server DEF — the user's
+  // own config — never from anything the server claims. No destination known (e.g. a
+  // parked Inbox replay of an old row) → say so honestly rather than guessing.
+  if (name.startsWith("mcp__")) {
+    if (mcpDest?.transport === "http")
+      return {
+        text: tt("approval.scope.leaves_mac", {
+          dest: mcpDest.host || tt("approval.scope.mcp_server_fallback"),
+        }),
+        external: true,
+      };
+    if (mcpDest?.transport === "stdio")
+      return { text: tt("approval.scope.mcp_local"), external: false };
+    return { text: tt("approval.scope.mcp_unknown"), external: true };
+  }
   // Egress (§1.9): the request itself reaches the network — never "stays on this computer".
   if (name === "web_fetch")
     return {
@@ -178,6 +195,59 @@ export function PreviewBlock({ text, mono = true }: { text: string; mono?: boole
   );
 }
 
+// OPE-136 finding 7: the long-tail fallback must never silently truncate. shortArgs
+// cuts every value at 96 chars with newlines flattened — the smuggled tail rides in
+// the part the card doesn't render (a 2,000-char email body approved on a 96-char
+// glimpse). Split the arguments: values the one-liner can show WHOLE stay on it;
+// anything longer (or multi-line — flattening is silent distortion too) gets its own
+// labeled, complete, expandable block. Keyed to this fallback path — never to tool
+// names — so every future connector inherits the guarantee with no code change.
+const LONG_ARG_CHARS = 96;
+
+export function splitLongArgs(args: any): {
+  short: Record<string, any>;
+  long: [string, string][];
+} {
+  const short: Record<string, any> = {};
+  const long: [string, string][] = [];
+  if (args && typeof args === "object") {
+    for (const [k, v] of Object.entries(args)) {
+      const s = typeof v === "string" ? v : JSON.stringify(v) ?? "";
+      if (s.length > LONG_ARG_CHARS || s.includes("\n")) long.push([k, s]);
+      else short[k] = v;
+    }
+  }
+  return { short, long };
+}
+
+// "body · 1,912 chars" / "payload · 2.3 MB · binary" — the label says what the block
+// holds and how big it really is, so even a collapsed block discloses its true size.
+function argSizeNote(value: string): string {
+  const t = getI18n().getFixedT(null, "translation");
+  const binary = value.length > 1024 && !/\s/.test(value);
+  if (binary) {
+    const kb = value.length / 1024;
+    const size = kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${Math.round(kb)} KB`;
+    return t("approval.arg_binary", { size });
+  }
+  return t("approval.arg_chars", { count: value.length });
+}
+
+export function LongArgBlocks({ long }: { long: [string, string][] }) {
+  return (
+    <>
+      {long.map(([k, v]) => (
+        <div key={k} data-testid={`approval-longarg-${k}`}>
+          <div className="approval-rest">
+            {k} · {argSizeNote(v)}
+          </div>
+          <PreviewBlock text={v} />
+        </div>
+      ))}
+    </>
+  );
+}
+
 // Outbound message text: short one-liners keep the cozy inline quote; anything
 // long (or multi-line) gets the clamped preview so the card stays card-sized.
 function MessagePreview({ text, label }: { text: string; label?: string }) {
@@ -219,19 +289,41 @@ function Buttons({
   // has a fixed destination (the configured provider), so tool-wide IS provider-wide and
   // the button is labelled by what it actually grants: searches.
   const fetchHost = item.name === "web_fetch" ? grantHost(item.args?.url) : "";
+  // MCP tools (OPE-136 §4): the session-scoped tool grant was already refused
+  // server-side for them (_grant_offered: tool-wide + argument-unbounded), so the
+  // button was a lie — hidden now. Their sanctioned lever is the DURABLE per-tool
+  // trust rule below.
+  const isMcp = item.name.startsWith("mcp__") && !connector;
   const noSessionGrant =
     autoApprove ||
     offerStanding ||
     connector ||
+    isMcp ||
     item.name === "run_shell" ||
     item.name === "save_skill" ||
     item.name === "web_fetch" ||
     item.name === "web_search";
+  // OPE-136 run grant: the rung between "once" and "always", EXTERNAL family only —
+  // MCP, connectors, and the core outward tools. EXEC keeps its command-scoped
+  // grants and EGRESS its domain grant (server-refused here anyway). Hidden in a
+  // run context (§25: the task-persistent grant is that flow's one grant) and in
+  // Auto-approve (§1.5: in-flow grants don't skip the judge).
+  const externalFamily = isMcp || connector || EXTERNAL.has(item.name);
   return (
     <div className="approval-btns">
       <button className="btn approval-primary" onClick={() => onApprove("once")}>
         {primaryLabel}
       </button>
+      {!autoApprove && !offerStanding && externalFamily && (
+        <button
+          className="btn"
+          title={t("approval.btn.this_run_title", { name: item.name })}
+          onClick={() => onApprove("this_run")}
+          data-testid="approval-this-run"
+        >
+          {t("approval.btn.this_run")}
+        </button>
+      )}
       {offerStanding && (
         <button
           className="btn"
@@ -246,6 +338,12 @@ function Buttons({
           exactly the scope distinction §25 exists to draw. Same rule for run_shell:
           the command-scoped button below is the specific (safer) grant, so the
           tool-wide one stays out of the card. */}
+      {/* Button vocabulary (owner call 2026-08-29): "Always" is reserved for grants that
+          actually survive the session — today only the automation-scoped "Allow every
+          time". Session grants live in RAM and die on close, so their labels say "for
+          this session"; the old "Always allow" copy oversold them and sent users hunting
+          for something durable (the requires_approval flag — OPE-136). The label STRINGS
+          live in locales/en.json + zh.json under approval.btn.* — keep them truthful there. */}
       {/* save_skill: no session-wide "always" — every skill proposal gets its own review
           (SKILLS-SPEC §5: one gate, always). */}
       {!noSessionGrant && (
@@ -255,6 +353,20 @@ function Buttons({
           onClick={() => onApprove("always_tool")}
         >
           {t("approval.btn.always_allow")}
+        </button>
+      )}
+      {/* OPE-136 §4 durable trust — the one button that has earned the word "Always":
+          writes a per-tool rule to the user-local store; survives sessions; revocable
+          on the server's detail page. Never in Auto-approve (§1.5: a card the
+          reviewer escalated must not mint a permanent skip). */}
+      {!autoApprove && !offerStanding && isMcp && (
+        <button
+          className="btn"
+          title={t("approval.btn.always_trust_title", { name: item.name })}
+          onClick={() => onApprove("always_trust")}
+          data-testid="approval-always-trust"
+        >
+          {t("approval.btn.always_trust")}
         </button>
       )}
       {!autoApprove && !offerStanding && item.name === "web_fetch" && fetchHost && (
@@ -322,7 +434,7 @@ export function ApprovalCard({
   const { t } = useTranslation();
   const [peek, setPeek] = useState(false);
   const title = humanizeApprovalTitle(item.name, item.args);
-  const scope = scopeNote(item.name, item.args, item.category);
+  const scope = scopeNote(item.name, item.args, item.category, item.mcpDestination);
   const grants = item.name === "create_scheduled_task" ? permissionLines(item.args) : [];
   // "requires approval" is the engine's default boilerplate — only surface a real reason.
   const reason = item.reason && item.reason !== "requires approval" ? item.reason : "";
@@ -408,6 +520,16 @@ export function ApprovalCard({
       )}
       {/* save_skill (SKILLS-SPEC §5.2): the arguments ARE the review surface. */}
       {item.name === "save_skill" && <SaveSkillPreview args={item.args} />}
+      {/* Egress evidence (OPE-136 finding 5): the FULL URL/query in the expandable
+          block — §1.9 gives the reviewer the whole envelope because the path and query
+          are where exfiltration rides; the human's own card must see no less. Never
+          the 96-char truncating one-liner. */}
+      {item.name === "web_fetch" && item.args?.url && (
+        <PreviewBlock text={String(item.args.url)} />
+      )}
+      {item.name === "web_search" && item.args?.query && (
+        <PreviewBlock text={String(item.args.query)} />
+      )}
       {/* web_search (§1.9): name the LIVE destination — "currently", never "default",
           because the card must show the setting as it stands right now. */}
       {item.name === "web_search" && (
@@ -416,6 +538,11 @@ export function ApprovalCard({
             ? t("approval.search_note_current", { provider: item.searchProvider })
             : t("approval.search_note")}
         </div>
+      )}
+      {/* MCP arguments (OPE-136 finding 5): everything the call carries, expandable —
+          for a stranger's tool the arguments are the only evidence there is. */}
+      {item.name.startsWith("mcp__") && item.args && Object.keys(item.args).length > 0 && (
+        <PreviewBlock text={JSON.stringify(item.args, null, 2)} />
       )}
 
       {grants.length > 0 && (
@@ -438,11 +565,23 @@ export function ApprovalCard({
           })}
         </div>
       )}
-      {/* Long-tail tools: no bespoke preview — fall back to the compact args line. */}
+      {/* Long-tail tools: no bespoke preview — the compact line carries only values
+          it can show WHOLE; anything longer renders as a complete labeled block
+          (finding 7: no silent truncation, on any tool, ever). MCP and egress tools
+          are excluded: they render full evidence above. */}
       {!FILE_WRITES.has(item.name) &&
-        !["run_shell", "send_message", "send_file", "save_skill"].includes(item.name) &&
+        !["run_shell", "send_message", "send_file", "save_skill", "web_fetch", "web_search"].includes(item.name) &&
+        !item.name.startsWith("mcp__") &&
         !grants.length &&
-        shortArgs(item.args) && <div className="approval-rest">{shortArgs(item.args)}</div>}
+        (() => {
+          const { short, long } = splitLongArgs(item.args);
+          return (
+            <>
+              {shortArgs(short) && <div className="approval-rest">{shortArgs(short)}</div>}
+              <LongArgBlocks long={long} />
+            </>
+          );
+        })()}
       {provenance}
       {reviewerUnsure}
       {reason && <div className="approval-reason">{reason}</div>}

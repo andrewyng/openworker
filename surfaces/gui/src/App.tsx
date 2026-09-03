@@ -54,7 +54,7 @@ import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
 import { addTurnUsage, emptyUsage, usageFromMessages } from "./usage";
 import { streamMode } from "./streamGate";
-import { InboxItemCard } from "./components/InboxItemCard";
+import { InboxItemCard, approvalItemFromParked } from "./components/InboxItemCard";
 import { chooseFolder, isTauri, platformOS, startWindowDrag } from "./tauri";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
@@ -789,6 +789,7 @@ export function App() {
               provenance: d.provenance || undefined,
               reviewerUnsure: d.reviewer_unsure || undefined,
               readonlyOk: !!d.readonly_ok,
+              mcpDestination: d.mcp_destination || undefined,
             },
           ]);
           break;
@@ -2145,8 +2146,32 @@ export function App() {
                     compact
                   />
                 ) : sessionInbox[0] ? (
-                  // Unattended session blocked on an Inbox item — answer it in context.
-                  <InboxItemCard item={sessionInbox[0]} onResolve={resolveSessionInbox} compact />
+                  // Session blocked on a parked Inbox item — answer it in context. A parked
+                  // APPROVAL with tool data renders through the REAL ApprovalCard (OPE-136:
+                  // one renderer, no second dress to drift out of evidence or buttons); its
+                  // decisions resolve through the same server-validated vocabulary as the
+                  // live path. Everything else keeps the Inbox card.
+                  (() => {
+                    const parked = approvalItemFromParked(sessionInbox[0]);
+                    const d = sessionInbox[0].data;
+                    return parked ? (
+                      <ApprovalCard
+                        item={parked}
+                        onApprove={(decision) =>
+                          void resolveSessionInbox(sessionInbox[0].id, decision)
+                        }
+                        runTask={
+                          d?.task_id
+                            ? { id: String(d.task_id), title: String(d.task_title || "") }
+                            : null
+                        }
+                        autoApprove={mode === "auto-approve"}
+                        compact
+                      />
+                    ) : (
+                      <InboxItemCard item={sessionInbox[0]} onResolve={resolveSessionInbox} compact />
+                    );
+                  })()
                 ) : undefined
               }
             />

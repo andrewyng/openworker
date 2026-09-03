@@ -470,14 +470,23 @@ class AnthropicProvider(ProviderClient):
             model=model, messages=messages, tools=tools, settings=settings
         )
         client = self._ensure_client()
+        # Stream-and-accumulate, not a plain create: the SDK REFUSES non-streaming
+        # requests whose max_tokens could exceed ~10 minutes (ValueError before any
+        # network I/O). With DEFAULT_MAX_TOKENS=32000 that killed every consumer of
+        # the non-streaming path — the auto-approve reviewer errored on ALL rows
+        # for every Anthropic model (found by the 2026-08-31 eval run; fail-closed,
+        # so verdicts fell back to asking a human). get_final_message() returns the
+        # same Message shape create() would.
         if _needs_refusal_fallback(model):
-            response = client.beta.messages.create(
+            with client.beta.messages.stream(
                 **kwargs,
                 betas=[_FALLBACK_BETA],
                 fallbacks=[{"model": _FALLBACK_MODEL}],
-            )
+            ) as stream:
+                response = stream.get_final_message()
         else:
-            response = client.messages.create(**kwargs)
+            with client.messages.stream(**kwargs) as stream:
+                response = stream.get_final_message()
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []

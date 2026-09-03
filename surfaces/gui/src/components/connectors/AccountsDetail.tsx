@@ -127,11 +127,16 @@ function Row({
             {a.account_id}
           </span>
         )}
-        {a.default && <span className={TAG_ACCENT}>{t("connector.default")}</span>}
+        {a.default && (
+          <span className={TAG_ACCENT} title={t("accounts.default_tip")}>
+            {t("connector.default")}
+          </span>
+        )}
       </span>
       {!a.default && (
         <button
           className="text-[12px] text-muted hover:text-ink shrink-0"
+          title={t("accounts.default_tip")}
           data-testid={`account-make-default-${a.account_id}`}
           onClick={async () => {
             await setDefaultAccount(connector, a.account_id);
@@ -143,7 +148,7 @@ function Row({
       )}
       <button
         className={XBTN}
-        title={t("accounts.disconnect_account_title")}
+        title={t("accounts.disconnect_tip")}
         data-testid={`account-disconnect-${a.account_id}`}
         disabled={busy}
         onClick={async () => {

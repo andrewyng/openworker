@@ -87,16 +87,48 @@ def _catalog_floor(tool_name: str) -> Optional[RiskClass]:
     return RiskClass.EXTERNAL if kind is not None and kind != "read" else None
 
 
+def _mcp_floor(tool_name: str, metadata: Any) -> Optional[RiskClass]:
+    """The floor for third-party MCP tools (OPE-136): EXTERNAL, always.
+
+    An MCP tool's effects are a stranger's claim — we cannot tell its reads from a write
+    wearing a read's name — so no config value may drop one into the never-checked READ
+    tier. Before this floor, `requires_approval: false` in mcp.json reclassified a whole
+    server's tools to READ, which skipped not just the approval card but the Discuss-mode
+    denial, the Auto-approve reviewer, and the audit trail in one step. The flag now only
+    ever waives the *card* (see permissions.evaluate's trusted-MCP branch); the class is
+    welded on.
+
+    Keyed on `category == "mcp"`, not the name prefix: the first-party MCP-backed
+    connectors (§42 one-click jira/monday/asana) share the `mcp__*` naming but are
+    re-labelled `category="connector"` at wiring (server/manager.py) because their
+    read/write kinds are pinned in the catalog — first-hand knowledge, so §36's
+    "connector reads never gate" keeps applying to them. That relabel also closes the
+    reverse name-collision: a CUSTOM server that happens to reuse a catalog name still
+    carries category "mcp" and lands on this floor. The name-prefix check only backstops
+    the metadata-less case (a bare name reaching classify without its registration
+    sticker fails closed)."""
+    if getattr(metadata, "category", "") == "mcp":
+        return RiskClass.EXTERNAL
+    if metadata is None and tool_name.startswith("mcp__"):
+        return RiskClass.EXTERNAL
+    return None
+
+
 def classify(
     tool_name: str, metadata: Any = None, overrides: Optional[RiskOverrides] = None
 ) -> RiskClass:
-    """Effective risk of a tool call. A user override may *relax* a metadata/MCP tool (the
+    """Effective risk of a tool call. A user override may *relax* a metadata tool (the
     intended use — quieting an over-cautious plug-in), but may only ever **tighten** a
-    built-in write/exec/egress tool or a connector-catalog write, never loosen one.
-    Downgrading a write to a read would switch off path scoping AND the read-only gate at
-    once, so it is refused here. Precedence otherwise: the by-name base table, then aisuite
-    metadata (`requires_approval` → external), else read."""
-    base = _BASE.get(tool_name) or _catalog_floor(tool_name)
+    built-in write/exec/egress tool, a connector-catalog write, or a third-party MCP tool
+    (OPE-136), never loosen one. Downgrading a write to a read would switch off path
+    scoping AND the read-only gate at once, so it is refused here. Precedence otherwise:
+    the by-name base table, then aisuite metadata (`requires_approval` → external),
+    else read."""
+    base = (
+        _BASE.get(tool_name)
+        or _catalog_floor(tool_name)
+        or _mcp_floor(tool_name, metadata)
+    )
     if overrides is not None:
         ov = overrides(tool_name)
         if ov is not None:

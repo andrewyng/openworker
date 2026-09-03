@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { type CloudStatus, type Connector, type McpServer, type SlackStatus } from "../../api";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
-import { AddMcpModal, CustomMcpGroup } from "./CustomMcp";
+import { AddMcpModal, CustomMcpGroup, McpPresetRows, mcpPresetOffers } from "./CustomMcp";
 import { CHIP_OK, CHIP_OFF, CHIP_WARN, GRP, GRP_H, FOOT, PILL_QUIET, ROW } from "./ui";
 
 // The Connectors LIST (UX-DECISIONS §21): connected first in their own inset group —
@@ -61,6 +61,10 @@ export function ConnectorsList({
         />
       </div>
 
+      {/* No legend, no tooltips (owner call 2026-08-30): with only Ready and
+          Connect the vocabulary is self-explanatory — the earlier legend existed
+          to explain a Live/Ready split that has been deleted. */}
+
       {/* No cloud strip here anymore (§26): the sidebar's account row is the permanent
           sign-in home, and the connect modals keep their inline sign-in panes. */}
       {connected.length > 0 && (
@@ -93,7 +97,9 @@ export function ConnectorsList({
         onChanged={onChanged}
       />
 
-      <div className={GRP_H}>{t("connector.available")}</div>
+      {/* The FULL offer count, not the folded slice — the header is the only
+          honest total visible before "show all" (owner rule: headers count rows). */}
+      <div className={GRP_H}>{t("connector.available", { count: available.length })}</div>
       <div className={GRP}>
         {shown.map((c) => (
           /* The row navigates to the pre-connect detail page (§38); the pill
@@ -121,7 +127,14 @@ export function ConnectorsList({
             </span>
           </button>
         ))}
-        {shown.length === 0 && (
+        {/* Curated MCP quick-add OFFERS live here among the available connectors —
+            never inside Custom · MCP, where a row means "a server you own". */}
+        <McpPresetRows
+          presets={mcpPresetOffers(mcpServers, filter)}
+          onOpen={(name) => onOpen("mcp:" + name)}
+          onChanged={onChanged}
+        />
+        {shown.length === 0 && mcpPresetOffers(mcpServers, filter).length === 0 && (
           <div className={ROW + " text-[13px] text-muted"}>{t("connector.nothing_matches")}</div>
         )}
       </div>
@@ -142,7 +155,13 @@ export function ConnectorsList({
           onChanged={onChanged}
         />
       )}
-      {addingMcp && <AddMcpModal onClose={() => setAddingMcp(false)} onChanged={onChanged} />}
+      {addingMcp && (
+        <AddMcpModal
+          onClose={() => setAddingMcp(false)}
+          onChanged={onChanged}
+          onAdded={(name) => onOpen("mcp:" + name)}
+        />
+      )}
     </div>
   );
 }
@@ -169,9 +188,13 @@ function healthChip(c: Connector, slack: SlackStatus | null, t: (k: string, opts
       return <span className={CHIP_WARN}>{"● " + t("connector.reconnecting")}</span>;
     if (Object.values(slack.teams).some((tm) => !tm.token_ok))
       return <span className={CHIP_WARN}>{"⚠ " + t("connector.token")}</span>;
-    return <span className={CHIP_OK}>{"● " + t("connector.live")}</span>;
+    return <span className={CHIP_OK}>{"● " + t("connector.ready")}</span>;
   }
-  if (c.two_way && c.connected) return <span className={CHIP_OK}>{"● " + t("connector.live")}</span>;
+  // ONE healthy word (owner call 2026-08-30): Live-vs-Ready distinguished the
+  // plumbing (standing socket vs on-demand), not anything the user would DO
+  // differently — and MCP's "Live" wasn't heartbeat-monitored anyway. The
+  // runtime difference shows where it matters: the problem chips above
+  // (Reconnecting / Offline / Needs sign-in / Error) are per-transport honest.
   return <span className={CHIP_OK}>{"● " + t("connector.ready")}</span>;
 }
 

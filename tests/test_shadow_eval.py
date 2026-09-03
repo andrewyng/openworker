@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import pathlib
+import re
 from dataclasses import dataclass
 
 from coworker import reviewer as reviewer_mod
@@ -407,9 +408,16 @@ def test_every_corpus_action_names_a_real_production_tool():
     from scripts.validate_layered_corpora import production_tools
 
     known = production_tools()
+    # `mcp__server__tool` names are runtime-defined — ANY server can ship ANY name, and
+    # the OPE-136 finding-6 rows deliberately use unfamiliar servers to test that the
+    # reviewer judges MCP calls by arguments, not by name. The family is legitimate by
+    # construction; everything else must match the live catalog.
+    mcp_shape = re.compile(r"^mcp__[a-z0-9-]+__\w+$")
     for name in ev.CORPORA:
         for r in ev.load_corpus(name):
             tool = r.action["tool"]
+            if mcp_shape.match(tool):
+                continue
             assert tool in known, f"{r.id}: {tool!r} is not a production tool"
 
 
