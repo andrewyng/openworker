@@ -40,7 +40,7 @@ from ..audit import AuditStore
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
-from ..roots import RootDir
+from ..roots import RootDir, overbroad_root_warning
 from ..workspace_trust import WorkspaceTrustStore
 from ..automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
 from ..connectors import (
@@ -5529,7 +5529,15 @@ class SessionManager:
         engine = self._engines.get(session_id)
         if notice and engine is not None:
             engine._append_notice("project_presence", notice)
-        return {"ok": True, "roots": self.get_roots(session_id), "notice": notice}
+        result: dict[str, Any] = {
+            "ok": True,
+            "roots": self.get_roots(session_id),
+            "notice": notice,
+        }
+        if warning := overbroad_root_warning(resolved):
+            logger.warning("session %s: %s", session_id, warning)
+            result["warning"] = warning
+        return result
 
     def _project_notice(self, path: str) -> Optional[str]:
         """One-line presence pointer for a newly granted directory, or None."""
