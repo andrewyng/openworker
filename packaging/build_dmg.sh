@@ -7,7 +7,8 @@
 #   4. Wrap the .app in a compressed .dmg via hdiutil (reliable + headless; Tauri's own
 #      bundle_dmg.sh uses Finder AppleScript and fails in non-interactive sessions).
 #
-# Prerequisites (mirrors build_windows.ps1's header):
+#   - Matrix E2EE (optional connector): libolm must be on the PATH at runtime
+#     (`brew install libolm`). Bundling libolm into the DMG is release follow-up (task 6.4).
 #   - Rust (rustup) + Node/npm, and the GUI deps installed (npm ci in surfaces/gui).
 #   - A Python venv at .venv (repo root) with this package installed editable, plus the
 #     build-only deps:

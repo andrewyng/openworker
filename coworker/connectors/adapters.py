@@ -459,6 +459,13 @@ def make_adapter(
             )
         if profile.get("bot_token") and profile.get("app_token"):
             return SlackAdapter(profile["bot_token"], profile["app_token"])
+    if platform == "matrix" and profile.get("access_token"):
+        from ..secrets import state_dir
+        from .matrix_adapter import MatrixAdapter
+        from .matrix_settings import MatrixSettings
+
+        settings = MatrixSettings.from_profile(profile)
+        return MatrixAdapter(settings, store_path=state_dir() / "matrix" / "store")
     if platform == "github" and profile.get("mode") == "relay":
         if not (relay_url and token_provider):
             logger.warning(

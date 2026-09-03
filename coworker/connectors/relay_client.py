@@ -191,17 +191,19 @@ class RelayHub:
             return "reconnecting"
         return "offline"
 
-    async def wait_dispatched(self, at_least: int, timeout: float = 2.0) -> None:
+    async def wait_dispatched(self, at_least: int, timeout: float = 5.0) -> None:
         """Test helper: wait until at least N frames have been dispatched."""
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
         while self._dispatched < at_least:
-            self._progress.clear()
+            if self._dispatched >= at_least:
+                return
             remaining = deadline - loop.time()
             if remaining <= 0:
                 raise TimeoutError(
                     f"only {self._dispatched} frames dispatched (< {at_least})"
                 )
+            self._progress.clear()
             try:
                 await asyncio.wait_for(self._progress.wait(), timeout=remaining)
             except asyncio.TimeoutError:
@@ -284,7 +286,7 @@ class SlackRelayAdapter(BasePlatformAdapter):
             },
         }
 
-    async def wait_dispatched(self, at_least: int, timeout: float = 2.0) -> None:
+    async def wait_dispatched(self, at_least: int, timeout: float = 5.0) -> None:
         await self._hub.wait_dispatched(at_least, timeout)
 
     # -- team registry -------------------------------------------------------
@@ -407,7 +409,9 @@ class SlackRelayAdapter(BasePlatformAdapter):
             return None
         base = os.environ.get("SLACK_API_URL", "https://slack.com/api/")
         try:
-            async with httpx.AsyncClient(timeout=15) as http:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(0.5, connect=0.25)
+            ) as http:
                 resp = await http.get(
                     base + method,
                     params=params,

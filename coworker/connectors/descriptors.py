@@ -118,6 +118,31 @@ def _validate_email(creds: dict) -> ValidationResult:
     return ValidationResult(ok, identity=identity or None, error=error or None)
 
 
+def _validate_matrix(creds: dict) -> ValidationResult:
+    import httpx
+
+    base = str(creds.get("homeserver_url") or "").rstrip("/")
+    token = creds.get("access_token", "")
+    if not base or not token:
+        return ValidationResult(False, error="homeserver_url and access_token required")
+    try:
+        resp = httpx.get(
+            f"{base}/_matrix/client/v3/account/whoami",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        data = resp.json()
+    except Exception as exc:
+        return ValidationResult(False, error=str(exc))
+    if resp.status_code >= 400:
+        detail = (
+            (data.get("errcode") or data.get("error")) if isinstance(data, dict) else None
+        )
+        return ValidationResult(False, error=str(detail or f"HTTP {resp.status_code}"))
+    user_id = data.get("user_id") if isinstance(data, dict) else None
+    return ValidationResult(True, identity=str(user_id or "matrix user"))
+
+
 def _validate_slack(creds: dict) -> ValidationResult:
     import httpx
 
@@ -487,6 +512,61 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
             "Paste both tokens below and Connect, then invite the bot to a channel or DM it.",
         ],
         validate=_validate_slack,
+    ),
+    ConnectorDescriptor(
+        name="matrix",
+        title="Matrix",
+        icon="⬡",
+        blurb="Two-way encrypted messaging on your Synapse or Element Server Suite homeserver.",
+        auth="token",
+        two_way=True,
+        channels=True,
+        brand_color="#0dbd8b",
+        logo="matrix",
+        fields=[
+            Field(
+                "homeserver_url",
+                "Homeserver URL",
+                help="Your Synapse or ESS base URL, e.g. https://matrix.example.org",
+                placeholder="https://matrix.example.org",
+            ),
+            Field(
+                "access_token",
+                "Access token",
+                secret=True,
+                help="Bot user access token (from Element → Settings → Help & About).",
+            ),
+            Field(
+                "recovery_key",
+                "Recovery key",
+                secret=True,
+                help="Required for E2EE cross-signing bootstrap on encrypted rooms.",
+            ),
+            Field(
+                "user_id",
+                "User ID",
+                required=False,
+                help="Optional @user:server — filled automatically on connect.",
+                placeholder="@bot:example.org",
+            ),
+            _ALLOWED_FIELD,
+            Field(
+                "allowed_rooms",
+                "Allowed room IDs",
+                required=False,
+                help="Comma-separated room IDs. Empty = all joined rooms.",
+                placeholder="!abc:example.org",
+            ),
+        ],
+        instructions=[
+            "Create a dedicated bot user on your Synapse or ESS homeserver.",
+            "Sign in with Element, open Settings → Help & About → Access Token.",
+            "Export your security recovery key (Settings → Security & Privacy) — required for E2EE.",
+            "Install libolm on this machine: brew install libolm (macOS) or apt install libolm-dev (Linux). CI installs libolm-dev on Ubuntu.",
+            "Invite the bot to encrypted rooms; it auto-accepts invites.",
+            "After connecting, message the bot once, then use Capture to grab your Matrix user ID.",
+        ],
+        validate=_validate_matrix,
     ),
     ConnectorDescriptor(
         name="email",

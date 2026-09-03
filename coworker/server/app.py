@@ -1394,6 +1394,15 @@ def create_app(manager: SessionManager) -> FastAPI:
             return {"ok": False, "error": "labels must be a list"}
         return gmail_accounts.set_filters(manager.secrets, senders, labels)
 
+    @app.patch("/v1/connectors/matrix/settings")
+    async def matrix_settings(body: dict) -> dict[str, Any]:
+        from ..connectors.matrix_profile import patch_matrix_settings
+
+        result = patch_matrix_settings(manager.secrets, body or {})
+        if result.get("ok"):
+            await _refresh_listeners_if_two_way("matrix")
+        return result
+
     @app.post("/v1/connectors/google_calendar/accounts/{email}/disconnect")
     async def gcal_account_disconnect(email: str) -> dict[str, Any]:
         """Drop ONE Google Calendar account (cloud metadata best-effort first);

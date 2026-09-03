@@ -689,6 +689,21 @@ export interface Connector {
   portals?: HubSpotPortal[]; // HubSpot only: connected portals (multi-portal)
   hidden_fields?: string[]; // HubSpot only: properties stripped from agent reads
   installations?: GithubInstallation[]; // GitHub only: App installations (managed relay)
+  matrix_settings?: MatrixSettings; // Matrix: advanced Hermes flags (no secrets)
+}
+
+export interface MatrixSettings {
+  homeserver_url: string;
+  user_id?: string | null;
+  require_mention: boolean;
+  auto_thread: boolean;
+  session_scope: string;
+  dm_mention_threads: boolean;
+  dm_auto_thread: boolean;
+  group_sessions_per_user: boolean;
+  lifecycle_reactions: boolean;
+  allowed_rooms: string[];
+  free_response_rooms: string[];
 }
 
 // --- OpenWorker Cloud (optional sign-in; manual token paste always works) ---
@@ -2288,6 +2303,17 @@ export async function setGmailFilters(filters: { senders?: string[]; labels?: st
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(filters),
+  });
+  return res.json();
+}
+
+export async function patchMatrixSettings(
+  body: Partial<MatrixSettings>,
+): Promise<{ ok: boolean; error?: string; settings?: MatrixSettings }> {
+  const res = await fetch(`${httpBase()}/v1/connectors/matrix/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
   return res.json();
 }
