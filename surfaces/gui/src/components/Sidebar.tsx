@@ -150,6 +150,9 @@ interface Props {
   collapsed?: boolean;
   onCollapse?: () => void;
   onPeekLeave?: () => void;
+  // Opens the app-level SearchModal. Kept out of this tree so the collapsed sidebar's
+  // `transform` cannot become the containing block for `position: fixed` (#282).
+  onOpenSearch?: () => void;
 }
 
 // Compact age for project session rows: "now" / "5m" / "6h" / "3d" / "2w" / "4mo" / "2y".
@@ -1040,7 +1043,8 @@ export function Sidebar(props: Props) {
       </div>
 
       {/* Search: a borderless nav-style entry (not a boxed input) that opens the command-palette
-          SearchModal over the whole app. Matches the bottom-nav rows to reduce the boxy look. */}
+          SearchModal over the whole app. Matches the bottom-nav rows to reduce the boxy look.
+          Opens via App so the palette is never mounted under the transformed collapsed sidebar. */}
       <div className="px-2.5 mt-1">
         <button
           className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left text-muted hover:bg-chromeHover hover:text-ink"
@@ -1297,17 +1301,6 @@ export function Sidebar(props: Props) {
         </div>
       </div>
 
-      {searchModalOpen && (
-        <SearchModal
-          sessions={props.sessions}
-          personas={personas ?? undefined}
-          onSelect={(id, ws, ag) => {
-            setSearchModalOpen(false);
-            props.onSelectSession(id, ws, ag);
-          }}
-          onClose={() => setSearchModalOpen(false)}
-        />
-      )}
     </div>
   );
 }
