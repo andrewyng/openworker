@@ -692,3 +692,32 @@ def test_session_append_only_and_list(tmp_path):
     assert len(listed) == 1
     assert listed[0].message_count == 2
     assert listed[0].title == "a"
+
+
+def test_bookkeeping_saves_do_not_bump_recency(tmp_path):
+    # touch=False (owner ruling 2026-08-24): `updated_at` means "last worked on", never
+    # "last saved" — the banner migration and message-less mode switches must not reorder
+    # Recents. A touch=True save still bumps as ever.
+    from coworker.sessions import SessionRecord
+
+    store = ConversationStore(tmp_path)
+    store.save(SessionRecord(session_id="rec1", workspace=str(tmp_path), model="m", mode="interactive", messages=[]))
+    store._conn.execute(
+        "UPDATE sessions SET updated_at = '2020-01-01 00:00:00' WHERE session_id = 'rec1'"
+    )
+    store._conn.commit()
+
+    store.save(
+        SessionRecord(session_id="rec1", workspace=str(tmp_path), model="m", mode="interactive", messages=[]),
+        touch=False,
+    )
+    row = store._conn.execute(
+        "SELECT updated_at FROM sessions WHERE session_id = 'rec1'"
+    ).fetchone()
+    assert row["updated_at"] == "2020-01-01 00:00:00"
+
+    store.save(SessionRecord(session_id="rec1", workspace=str(tmp_path), model="m", mode="interactive", messages=[]))
+    row = store._conn.execute(
+        "SELECT updated_at FROM sessions WHERE session_id = 'rec1'"
+    ).fetchone()
+    assert row["updated_at"] != "2020-01-01 00:00:00"

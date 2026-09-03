@@ -2,7 +2,7 @@ import { test, expect } from "./fixtures";
 
 // Guards the Settings-as-page refactor (§13, IA per UX-021): the ⚙ menu opens a full-page
 // surface with a left sub-nav — General · Models · Voice input — and each section renders.
-// Files is a card inside General; Personas is launch-flagged off.
+// Files is a card inside General; Coworkers ships on (flag "0" hides it).
 test("Settings opens as a full page and navigates sections", async ({ page }) => {
   await page.goto("/");
 
@@ -15,9 +15,9 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   for (const label of ["General", "Models", "Voice input"]) {
     await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
   }
-  // Folded/hidden tabs: Files is a General card now; Personas is launch-flagged off.
+  // Folded tabs: Files is a General card now; Coworkers ships as its own tab (UX-029).
   await expect(page.getByRole("button", { name: "Files", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Personas", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Coworkers", exact: true })).toBeVisible();
 
   // The Files card lives inside General.
   await expect(page.getByText("Each conversation gets its own folder")).toBeVisible();
@@ -26,14 +26,22 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   await expect(page.getByTestId("set-provider-openai")).toBeVisible();
 });
 
-// The launch flag brings the Personas tab back (the gallery/persona suites rely on it).
-test("Settings: Personas tab returns behind the launch flag", async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem("ocw.flag.personas", "1"));
+// The flag's "0" escape hatch hides the tab again (the default is on — UX-029).
+test("Settings: Coworkers tab opens by default; flag \"0\" hides it", async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Personas", exact: true }).click();
-  await expect(page.getByText("Add personas")).toBeVisible();
+  await page.getByRole("button", { name: "Coworkers", exact: true }).click();
+  await expect(page.getByTestId("install-disclosure")).toBeVisible();
+});
+
+test("Settings: the flag escape hatch hides the Coworkers tab", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("ocw.flag.personas", "0"));
+  await page.goto("/");
+  await page.getByTestId("account-row").click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "General" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Coworkers", exact: true })).toHaveCount(0);
 });
 
 // UX-021: Settings ▸ Models is the shared provider gallery (§39 components). Cards wear
@@ -126,13 +134,14 @@ test("Models: Remove key reverts a configured provider", async ({ page }) => {
   await expect(page.getByTestId("set-provider-anthropic")).toContainText("Not set up");
 });
 
-// Token savings (owner ask 2026-07-17; moved under Models by UX-021): the card renders with
-// the PDF fallback segmented control + attach thresholds, and edits POST through.
+// Token savings (owner ask 2026-07-17; now under Settings ▸ Context optimization,
+// owner 2026-08-21): the card renders with the PDF fallback segmented control +
+// attach thresholds, and edits POST through.
 test("Settings: Token savings card edits PDF fallback and thresholds", async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByRole("button", { name: "Context optimization", exact: true }).click();
 
   const card = page.getByTestId("token-savings-card");
   await expect(card).toBeVisible();

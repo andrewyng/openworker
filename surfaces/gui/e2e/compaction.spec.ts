@@ -10,7 +10,7 @@ test("Settings: Context compaction card edits threshold, cap, and summarizer mod
   await page.goto("/");
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByRole("button", { name: "Context optimization", exact: true }).click();
 
   const card = page.getByTestId("compaction-card");
   await expect(card).toBeVisible();

@@ -15,15 +15,28 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from . import compaction as _compaction
+from . import provenance
+from . import session_facts
+from . import toolchain as _toolchain
 from .events import Event, EventType
+
+# §8.4 retry guard: the reviewer pauses for the rest of the turn after this many denials
+# IN A ROW (2→5 + streak semantics, owner ruling 2026-08-24 — a cumulative 2 silently
+# downgraded long agentic turns to hand-approval after one over-strict pair).
+_REVIEWER_TRIP = 5
+_REVIEWER_PAUSED_TEXT = (
+    "Auto-approve is paused for the rest of this turn — the reviewer blocked "
+    f"{_REVIEWER_TRIP} actions in a row, so approvals now come to you."
+)
 from .permissions import Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
 from .providers.errors import friendly_model_error
+from .providers.openai_provider import looks_like_unparsed_tool_call
 from .tools import ToolRegistry
 
 
@@ -31,7 +44,27 @@ class ApprovalOutcome(str, Enum):
     ONCE = "once"
     ALWAYS_TOOL = "always_tool"
     ALWAYS_COMMAND = "always_command"
+    ALWAYS_DOMAIN = "always_domain"
+    # Session-wide grant for classifier-approved read-only shell commands (readonly.py).
+    READONLY_SESSION = "readonly_session"
+    # OPE-136 durable trust: persist a per-tool "don't ask" rule for an MCP tool —
+    # survives sessions, revocable on the server's detail page. MCP-only (validated
+    # server-side in manager._grant_offered, like every other grant).
+    ALWAYS_TRUST = "always_trust"
+    # OPE-136 run grant ("Allow for this request"): cover this exact tool for the
+    # remainder of the CURRENT run only — in-memory, cleared at the run boundary,
+    # nothing persisted. EXTERNAL-risk tools only (validated server-side).
+    THIS_RUN = "this_run"
     DENY = "deny"
+
+
+def _readonly_ok(arguments: dict) -> bool:
+    command = str((arguments or {}).get("command", "") or "")
+    if not command:
+        return False
+    from .readonly import is_readonly_command
+
+    return is_readonly_command(command)
 
 
 @dataclass
@@ -41,6 +74,10 @@ class PermissionRequest:
     metadata: Any
     reason: str
     tool_call_id: Optional[str] = None  # for durable resume (idempotent inbox item)
+    # Where an MCP call actually goes ({transport, host}, from the server DEF at
+    # registration) — carried on the request so a PARKED approval shows the same
+    # destination evidence as the live card (§35 parity). None for non-MCP tools.
+    mcp_destination: Optional[dict] = None
 
 
 Approver = Callable[[PermissionRequest], Awaitable[ApprovalOutcome]]
@@ -74,6 +111,15 @@ class TurnEngine:
         question_asker: Optional[
             Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
         ] = None,
+        tool_requester: Optional[
+            Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
+        ] = None,
+        team_approver: Optional[
+            Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
+        ] = None,
+        items_approver: Optional[
+            Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
+        ] = None,
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
         interrupt_hooks: Optional[list[Callable[[], None]]] = None,
@@ -96,10 +142,24 @@ class TurnEngine:
         # user to grant/decline a folder out-of-band, applies the grant to this live session, and
         # returns the outcome. None on surfaces that can't prompt (the tool then no-ops).
         self.directory_requester = directory_requester
+        # Handles the `request_tool` tool: emits TOOL_REQUESTED, waits for the user to install
+        # the pinned build or decline. None on surfaces that can't prompt (the tool then
+        # no-ops, and the agent is told so it can fall back openly rather than skip silently).
+        self.tool_requester = tool_requester
         # Handles the `propose_plan` tool: emits PLAN_PROPOSED, waits for the user's decision.
         # An approving result flips the live PermissionEngine out of plan mode (same session,
         # context kept). None on surfaces that can't prompt (the tool then no-ops).
         self.plan_approver = plan_approver
+        # Handles the `propose_team` tool (the staffing gate): emits TEAM_PROPOSED, waits
+        # for the user's decision; approval pre-spawns the worker sessions and the result
+        # carries the roster (actor ids). None on surfaces that can't prompt.
+        self.team_approver = team_approver
+        # Handles `propose_work_items` (the decomposition gate): emits ITEMS_PROPOSED,
+        # waits; approval creates the items on the board. Mode-independent by design —
+        # unlike propose_plan it carries no permission-mode semantics: propose_plan is
+        # an IMPLEMENTATION plan (steps/files, plan-mode exit); this is a team
+        # decomposition onto the board.
+        self.items_approver = items_approver
         # Handles the `ask_user` tool: turns a question into an Inbox item and waits for the answer
         # (answerable inline in a live session or from the Inbox when unattended). None on surfaces
         # that can't ask (the tool then no-ops).
@@ -111,6 +171,68 @@ class TurnEngine:
         self.compaction_state: Optional[_compaction.CompactionState] = None
         self.compaction_settings: Optional[Callable[[], dict[str, Any]]] = None
         self.is_attended: Optional[Callable[[], bool]] = None
+        # Session facts (spec Part 0 / §2.4) — the known world frozen at session start, plus
+        # the per-turn ingestion record. Set post-construction by the surface, same as
+        # compaction above, so the constructor footprint stays put. None ⇒ nothing recorded
+        # and behaviour is byte-identical; NOTHING consumes it in v1 either way.
+        self.session_facts: Optional[session_facts.SessionFacts] = None
+        # Auto-Approve reviewer (spec Part 8). Set post-construction; None ⇒ Mode.AUTO_APPROVE
+        # behaves exactly like INTERACTIVE. Consulted only on decisions the gate marked
+        # needs_user, only in AUTO_APPROVE mode, only when the session is attended (an
+        # unset is_attended counts as NOT attended here — automations never set it), and
+        # only until _REVIEWER_TRIP denials IN A ROW (§8.4 retry guard). Consecutive, not
+        # cumulative: an allow/unsure verdict or an ask_user answer resets the streak —
+        # the owner-hit 2026-08-24 was a 2-denial cumulative trip silently downgrading a
+        # long agentic turn to hand-approval for everything after one over-strict pair.
+        self.reviewer: Optional[Any] = None
+        self._reviewer_denials = 0
+        self._reviewer_verdicts: dict[str, Any] = {}
+        # (c) How each consequential call got cleared, keyed by tool_call id:
+        # {"origin": "reviewer"|"bypass"|"user", "note": <reviewer reasoning>, "grant":
+        # <user outcome>}. Consumed by _record_result into the TOOL_FINISHED event AND
+        # into the tool message's `_display` sidecar, so the quiet provenance chips
+        # survive reload (owner ruling 2026-08-24) — display-only, never provider-visible.
+        self._approval_origins: dict[str, dict[str, str]] = {}
+        # Shadow evaluation (spec Part 6 step 3): when True and a reviewer is attached, the
+        # reviewer records what it WOULD have decided on each approval card while the human
+        # still decides. Fire-and-forget — the card is never delayed, no decision is ever
+        # touched, and the verdict lands in the audit log (stage="reviewer_shadow", joined
+        # to the human's approval_resolved row by call_id).
+        self.reviewer_shadow = False
+        self._shadow_tasks: set[asyncio.Task] = set()
+        # One-shot "Allow anyway" grants (§8.4): minted ONLY by a human clicking the deny
+        # card, keyed on the exact tool + canonical arguments, consumed on first match. A
+        # re-proposal with even slightly different arguments does not match and goes back
+        # through the reviewer/card — deliberately narrow, deliberately not standing.
+        self._allow_anyway: set[tuple[str, str]] = set()
+        # ask_user answers for the reviewer's history (§8.2 — the missing third of the
+        # reply-tag feature: render_history prints the tag and the §8.3 instructions say to
+        # weigh it lower; this is the extractor that finally delivers the data). Captured at
+        # the moment the asker returns — the one point where the engine KNOWS the text came
+        # from the human, whichever authenticated surface answered (inline card, Inbox, or a
+        # bound channel; the same trust approval clicks already carry). ANSWERS ONLY, never
+        # the agent's question: agent-authored text stays out of the judge's view — showing
+        # the question too is step 2, evidence-gated on shadow data. Each entry is
+        # (anchor, text) where anchor = how many user messages existed at capture, so the
+        # merge in `_user_history` stays chronological. Runtime-only on purpose: a restart
+        # costs the reviewer context (more cards), never correctness.
+        self._ask_replies: list[tuple[int, str, str]] = []  # (anchor, answer, question)
+        # Extra user-facing fields for a tool's approval card, merged into the
+        # PERMISSION_REQUIRED payload — e.g. web_search's live provider name, so the card
+        # can say where queries actually go (§1.9). Set post-construction by the surface
+        # (the engine itself knows nothing about providers); None ⇒ no extras. Called at
+        # card time, not session start, so a mid-session Settings change shows through.
+        self.approval_extras: Optional[
+            Callable[[str, dict[str, Any]], dict[str, Any]]
+        ] = None
+        # What the agent itself created this session (OPE-114 §1). The reviewer never sees
+        # file contents, so `python scripts/setup.py` is unjudgeable from its text — but the
+        # engine knows whether it wrote or downloaded that file moments ago, and says so on
+        # the card and in the reviewer's request. Runtime-only, like `_ask_replies`: a
+        # restart costs context (more cards), never correctness.
+        self._agent_files = provenance.SessionFiles(permissions.workspace_root)
+        # Completed tool calls so far, so a fact can say how many steps back the write was.
+        self._step = 0
         self._last_context_tokens: Optional[int] = None
         self.audit_context: dict[str, Any] = {}
         if instructions and not (
@@ -118,6 +240,9 @@ class TurnEngine:
         ):
             self.messages.insert(0, {"role": "system", "content": instructions})
         self._cancel = asyncio.Event()
+        # Whether the latest assistant turn hit the output-token limit — decides which
+        # diagnosis a mangled (unparseable-args) tool call gets answered with.
+        self._turn_truncated = False
         # Each pending steering message: (text, optional MessageSource sidecar dict).
         self._steering: list[tuple[str, Optional[dict[str, Any]]]] = []
         # tool_call.id → the standing rule that auto-allowed it ("tool → target"), so the
@@ -188,14 +313,29 @@ class TurnEngine:
             message["_display"] = display
         self.messages.append(message)
         self._cancel.clear()
+        if self.session_facts is not None:
+            self.session_facts.begin_turn()
+        # §8.4 retry guard resets per user turn: two reviewer denials in one turn route
+        # everything else that turn to the human. A fresh user message is a fresh brief.
+        self._reviewer_denials = 0
+        self._reviewer_verdicts.clear()
         data: dict[str, Any] = {"input": user_input}
         if source is not None:
             data["source"] = source
         if display is not None:
             data["display"] = display
+        # OPE-136 run grants: a fresh run starts with a clean slate (belt — the
+        # finally below is the braces; an abandoned generator must not leak a
+        # previous answer's "Allow for this request" into this one).
+        self.permissions.clear_run_allowances()
         yield Event(EventType.TURN_START, data)
-        async for event in self._loop():
-            yield event
+        try:
+            async for event in self._loop():
+                yield event
+        finally:
+            # The run boundary IS the grant's expiry — normal finish, Stop, and
+            # generator teardown (disconnect) all land here.
+            self.permissions.clear_run_allowances()
 
     def switch_model(self, model: str) -> Optional[str]:
         """Rebind the session's model mid-conversation (roadmap item 3). History is
@@ -208,6 +348,12 @@ class TurnEngine:
             return None
         had_history = any(m.get("role") != "system" for m in self.messages)
         self.model = model
+        # The reviewer judges with the session's own model (§1.5: "if it's trusted to
+        # drive the agent, it's strong enough to review it"). Bound once at session build,
+        # it would otherwise keep the OLD model for the rest of the session after a
+        # switch — silently reviewing with a model the user moved away from.
+        if self.reviewer is not None:
+            self.reviewer.model = model
         if not had_history:
             return None
         from .providers.matrix import model_labels
@@ -245,13 +391,15 @@ class TurnEngine:
             return message.get("kind") == "error"
         return False
 
-    def _append_notice(self, kind: str, text: Optional[str] = None) -> None:
+    def _append_notice(self, kind: str, text: Optional[str] = None, **fields: Any) -> None:
         """Persist a turn-ending marker (error/interrupted) as a display-only `notice`
         message: it survives reload like the transcript does, but `_outbound_messages`
-        drops the role so no provider ever sees it."""
+        drops the role so no provider ever sees it. Extra `fields` (e.g. the failing
+        MCP server's name) persist on the message for structured rendering."""
         notice: dict[str, Any] = {"role": "notice", "kind": kind, "ts": time.time()}
         if text:
             notice["text"] = text
+        notice.update({k: v for k, v in fields.items() if v is not None})
         self.messages.append(notice)
 
     async def retry(self) -> AsyncIterator[Event]:
@@ -400,6 +548,8 @@ class TurnEngine:
                 # window on this round-trip (estimate fallback when never reported).
                 self._last_context_tokens = turn.usage.context_tokens
 
+            self._turn_truncated = turn.finish_reason == "length"
+            _sanitize_mangled_calls(turn)
             self.messages.append(_assistant_message(turn, model=self.model))
             payload: dict[str, Any] = {
                 "text": turn.text,
@@ -415,6 +565,25 @@ class TurnEngine:
                 if self._steering:
                     self._inject_steering()
                     continue
+                # The model tried to call a tool and the syntax never parsed — salvage already
+                # had its go. Ending as "completed" here would present a half-written call as
+                # the answer, which is indistinguishable from the model deciding it was done;
+                # the user just sees narration trailing off into stray tags. Fail loudly
+                # instead, on the error path so the GUI offers Retry — this is drift, not a
+                # deterministic failure, so retrying the same model usually works.
+                if looks_like_unparsed_tool_call(turn.text, self.registry.schemas() or None):
+                    message = (
+                        f"{self.model} replied with a tool call this endpoint couldn't parse, "
+                        "so the turn was stopped rather than answered from a partial call. "
+                        "Retry, or switch to a larger model — smaller local models drift off "
+                        "the tool-call format, especially with many tools in play."
+                    )
+                    self._append_notice("error", message)
+                    yield Event(
+                        EventType.ERROR,
+                        {"error": message, "error_type": "UnparsedToolCall"},
+                    )
+                    return
                 yield Event(
                     EventType.TURN_END,
                     {"status": "completed", "iterations": iterations},
@@ -587,6 +756,13 @@ class TurnEngine:
         """Run one assistant turn's tool calls: authorize all of them first (sequentially —
         approval prompts are interactive), then execute. Low-risk calls (reads, searches)
         run concurrently; everything else runs one at a time in call order."""
+        # Auto-Approve: fire the reviewer for every call that will need it, all at once,
+        # BEFORE the sequential authorize loop (spec §8.6 — one action per request, sent
+        # concurrently; the wall-clock cost of reviewing N calls is one round-trip, and a
+        # verdict physically cannot land on the wrong action). The loop below stays
+        # sequential because approval cards are interactive and must reach the human one
+        # at a time, in call order.
+        await self._preconsult_reviewer(tool_calls)
         cleared: list[ToolCall] = []
         for tool_call in tool_calls:
             if self._cancel.is_set():
@@ -598,6 +774,13 @@ class TurnEngine:
                 {"name": tool_call.name, "arguments": tool_call.arguments},
             )
             self._audit(tool_call, stage="proposed")
+            if _is_mangled(tool_call):
+                # The arguments never parsed as JSON (a `{"_raw": …}` fallback from the
+                # provider). Executing would produce a bare parameter error the model
+                # misreads — seen in the field as an endless "wrong parameter" retry
+                # loop. Answer with the ACTUAL diagnosis instead.
+                yield self._mangled_tool(tool_call)
+                continue
             # `request_directory` and `propose_plan` are interactive: the user decides
             # out-of-band and that decision IS the consent, so they skip the
             # permission/registry path.
@@ -605,8 +788,20 @@ class TurnEngine:
                 async for event in self._handle_directory_request(tool_call):
                     yield event
                 continue
+            if tool_call.name == "request_tool":
+                async for event in self._handle_tool_request(tool_call):
+                    yield event
+                continue
             if tool_call.name == "propose_plan":
                 async for event in self._handle_plan_proposal(tool_call):
+                    yield event
+                continue
+            if tool_call.name == "propose_team":
+                async for event in self._handle_team_proposal(tool_call):
+                    yield event
+                continue
+            if tool_call.name == "propose_work_items":
+                async for event in self._handle_items_proposal(tool_call):
                     yield event
                 continue
             if tool_call.name == "ask_user":
@@ -648,6 +843,37 @@ class TurnEngine:
             result, status = await asyncio.to_thread(self._execute_sync, tool_call)
             yield self._record_result(tool_call, result, status)
 
+    def _mangled_tool(self, tool_call: ToolCall) -> Event:
+        """Answer a tool call whose arguments never parsed, with the real diagnosis.
+
+        Two causes, two different cures — and the model can only pick the right one if
+        the error says which happened. Truncation (`finish_reason == "length"`) means
+        "same content, smaller pieces"; plain bad JSON means "re-send with the declared
+        parameters". Either way the raw text is NOT replayed into history: a stored
+        `{"_raw": …}` call reads as a worked example and teaches the model to emit
+        `_raw` on purpose (observed 2026-08-15), on top of re-sending the junk tokens
+        every turn."""
+        if self._turn_truncated:
+            reason = (
+                "your tool-call arguments were cut off by the output-token limit before "
+                "they finished streaming — the tool never received them. Produce the same "
+                "content in smaller pieces: several calls that each write or append a "
+                "section, keeping each call's content well under the limit. Do not retry "
+                "the identical oversized call."
+            )
+        else:
+            reason = (
+                "your tool-call arguments did not parse as a JSON object, so the tool "
+                "received nothing. `_raw` is not a parameter — it is the unparsed text of "
+                "the failed call. Re-issue the call using the tool's declared parameters."
+            )
+        self.messages.append(_tool_error_message(tool_call, reason))
+        self._audit(tool_call, stage="finished", status="error", reason=reason)
+        return Event(
+            EventType.TOOL_FINISHED,
+            {"name": tool_call.name, "status": "error", "reason": reason},
+        )
+
     def _interrupted_tool(self, tool_call: ToolCall) -> Event:
         """The stop-path answer for a call that will not run: a tool-error result in the
         history (hosted chat templates reject orphaned tool_calls, and durable-resume
@@ -670,6 +896,227 @@ class TurnEngine:
             metadata, "requires_approval", False
         )
 
+    # -- Auto-Approve reviewer (spec Part 8) ----------------------------------------
+
+    def _reviewer_active(self) -> bool:
+        """The reviewer is consulted only when ALL of these hold. Any miss ⇒ today's
+        behaviour (the card). Attended is required explicitly: `is_attended` unset counts
+        as NOT attended, so automations — which never set it — can never be reviewed
+        (§1.5: the mode is attended-only)."""
+        from .permissions import Mode
+
+        return (
+            self.reviewer is not None
+            and self.permissions.mode is Mode.AUTO_APPROVE
+            and self.is_attended is not None
+            and self.is_attended()
+            and self._reviewer_denials < _REVIEWER_TRIP
+        )
+
+    def _user_history(self) -> tuple[str, list[dict[str, Any]]]:
+        """(current request, earlier user messages) — the user's own words only, extracted
+        mechanically (§8.2). Never agent output, never tool results, never a summary.
+
+        `ask_user` answers are merged in from `_ask_replies` (captured as they arrived, not
+        parsed out of tool envelopes), tagged `is_reply` so `render_history` prints the
+        "[reply to a question the agent asked]" marker the §8.3 instructions already know
+        how to weigh. A reply is always HISTORY, never the current request — "ok proceed"
+        must not become the headline the action is judged against.
+
+        Attachments collapse to neutral markers via `reviewer_text` (§4.4): the reviewer
+        learns a file was attached, never what it says — an attachment body is
+        outside-authored text riding a user turn."""
+        from .attachments import reviewer_text
+
+        texts: list[str] = []
+        for msg in self.messages:
+            if msg.get("role") != "user":
+                continue
+            text = reviewer_text(msg.get("content"))
+            if text:
+                texts.append(text)
+        if not texts:
+            return "", [
+                {"text": t, "is_reply": True, **({"question": q} if q else {})}
+                for _, t, q in self._ask_replies
+            ]
+        history: list[dict[str, Any]] = []
+        for i, t in enumerate(texts[:-1], start=1):
+            history.append({"text": t})
+            history.extend(
+                {"text": r, "is_reply": True, **({"question": q} if q else {})}
+                for a, r, q in self._ask_replies
+                if a == i
+            )
+        # Replies captured during the current turn (anchor == len(texts)) — or after an
+        # anchor message that was itself empty/skipped — land at the tail, so a same-turn
+        # consent is already visible to the reviewer for the very next action.
+        history.extend(
+            {"text": r, "is_reply": True, **({"question": q} if q else {})}
+            for a, r, q in self._ask_replies
+            if a >= len(texts)
+        )
+        return texts[-1], history
+
+    def _downloaded_target(self, tool_call: ToolCall) -> Optional[Any]:
+        """A file this call would run that the agent DOWNLOADED this session, or None.
+        Fetch-then-execute has no quiet legitimate form, so it reaches a person over both
+        the reviewer and any command allowlist (OPE-114 §1)."""
+        match = self._agent_files.match(
+            tool_call.name, tool_call.arguments, step=self._step
+        )
+        return match if match is not None and match.downloaded else None
+
+    def _provenance(self, tool_call: ToolCall) -> str:
+        """One line naming a file this call would run that the agent itself created, or ""
+        (§8.2). Fixed vocabulary — never file contents, never outside-authored text, so the
+        no-untrusted-content rule holds."""
+        match = self._agent_files.match(
+            tool_call.name, tool_call.arguments, step=self._step
+        )
+        return match.render() if match else ""
+
+    async def _preconsult_reviewer(self, tool_calls: list[ToolCall]) -> None:
+        """Fire one reviewer request per call that will escalate, all concurrently, and
+        park the verdicts for `_authorize` to consume. One action per request — there is
+        no verdict list to pair back, so a verdict cannot land on the wrong action (§8.6).
+        Skips calls the gate already decides (allow or hard-deny): the reviewer only ever
+        sees what would otherwise become an approval card (§1.2)."""
+        if not self._reviewer_active() or not tool_calls:
+            return
+        interactive = {"request_directory", "propose_plan", "ask_user"}
+        pending: list[ToolCall] = []
+        for tool_call in tool_calls:
+            if tool_call.name in interactive or tool_call.id in self._reviewer_verdicts:
+                continue
+            spec = self.registry.get(tool_call.name)
+            if spec is None:
+                continue
+            decision = self.permissions.evaluate(
+                tool_call.name, tool_call.arguments, spec.metadata
+            )
+            # human_only asks never reach the reviewer — same rule as `_authorize`.
+            if (
+                not decision.allowed
+                and decision.needs_user
+                and not decision.human_only
+                and self._downloaded_target(tool_call) is None
+            ):
+                pending.append(tool_call)
+        if not pending:
+            return
+        request, history = self._user_history()
+        verdicts = await asyncio.gather(
+            *[
+                self.reviewer.review(
+                    request=request,
+                    history=history,
+                    tool_name=tc.name,
+                    arguments=tc.arguments,
+                    provenance=self._provenance(tc),
+                )
+                for tc in pending
+            ]
+        )
+        for tc, verdict in zip(pending, verdicts):
+            self._reviewer_verdicts[tc.id] = verdict
+
+    async def _consult_reviewer(self, tool_call: ToolCall) -> Any:
+        """The parked verdict from `_preconsult_reviewer`, or a fresh single call."""
+        verdict = self._reviewer_verdicts.pop(tool_call.id, None)
+        if verdict is not None:
+            return verdict
+        request, history = self._user_history()
+        return await self.reviewer.review(
+            request=request,
+            history=history,
+            tool_name=tool_call.name,
+            arguments=tool_call.arguments,
+            provenance=self._provenance(tool_call),
+        )
+
+    @staticmethod
+    def _action_key(tool_name: str, arguments: dict[str, Any] | None) -> tuple[str, str]:
+        try:
+            canon = json.dumps(arguments or {}, sort_keys=True, ensure_ascii=False)
+        except (TypeError, ValueError):
+            canon = str(arguments)
+        return (tool_name, canon)
+
+    def approve_action_once(self, tool_name: str, arguments: dict[str, Any] | None) -> None:
+        """Register a one-shot human approval for this EXACT action (§8.4 "Allow anyway").
+
+        Called by the server when the user clicks the deny card — a human decision made
+        with the full reviewer reason in front of them. The next proposal of the identical
+        action (same tool, byte-identical canonical arguments) runs without the reviewer or
+        a card; anything that differs at all still goes through the normal flow. Never
+        standing: consumed on first use."""
+        self._allow_anyway.add(self._action_key(tool_name, arguments))
+        if self.audit_sink is not None:
+            try:
+                self.audit_sink(
+                    {
+                        **self.audit_context,
+                        "tool": tool_name,
+                        "arguments": arguments or {},
+                        "stage": "allow_anyway_granted",
+                        "status": "granted",
+                        "reason": "user approved via the deny card (one-shot, exact action)",
+                    }
+                )
+            except Exception:
+                pass
+
+    def _consume_allow_anyway(self, tool_call: ToolCall) -> bool:
+        key = self._action_key(tool_call.name, tool_call.arguments)
+        if key in self._allow_anyway:
+            self._allow_anyway.discard(key)
+            return True
+        return False
+
+    def _spawn_shadow_review(self, tool_call: ToolCall) -> None:
+        """Shadow evaluation (spec Part 6 step 3): record what the reviewer WOULD have
+        decided about this card, without touching anything. Fire-and-forget — the card
+        renders immediately; the verdict lands in the audit log when the call returns,
+        joined to the human's `approval_resolved` row by `call_id`. There is deliberately
+        no code path from a shadow verdict to a decision."""
+        if self.reviewer is None or not self.reviewer_shadow:
+            return
+        request, history = self._user_history()
+        prov = self._provenance(tool_call)
+
+        async def _shadow() -> None:
+            try:
+                verdict = await self.reviewer.review(
+                    request=request,
+                    history=history,
+                    provenance=prov,
+                    tool_name=tool_call.name,
+                    arguments=tool_call.arguments,
+                )
+                self._audit(
+                    tool_call,
+                    stage="reviewer_shadow",
+                    status=verdict.verdict,
+                    reason=verdict.reason,
+                    call_id=tool_call.id,
+                    tokens_in=verdict.tokens_in,
+                    tokens_out=verdict.tokens_out,
+                    cache_read=verdict.cache_read,
+                    cache_write=verdict.cache_write,
+                )
+            except Exception:
+                pass  # shadow must never surface a failure
+
+        task = asyncio.create_task(_shadow())
+        self._shadow_tasks.add(task)
+        task.add_done_callback(self._shadow_tasks.discard)
+
+    async def drain_shadow_reviews(self) -> None:
+        """Await in-flight shadow verdicts (tests and orderly shutdown; never the hot path)."""
+        if self._shadow_tasks:
+            await asyncio.gather(*list(self._shadow_tasks), return_exceptions=True)
+
     async def _authorize(self, tool_call: ToolCall) -> "AsyncIterator[Event | bool]":
         """Permission flow for one call (TOOL_PROPOSED is emitted by the caller). Yields
         its events, then True/False (allowed) last. Denied/unknown calls get their
@@ -685,6 +1132,28 @@ class TurnEngine:
         allowed = decision.allowed
         reason = decision.reason
 
+        # OPE-114 §1: running something the agent DOWNLOADED this session is the classic
+        # fetch-then-execute chain, and there is no quiet legitimate version of it — so it
+        # goes to a person, over both the reviewer and any command allowlist that would
+        # otherwise wave it through (a `python` prefix rule must not vouch for a script
+        # pulled off the internet a moment ago). A hard deny is left untouched: this floor
+        # only ever tightens an allow, never loosens a block. Agent-WRITTEN files are not
+        # floored — "write this script and run it" is ordinary work — they travel as a fact
+        # for the reviewer to weigh instead.
+        provenance_note = self._provenance(tool_call)
+        if self._downloaded_target(tool_call) is not None and (
+            decision.needs_user or allowed
+        ):
+            allowed = False
+            reason = f"this file was downloaded by the agent this session — {provenance_note}"
+            decision = replace(
+                decision,
+                allowed=False,
+                reason=reason,
+                needs_user=True,
+                human_only=True,
+            )
+
         if allowed and decision.rule:
             # A task-scoped standing rule auto-allowed this call: audit the exact rule
             # (§25 invariant — every auto-allowed call cites its rule) and remember it so
@@ -694,26 +1163,182 @@ class TurnEngine:
                 tool_call, stage="auto_allowed", status="allowed", reason=reason
             )
 
+        # (c) Bypass mode ran a consequential call no other rule allowed: annotate it.
+        # "full access" is the exact reason string of permissions.py's bypass branch.
+        if allowed and decision.reason == "full access":
+            self._approval_origins[tool_call.id] = {"origin": "bypass"}
+
+        # OPE-136: a trusted-MCP allow ran cardless on standing config (a user trust
+        # rule, or the legacy server flag) — audited and chip-annotated like every
+        # other cardless origin ("recorded, never invisible"). Prefix-matched against
+        # permissions.py's two trusted-branch reason strings — and the chip keeps the
+        # two apart: "your trust rule" points at the tool page's Revoke, "server
+        # trust" at the mcp.json flag. One generic label made a user believe the
+        # SERVER had marked their own rule (owner-hit 2026-08-30).
+        if allowed and decision.reason.startswith("trusted MCP tool"):
+            origin = (
+                "trusted_rule"
+                if "user trust rule" in decision.reason
+                else "trusted_server"
+            )
+            self._approval_origins[tool_call.id] = {"origin": origin}
+            self._audit(
+                tool_call, stage="auto_allowed", status="allowed", reason=reason
+            )
+
+        # OPE-136 run grant: a covered call ran cardless under the user's in-run
+        # "Allow for this request" click — silent to attention, never invisible to
+        # the record (transcript chip + audit row, like every cardless origin).
+        if allowed and decision.reason == "tool allowed for this request":
+            self._approval_origins[tool_call.id] = {"origin": "run_grant"}
+            self._audit(
+                tool_call, stage="auto_allowed", status="allowed", reason=reason
+            )
+
+        if not allowed and decision.needs_user and self._consume_allow_anyway(tool_call):
+            # §8.4 "Allow anyway": the human already approved this exact action from the
+            # deny card. One-shot — consumed above; a different action never matches.
+            allowed = True
+            reason = "approved by user (allow anyway)"
+            self._audit(tool_call, stage="auto_allowed", status="allowed", reason=reason)
+
+        consulted_live = False
+        unsure_note = ""  # the reviewer's hesitation, when an unsure verdict raised the card
+        if (
+            not allowed
+            and decision.needs_user
+            and not decision.human_only
+            and self._reviewer_active()
+        ):
+            # The one thing the reviewer may do: turn "ask the human" into "go ahead" —
+            # never "blocked" into "go ahead" (§1.2; hard denies never reach this branch
+            # because needs_user is False on them). `human_only` asks (git hooks, CI
+            # configs, unscopable writes) skip the reviewer entirely: their floor is that
+            # a PERSON sees them, and a verdict here would be that floor's bypass.
+            consulted_live = True
+            verdict = await self._consult_reviewer(tool_call)
+            self._audit(
+                tool_call,
+                stage="reviewer_verdict",
+                status=verdict.verdict,
+                reason=verdict.reason,
+                tokens_in=verdict.tokens_in,
+                tokens_out=verdict.tokens_out,
+                cache_read=verdict.cache_read,
+                cache_write=verdict.cache_write,
+            )
+            if verdict.verdict == "allow":
+                allowed = True
+                self._reviewer_denials = 0  # streak semantics: any non-deny resets
+                self._approval_origins[tool_call.id] = {
+                    "origin": "reviewer", "note": verdict.reason
+                }
+                reason = f"allowed by reviewer: {verdict.reason}"
+            elif verdict.verdict == "deny":
+                # §8.4 deny asymmetry — full reason to the USER (event + audit above),
+                # terse non-diagnostic refusal to the AGENT. The sanctioned way around a
+                # deny is ask the human, never reshape the request.
+                from .reviewer import AGENT_DENY_MESSAGE
+
+                self._reviewer_denials += 1
+                tripped = self._reviewer_denials == _REVIEWER_TRIP
+                if tripped:
+                    # (a) The breaker must never trip silently (owner catch 2026-08-24):
+                    # persist a notice so reloads see it too.
+                    self._append_notice("reviewer_paused", _REVIEWER_PAUSED_TEXT)
+                yield Event(
+                    EventType.TOOL_FINISHED,
+                    {
+                        "name": tool_call.name,
+                        "status": "denied",
+                        "reason": "blocked by the safety reviewer",
+                        "reviewer_reason": verdict.reason,
+                        "allow_anyway": True,
+                        **({"reviewer_paused": _REVIEWER_PAUSED_TEXT} if tripped else {}),
+                    },
+                )
+                deny_msg = _tool_error_message(tool_call, AGENT_DENY_MESSAGE)
+                deny_msg["_display"] = {
+                    "approval_origin": "reviewer_denied",
+                    "approval_note": verdict.reason,
+                }
+                self.messages.append(deny_msg)
+                self._audit(
+                    tool_call,
+                    stage="finished",
+                    status="denied",
+                    reason=f"denied by reviewer: {verdict.reason}",
+                )
+                yield False
+                return
+            # "unsure" falls through to today's card — the human decides.
+            if verdict.verdict == "unsure":
+                self._reviewer_denials = 0  # streak semantics: any non-deny resets
+                unsure_note = verdict.reason
+
         if not allowed and decision.needs_user:
+            # Shadow evaluation: record what the reviewer would have said about this card.
+            # Skipped when the live path already consulted it (an `unsure` falling through
+            # to the card is already audited as reviewer_verdict — no double spend).
+            if not consulted_live:
+                self._spawn_shadow_review(tool_call)
             yield Event(
                 EventType.PERMISSION_REQUIRED,
                 {
                     "name": tool_call.name,
                     "arguments": tool_call.arguments,
                     "reason": decision.reason,
+                    # An `unsure` verdict raised this card: the reviewer's one-line reason
+                    # answers "why am I being asked?" in place (owner ask 2026-08-24).
+                    **(
+                        {"reviewer_unsure": verdict.reason}
+                        if consulted_live and verdict.verdict == "unsure"
+                        else {}
+                    ),
                     "category": getattr(metadata, "category", ""),
                     # The exact target a standing rule could pin, or None when the call
                     # isn't eligible (no declared target arg / exec risk). Surfaces use it
                     # to offer "Allow every time" on automation-run approval cards only.
+                    # OPE-114 §1: the fact neither the reviewer nor the human could get
+                    # from the command text alone.
+                    "provenance": provenance_note,
                     "standing_target": standing_rule_candidate(
                         tool_call.name,
                         tool_call.arguments,
                         metadata,
                         self.permissions.risk_overrides,
                     ),
+                    # True when this shell command classifies as read-only — the card
+                    # offers "Allow read-only commands for this session" only then.
+                    "readonly_ok": _readonly_ok(tool_call.arguments),
+                    # OPE-136 finding 4: where an MCP call actually goes, stamped at
+                    # registration (mcp/tools.py) from the server def — so the card's
+                    # scope chip can say "leaves this computer → host" instead of the
+                    # catch-all "stays on this computer". None for non-MCP tools.
+                    **(
+                        {"mcp_destination": dest}
+                        if (
+                            dest := getattr(
+                                spec.func, "__coworker_mcp_destination__", None
+                            )
+                            if spec
+                            else None
+                        )
+                        else {}
+                    ),
+                    **(
+                        self.approval_extras(tool_call.name, tool_call.arguments)
+                        if self.approval_extras
+                        else {}
+                    ),
                 },
             )
-            self._audit(tool_call, stage="approval_requested", reason=decision.reason)
+            self._audit(
+                tool_call,
+                stage="approval_requested",
+                reason=decision.reason,
+                call_id=tool_call.id,
+            )
             outcome = await self._interruptible(
                 self.approver(
                     PermissionRequest(
@@ -722,6 +1347,11 @@ class TurnEngine:
                         metadata=metadata,
                         reason=decision.reason,
                         tool_call_id=tool_call.id,
+                        mcp_destination=(
+                            getattr(spec.func, "__coworker_mcp_destination__", None)
+                            if spec
+                            else None
+                        ),
                     )
                 ),
                 interrupted=ApprovalOutcome.DENY,
@@ -731,9 +1361,15 @@ class TurnEngine:
                     False,
                     "interrupted by user" if self._cancel.is_set() else "denied by user",
                 )
+                self._approval_origins[tool_call.id] = {
+                    "origin": "user",
+                    "grant": "deny",
+                    **({"note": unsure_note} if unsure_note else {}),
+                }
                 self._audit(
                     tool_call,
                     stage="approval_resolved",
+                    call_id=tool_call.id,
                     status="denied",
                     approval=outcome.value,
                     reason=reason,
@@ -745,10 +1381,29 @@ class TurnEngine:
                     self.permissions.allow_command_for_session(
                         str(tool_call.arguments.get("command", ""))
                     )
+                elif outcome is ApprovalOutcome.ALWAYS_DOMAIN:
+                    self.permissions.allow_domain_for_session(
+                        str(tool_call.arguments.get("url", ""))
+                    )
+                elif outcome is ApprovalOutcome.READONLY_SESSION:
+                    self.permissions.allow_readonly_for_session()
+                elif outcome is ApprovalOutcome.ALWAYS_TRUST:
+                    # Durable per-tool trust (OPE-136 §4): lands in the user-local
+                    # override store, so tomorrow's sessions stay quiet too.
+                    self.permissions.grant_trust_for_tool(tool_call.name)
+                elif outcome is ApprovalOutcome.THIS_RUN:
+                    # Run grant: dies with the current answer (cleared in run()).
+                    self.permissions.allow_tool_for_run(tool_call.name)
                 allowed, reason = True, "approved by user"
+                self._approval_origins[tool_call.id] = {
+                    "origin": "user",
+                    "grant": outcome.value,
+                    **({"note": unsure_note} if unsure_note else {}),
+                }
                 self._audit(
                     tool_call,
                     stage="approval_resolved",
+                    call_id=tool_call.id,
                     status="approved",
                     approval=outcome.value,
                     reason=reason,
@@ -757,7 +1412,15 @@ class TurnEngine:
         if not allowed:
             if spec is None:
                 reason = f"unknown tool: {tool_call.name}"
-            self.messages.append(_tool_error_message(tool_call, reason))
+            err_msg = _tool_error_message(tool_call, reason)
+            origin = self._approval_origins.pop(tool_call.id, None)
+            if origin:
+                err_msg["_display"] = {
+                    "approval_origin": origin.get("origin", ""),
+                    **({"approval_note": origin["note"]} if origin.get("note") else {}),
+                    **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
+                }
+            self.messages.append(err_msg)
             yield Event(
                 EventType.TOOL_FINISHED,
                 {"name": tool_call.name, "status": "denied", "reason": reason},
@@ -787,6 +1450,12 @@ class TurnEngine:
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"
 
     def _record_result(self, tool_call: ToolCall, result: Any, status: str) -> Event:
+        self._step += 1
+        if status == "ok":
+            # Only successful calls: a write that raised left nothing on disk to run.
+            self._agent_files.record(
+                tool_call.name, tool_call.arguments, result, step=self._step
+            )
         # A `_display` key on a tool result is user-facing metadata the AGENT must
         # never see (e.g. how many gmail hits the privacy filters hid — a count
         # the model could probe around). Lift it onto the message as a sidecar
@@ -796,6 +1465,17 @@ class TurnEngine:
         if isinstance(result, dict) and "_display" in result:
             display = result.get("_display") or None
             result = {k: v for k, v in result.items() if k != "_display"}
+        origin = self._approval_origins.pop(tool_call.id, None)
+        if origin:
+            # Provenance survives reload via the same display-only sidecar as the privacy
+            # counts (owner ruling 2026-08-24) — `_outbound_messages` strips it, so no
+            # provider ever sees it.
+            display = {
+                **(display or {}),
+                "approval_origin": origin.get("origin", ""),
+                **({"approval_note": origin["note"]} if origin.get("note") else {}),
+                **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
+            }
         message = _tool_result_message(tool_call, result)
         if display:
             message["_display"] = display
@@ -822,6 +1502,7 @@ class TurnEngine:
             result=result,
             result_preview=_preview(result),
         )
+        self._note_ingestion(tool_call, status)
         rule = self._standing_notes.pop(tool_call.id, "")
         return Event(
             EventType.TOOL_FINISHED,
@@ -831,8 +1512,37 @@ class TurnEngine:
                 "result_preview": _preview(result),
                 **({"display": display} if display else {}),
                 **({"standing_rule": rule} if rule else {}),
+                # (c) quiet provenance chip — same fields the `_display` sidecar persists.
+                **(
+                    {
+                        "approval_origin": origin.get("origin", ""),
+                        **({"approval_note": origin["note"]} if origin.get("note") else {}),
+                        **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
+                    }
+                    if origin
+                    else {}
+                ),
             },
         )
+
+    def _note_ingestion(self, tool_call: ToolCall, status: str) -> None:
+        """Record that outside content entered this session, and from where. The fact and
+        the source only — never the content, not even truncated.
+
+        **Nothing consumes this in v1.** It exists so that when the reviewer is eventually
+        offered the fact (v2, `PRV-1`), the question "would it have changed a verdict?" can
+        be answered by replaying a shadow run instead of re-argued. See
+        `session_facts.py` and the spec's Part 0.
+
+        Failed calls are skipped: a fetch that errored brought nothing in.
+        """
+        if self.session_facts is None or status != "ok":
+            return
+        spec = self.registry.get(tool_call.name)
+        if not session_facts.is_ingesting(spec.metadata if spec else None):
+            return
+        record = self.session_facts.note(tool_call.name, tool_call.arguments)
+        self._audit(tool_call, **record.to_audit())
 
     def _audit(self, tool_call: ToolCall, **event: Any) -> None:
         if self.audit_sink is None:
@@ -847,6 +1557,108 @@ class TurnEngine:
             self.audit_sink(payload)
         except Exception:
             pass
+
+    async def _handle_items_proposal(self, tool_call: ToolCall) -> AsyncIterator[Event]:
+        """The decomposition gate: emit the proposed items, await the user's decision.
+        Approval creates them on the board (server-side, inside the approver) and the
+        result carries their ids; rejection returns feedback for a revised split."""
+        args = tool_call.arguments or {}
+        items = args.get("items") or []
+        valid = [
+            i
+            for i in items
+            if isinstance(i, dict)
+            and str(i.get("title", "")).strip()
+            and str(i.get("criteria", "")).strip()
+        ]
+        if not valid or len(valid) != len(items):
+            result: dict[str, Any] = {
+                "approved": False,
+                "error": "every proposed item needs a title and acceptance criteria",
+            }
+        elif self.items_approver is None:
+            result = {
+                "approved": False,
+                "error": "item proposals aren't available in this surface",
+            }
+        else:
+            yield Event(
+                EventType.ITEMS_PROPOSED,
+                {"items": valid, "note": str(args.get("note", ""))},
+            )
+            self._audit(tool_call, stage="items_proposed")
+            result = await self._interruptible(
+                self.items_approver(dict(args), tool_call.id),
+                interrupted={"approved": False, "error": "interrupted by user"},
+            ) or {"approved": False, "error": "no response"}
+
+        status = "ok" if result.get("approved") else "denied"
+        self.messages.append(_tool_result_message(tool_call, result))
+        self._audit(
+            tool_call,
+            stage="finished",
+            status=status,
+            result=result,
+            result_preview=_preview(result),
+        )
+        yield Event(
+            EventType.TOOL_FINISHED,
+            {
+                "name": tool_call.name,
+                "status": status,
+                "result_preview": _preview(result),
+            },
+        )
+
+    async def _handle_team_proposal(self, tool_call: ToolCall) -> AsyncIterator[Event]:
+        """The staffing gate: emit the proposed roster, await the user's out-of-band
+        decision. Approval PRE-SPAWNS the worker sessions (server-side, inside the
+        approver) and the result carries the roster with actor ids so the lead can
+        assign; rejection returns the user's feedback for a revised proposal."""
+        args = tool_call.arguments or {}
+        members = args.get("members") or []
+        if not isinstance(members, list) or not members:
+            result: dict[str, Any] = {
+                "approved": False,
+                "error": "propose at least one member ({persona, model?, reason?})",
+            }
+        elif self.team_approver is None:
+            result = {
+                "approved": False,
+                "error": "team staffing isn't available in this surface",
+            }
+        else:
+            yield Event(
+                EventType.TEAM_PROPOSED,
+                {
+                    "members": members,
+                    "enable_chat": bool(args.get("enable_chat", False)),
+                    "note": str(args.get("note", "")),
+                },
+            )
+            self._audit(tool_call, stage="team_proposed")
+            result = await self._interruptible(
+                self.team_approver(dict(args), tool_call.id),
+                interrupted={"approved": False, "error": "interrupted by user"},
+            ) or {"approved": False, "error": "no response"}
+
+        status = "ok" if result.get("approved") else "denied"
+        self.messages.append(_tool_result_message(tool_call, result))
+        self._audit(
+            tool_call,
+            stage="finished",
+            status=status,
+            result=result,
+            result_preview=_preview(result),
+        )
+        yield Event(
+            EventType.TOOL_FINISHED,
+            {
+                "name": tool_call.name,
+                "status": status,
+                "result_preview": _preview(result),
+            },
+        )
 
     async def _handle_plan_proposal(self, tool_call: ToolCall) -> AsyncIterator[Event]:
         """Emit the plan for review, await the user's out-of-band decision, and apply it:
@@ -915,6 +1727,103 @@ class TurnEngine:
             },
         )
 
+    async def _handle_tool_request(self, tool_call: ToolCall) -> AsyncIterator[Event]:
+        """Emit the install prompt, await the user's decision, hand the outcome back.
+
+        Declining is a normal outcome, not an error: the result tells the agent to fall back
+        and disclose the gap, because a security report that quietly loses a check is worse
+        than one that says which checks it couldn't run.
+        """
+        args = tool_call.arguments or {}
+        name = str(args.get("name", "")).strip()
+        reason = str(args.get("reason", ""))
+
+        if self.tool_requester is None or not name:
+            result: dict[str, Any] = {
+                "installed": False,
+                "error": "tool requests aren't available here",
+                "guidance": (
+                    "Continue without it: use a fallback check if you have one, and say in "
+                    "your report which checks were degraded."
+                ),
+            }
+        elif _toolchain.describe(name) is None:
+            # Not in the pinned catalog: no card at all (owner-hit 2026-08-20 — agents
+            # routed ordinary brew/pip installs through the install card, which could
+            # only fail after approval). The agent has a shell with its own approval
+            # flow; steer it there instead of at the user.
+            catalog = ", ".join(sorted(_toolchain.MANAGED))
+            result = {
+                "installed": False,
+                "error": (
+                    f"'{name}' is not in the pinned tool catalog ({catalog})."
+                ),
+                "guidance": (
+                    "Install it yourself with the shell (brew/pip/…, subject to the "
+                    "normal command approval), or continue without it and say in your "
+                    "report which checks were degraded."
+                ),
+            }
+        else:
+            # The prompt must say up front whether WE can install this (pinned build for
+            # this platform) — a card that offers Install for a tool we can't fetch turns
+            # the user's approval into a guaranteed error. Absence of metadata means NO.
+            info = _toolchain.describe(name)
+            yield Event(
+                EventType.TOOL_REQUESTED,
+                {
+                    "name": name,
+                    "reason": reason,
+                    "installable": info is not None,
+                    "version": (info or {}).get("version", ""),
+                    "summary": (info or {}).get("summary", ""),
+                    "source": (info or {}).get("source", ""),
+                },
+            )
+            self._audit(tool_call, stage="tool_requested", reason=reason)
+            result = await self._interruptible(
+                self.tool_requester(dict(args), tool_call.id),
+                interrupted={"installed": False, "error": "interrupted by user"},
+            ) or {"installed": False, "error": "no response"}
+            if not result.get("installed"):
+                # The card says "or install it yourself and continue" — honor it. A user
+                # who brewed the tool mid-prompt and clicked Continue has PROVIDED it,
+                # not declined it; find their copy before treating this as a refusal.
+                found = _toolchain.resolve(name)
+                if found:
+                    result = {
+                        "installed": True,
+                        "path": found,
+                        "note": (
+                            "the user provided their own copy instead of the managed "
+                            "install — use it from this path"
+                        ),
+                    }
+            if not result.get("installed"):
+                result.setdefault(
+                    "guidance",
+                    "Continue without it: use a fallback check if you have one, and say in "
+                    "your report which checks were degraded.",
+                )
+
+        status = "ok" if result.get("installed") else "denied"
+        self.messages.append(_tool_result_message(tool_call, result))
+        self._audit(
+            tool_call,
+            stage="finished",
+            status=status,
+            result=result,
+            result_preview=_preview(result),
+        )
+        yield Event(
+            EventType.TOOL_FINISHED,
+            {
+                "name": tool_call.name,
+                "status": status,
+                "result_preview": _preview(result),
+            },
+        )
+
     async def _handle_directory_request(
         self, tool_call: ToolCall
     ) -> AsyncIterator[Event]:
@@ -933,6 +1842,10 @@ class TurnEngine:
                     "reason": str(args.get("reason", "")),
                     "path": str(args.get("path", "")),
                     "writable": bool(args.get("writable", False)),
+                    # Root promotion (workspace-scratch-design.md §5): the agent asks for
+                    # the folder to become the session's primary workspace — the consent
+                    # card must say so, it's a different grant than a plain extra root.
+                    "primary": bool(args.get("primary", False)),
                 },
             )
             self._audit(
@@ -1000,6 +1913,8 @@ class TurnEngine:
             }
 
         status = "ok" if (result.get("answer") or result.get("answers")) else "denied"
+        if status == "ok":
+            self._note_ask_replies(result, question)
         self.messages.append(_tool_result_message(tool_call, result))
         self._audit(
             tool_call,
@@ -1016,6 +1931,32 @@ class TurnEngine:
                 "result_preview": _preview(result),
             },
         )
+
+    def _note_ask_replies(
+        self, result: dict[str, Any], question: str = ""
+    ) -> None:
+        """Record the user's ask_user answer(s) for the reviewer's history (§8.2),
+        together with the agent's question — shown to the judge explicitly framed as
+        agent-authored data (same Rule-3 discipline as tool arguments), so a structured
+        answer counts as evidence for exactly the question's scope (owner ruling
+        2026-08-24). Anchored to the number of user messages present now, so the merge
+        stays chronological however the session continues.
+
+        A fresh answer also resets the §8.4 denial streak: the user is present and just
+        gave direction — the reviewer deserves a fresh look at what follows."""
+        self._reviewer_denials = 0
+        anchor = sum(1 for m in self.messages if m.get("role") == "user")
+        answers = result.get("answers")
+        values = (
+            [str(v) for v in answers.values()]
+            if isinstance(answers, dict)
+            else [str(result.get("answer") or "")]
+        )
+        q = (question or "").strip()
+        for text in values:
+            text = text.strip()
+            if text:
+                self._ask_replies.append((anchor, text, q))
 
     def _inject_steering(self) -> None:
         for text, source in self._steering:
@@ -1172,6 +2113,30 @@ def _assistant_message(turn: AssistantTurn, model: Optional[str] = None) -> dict
             for tc in turn.tool_calls
         ]
     return message
+
+
+_MANGLED_PREVIEW_CHARS = 200
+
+
+def _is_mangled(tool_call: ToolCall) -> bool:
+    """Provider arg-parsers fall back to `{"_raw": <unparsed text>}` when a tool call's
+    arguments aren't a JSON object (typically a stream truncated mid-arguments)."""
+    return set(tool_call.arguments or {}) == {"_raw"}
+
+
+def _sanitize_mangled_calls(turn: AssistantTurn) -> None:
+    """Shrink each mangled call's stored raw text to a short preview BEFORE the turn
+    enters history. The full text is junk (half a JSON document): replaying it costs
+    thousands of tokens per turn and, worse, teaches the model that `_raw` is a real
+    parameter shape it should imitate."""
+    for tc in turn.tool_calls:
+        if _is_mangled(tc):
+            raw = str(tc.arguments.get("_raw") or "")
+            if len(raw) > _MANGLED_PREVIEW_CHARS:
+                tc.arguments = {
+                    "_raw": raw[:_MANGLED_PREVIEW_CHARS]
+                    + f"… [unparsed tool-call text, {len(raw)} chars, truncated in history]"
+                }
 
 
 def _tool_result_message(tool_call: ToolCall, result: Any) -> dict[str, Any]:

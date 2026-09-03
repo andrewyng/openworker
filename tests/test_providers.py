@@ -510,7 +510,9 @@ def test_matrix_labels_and_custom_model_fallback():
     assert labels["together:zai-org/GLM-5.2"] == "GLM-5.2 · via Together"
     assert labels["zai:glm-5.2"] == "GLM-5.2 · Z AI"
     # Deliberately small: agent-capable current models only (owner call, 2026-07-04).
-    assert len(MATRIX) < 60
+    # 60→65 (2026-08-24): the stealth ox-alpha preview slug tipped it; reclaim slack by
+    # pruning retired entries before raising this again.
+    assert len(MATRIX) < 65
     assert all(e.caps.tools for e in MATRIX.values())
     # A custom (unlisted) reseller model falls back to the conservative default — usable,
     # but at the user's own risk (no parallel tool calls assumed).
@@ -571,3 +573,47 @@ def test_complete_picks_up_reasoning_content():
     provider = OpenAIProvider(client=_FakeClient(SimpleNamespace(choices=[choice])))
     turn = provider.complete(model="deepseek-v4-pro", messages=[{"role": "user", "content": "x"}])
     assert turn.text == "Answer" and turn.reasoning == "deep thought"
+
+
+def test_default_max_tokens_injected_and_caller_setting_wins():
+    """Compat servers left to their OWN defaults cap completions absurdly low
+    (owner-hit 2026-08-15: Together defaulted Kimi K3 to ~2k tokens, so every report
+    write truncated mid-arguments). The request always names a ceiling now."""
+    from coworker.providers.openai_provider import DEFAULT_MAX_TOKENS
+
+    client = _FakeClient(_response(content="ok"))
+    provider = OpenAIProvider(client=client)
+    provider.complete(model="kimi-k3", messages=[])
+    assert client.chat.completions.calls[0]["max_tokens"] == DEFAULT_MAX_TOKENS
+
+    client2 = _FakeClient(_response(content="ok"))
+    provider2 = OpenAIProvider(client=client2)
+    provider2.complete(model="kimi-k3", messages=[], max_tokens=512)
+    assert client2.chat.completions.calls[0]["max_tokens"] == 512
+
+
+def test_over_limit_max_tokens_is_dropped_and_retried():
+    """A model whose completion limit sits below our default must not surface the 400:
+    drop the param, retry on the server's own default (yesterday's behavior, at worst)."""
+
+    class _LimitRejecting:
+        def __init__(self, response):
+            self._response = response
+            self.calls: list[dict] = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            if "max_tokens" in kwargs:
+                raise RuntimeError(
+                    "Error code: 400 - max_tokens must be at most 8193 for this model"
+                )
+            return self._response
+
+    client = _FakeClient(_response(content="ok"))
+    client.chat.completions = _LimitRejecting(_response(content="ok"))
+    provider = OpenAIProvider(client=client)
+
+    turn = provider.complete(model="tiny-model", messages=[])
+    calls = client.chat.completions.calls
+    assert turn.text == "ok" and len(calls) == 2
+    assert "max_tokens" not in calls[1]

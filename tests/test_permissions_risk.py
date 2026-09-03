@@ -46,13 +46,21 @@ def test_is_consequential():
     assert is_consequential(RiskClass.EXTERNAL)
 
 
-def test_overrides_win_over_base_and_metadata():
-    # A user-local override beats both the by-name base table and the metadata fallback.
+def test_overrides_relax_metadata_but_never_downgrade_a_builtin():
+    # A user-local override may relax a metadata/MCP tool (the intended use)...
     relax = lambda n: RiskClass.READ if n in {"write_file", "mcp_tool"} else None
-    assert classify("write_file", None, relax) == RiskClass.READ  # downgrade a write
     assert classify("mcp_tool", EXTERNAL_META, relax) == RiskClass.READ  # relax MCP
+    # ...but must NEVER loosen a built-in write/exec/egress tool: downgrading write_file to
+    # read would switch off path scoping AND the read-only gate, so the override is ignored.
+    assert classify("write_file", None, relax) == RiskClass.WRITE_LOCAL
     # Non-matching names fall through to the base/metadata classification.
     assert classify("run_shell", None, relax) == RiskClass.EXEC
+
+
+def test_overrides_may_tighten_a_builtin():
+    # Tightening is fine — only loosening a built-in is refused.
+    tighten = lambda n: RiskClass.EXEC if n == "write_file" else None
+    assert classify("write_file", None, tighten) == RiskClass.EXEC
 
 
 # -- PermissionEngine driven by risk class --------------------------------------
@@ -81,13 +89,13 @@ def test_external_asks_in_interactive_allows_in_auto(tmp_path):
     d = interactive.evaluate("send_message", {"text": "hi"}, EXTERNAL_META)
     assert not d.allowed and d.needs_user
 
-    auto = PermissionEngine(workspace_root=tmp_path, mode=Mode.AUTO)
+    auto = PermissionEngine(workspace_root=tmp_path, mode=Mode.BYPASS_APPROVALS)
     d = auto.evaluate("send_message", {"text": "hi"}, EXTERNAL_META)
     assert d.allowed
 
 
 def test_write_local_path_scoped(tmp_path):
-    eng = PermissionEngine(workspace_root=tmp_path, mode=Mode.AUTO)
+    eng = PermissionEngine(workspace_root=tmp_path, mode=Mode.BYPASS_APPROVALS)
     assert eng.evaluate("write_file", {"path": "ok.py", "content": "x"}, None).allowed
     escape = eng.evaluate("write_file", {"path": "../bad.py", "content": "x"}, None)
     assert not escape.allowed

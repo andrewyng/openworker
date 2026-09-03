@@ -57,6 +57,56 @@ MATRIX: dict[str, ModelEntry] = {
     "gpt-5.6-terra": ModelEntry("GPT-5.6 Terra · OpenAI", _AGENTIC_VISION, 400_000),
     "gpt-5.6-luna": ModelEntry("GPT-5.6 Luna · OpenAI", _AGENTIC_VISION, 400_000),
     "gpt-5.5": ModelEntry("GPT-5.5 · OpenAI", _AGENTIC_VISION, 400_000),
+    # ChatGPT-subscription catalog (the `openai-codex` OAuth provider). Curated to the
+    # ids the subscription backend actually serves; vision per the vendor's model docs,
+    # PDF unverified over this backend → local fallback via pdf_support.py.
+    # 5.6 tiers (Sol flagship / Terra balanced / Luna fast) serve over the subscription
+    # backend by plan — Sol is rate-limited on Plus, full on Pro.
+    "openai-codex:gpt-5.6-sol": ModelEntry(
+        "GPT-5.6 Sol · ChatGPT plan",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        400_000,
+    ),
+    "openai-codex:gpt-5.6-terra": ModelEntry(
+        "GPT-5.6 Terra · ChatGPT plan",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        400_000,
+    ),
+    "openai-codex:gpt-5.6-luna": ModelEntry(
+        "GPT-5.6 Luna · ChatGPT plan",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        400_000,
+    ),
+    "openai-codex:gpt-5.2-codex": ModelEntry(
+        "GPT-5.2 Codex · ChatGPT plan",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        400_000,
+    ),
+    "openai-codex:gpt-5.2": ModelEntry(
+        "GPT-5.2 · ChatGPT plan",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        400_000,
+    ),
+    "openai-codex:gpt-5.1-codex": ModelEntry(
+        "GPT-5.1 Codex · ChatGPT plan",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        400_000,
+    ),
+    "openai-codex:gpt-5.1-codex-mini": ModelEntry(
+        "GPT-5.1 Codex Mini · ChatGPT plan", _AGENTIC, 400_000
+    ),
     # Fable 5 (2026-06-09) is GA; its Mythos 5 sibling is approved-orgs-only, so it
     # stays out of a picker meant for the public.
     "anthropic:claude-fable-5": ModelEntry(
@@ -171,6 +221,12 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "openrouter:meta-llama/llama-4-maverick": ModelEntry(
         "Llama 4 Maverick · via OpenRouter", _AGENTIC, 1_000_000
+    ),
+    # Stealth/cloaked alpha (catalog-checked 2026-08-24: 1,048,576 ctx, tool calling).
+    # These are temporary lab previews — expect the slug to vanish when the lab ships
+    # the real model; keep it until OpenRouter retires it.
+    "openrouter:stealth/ox-alpha": ModelEntry(
+        "Ox Alpha · via OpenRouter", _AGENTIC, 1_048_576
     ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →

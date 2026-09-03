@@ -1,6 +1,6 @@
 // §35 (UX-018): approval cards speak the transcript's language. Routine workspace writes
-// are a compact ROW (humanized title, inline args-preview, short "Always allow" with the
-// full rule on hover); everything else is a full card — shell titles with the model's
+// are a compact ROW (humanized title, inline args-preview, short "Allow for this session"
+// with the full rule on hover); everything else is a full card — shell titles with the model's
 // description, external actions wear the leaves-this-Mac note. No "PERMISSION REQUIRED"
 // kicker, no raw args dump, no solid-fill buttons.
 import { expect } from "@playwright/test";
@@ -17,10 +17,9 @@ test("routine write → compact row: humanized title, inline preview, Allow reso
   const row = page.getByTestId("approval-row");
   await expect(row).toContainText("Write fetch_data.py");
   await expect(row).not.toContainText(/permission required/i);
-  await expect(row.getByRole("button", { name: "Always allow", exact: true })).toHaveAttribute(
-    "title",
-    /for this session/,
-  );
+  await expect(
+    row.getByRole("button", { name: "Allow for this session", exact: true }),
+  ).toHaveAttribute("title", /rest of this session/);
 
   // Preview expands INLINE from the tool args — the file doesn't exist yet.
   await row.getByText("preview ▾").click();
@@ -47,7 +46,9 @@ test("run_shell → full card: description title, command preview, stays-on-this
   await expect(page.getByText("Run a command").last()).toBeVisible();
   await expect(page.getByText("stays on this computer").last()).toBeVisible();
   await expect(page.getByText("The coworker wants to run a command.").first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Always allow this command" }).last()).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Allow this command for this session" }).last(),
+  ).toBeVisible();
   await expect(page.getByText(/local action/)).toHaveCount(0);
 
   await page.screenshot({ path: "test-results/ux018-shell-card.png", fullPage: false });
@@ -77,4 +78,22 @@ test("a one-paragraph digest send is clamped to a card, expandable in place", as
   await prev.getByText("show the full message").click();
   expect((await prev.boundingBox())!.height).toBeGreaterThan(clampedHeight);
   await expect(prev.getByText("show less")).toBeVisible();
+});
+
+test("read-only session grant: offered on classified commands, resolves the card", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const box = page.getByPlaceholder(/Ask the coworker/);
+  await box.fill("please run a tool");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  // The mocked `ls` proposal carries readonly_ok → the session-wide grant is offered.
+  const btn = page.getByTestId("allow-readonly-session");
+  await expect(btn).toBeVisible();
+  await expect(btn).toHaveAttribute("title", /no network, writes, or interpreters/);
+  await btn.click();
+
+  // Grant approves the pending call; the turn proceeds like any approval.
+  await expect(page.getByText(/The command ran; 1 file found/)).toBeVisible();
 });

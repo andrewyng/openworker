@@ -424,6 +424,43 @@ async def test_blocked_run_does_not_stall_other_tasks(tmp_path):
     await sched.stop()
 
 
+async def test_tick_while_run_is_parked_never_redispatches_it(tmp_path):
+    """The overlap guard is claimed at dispatch, not inside the spawned run.
+
+    Regression: a tick's due() snapshot still lists a task whose run is parked on
+    an approval (next_run only advances on completion). When the guard lived
+    inside the spawn, an approval landing just before that tick let the parked
+    run finish and clear the guard before the duplicate spawn took its first
+    step — the task ran twice (the intermittent `assert 2 == 1` above)."""
+    store = TaskStore(tmp_path / "auto.db")
+    task = _task(title="parked")
+    store.save(task)
+    store._conn.execute("UPDATE scheduled_tasks SET next_run=1.0 WHERE id=?", (task.id,))
+    store._conn.commit()
+
+    gate = asyncio.Event()
+    started = asyncio.Event()
+    calls = 0
+
+    async def runner(t, trigger):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await gate.wait()
+        return TaskRun(task_id=t.id, status="ok", trigger=trigger)
+
+    sched = Scheduler(store, runner, tick_seconds=9999)
+    await sched._tick(trigger="schedule")  # dispatch; the run parks on the gate
+    await started.wait()
+    gate.set()  # the approval lands...
+    await sched._tick(trigger="schedule")  # ...right as the next tick fires
+    for _ in range(5):
+        await asyncio.sleep(0)  # parked run finishes; any duplicate would start now
+    assert calls == 1
+    assert store.get(task.id).run_count == 1
+    await sched.stop()
+
+
 # -- engine events: standing_target on the card, the note on the tool card --------
 
 
