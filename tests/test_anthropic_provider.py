@@ -363,6 +363,24 @@ def test_ensure_client_without_key_raises(monkeypatch):
         AnthropicProvider()._ensure_client()
 
 
+def test_ensure_client_passes_base_url_only_when_set(monkeypatch):
+    """A custom endpoint reaches the SDK; a blank one is left off entirely so the SDK's
+    own default (which still honours ANTHROPIC_BASE_URL) applies."""
+    import anthropic
+
+    seen: list[dict] = []
+    monkeypatch.setattr(
+        anthropic, "Anthropic", lambda **kwargs: seen.append(kwargs) or object()
+    )
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-env")
+
+    AnthropicProvider(base_url="https://gw.example/anthropic")._ensure_client()
+    assert seen[-1]["base_url"] == "https://gw.example/anthropic"
+
+    AnthropicProvider()._ensure_client()
+    assert "base_url" not in seen[-1]
+
+
 # -- stream() ------------------------------------------------------------------------
 
 
@@ -489,6 +507,23 @@ def test_resolve_api_key_env_then_secrets(monkeypatch):
 
     assert resolve_api_key(_Secrets()) == "sk-ant-stored"
     assert resolve_api_key(None) is None
+
+
+def test_custom_endpoint_prefers_the_profile_key_over_env(monkeypatch):
+    """With a gateway configured, the key leaves the machine for a host that is NOT
+    Anthropic — the one typed alongside that endpoint must win over an ambient
+    ANTHROPIC_API_KEY meant for api.anthropic.com."""
+    from coworker.providers.anthropic_provider import resolve_api_key
+
+    class _Secrets:
+        def get(self, name):
+            return {"api_key": "sk-gw"} if name == "provider:anthropic" else None
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-env")
+    assert resolve_api_key(_Secrets(), prefer_profile=True) == "sk-gw"
+    assert resolve_api_key(_Secrets()) == "sk-ant-env"  # stock: env still wins
+    # No profile key stored → the env key is still better than no key at all.
+    assert resolve_api_key(None, prefer_profile=True) == "sk-ant-env"
 
 
 def test_anthropic_capabilities_parallel_tool_calls():
@@ -664,6 +699,23 @@ def test_thinking_defaults_on_with_hidden_profile_override():
     assert build_provider_client("anthropic", {"thinking_budget": "0"}, None).thinking_budget == 0
 
 
+def test_build_normalizes_the_custom_endpoint():
+    """The SDK appends /v1/messages itself, so the stored endpoint is the ROOT — a `/v1`
+    carried over from the OpenAI box (where it belongs) is trimmed rather than doubled."""
+    from coworker.providers.registry import build_provider_client
+
+    def base_for(value):
+        return build_provider_client("anthropic", {"base_url": value}, None)._base_url
+
+    assert base_for("https://gw.example/anthropic") == "https://gw.example/anthropic"
+    assert base_for("https://gw.example/anthropic/") == "https://gw.example/anthropic"
+    assert base_for("https://gw.example/anthropic/v1") == "https://gw.example/anthropic"
+    assert base_for("https://gw.example/anthropic/v1/") == "https://gw.example/anthropic"
+    # Blank stays None — stock api.anthropic.com, and the SDK's ANTHROPIC_BASE_URL still applies.
+    assert base_for("  ") is None
+    assert build_provider_client("anthropic", {}, None)._base_url is None
+
+
 def test_fable_requests_carry_server_side_fallback():
     """Fable/Mythos classifiers can decline benign-adjacent requests — every call opts
     into the server-side fallback so Opus 4.8 re-serves declines in the same call."""
@@ -680,6 +732,17 @@ def test_fable_requests_carry_server_side_fallback():
         model="claude-opus-4-8", messages=[{"role": "user", "content": "x"}]
     )
     assert "betas" not in client2.kwargs and "fallbacks" not in client2.kwargs
+
+
+def test_custom_endpoint_skips_the_beta_fallback_path():
+    """The beta header, the `fallbacks` param and the beta route are Anthropic-only — a
+    compatible gateway that doesn't know them 400s the whole turn, so a custom endpoint
+    takes the plain path even on Fable."""
+    client = _FakeClient(response=_text_response())
+    AnthropicProvider(client=client, base_url="https://gw.example/anthropic").complete(
+        model="claude-fable-5", messages=[{"role": "user", "content": "x"}]
+    )
+    assert "betas" not in client.kwargs and "fallbacks" not in client.kwargs
 
 
 def test_whole_chain_refusal_raises_friendly_error():
