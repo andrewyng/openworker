@@ -830,7 +830,10 @@ def _verify_bedrock(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
             if code == "ExpiredTokenException":
                 return {"ok": False, "error": "The credentials have expired — generate a new key."}
             return {"ok": False, "error": f"AWS Bedrock returned {code}."}
-        return {"ok": False, "error": f"Couldn't reach AWS Bedrock ({kind})."}
+        return {
+            "ok": False,
+            "error": f"Couldn't reach AWS Bedrock ({_describe_transport_error(exc)})."
+        }
     return {"ok": True}
 
 
@@ -869,7 +872,7 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
         except Exception as exc:
             return {
                 "ok": False,
-                "error": f"Couldn't reach Vertex AI ({exc.__class__.__name__}).",
+                "error": f"Couldn't reach Vertex AI ({_describe_transport_error(exc)}).",
             }
         if resp.status_code < 300:
             return {"ok": True}
@@ -914,7 +917,10 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
             timeout=timeout,
         )
     except Exception as exc:
-        return {"ok": False, "error": f"Couldn't reach Vertex AI ({exc.__class__.__name__})."}
+        return {
+            "ok": False,
+            "error": f"Couldn't reach Vertex AI ({_describe_transport_error(exc)}).",
+        }
     if resp.status_code < 300:
         return {"ok": True}
     if resp.status_code in (401, 403):
@@ -925,6 +931,37 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
     if resp.status_code == 404:
         return {"ok": False, "error": "Project or location not found on Vertex AI."}
     return {"ok": False, "error": f"Vertex AI returned HTTP {resp.status_code}."}
+
+
+def _describe_transport_error(exc: Exception) -> str:
+    """Turn a verify probe's transport failure into one actionable line.
+
+    The bare class name ("ConnectError") cost a real user round-trips of
+    diagnosis while the exception carried the answer all along — TLS
+    verification, DNS, refusal and timeout each read differently (#505).
+    """
+    msg = " ".join(str(exc).split()).rstrip(".")[:200]
+    lowered = msg.lower()
+    for signature, hint in (
+        (
+            "certificate_verify_failed",
+            "TLS certificate verification failed; the app's CA bundle may be missing or stale",
+        ),
+        ("ssl:", "TLS handshake failed"),
+        ("gaierror", "DNS could not resolve the endpoint"),
+        ("nodename", "DNS could not resolve the endpoint"),
+        ("name or service", "DNS could not resolve the endpoint"),
+        ("getaddrinfo", "DNS could not resolve the endpoint"),
+        ("refused", "the endpoint refused the connection"),
+        ("timed out", "the connection timed out"),
+    ):
+        if signature in lowered:
+            if not msg:
+                return f"{exc.__class__.__name__} — {hint}"
+            return f"{exc.__class__.__name__}: {msg} — looks like {hint}"
+    if not msg:
+        return exc.__class__.__name__
+    return f"{exc.__class__.__name__}: {msg}"
 
 
 def verify_provider_key(
@@ -1003,7 +1040,7 @@ def verify_provider_key(
     except Exception as exc:  # DNS/connection/timeout — never let it bubble to a 500
         return {
             "ok": False,
-            "error": f"Couldn't reach {d.title} ({exc.__class__.__name__}).",
+            "error": f"Couldn't reach {d.title} ({_describe_transport_error(exc)}).",
         }
 
     if resp.status_code < 300:
