@@ -161,6 +161,15 @@ def test_denied_and_approved_word_forms(tmp_path):
     assert store.get(b.id).resolution == "allow"
 
 
+def test_negated_denial_is_not_parsed_as_allow(tmp_path):
+    """A denial phrased with an allow word ("no, don't approve") must never release the item."""
+    store = InboxStore(tmp_path / "inbox.json")
+    for phrasing in ("no, don't approve", "not allowed", "no, do not allow this"):
+        item = store.add_approval("s1", "Deploy?", inbox="ops")
+        resolve_from_reply(f"{phrasing} [ow:{item.id}]", store.resolve)
+        assert store.get(item.id).resolution != "allow"
+
+
 def test_emoji_reactions_still_resolve(tmp_path):
     store = InboxStore(tmp_path / "inbox.json")
     a = store.add_approval("s1", "Deploy?", inbox="ops")
