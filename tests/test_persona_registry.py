@@ -70,6 +70,7 @@ def test_sidebar_defaults_to_surfaced_builtins(tmp_path, internal):
     assert set(ids) == {
         "cowork", "ops", "security", "cloud-posture", "dep-audit",
         "swe-lead", "devsecops-lead", "devops-lead", "triage-lead",
+        "requirements",
     }
     assert not any(
         i in ids
