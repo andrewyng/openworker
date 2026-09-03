@@ -1217,8 +1217,9 @@ class TeamStore:
                 # Cursor keys embed the space as a suffix ("feed:<actor>:<space>",
                 # "sub:<sub>:<space>") — rewrite the suffix, keep consumed positions.
                 cur_rows = self._conn.execute(
-                    "SELECT cursor_key FROM team_cursors WHERE cursor_key LIKE ?",
-                    ("%:" + old,),
+                    "SELECT cursor_key FROM team_cursors"
+                    " WHERE cursor_key LIKE ? ESCAPE '\\'",
+                    ("%" + _like_escape(":" + old),),
                 ).fetchall()
                 for crow in cur_rows:
                     new_key = crow["cursor_key"][: -len(old)] + new
@@ -1261,6 +1262,15 @@ class TeamStore:
                 f" {sorted(role.value for role in roles)} (actor {actor.id} is"
                 f" {actor.role.value})"
             )
+
+
+def _like_escape(text: str) -> str:
+    """Quote LIKE metacharacters so a literal string matches only itself. Space
+    keys are filesystem paths, where `_` (LIKE's single-character wildcard) is
+    ordinary — left raw it also matches a neighbouring space's rows."""
+    for char in ("\\", "%", "_"):
+        text = text.replace(char, "\\" + char)
+    return text
 
 
 def _canonical(payload: dict[str, Any]) -> str:
