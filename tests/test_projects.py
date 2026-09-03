@@ -162,6 +162,18 @@ class TestResolvers:
         assert key == str(repo.resolve())
         assert [m.content for m in store.list(workspace=key)] == ["learned here"]
 
+    def test_board_derivation_keeps_old_key_when_rekey_fails(self, repo):
+        sub = repo / "src"
+        sub.mkdir()
+
+        class FailingStore:
+            def rekey_space(self, old, new):
+                raise RuntimeError("injected rekey failure")
+
+        assert resolve_board_space(
+            str(sub), team_store=FailingStore()
+        ) == str(sub.resolve())
+
     def test_presence_counts(self, tmp_path):
         mstore = SQLiteMemoryStore(tmp_path / "m.db")
         tstore = TeamStore(tmp_path / "b.db")

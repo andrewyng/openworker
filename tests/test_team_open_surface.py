@@ -9,7 +9,7 @@ import pytest
 
 from coworker.teams import Actor, AuthorityError, BoardError, JournalStore, Role, TeamStore
 from coworker.teams.dialect import LocalDialect, RemoteDialect, local_dialect
-from coworker.teams.tokens import BoardTokens
+from coworker.teams.tokens import BoardPrincipal, BoardTokens
 
 USER = Actor(id="user", role=Role.USER)
 LEAD = Actor(id="lead-1", role=Role.LEAD, persona="swe-lead")
@@ -200,14 +200,15 @@ def test_board_api_rejects_the_sidecar_token_as_a_board_token(api):
 
 def test_token_binds_identity_and_store_enforces_authority(api):
     client, manager, app = api
-    lead_token = _tokens(manager).mint("lead-1", "lead")
-    nia_token = _tokens(manager).mint("nia", "worker")
+    lead_token = _tokens(manager).mint("lead-1", "lead", space="proj")
+    nia_token = _tokens(manager).mint("nia", "worker", space="proj")
     lead = {"Authorization": f"Bearer {lead_token}"}
     nia = {"Authorization": f"Bearer {nia_token}"}
 
     assert client.get("/v1/board/whoami", headers=nia).json() == {
         "actor": "nia",
         "role": "worker",
+        "space": "proj",
     }
 
     created = client.post(
@@ -249,11 +250,261 @@ def test_token_binds_identity_and_store_enforces_authority(api):
     assert bad.status_code == 403 or bad.status_code == 400
 
 
+def test_board_token_is_bound_to_one_space(api):
+    client, manager, _ = api
+    alpha_token = _tokens(manager).mint("lead-1", "lead", space="alpha")
+    alpha = {"Authorization": f"Bearer {alpha_token}"}
+
+    assert client.get("/v1/board/whoami", headers=alpha).json() == {
+        "actor": "lead-1",
+        "role": "lead",
+        "space": "alpha",
+    }
+    assert client.get("/v1/board/spaces", headers=alpha).json() == {
+        "spaces": ["alpha"]
+    }
+
+    for denied_space in ("beta", "does-not-exist"):
+        denied = client.get(
+            "/v1/board/items", headers=alpha, params={"space": denied_space}
+        )
+        assert denied.status_code == 404
+        assert denied.json() == {"error": "board space not found"}
+
+    before = manager.team_store.event_count("beta")
+    denied_create = client.post(
+        "/v1/board/items",
+        headers=alpha,
+        json={"space": "beta", "title": "Denied", "criteria": "never written"},
+    )
+    assert denied_create.status_code == 404
+    assert denied_create.json() == {"error": "board space not found"}
+    assert manager.team_store.event_count("beta") == before
+
+    allowed = client.post(
+        "/v1/board/items",
+        headers=alpha,
+        json={"space": "alpha", "title": "Allowed", "criteria": "written"},
+    )
+    assert allowed.status_code == 200
+
+
+def test_wrong_space_is_rejected_before_every_board_handler(api):
+    client, manager, _ = api
+    token = _tokens(manager).mint("lead-1", "lead", space="alpha")
+    headers = {"Authorization": f"Bearer {token}"}
+    requests = [
+        ("GET", "/v1/board/items", {"params": {"space": "beta"}}),
+        ("GET", "/v1/board/item", {"params": {"space": "beta", "id": 1}}),
+        (
+            "GET",
+            "/v1/board/attachment",
+            {"params": {"space": "beta", "name": f"{'0' * 64}.png"}},
+        ),
+        ("GET", "/v1/board/policy", {"params": {"space": "beta"}}),
+        ("GET", "/v1/board/pending", {"params": {"space": "beta"}}),
+        (
+            "POST",
+            "/v1/board/items",
+            {"json": {"space": "beta", "title": "x", "criteria": "c"}},
+        ),
+        (
+            "POST",
+            "/v1/board/items/transition",
+            {"json": {"space": "beta", "id": 1, "to": "in_progress"}},
+        ),
+        (
+            "POST",
+            "/v1/board/items/comment",
+            {"json": {"space": "beta", "id": 1, "body": "x"}},
+        ),
+        (
+            "POST",
+            "/v1/board/items/assign",
+            {"json": {"space": "beta", "id": 1, "assignee": "nia"}},
+        ),
+        ("POST", "/v1/board/items/claim", {"json": {"space": "beta", "id": 1}}),
+        (
+            "POST",
+            "/v1/board/link",
+            {"json": {"space": "beta", "src": 1, "kind": "blocks", "dst": 2}},
+        ),
+        (
+            "POST",
+            "/v1/board/items/attach",
+            {
+                "json": {
+                    "space": "beta",
+                    "id": 1,
+                    "filename": "x.png",
+                    "data_b64": "not-base64",
+                }
+            },
+        ),
+        (
+            "POST",
+            "/v1/board/policy",
+            {"json": {"space": "beta", "claims": "lead-only"}},
+        ),
+        (
+            "POST",
+            "/v1/board/consume",
+            {"json": {"space": "beta", "upto_seq": 999}},
+        ),
+        (
+            "POST",
+            "/v1/board/journal",
+            {"json": {"space": "beta", "case": "secret", "body": "x"}},
+        ),
+    ]
+
+    before_events = manager.team_store.event_count("beta")
+    for method, path, kwargs in requests:
+        response = client.request(method, path, headers=headers, **kwargs)
+        assert response.status_code == 404, (method, path, response.text)
+        assert response.json() == {"error": "board space not found"}
+    assert manager.team_store.event_count("beta") == before_events
+    assert not manager.attachment_store.root.exists()
+    assert manager.journal_store.overview(USER) == []
+
+
+def test_board_token_scopes_journal_cases_reads_and_appends(api):
+    client, manager, _ = api
+    manager.journal_store.append(USER, "shared", "alpha finding", space="alpha")
+    manager.journal_store.append(USER, "shared", "beta finding", space="beta")
+    manager.journal_store.append(USER, "beta-only", "hidden", space="beta")
+    token = _tokens(manager).mint("user", "user", space="alpha")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    cases = client.get("/v1/board/journal/cases", headers=headers)
+    assert cases.status_code == 200
+    assert [case["case"] for case in cases.json()["cases"]] == ["shared"]
+    assert cases.json()["cases"][0]["entries"] == 1
+
+    read = client.get(
+        "/v1/board/journal", headers=headers, params={"case": "shared"}
+    )
+    assert read.status_code == 200
+    assert [entry["body"] for entry in read.json()["entries"]] == [
+        "alpha finding"
+    ]
+
+    explicit_empty = client.post(
+        "/v1/board/journal",
+        headers=headers,
+        json={"space": "", "case": "shared", "body": "must be rejected"},
+    )
+    assert explicit_empty.status_code == 404
+    assert explicit_empty.json() == {"error": "board space not found"}
+
+    appended = client.post(
+        "/v1/board/journal",
+        headers=headers,
+        json={"case": "shared", "body": "scoped append"},
+    )
+    assert appended.status_code == 200
+    assert appended.json()["space"] == "alpha"
+    assert [
+        entry["body"]
+        for entry in manager.journal_store.read(USER, "shared", scope_space="alpha")
+    ] == ["alpha finding", "scoped append"]
+
+
+def test_space_rekey_requires_a_new_token_and_moves_journal_projection(api):
+    client, manager, _ = api
+    old_token = _tokens(manager).mint("lead-1", "lead", space="old")
+    old = {"Authorization": f"Bearer {old_token}"}
+    item = client.post(
+        "/v1/board/items",
+        headers=old,
+        json={
+            "space": "old",
+            "title": "Migrated",
+            "criteria": "still scoped",
+            "case": "migration",
+        },
+    ).json()
+    assert client.post(
+        "/v1/board/journal",
+        headers=old,
+        json={"case": "migration", "body": "before rekey", "item": item["id"]},
+    ).status_code == 200
+
+    assert manager.team_store.rekey_space("old", "new") is True
+
+    assert client.get("/v1/board/whoami", headers=old).status_code == 401
+    denied_fork = client.post(
+        "/v1/board/items",
+        headers=old,
+        json={"space": "old", "title": "Fork", "criteria": "must not exist"},
+    )
+    assert denied_fork.status_code == 401
+    assert manager.team_store.event_count("old") == 0
+    old_journal = client.get(
+        "/v1/board/journal", headers=old, params={"case": "migration"}
+    )
+    assert old_journal.status_code == 401
+
+    new_token = _tokens(manager).mint("lead-1", "lead", space="new")
+    new = {"Authorization": f"Bearer {new_token}"}
+    assert client.get(
+        "/v1/board/item",
+        headers=new,
+        params={"space": "new", "id": item["id"]},
+    ).status_code == 200
+    moved_journal = client.get(
+        "/v1/board/journal", headers=new, params={"case": "migration"}
+    )
+    assert [entry["body"] for entry in moved_journal.json()["entries"]] == [
+        "before rekey"
+    ]
+
+
+def test_space_rekey_rejects_a_principal_resolved_before_the_move(api, monkeypatch):
+    client, manager, _ = api
+    token = _tokens(manager).mint("lead-1", "lead", space="old")
+    principal = _tokens(manager).resolve(token)
+    manager.team_store.create_item("old", LEAD, title="Before", criteria="moves")
+
+    assert principal is not None
+    assert manager.team_store.rekey_space("old", "new") is True
+
+    # Simulate a request that resolved immediately before rekey and did not enter
+    # the store operation until immediately after it.
+    monkeypatch.setattr(manager.board_tokens, "resolve", lambda _: principal)
+    denied = client.post(
+        "/v1/board/items",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"space": "old", "title": "Fork", "criteria": "must not exist"},
+    )
+
+    assert denied.status_code == 404
+    assert denied.json() == {"error": "board space not found"}
+    assert manager.team_store.event_count("old") == 0
+    with pytest.raises(ValueError, match="retired"):
+        manager.board_tokens.mint("lead-1", "lead", space="old")
+
+
+def test_journal_append_rejects_explicit_null_space(api):
+    client, manager, _ = api
+    token = _tokens(manager).mint("user", "user", space="None")
+
+    response = client.post(
+        "/v1/board/journal",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"space": None, "case": "null-scope", "body": "must not append"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"error": "board space not found"}
+    assert manager.journal_store.cases(USER) == []
+
+
 def test_board_item_reads_hide_foreign_worker_items(api):
     client, manager, _ = api
-    lead_token = _tokens(manager).mint("lead-1", "lead")
-    nia_token = _tokens(manager).mint("nia", "worker")
-    webb_token = _tokens(manager).mint("webb", "worker")
+    lead_token = _tokens(manager).mint("lead-1", "lead", space="proj")
+    nia_token = _tokens(manager).mint("nia", "worker", space="proj")
+    webb_token = _tokens(manager).mint("webb", "worker", space="proj")
     lead = {"Authorization": f"Bearer {lead_token}"}
     nia = {"Authorization": f"Bearer {nia_token}"}
     webb = {"Authorization": f"Bearer {webb_token}"}
@@ -356,9 +607,9 @@ def test_board_item_reads_hide_foreign_worker_items(api):
 
 def test_board_item_reads_return_not_found_for_missing_items(api):
     client, manager, _ = api
-    nia_token = _tokens(manager).mint("nia", "worker")
-    lead_token = _tokens(manager).mint("lead-1", "lead")
-    user_token = _tokens(manager).mint("user", "user")
+    nia_token = _tokens(manager).mint("nia", "worker", space="proj")
+    lead_token = _tokens(manager).mint("lead-1", "lead", space="proj")
+    user_token = _tokens(manager).mint("user", "user", space="proj")
     nia = {"Authorization": f"Bearer {nia_token}"}
     lead = {"Authorization": f"Bearer {lead_token}"}
     user = {"Authorization": f"Bearer {user_token}"}
@@ -374,8 +625,8 @@ def test_board_item_reads_return_not_found_for_missing_items(api):
 
 def test_board_item_create_hides_missing_and_foreign_parents(api):
     client, manager, _ = api
-    lead_token = _tokens(manager).mint("lead-1", "lead")
-    nia_token = _tokens(manager).mint("nia", "worker")
+    lead_token = _tokens(manager).mint("lead-1", "lead", space="proj")
+    nia_token = _tokens(manager).mint("nia", "worker", space="proj")
     lead = {"Authorization": f"Bearer {lead_token}"}
     nia = {"Authorization": f"Bearer {nia_token}"}
 
@@ -411,8 +662,8 @@ def test_board_item_create_hides_missing_and_foreign_parents(api):
 
 def test_remote_dialect_round_trip(api):
     client, manager, app = api
-    lead_token = _tokens(manager).mint("lead-1", "lead")
-    nia_token = _tokens(manager).mint("nia", "worker")
+    lead_token = _tokens(manager).mint("lead-1", "lead", space="proj")
+    nia_token = _tokens(manager).mint("nia", "worker", space="proj")
     from fastapi.testclient import TestClient
 
     lead = RemoteDialect(
@@ -465,8 +716,8 @@ def test_remote_dialect_round_trip(api):
 
 def test_pending_and_consume_over_the_wire(api):
     client, manager, app = api
-    lead_token = _tokens(manager).mint("lead-1", "lead")
-    nia_token = _tokens(manager).mint("nia", "worker")
+    lead_token = _tokens(manager).mint("lead-1", "lead", space="proj")
+    nia_token = _tokens(manager).mint("nia", "worker", space="proj")
     from fastapi.testclient import TestClient
 
     lead = RemoteDialect(
@@ -525,8 +776,8 @@ def test_attach_over_the_wire_and_fetch(api):
     client, manager, app = api
     from fastapi.testclient import TestClient
 
-    lead_token = _tokens(manager).mint("lead-1", "lead")
-    nia_token = _tokens(manager).mint("nia", "worker")
+    lead_token = _tokens(manager).mint("lead-1", "lead", space="proj")
+    nia_token = _tokens(manager).mint("nia", "worker", space="proj")
     lead = RemoteDialect(
         "http://board.test",
         lead_token,
@@ -556,7 +807,7 @@ def test_attach_over_the_wire_and_fetch(api):
     data, mime = lead.attachment("proj", stored)
     assert data == PNG and mime == "image/png"
     assert nia.attachment("proj", stored) == (PNG, "image/png")
-    with pytest.raises(BoardError, match="attachment not found"):
+    with pytest.raises(BoardError, match="board space not found"):
         lead.attachment("another-space", stored)
 
     # a worker cannot attach to an item outside its slice
@@ -571,8 +822,8 @@ def test_board_attachment_read_hides_foreign_worker_reference(api):
     from fastapi.testclient import TestClient
     from coworker.teams.attachments import stored_name
 
-    lead_token = _tokens(manager).mint("lead-1", "lead")
-    nia_token = _tokens(manager).mint("nia", "worker")
+    lead_token = _tokens(manager).mint("lead-1", "lead", space="proj")
+    nia_token = _tokens(manager).mint("nia", "worker", space="proj")
     lead = {"Authorization": f"Bearer {lead_token}"}
     nia = {"Authorization": f"Bearer {nia_token}"}
 
@@ -635,7 +886,7 @@ def test_board_attachment_read_requires_token(api):
 def test_board_attachment_read_rejects_malformed_name(api):
     client, manager, _ = api
     lead = {
-        "Authorization": f"Bearer {_tokens(manager).mint('lead-1', 'lead')}"
+        "Authorization": f"Bearer {_tokens(manager).mint('lead-1', 'lead', space='proj')}"
     }
 
     response = client.get(
@@ -653,7 +904,7 @@ def test_board_attachment_read_hides_unreferenced_blob(api):
     from coworker.teams.attachments import stored_name
 
     lead = {
-        "Authorization": f"Bearer {_tokens(manager).mint('lead-1', 'lead')}"
+        "Authorization": f"Bearer {_tokens(manager).mint('lead-1', 'lead', space='proj')}"
     }
     ref = manager.attachment_store.put(PNG, "orphan.png")
 
@@ -672,7 +923,7 @@ def test_board_attachment_read_hides_missing_referenced_blob(api):
     from coworker.teams.attachments import stored_name
 
     lead = {
-        "Authorization": f"Bearer {_tokens(manager).mint('lead-1', 'lead')}"
+        "Authorization": f"Bearer {_tokens(manager).mint('lead-1', 'lead', space='proj')}"
     }
     item = client.post(
         "/v1/board/items",
@@ -862,7 +1113,7 @@ def test_local_attachment_read_allows_a_directly_linked_item(tmp_path):
 
 def test_attach_rejects_bad_payloads_over_the_wire(api):
     client, manager, app = api
-    lead_token = _tokens(manager).mint("lead-1", "lead")
+    lead_token = _tokens(manager).mint("lead-1", "lead", space="proj")
     headers = {"Authorization": f"Bearer {lead_token}"}
     client.post(
         "/v1/board/items",
@@ -883,20 +1134,165 @@ def test_attach_rejects_bad_payloads_over_the_wire(api):
 
 def test_tokens_are_hash_stored_and_revocable(tmp_path):
     tokens = BoardTokens(tmp_path / "board-tokens.json")
-    token = tokens.mint("nia", "worker", label="laptop")
+    token = tokens.mint("nia", "worker", space="proj", label="laptop")
     # plaintext never touches disk
     assert token not in (tmp_path / "board-tokens.json").read_text()
-    actor = tokens.resolve(token)
-    assert (actor.id, actor.role) == ("nia", Role.WORKER)
+    principal = tokens.resolve(token)
+    assert principal == BoardPrincipal(
+        actor=Actor(id="nia", role=Role.WORKER), space="proj"
+    )
     assert tokens.resolve("owb_forged") is None
     assert tokens.revoke(token[:12]) == 1
     assert tokens.resolve(token) is None
 
 
-def test_token_mint_validates_role(tmp_path):
+@pytest.mark.parametrize("role", ["admin", "system"])
+def test_token_mint_validates_role(tmp_path, role):
     tokens = BoardTokens(tmp_path / "board-tokens.json")
     with pytest.raises(ValueError):
-        tokens.mint("nia", "admin")
+        tokens.mint("nia", role, space="proj")
+
+
+@pytest.mark.parametrize("space", ["", "   ", "*"])
+def test_token_mint_requires_one_exact_space(tmp_path, space):
+    tokens = BoardTokens(tmp_path / "board-tokens.json")
+    with pytest.raises(ValueError, match="space"):
+        tokens.mint("nia", "worker", space=space)
+
+
+def test_token_space_is_an_opaque_exact_key(tmp_path):
+    tokens = BoardTokens(tmp_path / "board-tokens.json")
+    token = tokens.mint("nia", "worker", space="proj ")
+
+    assert tokens.resolve(token).space == "proj "
+
+
+def test_legacy_unscoped_tokens_fail_closed(tmp_path):
+    tokens = BoardTokens(tmp_path / "board-tokens.json")
+    token = tokens.mint("nia", "worker", space="proj")
+    path = tmp_path / "board-tokens.json"
+    entries = json.loads(path.read_text())
+    next(iter(entries.values())).pop("space")
+    path.write_text(json.dumps(entries))
+
+    assert tokens.resolve(token) is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("actor", ""),
+        ("role", "admin"),
+        ("role", "system"),
+        ("space", "*"),
+        ("space", ["proj"]),
+    ],
+)
+def test_malformed_token_entries_fail_closed(tmp_path, field, value):
+    tokens = BoardTokens(tmp_path / "board-tokens.json")
+    token = tokens.mint("nia", "worker", space="proj")
+    path = tmp_path / "board-tokens.json"
+    entries = json.loads(path.read_text())
+    next(iter(entries.values()))[field] = value
+    path.write_text(json.dumps(entries))
+
+    assert tokens.resolve(token) is None
+
+
+def test_malformed_token_registry_containers_fail_closed(tmp_path):
+    tokens = BoardTokens(tmp_path / "board-tokens.json")
+    token = tokens.mint("nia", "worker", space="proj")
+    path = tmp_path / "board-tokens.json"
+    entries = json.loads(path.read_text())
+    digest = next(iter(entries))
+
+    path.write_text("[]")
+    assert tokens.resolve(token) is None
+
+    path.write_text(json.dumps({digest: []}))
+    assert tokens.resolve(token) is None
+
+
+def test_malformed_rekey_tombstones_fail_closed(tmp_path):
+    tokens = BoardTokens(tmp_path / "board-tokens.json")
+    tokens.begin_space_rekey("old", "new")
+    path = tmp_path / "board-tokens.json"
+    entries = json.loads(path.read_text())
+    entries["__space_rekeys__"] = []
+    path.write_text(json.dumps(entries))
+
+    assert tokens.is_space_active("old") is False
+    with pytest.raises(ValueError, match="registry is malformed"):
+        tokens.mint("nia", "worker", space="old")
+
+
+def test_token_rekey_tombstone_survives_a_cross_process_mint(tmp_path):
+    import subprocess
+    import sys
+    import threading
+    import time
+
+    registry = tmp_path / "board-tokens.json"
+    loaded = tmp_path / "mint-loaded"
+    release = tmp_path / "release-mint"
+    token_output = tmp_path / "minted-token"
+    script = """
+import sys
+import time
+from pathlib import Path
+from coworker.teams.tokens import BoardTokens
+
+registry, loaded, release, output = map(Path, sys.argv[1:])
+tokens = BoardTokens(registry)
+original_load = tokens._load
+
+def paused_load():
+    entries = original_load()
+    loaded.touch()
+    while not release.exists():
+        time.sleep(0.01)
+    return entries
+
+tokens._load = paused_load
+output.write_text(tokens.mint("nia", "worker", space="old"))
+"""
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(registry),
+            str(loaded),
+            str(release),
+            str(token_output),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    deadline = time.monotonic() + 5
+    while not loaded.exists() and process.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert loaded.exists(), process.communicate(timeout=1)
+
+    tokens = BoardTokens(registry)
+    tombstoned = threading.Event()
+
+    def begin_rekey():
+        tokens.begin_space_rekey("old", "new")
+        tombstoned.set()
+
+    thread = threading.Thread(target=begin_rekey)
+    thread.start()
+    assert tombstoned.wait(0.1) is False
+    release.touch()
+    stdout, stderr = process.communicate(timeout=5)
+    thread.join(timeout=5)
+
+    assert process.returncode == 0, (stdout, stderr)
+    assert thread.is_alive() is False
+    assert tokens.space_rekeys() == {"old": "new"}
+    assert tokens.resolve(token_output.read_text()) is None
 
 
 # ------------------------------------------------------------------ MCP server
@@ -925,6 +1321,23 @@ def test_mcp_tool_surface_is_role_scoped(tmp_path):
     assert "board_policy" not in worker_names
     assert {"board_assign", "board_link", "board_policy"} <= lead_names
     assert "journal_append" in worker_names
+
+
+def test_mcp_rejects_a_token_for_another_space(api):
+    from fastapi.testclient import TestClient
+
+    from coworker.teams.mcp_server import build
+
+    client, manager, app = api
+    token = _tokens(manager).mint("nia", "worker", space="alpha")
+    dialect = RemoteDialect(
+        "http://board.test", token, client=TestClient(app, base_url="http://board.test")
+    )
+    try:
+        with pytest.raises(BoardError, match="token is scoped to 'alpha'"):
+            build(dialect, space="beta")
+    finally:
+        dialect.close()
 
 
 def test_mcp_worker_loop_through_call_tool(tmp_path):
@@ -1106,10 +1519,80 @@ def test_cli_token_mint_and_list(tmp_path, capsys):
 
     assert main(
         ["board", "token", "mint", "--actor", "nia", "--role", "worker",
-         "--label", "laptop", "--db", str(tmp_path)]
+         "--space", "proj", "--label", "laptop", "--db", str(tmp_path)]
     ) == 0
     token = capsys.readouterr().out.strip()
     assert token.startswith("owb_")
     assert main(["board", "token", "list", "--db", str(tmp_path)]) == 0
     out = capsys.readouterr().out
-    assert "nia" in out and "laptop" in out and token not in out
+    assert "nia" in out and "proj" in out and "laptop" in out and token not in out
+
+
+def test_cli_token_mint_requires_space(tmp_path, capsys):
+    from coworker.teams.cli import main
+
+    result = main(
+        ["board", "token", "mint", "--actor", "nia", "--db", str(tmp_path)]
+    )
+
+    assert result == 1
+    assert "--space is required" in capsys.readouterr().err
+
+
+def test_cli_token_mint_rejects_wildcard_space(tmp_path, capsys):
+    from coworker.teams.cli import main
+
+    result = main(
+        [
+            "board",
+            "token",
+            "mint",
+            "--actor",
+            "nia",
+            "--space",
+            "*",
+            "--db",
+            str(tmp_path),
+        ]
+    )
+
+    assert result == 1
+    assert "exact board space" in capsys.readouterr().err
+
+
+def test_cli_token_mint_reports_a_retired_space_cleanly(tmp_path, capsys):
+    from coworker.teams.cli import main
+
+    tokens = BoardTokens(tmp_path / "board-tokens.json")
+    tokens.begin_space_rekey("old", "new")
+
+    result = main(
+        [
+            "board",
+            "token",
+            "mint",
+            "--actor",
+            "nia",
+            "--space",
+            "old",
+            "--db",
+            str(tmp_path),
+        ]
+    )
+
+    assert result == 1
+    assert "space 'old' is retired" in capsys.readouterr().err
+
+
+def test_local_cli_caches_a_distinct_token_per_space():
+    from coworker.secrets import state_dir
+    from coworker.teams.cli import _local_cli_token
+
+    alpha = _local_cli_token("alpha")
+    assert _local_cli_token("alpha") == alpha
+    beta = _local_cli_token("beta")
+    assert beta != alpha
+
+    tokens = BoardTokens(state_dir() / "board-tokens.json")
+    assert tokens.resolve(alpha).space == "alpha"
+    assert tokens.resolve(beta).space == "beta"

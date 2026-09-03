@@ -23,6 +23,11 @@ def build(dialect, *, space: str):
     from mcp.server.fastmcp import FastMCP
 
     who = dialect.whoami()
+    token_space = who.get("space")
+    if token_space is not None and token_space != space:
+        raise BoardError(
+            f"board token is scoped to {token_space!r}, not MCP space {space!r}"
+        )
     role = who.get("role", "worker")
     mcp = FastMCP(
         "team-board",

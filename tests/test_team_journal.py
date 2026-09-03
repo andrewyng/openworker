@@ -13,6 +13,7 @@ from coworker.teams import (
     TeamStore,
 )
 from coworker.teams.model import JOURNAL_BODY_LIMIT
+from coworker.teams.tokens import BoardTokens
 
 USER = Actor(id="user", role=Role.USER)
 LEAD = Actor(id="lead-1", role=Role.LEAD)
@@ -78,6 +79,104 @@ def test_cases_span_boards_and_teams(board, journal):
     # and a case with NO board at all is fine — an Ops scratch investigation
     journal.append(USER, "loose-threads", "observation with no board")
     assert "loose-threads" in journal.cases(USER)
+
+
+def test_scoped_journal_reads_project_cross_board_cases_to_one_space(journal):
+    alpha = journal.append(LEAD, "ops", "alpha finding", space="alpha", item=1)
+    journal.append(LEAD, "ops", "beta finding", space="beta", item=1)
+    journal.append(LEAD, "beta-only", "other board", space="beta", item=2)
+
+    assert [entry["body"] for entry in journal.read(
+        LEAD, "ops", scope_space="alpha"
+    )] == ["alpha finding"]
+    assert journal.cases(LEAD, scope_space="alpha") == ["ops"]
+    assert journal.overview(LEAD, scope_space="alpha") == [
+        {"case": "ops", "entries": 1, "last_ts": alpha["ts"]}
+    ]
+
+    # The trusted in-process view remains case-global.
+    assert len(journal.read(LEAD, "ops")) == 2
+    assert journal.cases(LEAD) == ["beta-only", "ops"]
+
+
+def test_board_rekey_moves_journal_entries_and_grants(board, journal):
+    item_id = case_item(board, case="ops", assignee="worker-1", space="old")
+    journal.append(
+        WORKER, "ops", "old-space entry", space="old", item=item_id
+    )
+    journal.append(LEAD, "ops", "other-space entry", space="other", item=7)
+
+    assert board.rekey_space("old", "new") is True
+
+    assert journal.read(WORKER, "ops", scope_space="old") == []
+    assert [
+        entry["body"]
+        for entry in journal.read(WORKER, "ops", scope_space="new")
+    ] == ["old-space entry"]
+    assert journal.cases(WORKER, scope_space="new") == ["ops"]
+    assert journal.verify_chain("ops") == 2
+
+
+def test_board_and_journal_rekey_roll_back_together(tmp_path, monkeypatch):
+    journal = JournalStore(tmp_path / "journal.db")
+    tokens = BoardTokens(tmp_path / "board-tokens.json")
+    board = TeamStore(
+        tmp_path / "teams.db", journal=journal, space_rekeys=tokens
+    )
+    token = tokens.mint("lead-1", "lead", space="old")
+    item_id = case_item(board, case="atomic", space="old")
+    journal.append(LEAD, "atomic", "before", space="old", item=item_id)
+
+    def fail_commit():
+        raise RuntimeError("injected commit failure")
+
+    monkeypatch.setattr(board, "_commit_rekey", fail_commit)
+    with pytest.raises(RuntimeError, match="injected"):
+        board.rekey_space("old", "new")
+
+    assert board.event_count("old") > 0
+    assert board.event_count("new") == 0
+    assert [entry["body"] for entry in journal.read(LEAD, "atomic")] == ["before"]
+    assert journal.read(LEAD, "atomic", scope_space="new") == []
+    assert tokens.resolve(token) is not None
+
+    board.close()
+    journal.close()
+
+
+def test_rekey_recovery_failure_keeps_an_existing_tombstone(tmp_path, monkeypatch):
+    journal = JournalStore(tmp_path / "journal.db")
+    tokens = BoardTokens(tmp_path / "board-tokens.json")
+    board = TeamStore(
+        tmp_path / "teams.db", journal=journal, space_rekeys=tokens
+    )
+    board.create_item("old", LEAD, title="Pending", criteria="moves")
+    assert tokens.begin_space_rekey("old", "new") is True
+
+    def fail_commit():
+        raise RuntimeError("injected recovery failure")
+
+    monkeypatch.setattr(board, "_commit_rekey", fail_commit)
+    with pytest.raises(RuntimeError, match="recovery"):
+        board.rekey_space("old", "new")
+
+    assert tokens.space_rekeys() == {"old": "new"}
+    assert tokens.is_space_active("old") is False
+    with pytest.raises(ValueError, match="retired"):
+        tokens.mint("lead-1", "lead", space="old")
+
+    board.close()
+    journal.close()
+
+
+def test_existing_empty_case_gains_a_safe_space_association(board, journal):
+    journal.ensure_case("legacy-empty", WORKER.id)
+
+    board.create_item(
+        "alpha", WORKER, title="Existing case", criteria="visible", case="legacy-empty"
+    )
+
+    assert journal.cases(WORKER, scope_space="alpha") == ["legacy-empty"]
 
 
 def test_explicit_grant_shares_across_teams(journal):

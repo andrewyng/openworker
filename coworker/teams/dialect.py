@@ -303,8 +303,8 @@ class LocalDialect:
 
 class RemoteDialect:
     """The `/v1/board` HTTP client. `base_url` is an OpenWorker sidecar or a hosted
-    board service; the Bearer token carries identity — the server resolves it to an
-    actor+role, so this client never states who it is, it proves it."""
+    board service; the Bearer token carries identity and one board-space scope, so
+    this client never states its own authority — the server resolves it."""
 
     def __init__(
         self, base_url: str, token: str, *, client: Any = None, timeout: float = 30.0

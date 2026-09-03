@@ -20,6 +20,7 @@ hand a board to an external coding agent: point the agent's MCP config at
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -126,6 +127,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--role", choices=("worker", "lead", "user"), default="worker"
     )
+    p.add_argument("--space", default="", help="exact board space the token may use")
     p.add_argument("--label", default="", help="what this token is for (mint)")
     p.add_argument("--prefix", default="", help="token prefix to revoke")
     p.add_argument("--db", default="", help="state dir holding the registry")
@@ -195,7 +197,7 @@ def _dialect(args):
         return local_dialect(args.db, actor=args.local_actor, role=args.local_role)
     server = _discover_server()
     if server is not None:
-        return RemoteDialect(server, _local_cli_token())
+        return RemoteDialect(server, _local_cli_token(_space(args)))
     from ..secrets import state_dir
 
     return local_dialect(state_dir(), actor=args.local_actor, role=args.local_role)
@@ -226,7 +228,7 @@ def _discover_server() -> Optional[str]:
     return None
 
 
-def _local_cli_token() -> str:
+def _local_cli_token(space: str) -> str:
     """The CLI's own user token against the local server. Minted once into the
     shared registry; the plaintext is cached user-only in the state dir — the
     user's own credential on the user's own machine, same pattern as the sidecar
@@ -235,15 +237,17 @@ def _local_cli_token() -> str:
 
     from .tokens import BoardTokens
 
-    cache = state_dir() / "ocw-cli.token"
+    scope_key = hashlib.sha256(space.encode("utf-8")).hexdigest()[:16]
+    cache = state_dir() / f"ocw-cli-{scope_key}.token"
     tokens = BoardTokens(state_dir() / "board-tokens.json")
     try:
         cached = cache.read_text().strip()
-        if cached and tokens.resolve(cached) is not None:
+        principal = tokens.resolve(cached) if cached else None
+        if principal is not None and principal.space == space:
             return cached
     except OSError:
         pass
-    token = tokens.mint("user", "user", label="local ocw CLI")
+    token = tokens.mint("user", "user", space=space, label="local ocw CLI")
     write_private_text(cache, token + "\n")
     return token
 
@@ -416,10 +420,25 @@ def _cmd_token(args) -> int:
         if not args.actor:
             print("error: --actor is required to mint", file=sys.stderr)
             return 1
-        token = tokens.mint(args.actor, args.role, label=args.label)
+        if not args.space:
+            print("error: --space is required to mint", file=sys.stderr)
+            return 1
+        space = args.space
+        checked_space = space.strip()
+        if not checked_space or checked_space == "*":
+            print("error: one exact board space is required", file=sys.stderr)
+            return 1
+        try:
+            token = tokens.mint(
+                args.actor, args.role, space=space, label=args.label
+            )
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
         print(token)
         print(
-            f"# binds actor '{args.actor}' as {args.role}; shown once — store it"
+            f"# binds actor '{args.actor}' as {args.role} in space {space!r};"
+            " shown once — store it"
             " in the client's config (OCW_BOARD_TOKEN)",
             file=sys.stderr,
         )
@@ -434,7 +453,11 @@ def _cmd_token(args) -> int:
         return 0
     for entry in entries:
         label = f"  ({entry['label']})" if entry["label"] else ""
-        print(f"{entry['prefix']}…  {entry['actor']:<16} {entry['role']:<8}{label}")
+        space = entry.get("space") or "unscoped (disabled)"
+        print(
+            f"{entry['prefix']}…  {entry['actor']:<16} {entry['role']:<8}"
+            f" {space}{label}"
+        )
     if not entries:
         print("no tokens")
     return 0

@@ -183,7 +183,13 @@ class JournalStore:
                         (case, record["hash"], ts),
                     )
                     # A new case belongs to whoever opened it.
-                    self._grant_locked(case, actor.id, source="creator")
+                    self._grant_locked(
+                        case,
+                        actor.id,
+                        source="creator",
+                        space=space or "",
+                        item_id=item,
+                    )
                 else:
                     self._conn.execute(
                         "UPDATE journal_meta SET head_hash = ? WHERE case_id = ?",
@@ -207,6 +213,7 @@ class JournalStore:
         since_seq: int = 0,
         include_raw: bool = False,
         limit: int = 100,
+        scope_space: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """Filtered read. `raw` captures are skipped unless asked for (by
         `kind="raw"` or `include_raw`) so dumps never bury the signal entries."""
@@ -217,6 +224,9 @@ class JournalStore:
             if item is not None:
                 where.append("item_id = ?")
                 params.append(item)
+            if scope_space is not None:
+                where.append("space = ?")
+                params.append(scope_space)
             if author:
                 where.append("actor = ?")
                 params.append(author)
@@ -244,16 +254,25 @@ class JournalStore:
                 break
         return out
 
-    def overview(self, actor: Actor) -> list[dict[str, Any]]:
+    def overview(
+        self, actor: Actor, *, scope_space: Optional[str] = None
+    ) -> list[dict[str, Any]]:
         """Case list with entry counts and last activity — the rail's summary view."""
-        visible = self.cases(actor)
+        visible = self.cases(actor, scope_space=scope_space)
         if not visible:
             return []
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT case_id, COUNT(*) AS entries, MAX(ts) AS last_ts"
-                " FROM journal_entries GROUP BY case_id"
-            ).fetchall()
+            if scope_space is None:
+                rows = self._conn.execute(
+                    "SELECT case_id, COUNT(*) AS entries, MAX(ts) AS last_ts"
+                    " FROM journal_entries GROUP BY case_id"
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT case_id, COUNT(*) AS entries, MAX(ts) AS last_ts"
+                    " FROM journal_entries WHERE space = ? GROUP BY case_id",
+                    (scope_space,),
+                ).fetchall()
         counts = {row["case_id"]: dict(row) for row in rows}
         return [
             {
@@ -264,7 +283,9 @@ class JournalStore:
             for case in visible
         ]
 
-    def cases(self, actor: Actor) -> list[str]:
+    def cases(
+        self, actor: Actor, *, scope_space: Optional[str] = None
+    ) -> list[str]:
         """Cases visible to this actor (all of them for the user)."""
         with self._lock:
             if actor.role == Role.USER:
@@ -277,7 +298,16 @@ class JournalStore:
                     " ORDER BY case_id",
                     (actor.id,),
                 ).fetchall()
-        return [row["case_id"] for row in rows]
+            visible = [row["case_id"] for row in rows]
+            if scope_space is None or not visible:
+                return visible
+            scoped_rows = self._conn.execute(
+                "SELECT case_id FROM journal_entries WHERE space = ?"
+                " UNION SELECT case_id FROM journal_grants WHERE space = ?",
+                (scope_space, scope_space),
+            ).fetchall()
+        scoped = {row["case_id"] for row in scoped_rows}
+        return [case for case in visible if case in scoped]
 
     # ---------------------------------------------------------------------- grants
 
@@ -308,7 +338,14 @@ class JournalStore:
             )
             self._conn.commit()
 
-    def ensure_case(self, case: str, creator: str) -> None:
+    def ensure_case(
+        self,
+        case: str,
+        creator: str,
+        *,
+        space: str = "",
+        item_id: Optional[int] = None,
+    ) -> None:
         """Create a case (empty, chain at genesis) if it doesn't exist, granting
         its creator. Called by the board when an item attaches a case ref — so
         the case belongs to whoever attached it, not to whichever assignee
@@ -323,7 +360,29 @@ class JournalStore:
                     " VALUES (?, ?, ?)",
                     (case, GENESIS, datetime.now(timezone.utc).isoformat()),
                 )
-                self._grant_locked(case, creator, source="creator")
+                self._grant_locked(
+                    case,
+                    creator,
+                    source="creator",
+                    space=space,
+                    item_id=item_id,
+                )
+                self._conn.commit()
+                return
+            grants = self._conn.execute(
+                "SELECT source FROM journal_grants"
+                " WHERE case_id = ? AND principal = ?",
+                (case, creator),
+            ).fetchall()
+            for grant in grants:
+                self._grant_locked(
+                    case,
+                    creator,
+                    source=grant["source"],
+                    space=space,
+                    item_id=item_id,
+                )
+            if grants:
                 self._conn.commit()
 
     def sync_assignment(
@@ -372,6 +431,93 @@ class JournalStore:
         if rows and prev != self._head_hash(case):
             raise ChainError("case log ends before the recorded head — tail deleted")
         return len(rows)
+
+    def rekey_space(self, old: str, new: str) -> None:
+        """Move journal projections with a board-space identity migration.
+
+        Cases may span spaces, so changing even one entry requires recomputing
+        that case's complete hash chain in sequence order.
+        """
+        if old == new:
+            return
+        with self._lock:
+            try:
+                self._rekey_space_locked(self._conn, old, new)
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def _rekey_space_locked(
+        self,
+        connection: sqlite3.Connection,
+        old: str,
+        new: str,
+        *,
+        schema: str = "main",
+    ) -> None:
+        """Apply a rekey using an already-locked caller-owned transaction."""
+        if schema not in {"main", "journal_rekey"}:
+            raise ValueError(f"unsupported journal schema: {schema}")
+        entries = f"{schema}.journal_entries"
+        grants_table = f"{schema}.journal_grants"
+        meta = f"{schema}.journal_meta"
+        cases = [
+            row["case_id"]
+            for row in connection.execute(
+                f"SELECT DISTINCT case_id FROM {entries} WHERE space = ?",
+                (old,),
+            ).fetchall()
+        ]
+        grants = connection.execute(
+            f"SELECT case_id, principal, source, item_id FROM {grants_table}"
+            " WHERE space = ?",
+            (old,),
+        ).fetchall()
+        connection.execute(
+            f"UPDATE {entries} SET space = ? WHERE space = ?", (new, old)
+        )
+        for grant in grants:
+            connection.execute(
+                f"INSERT OR IGNORE INTO {grants_table}"
+                " (case_id, principal, source, space, item_id)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    grant["case_id"],
+                    grant["principal"],
+                    grant["source"],
+                    new,
+                    grant["item_id"],
+                ),
+            )
+        connection.execute(
+            f"DELETE FROM {grants_table} WHERE space = ?", (old,)
+        )
+        for case in cases:
+            rows = connection.execute(
+                f"SELECT * FROM {entries} WHERE case_id = ? ORDER BY seq",
+                (case,),
+            ).fetchall()
+            prev = GENESIS
+            for row in rows:
+                record = {
+                    key: (prev if key == "prev_hash" else row[key])
+                    for key in _HASHED_FIELDS
+                }
+                digest = _hash(record, fields=_HASHED_FIELDS)
+                connection.execute(
+                    f"UPDATE {entries} SET prev_hash = ?, hash = ? WHERE seq = ?",
+                    (prev, digest, row["seq"]),
+                )
+                prev = digest
+            connection.execute(
+                f"UPDATE {meta} SET head_hash = ? WHERE case_id = ?",
+                (prev, case),
+            )
+
+    def rekey_lock(self):
+        """Return the lock used by the board's coordinated two-database rekey."""
+        return self._lock
 
     def close(self) -> None:
         self._conn.close()
