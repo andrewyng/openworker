@@ -161,12 +161,19 @@ MATRIX: dict[str, ModelEntry] = {
         ),
     ),
     "zai:glm-5.2": ModelEntry("GLM-5.2 · Z AI", _AGENTIC, 128_000),
+    "zai-coding:glm-5.2": ModelEntry("GLM-5.2 · Z AI Coding Plan", _AGENTIC, 128_000),
+    "zai-coding:glm-4.7": ModelEntry("GLM-4.7 · Z AI Coding Plan", _AGENTIC, 128_000),
+    "zai-coding:glm-4-coder": ModelEntry("GLM-4 Coder · Z AI Coding Plan", _AGENTIC, 128_000),
     "deepseek:deepseek-v4-flash": ModelEntry(
         "DeepSeek V4 Flash · DeepSeek", _AGENTIC, 128_000
     ),
     "deepseek:deepseek-v4-pro": ModelEntry(
         "DeepSeek V4 Pro · DeepSeek", _AGENTIC, 128_000
     ),
+    "github:gpt-4o": ModelEntry("GPT-4o · GitHub Models", _AGENTIC_VISION, 128_000),
+    "github:gpt-4o-mini": ModelEntry("GPT-4o Mini · GitHub Models", _AGENTIC_VISION, 128_000),
+    "github:Meta-Llama-3.1-405B-Instruct": ModelEntry("Llama 3.1 405B · GitHub Models", _AGENTIC, 128_000),
+    "github:Meta-Llama-3.1-70B-Instruct": ModelEntry("Llama 3.1 70B · GitHub Models", _AGENTIC, 128_000),
     "kimi:kimi-k2.6": ModelEntry("Kimi K2.6 · Moonshot", _AGENTIC, 256_000),
     "minimax:MiniMax-M2.5": ModelEntry("MiniMax M2.5 · MiniMax"),
     "qwen:qwen3-max": ModelEntry("Qwen3 Max · Alibaba", _AGENTIC, 256_000),

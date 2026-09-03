@@ -263,28 +263,41 @@ def _compat(
     env_key: str,
     endpoint_help: str = "",
 ) -> ProviderDescriptor:
-    """Descriptor for an OpenAI-compatible vendor: key + a prefilled, editable endpoint."""
+    """Descriptor for an OpenAI-compatible vendor: key + a prefilled, editable endpoint + default model."""
     vendor = title.split(" (")[0]
+    
+    fields = [
+        ProviderField(
+            "api_key",
+            f"{vendor} API key",
+            secret=True,
+        ),
+        ProviderField(
+            "base_url",
+            "Endpoint",
+            required=False,
+            default=base_url,
+            placeholder=base_url,
+            help=endpoint_help
+            or f"Prefilled with {vendor}'s official endpoint; edit only for a regional or proxy variant.",
+        ),
+    ]
+
+    fields.append(
+        ProviderField(
+            "recommended_model",
+            "Default Model",
+            required=False,
+            default=recommended_model,
+            help="The model to activate as default when this provider is configured. You can enter any compatible model name.",
+        )
+    )
+
     return ProviderDescriptor(
         name=name,
         title=title,
         needs_key=True,
-        fields=[
-            ProviderField(
-                "api_key",
-                f"{vendor} API key",
-                secret=True,
-            ),
-            ProviderField(
-                "base_url",
-                "Endpoint",
-                required=False,
-                default=base_url,
-                placeholder=base_url,
-                help=endpoint_help
-                or f"Prefilled with {vendor}'s official endpoint; edit only for a regional or proxy variant.",
-            ),
-        ],
+        fields=fields,
         build=_openai_compat(vendor, base_url, env_key),
         recommended_model=recommended_model,
         env_key=env_key,
@@ -592,11 +605,27 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         endpoint_help="Prefilled with Z AI's international endpoint. China mainland: https://open.bigmodel.cn/api/paas/v4",
     ),
     _compat(
+        "zai-coding",
+        "Z AI Coding Plan",
+        base_url="https://api.z.ai/api/coding/paas/v4",
+        recommended_model="glm-5.2",
+        env_key="ZAI_CODING_API_KEY",
+        endpoint_help="Prefilled with Z AI's Coding Plan endpoint. Note: This requires a separate Coding Plan subscription.",
+    ),
+    _compat(
         "deepseek",
         "DeepSeek",
         base_url="https://api.deepseek.com",
         recommended_model="deepseek-v4-flash",
         env_key="DEEPSEEK_API_KEY",
+    ),
+    _compat(
+        "github",
+        "GitHub Models",
+        base_url="https://models.inference.ai.azure.com",
+        recommended_model="gpt-4o",
+        env_key="GITHUB_MODELS_TOKEN",
+        endpoint_help="GitHub Models API endpoint. Requires a GitHub Personal Access Token (PAT).",
     ),
     _compat(
         "kimi",
