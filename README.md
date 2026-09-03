@@ -20,6 +20,9 @@ It runs on your machine and doesn't lock you into any model: bring your own API 
 [**⬇ Windows 10/11 (x64)**](https://download.openworker.com/windows)
 <sub>builds are not yet code-signed, so SmartScreen will warn; signing is in progress</sub>
 
+**NVIDIA DGX Spark (Linux ARM64):** follow the [DGX Spark setup and build guide](docs/dgx-spark.md)
+to run the browser UI, connect a GPU-backed local model, or build a native `.deb`.
+
 Open the app, add a model key (or point it at Ollama), and ask for something real.
 
 ## Use cases
@@ -113,7 +116,7 @@ desktop app uses an in-memory launch token instead and never writes it to disk.
 
 To run the full desktop app instead of the browser UI, replace step 3 with `npm run tauri dev` (from `surfaces/gui/`) - the Tauri shell launches the window and supervises the server itself.
 
-Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gui` (GUI unit + hermetic end-to-end). Desktop bundles are built with `packaging/build_dmg.sh` / `packaging/build_windows.ps1`.
+Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gui` (GUI unit + hermetic end-to-end). Desktop bundles are built with `packaging/build_dmg.sh`, `packaging/build_windows.ps1`, or `packaging/build_linux.sh` (Linux, including DGX Spark ARM64).
 
 ## Repository layout
 
