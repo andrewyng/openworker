@@ -56,13 +56,29 @@ _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=[^;&|<>`]*$")
 _SED_WRITE = re.compile(r"(^|[;{])\s*[0-9,$/ ]*[wW]\s")
 
 
+def _has_unquoted_shell_variable(command: str) -> bool:
+    quote: str | None = None
+    escaped = False
+    for char in command:
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+        elif char == "'" and quote != '"':
+            quote = None if quote == "'" else "'"
+        elif char == '"' and quote != "'":
+            quote = None if quote == '"' else '"'
+        elif char == "$" and quote != "'":
+            return True
+    return False
+
+
 def _stages(command: str) -> list[list[str]] | None:
     """Tokenize with operators surfaced; split into pipeline stages. None = reject."""
     if not command or not command.strip():
         return None
-    # Substitutions can hide inside double quotes, which the tokenizer strips — check the
-    # raw text. Rejects a literal '$(' in a grep pattern too; that asymmetry is the point.
-    if "`" in command or "$(" in command or "<(" in command or ">(" in command:
+    # Shell variables are expanded after this check; single-quoted '$' is literal.
+    if _has_unquoted_shell_variable(command) or "$(" in command or "`" in command or "<(" in command or ">(" in command:
         return None
     lex = shlex.shlex(command, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
