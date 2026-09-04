@@ -14,7 +14,7 @@ import re
 from email.message import EmailMessage
 from html.parser import HTMLParser
 from typing import Any, Callable, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import aisuite as ai
 
@@ -134,6 +134,51 @@ _GEN_ACCOUNT_PROP = {
     "type": "string",
     "description": "Which connected account to use (default account when empty)",
 }
+
+_OUTLOOK_SEARCH_MAX_RESULTS = 100
+_OUTLOOK_SEARCH_MAX_PAGES = 100
+_OUTLOOK_MESSAGE_SUMMARY_FIELDS = (
+    "id",
+    "subject",
+    "from",
+    "sender",
+    "receivedDateTime",
+    "sentDateTime",
+    "isRead",
+    "hasAttachments",
+    "importance",
+    "conversationId",
+    "webLink",
+)
+_OUTLOOK_MESSAGE_DETAIL_FIELDS = (
+    *_OUTLOOK_MESSAGE_SUMMARY_FIELDS,
+    "toRecipients",
+    "ccRecipients",
+    "replyTo",
+    "body",
+    "bodyPreview",
+)
+
+
+def _outlook_message_summary(message: Any) -> dict[str, Any]:
+    """Keep mailbox listings compact; full content belongs to get-message."""
+    if not isinstance(message, dict):
+        return {}
+    return {
+        key: message[key]
+        for key in _OUTLOOK_MESSAGE_SUMMARY_FIELDS
+        if key in message
+    }
+
+
+def _is_outlook_graph_url(url: str) -> bool:
+    """Only forward mailbox credentials to the Graph origin we started on."""
+    parsed = urlsplit(url)
+    return (
+        parsed.scheme == "https"
+        and parsed.netloc == "graph.microsoft.com"
+        and parsed.path.startswith("/v1.0/")
+    )
 
 
 def _gmail_profile(
@@ -1316,17 +1361,92 @@ def make_integration_tools(
         )
         if err:
             return err
-        params = {"$top": max(1, min(int(max_results or 10), 20))}
+        limit = _clamp(
+            max_results, default=10, ceiling=_OUTLOOK_SEARCH_MAX_RESULTS
+        )
+        params = {
+            "$top": limit,
+            "$select": ",".join(_OUTLOOK_MESSAGE_SUMMARY_FIELDS),
+        }
         if query:
             params["$search"] = f'"{query}"'
+
+        headers = _graph_headers(profile["access_token"])
+        next_url = "https://graph.microsoft.com/v1.0/me/messages"
+        next_params: Optional[dict[str, Any]] = params
+        seen_page_urls: set[str] = set()
+        seen_message_ids: set[str] = set()
+        messages: list[dict[str, Any]] = []
+        pagination_warning = ""
+        pages_fetched = 0
+        page_truncated = False
+
+        while next_url and len(messages) < limit:
+            if next_url in seen_page_urls:
+                pagination_warning = "Microsoft Graph repeated a pagination URL"
+                break
+            if not _is_outlook_graph_url(next_url):
+                pagination_warning = "Microsoft Graph returned an unsafe pagination URL"
+                break
+            if pages_fetched >= _OUTLOOK_SEARCH_MAX_PAGES:
+                pagination_warning = "Microsoft Graph pagination exceeded the page limit"
+                break
+            seen_page_urls.add(next_url)
+            pages_fetched += 1
+            page = _request(
+                "GET",
+                next_url,
+                headers=headers,
+                params=next_params,
+            )
+            if not page.get("ok"):
+                if not messages:
+                    return _acct_result(aid, page)
+                pagination_warning = str(
+                    page.get("error") or "Microsoft Graph pagination failed"
+                )
+                break
+
+            data = page.get("data")
+            if not isinstance(data, dict):
+                pagination_warning = "Microsoft Graph returned an invalid message page"
+                break
+
+            raw_messages = data.get("value")
+            if not isinstance(raw_messages, list):
+                pagination_warning = "Microsoft Graph returned an invalid message list"
+                break
+
+            for index, raw_message in enumerate(raw_messages):
+                summary = _outlook_message_summary(raw_message)
+                message_id = str(summary.get("id") or "")
+                if message_id and message_id in seen_message_ids:
+                    continue
+                if message_id:
+                    seen_message_ids.add(message_id)
+                if summary:
+                    messages.append(summary)
+                if len(messages) >= limit:
+                    page_truncated = index < len(raw_messages) - 1
+                    break
+
+            raw_next = data.get("@odata.nextLink")
+            next_url = raw_next if isinstance(raw_next, str) else ""
+            # Graph's nextLink is opaque and already contains the original query.
+            next_params = None
+
+        has_more = bool(next_url) or page_truncated
+        result_data: dict[str, Any] = {
+            "value": messages,
+            "returned_count": len(messages),
+            "has_more": has_more,
+            "query_complete": not has_more,
+        }
+        if pagination_warning:
+            result_data["pagination_warning"] = pagination_warning
         return _acct_result(
             aid,
-            _request(
-                "GET",
-                "https://graph.microsoft.com/v1.0/me/messages",
-                headers=_graph_headers(profile["access_token"]),
-                params=params,
-            ),
+            {"ok": True, "data": result_data},
         )
 
     outlook_search_messages.__name__ = "outlook_search_messages"
@@ -1335,13 +1455,59 @@ def make_integration_tools(
             outlook_search_messages,
             _schema(
                 "outlook_search_messages",
-                "Search or list Outlook messages through Microsoft Graph.",
+                "Search Outlook and return up to 100 compact message summaries. "
+                "This tool follows Microsoft Graph pagination and deduplicates results. "
+                "When query_complete is false, report that the limit was reached and "
+                "ask the user to narrow the query; do not repeat or broaden the same "
+                "query to paginate. Use outlook_get_message to read a full body.",
                 {
-                    "query": {"type": "string"},
-                    "max_results": {"type": "integer"},
+                    "query": {
+                        "type": "string",
+                        "description": "Microsoft Outlook search expression; keep the user's requested scope unchanged.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": _OUTLOOK_SEARCH_MAX_RESULTS,
+                    },
                     "account": _GEN_ACCOUNT_PROP,
                 },
                 [],
+            ),
+            caps=["outlook", "read"],
+        )
+    )
+
+    def outlook_get_message(message_id: str, account: str = "") -> dict[str, Any]:
+        aid, profile, err = _account_profile(
+            secrets, "outlook", account, "access_token"
+        )
+        if err:
+            return err
+        return _acct_result(
+            aid,
+            _request(
+                "GET",
+                "https://graph.microsoft.com/v1.0/me/messages/"
+                f"{quote(message_id, safe='')}",
+                headers=_graph_headers(profile["access_token"]),
+                params={"$select": ",".join(_OUTLOOK_MESSAGE_DETAIL_FIELDS)},
+            ),
+        )
+
+    outlook_get_message.__name__ = "outlook_get_message"
+    tools.append(
+        _attach(
+            outlook_get_message,
+            _schema(
+                "outlook_get_message",
+                "Read one Outlook message, including its body, by the ID returned "
+                "from outlook_search_messages.",
+                {
+                    "message_id": {"type": "string"},
+                    "account": _GEN_ACCOUNT_PROP,
+                },
+                ["message_id"],
             ),
             caps=["outlook", "read"],
         )

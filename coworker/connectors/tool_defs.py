@@ -244,6 +244,13 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
     ),
     ConnectorToolDef(
         "outlook",
+        "outlook_get_message",
+        "Read Outlook message",
+        "read",
+        "Read one Outlook message by ID.",
+    ),
+    ConnectorToolDef(
+        "outlook",
         "outlook_send_mail",
         "Send mail",
         "write",
