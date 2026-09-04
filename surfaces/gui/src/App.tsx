@@ -247,6 +247,9 @@ export function App() {
   // Settings: show the composer's context-window fill bar. OFF by default (owner ask),
   // so an older backend without the field also shows the session total.
   const [contextBar, setContextBar] = useState(false);
+  // #611: when on, the live reasoning stream is collapsed to a quiet indicator while a
+  // turn runs; the finalized reasoning still appears after. Loaded from Settings.
+  const [hideReasoningRunning, setHideReasoningRunning] = useState(false);
   // Per-session token usage (OPE-42): rebuilt from the transcript on session load,
   // accumulated live from assistant_message events, reset with the transcript.
   const [usage, setUsage] = useState<SessionUsage>(emptyUsage());
@@ -791,6 +794,7 @@ export function App() {
         setModelConfig(s.model_config || {});
         setModelContextWindows(s.model_context_windows || {});
         setContextBar(s.context_bar === true);
+        setHideReasoningRunning(s.hide_reasoning_running === true);
         setModelReady(s.model_ready);
         if (s.surfaces) setSurfaces(s.surfaces);
       })
@@ -2311,10 +2315,19 @@ export function App() {
                   {/* Live thinking (reasoning models): a quiet collapsed block that streams the
                       trace for anyone who expands it; folds into the answer's disclosure when
                       the message finalizes. */}
-                  {running && reasoningStream && !streaming && (
-                    <div className="transcript">
-                      <ThinkingBlock text={reasoningStream} live />
-                    </div>
+                  {running &&
+                    reasoningStream &&
+                    !streaming &&
+                    !hideReasoningRunning && (
+                      <div className="transcript">
+                        <ThinkingBlock text={reasoningStream} live />
+                      </div>
+                    )}
+                  {/* #611: "Hide thinking while running" collapses the fast-scrolling live trace
+                      to a quiet one-line indicator — the finalized reasoning still appears in the
+                      assistant item after the turn, so no signal is lost. */}
+                  {running && reasoningStream && !streaming && hideReasoningRunning && (
+                    <WaitingForAgent label={t("app.thinking_hidden")} />
                   )}
                   {/* OPE-206: the sandbox for this session is being built (a container, its
                       runner, its mounts). Not a turn, so `running` is false; the row says so. */}
