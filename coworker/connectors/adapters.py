@@ -137,6 +137,7 @@ class TelegramAdapter(BasePlatformAdapter):
 
 class SlackAdapter(BasePlatformAdapter):
     platform = "slack"
+    supports_interactive = True  # Block Kit buttons, resolved via the interactions handler
 
     # Watchdog cadence: how often to check the live Socket Mode connection and force a reconnect
     # if it has silently died. `start_async()` sleeps forever, so a dead socket looks alive to us
