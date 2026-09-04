@@ -125,6 +125,15 @@ const NAV_COLLAPSED_KEY = "coworker:nav-collapsed:v1";
 
 type LastSession = { sessionId: string; workspace: string; updatedAt: number };
 
+// #608: a follow-up held while a turn runs, auto-sent when that turn finishes.
+type QueuedMsg = {
+  id: string;
+  text: string;
+  attachments?: Attachment[];
+  skill?: string;
+  ts: number;
+};
+
 function readLastSessions(): Record<string, LastSession> {
   try {
     const raw = localStorage.getItem(LAST_SESSION_KEY);
@@ -217,6 +226,16 @@ export function App() {
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
+  // #608: follow-ups queued while a turn runs — auto-sent in order when the turn finishes.
+  // State drives the composer's "N queued" pill; the ref mirror lets the drain effect see the
+  // latest queue without re-running on every enqueue.
+  const [queue, setQueue] = useState<QueuedMsg[]>([]);
+  const queueRef = useRef<QueuedMsg[]>([]);
+  // running live-mirrored so the drain effect (keyed on the running→false edge) reads fresh
+  // values; wasRunning tracks the previous render's value to detect the edge in the effect.
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  const wasRunningRef = useRef(running);
   // Transient "Compacting context…" indicator (OPE-27): set by the `compacting` event,
   // cleared by whatever the engine emits next — the summarizer call is otherwise a
   // multi-second silent stall mid-turn.
@@ -1133,6 +1152,35 @@ export function App() {
     sessionRef.current?.userMessage(text, attachments, model, skill);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
   };
+  // #608: hold a follow-up typed while a turn runs — the composer calls this instead of
+  // dropping the message. The drain effect below auto-sends them in order when the turn ends.
+  const enqueue = (text: string, attachments?: Attachment[], skill?: string) => {
+    const m: QueuedMsg = {
+      id: newId(),
+      text,
+      attachments,
+      skill,
+      ts: Date.now() / 1000,
+    };
+    queueRef.current = [...queueRef.current, m];
+    setQueue(queueRef.current);
+  };
+  // Drain the queue the moment a running turn ends (running→false edge). Runs ONLY on that
+  // edge never per enqueue; it reads queueRef for the freshest list.
+  useEffect(() => {
+    const wasRunning = wasRunningRef.current;
+    wasRunningRef.current = running;
+    if (wasRunning && !running) {
+      const pending = queueRef.current;
+      if (pending.length === 0) return;
+      queueRef.current = [];
+      setQueue([]);
+      pending.forEach((m) => send(m.text, m.attachments, m.skill));
+    }
+    // Intentionally not depending on `send`: this effect fires only on the running→false
+    // edge, and we use the closure from the render that flipped it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running]);
   // Resolving a LIVE prompt also resolves its parked Inbox mirror server-side, but the polled
   // `sessionInbox` copy stays "pending" for up to a poll cycle — long enough for the docked
   // answer-in-context card to flash the SAME request again right after the user answered it
@@ -2082,6 +2130,8 @@ export function App() {
               onConfigureVoiceInput={() => openSettings("voice")}
               onSend={send}
               onInterrupt={interrupt}
+              onQueue={enqueue}
+              queuedCount={queue.length}
               onModeChange={changeMode}
               onModelChange={changeModel}
               sessionId={sessionId}
