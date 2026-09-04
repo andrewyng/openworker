@@ -919,6 +919,9 @@ export interface ModelSettings {
   // Composer: show the context-window fill bar (default FALSE; absent → the chip shows
   // the session total). The usage popover keeps both numbers regardless.
   context_bar?: boolean;
+  // #611: collapse the live reasoning stream while a turn runs (default FALSE). When on,
+  // the reasoning is hidden during the run, but its finalized form still appears after.
+  hide_reasoning_running?: boolean;
   // Auto-Approve mode (spec §1.5): the feature flag that offers the reviewer mode, and its
   // shadow-eval sibling. Both default FALSE and are absent on older backends — the composer
   // hides the Auto-Approve mode entry unless auto_approve is explicitly true.
@@ -998,6 +1001,18 @@ export async function setContextBar(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ context_bar: shown }),
+  });
+  return res.json();
+}
+
+/** #611: persist whether the composer suppresses the live reasoning stream while a turn runs. */
+export async function setHideReasoningRunning(
+  hidden: boolean,
+): Promise<{ ok: boolean; hide_reasoning_running?: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/hide-reasoning`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ hide_reasoning_running: hidden }),
   });
   return res.json();
 }

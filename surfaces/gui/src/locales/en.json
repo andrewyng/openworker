@@ -393,7 +393,9 @@
     "personas_desc": "Coworkers are agents specialized for a particular role or task. They come equipped with the tools and skills to be successful in that role. Enabling a coworker lets you pick it when starting a conversation.",
     "composer_section": "Composer",
     "context_bar_title": "Show the context window bar",
-    "context_bar_desc": "A small meter showing how full the model’s context window is. Turn it off to show the same thing as a number instead."
+    "context_bar_desc": "A small meter showing how full the model’s context window is. Turn it off to show the same thing as a number instead.",
+    "hide_reasoning_title": "Hide thinking while I work",
+    "hide_reasoning_desc": "Collapse the fast-scrolling reasoning trace to a quiet “Thinking…” line while a turn runs. The full reasoning still appears after the turn finishes."
   },
   "cloud": {
     "check_browser": "Check your browser…",
@@ -429,6 +431,7 @@
     "jump_to_latest": "Jump to latest",
     "waiting_for_agent": "Waiting for agent...",
     "compacting_context": "Compacting context…",
+    "thinking_hidden": "Thinking…",
     "allow_anyway_message": "I reviewed the blocked {{name}} action — go ahead with it exactly as proposed.",
     "temp_folder_failed": "Could not create a temporary folder.",
     "temp_folder_created": "Temporary folder created",

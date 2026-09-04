@@ -385,7 +385,9 @@
     "personas_desc": "同事是专精于特定角色或任务的 agent，自带胜任该角色所需的工具与技能。启用同事后，即可在开始会话时选择它。",
     "composer_section": "输入框",
     "context_bar_title": "显示上下文窗口占用条",
-    "context_bar_desc": "一个小指示条，显示模型上下文窗口的占用程度。关闭后将改为以数字形式显示。"
+    "context_bar_desc": "一个小指示条，显示模型上下文窗口的占用程度。关闭后将改为以数字形式显示。",
+    "hide_reasoning_title": "工作时隐藏思考过程",
+    "hide_reasoning_desc": "任务运行期间，将快速滚动的思考文本折叠成一行安静的“思考中…”提示。完整思考内容仍会在任务结束后显示。"
   },
   "cloud": {
     "check_browser": "请查看你的浏览器…",
@@ -421,6 +423,7 @@
     "jump_to_latest": "跳到最新",
     "waiting_for_agent": "正在等待 agent…",
     "compacting_context": "正在压缩上下文…",
+    "thinking_hidden": "思考中…",
     "allow_anyway_message": "我已审阅被拦截的 {{name}} 操作 —— 请按原样执行。",
     "temp_folder_failed": "无法创建临时文件夹。",
     "temp_folder_created": "已创建临时文件夹",
