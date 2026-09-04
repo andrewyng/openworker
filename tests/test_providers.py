@@ -498,9 +498,14 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         "fireworks:accounts/fireworks/models/kimi-k2p6",
         "openrouter:z-ai/glm-5.2",
         "openrouter:meta-llama/llama-4-maverick",
+        "deepinfra:deepseek-ai/DeepSeek-V4-Flash",
+        "deepinfra:zai-org/GLM-5.3-Flash",
     ):
         caps = capabilities_for(mid)
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
+
+    assert capabilities_for("deepinfra:zai-org/GLM-5.3-Flash").vision is True
+    assert capabilities_for("deepinfra:deepseek-ai/DeepSeek-V4-Flash").vision is False
 
 
 def test_matrix_labels_and_custom_model_fallback():
@@ -509,17 +514,13 @@ def test_matrix_labels_and_custom_model_fallback():
     labels = model_labels()
     assert labels["together:zai-org/GLM-5.2"] == "GLM-5.2 · via Together"
     assert labels["zai:glm-5.2"] == "GLM-5.2 · Z AI"
+    assert (
+        labels["deepinfra:deepseek-ai/DeepSeek-V4-Flash"]
+        == "DeepSeek V4 Flash · via DeepInfra"
+    )
     # Deliberately small: agent-capable current models only (owner call, 2026-07-04).
-    # 60→65 (2026-08-24): the stealth ox-alpha preview slug tipped it; reclaim slack by
-    # pruning retired entries before raising this again.
-    # 65→70 (2026-09-16): three Claude 4.5/4.6 rows added for comparability with
-    # published evaluations of those models. The
-    # pruning owed above is NOT done here — deciding which entries are retired is an owner
-    # call, and dropping a row silently downgrades that model to the conservative fallback
-    # capabilities. Prune before raising this a third time.
-    # 70→75 (2026-10-01, OPE-215): three OpenRouter rows (Nemotron 3 Ultra, Nemotron 3.5
-    # Lightning, GLM 5.3). The pruning owed above is still not done; it remains the owner's
-    # call and should come before this is raised again.
+    # Includes the DeepInfra curated catalog and the OpenRouter rows on main.
+    # Keep the catalog bounded; further additions require pruning retired entries.
     assert len(MATRIX) < 75
     assert all(e.caps.tools for e in MATRIX.values())
     # A custom (unlisted) reseller model falls back to the conservative default — usable,
@@ -534,7 +535,7 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
     from coworker.providers.matrix import models_for_provider
     from coworker.providers.registry import get_descriptor
 
-    for name in ("together", "fireworks", "openrouter"):
+    for name in ("together", "fireworks", "openrouter", "deepinfra"):
         d = get_descriptor(name)
         assert d is not None and d.needs_key
         curated = models_for_provider(name)
@@ -542,6 +543,16 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
         # full ids in the matrix must round-trip: prefix + bare == matrix key
         base = next(f for f in d.fields if f.key == "base_url")
         assert base.default.startswith("https://")
+
+
+def test_deepinfra_never_leaks_the_openai_key(monkeypatch):
+    import pytest
+    from coworker.providers.registry import build_provider_client
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
+    monkeypatch.delenv("DEEPINFRA_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="DeepInfra"):
+        build_provider_client("deepinfra", {}, None)
 
 
 def test_foreign_sidecars_stripped_from_outbound_messages():
