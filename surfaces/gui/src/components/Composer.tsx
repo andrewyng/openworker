@@ -5,6 +5,7 @@ import { isPdfFile, readFile } from "../attach";
 import { ProjectBindMenu } from "./ProjectBindMenu";
 import { getSettings, inspectPdf, sessionSkills, type SessionSkillRow } from "../api";
 import { formatTokens, totalTokens } from "../usage";
+import { clearDraft, loadDraft, saveDraft, type ComposerDraft } from "./composerDraft";
 import { Dropdown, type Option } from "./Dropdown";
 import { Icon } from "./Icon";
 import { Toggle } from "./Toggle";
@@ -207,6 +208,14 @@ export function Composer(props: Props) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const noticeTimer = useRef<number | null>(null);
 
+  // Latest draft, mirrored each render so unmount/cleanup and the session-switch effect can
+  // persist exactly what the user last typed, however state changes between renders.
+  const draftRef = useRef<ComposerDraft>({ text: "", attachments: [], skill: null });
+  draftRef.current = { text, attachments, skill: pendingSkill };
+  // The resetKey this Composer last rendered with; lets the session-switch effect know the
+  // session we're LEAVING in order to save its draft before restoring the incoming one.
+  const prevResetKey = useRef<string | undefined>(props.resetKey);
+
   // Rejected-attachment notice: visible ~8s, then clears (or on ✕).
   const showAttachNotice = (message: string) => {
     setAttachNotice(message);
@@ -231,16 +240,34 @@ export function Composer(props: Props) {
     el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
   }, [text]);
 
-  // Clear the draft when the conversation changes, so a half-typed message / picked file doesn't
-  // bleed from one session into another. Declared BEFORE the prefill effect: when both fire in
-  // the same render (the Skills doorway starts a new session AND prefills it), effects run in
-  // declaration order — clear first, then the prefill lands on the fresh session.
+  // Persist the unsent draft per conversation: when the active session changes, save the
+  // half-typed message / picked file under the session we're LEAVING, then restore whatever
+  // draft is saved for the session we're ENTERING (rather than unconditionally wiping the box).
+  // Declared BEFORE the prefill effect: when both fire in the same render (the Skills doorway
+  // starts a new session AND prefills it), effects run in declaration order — the restore
+  // runs first, so the prefill still lands on top of the fresh session.
   useEffect(() => {
-    setText("");
-    setAttachments([]);
-    setPendingSkill(null);
+    const prev = prevResetKey.current;
+    const next = props.resetKey;
+    prevResetKey.current = next;
+    // Save the outgoing draft so it isn't lost on a session switch (first mount: nothing to save).
+    if (prev && prev !== next) saveDraft(prev, draftRef.current);
+    // Restore the incoming session's saved draft (none → empty box).
+    const restored = loadDraft(next);
+    setText(restored?.text ?? "");
+    setAttachments(restored?.attachments ?? []);
+    setPendingSkill(restored?.skill ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.resetKey]);
+
+  // Save the draft when the composer unmounts (e.g. navigating to Settings/Inbox or closing
+  // the session view), so it survives leaving the page and is restored when you come back.
+  useEffect(() => {
+    return () => {
+      if (prevResetKey.current) saveDraft(prevResetKey.current, draftRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Apply a prefill (text + attachments) pushed from outside, then focus the composer. Applied at
   // most once per nonce (a ref guards against StrictMode/re-render double-fires), and attachments
@@ -401,6 +428,8 @@ export function Composer(props: Props) {
     setText("");
     setAttachments([]);
     setPendingSkill(null);
+    // The message is away — drop the persisted draft so it isn't restored on a later visit.
+    if (props.resetKey) clearDraft(props.resetKey);
   };
 
   const onKey = (e: React.KeyboardEvent) => {
