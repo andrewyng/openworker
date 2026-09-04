@@ -8,6 +8,7 @@ import {
   setAutoApproveShadow,
   setCompactionSettings,
   setContextBar,
+  setHideReasoningRunning,
   setOnboarded,
   setPdfSettings,
   setScratchBase,
@@ -473,6 +474,8 @@ function AppearanceSection() {
 
       <ContextBarCard />
 
+      <HideReasoningCard />
+
       <AutoApproveCard />
 
       <FilesCard />
@@ -869,6 +872,45 @@ function ContextBarCard() {
         <span>
           <span className="block text-[13px] text-ink">{t("settings.context_bar_title")}</span>
           <span className="block text-[12px] text-muted">{t("settings.context_bar_desc")}</span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
+// #611: collapse the live reasoning stream to a quiet "Thinking…" indicator while a
+// turn runs. Mirror of ContextBarCard: a persisted, user-global checkbox in Composer
+// settings. The finalized reasoning still appears after the turn, so nothing is lost.
+function HideReasoningCard() {
+  const { t } = useTranslation();
+  const [hidden, setHidden] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => setHidden(s.hide_reasoning_running === true))
+      .catch(() => setHidden(false));
+  }, []);
+
+  const save = async (next: boolean) => {
+    setHidden(next);
+    await setHideReasoningRunning(next);
+  };
+
+  if (hidden === null) return null;
+  return (
+    <div className={CARD + " p-4 mb-4"} data-testid="hide-reasoning-card">
+      <div className={FIELD_LABEL}>{t("settings.composer_section")}</div>
+      <label className="flex items-start gap-3 py-2">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          data-testid="hide-reasoning-toggle"
+          checked={hidden}
+          onChange={(e) => save(e.target.checked)}
+        />
+        <span>
+          <span className="block text-[13px] text-ink">{t("settings.hide_reasoning_title")}</span>
+          <span className="block text-[12px] text-muted">{t("settings.hide_reasoning_desc")}</span>
         </span>
       </label>
     </div>

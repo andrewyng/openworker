@@ -37,6 +37,8 @@ const SETTINGS = {
   scratch_base: "~/OpenWorker",
   secrets_path: "/Users/test/.config/coworker/secrets.json",
   sessions_peek: 5,
+  // #611: live reasoning is collapsed to a quiet "Thinking…" line while a turn runs.
+  hide_reasoning_running: false,
   // Token savings (PDF attachments): 2-page limit keeps the composer threshold test's
   // fixture PDF small; the real default is 20.
   pdf_fallback: "text",
@@ -1437,6 +1439,10 @@ export async function mockApi(page: import("@playwright/test").Page) {
     if (p.endsWith("/v1/settings/context-bar") && m === "POST") {
       Object.assign(SETTINGS, req.postDataJSON());
       return json({ ok: true, context_bar: SETTINGS.context_bar });
+    }
+    if (p.endsWith("/v1/settings/hide-reasoning") && m === "POST") {
+      Object.assign(SETTINGS, req.postDataJSON());
+      return json({ ok: true, hide_reasoning_running: SETTINGS.hide_reasoning_running });
     }
     if (p.endsWith("/v1/settings/pdf") && m === "POST") {
       Object.assign(SETTINGS, req.postDataJSON());

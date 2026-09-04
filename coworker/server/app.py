@@ -1931,6 +1931,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         # Composer: show the context-window fill bar, or just the popover (owner ask).
         return manager.set_context_bar((body or {}).get("context_bar", True))
 
+    @app.post("/v1/settings/hide-reasoning")
+    def settings_set_hide_reasoning(body: dict) -> dict[str, Any]:
+        # #611: collapse the live reasoning stream to a quiet indicator while a turn runs.
+        return manager.set_hide_reasoning_running((body or {}).get("hide_reasoning_running", False))
+
     @app.post("/v1/settings/auto-approve")
     def settings_set_auto_approve(body: dict) -> dict[str, Any]:
         # Auto-Approve feature flag (spec §1.5): when on, Mode.AUTO_APPROVE gets an LLM

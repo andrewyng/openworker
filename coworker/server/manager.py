@@ -3442,6 +3442,9 @@ class SessionManager:
             "nav_layout": self._nav_layout(),
             "sessions_peek": self.sessions_peek(),
             "context_bar": self.context_bar(),
+            # #611: collapse/hide the live thinking stream while a turn runs (OFF by default so
+            # existing users keep seeing it; the finalized reasoning still shows after the turn).
+            "hide_reasoning_running": self.hide_reasoning_running(),
             # Auto-Approve feature flag + its shadow-eval sibling (spec §1.5). Drive the
             # Settings toggles and gate the composer's Auto-Approve mode entry.
             "auto_approve": self.auto_approve(),
@@ -3514,6 +3517,19 @@ class SessionManager:
         self._prefs["context_bar"] = bool(shown)
         self._save_prefs()
         return {"ok": True, "context_bar": self.context_bar()}
+
+    # -- Hide live reasoning while running (#611) ---------------------------------------
+    # The GUI streams the model's reasoning live during a turn; at full write speed it's a
+    # wall of fast-moving text. This pref collapses that live stream to a quiet one-line
+    # indicator (the finalized reasoning still appears after the turn). OFF by default.
+
+    def hide_reasoning_running(self) -> bool:
+        return bool(self._prefs.get("hide_reasoning_running", False))
+
+    def set_hide_reasoning_running(self, hidden: Any) -> dict[str, Any]:
+        self._prefs["hide_reasoning_running"] = bool(hidden)
+        self._save_prefs()
+        return {"ok": True, "hide_reasoning_running": self.hide_reasoning_running()}
 
     # -- Auto-Approve (spec §1.5, Part 6 step 3) --------------------------------
     # The feature flag and its shadow-eval sibling live in prefs (GUI-writable), falling
