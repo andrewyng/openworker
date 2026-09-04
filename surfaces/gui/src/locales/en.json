@@ -108,6 +108,8 @@
     "attach_other": "Other files",
     "connect_to_send": "Connect a model to send",
     "stop": "⏹ Stop",
+    "queue_send": "Queue & send when the task finishes",
+    "queued": "{{count}} queued — will send when this task finishes",
     "mode_label": "Mode",
     "approvals_to_inbox": "Send approvals to the Inbox",
     "mode": {

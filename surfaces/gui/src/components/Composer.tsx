@@ -97,6 +97,11 @@ interface Props {
   onConnectModel?: () => void;
   onConfigureVoiceInput?: () => void;
   onSend: (text: string, attachments?: Attachment[], skill?: string) => void;
+  // #608: when a turn is __running__, Send queues the follow-up instead of dropping it; the
+  // session auto-sends queued messages in order when the turn finishes. `onQueue` present =
+  // queueing is on; `queuedCount` drives the "N queued" pill.
+  onQueue?: (text: string, attachments?: Attachment[], skill?: string) => void;
+  queuedCount?: number;
   // Feeds the "/" force-run popup (SKILLS-SPEC §4.1 #3): the popup lists this session's
   // effective skill menu. Absent (e.g. tests without sessions) → the popup never opens.
   sessionId?: string;
@@ -385,13 +390,25 @@ export function Composer(props: Props) {
     // the skill rides as its own field. (Named `body`, not `t`, so it can't shadow i18n's t.)
     const skill = prefixIntact ? pendingSkill!.name : undefined;
     const body = (skill ? text.slice(skill.length + 1) : text).trim();
-    if (
-      (!body && attachments.length === 0 && !skill) ||
-      (props.running && !props.gateOpen) ||
-      dictation?.recording ||
-      dictationBusy
-    )
+    if (!body && attachments.length === 0 && !skill) return;
+    // Dictation is live — never submit what's being transcribed mid-sentence.
+    if (dictation?.recording || dictationBusy) return;
+    // #608: while a turn is running a follow-up can't be processed yet. If queueing is wired,
+    // hold it in the session queue (auto-sends when the turn finishes) instead of dropping it.
+    // Without an onQueue handler we keep the old behavior exactly.
+    if (props.running && !props.gateOpen) {
+      if (props.onQueue) {
+        if (needsModel) {
+          props.onConnectModel?.();
+          return;
+        }
+        props.onQueue(body, attachments, skill);
+        setText("");
+        setAttachments([]);
+        setPendingSkill(null);
+      }
       return;
+    }
     // No model connected: keep the draft (don't drop it) and send the user to setup instead.
     if (needsModel) {
       props.onConnectModel?.();
@@ -594,6 +611,21 @@ export function Composer(props: Props) {
           rows={1}
         />
 
+        {/* #608: follow-ups held while a turn runs — auto-sent when it finishes. */}
+        {!!props.queuedCount && props.queuedCount > 0 && (
+          <div className="px-3.5 pb-1.5 -mt-0.5">
+            <span
+              className="inline-flex items-center gap-1.5 text-[12px] text-faint"
+              role="status"
+              aria-live="polite"
+              data-testid="queued-count"
+            >
+              <Icon name="clock" size={13} />
+              {t("composer.queued", { count: props.queuedCount })}
+            </span>
+          </div>
+        )}
+
         {/* Three-control row (§22): + attach · Mode ⌄ …(right)… model (fresh only) · send */}
         <div className="px-2.5 pb-2.5 pt-1 flex items-center gap-1.5">
           {/* + attach menu */}
@@ -756,11 +788,35 @@ export function Composer(props: Props) {
             </button>
           )}
 
-          {/* send / stop — a pending gate re-opens Send: the reply resolves it */}
+          {/* send / stop — a pending gate re-opens Send: the reply resolves it.
+              While a turn runs (#608) two actions live side by side: Stop stays the
+              primary control, and the send arrow QUEUES the follow-up (it auto-sends
+              when the turn finishes) instead of dropping it — only when queueing is
+              wired (onQueue). Without it we render exactly the old Stop-only state. */}
           {props.running && !props.gateOpen ? (
-            <button className="btn danger" onClick={props.onInterrupt}>
-              {t("composer.stop")}
-            </button>
+            <>
+              {props.onQueue && (
+                <button
+                  className={
+                    "w-7 h-7 rounded-full grid place-items-center shrink-0 transition-colors " +
+                    (hasContent && props.connected && !dictation?.recording && !dictationBusy
+                      ? "bg-accent text-white hover:brightness-105"
+                      : "bg-paper border border-line text-faint")
+                  }
+                  onClick={submit}
+                  disabled={!props.connected || !!dictation?.recording || !!dictationBusy}
+                  title={needsModel ? t("composer.connect_to_send") : t("composer.queue_send")}
+                  aria-label={t("composer.queue_send")}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M12 19V5M5 12l7-7 7 7" />
+                  </svg>
+                </button>
+              )}
+              <button className="btn danger" onClick={props.onInterrupt}>
+                {t("composer.stop")}
+              </button>
+            </>
           ) : (
             <button
               className={
