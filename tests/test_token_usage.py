@@ -359,4 +359,12 @@ def test_model_context_windows_covers_verified_entries_only():
     windows = model_context_windows()
     assert windows["anthropic:claude-fable-5"] == 1_000_000
     assert "together:thinkingmachines/Inkling" not in windows  # unverified stays absent
+    assert windows["deepinfra:deepseek-ai/DeepSeek-V4-Flash"] == 128_000
+    assert windows["deepinfra:deepseek-ai/DeepSeek-V4-Flash-0731"] == 128_000
+    assert windows["deepinfra:deepseek-ai/DeepSeek-V4-Pro"] == 128_000
+    assert windows["deepinfra:deepseek-ai/DeepSeek-V4-Pro-0731"] == 128_000
+    assert windows["deepinfra:zai-org/GLM-5.3-Flash"] == 1_000_000
+    assert windows["deepinfra:zai-org/GLM-5.3"] == 1_000_000
+    assert windows["deepinfra:moonshotai/Kimi-K3"] == 1_000_000
+    assert windows["deepinfra:moonshotai/Kimi-K2.7-Code"] == 256_000
     assert all(isinstance(v, int) and v > 0 for v in windows.values())

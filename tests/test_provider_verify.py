@@ -161,3 +161,13 @@ def test_verify_unexpected_status(monkeypatch):
     res = verify_provider_key("anthropic", api_key="sk-ant-x")
     assert res["ok"] is False
     assert "500" in res["error"]
+
+
+def test_verify_deepinfra_default_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+
+    assert verify_provider_key("deepinfra", api_key="di-key") == {"ok": True}
+    assert cap["url"] == "https://api.deepinfra.com/v1/openai/models"
+    assert cap["headers"]["Authorization"] == "Bearer di-key"
+

@@ -74,6 +74,22 @@ def test_build_ollama_client_uses_base_url(monkeypatch):
     assert captured["api_key"] == "ollama"  # placeholder, Ollama ignores it
 
 
+def test_build_deepinfra_client_uses_default_base_url(monkeypatch):
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    client = build_provider_client(
+        "deepinfra", {"api_key": "di-test"}, secrets=None
+    )
+    client._ensure_client()  # type: ignore[attr-defined]
+    assert captured["base_url"] == "https://api.deepinfra.com/v1/openai"
+    assert captured["api_key"] == "di-test"
+
+
 # -- router routing -------------------------------------------------------------
 class _Recorder(ProviderClient):
     def __init__(self, name: str):
@@ -114,6 +130,12 @@ def test_router_routes_and_strips_prefix(monkeypatch):
     assert state["latest"]["ollama"].models == [
         "llama3.3"
     ]  # prefix stripped before delegating
+
+    turn = router.complete(
+        model="deepinfra:deepseek-ai/DeepSeek-V4-Flash", messages=[]
+    )
+    assert turn.text == "deepinfra"
+    assert state["latest"]["deepinfra"].models == ["deepseek-ai/DeepSeek-V4-Flash"]
 
     router.complete(model="gpt-5.5", messages=[])  # bare → default openai
     assert state["latest"]["openai"].models == ["gpt-5.5"]
