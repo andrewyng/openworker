@@ -2479,6 +2479,11 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "command_trust": manager.workspace_command_trust(
                         str(getattr(engine, "audit_context", {}).get("workspace", ""))
                     ),
+                    # A client that (re)connects mid-turn (e.g. switching back to this
+                    # conversation) has no other way to learn a turn is already running —
+                    # without this, its UI defaults to idle and the Stop control is gone
+                    # even though the turn is still executing server-side.
+                    "running": manager.is_running(session_id),
                 },
             }
         )

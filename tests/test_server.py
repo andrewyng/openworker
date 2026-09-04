@@ -680,6 +680,38 @@ def test_ws_session_persisted_while_parked_on_approval(tmp_path):
             pass
 
 
+def test_ws_ready_reports_running_state_on_reconnect(tmp_path):
+    """A client that (re)connects mid-turn -- e.g. switching back to a conversation whose
+    turn is still running -- must be told so in `ready`, or its UI has no way to restore the
+    Stop control (only the connection that started the turn ever saw `turn_start`)."""
+    manager = SessionManager(
+        workspace=tmp_path,
+        provider=ScriptedProvider(
+            [_tool("write_file", {"path": "x.py", "content": "1\n"}), _text("done")]
+        ),
+    )
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/reconnect1") as ws1:
+        assert ws1.receive_json()["type"] == "ready"
+        ws1.send_json({"type": "user_message", "text": "make x.py"})
+        while ws1.receive_json()["type"] != "permission_required":
+            pass
+        # Turn is parked on approval -- still running. A second connection to the same
+        # session (simulating "switch away and back") must see running=True in its own
+        # `ready` event.
+        with client.websocket_connect("/ws/session/reconnect1") as ws2:
+            ready2 = ws2.receive_json()
+            assert ready2["type"] == "ready"
+            assert ready2["data"]["running"] is True
+        ws1.send_json({"type": "approval", "decision": "deny"})
+        while ws1.receive_json()["type"] != "turn_done":
+            pass
+    # Turn is over -- a fresh connection must not report running.
+    with client.websocket_connect("/ws/session/reconnect1") as ws3:
+        ready3 = ws3.receive_json()
+        assert ready3["data"]["running"] is False
+
+
 def test_ws_browser_tool_audit_round_trip(tmp_path):
     client = _client(tmp_path, [_tool("browser_close", {}), _text("closed")])
     with client.websocket_connect("/ws/session/browser-audit?agent=cowork") as ws:
