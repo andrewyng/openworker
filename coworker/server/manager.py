@@ -27,7 +27,7 @@ from ..connections import (
     SessionConnectionStore,
     effective as effective_connections,
 )
-from ..inbox import InboxStore, args_preview
+from ..inbox import KIND_APPROVAL, InboxStore, args_preview
 from ..inbox_routing import InboxRouting
 from ..personas import PersonaRegistry
 from ..personas.registry import set_registry as set_persona_registry
@@ -169,6 +169,17 @@ def _grant_offered(outcome, request) -> bool:
             return False
         return name != "save_skill"
     return True
+
+
+def _reply_hint(item, buttons) -> str:
+    """How to answer this item in a chat that can't draw buttons. Naming the words the
+    reply parser accepts is the difference between a prompt and a dead end."""
+    if not buttons:
+        return "(Open the app to respond.)"
+    if getattr(item, "kind", "") == KIND_APPROVAL:
+        return "Reply `approve` or `deny`, keeping the tag below."
+    labels = ", ".join(b.label for b in buttons)
+    return f"Reply with one of: {labels} — keeping the tag below."
 
 
 def _approval_body(request) -> str:
@@ -4492,8 +4503,12 @@ class SessionManager:
     # -- mirroring inbox items to a bound channel -------------------------------
     async def mirror_inbox_item(self, item) -> None:
         """Mirror an Inbox item to its bound channel. Discrete choices (approve/deny, ask_user
-        options) render as BUTTONS — the item id rides in each, so a click resolves it
-        unambiguously. Free-text answers aren't offered over messaging (open the app).
+        options) render as BUTTONS where the platform has them — the item id rides in each, so a
+        click resolves it unambiguously. Where it doesn't (any adapter that hasn't implemented
+        `send_interactive`, Telegram included), the same choice goes out as text carrying the
+        `[ow:id]` tag and a line saying how to answer, because `_resolve_inbox_reply` needs that
+        tag to correlate a reply. Without it the reader is shown a question they cannot answer
+        from the surface it arrived on, and an agent suspended on that prompt waits forever.
         """
         from ..interactions import buttons_for
 
@@ -4510,12 +4525,12 @@ class SessionManager:
         body = "\n".join(p for p in (item.title, item.body) if p).strip()
         buttons = buttons_for(item)
         try:
-            if buttons:
+            if buttons and self.gateway.supports_interactive(target):
                 await self.gateway.deliver_interactive(target, body, buttons)
             else:
                 await self.gateway.deliver(
                     target,
-                    f"{body}\n(Open the app to respond.)\n[ow:{item.id}]".strip(),
+                    f"{body}\n{_reply_hint(item, buttons)}\n[ow:{item.id}]".strip(),
                 )
         except Exception:
             pass

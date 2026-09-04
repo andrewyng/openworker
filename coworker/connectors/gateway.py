@@ -197,6 +197,15 @@ class Gateway:
             return SendResult(False, error=f"no adapter for {platform}")
         return await adapter.send(chat_id, text, thread_id=thread_id)
 
+    def supports_interactive(self, target: str) -> bool:
+        """Whether this target's platform actually renders buttons. Callers that offer a
+        choice need to know: `deliver_interactive` silently degrades to plain text on an
+        adapter without button support, which would strand the reader with a question and
+        no way to answer it."""
+        platform, _chat_id, _thread_id = parse_target(target)
+        adapter = self._adapters.get(platform)
+        return bool(getattr(adapter, "supports_interactive", False))
+
     async def deliver_interactive(self, target: str, text: str, buttons) -> SendResult:
         """Send a prompt with choice buttons (adapters without interactive support show text only)."""
         platform, chat_id, thread_id = parse_target(target)
