@@ -717,6 +717,9 @@ pub fn run() {
             show_main(app);
         }))
         .plugin(tauri_plugin_dialog::init())
+        // Opens external http(s) URLs / files in the user's default browser (fixes #227, #607):
+        // the SPA routes transcript/provider links through openExternal() -> __TAURI__.opener.
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,

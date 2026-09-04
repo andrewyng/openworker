@@ -2,6 +2,7 @@ import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { useTranslation } from "react-i18next";
 import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
+import { openExternal } from "../tauri";
 
 // §34 (UX-016): the agent ends a deliverable turn with plain markdown —
 // [Title](artifact:relative/path) — and the renderer turns it into a chip that opens the
@@ -76,8 +77,22 @@ export function Markdown({ text }: { text: string }) {
               const label = Array.isArray(children) ? children.join("") : String(children ?? "");
               return <BoardChip label={label} />;
             }
+            // #607: plain `target="_blank"` no-ops in the desktop Tauri webview (window.open is
+            // not wired to the OS browser). Route left-clicks through openExternal() so links in
+            // chat messages open in the user's browser in BOTH the packaged app (via the opener
+            // plugin) and the browser build (window.open fallback). Keep the real href + target
+            // so the URL stays copyable/semantic and Ctrl/Cmd+click still works.
             return (
-              <a href={href} {...props} target="_blank" rel="noreferrer">
+              <a
+                href={href}
+                {...props}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (href) openExternal(href);
+                }}
+              >
                 {children}
               </a>
             );
