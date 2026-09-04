@@ -120,6 +120,59 @@ async def _hit_callback(query: str) -> str:
     return data.decode()
 
 
+def test_callback_host_defaults_to_loopback(monkeypatch):
+    monkeypatch.delenv(codex_auth.CALLBACK_HOST_ENV, raising=False)
+    assert codex_auth.callback_host() == "127.0.0.1"
+    # Empty is not a bind address — a blank env var must not become "listen
+    # everywhere", which is the one mistake here that widens exposure silently.
+    monkeypatch.setenv(codex_auth.CALLBACK_HOST_ENV, "")
+    assert codex_auth.callback_host() == "127.0.0.1"
+
+
+class _FakeServer:
+    sockets: tuple = ()
+
+    def close(self):
+        pass
+
+    async def wait_closed(self):
+        pass
+
+
+async def _bind_host_used(monkeypatch) -> str:
+    """The address `_start_callback_server` actually asks asyncio to listen on.
+
+    Asserted through the call rather than by binding for real: the port is fixed at
+    1455, so a machine running the Codex CLI (its usual holder) or a container
+    publishing that port would otherwise fail this test for unrelated reasons.
+    """
+    seen: dict = {}
+
+    async def fake_start_server(handler, host, port):
+        seen.update(host=host, port=port)
+        return _FakeServer()
+
+    monkeypatch.setattr(codex_auth.asyncio, "start_server", fake_start_server)
+    server, future = await codex_auth._start_callback_server("state-1")
+    future.cancel()
+    assert seen["port"] == codex_auth.CALLBACK_PORT
+    return seen["host"]
+
+
+async def test_callback_server_binds_loopback_by_default(monkeypatch):
+    monkeypatch.delenv(codex_auth.CALLBACK_HOST_ENV, raising=False)
+    assert await _bind_host_used(monkeypatch) == "127.0.0.1"
+
+
+async def test_callback_server_honours_the_bind_override(monkeypatch):
+    """A container publishes a port to its external interface; a server bound to the
+    container's own loopback never sees that traffic, so the redirect lands on a closed
+    port. The registered redirect URI is unaffected — it says where the BROWSER goes."""
+    monkeypatch.setenv(codex_auth.CALLBACK_HOST_ENV, "0.0.0.0")
+    assert await _bind_host_used(monkeypatch) == "0.0.0.0"
+    assert codex_auth.REDIRECT_URI == "http://localhost:1455/auth/callback"
+
+
 async def test_sign_in_full_flow(tmp_path, monkeypatch):
     secrets = SecretStore(tmp_path / "s.json")
     opened: dict = {}
