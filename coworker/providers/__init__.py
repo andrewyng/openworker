@@ -18,6 +18,7 @@ from .registry import (
     build_provider_client,
     descriptor_configured,
     detect_provider,
+    fetch_provider_models,
     get_descriptor,
     provider_descriptors,
     provider_names,

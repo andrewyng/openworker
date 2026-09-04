@@ -80,6 +80,7 @@ from ..providers import (
     descriptor_configured,
     get_descriptor,
     provider_descriptors,
+    fetch_provider_models,
     verify_provider_key,
 )
 from ..secrets import SecretStore, state_dir
@@ -3252,6 +3253,42 @@ class SessionManager:
             if missing:
                 return {"ok": False, "error": "missing: " + ", ".join(missing)}
         return verify_provider_key(
+            name, api_key=api_key, base_url=merged.get("base_url", ""), fields=merged
+        )
+
+    def fetch_models(
+        self, name: str, fields: Optional[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Fetch the model list from a provider, without persisting anything.
+
+        Mirrors ``verify_provider`` but returns the parsed model list instead of a
+        boolean OK. Falls back to stored/env values when the form left a field blank.
+        """
+        import os
+
+        d = get_descriptor(name)
+        if d is None:
+            return {"ok": False, "error": f"unknown provider: {name}"}
+        fields = fields or {}
+        profile = self.secrets.get(f"provider:{name}") or {}
+        merged = {}
+        for f in d.fields:
+            val = fields.get(f.key) or profile.get(f.key) or ""
+            if isinstance(val, str):
+                val = val.strip()
+            if val:
+                merged[f.key] = val
+        api_key = merged.get("api_key", "")
+        if not api_key and d.env_key:
+            api_key = os.environ.get(d.env_key, "").strip()
+        has_key_field = any(f.key == "api_key" for f in d.fields)
+        if d.needs_key and has_key_field and not api_key:
+            return {"ok": False, "error": "Enter an API key to fetch models."}
+        if d.needs_key and not has_key_field:
+            missing = [f.label for f in d.fields if f.required and not merged.get(f.key)]
+            if missing:
+                return {"ok": False, "error": "missing: " + ", ".join(missing)}
+        return fetch_provider_models(
             name, api_key=api_key, base_url=merged.get("base_url", ""), fields=merged
         )
 
