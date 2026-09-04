@@ -1,8 +1,15 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Markdown, OPEN_ARTIFACT_EVENT, OPEN_BOARD_EVENT } from "./Markdown";
+import { openExternal } from "../tauri";
 
 afterEach(cleanup);
+
+vi.mock("../tauri", () => ({ openExternal: vi.fn() }));
+
+beforeEach(() => {
+  vi.mocked(openExternal).mockClear();
+});
 
 // §34 (UX-016): [Title](artifact:path) renders as a chip that opens the artifact viewer via
 // a window event; ordinary links keep the open-externally treatment.
@@ -28,6 +35,25 @@ describe("Markdown artifact links", () => {
     const a = container.querySelector("a")!;
     expect(a.getAttribute("target")).toBe("_blank");
     expect(a.getAttribute("href")).toBe("https://example.com");
+  });
+
+  // #607: in the desktop Tauri webview a plain target="_blank" never opens the OS browser, so a
+  // left-click on an external link must be routed through openExternal() (which uses the opener
+  // plugin in the packaged app and window.open in the browser).
+  it("routes a left-click on an external link through openExternal and prevents default", () => {
+    render(<Markdown text="see [the docs](https://example.com)" />);
+    const a = screen.getByText("the docs").closest("a")!;
+    fireEvent.click(a, { defaultPrevented: false });
+    expect(openExternal).toHaveBeenCalledTimes(1);
+    expect(openExternal).toHaveBeenCalledWith("https://example.com");
+  });
+
+  it("does not route artifact: or board: links through openExternal", () => {
+    render(
+      <Markdown text="see [the docs](https://example.com) and [file](artifact:reports/a.pdf)" />,
+    );
+    fireEvent.click(screen.getByTestId("artifact-chip"));
+    expect(openExternal).not.toHaveBeenCalled();
   });
 
   it("chip title falls back to the filename when the link text is empty", () => {
