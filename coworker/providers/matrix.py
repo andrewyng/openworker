@@ -16,7 +16,7 @@ where the vendor spec wasn't re-checked stay ``None`` — the meter simply hides
 showing a made-up denominator. Values entered 2026-07-28 from vendor docs; verify alongside
 the id refresh.
 
-Resellers: Together + Fireworks + OpenRouter. TODO: add Groq entries here AND its
+Resellers: Together + Fireworks + OpenRouter + DeepInfra. TODO: add Groq entries here AND its
 descriptor in ``registry.py`` once the current provider surface is tested — deliberately
 deferred to bound how much needs verifying at once.
 """
@@ -227,6 +227,32 @@ MATRIX: dict[str, ModelEntry] = {
     # the real model; keep it until OpenRouter retires it.
     "openrouter:stealth/ox-alpha": ModelEntry(
         "Ox Alpha · via OpenRouter", _AGENTIC, 1_048_576
+    ),
+    # DeepInfra curated models (OpenAI-compatible inference). Latest generation:
+    # DeepSeek V4, GLM 5.3, Kimi K3. Pinned snapshots (0731) and canonical slugs.
+    "deepinfra:deepseek-ai/DeepSeek-V4-Flash": ModelEntry(
+        "DeepSeek V4 Flash · via DeepInfra", _AGENTIC, 128_000
+    ),
+    "deepinfra:deepseek-ai/DeepSeek-V4-Flash-0731": ModelEntry(
+        "DeepSeek V4 Flash 0731 · via DeepInfra", _AGENTIC, 128_000
+    ),
+    "deepinfra:deepseek-ai/DeepSeek-V4-Pro": ModelEntry(
+        "DeepSeek V4 Pro · via DeepInfra", _AGENTIC, 128_000
+    ),
+    "deepinfra:deepseek-ai/DeepSeek-V4-Pro-0731": ModelEntry(
+        "DeepSeek V4 Pro 0731 · via DeepInfra", _AGENTIC, 128_000
+    ),
+    "deepinfra:zai-org/GLM-5.3-Flash": ModelEntry(
+        "GLM-5.3 Flash · via DeepInfra", _AGENTIC_VISION, 1_000_000
+    ),
+    "deepinfra:zai-org/GLM-5.3": ModelEntry(
+        "GLM-5.3 · via DeepInfra", _AGENTIC, 1_000_000
+    ),
+    "deepinfra:moonshotai/Kimi-K3": ModelEntry(
+        "Kimi K3 · via DeepInfra", _AGENTIC_VISION, 1_000_000
+    ),
+    "deepinfra:moonshotai/Kimi-K2.7-Code": ModelEntry(
+        "Kimi K2.7 Code · via DeepInfra", _AGENTIC, 256_000
     ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
