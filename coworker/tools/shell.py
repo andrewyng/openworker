@@ -51,6 +51,48 @@ _NONINTERACTIVE_ENV = {
     "PIP_NO_INPUT": "1",
 }
 
+# Ambient credential patterns scrubbed from inherited os.environ unless explicitly allowlisted
+_SENSITIVE_PREFIXES = ("AWS_", "AZURE_", "GITHUB_TOKEN", "GH_TOKEN")
+_SENSITIVE_SUBSTRINGS = (
+    "_API_KEY",
+    "_SECRET",
+    "_TOKEN",
+    "_PASSWORD",
+    "_PASSWD",
+    "_CREDENTIAL",
+)
+_SENSITIVE_SUFFIXES = ("_KEY", "_AUTH")
+
+
+def is_sensitive_env(name: str) -> bool:
+    """Return True if an environment variable name matches sensitive credential patterns."""
+    upper = name.upper()
+    if upper.startswith(_SENSITIVE_PREFIXES):
+        return True
+    if any(sub in upper for sub in _SENSITIVE_SUBSTRINGS):
+        return True
+    if upper.endswith(_SENSITIVE_SUFFIXES):
+        return True
+    return False
+
+
+def filter_ambient_env(
+    raw_env: dict[str, str] | os._Environ[str],
+    *,
+    allowed_env: Optional[set[str] | list[str]] = None,
+) -> dict[str, str]:
+    """Scrub ambient credentials from an inherited environment mapping.
+
+    Variables matching known sensitive patterns (AWS_*, *_API_KEY, *_SECRET_*, *_TOKEN,
+    etc.) are dropped unless explicitly listed in allowed_env.
+    """
+    allowed = set(allowed_env or [])
+    return {
+        k: v
+        for k, v in raw_env.items()
+        if k in allowed or not is_sensitive_env(k)
+    }
+
 
 class Executor(ABC):
     @abstractmethod
@@ -140,6 +182,7 @@ class LocalExecutor(Executor):
         *,
         cwd: str | Path,
         env: Optional[dict[str, str]] = None,
+        allowed_env: Optional[list[str] | set[str]] = None,
         shell_path: Optional[str] = None,
         default_timeout: float = _DEFAULT_TIMEOUT,
         max_output_chars: int = 20_000,
@@ -147,6 +190,7 @@ class LocalExecutor(Executor):
         self.cwd = str(Path(cwd).expanduser().resolve())
         self.default_timeout = default_timeout
         self.max_output_chars = max_output_chars
+        self.allowed_env = set(allowed_env or [])
         self._marker = f"__COWORKER_DONE_{uuid.uuid4().hex}__"
         self._is_windows = _IS_WINDOWS
         self._bg_tasks: dict[str, _BackgroundTask] = {}
@@ -161,7 +205,8 @@ class LocalExecutor(Executor):
         if shell_path is None:
             shell_path = "powershell.exe" if self._is_windows else "/bin/bash"
         self._shell_path = shell_path
-        self._env = {**os.environ, **_NONINTERACTIVE_ENV, **(env or {})}
+        ambient = filter_ambient_env(os.environ, allowed_env=self.allowed_env)
+        self._env = {**ambient, **_NONINTERACTIVE_ENV, **(env or {})}
         # Managed pinned tools (toolchain.install) land under one stable bin dir; putting
         # it on PATH up front — even before anything is installed there — means a tool the
         # user approves mid-session works in THIS shell immediately, by name, no respawn.
