@@ -18,6 +18,13 @@ generated and no existing signing material was read or changed.
 3. In fork Actions settings allow Actions to create pull requests, and set
    repository variable `NEXUS_UPSTREAM_SYNC_ENABLED=true`. Until then both manual
    and scheduled runs are deliberately inert. No setting has been activated here.
+   When upstream changes workflow files, the default `GITHUB_TOKEN` may be
+   unable to push those changes. Configure a fine-grained `NEXUS_SYNC_TOKEN`
+   restricted to this fork with Contents, Pull requests, Actions and Workflows
+   write permissions (and an expiry/rotation plan). Both checkout/push and `gh`
+   use that token when present. Without it, ordinary integrations can use
+   `GITHUB_TOKEN`, but a workflow-permission rejection fails the run without a
+   merge or release. No personal token has been created or stored here.
 4. Dispatch **Detect upstream release** once and inspect its PR and CI run. The
    normal daily schedule is 06:23 UTC. The detector queries the latest published
    stable upstream release, fetches its tag and records the resolved commit SHA.

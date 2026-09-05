@@ -22,12 +22,15 @@ jobs:
         with:
           ref: codex/nexus-provider
           fetch-depth: 0
+          # Use the same credential for Git pushes and API calls. Updating upstream
+          # workflow files may require the token's Workflows write permission.
+          token: ${{ secrets.NEXUS_SYNC_TOKEN || github.token }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Open or update upstream integration PR and dispatch CI
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.NEXUS_SYNC_TOKEN || github.token }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
