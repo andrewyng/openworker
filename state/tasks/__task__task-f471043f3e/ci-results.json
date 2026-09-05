@@ -1,0 +1,6 @@
+[
+{"repo":"agpack","outcome":"PASS","passed":276,"failed":0,"errors":0,"secs":1},
+{"repo":"openworker","outcome":"FAIL","passed":1479,"failed":7,"errors":0,"secs":36},
+{"repo":"dcode-stack","outcome":"PASS","passed":274,"failed":0,"errors":0,"secs":68},
+{"repo":"ragtradesystem","outcome":"PASS","passed":467,"failed":0,"errors":0,"secs":133},
+{"repo":"sentinel-local","outcome":"PASS","passed":79,"failed":0,"errors":0,"secs":0}]

@@ -1,10 +1,11 @@
+import { useTranslation } from "react-i18next";
 import type { RootInfo } from "../api";
 import { Icon } from "./Icon";
 import { baseName } from "../paths";
 
 // One directory row, shared by the composer popover and the session start panel. The primary is the
 // session's bound workspace — the repo/folder for Code/Ops (shown by name), or a throwaway scratch
-// for Cowork (shown as "Temporary space"). It's always read-write and can't be removed.
+// for Cowork (shown as "Temporary folder"). It's always read-write and can't be removed.
 export function RootRow({
   root,
   busy,
@@ -21,9 +22,10 @@ export function RootRow({
   onToggle: (r: RootInfo) => void;
   onRemove: (path: string) => void;
 }) {
+  const { t } = useTranslation();
   const label = root.primary
     ? scratchPrimary
-      ? "Temporary space"
+      ? t("root.temporary_space")
       : baseName(root.path)
     : root.label;
   return (
@@ -32,7 +34,7 @@ export function RootRow({
       <span className="root-text" title={root.path}>
         <span className="root-label">
           {label}
-          {root.primary && !scratchPrimary && <span className="root-tag"> main</span>}
+          {root.primary && !scratchPrimary && <span className="root-tag"> {t("root.main")}</span>}
           {branch && (
             <span className="root-tag root-branch">
               {" "}
@@ -42,17 +44,17 @@ export function RootRow({
         </span>
         <span className="root-path">{root.path}</span>
       </span>
-      {!root.exists && <span className="root-tag warn">missing</span>}
+      {!root.exists && <span className="root-tag warn">{t("root.missing")}</span>}
       <button
         className={"root-access" + (root.writable ? " rw" : " ro")}
         onClick={() => onToggle(root)}
         disabled={busy || root.primary}
-        title={root.primary ? "The main workspace is always read-write" : "Toggle read-only / read-write"}
+        title={root.primary ? t("root.primary_always_rw") : t("root.toggle_rw")}
       >
-        {root.writable ? "Read-write" : "Read-only"}
+        {root.writable ? t("root.read_write") : t("root.read_only")}
       </button>
       {!root.primary && (
-        <button className="root-x" onClick={() => onRemove(root.path)} disabled={busy} title="Remove">
+        <button className="root-x" onClick={() => onRemove(root.path)} disabled={busy} title={t("common.remove")}>
           ×
         </button>
       )}

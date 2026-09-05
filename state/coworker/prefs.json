@@ -5,7 +5,7 @@
   "default_model": "openai:ornith-1.5-35b",
   "provider_last_used": {
     "ollama": 1787781957.5436277,
-    "openai": 1788118211.5840113
+    "openai": 1788520824.1389275
   },
   "compaction_cap_tokens": 65000,
   "scratch_base": "~/openworker-tasks",

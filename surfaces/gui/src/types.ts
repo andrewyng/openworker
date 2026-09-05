@@ -8,8 +8,11 @@ export type EventType =
   | "tool_proposed"
   | "permission_required"
   | "directory_requested"
+  | "tool_requested"
   | "question_requested"
   | "plan_proposed"
+  | "team_proposed"
+  | "items_proposed"
   | "tool_started"
   | "tool_finished"
   | "iteration_end"
@@ -21,6 +24,7 @@ export type EventType =
   // .interrupt_running_sessions) — not an engine event; the run has no more steps coming.
   | "run_interrupted"
   | "model_changed"
+  | "mode_notice"
   | "memory_saved"
   | "compacting"
   | "compacted"
@@ -37,7 +41,14 @@ import type { MessageSource } from "./api";
 
 // "always_task" persists to the owning automation's task record (standing scoped
 // approval, UX-DECISIONS §25) — offered only on automation-run approval cards, in-app.
-export type ApprovalDecision = "once" | "deny" | "always_tool" | "always_command" | "always_task";
+export type ApprovalDecision =
+  | "once"
+  | "deny"
+  | "always_tool"
+  | "always_command"
+  | "always_domain"
+  | "always_task"
+  | "readonly_session";
 
 export interface TodoItem {
   content: string;
@@ -78,6 +89,8 @@ export interface SessionInfo {
   attention?: number;
   // working = in-flight turn; sleeping = a self-wake is pending; idle = neither. A count-less dot.
   liveness?: "working" | "sleeping" | "idle";
+  // When sleeping: the next timer fire (ISO) — drives the "sleeping until…" strip.
+  sleeping_until?: string | null;
   // Channels this session listens to (inbound subscriptions).
   subscriptions?: string[];
   // §31: set when the session was spawned by a platform mention rather than the user —
@@ -85,6 +98,19 @@ export interface SessionInfo {
   // "From Slack" group and the row's platform icon.
   origin?: string;
   origin_label?: string;
+  // Agent teams: {} / absent for plain sessions. Workers carry role/lead_session
+  // (+ a computed current-item line); leads carry role/team_id. Drives the sidebar's
+  // ONE expandable team entry (workers nest under their lead; plain rows never expand).
+  team?: {
+    role?: "lead" | "worker" | string;
+    team_id?: string;
+    lead_session?: string;
+    actor?: string;
+    current_item?: string;
+    status?: string;
+    chat_enabled?: boolean;
+    chat_unread?: number;
+  };
 }
 
 // Attachments (images, PDFs, text files) sent with a user message.
@@ -123,6 +149,11 @@ export type Item =
       // accompanies is capped at 300 chars, so for a large result this is the only complete
       // record of what the call touched.
       display?: { threads?: string[]; mode?: string; hidden_by_filters?: number; [k: string]: any };
+      reviewerReason?: string;
+      allowAnyway?: boolean;
+      approvalOrigin?: string;
+      approvalNote?: string;
+      approvalGrant?: string;
     }
   | {
       kind: "approval";
@@ -133,6 +164,20 @@ export type Item =
       // The exact target a standing rule could pin (server-computed) — with a run
       // context, the card offers "Allow every time" (§25).
       standingTarget?: string;
+      // web_search only (§1.9): the LIVE configured provider name, resolved server-side
+      // when the card was raised — the grant description names the actual destination.
+      searchProvider?: string;
+      // OPE-114 §1: set when the action would run a file the agent itself created or
+      // downloaded this session ("setup.py was created by the agent 3 steps ago"). The
+      // one fact that cannot be read off the command text. Engine-authored, fixed
+      // vocabulary — never file contents.
+      provenance?: string;
+      // The Auto-Approve reviewer answered `unsure` and raised this card: its one-line
+      // reason, rendered quietly so "why am I being asked?" is answered in place.
+      reviewerUnsure?: string;
+      // Server-classified: this shell command only reads locally, so the card may offer
+      // the session-wide "Allow read-only commands" grant.
+      readonlyOk?: boolean;
       resolved?: ApprovalDecision;
     }
   | {
@@ -140,11 +185,37 @@ export type Item =
       reason: string;
       path?: string;
       writable?: boolean;
+      primary?: boolean; // root promotion: the folder becomes the session's workspace
       resolved?: "granted" | "denied";
+    }
+  | {
+      kind: "toolreq";
+      tool: string;
+      reason: string;
+      installable?: boolean;
+      version?: string;
+      summary?: string;
+      source?: string;
+      resolved?: "installed" | "skipped";
     }
   | {
       kind: "planreq";
       plan: string;
+      resolved?: "approved" | "rejected";
+    }
+  | {
+      // The staffing gate (agent teams): a lead proposes its worker roster.
+      kind: "teamreq";
+      members: { persona: string; name?: string; model?: string; reason?: string }[];
+      enable_chat?: boolean;
+      note?: string;
+      resolved?: "approved" | "rejected";
+    }
+  | {
+      // The decomposition gate: a lead proposes work items; approval creates them.
+      kind: "itemsreq";
+      items: { title: string; criteria: string; description?: string }[];
+      note?: string;
       resolved?: "approved" | "rejected";
     }
   | {
@@ -169,6 +240,14 @@ export type Item =
       // The engine's notice kind ("compacted" | "model_switch" | "interrupted" | "error" |
       // "server_restart"). Preserved so counting a marker never means matching its prose.
       notice?: string;
+      // `title` switches the one-line status notice to a block: a heading plus
+      // blank-line-separated paragraphs, left-aligned. Used for the Auto-Approve
+      // banner, which is prose rather than a status line.
+      title?: string;
+      // mcp_error notices: the failing server's name + the full error, rendered as one
+      // quiet line with the detail behind a disclosure and an Open-Connectors action.
+      server?: string;
+      detail?: string;
     }
   // MEMORY-SPEC §5.1: the save notice, inline in the conversation where the user is
   // already looking (a corner toast vanished before it could be read or undone —

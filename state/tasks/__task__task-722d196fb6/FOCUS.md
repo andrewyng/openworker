@@ -1,92 +1,99 @@
-# FOCUS — week of 2026-08-24
+# FOCUS — week of 2026-08-31
 
 Derived from evidence: commits in the last 14 days, live sessions, and what the
-automations keep producing. Rewritten Monday 2026-08-24 by the
+automations keep producing. Rewritten 2026-08-31 by the
 "Focus — derive from the week's work" automation.
 
-**State change since last run (2026-08-22):** openEvolve has moved. It was Phase 2
-in flight; Phase 2 is now **closed** (4/4 items, 71 tests, per `PHASE2.md`), and
-work is in **Phase 3** — scored today (builder session of 231 messages,
-"Phase 3, item 1 — RDKit descriptor bank + the SMILES->PDBQT…"). The open
-question "what replaces the surrogate-offline docking proxy" is **resolved**:
-the AutoDock Vina adapter shipped as `2529fa0` (session of 322 messages,
-"Phase 3 item 2 (the Vina adapter, 2529fa0) made a known Phase [issue]…").
+**State change since last run (2026-08-24):** the live center of gravity has
+moved. `agpack` — the "build" that the 08-30 sessions are almost entirely about
+(8 sessions, 189–330 messages each) — is now the top project. `dcode-stack`
+(the serving "brain" proxy, decode_proxy) has come back from quiet with 51
+commits 08-26/27. openEvolve/openScienceLab has the opposite move: its repo path
+is gone, only knowledge threads remain.
 
 ## Active
 
-1. **OpenScienceLab / openEvolve — Phase 3 (Scoring & QM layer)** —
-   `~/openworker-workspace/opensciencelab` (status: `PHASE2.md` closed, `PHASE3.md`
-   "item 2 done").
-   *Open question:* item 1 is in flight — can the SMILES→PDBQT conformer path even
-   work on this host, where meeko, OpenBabel and RDKit are not installed (that
-   "deliberately out of scope… none are installed on this host" is written into
-   `PHASE3.md`)? And then: PySCF DFT (item 3) and CHGNet (item 4) at their
-   documented tiered costs.
-   *Evidence:* 5 builder sessions of 231, 322, 367, 274 and 54 messages on
-   08-22/23/24 all working Phase 2→Phase 3 items; PHASE3.md item 2 shipped
-   (`2529fa0`); Phase 2 closed with 71 tests.
+1. **agpack — the "build" (verifiable-agent harness)** —
+   `/home/iconbaypark2900/dataScience/agpack`
+   *Open question:* P0 "unblock deployment" is "the real blocker" — can we confirm
+   the git remote/repo and ship it? (from 08-30 sessions). Downstream: does
+   Conformance Tier B (live-spec fetch + draft-drift) hold, and how legible does
+   it need to get (Direction A — "external-facing")?
+   *Evidence:* 8 sessions 08-30 of 189–330 messages titled "Continue the agpack
+   build", "P1 — Conformance Tier B", "Direction A — External-facing", "Step 5
+   (metered access) prompt", "P0 — unblock deployment", "the immediate next step:
+   ship it"; 2 commits authored by iconbaypark2900 — import from openworker-
+   workspace 08-19, then `agpack/tools/metered.py` step-5 metered access 08-30.
 
-2. **OpenWorker — the agent app itself** — `~/openworker`.
-   *Open question:* the fleet's silent-failure problem is being closed from the
-   engine side — with scheduled runs now claiming their persona's MCP tools and the
-   engine recording stopped/killed runs honestly, can the local-27B fleet run
-   unattended with no loss?
-   *Evidence:* 20+ commits on 08-22/23, all authored by iconbaypark2900
-   (persona MCP grants for scheduled runs, honest run-stop markers, brain recall,
-   rail redesign, cross-machine MCP over SSH).
+2. **OpenWorker — the agent app itself** — `/home/iconbaypark2900/openworker`
+   *Open question (carried):* with scheduled runs claiming their persona's MCP
+   tools and honest stop-markers, does the local-27B fleet run unattended with no
+   silent failure? *New:* state now carries four days including failed mornings;
+   one place knows the user's screen.
+   *Evidence:* 40 commits in the 14-day window, all iconbaypark2900, latest
+   2026-08-30 ("state: carry four days, including the mornings that failed").
 
-3. **Job search and funding pipeline** — automations only, no repo
-   (drafts in `~/OpenWorker/__task__task-c6cf366b90/drafts/`).
-   *Open question:* unchanged from last week — is this pipeline producing anything
-   *sent*, or only accumulating drafts? Still no evidence of a single application
-   going out.
-   *Evidence:* 37 draft .md files accumulated; daily `jobs-YYYY-MM-DD.md` through
-   08-21 and running (sessions "Job matches + tailored drafts" 08-22 and 08-23);
-   weekly grant digests.
+3. **dcode-stack — the machine's serving brain (decode_proxy)** —
+   `/home/iconbaypark2900/dcode-stack`
+   *Open question:* how do two engines (vLLM on :5100 + on-demand llama.cpp) share
+   one proxy endpoint routed by model name, and why does a dead CUDA engine exit 0
+   so on-failure never restarts it?
+   *Evidence:* 51 commits in the 14-day window, all iconbaypark2900, all on
+   08-26/27 — this was "went quiet (08-16)" in the 08-24 file; it has clearly come
+   back. vLLM vs llama.cpp prefill speedtest, KV pool sizing, auto-classifier,
+   on-demand llama.cpp.
 
-4. **workstation-stack — the machine's deployed stack** — `~/workstation-stack`.
-   *Open question:* does the committed stack still describe what is running on this
-   box — it has been static for three days while the app around it moved fast.
-   *Evidence:* 19 commits in the window, all iconbaypark2900, but latest
-   **2026-08-21** (evo-x2 split from spark, MCP gateway revival, image pinning).
-   Going quiet — still in the 14-day window, on the edge.
+4. **workstation-stack — the machine's deployed stack** —
+   `/home/iconbaypark2900/workstation-stack`
+   *Open question (carried):* does the committed stack still describe what is
+   running on this box? *New:* a 08-29 commit flags that seven LibreChat secrets
+   existed on one disk and in no backup — the secrets-protection model is under
+   repair.
+   *Evidence:* 10 commits in window, all iconbaypark2900, latest 2026-08-29
+   ("Seven LibreChat secrets existed on one disk and in no backup"); came back
+   from the 08-21 quiet.
 
-5. **Research corpus — quantum, ML, recursive self-improvement** — automation-
-   produced, landing in `~/OpenWorker/__task__task-1b2c4d3f13/` (papers-*.md) and
-   the Qdrant `default` collection via the weekly arXiv→Qdrant corpus job.
-   *Open question:* none named — this is a standing watch, but it is the strongest
-   ADJACENT thread feeding the other entries.
-   *Evidence:* papers-2026-08-22 and papers-2026-08-23 both produced this week;
-   research sessions of 82 and 42 messages (08-22/23).
+5. **Job search & funding pipeline** — automations only, no repo (drafts in
+   `~/OpenWorker/__task__task-c6cf366b90/drafts/`)
+   *Open question (carried):* unchanged since 08-24 — is this producing anything
+   *sent*, or only accumulating drafts? No evidence of a single application going
+   out.
+   *Evidence:* daily `jobs-YYYY-MM-DD.md` through 2026-08-28 and running; weekly
+   grant digests.
 
 ## Open questions
 
-- Can the SMILES→PDBQT step be done at all on this host (meeko/OpenBabel/RDKit none
-  installed) so Phase 3 item 1 finishes?  *(from the 2026-08-24 session title and
-  PHASE3.md)*
-- Will the PySCF DFT (item 3) and CHGNet (item 4) adapters land at the costs the
-  tiered-scoring contract says they should cost?  *(from PHASE3.md "items 1, 3, 4
-  still open")*
-- With scheduled runs now granted their persona's MCP tools and honest stop-markers
-  in the engine, does the fleet survive unattended on the local 27B with no silent
-  failures?  *(from openworker commits 08-23: "automations: give a scheduled run the
-  MCP tools its persona declares", "engine: tell the truth about why a run stopped")*
+- Can we unblock P0 (confirm git remote/repo, deployment) and ship the agpack
+  build? *(from 08-30 session titles — "P0 — unblock deployment" / "the immediate next step: ship it")*
+- Does Conformance Tier B (live-spec fetch + draft-drift) hold, and how legible
+  does the harness need to get for others? *(agpack sessions 08-30)*
+- How do vLLM and llama.cpp share one proxy routed by model name, and why does a
+  dead CUDA engine exit 0 so on-failure never restarts it? *(dcode-stack commits 08-26/27)*
+- With MCP grants + honest stop-markers in place, does the local-27B fleet
+  survive unattended with no silent failures? *(carried — 08-23 openworker commits)*
 - Is the job/grant pipeline converting to sent applications, or only to drafts?
-  *(carried forward — still open, 37 drafts and counting)*
+  *(carried — still 37+ drafts, last draft 2026-08-28)*
 
 ## Went quiet
 
-- **dcode-stack** — last touched **2026-08-16** ("Scaffold this repo… stop `project`
-  from mislabelling foreign projects"). Carried from last week's file; still no
-  commits since 2026-08-22 either. Eight days untouched and counting.
+- **openEvolve / openScienceLab** — last touched **2026-08-24** (`PHASE3.md`
+  "item 2 done"). State change: the repo path `~/openworker-workspace/opensciencelab`
+  no longer exists anywhere on disk — only knowledge threads under
+  `~/OpenWorker/knowledge/threads/` remain. Carried from 08-24's Active #1; the
+  work has effectively parked with the codebase.
+- **dcode-stack** — *moved to Active this run* (was "went quiet" last week at
+  08-16 — see Active #3).
+- **liaison-agentSystem** — stalled, last commit **2026-08-17** (a bare "WIP
+  snapshot"); ~14 days. Carried from the 08-24 brief; GitHub API was unavailable
+  to re-confirm this run (no `.git` reachable at maxdepth 2 via shell).
 - **Pre-open market brief — Sigma system** — automation disabled; last run
-  **2026-08-15** (unchanged from last week's file).
+  **2026-08-15**. Carried unchanged.
 
 ## Parked
 
 *(This section is yours. The weekly job carries it forward verbatim and never adds to it.)*
 
 ---
-*Note for the derive job: `~/llama.cpp` and `~/LibreChat` show commits in the window
-but every author is upstream (Gerganov, Avila, et al.). Both are tracked clones, not
-work in progress — count authorship, not commits.*
+*Note for the derive job: `~/llama.cpp` (and the `*master`/`*gb10`/`-qwen4exp`
+clones) show commits in the window but every author is upstream (Gerganov,
+Avila, etc.). Tracked clones, not work in progress — count authorship, not commits.*

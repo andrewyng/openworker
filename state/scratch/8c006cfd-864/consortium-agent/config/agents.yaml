@@ -1,0 +1,79 @@
+# Consortium reserve agent — agent registry (starter).
+# Mirrors sentinel-local/config/agents.yaml: a plain declarative list the
+# supervisor loads. Loaded by an agpack-signed runtime; every agent is a
+# capability-scoped tool bundle. `class` is the import path; the supervisor
+# resolves names, never classes.
+
+agents:
+  # 1. Observation: on-chain reserve + yield events, read-only, local.
+  chain_observer:
+    class: consortium.agents.observation:ChainObserverAgent
+    model: triage_primary
+    enabled: true
+    params:
+      rails:                    # metered PaymentRail ×5 (settlement spine)
+        - base
+        - ethereum
+        - solana
+        - arbitrum
+        - tempo
+      indexer_api:              # R1 mitigation: API, not a full node
+        endpoint: data/indexer.example.com
+        cache: data/indexer_cache.jsonl
+
+  # 2. Attribution: per-partner yield via ERC-4626 share math.
+  attribution:
+    class: consortium.agents.attribution:AttributionAgent
+    model: triage_primary
+    enabled: true
+    params:
+      reserve_token: OUSD
+      yield_legs: [aave, lido, yearn]
+      erc4626_share_math: true  # attribute by share, not by raw balance
+      partners_file: data/partners.jsonl   # 140+ members
+
+  # 3. Disclosure: CycloneDX + RSL reserve report with ledger provenance.
+  disclosure:
+    class: consortium.agents.disclosure:DisclosureAgent
+    model: narrative
+    enabled: true
+    params:
+      output_format: cyclonedx+rsl   # sentinel CBOM shape
+      ledger_source: data/audit_ledger.jsonl
+
+  # 4. Settlement router: cheapest/qualified chain per partner, budgeted.
+  settlement_router:
+    class: consortium.agents.settlement:SettlementRouterAgent
+    model: triage_primary
+    enabled: false            # off by default: moves real value
+    params:
+      rails: data/rails.jsonl  # quote/authorize/settle per chain
+      budget_engine: config/budget_policy.yaml
+      finality: test          # test|claimed|settled-and-verified (metered)
+
+  # 5. Compliance verification: sanctions + disclosure gate (proposes, never auto-spends).
+  compliance_verifier:
+    class: consortium.agents.compliance:ComplianceVerifierAgent
+    model: triage_primary
+    enabled: true
+    params:
+      sanctions_list: data/sanctions.example.jsonl
+      require_approval: true   # escalation to human before any block
+
+consensus:
+  policy:
+    attribution_confidence_floor: 0.8      # like sentinel confidence_floor
+    escalate_on_schema_failure: true       # never silently coerce payout math
+    settlement_requires_reconciliation: true  # metered finality: settle ⇒ reconcile().ok
+
+# agpack trust layer bindings (signed identity, scoped delegation, audit).
+trust:
+  identity:
+    algorithm: ed25519          # PECT/PACT signing — PQC path: hybrid ML-DSA-87
+    phc_migration: hybrid        # ML-DSA-87 || ed25519 (FIPS 204)
+  delegation:
+    scoped: true                 # per-partner / per-chain / per-cap
+    max_spent_per_partner_micros: 5000000   # 5.000000 (BudgetEngine ceiling)
+  audit_ledger:
+    format: agpack/otel-shaped   # replayable, one row per action
+    append_only: true

@@ -13,3 +13,22 @@ mode = "custom"
 # rejects any command containing ; & | > < ` $( ( or a newline before matching, so almost
 # nothing real would have qualified.
 auto_allow = ["run_shell"]
+
+# Commands that ALWAYS ask, ahead of `auto_allow` above and of "auto" mode. Without this
+# list, `auto_allow = ["run_shell"]` meant `git push` ran with no prompt — the persona
+# prose saying "never push" was the only thing standing in the way, and prose is not a
+# gate. Matched per command segment, through wrappers and chaining: `cd x && sudo git
+# push` trips the same rule a bare `git push` does. Global-only; a workspace config
+# cannot narrow it. See tests/test_gated_commands.py in openworker.
+gated_commands = [
+  "git push",
+  "gh release create",
+  "gh pr merge",
+  "npm publish",
+  "twine upload",
+  "docker push",
+  "fly deploy",
+  "vercel deploy",
+  "kubectl apply",
+  "terraform apply",
+]

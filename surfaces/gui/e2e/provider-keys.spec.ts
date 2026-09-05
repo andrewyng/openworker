@@ -71,3 +71,25 @@ test("non-secret fields blur-save on a configured provider (ollama endpoint)", a
   await page.getByTestId("set-provider-ollama").click();
   await expect(page.getByTestId("set-field-base_url")).toHaveValue("http://127.0.0.1:9999");
 });
+
+test("the subscription provider signs in from the browser flow, no key form", async ({
+  page,
+}) => {
+  await openModels(page);
+  const card = page.getByTestId("set-provider-openai-codex");
+  await expect(card).toContainText("Sign in with your plan");
+  await card.click();
+
+  // No key fields — the pane is the sign-in button (plus the blurb).
+  await expect(page.getByTestId("set-field-api_key")).toHaveCount(0);
+  await page.getByTestId("set-oauth-signin").click();
+
+  // The mock completes the flow on the first poll; the pane flips to signed in.
+  await expect(page.getByTestId("set-oauth-account")).toContainText("rohit@example.com");
+
+  // Sign out returns the pane (and the gallery card) to the signed-out state.
+  await page.getByTestId("set-oauth-signout").click();
+  await expect(page.getByTestId("set-oauth-signin")).toBeVisible();
+  await page.getByTestId("set-back").click();
+  await expect(card).toContainText("Sign in with your plan");
+});

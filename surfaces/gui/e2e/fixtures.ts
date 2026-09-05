@@ -4,18 +4,6 @@ import { test as base, expect, type Page } from "@playwright/test";
 // push server events through it via sendAppEvent below.
 const eventSockets = new WeakMap<Page, { send: (data: string) => void }>();
 
-// The session socket each page opened. A spec needs it to simulate the ugly case: a server
-// that dies without a word, where all the client ever sees is the close.
-const sessionSockets = new WeakMap<Page, { close: () => void }>();
-
-/** Drop the session socket the way a SIGKILLed server does — no frame, just gone. */
-export async function killSessionSocket(page: Page): Promise<void> {
-  for (let i = 0; i < 50 && !sessionSockets.get(page); i++) await page.waitForTimeout(100);
-  const ws = sessionSockets.get(page);
-  if (!ws) throw new Error("the app never opened a session socket");
-  ws.close();
-}
-
 /** Push an app-wide event exactly as the server would over /ws/events. Waits for
  * the GUI to have connected its socket first. */
 export async function sendAppEvent(page: Page, obj: unknown): Promise<void> {
@@ -36,6 +24,7 @@ const HEALTH = { status: "ok", default_workspace: null, model: "anthropic:claude
 
 const SETTINGS = {
   provider: "openai",
+  auto_approve: true, // surfaces the Auto-approve mode entry (reviewer feature flag)
   model: "anthropic:claude-opus-4-8",
   models: ["anthropic:claude-opus-4-8", "gpt-5.5", "gpt-4o", "gpt-4o-mini", "o3-mini"],
   has_key: true,
@@ -57,6 +46,10 @@ const SETTINGS = {
   model_labels: {
     "anthropic:claude-opus-4-8": "Claude Opus 4.8 · Anthropic",
     "zai:glm-5.2": "GLM-5.2 · Z AI",
+    "ark:dola-seed-evolving-latest-version": "Dola Seed Evolving · BytePlus Ark",
+    "ark:dola-seed-2-1-turbo-260628": "Dola Seed 2.1 Turbo · BytePlus Ark",
+    "ark-agent-plan-cn:doubao-seed-evolving": "Doubao Seed Evolving · Volcengine Agent Plan",
+    "ark-agent-plan-cn:doubao-seed-2.1-turbo": "Doubao Seed 2.1 Turbo · Volcengine Agent Plan",
   },
   // Context windows (subset — mirrors /v1/settings.model_context_windows); drives the
   // composer usage chip's context-fill meter.
@@ -65,27 +58,18 @@ const SETTINGS = {
   },
 };
 
+// UX-035 lineup: Chat is gone; Code ships disabled; the security bundles group under
+// "Security"; ops is ships:false (visible here because the mock plays an internal build).
 const PERSONAS = {
+  internal: true,
   personas: [
-    { id: "cowork", name: "OpenWorker", icon: "cowork", tagline: "Produce a deliverable — research, analysis, scripts", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", projects: true, tools: ["files", "search"], enabled: true, surfaced: true, default: true,
-      checkpoints: [
-        { id: "plan", label: "Plan", evidence: ["todo_write"] },
-        { id: "gather", label: "Gather", evidence: ["read_file", "web_search"] },
-        { id: "produce", label: "Produce the deliverable", evidence: ["write_file"] },
-      ],
-      budgets: [
-        { id: "searches", label: "searches", limit: 4, tools: ["web_search"] },
-        { id: "calls", label: "tool calls", limit: 12, tools: ["*"] },
-      ] },
-    { id: "code", name: "Code", icon: "code", tagline: "Work in a codebase — files, git, shell", needs_workspace: true, builtin: true, family: "code", workspace: "git", projects: true, tools: ["code_files", "git"], enabled: true, surfaced: true, default: false },
-    { id: "chat", name: "Chat", icon: "chat", tagline: "Quick questions — no workspace", needs_workspace: false, builtin: true, family: "knowledge", workspace: "none", projects: false, tools: [], enabled: true, surfaced: false, default: false },
-    // Ops carries the presentation a manifest can declare (`accent:` + `intro:`) — the start
-    // screen, composer placeholder and accent all come from the persona, so switching to it
-    // must change all three.
-    { id: "ops", name: "Ops Coworker", icon: "wrench", tagline: "Operate and investigate — runbooks, logs, infrastructure", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", projects: true, tools: ["files", "shell"], accent: "teal", intro: { greeting: "What's going on?", lede: "Start from an alert or a service — I'll investigate and leave a written note.", placeholder: "Describe the incident or the service to check…", starters: [{ key: "health", title: "Check the health of a running service", sub: "Endpoints, logs, and recent deploys", prompt: "Check the health of the service I name, then write up what you find.", requires: [] }, { key: "alerts", title: "Triage the alerts firing right now", sub: "What broke, when it started, what it touches", prompt: "Pull the alerts firing right now and tell me what broke.", requires: ["datadog"] }] }, enabled: true, surfaced: true, default: false },
+    { id: "cowork", name: "OpenWorker", icon: "cowork", tagline: "Produce a deliverable — research, analysis, scripts", requires_folder: false, builtin: true, tools: ["files", "search"], enabled: true, surfaced: true, default: true, ships: true, group: "general" },
+    { id: "code", name: "Code", icon: "code", tagline: "Work in a codebase — files, git, shell", requires_folder: true, builtin: true, tools: ["code_files", "git"], enabled: false, surfaced: false, default: false, ships: true, group: "general" },
+    { id: "security", name: "Security Coworker", icon: "shield", tagline: "Find and fix security issues — scan, triage, PR", requires_folder: true, builtin: true, tools: ["code_files", "git", "shell"], enabled: true, surfaced: true, default: false, ships: true, group: "security" },
+    { id: "ops", name: "Ops Coworker", icon: "wrench", tagline: "Operate and investigate — runbooks, logs, infrastructure", requires_folder: false, builtin: true, tools: ["files", "shell"], enabled: true, surfaced: true, default: false, ships: false, group: "general" },
     // A non-builtin install (disabled pending consent — invisible to picker specs) so the
     // Personas page's delete/enable affordances have a target.
-    { id: "acme-notes", name: "Acme Notes", icon: "pencil", tagline: "Acme's note-taking coworker", needs_workspace: true, builtin: false, family: "knowledge", workspace: "deliverable", projects: true, tools: ["files"], enabled: false, surfaced: false, default: false },
+    { id: "acme-notes", name: "Acme Notes", icon: "pencil", tagline: "Acme's note-taking coworker", requires_folder: false, builtin: false, tools: ["files"], enabled: false, surfaced: false, default: false, ships: true, group: "general" },
   ],
 };
 
@@ -112,7 +96,7 @@ const PINNED_SESSION = {
 const EXTRA_SESSIONS = Array.from({ length: 7 }, (_, i) => ({
   session_id: `wp-${i + 1}`,
   title: `Weekly plan ${i + 1}`,
-  workspace: "/Users/test/OpenWorker/launch-note",
+  workspace: "",
   agent: "cowork",
   model: "anthropic:claude-opus-4-8",
   mode: "interactive",
@@ -140,6 +124,25 @@ const OPS_SESSION = {
   archived: false,
   attention: 0,
   liveness: "idle",
+  subscriptions: [],
+};
+
+// A session whose turn is LIVE on the server — its ws `ready` carries running:true, the
+// reconnect-mid-turn case (owner catch 2026-08-24): Stop + waiting row must show without
+// a local turn_start. Older than the pinned session so boot-resume stays deterministic.
+const LIVE_SESSION = {
+  session_id: "resume-live-1",
+  title: "Long audit",
+  workspace: "",
+  agent: "cowork",
+  model: "anthropic:claude-opus-4-8",
+  mode: "interactive",
+  updated_at: "2026-06-20 10:00:00",
+  messages: 2,
+  pinned: false,
+  archived: false,
+  attention: 0,
+  liveness: "working",
   subscriptions: [],
 };
 
@@ -330,41 +333,11 @@ const AUTOMATION_CLEAN = {
   id: "task-2",
   title: "Weekly CRM digest",
   schedule: "Every Monday at ~9:00 AM",
-  // Its own cron, not the daily one inherited from the spread — the page groups by cadence.
-  schedule_raw: { kind: "cron", cron: "0 9 * * 1", fire_at: null, timezone: "local" },
   last_status: "ok",
   unseen_runs: 0,
   unseen_failed: false,
   always_allowed: [],
 };
-// Two suggestions with the shape the engine emits: the evidence line is the point of them.
-const SUGGESTIONS = [
-  {
-    key: "repo-health-acme",
-    title: "Repo health — acme",
-    blurb: "What landed, what is uncommitted, what looks stale — as a written report.",
-    reason: "19 of your commits to acme in the last 21 days, and no automation mentions it.",
-    cadence: "weekly",
-    cron: "0 6 * * 1",
-    agent: "cowork",
-    instructions: "Inspect the acme repository and write a report.",
-    requires: [],
-    score: 59,
-  },
-  {
-    key: "connector-slack",
-    title: "Weekly Slack digest",
-    blurb: "What changed in Slack this week, summarised into one report.",
-    reason: "Slack is connected but no automation uses it.",
-    cadence: "weekly",
-    cron: "0 7 * * 1",
-    agent: "cowork",
-    instructions: "Summarise the week's Slack activity.",
-    requires: ["slack"],
-    score: 30,
-  },
-];
-
 const AUTOMATION_RUNS = [
   {
     run_id: "r1",
@@ -390,13 +363,30 @@ const PROVIDERS = [
   { name: "anthropic", title: "Claude (Anthropic)", needs_key: true, fields: [{ key: "api_key", label: "API key", secret: true, required: true, help: "", placeholder: "sk-…" }], configured: true, values: {}, suggested_models: ["claude-opus-4-8"], key_set_at: null, last_used_at: null },
   // zai: an OpenAI-compatible vendor — unconfigured, with a prefilled editable endpoint + blurb.
   { name: "zai", title: "Z AI (GLM)", needs_key: true, blurb: "Uses Z AI's OpenAI-compatible API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "Z AI API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Prefilled with Z AI's international endpoint.", placeholder: "https://api.z.ai/api/paas/v4", default: "https://api.z.ai/api/paas/v4" }], configured: false, values: {}, suggested_models: ["glm-5.2"], key_set_at: null, last_used_at: null },
+  // Ark uses two provider identities: BytePlus pay-as-you-go and Volcengine Agent Plan CN
+  // have independent credentials, endpoints, and strict curated model lists.
+  { name: "ark", title: "BytePlus Ark", needs_key: true, blurb: "Uses BytePlus Ark's OpenAI-compatible Responses API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "BytePlus Ark API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "BytePlus Ark's Asia Pacific endpoint.", placeholder: "https://ark.ap-southeast.bytepluses.com/api/v3", default: "https://ark.ap-southeast.bytepluses.com/api/v3" }], configured: false, values: {}, suggested_models: ["dola-seed-evolving-latest-version", "dola-seed-2-1-turbo-260628"], key_set_at: null, last_used_at: null },
+  { name: "ark-agent-plan-cn", title: "Volcengine Ark Agent Plan", needs_key: true, blurb: "Uses Volcengine Ark Agent Plan's OpenAI-compatible Responses API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "Volcengine Ark Agent Plan API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Volcengine Ark Agent Plan's China (Beijing) endpoint.", placeholder: "https://ark.cn-beijing.volces.com/api/plan/v3", default: "https://ark.cn-beijing.volces.com/api/plan/v3" }], configured: false, values: {}, suggested_models: ["doubao-seed-evolving", "doubao-seed-2.1-turbo"], key_set_at: null, last_used_at: null },
   // ollama: keyless local provider — "configured" without proving anything runs; the
   // onboarding gallery shows "No key needed" and its form is endpoint + Detect (§39).
   { name: "ollama", title: "Ollama (local models)", needs_key: false, fields: [{ key: "base_url", label: "Endpoint", secret: false, required: false, help: "", placeholder: "http://127.0.0.1:11434", default: "http://127.0.0.1:11434" }], configured: true, values: {}, suggested_models: ["qwen3-coder:30b"], key_set_at: null, last_used_at: null },
+  // openai-codex: the subscription OAuth provider — no key form; the gallery card and
+  // form render sign-in state instead (auth: "oauth"). Starts signed out.
+  { name: "openai-codex", title: "ChatGPT subscription", needs_key: false, auth: "oauth", signed_in: false, account: null, authorizing: false, last_error: null, blurb: "Sign in with your ChatGPT plan and run OpenAI models through your subscription — no API key. Tokens stay on this machine.", fields: [], configured: false, values: {}, suggested_models: ["gpt-5.6-sol"], key_set_at: null, last_used_at: null },
 ];
 
 /** Install the API + WebSocket mocks on a page. Returns handles for assertions/seed data. */
 export async function mockApi(page: import("@playwright/test").Page) {
+  // The rail defaults to HIDDEN (UX-038 follow-up). Existing specs were written
+  // against a visible rail, so run them in the "user opened it" state; the
+  // default + persistence themselves are pinned by rail-default.spec.ts.
+  await page.addInitScript(() => {
+    try {
+      if (!localStorage.getItem("ocw-e2e-rail-default")) {
+        localStorage.setItem("coworker:rail-hidden:v1", "0");
+      }
+    } catch { /* ignore */ }
+  });
   const subscriptions: any[] = [
     // One existing subscription (a non-pinned session) so the Slack page's per-workspace
     // "Listening" row has an entry. Relay-mode channels are team-qualified (slack:T…/C…).
@@ -572,10 +562,20 @@ export async function mockApi(page: import("@playwright/test").Page) {
   // Installed personas — mutable so enable/surface/delete round-trip through the UI.
   const personas: any[] = PERSONAS.personas.map((p) => ({ ...p }));
   // Sessions — mutable so archive (PATCH), rename (PATCH), and delete round-trip.
+  // UX-044: mutable binding state for the project-menu mocks.
+  const projectBindings: Record<string, string> = {};
+  const projectNames: Record<string, { name: string; key: string }[]> = {
+    memory: [
+      { name: "openworker", key: "/k/openworker" },
+      { name: "personal-ops", key: "/k/ops" },
+    ],
+    board: [{ name: "aicreator-ops", key: "/k/aico" }],
+  };
   const sessions: any[] = [
     { ...PINNED_SESSION },
     ...EXTRA_SESSIONS.map((s) => ({ ...s })),
     { ...OPS_SESSION },
+    { ...LIVE_SESSION },
     { ...SLACK_SESSION },
   ];
   // Inbox items + the outbound routing binding — mutable for resolve + the inline Slack config.
@@ -615,6 +615,39 @@ export async function mockApi(page: import("@playwright/test").Page) {
   ];
   let stagedSkill: any = null;
 
+  // Agent teams (OPE-96): the session's board — empty until a test opts in by sending
+  // "plan the work" (the fake agent then files items; no draft state — the board only
+  // holds accepted work). Mutable so transitions round-trip through the real endpoints.
+  const boardItems: any[] = [];
+  // # team chat log — seeded with one lead question so mention highlighting renders.
+  const chatMessages: any[] = [
+    {
+      seq: 1,
+      ts: new Date().toISOString(),
+      author: "lead",
+      author_role: "lead",
+      text: "@nia does the api assume the assets bucket is public? quick check before you write it up.",
+      mentions: ["nia"],
+    },
+  ];
+  // Pure notes added from the detail pane (never change state) — appended to
+  // the item's timeline so the pane reflects them after reload.
+  const itemNotes: Record<number, any[]> = {};
+  const seedBoard = () => {
+    if (boardItems.length) return;
+    boardItems.push(
+      { id: 1, title: "Code security review — api", description: "", criteria: "every finding triaged with file:line evidence", state: "open", assignee: "", creator: "lead", refs: [], links: [] },
+      { id: 2, title: "Secrets — git history, both repos", description: "", criteria: "every hit dismissed-with-reason or rotation-instructed", state: "open", assignee: "", creator: "lead", refs: [], links: [] },
+      { id: 3, title: "Dependency audit — lockfiles", description: "", criteria: "reachable vs theoretical separated; upgrade branch green", state: "in_progress", assignee: "dep-audit", creator: "lead", refs: [], links: [] },
+      { id: 4, title: "Cloud posture — infra", description: "", criteria: "trivy config clean or findings triaged", state: "blocked", assignee: "cloud-posture", creator: "lead", refs: [], links: [], blocker: "need tfvars for staging" },
+      { id: 5, title: "Report rollup", description: "", criteria: "one report, all sections", state: "review", assignee: "security", creator: "lead", refs: [`attachment://${"a".repeat(64)}.png#rendered-page.png`], links: [] },
+    );
+  };
+  const boardPayload = () =>
+    boardItems.length
+      ? { space: "/Users/test/OpenWorker/launch-note", name: "launch-note", items: boardItems }
+      : { space: null, name: "", items: [] };
+
   // Fresh cloud sign-in state per test (module state outlives a page).
   Object.assign(CLOUD_STATE, {
     signed_in: false,
@@ -637,30 +670,18 @@ export async function mockApi(page: import("@playwright/test").Page) {
   });
 
   await page.routeWebSocket(/\/ws\/session\//, (ws) => {
-    sessionSockets.set(page, ws);
     const send = (type: string, data: Record<string, unknown> = {}) =>
       ws.send(JSON.stringify({ type, data }));
-    // The window the engine resolves for the session. The client-side matrix is
-    // hosted-models-only, so this frame is the only source for a local model.
-    send("ready", { context_window: 40000 });
+    // The page's session id, from the socket URL — team approval stamps THIS session
+    // as the lead (the active conversation IS the lead; workers hang off it).
+    const sid = ws.url().split("/ws/session/")[1]?.split("?")[0] || "sess-lead";
+    send("ready", sid === "resume-live-1" ? { running: true } : {});
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
     let hadTurn = false; // a user_message landed — set_model is now a mid-session switch
     ws.onMessage((raw) => {
       const msg = JSON.parse(String(raw));
-      if (msg.type === "user_message" && String(msg.text || "").includes("recall memory")) {
-        // brain_recall: a ~9KB result truncated to a 300-char preview, plus the untruncated
-        // `display` sidecar the engine attaches for the GUI (invisible to the model).
-        send("tool_proposed", { name: "brain_recall", arguments: { query: "phase 2" } });
-        send("tool_finished", {
-          name: "brain_recall",
-          status: "done",
-          result_preview: '{"query": "phase 2", "threads": [{"id": "openevolve-phase-2", "now": "Step 1 of 4 ship',
-          display: { threads: ["openevolve-phase-2", "local-model-reliability"], mode: "read" },
-        });
-        send("assistant_message", { text: "Recalled two threads." });
-        send("turn_done");
-      } else if (msg.type === "user_message") {
+      if (msg.type === "user_message") {
         hadTurn = true;
         // Force-run (SKILLS-SPEC §6): like the real server, TURN_START ships the user's
         // literal "/name …" line as `display` so the client dedupes on what the user sees.
@@ -668,6 +689,31 @@ export async function mockApi(page: import("@playwright/test").Page) {
           input: msg.text,
           ...(msg.skill ? { display: `/${msg.skill}${msg.text ? ` ${msg.text}` : ""}` } : {}),
         });
+        if (/trip the reviewer/i.test(msg.text)) {
+          send("tool_proposed", { name: "run_shell", arguments: { command: "semgrep scan" } });
+          send("tool_finished", {
+            name: "run_shell",
+            status: "denied",
+            reason: "blocked by the safety reviewer",
+            reviewer_reason: "This creates files even though you asked not to.",
+            allow_anyway: true,
+            reviewer_paused:
+              "Auto-approve is paused for the rest of this turn — the reviewer blocked 5 actions in a row, so approvals now come to you.",
+          });
+          return; // turn stays open: the pause is a mid-turn state
+        }
+        if (/run an unsure tool/i.test(msg.text)) {
+          // The Auto-Approve reviewer answered `unsure`: the card carries its reason.
+          pendingTool = "run_shell";
+          send("tool_proposed", { name: "run_shell", arguments: { command: "python3 helper.py" } });
+          send("permission_required", {
+            name: "run_shell",
+            arguments: { command: "python3 helper.py" },
+            reason: "requires approval",
+            reviewer_unsure: "This runs a newly created script whose effects cannot be determined from the command.",
+          });
+          return; // suspended on the approval
+        }
         if (/run a tool/i.test(msg.text)) {
           pendingTool = "run_shell";
           send("tool_proposed", { name: "run_shell", arguments: { command: "ls" } });
@@ -675,57 +721,110 @@ export async function mockApi(page: import("@playwright/test").Page) {
             name: "run_shell",
             arguments: { command: "ls" },
             reason: "The coworker wants to run a command.",
+            readonly_ok: true, // `ls` classifies read-only server-side
           });
           return; // suspended on the approval
         }
-        // A plan: the model's own todo list, which drives the rail's Now/Next and rows.
+        // Agent teams: the decomposition gate — the lead proposes work items and
+        // SUSPENDS until the items_response verdict arrives (approval creates them).
+        // A board wake arriving on this session: the digest rides `source` with
+        // structured rows — the BoardWakeCard renders collapsed by default.
+        if (/board wake/i.test(msg.text)) {
+          send("turn_start", {
+            source: {
+              connector: "board",
+              kind: "channel",
+              channel_id: "/Users/test/OpenWorker/launch-note",
+              channel_name: "Team board",
+              sender_id: "board",
+              sender_name: "Board",
+              ts: Date.now() / 1000,
+              text: "⏰ Board wake — your team needs decisions:\n- #2 moved to review by webb",
+              board: {
+                rows: [
+                  {
+                    kind: "moved",
+                    item: 2,
+                    title: "Statements page",
+                    actor: "webb",
+                    to: "review",
+                    note: "Ready for review on feat/customer-statements, commit 029f9f7. Build verified; final verdict stays with the tester.",
+                  },
+                  { kind: "filed", item: 5, title: "Follow-up: rate limit", actor: "nia" },
+                ],
+              },
+            },
+          });
+          send("assistant_message", { text: "Reviewing the hand-off now." });
+          send("turn_done");
+          return;
+        }
+        if (/propose the split/i.test(msg.text)) {
+          send("items_proposed", {
+            items: [
+              { title: "Statement API endpoint", criteria: "returns opening/closing balances over the chosen range; 8 endpoint tests green; malformed, missing, and reversed date ranges return 400; draft invoices are excluded from issued totals; inclusive boundaries verified end to end" },
+              { title: "Statements dashboard page", criteria: "renders seeded data for Ada / Northgate; empty + error states covered" },
+              { title: "Statement totals reconcile", criteria: "running balance matches invoices minus payments for the range" },
+              { title: "Verification pass", criteria: "tester confirms page renders with live API data" },
+            ],
+            note: "Shared journal case: statements.",
+          });
+          return; // suspended on the items decision
+        }
+        // Agent teams (OPE-97): the staffing gate — the lead proposes a roster and
+        // SUSPENDS until the team_response verdict arrives.
+        if (/staff the team/i.test(msg.text)) {
+          send("team_proposed", {
+            members: [
+              { persona: "swe-worker", name: "nia", model: "anthropic:claude-opus-4-8", reason: "implementation" },
+              { persona: "design-worker", name: "webb", reason: "UI polish" },
+              { persona: "test-worker", name: "checks", reason: "verifies against acceptance criteria" },
+            ],
+            enable_chat: false,
+            note: "Three workers cover the plan; checks verifies before anything closes.",
+          });
+          return; // suspended on the staffing decision
+        }
+        // Agent teams (OPE-96): a decomposition turn — the plan was approved in
+        // conversation (plan-approval flow); the agent files the items and the
+        // board rail appears on the next board fetch.
         if (/plan the work/i.test(msg.text)) {
-          const todos = [
-            { content: "Read the spec", status: "done" },
-            { content: "Draft the patch", status: "in_progress" },
-            { content: "Run the tests", status: "pending" },
-          ];
-          send("tool_proposed", { name: "todo_write", arguments: { todos } });
-          send("tool_finished", { name: "todo_write", status: "done", result_preview: "ok" });
-          send("assistant_message", { text: "Planned three steps." });
+          seedBoard();
+          send("assistant_message", {
+            text: "Plan approved — filed 5 work items on the board.",
+          });
           send("turn_done");
           return;
         }
-        // A plan the run then leaves behind: the list is written once and never revised, while
-        // ten more calls do the work. This is the measured failure (a five-item plan revised at
-        // call 24 of 101, then never again) at a size a test can watch.
-        if (/plan then wander/i.test(msg.text)) {
-          const todos = [
-            { content: "Read the spec", status: "done" },
-            { content: "Draft the patch", status: "in_progress" },
-            { content: "Run the tests", status: "pending" },
-          ];
-          send("tool_proposed", { name: "todo_write", arguments: { todos } });
-          send("tool_finished", { name: "todo_write", status: "done", result_preview: "ok" });
-          for (let i = 0; i < 10; i++) {
-            send("tool_proposed", { name: "read_file", arguments: { path: `src/f${i}.py` } });
-            send("tool_finished", { name: "read_file", status: "done", result_preview: "ok" });
-          }
-          send("assistant_message", { text: "All three steps are finished." });
+        // A deliverable turn ending in an artifact chip (§34) — for the chip-open flow.
+        if (/show the report/i.test(msg.text)) {
+          send("assistant_message", {
+            text: "Done — [Security review](artifact:reports/security-review.html)",
+          });
           send("turn_done");
           return;
         }
-        // Native connector tools: real runtime names (gmail_*, hubspot_*, notion_*) that no
-        // static bucket in the rail can name. The turn is entirely connector work, which is
-        // what an ops-shaped session looks like.
-        if (/work the connectors/i.test(msg.text)) {
-          for (const name of [
-            "gmail_search_messages",
-            "gmail_search_messages",
-            "hubspot_search",
-            "notion_read_page",
-          ]) {
-            send("tool_proposed", { name, arguments: {} });
-            send("tool_finished", { name, status: "done", result_preview: "ok" });
-          }
-          send("assistant_message", { text: "Pulled the connector data." });
-          send("turn_done");
-          return;
+        // The pre-fix payload shape (owner-hit 2026-08-14): no installable/version/summary
+        // — an older sidecar, or any surface that forgets the field. Must render NOT
+        // installable, never a guessed Install offer.
+        if (/request an unpinned tool/i.test(msg.text)) {
+          send("tool_requested", {
+            name: "somescanner",
+            reason: "scan the Terraform for misconfigurations",
+          });
+          return; // suspended on the tool request
+        }
+        // OPE-85: the agent hits a missing scanner and asks instead of skipping the check.
+        if (/scan for secrets/i.test(msg.text)) {
+          send("tool_requested", {
+            name: "gitleaks",
+            reason: "scan the git history for committed secrets",
+            installable: true,
+            version: "8.30.1",
+            summary: "scans git history and the working tree for committed secrets",
+            source: "github.com/gitleaks",
+          });
+          return; // suspended on the tool request
         }
         // §35 compact row: a routine workspace write (content rides in the args).
         if (/write a file/i.test(msg.text)) {
@@ -830,21 +929,6 @@ export async function mockApi(page: import("@playwright/test").Page) {
           send("turn_done");
           return;
         }
-        // The server going down mid-turn: it gets `run_interrupted` out while the socket is
-        // still open and then stops. Note what does NOT follow — no turn_done, because the
-        // process that would have sent it is gone.
-        if (/kill the server/i.test(msg.text)) {
-          send("tool_proposed", { name: "read_file", arguments: { path: "a.py" } });
-          send("tool_finished", { name: "read_file", status: "done", result_preview: "{}" });
-          setTimeout(
-            () =>
-              send("run_interrupted", {
-                reason: "The agent server restarted while this run was working.",
-              }),
-            120,
-          );
-          return;
-        }
         // A deliberately SLOW multi-second stream (~40 ticks × 120ms) so specs can
         // interact mid-turn — the follow/pin scroll contract (FB-004) is untestable
         // against the instant echo below.
@@ -899,6 +983,88 @@ export async function mockApi(page: import("@playwright/test").Page) {
           send("assistant_message", { text: `Done via ${pendingTool} [decision=${msg.decision}]` });
         }
         send("turn_done");
+      } else if (msg.type === "items_response") {
+        if (msg.approved) {
+          seedBoard(); // "created on the board" — the board fetch now shows them
+          send("assistant_message", {
+            text: "Items created on the board — [Board · 5 items](board:) if you want to watch. Staffing next.",
+          });
+        } else {
+          send("assistant_message", { text: "Understood — reworking the split." });
+        }
+        send("turn_done");
+      } else if (msg.type === "team_response") {
+        if (msg.approved) {
+          // Server-side create_team pre-spawned the workers. The ACTIVE session IS
+          // the lead (seventeenth pass): stamp it in the sessions list — RECENT keeps
+          // this ONE entry — and hang the workers off it for the drawer's Team panel.
+          let lead = sessions.find((s) => s.session_id === sid);
+          if (!lead) {
+            lead = {
+              session_id: sid,
+              workspace: "/Users/test/OpenWorker/launch-note",
+              agent: "cowork",
+              model: "m",
+              mode: "interactive",
+              messages: 2,
+            };
+            sessions.unshift(lead);
+          }
+          lead.title = "Build the statements page";
+          lead.updated_at = new Date().toISOString();
+          lead.team = {
+            role: "lead",
+            team_id: "t1",
+            chat_enabled: !!msg.enable_chat,
+            chat_unread: msg.enable_chat ? 1 : 0,
+          };
+          // The lead sets its check-in timer after staffing — it shows as sleeping.
+          lead.liveness = "sleeping";
+          lead.sleeping_until = new Date(Date.now() + 4 * 60_000).toISOString();
+          for (const [actor, persona, status, item] of [
+            ["nia", "swe-worker", "in_progress", "#1 in progress"],
+            ["webb", "design-worker", "idle", "idle"],
+            ["checks", "test-worker", "blocked", "#4 blocked"],
+          ] as const) {
+            sessions.push({
+              session_id: `sess-${actor}`,
+              title: actor,
+              workspace: "/Users/test/OpenWorker/launch-note",
+              agent: persona,
+              model: "m",
+              mode: "interactive",
+              updated_at: new Date().toISOString(),
+              messages: 0,
+              team: {
+                role: "worker",
+                team_id: "t1",
+                lead_session: sid,
+                actor,
+                status,
+                current_item: item,
+              },
+            });
+          }
+          send("assistant_message", {
+            text: "Team created — nia, webb and checks are standing by. Assigning items now.",
+          });
+        } else {
+          send("assistant_message", { text: "Understood — tell me how to change the roster." });
+        }
+        send("turn_done");
+      } else if (msg.type === "tool_response") {
+        // Either way the turn continues — the point of the contract is that declining
+        // degrades the report openly instead of dropping the check.
+        if (msg.approved) {
+          send("assistant_message", {
+            text: "Installed gitleaks 8.30.1 — scanned history, no secrets found.",
+          });
+        } else {
+          send("assistant_message", {
+            text: "Skipped gitleaks. Coverage: history secret sweep done by hand instead.",
+          });
+        }
+        send("turn_done");
       } else if (msg.type === "interrupt") {
         // Stop mid-stream: like the real engine, end the turn with `interrupted` and
         // NO assistant_message — the client owns promoting the partial into the transcript.
@@ -908,20 +1074,36 @@ export async function mockApi(page: import("@playwright/test").Page) {
         }
         send("interrupted", {});
         send("turn_done");
+      } else if (msg.type === "set_mode") {
+        // Mirrors the server: full explainer the FIRST time a session enters
+        // Auto-Approve, a one-line marker for every later change.
+        const anyWs = ws as any;
+        if (msg.mode === "auto-approve" && !anyWs.__modeNoticeShown) {
+          anyWs.__modeNoticeShown = true;
+          send("mode_notice", {
+            title: "Auto-approve is on.",
+            text:
+              "Auto-approve uses a model to let routine actions through without asking; " +
+              "anything it isn't sure about still comes to you. It cuts interruptions but " +
+              "still carries some risk i.e. a command it allows still reaches anything you " +
+              "can. These are model judgments, and not guarantees.",
+          });
+        } else {
+          const labels: Record<string, string> = {
+            discuss: "Discuss",
+            interactive: "Ask for approval",
+            "bypass-approvals": "Bypass approvals",
+            "auto-approve": "Auto-approve",
+          };
+          send("mode_notice", { text: `${labels[msg.mode] || msg.mode} is on.` });
+        }
       } else if (msg.type === "set_model") {
         // Mid-session switch: the server applies it and broadcasts the persisted marker.
         // Like the real server, the FIRST bind (fresh session) is silent.
-        //
-        // app.py ALWAYS sends `context_window` on this frame, and it is NULL whenever the
-        // engine cannot resolve a window for the model it just bound (an id outside the
-        // hosted matrix, or an ollama model that is not loaded). Mirroring that null is the
-        // point: it is the routine case for local models, and the client must not go on
-        // dividing by the previous model's window.
         if (hadTurn)
           send("model_changed", {
             model: msg.model,
             text: `Model switched to ${msg.model}`,
-            context_window: SETTINGS.model_context_windows[msg.model] ?? null,
           });
       } else if (msg.type === "retry") {
         // Like the real engine: re-runs with NO new user message (turn_start input is empty).
@@ -951,6 +1133,32 @@ export async function mockApi(page: import("@playwright/test").Page) {
       }
       return json(connections);
     }
+    // UX-044 project bindings: stateful per-run so specs can bind/unbind/name.
+    if (/\/v1\/sessions\/[^/]+\/project-menu$/.test(p)) {
+      const kind = new URL(req.url()).searchParams.get("kind") || "memory";
+      return json({
+        kind,
+        bound: projectBindings[kind] ?? null,
+        derived: {
+          kind: "folder",
+          label: "~/fleet/ro4d/demo-universe/notes",
+          full: "/Users/u/fleet/ro4d/demo-universe/notes",
+          key: "/Users/u/fleet/ro4d/demo-universe/notes",
+        },
+        named: projectNames[kind] || [],
+      });
+    }
+    if (/\/v1\/sessions\/[^/]+\/bindings$/.test(p) && m === "PUT") {
+      const b = req.postDataJSON() || {};
+      if (b.name) projectBindings[b.kind] = b.name;
+      else delete projectBindings[b.kind];
+      return json({ ok: true, bindings: projectBindings });
+    }
+    if (/\/v1\/sessions\/[^/]+\/project-name$/.test(p) && m === "POST") {
+      const b = req.postDataJSON() || {};
+      (projectNames[b.kind] ||= []).unshift({ name: b.name, key: "/Users/u/fleet/ro4d/demo-universe/notes" });
+      return json({ ok: true, kind: b.kind, name: b.name });
+    }
     if (/\/v1\/sessions\/[^/]+\/roots$/.test(p)) {
       if (m === "POST") {
         const b = req.postDataJSON();
@@ -966,6 +1174,173 @@ export async function mockApi(page: import("@playwright/test").Page) {
         return json({ ok: true, roots });
       }
       return json({ roots });
+    }
+    // Artifacts (OPE-91): one HTML report whose content actively probes the sandbox —
+    // an inline script that renders proof-of-execution, a parent-window escape attempt,
+    // and an external subresource that must be CSP-blocked.
+    if (/\/v1\/sessions\/[^/]+\/artifacts\/read$/.test(p)) {
+      const reqPath = new URL(req.url()).searchParams.get("path") || "";
+      // UX-037 Files: a session root (or subfolder) reads as a folder listing.
+      const rootHit = roots.find((r) => reqPath === r.path);
+      if (rootHit) {
+        return json({
+          ok: true,
+          path: reqPath,
+          kind: "folder",
+          entries: [
+            { name: "reports", dir: true, size: 0 },
+            { name: "notes.md", dir: false, size: 128 },
+          ],
+        });
+      }
+      if (reqPath.endsWith("/reports")) {
+        return json({
+          ok: true,
+          path: reqPath,
+          kind: "folder",
+          entries: [{ name: "security-review.html", dir: false, size: 2048 }],
+        });
+      }
+      if (reqPath.endsWith("notes.md")) {
+        return json({ ok: true, path: reqPath, kind: "markdown", content: "# Notes\n\nhello from the explorer" });
+      }
+      return json({
+        ok: true,
+        path: "reports/security-review.html",
+        kind: "html",
+        content: [
+          "<h1>Security review</h1>",
+          '<div id="probe">script did not run</div>',
+          "<script>",
+          '  document.getElementById("probe").textContent = "script ran in sandbox";',
+          "  try { window.parent.document.title = 'ESCAPED'; } catch (e) {",
+          '    document.getElementById("probe").textContent += " · parent blocked";',
+          "  }",
+          "</script>",
+          '<img src="https://evil.example/exfil.png" onerror="document.getElementById(\'probe\').textContent += \' · network blocked\'">',
+        ].join("\n"),
+      });
+    }
+    if (/\/v1\/sessions\/[^/]+\/artifacts\/reveal$/.test(p)) return json({ ok: true });
+    // Item detail (merged event timeline + attachments) for the detail pane.
+    if (/\/v1\/sessions\/[^/]+\/board\/item$/.test(p)) {
+      const id = Number(new URL(req.url()).searchParams.get("id"));
+      const item = boardItems.find((i) => i.id === id);
+      if (!item) return json({ error: "no such item" });
+      const at = new Date().toISOString();
+      const timeline =
+        id === 5
+          ? [
+              { seq: 30, ts: at, actor: "lead", kind: "created" },
+              { seq: 31, ts: at, actor: "lead", kind: "assigned", assignee: "security" },
+              { seq: 32, ts: at, actor: "security", kind: "moved", to: "in_progress" },
+              {
+                seq: 41,
+                ts: at,
+                actor: "security",
+                kind: "comment",
+                body: "Rolled all four sections into report.md — balances reconcile against the seeded rows.",
+              },
+              {
+                seq: 42,
+                ts: at,
+                actor: "security",
+                kind: "comment",
+                body: "attached the rendered page",
+                refs: [`attachment://${"a".repeat(64)}.png#rendered-page.png`],
+              },
+              {
+                seq: 43,
+                ts: at,
+                actor: "security",
+                kind: "moved",
+                to: "review",
+                body: "Ready — balances verified against seeded rows.",
+              },
+            ]
+          : [{ seq: 30, ts: at, actor: "lead", kind: "created" }];
+      return json({ ...item, timeline: timeline.concat(itemNotes[id] || []) });
+    }
+    if (/\/v1\/sessions\/[^/]+\/board\/comment$/.test(p) && m === "POST") {
+      const b = req.postDataJSON() || {};
+      const id = Number(b.item);
+      (itemNotes[id] = itemNotes[id] || []).push({
+        seq: 90 + (itemNotes[id]?.length || 0),
+        ts: new Date().toISOString(),
+        actor: "user",
+        kind: "comment",
+        body: String(b.body || ""),
+      });
+      return json({ ok: true });
+    }
+    if (/\/v1\/sessions\/[^/]+\/board\/attachment$/.test(p)) {
+      // A real 1x1 PNG so the <img> actually loads (the spec asserts it renders).
+      return route.fulfill({
+        status: 200,
+        contentType: "image/png",
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+          "base64",
+        ),
+      });
+    }
+    // Agent teams (OPE-96): board reads + the user-side mutations.
+    if (/\/v1\/sessions\/[^/]+\/board\/transition$/.test(p)) {
+      const b = req.postDataJSON() || {};
+      const item = boardItems.find((i) => i.id === Number(b.item));
+      if (!item) return json({ error: "no such item" });
+      item.state = String(b.to);
+      return json(item);
+    }
+    if (/\/v1\/sessions\/[^/]+\/board$/.test(p)) return json(boardPayload());
+    // # team chat (OPE-99): one group, message log, user posts append.
+    if (/\/v1\/teams\/[^/]+\/chat$/.test(p)) {
+      if (m === "POST") {
+        const b = req.postDataJSON() || {};
+        chatMessages.push({
+          seq: chatMessages.length + 1,
+          ts: new Date().toISOString(),
+          author: "user",
+          author_role: "user",
+          text: String(b.text || ""),
+          mentions: ["nia", "webb", "checks", "lead"].filter((h) =>
+            String(b.text || "").includes(`@${h}`),
+          ),
+        });
+        return json(chatMessages[chatMessages.length - 1]);
+      }
+      return json({
+        enabled: true,
+        team_id: "t1",
+        members: [
+          { name: "nia", persona: "swe-worker", role: "worker" },
+          { name: "webb", persona: "design-worker", role: "worker" },
+          { name: "checks", persona: "test-worker", role: "worker" },
+          { name: "lead", persona: "swe-lead", role: "lead" },
+        ],
+        messages: chatMessages,
+      });
+    }
+    if (p.endsWith("/v1/teams/journal")) {
+      return json({
+        cases: boardItems.length
+          ? [{ case: "findings", entries: 12, last_ts: new Date().toISOString() }]
+          : [],
+      });
+    }
+    if (/\/v1\/sessions\/[^/]+\/artifacts$/.test(p)) {
+      return json({
+        artifacts: [
+          {
+            path: "reports/security-review.html",
+            abs_path: "/Users/test/OpenWorker/launch-note/reports/security-review.html",
+            name: "security-review.html",
+            kind: "html",
+            size: 2048,
+            modified_at: Math.floor(Date.now() / 1000) - 60,
+          },
+        ],
+      });
     }
     if (/\/v1\/sessions\/[^/]+\/messages$/.test(p)) return json({ messages: [] });
     if (/\/v1\/sessions\/[^/]+\/unattended$/.test(p)) {
@@ -1087,9 +1462,50 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const b = req.postDataJSON();
       return json({ ok: true, path: b.path, git_branch: "main" });
     }
+    if (p.endsWith("/v1/workspaces/temp") && m === "POST") {
+      // UX-029: "Start in a temporary folder" — created at send time, git-ready.
+      const b = req.postDataJSON();
+      return json({ ok: true, path: `/tmp/ow-temp/${b.session_id}`, git: b.git !== false });
+    }
+    if (/\/v1\/sessions\/[^/]+\/save-as-project$/.test(p) && m === "POST") {
+      const b = req.postDataJSON();
+      return json({ ok: true, path: b.path });
+    }
+    if (/\/v1\/personas\/[^/]+\/export$/.test(p) && m === "POST") {
+      // Sharing v1: export the bundle zip into the chosen folder.
+      const id = p.split("/").slice(-2)[0];
+      const b = req.postDataJSON();
+      return json({ ok: true, path: `${b.dir}/${id}-coworker-v1.zip` });
+    }
     // must precede the /v1/personas/{id} catch-all (install matches it too)
     if (p.endsWith("/v1/personas/install") && m === "POST") {
       const b = req.postDataJSON();
+      if (b.zip_b64) {
+        // Sharing v1: a bundle zip import — consent with version + replaces + recommends.
+        const imported = {
+          id: "team-sec", name: "Team Security Coworker", icon: "shield",
+          tagline: "Our security playbook", requires_folder: true, builtin: false,
+          tools: ["code_files", "search", "shell"],
+          enabled: false, surfaced: false, default: false, version: "2",
+        };
+        if (!personas.some((x) => x.id === "team-sec")) personas.push(imported);
+        return json({
+          ok: true,
+          personas,
+          consent: [{
+            id: "team-sec", name: "Team Security Coworker",
+            description: "Reviews code the way our team does.",
+            tools: ["code_files", "search", "shell"],
+            risk: ["read", "write_local", "exec"],
+            connectors: true, mcp: [], messaging: false,
+            recommended_mode: "interactive", recommended_models: [],
+            recommends: [{ kind: "connector", ref: "github", reason: "open fix PRs", tier: "core" }],
+            version: "2",
+            replaces: { version: "1", installed_at: "2026-08-01", capabilities_grew: true },
+            source: "/tmp/team-sec.zip", builtin: false,
+          }],
+        });
+      }
       if (b.gallery_slug) {
         return json(
           CLOUD_STATE.signed_in
@@ -1132,8 +1548,24 @@ export async function mockApi(page: import("@playwright/test").Page) {
       personas.splice(i, 1);
       return json({ ok: true, personas });
     }
-    if (/\/v1\/personas\/[^/]+$/.test(p)) return json(PERSONA_DETAIL);
-    if (p.endsWith("/v1/personas")) return json({ personas });
+    if (/\/v1\/personas\/[^/]+$/.test(p)) {
+      // Detail merges the live list row over the static shape, so enable/surface/default
+      // state and builtin-ness track the same mutable array the list serves.
+      const id = decodeURIComponent(p.split("/").pop() || "");
+      const base = personas.find((x) => x.id === id);
+      return json({
+        ...PERSONA_DETAIL,
+        media: [],
+        surfaced: true,
+        default: false,
+        builtin: true,
+        group: "general",
+        ...(base || {}),
+        recommends: PERSONA_DETAIL.recommends,
+        default_connections: PERSONA_DETAIL.default_connections,
+      });
+    }
+    if (p.endsWith("/v1/personas")) return json({ internal: PERSONAS.internal, personas });
     if (p.endsWith("/v1/sessions")) return json({ sessions });
     if (/\/v1\/connectors\/slack\/unauthorized\/[^/]+$/.test(p) && m === "POST") {
       const id = p.split("/").pop();
@@ -1531,6 +1963,36 @@ export async function mockApi(page: import("@playwright/test").Page) {
       prov.key_set_at = null;
       return json({ ok: true, provider: name });
     }
+    // Subscription OAuth sign-in (openai-codex): the flow "completes" instantly —
+    // signin flips the row to signed in; status mirrors it; signout clears it.
+    if (p.endsWith("/v1/providers/openai-codex/signin") && m === "POST") {
+      const prov = providers.find((x) => x.name === "openai-codex");
+      if (prov) {
+        prov.signed_in = true;
+        prov.configured = true;
+        prov.account = "rohit@example.com";
+      }
+      return json({ ok: true, started: true });
+    }
+    if (p.endsWith("/v1/providers/openai-codex/status")) {
+      const prov = providers.find((x) => x.name === "openai-codex");
+      return json({
+        signed_in: !!prov?.signed_in,
+        account: prov?.account || null,
+        authorizing: false,
+        last_error: null,
+        authorize_url: null,
+      });
+    }
+    if (p.endsWith("/v1/providers/openai-codex/signout") && m === "POST") {
+      const prov = providers.find((x) => x.name === "openai-codex");
+      if (prov) {
+        prov.signed_in = false;
+        prov.configured = false;
+        prov.account = null;
+      }
+      return json({ ok: true, had_tokens: true });
+    }
     if (p.endsWith("/v1/providers")) return json(providers);
     if (p.endsWith("/v1/channels/recent"))
       return json({
@@ -1571,37 +2033,6 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // automations: one scheduled task with a running run (drives the Automations detail page
     // and the run-session banner + Back-to-runs flow). Mutable: Run now appends a run and opens
     // its live session; the enable toggle (PATCH) and delete (DELETE) round-trip through the UI.
-    if (p.endsWith("/v1/remote-access")) {
-      return json({
-        ready: true,
-        mcp_installed: true,
-        command: "/usr/local/bin/openworker-mcp",
-        ssh_listening: true,
-        host: "worker-1",
-        detail: "Another machine can drive this one over SSH as worker-1.",
-        snippet: '{\n  "mcpServers": {\n    "openworker": {\n      "command": "ssh"\n    }\n  }\n}',
-      });
-    }
-    if (p.endsWith("/v1/computer-use")) {
-      // Not ready by default: the interesting state is the one the rail used to get wrong —
-      // a browser connector reporting "connected" with no Playwright behind it.
-      return json({
-        ready: false,
-        playwright: false,
-        browsers: false,
-        detail: "Playwright is not installed, so browser tools would fail on first use.",
-        fix: ["pip install playwright", "python -m playwright install chromium"],
-      });
-    }
-    if (p.endsWith("/v1/automations/suggestions")) {
-      // Server-derived suggestions (coworker/automation/suggestions.py). Anything already
-      // scheduled is filtered server-side, so accepting one must remove it from this list.
-      return json({
-        suggestions: SUGGESTIONS.filter(
-          (s) => !automations.some((t) => t.title === s.title),
-        ),
-      });
-    }
     if (/\/v1\/automations\/[^/]+\/seen$/.test(p) && m === "POST") {
       const id = p.split("/").slice(-2)[0];
       const task = automations.find((t) => t.id === id);
@@ -1694,8 +2125,17 @@ export async function mockApi(page: import("@playwright/test").Page) {
     if (p.endsWith("/v1/mcp") && m === "GET") {
       for (const s2 of mcpServers) {
         if (s2.status === "authorizing" && s2._flip) {
-          s2.status = "connected";
-          s2.tool_count = 6;
+          // Servers named locked-* simulate a guarded remote: the anonymous
+          // probe 401s (→ needs sign-in) until the entry is switched to oauth.
+          if (s2.name.startsWith("locked") && s2.auth !== "oauth") {
+            s2.status = "error";
+            s2.auth_hint = true;
+            s2.last_error = "authentication required — sign in to connect";
+          } else {
+            s2.status = "connected";
+            s2.tool_count = 6;
+            s2.last_test_at = 1700000000; // the successful probe stamps the row
+          }
         }
         if (s2.status === "authorizing") s2._flip = true;
       }
@@ -1710,6 +2150,8 @@ export async function mockApi(page: import("@playwright/test").Page) {
         requires_approval: true,
         auth: b.config?.auth === "oauth" ? "oauth" : null,
         status: b.config?.auth === "oauth" ? "needs_auth" : "configured",
+        auth_hint: false,
+        last_test_at: null,
         last_error: null,
         tool_count: null,
         config: b.config || {},
@@ -1720,7 +2162,12 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const mc = p.match(/\/v1\/mcp\/([^/]+)\/connect$/);
       if (mc && m === "POST") {
         const s2 = mcpServers.find((x) => x.name === decodeURIComponent(mc[1]));
-        if (s2) s2.status = "authorizing";
+        if (s2) {
+          s2.status = "authorizing";
+          s2.auth_hint = false;
+          s2.last_error = null;
+          s2._flip = false;
+        }
         return json({ ok: true, started: true });
       }
       const ms = p.match(/\/v1\/mcp\/([^/]+)\/signout$/);
@@ -1732,6 +2179,29 @@ export async function mockApi(page: import("@playwright/test").Page) {
           s2._flip = false;
         }
         return json({ ok: true });
+      }
+      const mp = p.match(/\/v1\/mcp\/([^/]+)$/);
+      if (mp && m === "PATCH") {
+        const s2 = mcpServers.find((x) => x.name === decodeURIComponent(mp[1]));
+        const b = req.postDataJSON() || {};
+        if (s2) {
+          if (b.enabled !== undefined) s2.enabled = b.enabled;
+          if (b.auth === "oauth") {
+            // The needs-sign-in fix: entry switches to oauth; the follow-up
+            // connect runs the browser flow.
+            s2.auth = "oauth";
+            s2.auth_hint = false;
+            s2.status = "needs_auth";
+          }
+          s2.config = { ...s2.config, ...b };
+        }
+        return json({ ok: !!s2, name: mp[1] });
+      }
+      const md = p.match(/\/v1\/mcp\/([^/]+)$/);
+      if (md && m === "DELETE") {
+        const i = mcpServers.findIndex((x) => x.name === decodeURIComponent(md[1]));
+        if (i >= 0) mcpServers.splice(i, 1);
+        return json({ ok: i >= 0 });
       }
     }
     if (p.endsWith("/v1/unrouted")) return json([]);
@@ -1764,6 +2234,27 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // Anything else: an empty-but-valid body. GET list endpoints read `?? []`/`?? {}` fallbacks.
     return json({});
   });
+}
+
+/** Seed a replayed transcript for one session. The shared mock answers every
+ * GET /v1/sessions/{id}/messages with `[]`, so reopening a session always starts blank;
+ * this registers a LATER route (later routes win) that stages rich history for that one
+ * session — replayed tool calls with results, connector-sourced messages, notices,
+ * reasoning — so specs can assert the reopen path (itemsFromMessages) directly instead
+ * of driving every turn live through the fake agent. Call after the page has the mock
+ * (any time before the session is opened). */
+export async function seedSessionMessages(
+  page: Page,
+  sessionId: string,
+  messages: Record<string, unknown>[],
+): Promise<void> {
+  await page.route(new RegExp(`/v1/sessions/${sessionId}/messages$`), (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ messages }),
+    }),
+  );
 }
 
 // A `test` whose page has the API mocked before navigation.

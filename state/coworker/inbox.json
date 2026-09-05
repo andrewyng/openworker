@@ -3438,6 +3438,427 @@
         }
       ],
       "data": {}
+    },
+    {
+      "id": "8ae1eea2248141698075ec990684e826",
+      "session_id": "0dfe1e25-a8f",
+      "kind": "approval",
+      "title": "Run `write_file`?",
+      "body": "requires approval\ncontent: # Task: P1 \u2014 Conformance Tier B (live-spec fetch + draft-drift detection) ## Sc\u2026 \u00b7 path: /home/iconbaypark2900/openworker-tasks/0dfe1e25-a8f/metered-web-broker-P1-confo\u2026",
+      "state": "resolved",
+      "resolution": "once",
+      "inbox": "default",
+      "created_at": "2026-08-30T19:42:35.593460+00:00",
+      "resolved_at": "2026-08-30T19:42:38.375753+00:00",
+      "visibility": "inline",
+      "tool_call_id": "chatcmpl-tool-88cec8bb060f53c8",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "write_file",
+        "arguments": {
+          "content": "# Task: P1 \u2014 Conformance Tier B (live-spec fetch + draft-drift detection)\n\n## Scope\nUpgrade `@mwb/conformance` from **Tier A** (re-validates the broker's OWN generated A2A card against rules the broker wrote itself \u2014 can't catch external drift) to **Tier B**: fetch the **live spec** for each protocol, validate a real artifact against it, and flag **version drift** when a draft bumps a field.\n\nThe metered-web-broker repo at `/home/iconbaypark2900/dataScience/metered-web-broker` is **read-only**. Copy it to a writable scratch location, work there, run the gate stack, report exit codes.\n\n## The gate stack (run all four, all green, report each exit code)\n1. `npm ci`\n2. `npm run typecheck`  (exit 0)\n3. `npm test`           (all pass \u2014 58/58 baseline)\n4. `npm run conformance <artifact> <name>`  (exit 0 on good, exit 1 on bad)\n\n## Read first\n- `packages/conformance/src/validators.ts`, `types.ts`, `run.ts`, `cli.ts` \u2014 the 4 current validators (identity / license / settlement / contract-shape) and the `FailureClass` union.\n- `packages/core/src/types.ts` \u2014 artifact types + the broker's `FetchOutcome`.\n\n## Tasks\n1. **Web-search live spec field names \u2014 do not assume them.** Look up current drafts/fields for each protocol and record the exact URLs + draft/edition versions checked:\n   - **A2A** `AgentCard` fields\n   - **AP2** authorization / mandate shape\n   - **UCP** `/.well-known/ucp` commerce object\n   - **Web Bot Auth** signature-directory structure\n2. **Extend `@mwb/conformance`** with validators for A2A card, AP2 mandate, UCP checkout, and Web Bot Auth. Each validator must be able to:\n   - (a) fetch the **live spec** OR accept a pinned draft + version,\n   - (b) validate the artifact against it,\n   - (c) report **drift** vs. the pinned draft (field added/renamed/removed).\n3. **Wire CI** so each step resolves the live/pinned draft per protocol and runs the harness on representative artifacts; fail the build on any drift or validation error.\n4. **Prove it catches drift AND rejects a bad artifact:** generate one artifact that satisfies the current draft and one that violates one field; assert the harness **accepts the good and rejects the bad**; and assert that pinning to an older/other draft **flags drift** on the good artifact. Commit both artifacts as fixtures.\n\n## Closed by\n`npm test` green **with new coverage for each protocol validator**, PLUS `conformance <good-artifact> <name>` \u2192 exit 0 AND `conformance <bad-artifact> <name>` \u2192 exit 1, AND pinning an older draft flags drift on the good one \u2014 with the pinned draft version + live spec URLs recorded in the harness output. The gate must demonstrably reject a drifted/bad artifact, not just re-validate the broker's own card.\n\n## Invariants to preserve\nKeep the framework's six immutable invariants green \u2014 in particular: one terminal outcome per `fetchId`; the three failure classes reported separately (never collapsed); identity best-effort, never a gate; one ledger row + one meter charge per `fetchId`; settled payment provable.\n\n## In scope vs. not\n- **In:** live-spec fetch, drift detection, good/bad + drift-flag proof, CI wiring.\n- **Out:** P2 (a real 402\u2192settle\u2192content round-trip) and P3 (finality flag) are separate multi-hour phases \u2014 do not roll into them.\n\n## Finish\nShow exit codes for the full gate stack AND the P1 proof cases (good \u2192 0, bad \u2192 1, drift flagged). Write results back to scratch. Give a one-line status.\n",
+          "path": "/home/iconbaypark2900/openworker-tasks/0dfe1e25-a8f/metered-web-broker-P1-conformance-tierb.md"
+        }
+      }
+    },
+    {
+      "id": "a2578c5abdfe4d5f9b52a0392975e7e1",
+      "session_id": "490bedd3-4af",
+      "kind": "question",
+      "title": "I can read/edit the repo files and run web searches, but this session has **no shell-execution tool** \u2014 so I cannot run `npm ci`/`npm test`/`npm run conformance` or commit, and I can't check live-fetch reachability. Before I write more code, how should the gate stack run and the exit codes be reported?",
+      "body": "",
+      "state": "resolved",
+      "resolution": "Yes go ahead and use those commands",
+      "inbox": "default",
+      "created_at": "2026-08-30T20:11:20.359863+00:00",
+      "resolved_at": "2026-08-30T20:12:35.887917+00:00",
+      "visibility": "inline",
+      "tool_call_id": "chatcmpl-tool-ac4b0c46fbc9c526",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {}
+    },
+    {
+      "id": "46ec4acbba1640c89aa7db726028687c",
+      "session_id": "563e55d1-62a",
+      "kind": "approval",
+      "title": "Run `write_file`?",
+      "body": "requires approval\npath: concordCircuit/DESIGN.md \u00b7 content: # ConcordCircuit \u2014 `concord` (P1: pillar composition) `concord` is the composit\u2026",
+      "state": "resolved",
+      "resolution": "once",
+      "inbox": "default",
+      "created_at": "2026-08-31T21:32:51.162546+00:00",
+      "resolved_at": "2026-08-31T21:54:08.702847+00:00",
+      "visibility": "inline",
+      "tool_call_id": "chatcmpl-tool-a58cf65c2204b095",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "write_file",
+        "arguments": {
+          "path": "concordCircuit/DESIGN.md",
+          "content": "# ConcordCircuit \u2014 `concord` (P1: pillar composition)\n\n`concord` is the composition layer that **stands the three read-only pillars on\ntop of each other** \u2014 it does not reimplement them. The three pillars are\nexternal repos the workspace *reads* but never writes:\n\n| Pillar | Repo | What it contributes to ConcordCircuit | Kind |\n|---|---|---|---|\n| **Quantum-safe + lightweight reasoning** | `sentinel-local` | Local multi-agent consensus, schema-validated structured output, `escalate_on_schema_failure`, `ground_truth` eval pattern | Python (`src/`) |\n| **Trust + payout integrity** | `agpack` | Signed bundle + manifest, capability-scoped sandbox, scoped + signed delegation, **replayable audit ledger** | Python (`src/`) |\n| **Settlement spine** | `metered-web-broker` | One contract \u2014 `PaymentRail` (`quote\u2192authorize\u2192settle`), budget engine, ed25519 identity, **finality flag** (`test`/`claimed`/`final`) | TypeScript (`packages/`) |\n\nThe composition is **read-only by design**: `concord` imports and composes; it\nnever edits a pillar. The three \"must-be-written\" stubs each pillar ships\nare **deliberately not written here** \u2014 that is Phase 0\u20136. P1 records *which*\nstubs exist so no later phase silently re-derives them.\n\n---\n\n## The one invariant that ties all three pillars together\n\n> **Every move of partner value is signed, scoped, budgeted, and recorded\n> before it is final \u2014 and never final until it reconciles.**\n>\n> \u2014 `concord.invariant.UNIFYING_INVARIANT`\n\nThe five facets are each a pillar's promise, concretized:\n\n| Facet | Source | Enforced by |\n|---|---|---|\n| **Signed** | agpack `trust.signing` (`sign`/`verify`) | manifest `signed_at_unix` + ed25519 block, verified on replay |\n| **Scoped** | agpack `trust.delegation.verify` | 8-step `verify(token, logical_now, keys)` \u2014 hard-fail on unknown scope/namespace |\n| **Budgeted** | metered `budget.engine` (`preflight`) | `CURRENCY_MISMATCH` / per-call ceiling \u2192 `failureClass: 'blocked'` |\n| **Recorded** | agpack `trust.audit.AuditLedger` | one append-only `dispatch`/`import_call`/`delegate`/`budget` row per action |\n| **Reconciled** | metered `core` finality | `final \u27fa reconcile().ok === true` \u2014 a settlement is *proven*, never assumed |\n\nThe last facet is the **finality gate** and the one that is load-bearing for\nPhase 3 (payout, the risk apex). Until the settlement reconciles, its row is\n`claimed` (or `test`), never `final`. P1 encodes this gate in\n`concord.invariant.finality_is_satisfied(...)` so a future Phase 3 executor\ncannot mark a row `final` on a non-reconciling settlement.\n\n---\n\n## STUB vs REAL \u2014 the reality checks (empirical, not asserted)\n\n`concord.reality.check()` **probes** each pillar at import time and reports\n`REAL`, `STUB`, or `MISSING`. It is the honesty gate for the whole project:\na pillar that *claims* to be usable but whose symbol is actually a stub will\nmake `assert_real_reality()` fail. The probes below are the **ground truth\nverified against the real source on 2026-08-31**:\n\n### agpack (`dataScience/agpack/src/`) \u2014 REAL\n\n| Symbol | Verdict |\n|---|---|\n| `agpack.trust.audit.{AuditLedger, AuditRecord, KINDS, LedgerCorrupt}` | **REAL** \u2014 the 4-record contract, `.validate()`, `replay()` |\n| `agpack.trust.signing.{sign, verify, SignatureBlock, SCHEME_ED25519}` | **REAL** |\n| `agpack.trust.delegation.verify` | **REAL** (8-step, hard-fail) |\n| `agpack.sandbox.{host, capabilities, limits, imports}` | **REAL** |\n| `agpack.artifact.{packager, schema, validator}` | **REAL** |\n| `agpack.cli` | **STUB** \u2014 raises `NotImplementedError` at import; **the `concord` runtime must replace it** |\n\n### sentinel-local (`jabCreative/dataScience/sentinel-local/src/`) \u2014 importable, 3 STUB symbols\n\n| Symbol | Verdict |\n|---|---|\n| `sentinel.orchestrator.{supervisor, consensus, router, state}` | **REAL** \u2014 multi-agent consensus is usable verbatim |\n| `sentinel.llm.structured` | **REAL** \u2014 schema-validated output + repair |\n| `sentinel.eval.{harness, metrics}` | **REAL** \u2014 the `ground_truth.jsonl` pattern |\n| `sentinel.crypto.inventory` | **REAL** |\n| `sentinel.crypto.risk.{score_finding, rank}` | **STUB** \u2014 `# TODO`, symbol absent (Phase 6) |\n| `sentinel.crypto.cbom.{to_cbom, write}` | **STUB** \u2014 `# TODO`, symbol absent (Phase 5) |\n| `sentinel.agents.crypto_posture.CryptoPostureAgent` | **STUB** \u2014 `# TODO`, class absent (Phase 6) |\n\n### metered-web-broker (`jabCreative/dataScience/metered-web-broker/`) \u2014 TS contract\n\n| Symbol | Verdict |\n|---|---|\n| `PaymentRail` (`packages/core/src/types.ts`) `quote\u2192authorize\u2192settle` | **REAL** (TS, consumed, not reimplemented) |\n| `BudgetEngine.preflight` \u2192 `CURRENCY_MISMATCH`, `recordPaid`, `snapshot` | **REAL** (TS) |\n| finality `settled \u27f9 reconcile().ok` (`packages/core/src/types.ts`) | **REAL** (TS) \u2014 the `concord.invariant` gate references it |\n| `AuditLedger` (`packages/audit/src/ledger.ts`) gap-free `seq` | **REAL** (TS) |\n\n---\n\n## The real importable code (this package)\n\n- `concord/__init__.py` \u2014 package root; states the unifying invariant.\n- `concord/invariant.py` \u2014 the invariant + the finality gate.\n- `concord/pillars.py` \u2014 where each pillar lives, how to import it, the real\n  vs stub symbol table. **Read-only composition; no pillar is rewritten.**\n- `concord/reality.py` \u2014 the empirical STUB-vs-REAL reality-check engine.\n- `concord/__main__.py` \u2014 `python -m concord check` (egress zero).\n\nRun it: `python -m concord check` \u2192 prints the STUB-vs-REAL table and asserts\nevery declared-REAL symbol is actually importable.\n"
+        }
+      }
+    },
+    {
+      "id": "1e769a6230774c01a800a16f4b2245f5",
+      "session_id": "a7090ed4-579",
+      "kind": "approval",
+      "title": "Run `write_file`?",
+      "body": "requires approval\npath: /home/iconbaypark2900/openworker-tasks/a7090ed4-579/verify_concord.py \u00b7 content: import sys, importlib from pathlib import Path AGPACK = Path(\"/home/iconbaypark\u2026",
+      "state": "resolved",
+      "resolution": "once",
+      "inbox": "default",
+      "created_at": "2026-08-31T22:44:22.604485+00:00",
+      "resolved_at": "2026-08-31T22:51:34.262217+00:00",
+      "visibility": "inline",
+      "tool_call_id": "chatcmpl-tool-a3480464c0cda4eb",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "write_file",
+        "arguments": {
+          "path": "/home/iconbaypark2900/openworker-tasks/a7090ed4-579/verify_concord.py",
+          "content": "import sys, importlib\nfrom pathlib import Path\n\nAGPACK = Path(\"/home/iconbaypark2900/dataScience/agpack/src\")\nSENTINEL = Path(\"/home/iconbaypark2900/jabCreative/dataScience/sentinel-local/src\")\nMETERED = Path(\"/home/iconbaypark2900/jabCreative/dataScience/metered-web-broker\")\n\n# can we even reach the source roots?\nfor name, root in [(\"agpack\", AGPACK), (\"sentinel\", SENTINEL), (\"metered\", METERED)]:\n    print(f\"{name}: exists={root.exists()} dir={root.is_dir()}\")\n\nsys.path[0:0] = [str(AGPACK), str(SENTINEL)]\nimport concord\nr = concord.check()\nprint(r.print())\nprint()\ntry:\n    concord.assert_real_reality(r)\n    print(\"REALITY CHECK OK\")\nexcept AssertionError as exc:\n    print(\"FAILED:\", exc)\n    sys.exit(1)\n"
+        }
+      }
+    },
+    {
+      "id": "dc9bc798426248c8895a3298674b79ab",
+      "session_id": "a7090ed4-579",
+      "kind": "approval",
+      "title": "Run `write_file`?",
+      "body": "requires approval\ncontent: import os METERED = \"/home/iconbaypark2900/jabCreative/dataScience/metered-web-\u2026 \u00b7 path: /home/iconbaypark2900/openworker-tasks/a7090ed4-579/verify_metered.py",
+      "state": "resolved",
+      "resolution": "once",
+      "inbox": "default",
+      "created_at": "2026-08-31T22:51:34.276483+00:00",
+      "resolved_at": "2026-08-31T22:51:34.881958+00:00",
+      "visibility": "inline",
+      "tool_call_id": "chatcmpl-tool-b62d1d4731ee5145",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "write_file",
+        "arguments": {
+          "content": "import os\nMETERED = \"/home/iconbaypark2900/jabCreative/dataScience/metered-web-broker\"\nfor rel in [\"packages/core/src/types.ts\", \"packages/budget/src/engine.ts\"]:\n    p = os.path.join(METERED, rel)\n    print(rel, \"EXISTS\" if os.path.isfile(p) else \"MISSING\")\n",
+          "path": "/home/iconbaypark2900/openworker-tasks/a7090ed4-579/verify_metered.py"
+        }
+      }
+    },
+    {
+      "id": "858bf00219d742ada7c1caf67562aaed",
+      "session_id": "1f1701d7-ca5",
+      "kind": "approval",
+      "title": "Run `write_file`?",
+      "body": "requires approval\npath: concord/runtime.py \u00b7 content: \"\"\"concord.runtime -- the Phase 0 settlement runtime (pure-math ERC-4626). This\u2026",
+      "state": "resolved",
+      "resolution": "once",
+      "inbox": "default",
+      "created_at": "2026-08-31T23:39:17.342585+00:00",
+      "resolved_at": "2026-08-31T23:39:40.150009+00:00",
+      "visibility": "inline",
+      "tool_call_id": "chatcmpl-tool-91aa5058526135fb",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "write_file",
+        "arguments": {
+          "path": "concord/runtime.py",
+          "content": "\"\"\"concord.runtime -- the Phase 0 settlement runtime (pure-math ERC-4626).\n\nThis is the runtime that fills the role of the agpack *cli* stub. ``agpack.cli``\nis declared (in :mod:`concord.pillars`) as\n\n    Symbol(\"agpack.cli\", \"STUB\", \"raises NotImplementedError at import; the\n                                  concord runtime replaces it\")\n\n``concord.runtime`` is the real thing in its place: a deterministic,\n**egress-zero** settlement engine. It does three things, all pure Python\n(standard library only):\n\n1. A **deterministic corpus** of 140 partners across 5 chains. It uses a\n   *constant price-per-share* ERC-4626 model (``total_assets = total_shares *\n   price_per_share``), so by-share attribution is **exact** -- no residual wei.\n\n2. An **audit ledger** that records that corpus through the *real*\n   ``agpack.trust.audit`` contract: one ``budget`` record at ordinal ``0``, one\n   ``dispatch`` per chain, one ``delegate`` chain->partner hop and one\n   ``import_call`` attribution per partner, with ordinals 0-based by append\n   order, written to JSONL so an auditor's ``AuditLedger.replay`` self-validates\n   every row against ``LedgerCorrupt``.\n\n3. A **reconciliation** step. ``reconcile().ok`` is ``True`` iff\n   ``sum_out == sum_in`` to the wei, and a settlement row is stamped ``final``\n   *only* once it reconciled -- the P1 ``finality_is_satisfied`` gate, made a\n   computable property here (see :mod:`concord.invariant`).\n\nEgress is zero by construction: no network, no subprocess, no ``random``, no\n``time.time()``. Determinism: only ``hashlib`` for any hashing, fixed\nconstants as seeds, and partners/chains are always iterated in sorted order, so\nthe same corpus yields **byte-identical** JSONL and reports across runs.\n\nThe on-disk JSONL is *pure audit records* -- exactly what\n``agpack.trust.audit`` produces and stores nothing else. The corpus and the\nsettlement totals live in the deterministic builder, which the commands rebuild\nfrom first principles. See :mod:`concord.P2_TASK` sections 2/3/4 for the\ncontract this honours.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport hashlib\nimport json\nfrom dataclasses import dataclass, field\nfrom pathlib import Path\nfrom typing import Any\n\nfrom agpack.trust.audit import (\n    KIND_BUDGET,\n    KIND_DELEGATE,\n    KIND_DISPATCH,\n    KIND_IMPORT_CALL,\n    KINDS,\n    AuditLedger,\n    AuditRecord,\n    LedgerCorrupt,\n    replay,\n)\n\nfrom .invariant import finality_is_satisfied\n\n# -- grounding: the real agpack audit contract is imported, never recompiled. #\n#  - KINDS / _DETAIL_SCHEMAS: the closed 4-record set (audit, self-check).\n#  - AuditRecord / AuditLedger: the real record + append-only container.\n#  - LedgerCorrupt / replay: the self-validation gate the JSONL must satisfy.\n\n# -- determinism constants -------------------------------------------------- #\n#: A fixed run id (not derived from wall time, not random).\nRUN_ID: str = \"concord-p2-erc4626-000\"\n\n#: The settlement engine is the \"agent\" behind dispatch/budget events.\nRUN_SUBJECT: str = \"concord-runtime\"\n\n#: Logical clock base. ``ts_unix`` is ``BASE_TS + ordinal`` -- 1-sec logical,\n#: strictly increasing, hence monotonic. NOT wall time.\nBASE_TS: int = 1_700_000_000\n\n#: Fixed, named set of 5 chains, sorted for a deterministic iteration order.\nCHAIN_NAMES: tuple[str, ...] = tuple(\n    sorted([\"aave\", \"compound\", \"lido\", \"yearn\", \"curve\"])\n)\n\n#: A **constant price-per-share** (1e8 wei per share). With a constant price,\n``total_assets`` is divisible by ``total_shares`` so by-share attribution is\n#: exact (zero remainder), which is what makes ``sum == delta`` hold to the wei.\nPRICE_PER_SHARE: int = 1_000_000_000\n\n#: Corpus is fixed by construction: 140 partners, 5 chains.\n_NUM_PARTNERS: int = 140\n_NUM_CHAINS: int = 5\n\n#: Default on-disk location for the JSONL ledger (workspace-rooted).\nDEFAULT_LEDGER_PATH: str = \"concord/settlement.jsonl\"\n\n#: chain name -> position in :data:`CHAIN_NAMES` (deterministic fuel index).\n_CHAIN_INDEX: dict[str, int] = {name: i for i, name in enumerate(CHAIN_NAMES)}\n\n\n# -- corpus ----------------------------------------------------------------- #\n@dataclass(frozen=True)\nclass Chain:\n    \"\"\"One chain: its declared ``total_shares`` and its pool ``total_assets``.\"\"\"\n\n    name: str\n    total_shares: int\n    total_assets: int\n\n\n@dataclass(frozen=True)\nclass Partner:\n    \"\"\"One partner: a stable id, the chain it settles from, and its shares.\"\"\"\n\n    partner_id: str\n    chain: str\n    shares: int\n\n\n@dataclass(frozen=True)\nclass Corpus:\n    \"\"\"The deterministic 140-partner / 5-chain corpus.\"\"\"\n\n    chains: tuple[Chain, ...]\n    partners: tuple[Partner, ...]\n\n    def total_assets(self) -> int:\n        \"\"\"The total deposited pool across every chain (the *in* side).\"\"\"\n\n        return sum(c.total_assets for c in self.chains)\n\n    def partners_in(self, chain: str) -> list[Partner]:\n        \"\"\"All partners settling from ``chain`` (sorted by partner id).\"\"\"\n\n        return sorted(\n            (p for p in self.partners if p.chain == chain),\n            key=lambda p: p.partner_id,\n        )\n\n\ndef build_corpus() -> Corpus:\n    \"\"\"Build the deterministic corpus. Pure; returns plain data.\n\n    Assignment is a fixed formula (no RNG): partner ``p{i:03d}`` settles from\n    ``CHAIN_NAMES[i % 5]`` with ``shares = 1 + (i % 7)``. Each chain's\n    ``total_assets`` is ``chain_total_shares * price_per_share`` -- a constant\n    price-per-share, so attribution is exact. Partners and chains are sorted, so\n    the output is identical on every run.\n    \"\"\"\n\n    partners: list[Partner] = []\n    for i in range(_NUM_PARTNERS):\n        chain = CHAIN_NAMES[i % _NUM_CHAINS]\n        shares = 1 + (i % 7)\n        partners.append(Partner(partner_id=f\"p{i:03d}\", chain=chain, shares=shares))\n    partners.sort(key=lambda p: p.partner_id)\n\n    total_shares_by_chain: dict[str, int] = {name: 0 for name in CHAIN_NAMES}\n    for p in partners:\n        total_shares_by_chain[p.chain] += p.shares\n\n    chain_objs: list[Chain] = []\n    for name in sorted(total_shares_by_chain):  # deterministic order\n        ts = total_shares_by_chain[name]\n        # total_assets is a multiple of total_shares -> exact attribution,\n        # zero remainder under _attribute_by_share.\n        ta = ts * PRICE_PER_SHARE\n        chain_objs.append(Chain(name=name, total_shares=ts, total_assets=ta))\n\n    return Corpus(chains=tuple(chain_objs), partners=tuple(partners))\n\n\n# -- ERC-4626 by-share attribution ------------------------------------------ #\ndef _attribute_by_share(\n    total_assets: int, shares_by_partner: list[tuple[str, int]]\n) -> list[tuple[str, int]]:\n    \"\"\"Attribute ``total_assets`` by share: ``assets * shares // totalShares``.\n\n    Returns ``(partner_id, payout)`` in the SAME order as ``shares_by_partner``.\n\n    **Remainder scheme (to-the-wei).** Integer ``assets * shares // total`` can\n    drop a fractional wei per partner. The pool remainder\n    (``total_assets - sum(integer parts)``) is assigned to the **last** partner\n    in ``shares_by_partner`` order, which provably exhausts the pool:\n    ``sum(payouts) == total_assets`` exactly, no residual.\n\n    For the base corpus ``total_assets`` is divisible by ``sum(shares)``\n    (constant price-per-share), so the remainder is zero and every payout is\n    ``shares * price_per_share``. The remainder scheme runs regardless and is\n    covered by a test with *non-divisible* input.\n    \"\"\"\n\n    total = sum(s for _, s in shares_by_partner)\n    if total <= 0:\n        raise ValueError(\"total shares must be positive for attribution\")\n\n    parts: list[tuple[str, int]] = []\n    running = 0\n    for pid, sh in shares_by_partner:\n        out = total_assets * sh // total\n        parts.append((pid, out))\n        running += out\n\n    remainder = total_assets - running\n    if remainder:\n        # Deterministic: the last partner in sorted order absorbs the residual.\n        pid, out = parts[-1]\n        parts[-1] = (pid, out + remainder)\n    return parts\n\n\n# -- settlement row ---------------------------------------------------------- #\n@dataclass(frozen=True)\nclass Settlement:\n    \"\"\"One chain's settlement row. ``final`` *only* once it reconciled.\"\"\"\n\n    chain: str\n    total_in: int\n    total_out: int\n    reconciled: bool\n    finality: str\n\n    @property\n    def is_final(self) -> bool:\n        \"\"\"True iff this row is stamped ``final`` (the P1 finality gate).\"\"\"\n\n        return finality_is_satisfied(self.finality)\n\n\n# -- the ledger -------------------------------------------------------------- #\n@dataclass\nclass SettlementLedger:\n    \"\"\"The settlement ledger: ordered audit records + their settlement rows.\n\n    ``records`` are the *real* agpack :class:`AuditRecord`s (ordinals assigned\n    by :class:`AuditLedger`), in ordinal order. ``settlements`` are the per-chain\n    settlement rows. ``corpus`` is the deterministic corpus they were built from.\n    \"\"\"\n\n    records: tuple[AuditRecord, ...] = field(default_factory=tuple)\n    settlements: tuple[Settlement, ...] = field(default_factory=tuple)\n    corpus: Corpus | None = None\n\n\ndef _full_hex(s: str) -> str:\n    \"\"\"Deterministic 64-hex SHA-256 of ``s`` (stdlib hashlib only).\"\"\"\n\n    return hashlib.sha256(s.encode(\"utf-8\")).hexdigest()\n\n\ndef _prefix(s: str, n: int) -> str:\n    \"\"\"The redacted view: first ``n`` hex chars of ``s``'s SHA-256.\"\"\"\n\n    return _full_hex(s)[:n]\n\n\ndef _build_seq(corpus: Corpus) -> tuple[list[tuple[str, str, dict[str, Any]]], list[Settlement]]:\n    \"\"\"Build the ordered ``(kind, subject, detail)`` record sequence + settlements.\n\n    Order (auditable, 0-based by append): one ``budget`` at ordinal 0, then per\n    chain (sorted): one ``dispatch`` (the chain settlement), then per partner\n    (sorted): one ``delegate`` chain->partner hop followed by one\n    ``import_call`` attribution step.\n    \"\"\"\n\n    seq: list[tuple[str, str, dict[str, Any]]] = []\n    settlements: list[Settlement] = []\n\n    # 1) budget: the declared pool, recorded once at run start (ordinal 0).\n    budget_detail = {\n        \"budget\": {\n            \"currency\": \"USDC\",\n            \"price_per_share\": PRICE_PER_SHARE,\n            \"chain_count\": len(corpus.chains),\n            \"partner_count\": len(corpus.partners),\n            \"total_assets\": corpus.total_assets(),\n            \"chains\": {c.name: c.total_assets for c in corpus.chains},\n        }\n    }\n    seq.append((KIND_BUDGET, RUN_SUBJECT, budget_detail))\n\n    # 2) per chain: dispatch, then per partner: delegate + import_call.\n    for chain in corpus.chains:  # corpus.chains is already sorted\n        chain_partners = corpus.partners_in(chain.name)  # sorted by id\n        shares_map = [(p.partner_id, p.shares) for p in chain_partners]\n        payouts = _attribute_by_share(chain.total_assets, shares_map)\n        total_out = sum(o for _, o in payouts)\n\n        chain_token = _prefix(f\"token:chain:{chain.name}\", 24)\n\n        seq.append(\n            (\n                KIND_DISPATCH,\n                RUN_SUBJECT,\n                {\n                    \"tool_cid\": _prefix(f\"tool:erc4626:settle:{chain.name}\", 32),\n                    \"args_sha256_prefix16\": _prefix(\n                        f\"settle:{chain.name}:{chain.total_assets}\", 16\n                    ),\n                    \"budget_spent\": {\n                        \"amount\": chain.total_assets,\n                        \"unit\": \"wei\",\n                        \"currency\": \"USDC\",\n                    },\n                    \"output_sha256\": _full_hex(\n                        \"settle-out:\"\n                        + chain.name\n                        + \":\"\n                        + \",\".join(f\"{pid}:{o}\" for pid, o in payouts)\n                    ),\n                },\n            )\n        )\n\n        for pid, payout in payouts:\n            seq.append(\n                (\n                    KIND_DELEGATE,\n                    f\"{chain.name}-delegator\",\n                    {\n                        \"token_id\": _prefix(f\"token:{chain.name}:{pid}\", 24),\n                        # chain->partner hop: parent is the chain token (a str).\n                        \"parent_token_id\": chain_token,\n                        \"hop_depth\": 1,\n                        \"scope\": f\"erc4626:{chain.name}:delegated\",\n                        \"resource\": pid,\n                    },\n                )\n            )\n            seq.append(\n                (\n                    KIND_IMPORT_CALL,\n                    \"concord.attributor\",\n                    {\n                        \"scope\": f\"erc4626:{chain.name}:attribute\",\n                        \"resource\": pid,\n                        \"arg_fingerprint\": _prefix(\n                            f\"attr:{chain.name}:{pid}:{next(\n                                p.shares for p in chain_partners if p.partner_id == pid\n                            )}\",\n                            16,\n                        ),\n                        \"host_return\": str(payout),\n                        \"fuel_delta\": (_CHAIN_INDEX[chain.name] % 4) + 1,\n                    },\n                )\n            )\n\n        # finality: stamped 'final' ONLY if the chain reconciled (out == in).\n        reconciled = total_out == chain.total_assets\n        settlements.append(\n            Settlement(\n                chain=chain.name,\n                total_in=chain.total_assets,\n                total_out=total_out,\n                reconciled=reconciled,\n                finality=\"final\" if reconciled else \"claimed\",\n            )\n        )\n\n    return seq, settlements\n\n\ndef build_ledger(corpus: Corpus | None = None) -> SettlementLedger:\n    \"\"\"Build a :class:`SettlementLedger` from the corpus, assigning ordinals.\n\n    Ordinals are assigned by the *real* agpack :class:`AuditLedger` (0-based, by\n    append order) -- the ledger owns ordinal assignment; the caller does not.\n    \"\"\"\n\n    corpus = corpus or build_corpus()\n    seq, settlements = _build_seq(corpus)\n\n    ledger = AuditLedger()  # start=0\n    for n, (kind, subject, detail) in enumerate(seq):\n        # ordinal=None lets AuditLedger.append stamp the real 0-based ordinal.\n        ledger.append(\n            AuditRecord(\n                ordinal=None,\n                run_id=RUN_ID,\n                kind=kind,\n                ts_unix=BASE_TS + n,\n                subject=subject,\n                detail=detail,\n            )\n        )\n\n    return SettlementLedger(\n        records=ledger.records(),\n        settlements=tuple(settlements),\n        corpus=corpus,\n    )\n\n\n# -- JSONL (de)serialization ------------------------------------------------- #\ndef _record_to_dict(rec: AuditRecord) -> dict[str, Any]:\n    \"\"\"The on-disk shape: envelope + detail, one compact JSON object.\"\"\"\n\n    return {\n        \"ordinal\": rec.ordinal,\n        \"run_id\": rec.run_id,\n        \"kind\": rec.kind,\n        \"ts_unix\": rec.ts_unix,\n        \"subject\": rec.subject,\n        \"detail\": rec.detail,\n    }\n\n\ndef to_jsonl(records: tuple[AuditRecord, ...]) -> str:\n    \"\"\"Compact JSONL: one compact JSON object per line, in ordinal order.\"\"\"\n\n    lines = [\n        json.dumps(_record_to_dict(r), separators=(\",\", \":\"), sort_keys=True)\n        for r in records\n    ]\n    return \"\\n\".join(lines) + \"\\n\"\n\n\ndef from_jsonl(text: str) -> tuple[tuple[AuditRecord, ...], int]:\n    \"\"\"Parse JSONL text back into ordered :class:`AuditRecord`s.\n\n    Returns ``(records, count)``. Each record is reconstructed with its stored\n    ``ordinal`` so an auditor's ``replay`` sees the same ledger.\n    \"\"\"\n\n    records: list[AuditRecord] = []\n    for line in text.splitlines():\n        if not line.strip():\n            continue\n        obj = json.loads(line)\n        records.append(\n            AuditRecord(\n                ordinal=obj[\"ordinal\"],\n                run_id=obj[\"run_id\"],\n                kind=obj[\"kind\"],\n                ts_unix=obj[\"ts_unix\"],\n                subject=obj[\"subject\"],\n                detail=obj[\"detail\"],\n            )\n        )\n    return tuple(records), len(records)\n\n\ndef write_ledger(path: str | Path, records: tuple[AuditRecord, ...]) -> str:\n    \"\"\"Write ``records`` to ``path`` as JSONL. Returns the path (as str).\"\"\"\n\n    p = Path(path)\n    p.parent.mkdir(parents=True, exist_ok=True)\n    p.write_text(to_jsonl(records), encoding=\"utf-8\")\n    return str(p)\n\n\ndef read_ledger(path: str | Path) -> SettlementLedger:\n    \"\"\"Read a JSONL ledger from ``path`` and reconstruct a SettlementLedger.\n\n    Reconstructs the real ``AuditLedger`` from the JSONL (so ``replay`` works\n    on the file) and rebuilds the deterministic corpus + settlement rows from\n    first principles, so an auditor can reconcile the file to the real corpus.\n    \"\"\"\n\n    records, _count = from_jsonl(Path(path).read_text(encoding=\"utf-8\"))\n    corpus = build_corpus()\n    settlements = build_ledger(corpus).settlements\n    return SettlementLedger(records=records, settlements=settlements, corpus=corpus)\n\n\n# -- reconciliation ---------------------------------------------------------- #\ndef reconcile(total_in: int, total_out: int) -> dict[str, Any]:\n    \"\"\"Reconcile *in* against *out* to the wei. Returns ``{\"ok\", ...}``.\n\n    ``ok`` is ``True`` **iff** ``delta == 0`` -- i.e. ``sum_out == sum_in``\n    exactly, to the wei. This is the finality gate made computable: a settlement\n    row is stamped ``final`` only when :func:`reconcile` returns ``ok``.\n    \"\"\"\n\n    delta = total_out - total_in\n    return {\n        \"ok\": delta == 0,\n        \"sum_in\": total_in,\n        \"sum_out\": total_out,\n        \"delta\": delta,\n    }\n\n\ndef recorded_total_in(records: tuple[AuditRecord, ...]) -> int:\n    \"\"\"The declared pool recorded in the ``budget`` detail (the *in* side).\"\"\"\n\n    for rec in records:\n        if rec.kind == KIND_BUDGET:\n            return int(rec.detail[\"budget\"][\"total_assets\"])\n    raise ValueError(\"no budget record in ledger\")\n\n\ndef recorded_total_out(records: tuple[AuditRecord, ...]) -> int:\n    \"\"\"Sum of every partner's recorded payout (the *out* side, to the wei).\"\"\"\n\n    total = 0\n    for rec in records:\n        if rec.kind == KIND_IMPORT_CALL:\n            total += int(rec.detail[\"host_return\"])\n    return total\n\n\ndef reconcile_ledger(records: tuple[AuditRecord, ...]) -> dict[str, Any]:\n    \"\"\"Reconcile a reconstructed ledger: in from budget, out from import_calls.\"\"\"\n\n    return reconcile(recorded_total_in(records), recorded_total_out(records))\n\n\ndef reconstruct_ledger(records: tuple[AuditRecord, ...]) -> AuditLedger:\n    \"\"\"Rebuild the real :class:`AuditLedger` from records (for ``replay``).\"\"\"\n\n    ledger = AuditLedger()\n    for rec in records:\n        ledger.append(rec)  # rec already carries its fixed ordinal\n    return ledger\n"
+        }
+      }
+    },
+    {
+      "id": "2ddee449f3e7457d920b3e14dafc16ca",
+      "session_id": "1f1701d7-ca5",
+      "kind": "approval",
+      "title": "Run `replace_in_file`?",
+      "body": "requires approval\npath: concord/runtime.py \u00b7 old: #: A **constant price-per-share** (1e8 wei per share). With a constant price,``\u2026 \u00b7 new: #: A **constant price-per-share** (1e8 wei per share). With a constant price, #\u2026",
+      "state": "resolved",
+      "resolution": "once",
+      "inbox": "default",
+      "created_at": "2026-08-31T23:39:51.521388+00:00",
+      "resolved_at": "2026-08-31T23:41:01.394107+00:00",
+      "visibility": "inline",
+      "tool_call_id": "chatcmpl-tool-8f8c4d72e146bc5a",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "replace_in_file",
+        "arguments": {
+          "path": "concord/runtime.py",
+          "old": "#: A **constant price-per-share** (1e8 wei per share). With a constant price,``total_assets`` is divisible by ``total_shares`` so by-share attribution is\n#: exact (zero remainder), which is what makes ``sum == delta`` hold to the wei.\n#: PRICE_PER_SHARE: int = 1_000_000_000",
+          "new": "#: A **constant price-per-share** (1e8 wei per share). With a constant price,\n#: ``total_assets`` is divisible by ``total_shares`` so by-share attribution is\n#: exact (zero remainder) -- which is what makes ``sum == delta`` hold to the wei.\n#: PRICE_PER_SHARE: int = 1_000_000_000"
+        }
+      }
+    },
+    {
+      "id": "00c5e43f2b3448cca8a7b028c754e891",
+      "session_id": "__run__run-785ddc0e4d",
+      "kind": "approval",
+      "title": "Run `browser_submit`?",
+      "body": "requires approval\ntarget: Submit Application",
+      "state": "resolved",
+      "resolution": "once",
+      "inbox": "default",
+      "created_at": "2026-09-01T18:11:37.719575+00:00",
+      "resolved_at": "2026-09-01T18:27:51.413161+00:00",
+      "visibility": "inbox",
+      "tool_call_id": "chatcmpl-tool-bab134c514f84b2d",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "browser_submit",
+        "arguments": {
+          "target": "Submit Application"
+        },
+        "task_id": "task-fe38324f51",
+        "task_title": "Apply \u2014 file the shortlist"
+      }
+    },
+    {
+      "id": "65039b7391774bcc9517dd151120f0a7",
+      "session_id": "__run__run-785ddc0e4d",
+      "kind": "approval",
+      "title": "Run `browser_submit`?",
+      "body": "requires approval\ntarget: Submit Application",
+      "state": "pending",
+      "resolution": null,
+      "inbox": "default",
+      "created_at": "2026-09-01T18:28:44.798609+00:00",
+      "resolved_at": null,
+      "visibility": "inbox",
+      "tool_call_id": "chatcmpl-tool-94c8328a25c97587",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "browser_submit",
+        "arguments": {
+          "target": "Submit Application"
+        },
+        "task_id": "task-fe38324f51",
+        "task_title": "Apply \u2014 file the shortlist"
+      }
+    },
+    {
+      "id": "ead18bd167de4444b094ed63cefdeee1",
+      "session_id": "__run__run-785ddc0e4d",
+      "kind": "approval",
+      "title": "Run `browser_submit`?",
+      "body": "requires approval\ntarget: Submit Application",
+      "state": "pending",
+      "resolution": null,
+      "inbox": "default",
+      "created_at": "2026-09-01T18:28:46.219968+00:00",
+      "resolved_at": null,
+      "visibility": "inbox",
+      "tool_call_id": "chatcmpl-tool-9cd5be77c45fc7c8",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "browser_submit",
+        "arguments": {
+          "target": "Submit Application"
+        },
+        "task_id": "task-fe38324f51",
+        "task_title": "Apply \u2014 file the shortlist"
+      }
+    },
+    {
+      "id": "9501cce2fd5c4dc6a063aef4fd6ac660",
+      "session_id": "__run__run-e27d165427",
+      "kind": "approval",
+      "title": "Run `run_shell`?",
+      "body": "requires approval\ncommand: date +%Y-%m-%d \u00b7 description: Get today's date",
+      "state": "pending",
+      "resolution": null,
+      "inbox": "default",
+      "created_at": "2026-09-01T19:55:06.913394+00:00",
+      "resolved_at": null,
+      "visibility": "inbox",
+      "tool_call_id": "chatcmpl-tool-94c221ee512c2a47",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "run_shell",
+        "arguments": {
+          "command": "date +%Y-%m-%d",
+          "description": "Get today's date"
+        },
+        "task_id": "task-fe38324f51",
+        "task_title": "Apply \u2014 file the shortlist"
+      }
+    },
+    {
+      "id": "65207178bb2f47f9a05ccb1f46f4cbf2",
+      "session_id": "__run__run-74dee9f835",
+      "kind": "approval",
+      "title": "Run `run_shell`?",
+      "body": "requires approval\ncommand: ls -la /home/iconbaypark2900/Documents/*.pdf 2>/dev/null; echo \"---workspace dr\u2026 \u00b7 description: Check for resume PDF availability",
+      "state": "pending",
+      "resolution": null,
+      "inbox": "default",
+      "created_at": "2026-09-01T22:18:24.639044+00:00",
+      "resolved_at": null,
+      "visibility": "inbox",
+      "tool_call_id": "chatcmpl-tool-9ced0fe870be4173",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "run_shell",
+        "arguments": {
+          "command": "ls -la /home/iconbaypark2900/Documents/*.pdf 2>/dev/null; echo \"---workspace drafts---\"; ls -la drafts/ 2>/dev/null",
+          "description": "Check for resume PDF availability"
+        },
+        "task_id": "task-fe38324f51",
+        "task_title": "Apply \u2014 file the shortlist"
+      }
+    },
+    {
+      "id": "a247142371b54aad81b405a9cf0c238d",
+      "session_id": "__run__run-507dcfeacf",
+      "kind": "approval",
+      "title": "Run `run_shell`?",
+      "body": "requires approval\ncommand: wc -l ledger.md; tail -c 200 ledger.md | xxd | tail -n 15 \u00b7 description: Inspect ledger.md line count and trailing bytes",
+      "state": "pending",
+      "resolution": null,
+      "inbox": "default",
+      "created_at": "2026-09-02T11:21:04.726696+00:00",
+      "resolved_at": null,
+      "visibility": "inbox",
+      "tool_call_id": "chatcmpl-tool-9aeb3131e57fddd6",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "run_shell",
+        "arguments": {
+          "command": "wc -l ledger.md; tail -c 200 ledger.md | xxd | tail -n 15",
+          "description": "Inspect ledger.md line count and trailing bytes"
+        },
+        "task_id": "task-fe38324f51",
+        "task_title": "Apply \u2014 file the shortlist"
+      }
+    },
+    {
+      "id": "c02989ddd99241e0ac9a2530e8277228",
+      "session_id": "__run__run-66be2311c5",
+      "kind": "approval",
+      "title": "Run `run_shell`?",
+      "body": "requires approval\ncommand: cd /home/iconbaypark2900/dcode-stack && echo \"=== find SPEC.md ===\" && find . -\u2026 \u00b7 description: Locate spec files and survey state",
+      "state": "pending",
+      "resolution": null,
+      "inbox": "default",
+      "created_at": "2026-09-02T16:31:16.195158+00:00",
+      "resolved_at": null,
+      "visibility": "inbox",
+      "tool_call_id": "chatcmpl-tool-85dcc2c1244f1405",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "run_shell",
+        "arguments": {
+          "command": "cd /home/iconbaypark2900/dcode-stack && echo \"=== find SPEC.md ===\" && find . -name 'SPEC*.md' -not -path './.git/*' 2>/dev/null && echo \"=== find -spec.md ===\" && find . -name '*-spec.md' -not -path './.git/*' 2>/dev/null && echo \"=== slices dir? ===\" && ls -la slices/ 2>&1 | head -20 && echo \"=== .survey contents ===\" && ls -la .survey/ 2>&1",
+          "description": "Locate spec files and survey state"
+        },
+        "task_id": "task-82a3e24f25",
+        "task_title": "TEMP \u2014 repo-ops build test on dcode-stack"
+      }
+    },
+    {
+      "id": "499f20c11bfe4a348cfd7645f2947bb2",
+      "session_id": "__run__run-93cd0652c1",
+      "kind": "approval",
+      "title": "Run `browser_type`?",
+      "body": "requires approval\ntarget: role=button:Next \u00b7 text: ",
+      "state": "pending",
+      "resolution": null,
+      "inbox": "default",
+      "created_at": "2026-09-03T11:17:42.138282+00:00",
+      "resolved_at": null,
+      "visibility": "inbox",
+      "tool_call_id": "chatcmpl-tool-9b248ad7bdbdd115",
+      "options": [],
+      "allow_text": true,
+      "multi": false,
+      "header": "",
+      "questions": [],
+      "data": {
+        "tool": "browser_type",
+        "arguments": {
+          "target": "role=button:Next",
+          "text": ""
+        },
+        "task_id": "task-fe38324f51",
+        "task_title": "Application prep - field-by-field answer sheets"
+      }
+    },
+    {
+      "id": "92929674723243c4b4e8c0ba59b8d5d9",
+      "session_id": "da7574dc-4a3",
+      "kind": "question",
+      "title": "Context compaction failed \u2014 the summarizer couldn't condense this session's history. How should I proceed?",
+      "body": "",
+      "state": "resolved",
+      "resolution": "Trim oldest 10%",
+      "inbox": "default",
+      "created_at": "2026-09-03T21:33:19.682090+00:00",
+      "resolved_at": "2026-09-03T22:11:56.885770+00:00",
+      "visibility": "inline",
+      "tool_call_id": null,
+      "options": [
+        "Retry",
+        "Trim oldest 10%"
+      ],
+      "allow_text": false,
+      "multi": false,
+      "header": "Compaction",
+      "questions": [],
+      "data": {}
     }
   ]
 }

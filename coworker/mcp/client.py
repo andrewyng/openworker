@@ -13,14 +13,34 @@ Tool execution from the (sync) ToolRegistry bridges back here via
 from __future__ import annotations
 
 import asyncio
+import tempfile
 from contextlib import AsyncExitStack
-from typing import Any, Optional
+from typing import Any, IO, Optional
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from .config import MCPServerDef
+
+
+_STDERR_TAIL_LINES = 20
+_STDERR_TAIL_CHARS = 1500
+
+
+def _read_tail(errfile: Optional[IO[str]]) -> Optional[str]:
+    """Last few lines of a captured stderr file — the crash evidence, not the log."""
+    if errfile is None:
+        return None
+    try:
+        errfile.seek(0)
+        text = errfile.read()
+    except (OSError, ValueError):
+        return None
+    lines = [ln for ln in text.strip().splitlines() if ln.strip()]
+    if not lines:
+        return None
+    return "\n".join(lines[-_STDERR_TAIL_LINES:])[-_STDERR_TAIL_CHARS:]
 
 
 class _Conn:
@@ -36,6 +56,7 @@ class MCPManager:
     def __init__(self, secrets: Any = None) -> None:
         self._conns: dict[str, _Conn] = {}
         self._tasks: dict[str, asyncio.Task] = {}
+        self._stderr_tails: dict[str, str] = {}
         self._lock = asyncio.Lock()
         # SecretStore for OAuth servers' token persistence (mcp/oauth.py); lazy default
         # so library/CLI construction without secrets keeps working.
@@ -64,6 +85,33 @@ class MCPManager:
     async def tools(self, server: MCPServerDef) -> list[Any]:
         return (await self.ensure(server)).tools
 
+    async def verify(self, server: MCPServerDef, *, interactive: bool = False) -> _Conn:
+        """A REAL health check for explicit Test actions. `ensure` returns a cached
+        connection untouched, which made Test-on-Live a silent no-op that could not
+        detect a dead server (owner-hit 2026-08-21). Here a cached connection is
+        round-tripped (tools/list, refreshing the tool set); a dead one is torn
+        down and reconnected fresh."""
+        conn = self._conns.get(server.name)
+        if conn is not None:
+            try:
+                listed = await asyncio.wait_for(conn.session.list_tools(), timeout=20)
+                conn.tools = list(listed.tools)
+                return conn
+            except Exception:
+                conn.shutdown.set()
+                task = self._tasks.pop(server.name, None)
+                if task is not None:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(task), timeout=5)
+                    except Exception:
+                        task.cancel()
+                self._conns.pop(server.name, None)  # _serve pops too; belt and braces
+        return await self.ensure(server, interactive=interactive)
+
+    def last_stderr(self, name: str) -> Optional[str]:
+        """Stderr tail from the most recent failed startup of `name`, if any."""
+        return self._stderr_tails.get(name)
+
     async def call(
         self, name: str, tool: str, arguments: Optional[dict[str, Any]]
     ) -> Any:
@@ -88,6 +136,7 @@ class MCPManager:
     async def _serve(
         self, server: MCPServerDef, ready: asyncio.Future, *, interactive: bool = False
     ) -> None:
+        errfile = None
         try:
             async with AsyncExitStack() as stack:
                 if server.transport == "http":
@@ -124,18 +173,34 @@ class MCPManager:
                         env=server.env or None,
                         cwd=server.cwd,
                     )
-                    read, write = await stack.enter_async_context(stdio_client(params))
+                    # Capture the child's stderr so a startup crash leaves evidence
+                    # the UI can show (the SDK needs a real file descriptor here).
+                    errfile = tempfile.TemporaryFile(
+                        mode="w+", encoding="utf-8", errors="replace"
+                    )
+                    read, write = await stack.enter_async_context(
+                        stdio_client(params, errlog=errfile)
+                    )
                 session = await stack.enter_async_context(ClientSession(read, write))
                 await session.initialize()
                 listed = await session.list_tools()
                 conn = _Conn(session, list(listed.tools))
+                self._stderr_tails.pop(server.name, None)
                 if not ready.done():
                     ready.set_result(conn)
                 await conn.shutdown.wait()
         except Exception as exc:  # connection / init failure
+            tail = _read_tail(errfile)
+            if tail:
+                self._stderr_tails[server.name] = tail
             if not ready.done():
                 ready.set_exception(exc)
         finally:
+            if errfile is not None:
+                try:
+                    errfile.close()
+                except OSError:
+                    pass
             self._conns.pop(server.name, None)
             self._tasks.pop(server.name, None)
 

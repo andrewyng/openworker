@@ -1,0 +1,178 @@
+[
+  {
+    "run_id": "run-ae080b1a78",
+    "started_at": 1788361996.2906919,
+    "finished_at": 1788362115.994442,
+    "status": "ok",
+    "error": null,
+    "result_chars": 1616
+  },
+  {
+    "run_id": "run-bfbb840579",
+    "started_at": 1788339908.8782792,
+    "finished_at": 1788340024.1817887,
+    "status": "ok",
+    "error": null,
+    "result_chars": 1718
+  },
+  {
+    "run_id": "run-9e6eb5e017",
+    "started_at": 1788253528.271976,
+    "finished_at": 1788253617.6484125,
+    "status": "ok",
+    "error": null,
+    "result_chars": 698
+  },
+  {
+    "run_id": "run-986e855791",
+    "started_at": 1788167127.235239,
+    "finished_at": 1788167221.1021607,
+    "status": "ok",
+    "error": null,
+    "result_chars": 230
+  },
+  {
+    "run_id": "run-ee6f2c27f6",
+    "started_at": 1788103270.0697112,
+    "finished_at": 1788103273.0846589,
+    "status": "incomplete",
+    "error": "run ended as unknown",
+    "result_chars": 0
+  },
+  {
+    "run_id": "run-c26323469b",
+    "started_at": 1788005817.2077522,
+    "finished_at": 1788005820.1817896,
+    "status": "incomplete",
+    "error": "run ended as unknown",
+    "result_chars": 0
+  },
+  {
+    "run_id": "run-a39ac4c856",
+    "started_at": 1787907916.0179937,
+    "finished_at": 1787907985.429784,
+    "status": "ok",
+    "error": null,
+    "result_chars": 581
+  },
+  {
+    "run_id": "run-3134acae82",
+    "started_at": 1787821515.2064645,
+    "finished_at": 1787821614.181355,
+    "status": "ok",
+    "error": null,
+    "result_chars": 626
+  },
+  {
+    "run_id": "run-fe25f5748d",
+    "started_at": 1787735103.151185,
+    "finished_at": 1787738426.9374237,
+    "status": "incomplete",
+    "error": "run ended as unknown",
+    "result_chars": 68
+  },
+  {
+    "run_id": "run-788101c0d4",
+    "started_at": 1787659817.567899,
+    "finished_at": 1787662205.1721463,
+    "status": "incomplete",
+    "error": "run ended as interrupted",
+    "result_chars": 89
+  },
+  {
+    "run_id": "run-50684fcfc0",
+    "started_at": 1787562321.3970344,
+    "finished_at": 1787567483.0004904,
+    "status": "incomplete",
+    "error": "run ended as unknown",
+    "result_chars": 475
+  },
+  {
+    "run_id": "run-beec6820af",
+    "started_at": 1787475916.8208315,
+    "finished_at": 1787478560.4967806,
+    "status": "incomplete",
+    "error": "run ended as interrupted",
+    "result_chars": 185
+  },
+  {
+    "run_id": "run-b69cb8e824",
+    "started_at": 1787389502.8100812,
+    "finished_at": 1787392445.3365417,
+    "status": "incomplete",
+    "error": "run ended as unknown",
+    "result_chars": 135
+  },
+  {
+    "run_id": "run-e7dc20dbe2",
+    "started_at": 1787303112.328501,
+    "finished_at": 1787318065.3254952,
+    "status": "incomplete",
+    "error": "run ended as unknown",
+    "result_chars": 298
+  },
+  {
+    "run_id": "run-f418c3a616",
+    "started_at": 1787272762.1111188,
+    "finished_at": 1787273418.6220398,
+    "status": "ok",
+    "error": null,
+    "result_chars": 116
+  },
+  {
+    "run_id": "run-e50d87efbd",
+    "started_at": 1787262543.3123283,
+    "finished_at": 1787262850.0952384,
+    "status": "ok",
+    "error": null,
+    "result_chars": 677
+  },
+  {
+    "run_id": "run-a66686f101",
+    "started_at": 1787243002.3369467,
+    "finished_at": 1787249384.087949,
+    "status": "ok",
+    "error": null,
+    "result_chars": 161
+  },
+  {
+    "run_id": "run-1bbb5ebc3f",
+    "started_at": 1787241935.858796,
+    "finished_at": 1787242443.9224908,
+    "status": "incomplete",
+    "error": "run produced no output",
+    "result_chars": 0
+  },
+  {
+    "run_id": "run-7c850d2832",
+    "started_at": 1787231235.3251026,
+    "finished_at": 1787231237.2403286,
+    "status": "incomplete",
+    "error": "run ended as unknown",
+    "result_chars": 0
+  },
+  {
+    "run_id": "run-34d5296459",
+    "started_at": 1787199526.4410653,
+    "finished_at": 1787269411.224433,
+    "status": "aborted",
+    "error": "orphaned mid-run by a service restart; never resumed. Finalized 2026-08-20 during cleanup \u2014 artifacts cleared because finalize credits any workspace file touched since the run started.",
+    "result_chars": 0
+  },
+  {
+    "run_id": "run-4a94656a79",
+    "started_at": 1787164525.071698,
+    "finished_at": 1787269411.1307354,
+    "status": "aborted",
+    "error": "orphaned mid-run by a service restart; never resumed. Finalized 2026-08-20 during cleanup \u2014 artifacts cleared because finalize credits any workspace file touched since the run started.",
+    "result_chars": 152
+  },
+  {
+    "run_id": "run-77338d8da0",
+    "started_at": 1787066121.3169727,
+    "finished_at": 1787269411.0674064,
+    "status": "aborted",
+    "error": "orphaned mid-run by a service restart; never resumed. Finalized 2026-08-20 during cleanup \u2014 artifacts cleared because finalize credits any workspace file touched since the run started.",
+    "result_chars": 75
+  }
+]

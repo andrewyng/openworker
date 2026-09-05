@@ -217,7 +217,7 @@ describe("New-session split button", () => {
   });
 
   it("primary starts the last-used persona; the menu lists enabled personas + Manage personas…", async () => {
-    localStorage.setItem("ocw.flag.personas", "1"); // Manage entry is launch-flagged off
+    localStorage.setItem("ocw.flag.personas", "1");
     stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
@@ -273,8 +273,8 @@ describe("New-session split button", () => {
     expect(w.getByText("Ops")).toBeTruthy();  // the control: surfaced siblings still listed
   });
 
-  it("hides Manage personas… while the launch flag is off (the default)", async () => {
-    localStorage.removeItem("ocw.flag.personas");
+  it("hides Manage personas… when the launch flag is explicitly off", async () => {
+    localStorage.setItem("ocw.flag.personas", "0");
     stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },

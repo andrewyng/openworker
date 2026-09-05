@@ -27,3 +27,4 @@ state/**/*.bak-*
 state/**/*.db
 state/**/*-wal
 state/**/*-shm
+.claude/settings.local.json

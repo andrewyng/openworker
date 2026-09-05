@@ -1,0 +1,22 @@
+[
+  {
+    "slice": "trial-counter",
+    "status": "open",
+    "first_seen": "2026-08-20",
+    "last_verified": "2026-09-02",
+    "spec_ref": "R9 - 'A malformed argument MUST raise rather than be ignored or coerced.'",
+    "summary": "record_outcome() guards with isinstance(sharpe, (int, float)), and isinstance(True, int) is True in Python, so a bool passes both that guard and math.isfinite() and is stored as a Sharpe of 1.0. Verified live on 2026-09-02: isinstance(True, (int,float))=True, math.isfinite(True)=True, float(True)=1.0. The 274-test suite contains zero references to bool or True, so CI is green and cannot see this. Fix is one line: reject bool explicitly before the numeric check.",
+    "test_written": false,
+    "notes": "Found by the retired Spec drift check on 2026-08-20 with the fix stated. Still present 13 days later, which is why findings are now aged and re-reported rather than rediscovered."
+  },
+  {
+    "slice": "example-logstat",
+    "status": "open",
+    "first_seen": "2026-08-20",
+    "last_verified": "2026-09-02",
+    "spec_ref": "SPEC.md requires logstat.py and test_logstat.py run against data/server.log",
+    "summary": "work/ is empty: no logstat.py, no test_logstat.py, no data/ directory. Nothing is implemented. Caveat recorded by the original audit and still unresolved: the slice's README describes it as a work/template slice for the bin/govern pipeline, so the absence may be intentional. If it is, the SPEC and the slice's role disagree and one of them should change. Either way it has never been verified as conformant.",
+    "test_written": false,
+    "notes": "Mechanically re-detected by ci-sweep-stage each run; it needs no model budget to confirm."
+  }
+]

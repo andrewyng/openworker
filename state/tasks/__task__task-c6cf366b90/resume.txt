@@ -1,90 +1,67 @@
-# Resume — extracted from Jonathan_Beale_Resume.pdf
+# Resume — extracted from Jonathan_Beale_Resume_2026.pdf
 
 Jonathan Beale
- jonaston015@gmail.com    (954) 494-0671    linkedin.com/in/jonathan-beale    github.com/iconbaypark2900
+Fort Lauderdale, FL  •  jonaston015@gmail.com  •  (954) 494-0671  •  linkedin.com/in/jonathan-beale  • 
+github.com/iconbaypark2900
+SUMMARY
+Machine Learning Engineer with 2.5 years building and deploying production ML systems on Google Cloud
+Platform (GCP). Shipped end-to-end recommendation and Retrieval-Augmented Generation (RAG) systems,
+owning the full lifecycle from infrastructure provisioning and containerization through monitoring and retraining.
+Independent research in hybrid quantum-classical machine learning (QML), with a live public demo and results
+benchmarked against classical baselines.
+TECHNICAL SKILLS
+Languages: Python, Java, TypeScript, R, Rust
+Machine Learning & Agentic Frameworks: PyTorch, HuggingFace Transformers, LangChain, DSPy, GEVA,
+Unsloth, Ollama, Streamlit
+ML Systems: Retrieval-Augmented Generation (RAG), recommendation systems, Small Language Model (SLM)
+agents, ETL pipelines, REST inference APIs, model monitoring and retraining
+Cloud & DevOps: Google Cloud Platform (GCP) — Vertex AI (Feature Store, Matching Engine, AI Platform);
+Docker, GitHub Actions, Vercel, Next.js, ElasticSearch
+Quantum Frameworks: Qiskit, PennyLane, Qrisp
+Databases & Graph: PostgreSQL, Neo4j, NetworkX
 EXPERIENCE
-ML Solutions Architect | Hewani
-Remote | April 2025 – Present
-
-Architected and deployed an end-to-end ML recommendation system on Google Cloud Vertex AI (Feature
-Store, Matching Engine, AI Platform), engineering algorithms in Python that deliver personalized content and
-product suggestions at scale.
-
-Designed and exposed RESTful inference APIs consumed across multiple app surfaces, owning the full
-deployment lifecycle from infrastructure provisioning and containerization to monitoring and retraining pipelines.
-AI/ML Engineer | Mutual of Omaha
-Remote | January 2024 – February 2025
-
-Architected and deployed a RAG system for intelligent insurance document querying, enabling semantic search
-over large document corpora and significantly reducing manual review time.
-
-Built an ETL pipeline using small language models (SLMs) as autonomous agents to deduplicate medical and
-insurance claim records, alongside a document transformation pipeline to cleanse and optimize files for medical
-review.
-A.R. Development & Digital Storytelling Intern | Snap Inc.
-Remote | October – November 2024
-
-Developed Gen Z-focused marketing strategies for product launches on Snapchat in the EAT vertical.
-
-Identified emerging trends and recommended best practices for engaging Gen Z audiences across social media
-platforms.
-Market Research Intern | NRG
-Remote | September – October 2024
-
-Conducted comprehensive market research on policy impact and strategic decision-making to support energy
-sector initiatives.
-
-Analyzed renewable energy policy trends and their influence on market demand and regulatory compliance.
+ML Solutions Architect — Hewani
+Remote  |  April 2025 – August 2026
+Architected and deployed an end-to-end machine learning recommendation system on Google Cloud Vertex
+AI (Feature Store, Matching Engine, AI Platform), delivering personalized content and product suggestions at
+scale.
+Designed and exposed RESTful inference APIs consumed across multiple application surfaces, owning the
+full deployment lifecycle from infrastructure provisioning and containerization through monitoring and
+retraining pipelines.
+AI/ML Engineer — Mutual of Omaha
+Remote  |  January 2024 – February 2025
+Architected and deployed a Retrieval-Augmented Generation (RAG) system for insurance document
+querying, enabling semantic search over large document corpora and significantly reducing manual review
+time.
+Built an ETL pipeline using Small Language Models (SLMs) as autonomous agents to deduplicate medical
+and insurance claim records, alongside a document transformation pipeline to cleanse and optimize files for
+medical review.
 PROJECTS
-Hybrid QML Biomedical Link Prediction | Personal Project
-2024 – Present
-
+Hybrid Quantum Machine Learning (QML) — Biomedical Link Prediction
+Personal project  |  2024 – Present
 Built a hybrid quantum-classical ML pipeline on the Hetionet biomedical knowledge graph to predict novel
 disease-gene and drug-target relationships.
-
-Compared QSVC and VQC models against classical baselines (Logistic Regression, SVM, Random Forest),
-achieving PR-AUC ~0.73 with QSVC outperforming classical models.
-
-Optimized quantum embeddings using RotatE representations and LDA dimensionality reduction; targeted IBM
-Quantum hardware backends (Brisbane, Torino) via Qiskit Runtime.
-
-Live demo: hetqml-web.fly.dev/initialize | Repo: github.com/iconbaypark2900/hybrid-qml-kg-poc
-Quantum Random Number Generator (QCrypt RNG) | Personal Project
-2024 – Present
-
-Designed a post-quantum cryptography random number generator leveraging quantum circuit primitives via
-Qiskit and Pennylane to produce provably non-deterministic entropy sources.
-
-Integrated the RNG into a cryptographic pipeline demonstrating hardware-backed randomness suitable for
-secure key generation and encryption protocols.
-
-Deployed and benchmarked against classical PRNG baselines, validating statistical randomness using NIST
-test suites.
-
+Benchmarked Quantum Support Vector Classifier (QSVC) and Variational Quantum Classifier (VQC) against
+Logistic Regression, SVM and Random Forest baselines, reaching PR-AUC ~0.73 with QSVC outperforming
+the classical models.
+Optimized quantum embeddings using RotatE representations and LDA dimensionality reduction; targeted
+IBM Quantum hardware backends (Brisbane, Torino) via Qiskit Runtime.
+Live demo: hetqml-web.fly.dev/initialize  |  Repo: github.com/iconbaypark2900/hybrid-qml-kg-poc
+Quantum Random Number Generator (QCrypt RNG)
+Personal project  |  2024 – Present
+Designed a post-quantum cryptography random number generator using quantum circuit primitives via Qiskit
+and PennyLane to produce provably non-deterministic entropy.
+Benchmarked against classical PRNG baselines and validated statistical randomness using the NIST test
+suites.
 TRAINING & CERTIFICATIONS
-Year Up | Java Focus, 12-Week Immersive Developer Academy
-June 2023
-Completed intensive full-stack Java development bootcamp in partnership with Pluralsight. Built production-grade
-applications covering OOP, REST APIs, and software engineering fundamentals.
-Applied Data Institute (ADI) Fellowship | Equitech Futures
+Applied Data Institute (ADI) Fellowship — Equitech Futures
 December 2023
-Selective machine learning fellowship focused on applied data science, real-world ML pipelines, and responsible AI.
-Completed under the supervision of the Founder & Chief Science Officer.
-TECHNICAL SKILLS
-Languages: Python (Intermediate), Java (Intermediate), TypeScript (Intermediate), R (Beginner), Rust (Beginner)
-AI/ML & Agentic Frameworks: PyTorch, DSPy, GEVA, Unsloth, Ollama, HuggingFace Transformers, LangChain,
-Streamlit
-Quantum Frameworks: Qiskit, PennyLane, Qrisp
-DevOps & Cloud: Docker, Google Cloud Platform (GCP), Vercel, GitHub Actions, Next.js, ElasticSearch
-Databases & Graph: PostgreSQL, Neo4j, NetworkX
-EXTRACURRICULAR
-ShellHacks Hackathon Participant
-September 2024
-Built an AI-powered app to automatically redact sensitive information from documents.
-AI Society Member
-August 2024
-Facilitated discussions on AI ethics and connected students with learning and career opportunities in the AI field.
-E³ Scholar | CodePath
+Selective machine learning fellowship in applied data science, production ML pipelines and responsible AI,
+completed under the Founder & Chief Science Officer.
+Year Up — 12-Week Immersive Java Developer Academy
+June 2023
+Full-stack Java development program in partnership with Pluralsight, covering object-oriented programming,
+REST APIs and software engineering fundamentals.
+CodePath — E³ Scholar
 June 2024
-Completed coursework in cybersecurity and Python programming, solving real-world tech problems in collaboration
-with industry professionals.
+Coursework in cybersecurity and Python, applied to real-world problems with industry professionals.

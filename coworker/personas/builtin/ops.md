@@ -1,4 +1,5 @@
 ---
+ships: false
 id: ops
 name: Ops Coworker
 icon: wrench

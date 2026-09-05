@@ -10,9 +10,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-# Indexed by cron's day-of-week, which starts at SUNDAY (0 and 7 both mean Sunday). A
-# Monday-first list here silently shifted every weekly label by a day — "Spec drift check"
-# advertised Monday while running Sundays.
+# Indexed by cron's day-of-week, which starts at SUNDAY (0 and 7 both mean Sunday).
+# Both HEAD and origin/main start the list at Sunday — indexing a Monday-first list
+# by the cron dow labelled every weekly schedule one day late (a "Spec drift check"
+# advertised Monday while running Sundays).
 _DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 _MONTH = ["", "January", "February", "March", "April", "May", "June", "July", "August",
           "September", "October", "November", "December"]

@@ -3,13 +3,16 @@
     "fastchat": true,
     "research": true,
     "repo-ops": true,
-    "builder": true
+    "builder": true,
+    "code": false,
+    "cowork": false
   },
   "surfaced": {
     "fastchat": true,
     "research": true,
     "repo-ops": true,
-    "builder": true
+    "builder": true,
+    "cowork": false
   },
-  "default": "fastchat"
+  "default": "repo-ops"
 }

@@ -1,0 +1,9 @@
+[
+  {
+    "run_id": "run-66be2311c5",
+    "started_at": 1788366665.548301,
+    "finished_at": 1788369065.7578287,
+    "status": "incomplete",
+    "error": "stopped at the 2400s limit \u2014 it was still working and did not finish; whatever it produced before the cut is kept"
+  }
+]

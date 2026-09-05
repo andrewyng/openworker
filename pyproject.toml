@@ -21,7 +21,7 @@ dependencies = [
     "docstring_parser",
     "pyyaml>=6",  # persona manifest frontmatter (YAML)
     "pydantic>=2",
-    "mcp>=1.1,<2",  # MCP client (stdio + streamable-http); 2.0 removed streamablehttp_client
+    "mcp>=1.28.1,<2",  # MCP client (stdio + streamable-http); floor >=1.28.1 avoids PYSEC-2026-3481/3482/3483 (fixed in 1.27.2/1.28.1); <2 since 2.0.0 removed streamablehttp_client
     "httpx>=0.27",  # sync outbound senders for messaging connectors (send_message tool)
     "websockets>=13",  # managed Slack relay client transport (relay_client.py)
     "ddgs>=9",  # keyless default web-search provider (DuckDuckGo); Tavily/Brave use httpx
@@ -55,14 +55,24 @@ openworker-server = "coworker.server.run:main"
 openworker-connectors = "coworker.connectors.cli:main"
 # Reached over SSH from another machine (`ssh host openworker-mcp`); speaks stdio, opens no port.
 openworker-mcp = "coworker.mcp_server.cli:cli"
+# The board as an open surface (OPE-100): `ocw board …` / `ocw journal …`,
+# including `ocw board mcp` — the stdio MCP server external harnesses attach to.
+ocw = "coworker.teams.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["coworker*"]
 
 [tool.setuptools.package-data]
-coworker = ["personas/builtin/*.md"]
+coworker = [
+    "personas/builtin/*.md",
+    "personas/builtin/*/manifest.md",
+    "personas/builtin/*/skills/*/SKILL.md",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The reviewer-eval tests import from the repo-root scripts/ package; the pytest
+# console script (CI) does not put the root on sys.path the way `python -m pytest` does.
+pythonpath = ["."]
 asyncio_mode = "auto"

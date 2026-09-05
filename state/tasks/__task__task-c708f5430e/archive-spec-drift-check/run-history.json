@@ -1,0 +1,34 @@
+[
+  {
+    "run_id": "run-1bda272b8d",
+    "started_at": 1788103270.0705755,
+    "finished_at": 1788103273.0885637,
+    "status": "incomplete",
+    "error": "run ended as unknown",
+    "result_chars": 0
+  },
+  {
+    "run_id": "run-fc65d2243b",
+    "started_at": 1787477416.856835,
+    "finished_at": 1787478557.4850929,
+    "status": "incomplete",
+    "error": "run ended as interrupted",
+    "result_chars": 0
+  },
+  {
+    "run_id": "run-e3bfd77d21",
+    "started_at": 1787263503.3310194,
+    "finished_at": 1787265395.4840415,
+    "status": "ok",
+    "error": null,
+    "result_chars": 1316
+  },
+  {
+    "run_id": "run-77e88a7373",
+    "started_at": 1787255016.4173872,
+    "finished_at": 1787257355.9014168,
+    "status": "incomplete",
+    "error": "run ended as unknown",
+    "result_chars": 186
+  }
+]

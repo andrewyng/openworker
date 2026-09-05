@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   disconnectConnector,
   getCloudStatus,
   getConnectors,
+  getMcpServers,
   getSlackStatus,
   type CloudStatus,
   type Connector,
+  type McpServer,
   type SlackStatus,
 } from "../../api";
+import { McpServerDetail } from "./CustomMcp";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AllowlistBlock, ConnectorTools, ListeningSessionsBlock, UnauthorizedBlock } from "../ManageTabs";
 import { AccountsDetail } from "./AccountsDetail";
@@ -50,13 +54,16 @@ const DETAIL_PAGES: Record<string, (p: DetailProps) => JSX.Element> = {
 };
 
 export function ConnectorsSection() {
+  const { t: tt } = useTranslation();
   const [detail, setDetail] = useState<string | null>(null);
   const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
   const [slack, setSlack] = useState<SlackStatus | null>(null);
 
   const refresh = () => {
     getConnectors().then(setConnectors).catch(() => setConnectors([]));
+    getMcpServers().then(setMcpServers).catch(() => setMcpServers([]));
     getCloudStatus().then(setCloud).catch(() => setCloud(null));
     getSlackStatus().then(setSlack).catch(() => setSlack(null));
   };
@@ -68,6 +75,37 @@ export function ConnectorsSection() {
     return () => clearInterval(t);
   }, []);
 
+  // While an MCP test/sign-in is in flight, poll fast so the chip flips to its
+  // result (Live / Error / Needs sign-in) without the user touching anything.
+  const mcpBusy = mcpServers.some((s) => s.status === "authorizing");
+  useEffect(() => {
+    if (!mcpBusy) return;
+    const t = setInterval(refresh, 2000);
+    return () => clearInterval(t);
+  }, [mcpBusy]);
+
+  // Custom MCP entries route as "mcp:<name>" so they can never collide with a
+  // connector detail page of the same name.
+  if (detail?.startsWith("mcp:")) {
+    const s = mcpServers.find((x) => "mcp:" + x.name === detail);
+    return (
+      <div>
+        <button
+          className="text-[13px] text-accent mb-3"
+          data-testid="connectors-breadcrumb"
+          onClick={() => setDetail(null)}
+        >
+          ‹ Connectors
+        </button>
+        {!s ? (
+          <div className="text-[13px] text-muted">Loading…</div>
+        ) : (
+          <McpServerDetail server={s} onChanged={refresh} onGone={() => setDetail(null)} />
+        )}
+      </div>
+    );
+  }
+
   if (detail) {
     const c = connectors.find((x) => x.name === detail);
     const Page = DETAIL_PAGES[detail];
@@ -78,10 +116,10 @@ export function ConnectorsSection() {
           data-testid="connectors-breadcrumb"
           onClick={() => setDetail(null)}
         >
-          ‹ Connectors
+          {tt("connector.back_to_connectors")}
         </button>
         {!c ? (
-          <div className="text-[13px] text-muted">Loading…</div>
+          <div className="text-[13px] text-muted">{tt("connector.loading")}</div>
         ) : !c.connected ? (
           /* Pre-connect page (§38). When a connect completes, the poll flips
              c.connected and this same route re-renders as the connected page. */
@@ -104,6 +142,7 @@ export function ConnectorsSection() {
   return (
     <ConnectorsList
       connectors={connectors}
+      mcpServers={mcpServers}
       cloud={cloud}
       slack={slack}
       onOpen={setDetail}
@@ -122,27 +161,28 @@ function GenericDetail({
   onChanged,
   onGone,
 }: DetailProps & { onGone: () => void }) {
+  const { t } = useTranslation();
   return (
     <div>
       <div className="flex items-center gap-3.5 mb-5">
         <ConnectorBadge connector={c} size={44} title={c.title} />
         <div className="min-w-0 flex-1">
           <h2 className="text-[20px] font-semibold tracking-tight leading-tight">{c.title}</h2>
-          <div className="text-[12.5px] text-muted flex items-center gap-1.5">
+          <div className="text-[13px] text-muted flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-ok" />
-            {c.account || (c.auth === "none" ? "Built in" : "Connected")}
+            {c.account || (c.auth === "none" ? t("connector.built_in") : t("connector.connected"))}
           </div>
         </div>
         {c.auth !== "none" && (
           <button
-            className="text-[12.5px] text-danger/80 hover:text-danger shrink-0"
+            className="text-[13px] text-danger/80 hover:text-danger shrink-0"
             onClick={async () => {
               await disconnectConnector(c.name);
               onChanged();
               onGone();
             }}
           >
-            Disconnect
+            {t("connector.disconnect")}
           </button>
         )}
       </div>

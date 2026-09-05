@@ -6,7 +6,12 @@
       "headers": {
         "Authorization": "Bearer local-mcp-key"
       },
-      "requires_approval": false
+      "requires_approval": false,
+      "include_tools": [
+        "arxiv-search_papers",
+        "arxiv-get_abstract",
+        "arxiv-semantic_search"
+      ]
     },
     "wikipedia": {
       "type": "http",
@@ -22,7 +27,10 @@
       "headers": {
         "Authorization": "Bearer local-mcp-key"
       },
-      "requires_approval": false
+      "requires_approval": false,
+      "include_tools": [
+        "tavily-tavily_search"
+      ]
     },
     "exa": {
       "type": "http",
@@ -38,7 +46,11 @@
       "headers": {
         "Authorization": "Bearer local-mcp-key"
       },
-      "requires_approval": false
+      "requires_approval": false,
+      "include_tools": [
+        "context7-resolve-library-id",
+        "context7-query-docs"
+      ]
     },
     "fetch": {
       "type": "http",
@@ -54,7 +66,14 @@
       "headers": {
         "Authorization": "Bearer local-mcp-key"
       },
-      "requires_approval": true
+      "requires_approval": true,
+      "include_tools": [
+        "github-search_code",
+        "github-get_file_contents",
+        "github-list_commits",
+        "github-get_issue",
+        "github-create_issue"
+      ]
     },
     "filesystem": {
       "type": "http",
@@ -94,6 +113,11 @@
       "headers": {
         "Authorization": "Bearer local-mcp-key"
       },
+      "requires_approval": false
+    },
+    "playwright": {
+      "type": "http",
+      "url": "http://127.0.0.1:3002/mcp",
       "requires_approval": false
     }
   }

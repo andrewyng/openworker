@@ -1,7 +1,7 @@
 {
-  "source_file": "decisions_20260827.csv",
-  "trading_day": "2026-08-27",
-  "copied_at": "2026-08-28T07:25:00-04:00",
+  "source_file": "decisions_20260901.csv",
+  "trading_day": "2026-09-01",
+  "copied_at": "2026-09-02T07:25:00-04:00",
   "rows_total": 96,
   "counts_by_decision": {
     "NO_GO": 90,
@@ -9,9 +9,9 @@
     "GATE_SKIP": 3
   },
   "go_tickers": [
-    "ACHR",
-    "COP",
-    "FCX"
+    "FCX",
+    "RKLB",
+    "SMCI"
   ],
   "accounts_seen": [
     "A",

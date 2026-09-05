@@ -1,0 +1,15 @@
+# Cover letter — AIAF Fellowship 2026 (AI Alignment Foundation)
+
+*For the 5-minute video / application statement. Deadline: August 17, 2026 (AoE) — this is today.*
+
+---
+
+Hi — I'm Jonathan Beale, an ML Solutions Architect with nearly two years of production AI/ML work, and I'm applying for the AIAF 2026 Fellowship.
+
+**Why alignment matters to me.** I build LLM systems for a living — a RAG platform over insurance documents at Mutual of Omaha, an agentic ETL pipeline using small language models, and end-to-end recommendation systems on Vertex AI at Hewani. The closer I get to these models in production, the more I see that alignment isn't a theoretical layer: it's the difference between a semantic search system that gives clinicians the right document and one that hallucinates clinical content. I've also been active in AI ethics since 2024 — I facilitated AI-ethics discussions as an AI Society member, and before that I built a hackathon project whose entire point was *protecting* people's sensitive data from AI pipelines. I've spent real time thinking about where these systems go wrong, not just how to make them fast.
+
+**Why one of your directions interests me.** Self-interpretation via adapter probes resonates most because it mirrors how I actually work: I instrument opaque systems to make their internal state legible. In production ML I've debugged retrieval and ranking quality by probing what the pipeline is actually doing at each stage rather than trusting end-to-end behavior. One critique of the adapter-probes direction: probes trained to read a fixed set of concepts can be brittle to distribution shift in the model's own activations, which matters as models are continually updated. I'd extend the work toward *dynamic* probe selection — routing to different interpretive circuits depending on the input regime — and I think the most promising next step is validating probe-based monitors against steering interventions (your third project), which would close the loop between observing a property and actually controlling it.
+
+**Independent research I can point to.** Beyond industry work, I've run a self-directed research project from 2024 to now: a hybrid quantum-classical pipeline for link prediction on the Hetionet biomedical graph, comparing QSVC and VQC models against classical baselines (PR-AUC ~0.73, with the quantum variant beating them), targeting real IBM Quantum backends via Qiskit Runtime — with a live demo and public repo. I also built a quantum entropy source and validated it against NIST statistical test suites. That project shows what I do when I have a week and a question: design the experiment, ship the code, measure honestly, publish the demo.
+
+Flexibility is my default — I've deployed recommender systems, RAG, agent pipelines, and quantum ML, and I take direction from the problem, not the title. I can commit 40 hours/week for all eight weeks starting September 8, and I'm set up for Pacific-morning overlap. I'd be glad to be one of the six people doing real alignment work this fall.

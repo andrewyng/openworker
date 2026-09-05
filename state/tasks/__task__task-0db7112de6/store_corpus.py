@@ -1,62 +1,53 @@
-"""Store this week's corpus into local Qdrant (collection: default).
+"""Store 2026-08-31 weekly corpus into local Qdrant (collection: default).
 
-Schema mirrors existing point:
-  payload = {"document": str, "metadata": {"topic","arxiv_id","date","source"}}
+Schema mirrors prior runs (store_corpus.py):
+  payload = {"document": str, "metadata": {topic, arxiv_id, date, source:"arxiv-weekly"}}
 Vector: 384-dim MiniLM (fastembed) under name "fast-all-minilm-l6-v2".
-Duplicate check: scroll existing points -> skip if arxiv_id already present
-                 or if the title text is already in a stored document.
+
+Dedup: scroll existing points, skip if arxiv_id already present OR title text
+      already in a stored document. All 10 candidates are new vs the 11 stored
+      IDs (2608.24979..2608.27351), but we re-check defensively.
 """
-import json, urllib.request, uuid
-import fastembed
+import json, urllib.request, uuid, fastembed
 
 QDRANT, COLL, VECTOR_NAME = "http://localhost:6333", "default", "fast-all-minilm-l6-v2"
-DATE = "2026-08-20"
+DATE = "2026-08-31"
 
 T_QUANTUM   = "Quantum computing: algorithms, error correction, hardware, quantum ML"
 T_MATERIALS = "Materials science: DFT, ML interatomic potentials, crystal structure generation"
 T_MLSYSTEMS = "ML systems: inference efficiency, quantization, MoE architectures, long context"
 T_AGENTS    = "Agents: tool use, retrieval, evaluation, multi-agent systems"
 
-# (topic, arxiv_id, title, one-sentence finding in own words — all read 2026-08-20)
+# (topic, id, published_date, tag ON-FOCUS/ADJACENT, title, one-sentence finding, read 2026-08-31)
 PAPERS = [
-    (T_QUANTUM, "2608.18985", "RushHour: A Dynamically Reconfigurable Lattice-Surgery Architecture",
-     "Dynamic lattice surgery with a hardware-compiler co-design (RushHour ISA + Lattice Management Unit) lets one unified span cover the whole area/time trade-off of FTQC; on 6 state-of-the-art compilers it runs 86% of benchmarks where others need 1.2-3.5x larger chips and is 2.0-7.2x faster on space-constrained early-FTQC chips"),
-    (T_QUANTUM, "2608.18512", "Integer Linear Programming Decoder for Abelian and Non-Abelian Topological Codes",
-     "Formulating topological-code decoding as integer linear programming with anyon-fusion linear constraints handles arbitrary (abelian and non-abelian) topological orders including correlated error species, beating matching and clustering decoders on thresholds for Z2, Z3, and D4 topological phases"),
-    (T_QUANTUM, "2608.16857", "Fault-Tolerant Quantum Computation with Adversarial Errors",
-     "Proving fault-tolerance against an adaptive adversary corrupting N^{1-o(1)} qudits per round via a new family of subsystem product codes with large dimension/distance, low-weight checks, and transversal non-Clifford gates — resolving a key bottleneck toward quantum PCPs and demonstrating FTQC survives global worst-case non-Markovian noise"),
-    (T_QUANTUM, "2608.15760", "Machine Learning Approaches to Decoding Topological Quantum Codes",
-     "A survey chapter framing topological-code decoding as a learning problem: discriminative / generative / RL formulations, neural decoder building blocks, real-time constraints, and open challenges toward scalable fault-tolerant quantum computing"),
-    (T_MATERIALS, "2608.19041", "Universal Machine-learning Molecular Dynamics at the Speed of Empirical Potentials",
-     "DPA4C, a co-designed equivariant MLIP with compressed CUDA operators, spans a 49-fold parameter range; the largest variant matches MACE-Omat accuracy at ~100x higher measured throughput, and the most compact reduces the fastest existing universal MLIP's energy/force/stress errors by 61.4%/48.1%/34.3% at 1.92x its saturated throughput"),
-    (T_MATERIALS, "2608.17716", "Atomistic Structure Generation and Neural-Network Screening of Hard Carbons to Identify High-Capacity Sodium Storage",
-     "Combining universal ML interatomic potentials with the RAFFLE structure-generation framework to build 13,096 experimentally matched hard-carbon models (up to 4,378 atoms), then using a lightweight NN surrogate on frozen-potential descriptors plus geometric void features to identify candidates exceeding 800 mAh/g for sodium storage"),
-    (T_MATERIALS, "2608.15776", "ALKEMIE Agent: an autonomous platform for computational materials design",
-     "An agentic platform integrating retrieval-augmented generation, a materials-computation knowledge base, database-supported provenance, AI-assisted structure modeling, bounded task execution, and tool-calling iteration in a traceable control loop, demonstrated across recommendation, phonon, MLIP training, LAMMPS, AIMC, and active-learning screening tasks"),
-    (T_MATERIALS, "2608.15609", "Graph neural network prediction of temperature-dependent hydrogen diffusion and thermal conductivity tensors of tungsten",
-     "A rotation-equivariant GNN surrogate reads a tungsten atomic configuration (with helium bubbles and grain boundaries) and returns full transport tensors — temperature-dependent hydrogen diffusion and thermal conductivity — in milliseconds, replacing hours of embedded-atom-method MD and anchoring the fusion-divertor transport prediction to first-principles ML potentials"),
-    (T_MLSYSTEMS, "2608.18261", "Cacheable by Design? Training Mixture-of-Experts Routers for Locality Against the Edge Memory-Bandwidth Wall: A Pre-Registered Negative Result with a Systems Measurement Study",
-     "Pre-registered negative result: training MoE router locality losses to reduce cache misses (up to 60% fewer) fails at every configuration to meet the <=1% perplexity gate, and a 340M rung shows the tax does not shrink with scale; a training-free cache-aware rerouting stack combined with the trained component achieves ~80% miss reduction at <=3.4% perplexity"),
-    (T_MLSYSTEMS, "2608.15602", "FluxBin: Flexible LUT-based Ultra-low-bit LLM Inference by Algorithm-Kernel Synergy",
-     "Binary-weight LLM inference via a look-up-table CUDA kernel fused with a row-column binary-algorithm co-design: up to 5.92x speedup and 10.19x energy reduction, with 70B-scale models deployable on a single A100 at 4x memory reduction and accuracy comparable to heavy fine-tuning methods"),
-    (T_MLSYSTEMS, "2608.16947", "A Constant-Competitive Algorithm for Dynamic Mixture-of-Experts Serving",
-     "Proves a Theta(1) competitive randomized algorithm for dynamic MoE serving (experts replicated across k+1 GPUs), improving on the prior O(sqrt(log k)) bound and closing a gap for the integral primal problem with a Lean 4 machine-checked proof of the full reduction"),
-    (T_MLSYSTEMS, "2608.13756", "The Integer Alibi: Localizing Cross-Kernel Divergence in INT8-Quantized LLM Inference",
-     "The core finding is that INT32 dot products are mathematically exact and bit-reproducible, so any end-to-end divergence between CUTLASS and Triton INT8 GEMM kernels must originate in scale application or output rounding, not in the accumulation itself; the paper presents a methodological framework for diagnosing this class of cross-kernel discrepancies at the bit level"),
-    (T_AGENTS, "2608.18554", "CentaurBench: Benchmarking LLM Capabilities on Augmenting vs. Automating Real-World Work Tasks",
-     "A unified framework where an assistant LLM guides a lower-capacity worker LLM across 7 economically grounded tasks: rankings in automation vs augmentation modes are only modestly correlated, and the automation winner loses on 5 of 7 augmentation tasks, showing that automation ability is an incomplete proxy for assistance quality"),
-    (T_AGENTS, "2608.18398", "LEDGER: Claim-to-Evidence Trace Graphs for Auditing LLM Agents",
-     "A layered tracing/review system that builds typed evidence-and-decision graphs over raw agent execution logs, grouping Trace Records into Evidence and Workflow Nodes and linking claims to their supporting actions, artifacts, and checks for evidence-centered audit of long-horizon tool-using agents"),
-    (T_AGENTS, "2608.17275", "When Agents Act on Web3: An Attack-Surface Survey of MCP, Skills, and Tool Calling",
-     "A survey of agent tool-calling (MCP/skills) on public blockchains argues that blockchain layer properties (irreversibility, signing authority, continuous autonomy, sequence-level composition) turn normally-recoverable agent failures into standing irrecoverable loss; maps the attack surface with a risk-matrix, and finds current protections stop fewer than 30% of attacks and model-level safety rejects fewer than 3% of risky calls"),
+    (T_AGENTS,  "2608.27969", "2026-08-28", "ON-FOCUS", "openJiuwen: Beyond Static Harnesses for Long-Horizon Coding Agents",
+     "An open-source agent harness built for composability (shared execution substrate plus Rail-based capability composition across single agents, delegated sub-agents, and Swarm Flow) and runtime adaptivity, where evolving runtime evidence dynamically rewrites context, feedback, and task control. Hits 82.6% on SWE-bench Verified and 87.19% on Terminal-Bench 2.1, exceeding the strongest selected official-leaderboard point estimates by 3.4 and 3.39 points - a live reference for building and maintaining a verifiable long-horizon coding harness."),
+    (T_AGENTS,  "2608.28497", "2026-08-28", "ON-FOCUS", "On the Maintenance and Co-evolution of Agent Plugins: An Empirical Study of Claude Code Plugin Marketplaces",
+     "Empirical study of 1,926 repos, 8,351 plugins, and 77,773 commits finds agent plugins are predominantly feature-driven with an OSS feature-commit rate twice that of traditional software, and that natural-language instruction files co-evolve with their implementation scripts at above-chance rates (78% functionally coupled) - a new maintenance-dependency class not seen in traditional software engineering."),
+    (T_AGENTS,  "2608.28447", "2026-08-28", "ON-FOCUS", "Learning to Use Tools: Reinforcement Learning for Tool-Integrated Mathematical Reasoning",
+     "Teaching an LLM calculator tool-calling via SFT then on-policy RL (RLOO/RLOO++/GRPO/DAPO) with only verifiable final-answer rewards on the Countdown task: tool integration cuts arithmetic and verification errors, and Tool-DAPO lifts pass@1 from 35.8% to 66.0%; includes a fresh 1,024-problem held-out benchmark with no training overlap."),
+    (T_AGENTS,  "2608.26385", "2026-08-26", "ON-FOCUS", "Why RAGs Hallucinate: Penalty-Aware Evaluation of Retrieval-Augmented Generation Systems with Knowledge-Gap Canaries",
+     "Shows volume-based scoring rewards guessing (answering everything outscores declining when knowledge is unavailable) and introduces penalty-aware scoring (correct +1, wrong -4, abstain 0) with knowledge-gap canaries and a retrieval/generation/abstention failure-attribution pipeline that reorders commercial RAG systems by roughly sixfold on canary-violation rates; all data released for audit."),
+    (T_MLSYSTEMS, "2608.28044", "2026-08-28", "ON-FOCUS", "Characterization of Request and Token Energy Costs for LLM Inference Workloads on GPU Platforms",
+     "Argues token-normalized energy is an incomplete serving metric because GPU energy accrues over the inference window: a decomposed model with fixed prefill, fixed setup cost, and per-token marginal energy shows output length and batching cut token energy while total request energy can rise, and MoE widens the dense-vs-MoE energy gap at low concurrency - so energy-aware serving should optimize request energy and token energy jointly."),
+    (T_MLSYSTEMS, "2608.28444", "2026-08-28", "ON-FOCUS", "Sliding-window beats linear attention",
+     "Shows post-training-free Sliding Window Attention with sinks performs as well as or better than post-trained Linear Attention across several LLMs, and massively outperforms it on long-context tasks (needle-in-haystack and BABILong at 2-10x) while needing no post-training and using less memory - arguing for switching to SWA to cut inference memory cost rather than retrofitting linear attention."),
+    (T_MLSYSTEMS, "2608.28003", "2026-08-28", "ON-FOCUS", "A Method for Layer Bit-Width Allocation in LLM Quantization via Performance Maximization Under a Quality-Degradation Constraint",
+     "Formulates per-layer quantization bit allocation for Gemma-3-1B in TensorRT-LLM as latency maximization under a quality-loss budget using a prior layer-sensitivity profile, finding short-context Attention quantization can actually slow execution while FFN and lm_head benefit, and reaching up to 19.1% latency reduction with negligible quality degradation."),
+    (T_MATERIALS, "2608.28100", "2026-08-28", "ADJACENT", "uMOF: A Universal Database, Benchmark, and Machine Learning Interatomic Potentials for Metal-Organic Frameworks",
+     "Releases the largest r2SCAN-D4 DFT dataset for MOFs (85,524 configs, 19,950 frameworks, 79 elements) plus a literature-mined 3,986-verified benchmark and two MACE-foundation universal MLIPs; on gas-adsorption enthalpies via Widom insertion they beat even MOF-specialized baselines trained on datasets up to three orders of magnitude larger, cutting error by more than 80% to within experimental uncertainty."),
+    (T_MATERIALS, "2608.26962", "2026-08-27", "ADJACENT", "Packora: Systematic Design for Generative Molecular Crystal Structure Prediction",
+     "A flow-based generative model jointly predicting atomic coordinates and lattice for molecular crystal structure prediction (multi-component and organometallic), evaluated with generation ranking to isolate generator quality. Achieves the best matched-budget coverage across six benchmarks, higher experimental-form recovery, and faster ranking convergence via cacheable pairwise reasoning and balanced pairwise/single representation scaling."),
+    (T_QUANTUM, "2608.26272", "2026-08-26", "ADJACENT", "Fault-tolerant quantum computation cannot be achieved with constant spacetime overhead",
+     "Proves an unavoidable logarithmic contribution to cumulative spacetime overhead for preserving quantum memory under general adaptive protocols even under an optimistic noise model, gives a positive-rate CSS code attaining the bound, and derives circuit-size bounds for subsystem spacetime codes - a fundamental resource limit on fault-tolerant quantum computing."),
 ]
 
-# ---- duplicate check: scroll existing corpus ----
-req = urllib.request.Request(f"{QDRANT}/collections/{COLL}/points/scroll",
-                             data=json.dumps({"limit": 200, "with_payload": True}).encode())
-points = json.load(urllib.request.urlopen(req))["result"]["points"]
+# dedup: scroll existing corpus
+req = urllib.request.Request(QDRANT + "/collections/" + COLL + "/points/scroll",
+                             data=json.dumps({"limit": 400, "with_payload": True}).encode())
+pts = json.load(urllib.request.urlopen(req))["result"]["points"]
 stored_arxiv, stored_docs = set(), []
-for p in points:
+for p in pts:
     d = p["payload"]
     aid = (d.get("metadata") or {}).get("arxiv_id")
     if aid:
@@ -66,63 +57,44 @@ for p in points:
     for tok in doc.split():
         if tok.startswith("arXiv:"):
             stored_arxiv.add(tok[6:])
-print(f"existing points: {len(points)}, arxiv ids: {len(stored_arxiv)}")
+print("existing points:", len(pts), "stored arxiv ids:", len(stored_arxiv))
 
-# ---- filter ----
 to_store, skipped = [], []
-for topic, aid, title, finding in PAPERS:
-    if aid in stored_arxiv:
-        skipped.append((aid, title, "arxiv_id already present"))
-    elif any(title.lower() in doc.lower() for doc in stored_docs):
-        skipped.append((aid, title, "title already present"))
+for topic, aid, date, tag, title, finding in PAPERS:
+    if aid in stored_arxiv or any(title.lower() in dl.lower() for dl in stored_docs):
+        skipped.append((aid, title, "duplicate"))
     else:
-        info = f"{title}. {finding}. arXiv:{aid}"
-        to_store.append({
-            "id": str(uuid.uuid4()),
-            "payload": {
-                "document": info,
-                "metadata": {"topic": topic, "arxiv_id": aid, "date": DATE, "source": "arxiv-weekly"},
-            },
-        })
+        info = title + ". " + finding + ". arXiv:" + aid
+        to_store.append({"id": str(uuid.uuid4()),
+                         "payload": {"document": info,
+                                     "metadata": {"topic": topic, "arxiv_id": aid,
+                                                  "date": date, "source": "arxiv-weekly"}}})
 
 if skipped:
     print("SKIPPED (duplicate):")
     for a, t, r in skipped:
-        print(f"  {a} {t} — {r}")
-else:
-    print("no duplicates found")
+        print("  ", a, t, r)
 
 if not to_store:
-    raise SystemExit("nothing to store — all 15 were duplicates; aborting without changes")
+    raise SystemExit("nothing to store - all duplicates; aborting")
 
-# ---- embed + upsert ----
-# NOTE (discovered 2026-08-20): on this Qdrant 1.19.0 build the POST
-# /collections/<c>/points upsert endpoint is a no-op shim (returns
-# "ok" with empty result, nothing persists). The PUT /collections/<c>/points
-# endpoint with the standard {"points":[...]} body is the real one.
+# embed + PUT upsert
 model = fastembed.TextEmbedding(model_name='sentence-transformers/all-MiniLM-L6-v2')
 vectors = list(model.embed([t["payload"]["document"] for t in to_store]))
-body = json.dumps({
-    "points": [
-        {
-            "id": t["id"],
-            "vector": {VECTOR_NAME: [float(x) for x in v]},
-            "payload": t["payload"],
-        }
-        for t, v in zip(to_store, vectors)
-    ],
-    "wait": True,
-}).encode()
-req = urllib.request.Request(f"{QDRANT}/collections/{COLL}/points", data=body, method="PUT",
+body = json.dumps({"points": [
+    {"id": t["id"], "vector": {VECTOR_NAME: [float(x) for x in v]}, "payload": t["payload"]}
+    for t, v in zip(to_store, vectors)], "wait": True}).encode()
+req = urllib.request.Request(QDRANT + "/collections/" + COLL + "/points", data=body, method="PUT",
                              headers={"Content-Type": "application/json"})
-resp = json.load(urllib.request.urlopen(req))
-print(f"upsert response: {resp}")
+resp = json.load(urllib.request.urlopen(req, timeout=60))
+print("upsert response:", json.dumps(resp)[:300])
 
-# ---- verify ----
-req = urllib.request.Request(f"{QDRANT}/collections/{COLL}/points/scroll",
-    data=json.dumps({"filter": {
-        "must": [{"key": "metadata.source", "match": {"value": "arxiv-weekly"}}]
-    }, "with_payload": True, "limit": 200}).encode())
-stored_now = json.load(urllib.request.urlopen(req))["result"]["points"]
-this_run = [p for p in stored_now if (p["payload"].get("metadata") or {}).get("date") == DATE]
-print(f"arxiv-weekly points now: {len(stored_now)}; this run: {len(this_run)}")
+# verify
+req = urllib.request.Request(QDRANT + "/collections/" + COLL + "/points/scroll",
+    data=json.dumps({"filter": {"must": [{"key": "metadata.source", "match": {"value": "arxiv-weekly"}}]},
+                     "with_payload": True, "limit": 400}).encode())
+now = json.load(urllib.request.urlopen(req))["result"]["points"]
+this_run = [p for p in now if (p["payload"].get("metadata") or {}).get("date") == DATE]
+ids_now = [p["payload"]["metadata"]["arxiv_id"] for p in this_run]
+print("arxiv-weekly points now:", len(now), "this run stored:", len(this_run))
+print("this-run IDs:", ", ".join(ids_now))

@@ -51,6 +51,14 @@ won't clash with a running `npm run dev` on 5173) and reuses it if already up.
   automation ("Daily AI News") with a running run — `POST .../run` appends a run, `PATCH`/`DELETE`
   toggle and remove.
 
+- **Seeded transcripts**: every session's `GET /v1/sessions/{id}/messages` answers `[]`, so
+  reopening starts blank. `seedSessionMessages(page, sessionId, messages)` (exported from
+  fixtures) registers a later, winning route that stages full replayed history for one
+  session — tool_calls + `role:"tool"` results (wired by `tool_call_id`), `_display`
+  sidecars, `reasoning`, `notice` markers, connector `source` messages. Use it to assert
+  the reopen path (`itemsFromMessages`) — replayed step groups, connector cards, tail-error
+  Retry — which live echo-driving can't reach. See `seeded-history.spec.ts`.
+
 ## Adding a spec
 
 ```ts

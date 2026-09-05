@@ -1,76 +1,84 @@
-# KB Ingest Run — 2026-08-28
+# KB Ingest Run — 2026-08-31
 
 **Job:** Knowledge base — ingest yesterday's findings
-**Status:** Completed. 13 new points stored; collection now at **21**. 0 left behind budget.
+**Status:** Completed. 10 new points stored; collection now at **41** (was 31). 0 left behind budget.
 
-## What was done
-- Located 5 fresh automation outputs from the last 24h (today is 2026-08-28): papers, breakage,
-  jobs, morning-briefing, repo-activity. Read all in full.
-- FOCUS.md (week of 2026-08-24) carried forward: ON-FOCUS on OpenEvolve Phase 3 QM/chemistry,
-  the unattended-fleet question, the job/grant pipeline, and the workstation stack; ADJACENT capped at 3.
-- Dedup via Qdrant HTTP `POST /collections/default/points/query` (cosine 0.72) followed by
-  **identifier-aware re-check** — see the important caveat below.
-- fastembed 0.8.0 (`BAAI/bge-small-en-v1.5`, 384-dim) for embedding. MCP qdrant tools not in this
-  session's toolset, so the direct HTTP path was used.
+## Context (first run since 08-28)
+Read 7 fresh automation outputs (all dated 2026-08-31), all carried forward from the 08-28 ledger:
+- `papers-2026-08-31.md` — 3 ON-FOCUS papers + 2 ADJACENT
+- `breakage-2026-08-31.md` — ollama v0.33.2 + legacy-rocm-build #6522
+- `jobs-2026-08-31.md` — MATS Residency; Horizon 2027 CLOSED
+- `morning-briefing-2026-08-31.md` — Nepal flood + Egypt bank action
+- `corpus-2026-08-31.md` — arXiv weekly job
+- `repo-activity-2026-08-31.md` — 0 new (GitHub gateway down, 4th run)
+- `grants-2026-week-36.md` — Corrigibility Research Fund re-open
 
-## ⚠️ Important dedup caveat (this run's real lesson)
-My first pass ran all 13 candidates through the mandated find-first dedup at cosine 0.72 and
-reported 10 as "duplicates." They were **false positives**, not real dups. The collection was
-only 8 points (from 08-27), so each candidate top-matched a *different* stored point on 0.72–0.84
-cosine — OSTRE paper vs the stored 2608.25896 Trotterization paper, the 4 job candidates vs the
-stored UnitedHealthcare job, unsloth vs the stored ollama release. **None shares an identifier
-with a stored point.** I re-ran with identifier-aware dedup (skip only if a live hit contains my
-candidate's arXiv id / release tag / company+role) and **stored all 10**.
+## ⚠️ Important: the corpus job already stored 10 points today
+The **arXiv weekly corpus job** (task-0db7112de6, persona carries only github+filesystem MCP)
+ran earlier today and **stored 10 papers to Qdrant itself** via HTTP, growing the collection
+**21 → 31**. Its IDs include **2608.28444** (Sliding-window attention), which is ALSO listed in
+the 08-31 `papers` file — a cross-file duplicate. The mandated find-first + identifier-aware
+dedup correctly caught it: **2608.28444 was NOT re-stored** by this run. The `papers` ADJACENT
+item 2608.28490 (security survey) was *not* in the corpus set, so it was stored here.
 
-Net: on a small collection cosine 0.72 is too loose — for THIS job, identifier match is the
-reliable near-duplicate test. No real duplicate was ever stored, and nothing false was lost.
+## Stores this run (10; collection 31 → 41)
 
-## Stores this run (13; collection 8 → 21)
-
-ON-FOCUS:
-- OSTRE — Find Rows & Decode for quantum expander codes (arXiv:2608.27211) — QEC *decode*-cost
-  algorithmic result, the load-bearing half of the OpenEvolve Phase 3 QM-budget question.
-- Evolution Strategies beat GRPO via broader reasoning coverage (arXiv:2608.27351) — ES ≠ cheaper
-  GRPO; sparse, forgetting-free, lower-memory reasoning post-training.
-- Circuit Condensation (arXiv:2608.27254) — post-train to concentrate a behavior's circuit
-  8.1× smaller (up to 316×); the weight update, not the search, does the shrinking.
-- AgentFold (arXiv:2608.26747) — real-world analogue of OpenEvolve's self-improving-agent loop
-  for molecular model design; structured memory (successes AND failures) is the loop precondition.
-- HarnessLens (arXiv:2608.27311) — budget-aware harness-evolution loop; structure around the
-  model is the load-bearing lever.
-- unsloth v0.1.804-beta shipped (adapter-additive, no new gfx1151 break) — first new unsloth
-  release stored this job; re-affirmed standing reinstall guardrail.
-- UnitedHealthcare Sr AI/ML Engineer (NEW top match, 08-28 run 1).
-- Laurel Applied AI Engineer (strong reach, 7+yr gate).
-- CHEQ AI Engineer (near-1:1 GCP stack, almost certainly in-office Tel Aviv).
-- Horizon AI-for-Science Fellowship — 2026 cycle closed, watch next cycle (best match for Phase 3).
+ON-FOCUS (7):
+- **2608.28571** Learning to Decode Concatenated Quantum Codes w/ Hierarchical Message Passing —
+  neural QEC decoder doubles the [[15,7,3]] Hamming pseudo-threshold 6.5%→12.3%. The load-bearing
+  *cost* half of the OpenEvolve Phase-3 QM-budget question, now with a concrete ~12% threshold.
+- **2608.28576** Size-Weight Frontier for Synthetic-Augmented Inference — coverage-guaranteed
+  weighting of synthetic data ("weight it, don't pile it on").
+- **2608.28541** Code World Models: Enclosed Mode Is a Gauge Choice — a model accepted by a
+  sampling gate can be exactly right on the reachable query set and arbitrary beyond it. Strongest
+  formalization yet of the OpenWorker FrontierChallenge/Phantom-Gains trust gap.
+- **ollama v0.33.2** — macOS/Claude-proxy housekeeping release, first since v0.33.1; no ROCm/Linux
+  change, not a new break vector on the gfx1151 box.
+- **legacy-rocm-build #6522** — 2nd independent AMD-triage report of gfx1151 AsyncEventsLoop
+  100%-CPU-spin, same class as TheRock #7051 (corroborates).
+- **MATS Residency Winter 2027** — only genuinely fresh job find: no-PhD AI-safety residency,
+  ~$6.4k/mo + up to $16k/mo compute, window Aug15–Oct31 2026 AoE; real gate is the 12-week physical
+  Berkeley/London cohort.
+- **Corrigibility Research Fund** — re-opened (since a prior digest closed it Aug 23), rolling,
+  no form, email apply, closes Oct 31 2026.
 
 ADJACENT (cap 3):
-- LLMs design near-optimal OR algorithms (arXiv:2608.27296).
-- US weighing 7.5% tariff on Chinese goods over "overcapacity" (morning briefing).
-- Cambridge ERA:AI Fellowship Winter 2027 reopened.
+- **2608.28490** LLM-Based Agents for Software & Systems Security — systematic review; the "auditable
+  authority" gap is exactly the trust-and-governance hinge the RSI thread has been converging on.
+- **Nepal glacier-triggered flash-flood disaster** — ~800 dead, ~85 US citizens missing.
+- **US restricts UAE ops of Egypt's Banque Misr** over Iran facilitation — threads into the carried
+  "Operation Economic Outcast" Iran thread (not a new escalation).
 
-## State changes carried forward
-- **Horizon 2027 Fellowship** — still OPEN, deadline **Aug 30 2026, 11:59pm AoE** (~1 day out from
-  08-28). Time-critical — closes tomorrow. Still drafts-only, zero applications sent.
-- **Ollama** — 0.33.1 was stored 08-27; 08-28 confirms prerelease phase is *over* (0.33.1 final +
-  0.33.2-rc0). Affects LibreChat. No new store.
-- **unsloth** — new release first stored this run (v0.1.804-beta).
-- **repo-activity gateway** — GitHub MCP gateway unreachable **3rd consecutive run**; 0/10 repos.
-- **workstation-stack** — FOCUS.md's latest commit still 2026-08-21 (~8 days, on the stalled line).
-- **dcode-stack** (~12 days) and **liaison-agentSystem** (~11 days) — both stalled, API-unverifiable.
+ADJACENT items left out (over cap of 3): India–Russia gasoline flow (India shipping ~1M barrels);
+grants-ADJACENT items BlueDot Impact, Iliad RFP, IBM Quantum Credits.
 
-## Sources / non-findings
-- `repo-activity-2026-08-28.md` → 0 (gateway down, 0/10 verifiable).
-- `morning-briefing-2026-08-28.md` → 2 net-new (tariff, Cambridge); ollama + Chinese open-weights
-  recorded as carried baseline, not re-reported.
-- The 8 pre-existing points are from 08-27 only — 08-24/08-26 (58 pts) remain unrecovered, the
-  data-loss incident flagged 08-27 is still open.
+## State changes carried forward (the ones that moved)
+- **Horizon 2027 Fellowship** — FIRST FLAGGED 2026-08-26/27 as "OPEN, ~3 days out"; **now CLOSED**
+  (deadline Aug 30 2026 11:59pm AoE has passed — today is the 31st). Drafts were carried 3 runs but
+  never submitted, so the 2027 window is **lost** for the applicant. Watch the 2028 cohort.
+- **repo-activity GitHub gateway** — **unreachable 4th consecutive run** (identical `fetch failed`;
+  08-24 was a different "Bad credentials" error). 0 of 10 repos.
+- **Tavily** — search backend down for a **5th consecutive run** (EAI_AGAIN); **Context7** also
+  started failing this run (`TypeError: fetch failed`). Breakage + corpus jobs ran via web_search +
+  direct GitHub/arXiv REST instead.
+- **dcode-stack** — recorded last activity 2026-08-27 (4 days quiet, not yet 7+); FOCUS moved it
+  from "went quiet" back to **Active** this week. **workstation-stack** — last activity 2026-08-29.
 
 ## Running total
-`curl -s http://127.0.0.1:6333/collections/default` → `points_count: 21` (was 8, +13).
+`curl -s http://127.0.0.1:6333/collections/default | head -c 300` → `points_count: 41` (was 31, +10).
+Collection `default`, named vector `fast-all-minilm-l6-v2`, 384-dim Cosine, `indexed_vectors_count: 0`
+(HNSW still lazy — retrieval verification done via scroll, not `/points/query`, which still rejects
+every vector shape).
+
+## Sources / non-findings
+- `repo-activity-2026-08-31.md` → 0 (GitHub gateway down, 4th consecutive run).
+- 2608.28444 (Sliding-window attention) → already stored by the corpus job today (not re-stored).
+- UnitedHealthcare / Laurel / CHEQ job matches — unchanged 08-28 carryover drafts, no store.
+- transformers v5.16.1 / llama.cpp v0.3.0 / OpenWorker v0.2.1 / unsloth v0.1.804-beta — unchanged.
+- TheRock #7051 — zero movement since 08-18, not re-stored.
 
 ## Deliverables
-- **Ledger:** `/home/iconbaypark2900/OpenWorker/knowledge/ingest/2026-08-28.md`
-- **Run data / scripts:** `ingest_kb_2026-08-28.json`, `ingest_kb_2026-08-28.py`,
-  `ingest_kb_append_2026-08-28.py` in this task workspace.
+- **Ledger:** `/home/iconbaypark2900/OpenWorker/knowledge/ingest/2026-08-31.md`
+- **Run data / script:** `ingest_kb_2026-08-31.json`, `store_2026-08-31.py` in the task workspace.
+- **Threads updated:** quantum-computing-ml-rsi-paper-watch (3 papers), automation-fleet (count
+  31→41), job-search (Horizon CLOSED + MATS), local-stack-breakage (#6522 + ollama v0.33.2).

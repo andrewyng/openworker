@@ -56,9 +56,9 @@ def test_gated_commands_always_ask(tmp_path, command):
     assert d.needs_user, f"{command!r} was denied outright instead of asking"
 
 
-@pytest.mark.parametrize("mode", [Mode.AUTO, Mode.CUSTOM, Mode.INTERACTIVE])
+@pytest.mark.parametrize("mode", [Mode.BYPASS_APPROVALS, Mode.CUSTOM, Mode.INTERACTIVE])
 def test_gate_holds_in_every_mode(tmp_path, mode):
-    """Including AUTO — an unattended automation is exactly when nobody is watching."""
+    """Including BYPASS_APPROVALS — an unattended automation is exactly when nobody is watching."""
     d = decide(engine(tmp_path, mode), "git push origin main")
     assert not d.allowed and d.needs_user
 

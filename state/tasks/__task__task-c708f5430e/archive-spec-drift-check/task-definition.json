@@ -1,0 +1,43 @@
+{
+  "title": "Spec drift check",
+  "instructions": "Audit my specs against their implementations and report drift.\n\nUSE SHELL WITH NATIVE PATHS. Previous runs called filesystem-directory_tree on\n~/dcode-stack/slices and produced no output at all for three consecutive runs. The filesystem\nMCP server sees this machine's home as /data/home, so that path does not resolve for it, and a\nscheduled run is confined to its own workspace besides. Read the code with shell - cat,\nsed -n, grep - and absolute /home/iconbaypark2900/... paths instead.\n\nSCOPE - the ten dcode-stack slices, each carrying a SPEC.md and its code:\n  ls /home/iconbaypark2900/dcode-stack/slices\n  (collision-probability, example-logstat, magnitude, modified-var, polars-mix,\n   polars-run-eval, purged-cv, refraction, shadow, trial-counter)\nThen read FOCUS.md. If it names a project ABOVE dcode-stack that carries spec files - agpack,\nat /home/iconbaypark2900/jabCreative/dataScience/agpack, was #1 for the week of 2026-08-31 -\naudit that project's specs FIRST and give dcode-stack whatever budget remains.\n\nMETHOD, per slice - read BOTH, always:\n  1. cat the SPEC.md.\n  2. cat the implementation it describes.\n  3. Compare: what the spec REQUIRES, what the code DOES, whether they agree.\n\nFAIL CLOSED. If you could not read a file, that slice is UNKNOWN, not passing. An unverified\nclaim of conformance is worse than saying you could not check, because it gets trusted.\n\nPRIORITISE the invariants these specs care about, which are mostly about silent failure:\n  - \"malformed input MUST be fatal, never silently coerced or skipped\"\n  - guards that must not be silently dropped\n  - values that must raise rather than be coerced\n\nBUDGET: at most 20 shell calls. Cover as many slices as that allows and LIST THE ONES YOU DID\nNOT REACH. Partial coverage stated honestly beats full coverage claimed.\n\nOUTPUT: write spec-drift-$(date +%F).md - take the date from the shell, never from memory -\nwith three sections in this order: DRIFT (spec and code disagree), UNKNOWN (could not verify),\nOK (verified matching). DRIFT first. If you reach the budget having verified only three\nslices, that is a valid report; a run that writes nothing is not.\n\nCONTINUITY & FOCUS \u2014 two reads, before anything else:\n  1. read_file FOCUS.md in your workspace. Its first line names the week it was written for\n     (\"# FOCUS - week of YYYY-MM-DD\"). Tag each item ON-FOCUS (bears on a project or open\n     question named there) or ADJACENT. Lead with ON-FOCUS; cap ADJACENT at three and put\n     them last. If FOCUS.md is missing, say so in one line and treat everything as ADJACENT.\n     If the week it names is more than 8 days old, the Monday job that rewrites it did not\n     run: say so in one line at the top and treat its items as weak evidence, not current\n     priority. Missing fails loudly, stale fails silently, and stale is the one that happens.\n  2. list_files your workspace and read your own most recent prior output. Carry forward what\n     is still live, mark what has closed, and spend this run on what is genuinely NEW. Say\n     \"X, first flagged <date>, is now <state>\" rather than rediscovering X. Never re-report\n     an unchanged item as a fresh finding. The value is the running record, not a cold start.\n",
+  "schedule": {
+    "kind": "cron",
+    "cron": "30 5 * * 0",
+    "fire_at": null,
+    "timezone": "local"
+  },
+  "workspace": "/home/iconbaypark2900/OpenWorker/__task__task-c708f5430e",
+  "origin_surface": "cowork",
+  "origin_session_id": "",
+  "agent": "repo-ops",
+  "id": "task-c708f5430e",
+  "task_session_id": "__task__task-c708f5430e",
+  "model": null,
+  "notify_on_completion": true,
+  "notify_target": null,
+  "always_allowed_tools": [
+    "brain_note",
+    "brain_recall",
+    "grep",
+    "list_files",
+    "read_file",
+    "read_file_lines",
+    "remember",
+    "run_shell",
+    "todo_write",
+    "web_fetch",
+    "web_search",
+    "write_file"
+  ],
+  "always_allowed_commands": [],
+  "enabled": true,
+  "created_at": 1786987187.2849755,
+  "updated_at": 1788368208.077123,
+  "next_run": 1788687000.0,
+  "last_run": 1788103270.0705755,
+  "last_status": "incomplete",
+  "run_count": 4,
+  "max_runs": null,
+  "seen_runs_at": 0.0
+}

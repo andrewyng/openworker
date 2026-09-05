@@ -7,11 +7,21 @@
 // to a project, and only Builder had the structure to show it. The persona now DECLARES it
 // (`projects:` in the manifest), so the answer travels with the persona instead of being
 // inferred from a family that also governs unrelated engine behaviour.
+//
+// Union note (merge into origin/main): origin's manifest evolved to DECLARE the folder via
+// `requires_folder` (the legacy family/workspace-enum pair collapsed into this trait;
+// workspace-scratch-design.md). Keep both: a sidecar may send `projects` or `requires_folder`,
+// and a modern persona should work either way.
 export function isProjectScoped(p?: {
   workspace?: string;
   family?: string;
   projects?: boolean;
+  requires_folder?: boolean;
 }): boolean {
+  // A modern sidecar sends `requires_folder` (the current manifest trait); prefer it.
+  if (p && "requires_folder" in p) {
+    return p.requires_folder === true;
+  }
   // An older sidecar sends no `projects`; fall back to the pre-§16-reversal rule rather than
   // gating everything on a field it does not know about.
   return p?.projects ?? p?.family === "code";

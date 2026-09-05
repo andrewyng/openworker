@@ -1,13 +1,15 @@
 // Provider logo registry (UX-DECISIONS §39): official brand marks for the onboarding
-// provider gallery, vendored from the MIT-licensed lobe-icons set (same
-// bundled-asset posture as the connector registry — no CDN at runtime). Keys are
-// /v1/providers names; unknown names get no mark (the gallery falls back to a
-// neutral monogram). PROVIDER_ORDER is the gallery order — recognition first,
-// long tail behind the scroll fold.
+// provider gallery. Most are vendored from the MIT-licensed lobe-icons set; BytePlus is
+// its official website mark, used with permission. All stay bundled like connector assets
+// (no CDN at runtime). Keys are /v1/providers names; unknown names get no mark (the gallery
+// falls back to a neutral monogram). PROVIDER_ORDER is the gallery order — recognition
+// first, long tail behind the scroll fold.
 
 import anthropic from "./logos/anthropic.svg";
 import openai from "./logos/openai.svg";
 import gemini from "./logos/gemini.svg";
+import byteplus from "./logos/byteplus.svg";
+import volcengine from "./logos/volcengine.svg";
 import ollama from "./logos/ollama.svg";
 import bedrock from "./logos/bedrock.svg";
 import vertex from "./logos/vertex.svg";
@@ -26,7 +28,12 @@ import meta from "./logos/meta.svg";
 export const PROVIDER_LOGOS: Record<string, string> = {
   anthropic,
   openai,
+  // The subscription provider wears the same vendor mark — it's the same models,
+  // different billing (owner call 2026-08-21: no bare-letter monogram).
+  "openai-codex": openai,
   gemini,
+  ark: byteplus,
+  "ark-agent-plan-cn": volcengine,
   meta,
   ollama,
   bedrock,
@@ -47,6 +54,8 @@ export const PROVIDER_ORDER = [
   "anthropic",
   "openai",
   "gemini",
+  "ark",
+  "ark-agent-plan-cn",
   "meta",
   "ollama",
   "bedrock",

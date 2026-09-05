@@ -1,0 +1,30 @@
+{
+  "title": "TEMP \u2014 repo-ops build test on dcode-stack",
+  "instructions": "Work on the dcode-stack project in this workspace.\n\nThis is the whole project, not one file: it carries ten slices under `slices/`, each with\nits own SPEC.md, plus docs/ARCHITECTURE.md. Read them as a set.\n\nFollow your standing doctrine exactly:\n  - If there is no project map, or the one that exists is stale, THIS RUN IS THE SURVEY.\n    Find every spec markdown, read them, and write PROJECT_MAP.md at the repo root: each\n    spec, what it requires, and whether the code satisfies it \u2014 built / partial / missing /\n    drifted. Build nothing this run. A map is a finished run.\n  - If a current map exists, pick the next gap it lists \u2014 the one that unblocks the most\n    others \u2014 write the verifier first, and close that one gap.\n\nGround every status claim in something you actually read. \"built\" means you opened the code\nand it does what the spec says, not that a file with the right name exists. Where a spec and\nits implementation disagree, that is `drifted` and the disagreement is the finding.\n\nDo not push, do not deploy, do not touch git history. Committing your own work is fine.\n",
+  "schedule": {
+    "kind": "once",
+    "cron": null,
+    "fire_at": "2026-09-02T12:30:45",
+    "timezone": "local"
+  },
+  "workspace": "/home/iconbaypark2900/dcode-stack",
+  "origin_surface": "cowork",
+  "origin_session_id": "",
+  "agent": "repo-ops",
+  "id": "task-82a3e24f25",
+  "task_session_id": "__task__task-82a3e24f25",
+  "model": null,
+  "notify_on_completion": false,
+  "notify_target": null,
+  "always_allowed_tools": [],
+  "always_allowed_commands": [],
+  "enabled": true,
+  "created_at": 1788366525.72599,
+  "updated_at": 1788369065.76861,
+  "next_run": null,
+  "last_run": 1788366665.548301,
+  "last_status": "incomplete",
+  "run_count": 1,
+  "max_runs": null,
+  "seen_runs_at": 0.0
+}

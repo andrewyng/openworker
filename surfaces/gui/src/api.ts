@@ -104,6 +104,37 @@ export async function openWorkspace(
   return res.json();
 }
 
+/** UX-029 "Start in a temporary folder": create the conversation's temp dir at send time
+ * (git-init'd for code-family work). Idempotent. */
+export async function createTempWorkspace(
+  sessionId: string,
+  git = true,
+): Promise<{ ok: boolean; path?: string; git?: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/workspaces/temp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, git }),
+  });
+  return res.json();
+}
+
+/** UX-029 "Save as project…": move a session's temporary folder to a real location.
+ * Callers reconnect afterwards so the engine rebinds to the new path. */
+export async function saveSessionAsProject(
+  sessionId: string,
+  path: string,
+): Promise<{ ok: boolean; path?: string; error?: string }> {
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/save-as-project`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    },
+  );
+  return res.json();
+}
+
 export async function getTrustedWorkspaces(): Promise<WorkspaceCommandTrust[]> {
   const res = await fetch(`${httpBase()}/v1/workspaces/trusted`);
   return (await res.json()).workspaces ?? [];
@@ -138,6 +169,20 @@ export interface MessageSource {
   sender_name: string; // resolved; may equal the id
   ts: number; // epoch seconds
   text: string; // the RAW message (what the card shows)
+  // Board wakes only (connector === "board"): the digest as structured rows, so
+  // the BoardWakeCard renders collapsed summaries instead of re-parsing prose.
+  board?: { rows: BoardWakeRow[] };
+}
+
+// One digest event on a board wake. `note` is a UI-clamped excerpt of a hand-off
+// comment (the full text lives on the board).
+export interface BoardWakeRow {
+  kind: "assigned" | "claimed" | "moved" | "filed" | "comment" | "chat" | string;
+  item?: number | null;
+  title?: string;
+  actor?: string;
+  to?: string;
+  note?: string;
 }
 
 // A transcript message from GET /v1/sessions/{id}/messages. Kept permissive (open shape) because
@@ -185,6 +230,142 @@ export async function deleteSession(sessionId: string): Promise<{ ok: boolean; e
   return res.json();
 }
 
+// Agent teams (OPE-96): the session's board — items on the workspace-keyed space.
+export interface BoardItem {
+  id: number;
+  title: string;
+  description: string;
+  criteria: string;
+  state: "open" | "in_progress" | "blocked" | "review" | "done" | "canceled" | string;
+  assignee: string;
+  creator: string;
+  refs: string[];
+  links: { kind: string; item: number }[];
+  // Blocked rows only: the latest blocker comment, clamped ("need tfvars…").
+  blocker?: string;
+}
+
+export interface Board {
+  space: string | null;
+  name: string;
+  items: BoardItem[];
+}
+
+export interface JournalCase {
+  case: string;
+  entries: number;
+  last_ts: string;
+}
+
+export async function getBoard(sessionId: string): Promise<Board> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/board`);
+  return res.json();
+}
+
+// One event in an item's merged timeline (the detail pane renders the item's
+// whole story: filed → assigned/claimed → moves → comments, with attachments).
+export interface BoardTimelineEvent {
+  seq: number;
+  ts: string;
+  actor: string;
+  kind: "created" | "assigned" | "claimed" | "moved" | "comment" | string;
+  to?: string;
+  assignee?: string;
+  body?: string;
+  refs?: string[];
+}
+
+export type BoardItemDetail = BoardItem & { timeline?: BoardTimelineEvent[] };
+
+export async function getBoardItem(
+  sessionId: string,
+  id: number,
+): Promise<BoardItemDetail | { error: string }> {
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/board/item?id=${id}`,
+  );
+  return res.json();
+}
+
+// Attachment bytes → an object URL for <img>. The module fetch wrapper carries
+// the sidecar token, which a bare <img src> cannot.
+export async function fetchBoardAttachment(
+  sessionId: string,
+  stored: string,
+): Promise<string | null> {
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/board/attachment?name=${encodeURIComponent(stored)}`,
+  );
+  if (!res.ok) return null;
+  return URL.createObjectURL(await res.blob());
+}
+
+// A pure note on an item — never changes state; the assignee hears it via its feed.
+export async function boardComment(
+  sessionId: string,
+  item: number,
+  body: string,
+): Promise<{ ok?: boolean; error?: string }> {
+  const res = await fetch(
+    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/board/comment`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item, body }),
+    },
+  );
+  return res.json();
+}
+
+export async function boardTransition(
+  sessionId: string,
+  item: number,
+  to: string,
+  comment = "",
+): Promise<BoardItem | { error: string }> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/board/transition`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ item, to, comment }),
+  });
+  return res.json();
+}
+
+export interface ChatMessage {
+  seq: number;
+  ts: string;
+  author: string;
+  author_role: "user" | "lead" | "worker" | string;
+  text: string;
+  mentions: string[];
+}
+
+export interface TeamChat {
+  enabled: boolean;
+  team_id?: string;
+  members: { name: string; persona: string; role: string }[];
+  messages: ChatMessage[];
+}
+
+export async function getTeamChat(teamId: string): Promise<TeamChat> {
+  const res = await fetch(`${httpBase()}/v1/teams/${encodeURIComponent(teamId)}/chat`);
+  return res.json();
+}
+
+export async function postTeamChat(teamId: string, text: string): Promise<ChatMessage | { error: string }> {
+  const res = await fetch(`${httpBase()}/v1/teams/${encodeURIComponent(teamId)}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  return res.json();
+}
+
+export async function getJournalCases(): Promise<JournalCase[]> {
+  const res = await fetch(`${httpBase()}/v1/teams/journal`);
+  return (await res.json()).cases ?? [];
+}
+
 export interface ArtifactInfo {
   path: string; // workspace-relative (the display/API identifier)
   abs_path?: string; // absolute — what "Copy path" copies
@@ -192,6 +373,9 @@ export interface ArtifactInfo {
   kind: "markdown" | "html" | "image" | "code" | "text" | string;
   size: number;
   modified_at: number;
+  // Which rail surface opened it — drives the viewer's breadcrumb ("Artifacts" vs
+  // "Files"). Absent = artifacts (UX-037).
+  origin?: "artifacts" | "files";
 }
 
 export interface ArtifactContent {
@@ -280,6 +464,10 @@ export interface McpServer {
   // "needs_auth" (no tokens yet) | "authorizing" (browser sign-in in flight)
   status: string;
   auth?: "oauth" | null;
+  // http server whose anonymous connect hit a 401/403 — offer OAuth sign-in.
+  auth_hint?: boolean;
+  // Epoch seconds of the last successful explicit Test (persisted server-side).
+  last_test_at?: number | null;
   last_error?: string | null;
   tool_count: number | null;
   config: Record<string, any>;
@@ -704,6 +892,11 @@ export interface ModelSettings {
   // Composer: show the context-window fill bar (default FALSE; absent → the chip shows
   // the session total). The usage popover keeps both numbers regardless.
   context_bar?: boolean;
+  // Auto-Approve mode (spec §1.5): the feature flag that offers the reviewer mode, and its
+  // shadow-eval sibling. Both default FALSE and are absent on older backends — the composer
+  // hides the Auto-Approve mode entry unless auto_approve is explicitly true.
+  auto_approve?: boolean;
+  auto_approve_shadow?: boolean;
   // Curated-matrix display names ({full id → "GLM-5.2 · via Together"}); custom models absent.
   model_labels?: Record<string, string>;
   // {full id → context window in tokens}, verified matrix entries only — drives the
@@ -778,6 +971,33 @@ export async function setContextBar(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ context_bar: shown }),
+  });
+  return res.json();
+}
+
+type AutoApproveResult = {
+  ok: boolean;
+  auto_approve?: boolean;
+  auto_approve_shadow?: boolean;
+  error?: string;
+};
+
+/** Toggle the Auto-Approve feature flag (spec §1.5); applies to the next session build. */
+export async function setAutoApprove(on: boolean): Promise<AutoApproveResult> {
+  const res = await fetch(`${httpBase()}/v1/settings/auto-approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ auto_approve: on }),
+  });
+  return res.json();
+}
+
+/** Toggle shadow evaluation (Part 6 step 3): the reviewer records but never decides. */
+export async function setAutoApproveShadow(on: boolean): Promise<AutoApproveResult> {
+  const res = await fetch(`${httpBase()}/v1/settings/auto-approve-shadow`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ auto_approve_shadow: on }),
   });
   return res.json();
 }
@@ -900,8 +1120,11 @@ export interface Persona {
   name: string;
   icon: string;
   tagline: string;
-  needs_workspace: boolean;
+  requires_folder: boolean; // folder gate — drives project-scoping
   builtin: boolean;
+  // Legacy fields retained (merge union): HEAD keyed scoping on these. origin/main's
+  // manifest evolved to `requires_folder` / `projects`; both are preserved so the GUI
+  // accepts either a legacy sidecar's family/workspace or the modern projects flag.
   family: string;
   workspace: string; // "git" | "project" | "deliverable" | "none" (legacy; family superseded it)
   // Sessions belong to a folder the user picks, and group under it in the sidebar.
@@ -914,6 +1137,11 @@ export interface Persona {
   enabled: boolean;
   surfaced: boolean;
   default: boolean;
+  // Distribution flag (ships:false = internal builds only) + settings-page group.
+  ships?: boolean;
+  group?: string; // "general" | "security"
+  version?: string;
+  installed_at?: string;
 }
 
 export interface PersonaConsent {
@@ -922,11 +1150,15 @@ export interface PersonaConsent {
   description: string;
   tools: string[];
   risk: string[];
-  connectors: boolean;
+  // "all" (general builtins) or the declared allowlist — [] means no connector access.
+  connectors: "all" | string[];
   mcp: string[];
   messaging: boolean;
   recommended_mode: string;
   recommended_models: string[];
+  recommends?: { kind: string; ref: string; reason: string; tier: string }[];
+  version?: string;
+  replaces?: { version: string; installed_at: string; capabilities_grew: boolean } | null;
   source: string | null;
   builtin: boolean;
 }
@@ -934,6 +1166,13 @@ export interface PersonaConsent {
 export async function getPersonas(): Promise<Persona[]> {
   const res = await fetch(`${httpBase()}/v1/personas`);
   return (await res.json()).personas;
+}
+
+/** Personas plus the build flag: `internal` builds may show unshipped coworkers + the Gallery. */
+export async function getPersonasIndex(): Promise<{ personas: Persona[]; internal: boolean }> {
+  const res = await fetch(`${httpBase()}/v1/personas`);
+  const body = await res.json();
+  return { personas: body.personas ?? [], internal: !!body.internal };
 }
 
 export async function updatePersona(
@@ -1012,8 +1251,21 @@ export async function getCloudGalleryDetail(slug: string): Promise<GalleryDetail
   return res.json();
 }
 
+/** Sharing v1 (OPE-7): zip a coworker's bundle into `dir`; the zip is the import format. */
+export async function exportPersona(
+  id: string,
+  dir: string,
+): Promise<{ ok: boolean; path?: string; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/personas/${encodeURIComponent(id)}/export`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dir }),
+  });
+  return res.json();
+}
+
 export async function installPersona(
-  body: { dir?: string; git_url?: string; gallery_slug?: string },
+  body: { dir?: string; git_url?: string; gallery_slug?: string; zip_b64?: string; filename?: string },
 ): Promise<{ ok: boolean; consent?: PersonaConsent[]; personas?: Persona[]; error?: string }> {
   const res = await fetch(`${httpBase()}/v1/personas/install`, {
     method: "POST",
@@ -1051,13 +1303,27 @@ export interface PersonaDetail {
   icon: string;
   tagline: string;
   description: string;
+  media: string[]; // bundle media/ screenshots, served via /v1/personas/{id}/media/{name}
+  builtin: boolean;
+  group: string;
   enabled: boolean; // persona on/off (shown in the picker)
+  surfaced: boolean;
+  default: boolean;
   tools: string[];
   recommended_models: string[];
   default_permission_mode: string;
-  workspace: string;
+  requires_folder: boolean; // folder gate (workspace-scratch-design.md)
   recommends: PersonaRecommendation[];
   default_connections: PersonaDefaultConnection[];
+}
+
+/** Fetch one bundle screenshot with launch auth and hand back an object URL. */
+export async function getPersonaMediaUrl(id: string, name: string): Promise<string> {
+  const res = await fetch(
+    `${httpBase()}/v1/personas/${encodeURIComponent(id)}/media/${encodeURIComponent(name)}`,
+  );
+  if (!res.ok) throw new Error(`media ${name}: ${res.status}`);
+  return URL.createObjectURL(await res.blob());
 }
 
 export async function getPersonaDetail(id: string): Promise<PersonaDetail> {
@@ -1445,6 +1711,29 @@ export async function setUnattended(
   return res.json();
 }
 
+// Auto-Approve metering (§1.7): per-session reviewer counts from the durable audit rows.
+export interface ReviewerBucket {
+  checks: number;
+  allow: number;
+  deny: number;
+  unsure: number;
+  tokens_in: number;
+  tokens_out: number;
+  // Cached-prefix share of the input, billed at ~10%. Without it the badge only ever
+  // showed the FRESH tokens — a fraction of what a check really processes.
+  cache_read: number;
+  cache_write: number;
+}
+export interface ReviewerStats {
+  live: ReviewerBucket;   // the mode actually deciding (Mode.AUTO_APPROVE)
+  shadow: ReviewerBucket; // shadow evaluation: recorded next to the human's own decisions
+}
+
+export async function getReviewerStats(sessionId: string): Promise<ReviewerStats> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${sessionId}/reviewer-stats`);
+  return res.json();
+}
+
 export async function getSettings(): Promise<ModelSettings> {
   const res = await fetch(`${httpBase()}/v1/settings`);
   return res.json();
@@ -1593,6 +1882,36 @@ export interface ProviderInfo {
   blurb?: string; // one-line note under the title ("Uses X's OpenAI-compatible API…")
   key_set_at?: string | null; // ISO date the key was last (re)saved — absent for env-only config
   last_used_at?: number | null; // epoch secs the provider last served a completion
+  // OAuth providers (auth === "oauth"): browser sign-in instead of a key form.
+  auth?: string | null;
+  signed_in?: boolean;
+  account?: string | null; // signed-in account label (email or id)
+  authorizing?: boolean;
+  last_error?: string | null;
+}
+
+// -- ChatGPT-subscription provider sign-in (OAuth; tokens never reach the GUI) ------
+export interface CodexAuthStatus {
+  signed_in: boolean;
+  account?: string | null;
+  authorizing: boolean;
+  last_error?: string | null;
+  authorize_url?: string | null;
+}
+
+export async function codexSignin(): Promise<{ ok: boolean }> {
+  const res = await fetch(`${httpBase()}/v1/providers/openai-codex/signin`, { method: "POST" });
+  return res.json();
+}
+
+export async function codexAuthStatus(): Promise<CodexAuthStatus> {
+  const res = await fetch(`${httpBase()}/v1/providers/openai-codex/status`);
+  return res.json();
+}
+
+export async function codexSignout(): Promise<{ ok: boolean }> {
+  const res = await fetch(`${httpBase()}/v1/providers/openai-codex/signout`, { method: "POST" });
+  return res.json();
 }
 
 export async function getProviders(): Promise<ProviderInfo[]> {
@@ -2157,7 +2476,13 @@ export class Session {
   constructor(sessionId: string, workspace: string, agent: string, handlers: Handlers) {
     const q = `?workspace=${encodeURIComponent(workspace)}&agent=${encodeURIComponent(agent)}`;
     this.ws = openWebSocket(`${wsBase()}/ws/session/${sessionId}${q}`);
-    this.ws.onmessage = (e) => handlers.onEvent(JSON.parse(e.data));
+    this.ws.onmessage = (e) => {
+      try {
+        handlers.onEvent(JSON.parse(e.data));
+      } catch {
+        /* malformed frame — ignore */
+      }
+    };
     this.ws.onopen = () => {
       this.flush();
       handlers.onOpen?.();
@@ -2198,9 +2523,20 @@ export class Session {
     this.send({ type: "approval", decision });
   }
 
+  /** §8.4 "Allow anyway": register a ONE-SHOT exact-action approval for a reviewer-denied
+   *  tool call. The caller follows up with a normal user message so the agent retries. */
+  allowAnyway(name: string, args: any) {
+    this.send({ type: "allow_anyway", name, arguments: args ?? {} });
+  }
+
   // Reply to a `request_directory` prompt: grant a folder (with access level) or decline.
   respondDirectory(granted: boolean, path?: string, writable?: boolean) {
     this.send({ type: "directory_response", granted, ...(path ? { path } : {}), writable: !!writable });
+  }
+
+  // Reply to a `request_tool` prompt: install the pinned build, or skip the check.
+  respondTool(approved: boolean) {
+    this.send({ type: "tool_response", approved });
   }
 
   // Reply to a `propose_plan` prompt: approve (choosing the execution mode) or reject with feedback.
@@ -2209,6 +2545,23 @@ export class Session {
       type: "plan_response",
       approved,
       ...(mode ? { mode } : {}),
+      ...(feedback ? { feedback } : {}),
+    });
+  }
+
+  respondTeam(approved: boolean, feedback?: string, enableChat?: boolean) {
+    this.send({
+      type: "team_response",
+      approved,
+      ...(feedback ? { feedback } : {}),
+      ...(enableChat !== undefined ? { enable_chat: enableChat } : {}),
+    });
+  }
+
+  respondItems(approved: boolean, feedback?: string) {
+    this.send({
+      type: "items_response",
+      approved,
       ...(feedback ? { feedback } : {}),
     });
   }
@@ -2245,4 +2598,44 @@ export class Session {
     this.ws.onclose = null;
     this.ws.close();
   }
+}
+
+// -- project bindings (pass 20 / UX-044) ---------------------------------------
+
+export interface ProjectMenu {
+  kind: "memory" | "board";
+  bound: string | null;
+  derived: { kind: "git" | "folder"; label: string; full: string; key: string } | null;
+  named: { name: string; key: string }[];
+}
+
+export async function getProjectMenu(sessionId: string, kind: "memory" | "board"): Promise<ProjectMenu> {
+  const r = await fetch(`${httpBase()}/v1/sessions/${sessionId}/project-menu?kind=${kind}`);
+  return r.json();
+}
+
+export async function setProjectBinding(
+  sessionId: string,
+  kind: "memory" | "board",
+  name: string | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const r = await fetch(`${httpBase()}/v1/sessions/${sessionId}/bindings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, name }),
+  });
+  return r.json();
+}
+
+export async function nameCurrentProject(
+  sessionId: string,
+  kind: "memory" | "board",
+  name: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const r = await fetch(`${httpBase()}/v1/sessions/${sessionId}/project-name`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, name }),
+  });
+  return r.json();
 }
