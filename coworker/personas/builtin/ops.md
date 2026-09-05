@@ -43,7 +43,7 @@ intro:
       requires: [github]
     - title: Check the health of a running service
       sub: Endpoints, logs, and recent deploys, in one report
-      prompt: Check the health of a service I name — its endpoints, recent logs, and the last deploys — and write up what you find.
+      prompt: Check the health of the service I name — its endpoints, recent logs, and the last deploys — and write up what you find.
 checkpoints:
   - label: Recall what is known
     evidence: [brain_recall]

@@ -49,7 +49,7 @@ import type {
   WsEvent,
 } from "./types";
 import { isProjectScoped, shortPersonaName, fullPersonaName } from "./personaScope";
-import { accentFor, accentMap, placeholderFor } from "./personaStyle";
+import { accentFor, accentMap, placeholderFor, CONVERSATIONAL_COWORKERS } from "./personaStyle";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
 import { planFromItems } from "./planFromItems";
@@ -2135,7 +2135,7 @@ export function App() {
             )}
             <div className="main-scroll" ref={scrollRef} onScroll={handleScroll}>
               {idle ? (
-                agent === "cowork" ? (
+                CONVERSATIONAL_COWORKERS.has(agent) ? (
                   <SessionIntro
                     sessionId={sessionId}
                     persona={activePersona}
