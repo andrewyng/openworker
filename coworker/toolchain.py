@@ -144,6 +144,11 @@ MANAGED: dict[str, ManagedTool] = {
                 sha256="2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a",
                 member="trivy",
             ),
+            "linux_arm64": Download(
+                url="https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-ARM64.tar.gz",
+                sha256="b94ce1976bbf3c15b514b605ee88be7c6d94a29be2302847ff01cb794d47aad5",
+                member="trivy",
+            ),
         },
     ),
     "osv-scanner": ManagedTool(
