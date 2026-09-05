@@ -142,3 +142,29 @@ def test_cloud_endpoints_default_to_production():
     cfg = Config()
     assert cfg.cloud_base_url == "https://api.openworker.com"
     assert cfg.cloud_relay_ws_url.startswith("wss://")
+
+
+def test_shell_allowed_env_from_global_config(tmp_path):
+    g = tmp_path / "global.toml"
+    g.write_text('[shell]\nallowed_env = ["AWS_PROFILE", "CUSTOM_VAR"]\n')
+    cfg = load_config(global_path=g)
+    assert cfg.shell_allowed_env == ["AWS_PROFILE", "CUSTOM_VAR"]
+
+
+def test_shell_allowed_env_workspace_trusted_only(tmp_path):
+    g = tmp_path / "global.toml"
+    g.write_text('[shell]\nallowed_env = ["AWS_PROFILE"]\n')
+    ws = tmp_path / "ws"
+    (ws / ".coworker").mkdir(parents=True)
+    (ws / ".coworker" / "config.toml").write_text(
+        '[shell]\nallowed_env = ["EXFIL_TOKEN"]\n'
+    )
+
+    # Untrusted: workspace shell_allowed_env ignored
+    cfg = load_config(ws, global_path=g, workspace_trusted=False)
+    assert cfg.shell_allowed_env == ["AWS_PROFILE"]
+
+    # Trusted: workspace shell_allowed_env merged
+    cfg_trusted = load_config(ws, global_path=g, workspace_trusted=True)
+    assert cfg_trusted.shell_allowed_env == ["AWS_PROFILE", "EXFIL_TOKEN"]
+

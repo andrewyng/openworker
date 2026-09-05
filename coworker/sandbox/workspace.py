@@ -49,10 +49,10 @@ class Workspace(ABC):
 
 
 class DirectWorkspace(Workspace):
-    def __init__(self, *, cwd: str | Path) -> None:
+    def __init__(self, *, cwd: str | Path, allowed_env: Optional[list[str]] = None) -> None:
         from ..tools.shell import LocalExecutor  # here, not at the top: tools.shell imports us
 
-        self._executor = LocalExecutor(cwd=cwd)
+        self._executor = LocalExecutor(cwd=cwd, allowed_env=allowed_env)
 
     @property
     def executor(self) -> Executor:
@@ -372,6 +372,7 @@ def open_workspace(
     toolchains: Optional[list] = None,
     extra_hosts: Optional[list] = None,
     start: bool = True,
+    allowed_env: Optional[list[str]] = None,
 ) -> Workspace:
     """The session's workspace for the configured provider. `credentials`: the machine's
     `sandbox_credentials` setting; the enabled entries are copied into the sandbox
@@ -385,7 +386,7 @@ def open_workspace(
     into the registry and onto the sandbox as a label."""
     name = provider_name(provider)
     if name == DIRECT:
-        return DirectWorkspace(cwd=cwd)
+        return DirectWorkspace(cwd=cwd, allowed_env=allowed_env)
     if name == RUNNER_LOCAL:
         from .providers.runner_local import RunnerLocalProvider
 

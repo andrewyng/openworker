@@ -152,12 +152,56 @@ class _BackgroundTask:
             pass
 
 
+# Ambient credential patterns scrubbed from inherited os.environ unless explicitly allowlisted
+_SENSITIVE_PREFIXES = ("AWS_", "AZURE_", "GITHUB_TOKEN", "GH_TOKEN")
+_SENSITIVE_SUBSTRINGS = (
+    "_API_KEY",
+    "_SECRET",
+    "_TOKEN",
+    "_PASSWORD",
+    "_PASSWD",
+    "_CREDENTIAL",
+)
+_SENSITIVE_SUFFIXES = ("_KEY", "_AUTH")
+
+
+def is_sensitive_env(name: str) -> bool:
+    """Return True if an environment variable name matches sensitive credential patterns."""
+    upper = name.upper()
+    if upper.startswith(_SENSITIVE_PREFIXES):
+        return True
+    if any(sub in upper for sub in _SENSITIVE_SUBSTRINGS):
+        return True
+    if upper.endswith(_SENSITIVE_SUFFIXES):
+        return True
+    return False
+
+
+def filter_ambient_env(
+    raw_env: dict[str, str] | os._Environ[str],
+    *,
+    allowed_env: Optional[set[str] | list[str]] = None,
+) -> dict[str, str]:
+    """Scrub ambient credentials from an inherited environment mapping.
+
+    Variables matching known sensitive patterns (AWS_*, *_API_KEY, *_SECRET_*, *_TOKEN,
+    etc.) are dropped unless explicitly listed in allowed_env.
+    """
+    allowed = set(allowed_env or [])
+    return {
+        k: v
+        for k, v in raw_env.items()
+        if k in allowed or not is_sensitive_env(k)
+    }
+
+
 class LocalExecutor(Executor):
     def __init__(
         self,
         *,
         cwd: str | Path,
         env: Optional[dict[str, str]] = None,
+        allowed_env: Optional[list[str] | set[str]] = None,
         shell_path: Optional[str] = None,
         default_timeout: float = _DEFAULT_TIMEOUT,
         # Memory safety net only (OPE-186): what the MODEL sees is bounded by the engine's
@@ -185,7 +229,7 @@ class LocalExecutor(Executor):
         if shell_path is None:
             shell_path = "powershell.exe" if self._is_windows else "/bin/bash"
         self._shell_path = shell_path
-        self._env = {**os.environ, **_NONINTERACTIVE_ENV, **(env or {})}
+        self._env = {**filter_ambient_env(os.environ, allowed_env=allowed_env), **_NONINTERACTIVE_ENV, **(env or {})}
         for extra in extra_path_dirs:
             path = self._env.get("PATH", "")
             if extra not in path.split(os.pathsep):
