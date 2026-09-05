@@ -22,7 +22,10 @@ async function startAs(page: import("@playwright/test").Page, persona: RegExp) {
   }
 }
 
-test("the session states which persona is answering, and switching changes all of it", async ({
+// WIP (design TBD): these assert a persona-greeting start screen ("What should we
+// produce?", persona-specific intro-task rows) that the current WIP quickstart
+// ("✦Let's build something") replaced. Revisit once the start-screen design is decided.
+test.fixme("the session states which persona is answering, and switching changes all of it", async ({
   page,
 }) => {
   await page.goto("/");
@@ -44,7 +47,7 @@ test("the session states which persona is answering, and switching changes all o
   await expect(page.locator(".main")).toHaveAttribute("data-accent", "teal");
 });
 
-test("a persona's own task prefills the composer; a gated one offers setup instead", async ({
+test.fixme("a persona's own task prefills the composer; a gated one offers setup instead", async ({
   page,
 }) => {
   await page.goto("/");

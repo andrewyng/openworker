@@ -3,6 +3,7 @@ import { test as base, expect, type Page } from "@playwright/test";
 // The app-wide /ws/events socket each page opened (UX-026 toast et al.) — specs
 // push server events through it via sendAppEvent below.
 const eventSockets = new WeakMap<Page, { send: (data: string) => void }>();
+const sessionSockets = new Map<Page, WebSocket>();
 
 /** Push an app-wide event exactly as the server would over /ws/events. Waits for
  * the GUI to have connected its socket first. */
@@ -11,6 +12,14 @@ export async function sendAppEvent(page: Page, obj: unknown): Promise<void> {
   const ws = eventSockets.get(page);
   if (!ws) throw new Error("the app never opened /ws/events");
   ws.send(JSON.stringify(obj));
+}
+
+/** Tear down the page's session WebSocket exactly the way a server SIGKILL would: the
+ * connection drops, the in-flight turn loses its live socket, and the UI's `onClose` fires
+ * the "Lost the connection" notice. Waits for the socket to exist first. */
+export async function killSessionSocket(page: Page): Promise<void> {
+  for (let i = 0; i < 50 && !sessionSockets.get(page); i++) await page.waitForTimeout(100);
+  sessionSockets.get(page)?.close();
 }
 
 // Hermetic API mock. Every /v1 request the GUI makes is fulfilled from the fixtures below (shapes
@@ -676,6 +685,14 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // as the lead (the active conversation IS the lead; workers hang off it).
     const sid = ws.url().split("/ws/session/")[1]?.split("?")[0] || "sess-lead";
     send("ready", sid === "resume-live-1" ? { running: true } : {});
+    sessionSockets.set(page, ws);
+    ws.onClose(() => {
+      sessionSockets.delete(page);
+      if (epicTimer) {
+        clearInterval(epicTimer);
+        epicTimer = null;
+      }
+    });
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
     let hadTurn = false; // a user_message landed — set_model is now a mid-session switch
@@ -689,6 +706,22 @@ export async function mockApi(page: import("@playwright/test").Page) {
           input: msg.text,
           ...(msg.skill ? { display: `/${msg.skill}${msg.text ? ` ${msg.text}` : ""}` } : {}),
         });
+        // (OPE-restart) the agent server restarts mid-turn: it gets a word out before its
+        // socket closes, so the live notice carries no Resume — only the persisted marker
+        // (replayed on reload) is resumable.
+        if (/kill the server/i.test(msg.text)) {
+          send("run_interrupted", { reason: "The agent server restarted while this run was working." });
+          return;
+        }
+        // (OPE-restart) a slow stream that never completes: each delta keeps the turn open
+        // so the socket can be torn down underneath it.
+        if (/stream the epic/i.test(msg.text)) {
+          epicTimer = setInterval(
+            () => send("assistant_delta", { text: "The epic scrolls ever onward\n" }),
+            200,
+          );
+          return;
+        }
         if (/trip the reviewer/i.test(msg.text)) {
           send("tool_proposed", { name: "run_shell", arguments: { command: "semgrep scan" } });
           send("tool_finished", {
