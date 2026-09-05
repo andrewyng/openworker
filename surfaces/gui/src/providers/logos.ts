@@ -60,6 +60,7 @@ export const PROVIDER_ORDER = [
   "ollama",
   "bedrock",
   "vertex",
+  "nexus",
   "openrouter",
   "fireworks",
   "together",

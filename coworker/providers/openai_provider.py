@@ -80,6 +80,63 @@ def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, An
     ]
 
 
+def _repair_invalid_tool_history(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Drop uncorrelatable legacy calls/results from an outbound-only copy.
+
+    Provider validation below prevents new corruption. This narrowly repairs sessions
+    saved by older builds so Retry works without rewriting their transcript/audit trail.
+    """
+    repaired: list[dict[str, Any]] = []
+    invalid_ids: set[str] = set()
+    for message in messages:
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            valid, invalid = [], []
+            for call in message.get("tool_calls") or []:
+                call_id = call.get("id") if isinstance(call, dict) else None
+                function = call.get("function") if isinstance(call, dict) else None
+                name = function.get("name") if isinstance(function, dict) else None
+                if (
+                    isinstance(call_id, str)
+                    and call_id.strip()
+                    and isinstance(name, str)
+                    and name.strip()
+                ):
+                    valid.append(call)
+                else:
+                    invalid.append(call)
+            if invalid:
+                valid_ids = {call["id"] for call in valid}
+                invalid_ids.update(
+                    call.get("id")
+                    for call in invalid
+                    if isinstance(call, dict)
+                    and isinstance(call.get("id"), str)
+                    and call.get("id")
+                    and call.get("id") not in valid_ids
+                )
+                message = dict(message)
+                if valid:
+                    message["tool_calls"] = valid
+                else:
+                    message.pop("tool_calls", None)
+        if message.get("role") == "tool":
+            call_id = message.get("tool_call_id")
+            if (
+                not isinstance(call_id, str)
+                or not call_id.strip()
+                or call_id in invalid_ids
+            ):
+                continue
+        repaired.append(message)
+    return repaired
+
+
+def _prepare_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return _strip_foreign_sidecars(_repair_invalid_tool_history(messages))
+
+
 _MAX_TOKENS_ERROR = "'max_tokens' is not supported"
 
 # Ceiling, not a spend target — same rationale as the Anthropic provider's default: a
@@ -145,6 +202,7 @@ class OpenAIProvider(ProviderClient):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         secrets: Any = None,
+        parallel_tool_calls: Optional[bool] = None,
     ):
         # The SDK client is built lazily on first use, NOT at construction. This lets an engine
         # be assembled before any key exists — the desktop app lets you enter the key in Settings
@@ -159,7 +217,15 @@ class OpenAIProvider(ProviderClient):
         self._api_key = api_key
         self._base_url = base_url
         self._secrets = secrets
+        # Provider-level compatibility default. None leaves the wire untouched; False is
+        # used by gateways whose streamed parallel-call metadata is not reliable. A caller
+        # can still override it explicitly in model settings.
+        self._parallel_tool_calls = parallel_tool_calls
         self.default_model = default_model
+
+    def _apply_tool_defaults(self, kwargs: dict[str, Any]) -> None:
+        if kwargs.get("tools") and self._parallel_tool_calls is not None:
+            kwargs.setdefault("parallel_tool_calls", self._parallel_tool_calls)
 
     def _ensure_client(self) -> Any:
         if self._client is None:
@@ -188,11 +254,12 @@ class OpenAIProvider(ProviderClient):
     ) -> AssistantTurn:
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": _strip_foreign_sidecars(messages),
+            "messages": _prepare_messages(messages),
             **settings,
         }
         if tools:
             kwargs["tools"] = tools
+        self._apply_tool_defaults(kwargs)
         kwargs.setdefault("max_tokens", DEFAULT_MAX_TOKENS)
         _pin_reasoning_effort(kwargs)
 
@@ -212,6 +279,7 @@ class OpenAIProvider(ProviderClient):
         text = getattr(message, "content", None)
         tool_calls = _parse_tool_calls(getattr(message, "tool_calls", None))
         text, tool_calls = _maybe_salvage_tool_calls(text, tool_calls, tools=tools)
+        _validate_tool_calls(tool_calls)
         return AssistantTurn(
             text=text,
             tool_calls=tool_calls,
@@ -234,7 +302,7 @@ class OpenAIProvider(ProviderClient):
     ):
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": _strip_foreign_sidecars(messages),
+            "messages": _prepare_messages(messages),
             "stream": True,
             # Usage on the final chunk (empty `choices`). Compat servers that reject
             # the option get a one-shot retry without it (_param_fix_retry).
@@ -243,6 +311,7 @@ class OpenAIProvider(ProviderClient):
         }
         if tools:
             kwargs["tools"] = tools
+        self._apply_tool_defaults(kwargs)
         kwargs.setdefault("max_tokens", DEFAULT_MAX_TOKENS)
         _pin_reasoning_effort(kwargs)
         client = self._ensure_client()
@@ -310,6 +379,7 @@ class OpenAIProvider(ProviderClient):
         text, tool_calls = _maybe_salvage_tool_calls(
             "".join(text_parts) or None, tool_calls, tools=tools
         )
+        _validate_tool_calls(tool_calls)
         yield StreamChunk(
             turn=AssistantTurn(
                 text=text,
@@ -324,7 +394,7 @@ class OpenAIProvider(ProviderClient):
 def _parse_tool_calls(raw_tool_calls: Any) -> list[ToolCall]:
     calls: list[ToolCall] = []
     for tc in raw_tool_calls or []:
-        function = tc.function
+        function = getattr(tc, "function", None)
         raw_args = getattr(function, "arguments", None)
         try:
             arguments = json.loads(raw_args) if raw_args else {}
@@ -333,9 +403,41 @@ def _parse_tool_calls(raw_tool_calls: Any) -> list[ToolCall]:
             # can return a tool-error so the model corrects itself.
             arguments = {"_raw": raw_args}
         calls.append(
-            ToolCall(id=getattr(tc, "id", ""), name=function.name, arguments=arguments)
+            ToolCall(
+                id=getattr(tc, "id", "") or "",
+                name=getattr(function, "name", "") or "",
+                arguments=arguments,
+            )
         )
     return calls
+
+
+def _validate_tool_calls(tool_calls: list[ToolCall]) -> None:
+    """Reject incomplete/ambiguous calls before the engine can execute or persist them.
+
+    OpenAI-compatible streamed deltas may omit id/name on continuation chunks, but the
+    fully accumulated call must contain both. A missing or duplicate id makes the result
+    impossible to correlate safely; guessing would risk executing the wrong function.
+    """
+    seen: set[str] = set()
+    for index, call in enumerate(tool_calls):
+        missing = []
+        if not isinstance(call.id, str) or not call.id.strip():
+            missing.append("tool_call_id")
+        if not isinstance(call.name, str) or not call.name.strip():
+            missing.append("function name")
+        if missing:
+            raise RuntimeError(
+                "Provider returned an incomplete tool call at index "
+                f"{index} (missing {' and '.join(missing)}). No tool was executed; "
+                "retry the turn."
+            )
+        if call.id in seen:
+            raise RuntimeError(
+                "Provider returned duplicate tool_call_id "
+                f"{call.id!r}. No tool was executed; retry the turn."
+            )
+        seen.add(call.id)
 
 
 # Some OpenAI-compatible backends — notably Ollama for several local models (qwen, etc.) —

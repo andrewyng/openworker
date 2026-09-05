@@ -12,7 +12,8 @@ Chat Completions path), `anthropic` (native Messages API via
 `AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `bedrock`
 (models in the user's own AWS account — Claude natively, everything else via Converse),
 `vertex` (the user's own GCP project — Gemini and Claude natively, open-weight via the
-MaaS endpoint), and `ollama` (local, OpenAI-compatible `/v1`).
+MaaS endpoint), `nexus` (Dappnode's OpenAI-compatible inference gateway), and `ollama`
+(local, OpenAI-compatible `/v1`).
 """
 
 from __future__ import annotations
@@ -201,7 +202,13 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     return OpenAIProvider(api_key="ollama", base_url=base_url)
 
 
-def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
+def _openai_compat(
+    vendor: str,
+    default_base_url: str,
+    env_key: Optional[str] = None,
+    *,
+    parallel_tool_calls: Optional[bool] = None,
+):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
     Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its
     env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a configured OpenAI
@@ -218,7 +225,11 @@ def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = 
             raise RuntimeError(
                 f"No {vendor} API key configured — add it in Settings ▸ Models."
             )
-        return OpenAIProvider(api_key=api_key, base_url=base_url)
+        return OpenAIProvider(
+            api_key=api_key,
+            base_url=base_url,
+            parallel_tool_calls=parallel_tool_calls,
+        )
 
     return build
 
@@ -262,6 +273,7 @@ def _compat(
     recommended_model: str,
     env_key: str,
     endpoint_help: str = "",
+    parallel_tool_calls: Optional[bool] = None,
 ) -> ProviderDescriptor:
     """Descriptor for an OpenAI-compatible vendor: key + a prefilled, editable endpoint."""
     vendor = title.split(" (")[0]
@@ -285,7 +297,12 @@ def _compat(
                 or f"Prefilled with {vendor}'s official endpoint; edit only for a regional or proxy variant.",
             ),
         ],
-        build=_openai_compat(vendor, base_url, env_key),
+        build=_openai_compat(
+            vendor,
+            base_url,
+            env_key,
+            parallel_tool_calls=parallel_tool_calls,
+        ),
         recommended_model=recommended_model,
         env_key=env_key,
         blurb=f"Uses {vendor}'s OpenAI-compatible API — the endpoint is prefilled, just add your key.",
@@ -643,10 +660,22 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="META_API_KEY",
         endpoint_help="Prefilled with the Meta Model API endpoint (public preview, US-only as of 2026-07).",
     ),
-    # Resellers: many labs' models behind one key, using THEIR model namespaces (the curated
+    # Gateways/resellers: many labs' models behind one key, using THEIR model namespaces (the curated
     # ids + display labels live in providers/matrix.py). TODO: add Groq here (+ its matrix
     # rows) once the current provider surface is tested — deliberately deferred to bound
     # how much needs verifying at once (owner call, 2026-07-04).
+    _compat(
+        "nexus",
+        "Dappnode Nexus",
+        base_url="https://nexus-api.dappnode.com/v1",
+        recommended_model="deepseek/deepseek-v4-flash",
+        env_key="NEXUS_API_KEY",
+        endpoint_help="Prefilled with Dappnode Nexus's OpenAI-compatible endpoint.",
+        # Live private/glm-5.2 probes (2026-08-13): Nexus streaming can omit the id
+        # and name of a call inside a parallel batch. Serial tool turns preserve full
+        # metadata and the engine naturally continues with the next call.
+        parallel_tool_calls=False,
+    ),
     _compat(
         "together",
         "Together AI",
@@ -935,12 +964,12 @@ def verify_provider_key(
     fields: Optional[dict[str, Any]] = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
-    """Validate a provider's credentials with one cheap call — usually list models.
-
-    Ark's Responses-compatible data plane does not document a `/models` probe, so its Test button
-    sends a non-persisted one-token Responses request instead. Callers pass the key directly so a
-    user can Test before saving. Never raises; returns {ok, error?}. Multi-field cloud providers
-    (Bedrock, Vertex) take their whole form via `fields`; everyone else uses api_key/base_url.
+    """Validate a provider's credentials with one cheap live call. Most providers expose an
+    authenticated model-list endpoint; Nexus and Ark do not, so their probes perform a
+    one-token completion (chat/completions for Nexus, Responses for Ark). Transient:
+    callers pass the key directly so a user can Test before saving. Never raises;
+    returns {ok, error?}. Multi-field cloud providers (Bedrock, Vertex) take their whole
+    form via `fields`; everyone else uses api_key/base_url.
     """
     import httpx
 
@@ -970,7 +999,26 @@ def verify_provider_key(
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
+        elif name == "nexus":
+            # Nexus's /v1/models catalog is public, so it cannot prove the submitted key works.
+            # Exercise the real authenticated inference path with the smallest useful request.
+            default_base = next(
+                (f.default for f in d.fields if f.key == "base_url" and f.default), ""
+            )
+            base = (base_url or "").strip().rstrip("/") or default_base.rstrip("/")
+            resp = httpx.post(
+                base + "/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": d.recommended_model,
+                    "messages": [{"role": "user", "content": "Reply OK"}],
+                    "max_tokens": 1,
+                    "stream": False,
+                },
+                timeout=timeout,
+            )
         elif name in ("ark", "ark-agent-plan-cn"):
+            # Ark's Responses-compatible data plane does not document a /models probe.
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""
             )

@@ -23,8 +23,9 @@
 #   APPLE_API_KEY_CONTENT        base64 App Store Connect API .p8 (notarytool)
 #   APPLE_API_KEY                the API key id
 #   APPLE_API_ISSUER             the API issuer id
-# When the secrets are absent (forks, scratch runs) the build degrades to unsigned —
-# installable via `xattr -cr`. Windows remains unsigned (Authenticode is a later step).
+# When the secrets are absent (forks, scratch runs) Tauri applies an ad-hoc signature —
+# installable after right-click → Open or `xattr -cr`. Windows remains unsigned
+# (Authenticode is a later step).
 
 name: Release
 
@@ -72,6 +73,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Validate fork channel and updater key configuration
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: python3 packaging/check_fork_policy.py
+
       - name: Set up the sidecar venv (.venv)
         # The build scripts expect a venv at .venv with the package + PyInstaller.
         # typer/tzdata are build-time-only (PyInstaller walks mcp.cli, which needs typer;
@@ -84,9 +90,8 @@ jobs:
           "$VPY" -m pip install -e ".[bedrock]" pyinstaller typer tzdata
           "$VPY" -c "import aisuite, coworker"  # fail fast if either import breaks
 
-      - name: npm ci
-        working-directory: surfaces/gui
-        run: npm ci
+      - name: Install npm dependencies (7-day quarantine)
+        run: bash packaging/npm_install_safe.sh
 
       - name: Build .dmg (macOS)
         if: runner.os == 'macOS'

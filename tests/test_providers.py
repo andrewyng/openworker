@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from coworker.providers import (
     AssistantTurn,
     ModelCapabilities,
@@ -247,8 +249,14 @@ def _chunk(content=None, tool_call=None, finish=None):
 
 class _StreamClient:
     def __init__(self, chunks):
+        self.calls = []
+
+        def create(**kwargs):
+            self.calls.append(kwargs)
+            return iter(chunks)
+
         self.chat = SimpleNamespace(
-            completions=SimpleNamespace(create=lambda **kwargs: iter(chunks))
+            completions=SimpleNamespace(create=create)
         )
 
 
@@ -276,6 +284,84 @@ def test_stream_accumulates_tool_calls():
     assert turn.tool_calls[0] == ToolCall(
         id="call_1", name="read_file", arguments={"path": "a.py"}
     )
+
+
+def test_stream_rejects_incomplete_parallel_tool_call():
+    valid = SimpleNamespace(
+        index=0,
+        id="call_1",
+        function=SimpleNamespace(name="read_file", arguments='{"path":"a.py"}'),
+    )
+    missing_metadata = SimpleNamespace(
+        index=1,
+        id=None,
+        function=SimpleNamespace(name=None, arguments='{"path":"b.py"}'),
+    )
+    provider = OpenAIProvider(
+        client=_StreamClient(
+            [
+                _chunk(tool_call=valid),
+                _chunk(tool_call=missing_metadata),
+                _chunk(finish="tool_calls"),
+            ]
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="missing tool_call_id and function name"):
+        list(provider.stream(model="private/glm-5.2", messages=[], tools=_TOOLS))
+
+
+def test_provider_can_disable_parallel_tool_calls_by_default():
+    client = _StreamClient([_chunk(content="ok"), _chunk(finish="stop")])
+    provider = OpenAIProvider(client=client, parallel_tool_calls=False)
+    list(provider.stream(model="private/glm-5.2", messages=[], tools=_TOOLS))
+    assert client.calls[0]["parallel_tool_calls"] is False
+
+    override = _StreamClient([_chunk(content="ok"), _chunk(finish="stop")])
+    provider = OpenAIProvider(client=override, parallel_tool_calls=False)
+    list(
+        provider.stream(
+            model="private/glm-5.2",
+            messages=[],
+            tools=_TOOLS,
+            parallel_tool_calls=True,
+        )
+    )
+    assert override.calls[0]["parallel_tool_calls"] is True
+
+
+def test_provider_repairs_legacy_tool_call_with_missing_metadata():
+    client = _FakeClient(_response(content="ok"))
+    provider = OpenAIProvider(client=client)
+    messages = [
+        {
+            "role": "assistant",
+            "content": "reading files",
+            "tool_calls": [
+                {
+                    "id": "",
+                    "type": "function",
+                    "function": {"name": "", "arguments": '{"path":"broken.md"}'},
+                },
+                {
+                    "id": "call_valid",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": '{"path":"good.md"}',
+                    },
+                },
+            ],
+        },
+        {"role": "tool", "tool_call_id": "", "content": "not executed"},
+        {"role": "tool", "tool_call_id": "call_valid", "content": "good"},
+    ]
+    provider.complete(model="private/glm-5.2", messages=messages)
+
+    sent = client.chat.completions.calls[0]["messages"]
+    assert [c["id"] for c in sent[0]["tool_calls"]] == ["call_valid"]
+    assert [m["tool_call_id"] for m in sent if m["role"] == "tool"] == ["call_valid"]
+    assert len(messages[0]["tool_calls"]) == 2  # canonical history stays intact
 
 
 # -- OpenAI-compatible vendor providers (Z AI, DeepSeek, Kimi, MiniMax, Qwen, xAI, Mistral) ------
@@ -512,7 +598,10 @@ def test_matrix_labels_and_custom_model_fallback():
     # Deliberately small: agent-capable current models only (owner call, 2026-07-04).
     # 60→65 (2026-08-24): the stealth ox-alpha preview slug tipped it; reclaim slack by
     # pruning retired entries before raising this again.
-    assert len(MATRIX) < 65
+    # Fork delta: +10 curated Nexus entries (verified against the live catalog
+    # 2026-08-08) raise the ceiling by the same amount; upstream's own pruning
+    # discipline still applies to the upstream portion of the matrix.
+    assert len(MATRIX) < 75
     assert all(e.caps.tools for e in MATRIX.values())
     # A custom (unlisted) reseller model falls back to the conservative default — usable,
     # but at the user's own risk (no parallel tool calls assumed).
@@ -534,6 +623,47 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
         # full ids in the matrix must round-trip: prefix + bare == matrix key
         base = next(f for f in d.fields if f.key == "base_url")
         assert base.default.startswith("https://")
+
+
+def test_nexus_descriptor_and_models_are_in_lockstep(monkeypatch):
+    """Dappnode Nexus is a first-class OpenAI-compatible gateway with its own key.
+
+    Keeping a separate provider profile prevents an OpenAI key from ever being sent to
+    Nexus and gives Nexus model ids their own routed namespace.
+    """
+    import pytest
+
+    from coworker.providers.matrix import models_for_provider
+    from coworker.providers.registry import build_provider_client, get_descriptor
+
+    descriptor = get_descriptor("nexus")
+    assert descriptor is not None and descriptor.needs_key
+    assert descriptor.title == "Dappnode Nexus"
+    assert descriptor.env_key == "NEXUS_API_KEY"
+    assert descriptor.recommended_model == "deepseek/deepseek-v4-flash"
+
+    endpoint = next(f for f in descriptor.fields if f.key == "base_url")
+    assert endpoint.default == "https://nexus-api.dappnode.com/v1"
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
+    monkeypatch.delenv("NEXUS_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="Dappnode Nexus"):
+        build_provider_client("nexus", {}, None)
+
+    provider = build_provider_client("nexus", {"api_key": "nx-test"}, None)
+    assert isinstance(provider, OpenAIProvider)
+    assert provider._api_key == "nx-test"
+    assert provider._base_url == endpoint.default
+    assert provider._parallel_tool_calls is False
+
+    curated = models_for_provider("nexus")
+    assert descriptor.recommended_model in curated
+    assert "private/glm-5.2" in curated
+    for model in curated:
+        caps = capabilities_for(f"nexus:{model}")
+        assert caps.tools and not caps.parallel_tool_calls and caps.streaming
+    custom = capabilities_for("nexus:private/future-model")
+    assert custom.tools and not custom.parallel_tool_calls and custom.streaming
 
 
 def test_foreign_sidecars_stripped_from_outbound_messages():
