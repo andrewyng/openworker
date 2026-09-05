@@ -53,6 +53,24 @@ def test_env_persists_across_calls(executor):
     assert "hello_world" in result["output"]
 
 
+def test_managed_bin_dir_is_on_path_from_spawn(tmp_path, monkeypatch):
+    """A tool the user approves mid-session must work by name in the ALREADY-running
+    shell (owner-hit 2026-08-14: freshly installed trivy needed a full-path retry). The
+    stable bin dir goes on PATH at spawn, before anything exists in it."""
+    import os as _os
+
+    from coworker import toolchain
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    ex = LocalExecutor(cwd=tmp_path, default_timeout=10)
+    try:
+        assert str(toolchain.bin_dir()) in ex._env["PATH"].split(_os.pathsep)
+        # User's own PATH entries stay ahead — their copies always win.
+        assert not ex._env["PATH"].startswith(str(toolchain.bin_dir()))
+    finally:
+        ex.close()
+
+
 def test_exit_code_captured(executor):
     assert executor.run(EXIT_OK)["exit_code"] == 0
     assert executor.run(EXIT_FAIL)["exit_code"] == 1
@@ -132,6 +150,25 @@ def _poll_output(reg, task_id, *, until_status=None, deadline=10.0):
             if until_status is None and not acc:
                 time.sleep(0.1)
                 continue
+            if until_status is not None:
+                # Output reads are incremental and the status can flip to its
+                # terminal value on the same tick the final chunk is still being
+                # drained into the task buffer. Drain the tail: consume anything
+                # already buffered greedily (no sleep), and only wait between
+                # *empty* reads, stopping once two consecutive reads yield nothing
+                # (robust to a one-tick gap between chunks). Bounded and cheap —
+                # the common case is a couple of reads, not a tight 2s poll.
+                grace_end = time.monotonic() + 0.5
+                empty_reads = 0
+                while empty_reads < 2 and time.monotonic() < grace_end:
+                    extra = reg.execute("shell_task_output", {"task_id": task_id})
+                    if extra["output"]:
+                        acc += extra["output"]
+                        res = extra
+                        empty_reads = 0
+                        continue  # more available now — keep draining, no sleep
+                    empty_reads += 1
+                    time.sleep(0.02)
             return acc, res
         time.sleep(0.1)
     return acc, res

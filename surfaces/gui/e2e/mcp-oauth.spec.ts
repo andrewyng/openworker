@@ -1,37 +1,37 @@
-// MCP OAuth quick-add (first server: Granola): the MCP tab offers a curated Connect
-// card; connecting adds the server, kicks off the browser sign-in ("signing in…"),
-// and the tab's poll flips the row to connected. Sign out returns it to needs_auth.
+// MCP OAuth quick-add (first server: Granola): the Custom · MCP group on the
+// Connectors page offers a curated Connect card; connecting adds the server, kicks
+// off the browser sign-in (Signing in…), and the poll flips the row to Live.
+// Sign out (detail page) returns it to Needs sign-in.
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
-async function openMcpTab(page) {
+async function openConnectors(page) {
   await page.goto("/");
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Connectors", exact: true }).click();
-  await page.getByRole("button", { name: "MCP servers", exact: true }).click();
 }
 
-test("granola: quick-add card → sign-in flow → connected → sign out", async ({ page }) => {
-  await openMcpTab(page);
+test("granola: quick-add card → sign-in flow → Live → sign out", async ({ page }) => {
+  await openConnectors(page);
 
-  // Curated card renders while granola isn't configured.
+  // Curated OFFER renders among the Available connectors while granola isn't
+  // configured (never inside Custom · MCP — a row there means a server you own).
   const preset = page.getByTestId("mcp-preset-granola");
   await expect(preset).toContainText("Granola");
   await expect(preset).toContainText("Meeting notes");
 
-  // Connect: adds the server with OAuth pending and starts the browser flow.
+  // Connect: adds the server, starts the browser sign-in, and lands STRAIGHT on
+  // the detail page (OPE-136: the connect-time tool review ceremony lives there).
   await preset.getByRole("button", { name: "Connect" }).click();
-  await expect(page.getByTestId("mcp-preset-granola")).toHaveCount(0);
-  const row = page.locator(".space-y-2 > div").filter({ hasText: "granola" }).first();
-  await expect(row).toContainText("signing in…");
+  const detail = page.getByTestId("mcp-detail-granola");
+  await expect(detail).toContainText("Signing in…");
 
-  // The 2s status poll flips the mock to connected with its 6 tools.
-  await expect(row).toContainText("connected", { timeout: 10_000 });
-  await expect(row).toContainText("6 tools");
-  await expect(row).toContainText("oauth");
+  // The status poll flips the mock to connected with its 6 tools.
+  await expect(detail).toContainText("Ready", { timeout: 10_000 });
+  await expect(detail).toContainText("6 tools");
 
-  // Sign out forgets tokens; the row needs auth again and offers Sign in.
-  await row.getByTestId("mcp-signout-granola").click();
-  await expect(row).toContainText("needs auth");
-  await expect(row.getByTestId("mcp-signin-granola")).toBeVisible();
+  // Sign out forgets tokens; the chip needs sign-in again.
+  await detail.getByTestId("mcp-signout-granola").click();
+  await expect(detail).toContainText("Needs sign-in");
+  await expect(detail.getByTestId("mcp-signin-granola")).toBeVisible();
 });

@@ -24,9 +24,12 @@ def capabilities_for(model: str) -> ModelCapabilities:
 
     # Ollama (local) models vary widely and many fake/mishandle parallel tool calls — assume
     # tools work (we only point at tool-capable models) but stay conservative otherwise.
+    # Vision is detected from common model naming conventions (-vl, vision, llava, etc.).
     if provider == "ollama":
+        _vision_patterns = ("-vl", "vision", "llava", "bakllava", "cogvlm", "minicpm-v")
+        has_vision = any(p in name for p in _vision_patterns)
         return ModelCapabilities(
-            tools=True, vision=False, parallel_tool_calls=False, streaming=True
+            tools=True, vision=has_vision, parallel_tool_calls=False, streaming=True
         )
 
     # Nexus routes many backends behind one OpenAI-compatible gateway. Live private-model

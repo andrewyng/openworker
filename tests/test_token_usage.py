@@ -7,6 +7,7 @@ SDK's response surface, dict events for Bedrock's Converse stream.
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import aisuite as ai
@@ -54,8 +55,13 @@ class _FakeAnthropicClient:
             self.kwargs = kwargs
             return events
 
-        self.messages = SimpleNamespace(create=create)
-        self.beta = SimpleNamespace(messages=SimpleNamespace(create=create))
+        @contextmanager
+        def stream(**kwargs):
+            self.kwargs = kwargs
+            yield SimpleNamespace(get_final_message=lambda: events)
+
+        self.messages = SimpleNamespace(create=create, stream=stream)
+        self.beta = SimpleNamespace(messages=SimpleNamespace(create=create, stream=stream))
 
 
 def test_anthropic_stream_captures_usage():

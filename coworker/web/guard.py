@@ -1,6 +1,6 @@
 """Address guard for URLs the model chooses.
 
-`web_fetch` and `browser_read_url` take a URL straight from the model, and the model's
+`web_fetch` and `browser_open_url` take a URL straight from the model, and the model's
 input is untrusted by design — it reads web pages, email and Slack messages, all of which
 are documented as "data, not instructions". A page that talks the agent into fetching
 `http://169.254.169.254/` or `http://127.0.0.1:11434/` turns a read-only research tool into

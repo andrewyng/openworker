@@ -9,6 +9,7 @@ dist/
 
 # Local secrets (live-smoke BYO keys) — never committed
 .env
+.claude/settings.local.json
 
 # OS/editor noise
 .DS_Store

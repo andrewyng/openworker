@@ -1,9 +1,10 @@
 """Native Anthropic provider — message/tool conversion, complete(), stream(). SDK-free:
-the fake client mimics the `anthropic` SDK's `messages.create` surface with SimpleNamespace
-objects, the same pattern test_providers.py uses for the OpenAI SDK."""
+the fake client mimics the `anthropic` SDK's `messages.create` / `messages.stream` surface
+with SimpleNamespace objects, the same pattern test_providers.py uses for the OpenAI SDK."""
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -19,8 +20,10 @@ from coworker.providers.anthropic_provider import (
 
 
 class _FakeClient:
-    """Records the kwargs passed to messages.create and returns a canned response
-    (or an event iterator when stream=True)."""
+    """Records the kwargs passed to messages.create / messages.stream and returns a
+    canned response. provider.stream() drives create(stream=True) → event iterator;
+    provider.complete() drives the messages.stream(...) context manager and reads
+    get_final_message()."""
 
     def __init__(self, response=None, events=None):
         self.kwargs: dict = {}
@@ -31,9 +34,14 @@ class _FakeClient:
                 return iter(events or [])
             return response
 
-        self.messages = SimpleNamespace(create=create)
+        @contextmanager
+        def stream(**kwargs):
+            self.kwargs = kwargs
+            yield SimpleNamespace(get_final_message=lambda: response)
+
+        self.messages = SimpleNamespace(create=create, stream=stream)
         # Fable/Mythos route through the beta endpoint (server-side refusal fallback).
-        self.beta = SimpleNamespace(messages=SimpleNamespace(create=create))
+        self.beta = SimpleNamespace(messages=SimpleNamespace(create=create, stream=stream))
 
 
 def _text_response(text="hello", stop_reason="end_turn"):

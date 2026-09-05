@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   deleteAllMemory,
   deleteMemory,
@@ -19,12 +20,13 @@ import { Toggle } from "./Toggle";
 // no scope vocabulary, no markdown, no files. Everything else memory does happens in
 // chat (toast §5.1, attribution §5.2).
 const CARD = "rounded-xl2 border border-line bg-panel";
-const FIELD_LABEL = "text-[12.5px] font-medium text-ink";
+const FIELD_LABEL = "text-[13px] font-medium text-ink";
 const FIELD_HELP = "text-[12px] text-muted mt-1.5 leading-relaxed";
 const BTN_ACCENT =
-  "text-[12.5px] px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
+  "text-[13px] px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
 
 export function MemorySection() {
+  const { t } = useTranslation();
   const [settings, setSettings] = useState<MemorySettings | null>(null);
   const [entries, setEntries] = useState<MemoryEntry[] | null>(null);
   // State-change copy (§5.3): shown under the toggle / list after an action.
@@ -53,55 +55,34 @@ export function MemorySection() {
     if (!settings) return;
     const next = await setMemorySettings({ enabled: !settings.enabled });
     setSettings(next);
-    setToggleMsg(
-      next.enabled
-        ? "Details you share from future conversations will be remembered, so I can be more helpful over time."
-        : "I'll stop remembering new things about you. What I already know is kept and still used — delete anything below you'd rather I forget.",
-    );
+    setToggleMsg(next.enabled ? t("memory.on_msg") : t("memory.off_msg"));
   };
 
   const wipeAll = async () => {
-    if (
-      !window.confirm(
-        "Delete everything that's been remembered about you?\n\n" +
-          "This can't be undone. Conversations you already have open still know what " +
-          "they knew — new conversations start with a clean slate.",
-      )
-    )
-      return;
+    if (!window.confirm(t("memory.wipe_confirm"))) return;
     await deleteAllMemory();
-    setListMsg(
-      "Everything I remembered has been deleted. New conversations start fresh; ones " +
-        "you already have open still know what they knew when they started.",
-    );
+    setListMsg(t("memory.wiped_msg"));
     refresh();
   };
 
   if (!settings || entries === null)
-    return <div className="text-[13px] text-muted">Loading…</div>;
+    return <div className="text-[13px] text-muted">{t("memory.loading")}</div>;
 
   return (
     <section>
-      <PanelHead
-        title="Memory"
-        sub="Your coworkers can remember useful things about you between conversations. Everything they know is listed here."
-      />
+      <PanelHead title={t("settings.tab.memory")} sub={t("memory.section_sub")} />
 
       {/* On/off — one switch, no other setup (§5.4). */}
       <div className={CARD + " p-4 mb-4"} data-testid="memory-toggle-card">
         <div className="flex items-center gap-3">
-          <Toggle checked={settings.enabled} onChange={toggleEnabled} title="Remember new things about you" />
+          <Toggle checked={settings.enabled} onChange={toggleEnabled} title={t("memory.toggle_title")} />
           <div className="min-w-0 flex-1">
-            <div className={FIELD_LABEL}>Remember new things about me</div>
-            <div className="text-[12px] text-muted mt-0.5">
-              Lasting preferences you mention in chat get saved and used in future conversations —
-              you'll see a small note each time, with one-tap Undo. Turning this off stops new
-              saves; anything already below is still used until you delete it.
-            </div>
+            <div className={FIELD_LABEL}>{t("memory.toggle_label")}</div>
+            <div className="text-[12px] text-muted mt-0.5">{t("memory.toggle_help")}</div>
           </div>
         </div>
         {toggleMsg && (
-          <div className="text-[12.5px] text-muted mt-3 pt-3 border-t border-line" data-testid="memory-toggle-msg">
+          <div className="text-[13px] text-muted mt-3 pt-3 border-t border-line" data-testid="memory-toggle-msg">
             {toggleMsg}
           </div>
         )}
@@ -111,32 +92,27 @@ export function MemorySection() {
           message ("what I already know is kept, delete it below") points here. */}
       <div className={CARD + " p-4 mb-4"} data-testid="memory-list-card">
         <div className="flex items-center gap-2">
-          <div className={FIELD_LABEL + " flex-1"}>What I've learned about you</div>
+          <div className={FIELD_LABEL + " flex-1"}>{t("memory.learned_title")}</div>
           {entries.length > 0 && (
             <button
               className="text-[12px] text-danger/80 hover:text-danger"
               data-testid="memory-delete-all"
               onClick={wipeAll}
             >
-              Forget everything…
+              {t("memory.forget_all")}
             </button>
           )}
         </div>
-        <div className={FIELD_HELP}>
-          Saved automatically from your conversations. Fix anything that's wrong — or delete it.
-          Edits and deletions apply to new conversations; ones you already have open keep what
-          they knew when they started.
-        </div>
+        <div className={FIELD_HELP}>{t("memory.learned_help")}</div>
         {listMsg && (
-          <div className="text-[12.5px] text-muted mt-2.5" data-testid="memory-list-msg">
+          <div className="text-[13px] text-muted mt-2.5" data-testid="memory-list-msg">
             {listMsg}
           </div>
         )}
         {entries.length === 0 ? (
           !listMsg && (
             <div className="text-[12px] text-muted mt-3" data-testid="memory-empty">
-              Nothing yet. When you mention a lasting preference in chat — or say "remember
-              that…" — it will show up here.
+              {t("memory.empty")}
             </div>
           )
         ) : (
@@ -162,6 +138,7 @@ function UserRulesCard({
   settings: MemorySettings;
   onSaved: (s: MemorySettings) => void;
 }) {
+  const { t } = useTranslation();
   const [draft, setDraft] = useState(settings.user_rules);
   const [savedMsg, setSavedMsg] = useState(false);
 
@@ -174,18 +151,13 @@ function UserRulesCard({
 
   return (
     <div className={CARD + " p-4"} data-testid="user-rules-card">
-      <div className={FIELD_LABEL}>Your instructions</div>
-      <div className={FIELD_HELP}>
-        Your coworkers follow these in every conversation.
-      </div>
+      <div className={FIELD_LABEL}>{t("memory.rules_title")}</div>
+      <div className={FIELD_HELP}>{t("memory.rules_help")}</div>
       <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         rows={4}
-        placeholder={
-          "I use a screen reader — no tables, describe any image\n" +
-          "Use DD-MM-YYYY for dates"
-        }
+        placeholder={t("memory.rules_placeholder")}
         data-testid="user-rules-input"
         className="w-full mt-2.5 px-3 py-2.5 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent resize-y leading-relaxed"
       />
@@ -196,13 +168,10 @@ function UserRulesCard({
           disabled={draft === settings.user_rules}
           data-testid="user-rules-save"
         >
-          Save
+          {t("memory.save")}
         </button>
         {savedMsg && (
-          <span className="text-[12.5px] text-muted">
-            Saved — applies to new conversations. Ones you already have open keep the
-            instructions they started with.
-          </span>
+          <span className="text-[13px] text-muted">{t("memory.rules_saved")}</span>
         )}
       </div>
     </div>
@@ -210,6 +179,7 @@ function UserRulesCard({
 }
 
 function MemoryRow({ entry, onChanged }: { entry: MemoryEntry; onChanged: () => void }) {
+  const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(entry.content);
 
@@ -243,10 +213,10 @@ function MemoryRow({ entry, onChanged }: { entry: MemoryEntry; onChanged: () => 
         />
         <div className="flex items-center gap-2.5 mt-1.5">
           <button className={BTN_ACCENT} onClick={() => void save()}>
-            Save
+            {t("memory.save")}
           </button>
-          <button className="text-[12.5px] text-muted hover:text-ink" onClick={() => setEditing(false)}>
-            cancel
+          <button className="text-[13px] text-muted hover:text-ink" onClick={() => setEditing(false)}>
+            {t("manage.cancel")}
           </button>
         </div>
       </div>
@@ -257,7 +227,7 @@ function MemoryRow({ entry, onChanged }: { entry: MemoryEntry; onChanged: () => 
       <div className="min-w-0 flex-1 text-[13px] leading-relaxed">{entry.content}</div>
       <button
         className="text-faint hover:text-ink shrink-0 mt-0.5"
-        title="Fix this"
+        title={t("memory.fix_tip")}
         data-testid={`memory-edit-btn-${entry.id}`}
         onClick={() => {
           setDraft(entry.content);
@@ -268,7 +238,7 @@ function MemoryRow({ entry, onChanged }: { entry: MemoryEntry; onChanged: () => 
       </button>
       <button
         className="text-faint hover:text-danger shrink-0 mt-0.5"
-        title="Delete this memory"
+        title={t("memory.delete_tip")}
         data-testid={`memory-delete-${entry.id}`}
         onClick={() => void remove()}
       >
