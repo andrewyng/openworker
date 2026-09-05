@@ -240,8 +240,18 @@ export function introFor(persona?: Persona, personaId?: string): PersonaIntro {
   };
 }
 
-/** The composer placeholder for a persona — the one string that used to say "coworker" for all. */
+/** The composer placeholder for a persona — the one string that used to say "coworker" for all.
+ *  Conversational coworker personas keep main's universal "Ask the coworker…" greeting on the
+ *  live chat composer (the contract main's family-gate e2e asserts); automation personas fall
+ *  through to their intro/manifest voice ("Describe the job…") — those never field a live chat,
+ *  they run on a schedule. */
+const CONVERSATIONAL_COWORKERS = new Set(["cowork", "ops", "security"]);
+
 export function placeholderFor(persona?: Persona, personaId?: string): string {
+  const id = (persona?.id || personaId || "").toLowerCase();
+  if (CONVERSATIONAL_COWORKERS.has(id)) {
+    return "Ask the coworker…  (drop or paste files)";
+  }
   return introFor(persona, personaId).placeholder;
 }
 

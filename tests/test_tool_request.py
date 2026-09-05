@@ -55,14 +55,7 @@ async def _run(engine) -> list:
 
 
 @pytest.mark.asyncio
-async def test_emits_tool_requested_and_reports_install(tmp_path, monkeypatch):
-    from coworker import toolchain
-
-    # The install card is only surfaced for platforms that have a pinned build; pin
-    # one so the contract is exercised regardless of the host arch (e.g. linux/arm64
-    # has no gitleaks build).
-    monkeypatch.setattr(toolchain, "_platform_key", lambda: "linux_amd64")
-
+async def test_emits_tool_requested_and_reports_install(tmp_path):
     async def requester(args, tool_call_id=None):
         assert args["name"] == "gitleaks"
         return {"installed": True, "path": "/tmp/gitleaks", "version": "8.30.1"}
@@ -79,8 +72,6 @@ async def test_declining_tells_the_agent_to_fall_back_openly(tmp_path, monkeypat
     """A refusal must not read as 'check done'. The tool result has to push the agent
     toward a disclosed fallback, which is the whole point of the contract."""
     from coworker import toolchain
-
-    monkeypatch.setattr(toolchain, "_platform_key", lambda: "linux_amd64")
 
     # Truly absent — otherwise the decline-time re-check (below) would find the dev
     # machine's real gitleaks and turn this into the user-provided-copy path.
@@ -107,7 +98,6 @@ async def test_decline_recheck_finds_a_copy_the_user_installed_themselves(tmp_pa
     the agent must be handed their copy's path, not a refusal."""
     from coworker import toolchain
 
-    monkeypatch.setattr(toolchain, "_platform_key", lambda: "linux_amd64")
     monkeypatch.setattr(toolchain, "resolve", lambda name: "/opt/homebrew/bin/gitleaks")
 
     async def requester(args, tool_call_id=None):

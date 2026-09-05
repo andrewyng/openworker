@@ -117,6 +117,11 @@ MANAGED: dict[str, ManagedTool] = {
                 sha256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb",
                 member="gitleaks",
             ),
+            "linux_arm64": Download(
+                url="https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_arm64.tar.gz",
+                sha256="e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080",
+                member="gitleaks",
+            ),
         },
     ),
     "trivy": ManagedTool(

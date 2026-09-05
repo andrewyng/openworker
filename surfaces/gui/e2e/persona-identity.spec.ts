@@ -40,7 +40,7 @@ test("the session states which persona is answering, and switching changes all o
   await expect(page.getByTestId("intro-task-health")).toBeVisible();
   await expect(page.getByTestId("intro-task-hubspot")).toHaveCount(0);
   await expect(page.getByTestId("composer-persona")).toHaveText("Ops");
-  await expect(page.getByPlaceholder(/Describe the incident/)).toBeVisible();
+  await expect(page.getByPlaceholder(/Ask the coworker/)).toBeVisible();
   await expect(page.locator(".main")).toHaveAttribute("data-accent", "teal");
 });
 
@@ -55,7 +55,7 @@ test("a persona's own task prefills the composer; a gated one offers setup inste
   await expect(gated).toContainText("Configure ›");
   await gated.click();
   await expect(page.getByRole("region", { name: "Session access" })).toBeVisible();
-  const box = page.getByPlaceholder(/Describe the incident/);
+  const box = page.getByPlaceholder(/Ask the coworker/);
   await expect(box).toHaveValue("");
 
   // The row that needs nothing starts immediately.

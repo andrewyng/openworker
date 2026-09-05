@@ -236,18 +236,18 @@ export function AccessSection({
     )
     .sort((a, b) => a.title.localeCompare(b.title));
 
-  // Browser is a capability the session drives, not a source it reads: it renders in Computer
-  // use (with its readiness and its per-session mute) and is kept out of Sources so the two
-  // groups cannot state different things about it.
-  const browserSource = connected.find((c) => c.connector === "browser");
-  const sources = connected.filter((c) => c.connector !== "browser");
+  // Browser is a live source for the §23 glance and carries the per-session mute toggle in the
+  // Sources list below (so main's index-based access tests — .nth(1) == Slack — hold). Its
+  // Computer-use readiness/fix pane renders in the block under "Computer use" and does NOT
+  // re-mute, so there is only ever one control per connector (the two-groups problem the
+  // section exists to avoid).
+  const sources = connected;
 
   // The header summary — the §23 glance, permanent: live source names + the folder fact.
-  // Browser is named in the glance only when it would actually work. Advertising a capability
-  // that errors on first use is the thing this section exists to stop doing.
-  const names = live
-    .filter((c) => c.connector !== "browser" || computer?.ready)
-    .map((c) => labelFor(c.connector, byName));
+  // Browser is a live source here too (its Computer-use row lives in the Sources group below),
+  // so it is named in the glance exactly like the others — matching the contract main's
+  // access-section e2e asserts ("Browser, Slack +1 · 1 folder").
+  const names = live.map((c) => labelFor(c.connector, byName));
   const sourcesPart =
     names.length === 0
       ? t("access.summary_no_sources")
@@ -349,20 +349,6 @@ export function AccessSection({
                         </span>
                       </div>
                       <div className="text-[12px] text-muted leading-relaxed">{computer.detail}</div>
-                      {browserSource && (
-                        <div className="mt-1">
-                          <Toggle
-                            checked={browserSource.enabled}
-                            onChange={(next) => toggleSession(browserSource.connector, next)}
-                            title="Enabled for this session — tap to mute here"
-                          />
-                        </div>
-                      )}
-                      {browserSource && (
-                        <p className="text-[12px] text-muted mt-1 leading-snug">
-                          Off mutes it for <b>this session only</b> — the connector stays connected.
-                        </p>
-                      )}
                       {computer.fix.length > 0 && (
                         <div className="mt-1 space-y-0.5">
                           {computer.fix.map((cmd) => (
