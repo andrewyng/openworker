@@ -189,7 +189,13 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     return OpenAIProvider(api_key="ollama", base_url=base_url)
 
 
-def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
+def _openai_compat(
+    vendor: str,
+    default_base_url: str,
+    env_key: Optional[str] = None,
+    *,
+    parallel_tool_calls: Optional[bool] = None,
+):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
     Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its
     env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a configured OpenAI
@@ -206,7 +212,11 @@ def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = 
             raise RuntimeError(
                 f"No {vendor} API key configured — add it in Settings ▸ Models."
             )
-        return OpenAIProvider(api_key=api_key, base_url=base_url)
+        return OpenAIProvider(
+            api_key=api_key,
+            base_url=base_url,
+            parallel_tool_calls=parallel_tool_calls,
+        )
 
     return build
 
@@ -219,6 +229,7 @@ def _compat(
     recommended_model: str,
     env_key: str,
     endpoint_help: str = "",
+    parallel_tool_calls: Optional[bool] = None,
 ) -> ProviderDescriptor:
     """Descriptor for an OpenAI-compatible vendor: key + a prefilled, editable endpoint."""
     vendor = title.split(" (")[0]
@@ -242,7 +253,12 @@ def _compat(
                 or f"Prefilled with {vendor}'s official endpoint; edit only for a regional or proxy variant.",
             ),
         ],
-        build=_openai_compat(vendor, base_url, env_key),
+        build=_openai_compat(
+            vendor,
+            base_url,
+            env_key,
+            parallel_tool_calls=parallel_tool_calls,
+        ),
         recommended_model=recommended_model,
         env_key=env_key,
         blurb=f"Uses {vendor}'s OpenAI-compatible API — the endpoint is prefilled, just add your key.",
@@ -537,6 +553,10 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="deepseek/deepseek-v4-flash",
         env_key="NEXUS_API_KEY",
         endpoint_help="Prefilled with Dappnode Nexus's OpenAI-compatible endpoint.",
+        # Live private/glm-5.2 probes (2026-08-13): Nexus streaming can omit the id
+        # and name of a call inside a parallel batch. Serial tool turns preserve full
+        # metadata and the engine naturally continues with the next call.
+        parallel_tool_calls=False,
     ),
     _compat(
         "together",

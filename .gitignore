@@ -9,3 +9,7 @@ dist/
 
 # Local secrets (live-smoke BYO keys) — never committed
 .env
+
+# OS/editor noise
+.DS_Store
+.vscode/

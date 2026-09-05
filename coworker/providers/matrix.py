@@ -31,6 +31,9 @@ from .base import ModelCapabilities
 _AGENTIC = ModelCapabilities(
     tools=True, vision=False, parallel_tool_calls=True, streaming=True
 )
+_AGENTIC_SERIAL = ModelCapabilities(
+    tools=True, vision=False, parallel_tool_calls=False, streaming=True
+)
 # The native three (OpenAI, Anthropic, Gemini) all take PDFs directly; every
 # OpenAI-compatible vendor and reseller in the matrix does not (their chat APIs have
 # no inline file part — checked 2026-07-17), so those fall back via pdf_support.py.
@@ -114,36 +117,36 @@ MATRIX: dict[str, ModelEntry] = {
     # catalog (checked 2026-08-08). `nexus/auto` is intentionally not curated: the
     # router record does not advertise function calling, which OpenWorker requires.
     "nexus:deepseek/deepseek-v4-flash": ModelEntry(
-        "DeepSeek V4 Flash · via Nexus", _AGENTIC, 1_048_576
+        "DeepSeek V4 Flash · via Nexus", _AGENTIC_SERIAL, 1_048_576
     ),
     "nexus:deepseek/deepseek-v4-pro": ModelEntry(
-        "DeepSeek V4 Pro · via Nexus", _AGENTIC, 1_048_576
+        "DeepSeek V4 Pro · via Nexus", _AGENTIC_SERIAL, 1_048_576
     ),
     "nexus:minimax/minimax-m2.7": ModelEntry(
-        "MiniMax 2.7 · via Nexus", _AGENTIC, 204_800
+        "MiniMax 2.7 · via Nexus", _AGENTIC_SERIAL, 204_800
     ),
     # The upstream Nexus catalog currently spells this slug `minmax-m3`; retain
     # it verbatim even though the display name is MiniMax-M3.
     "nexus:minimax/minmax-m3": ModelEntry(
-        "MiniMax M3 · via Nexus", _AGENTIC, 512_000
+        "MiniMax M3 · via Nexus", _AGENTIC_SERIAL, 512_000
     ),
     "nexus:moonshotai/kimi-k2.6": ModelEntry(
-        "Kimi K2.6 · via Nexus", _AGENTIC, 262_144
+        "Kimi K2.6 · via Nexus", _AGENTIC_SERIAL, 262_144
     ),
     "nexus:moonshotai/kimi-k2.7-code": ModelEntry(
-        "Kimi K2.7 Code · via Nexus", _AGENTIC, 262_144
+        "Kimi K2.7 Code · via Nexus", _AGENTIC_SERIAL, 262_144
     ),
     "nexus:moonshotai/kimi-k3": ModelEntry(
-        "Kimi K3 · via Nexus", _AGENTIC, 1_048_576
+        "Kimi K3 · via Nexus", _AGENTIC_SERIAL, 1_048_576
     ),
     "nexus:private/gemma4-31b": ModelEntry(
-        "Gemma 4 31B Private · via Nexus", _AGENTIC, 256_000
+        "Gemma 4 31B Private · via Nexus", _AGENTIC_SERIAL, 256_000
     ),
     "nexus:private/glm-5.2": ModelEntry(
-        "GLM 5.2 Private · via Nexus", _AGENTIC, 128_000
+        "GLM 5.2 Private · via Nexus", _AGENTIC_SERIAL, 128_000
     ),
     "nexus:zai-org/glm-5.2": ModelEntry(
-        "GLM 5.2 · via Nexus", _AGENTIC, 1_048_576
+        "GLM 5.2 · via Nexus", _AGENTIC_SERIAL, 1_048_576
     ),
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
     "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together", _AGENTIC, 128_000),
