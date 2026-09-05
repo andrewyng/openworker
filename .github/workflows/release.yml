@@ -73,6 +73,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Validate fork channel and updater key configuration
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: python3 packaging/check_fork_policy.py
+
       - name: Set up the sidecar venv (.venv)
         # The build scripts expect a venv at .venv with the package + PyInstaller.
         # typer/tzdata are build-time-only (PyInstaller walks mcp.cli, which needs typer;
