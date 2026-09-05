@@ -37,13 +37,17 @@ intro:
       sub: What broke, when it started, and what it touches
       prompt: Pull the alerts firing right now, group them by service, and tell me what broke, when it started, and what it affects.
       requires: [datadog]
+      key: alerts
     - title: Write the incident note for the last outage
       sub: Timeline, impact, and the fix — as a file I can share
       prompt: Reconstruct the timeline of the most recent outage from the deploys and alerts, then write an incident note with impact and the fix.
       requires: [github]
+      key: write-note
     - title: Check the health of a running service
       sub: Endpoints, logs, and recent deploys, in one report
       prompt: Check the health of the service I name — its endpoints, recent logs, and the last deploys — and write up what you find.
+      requires: []
+      key: health
 checkpoints:
   - label: Recall what is known
     evidence: [brain_recall]
