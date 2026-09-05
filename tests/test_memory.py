@@ -721,3 +721,148 @@ def test_bookkeeping_saves_do_not_bump_recency(tmp_path):
         "SELECT updated_at FROM sessions WHERE session_id = 'rec1'"
     ).fetchone()
     assert row["updated_at"] != "2020-01-01 00:00:00"
+
+
+# -- FTS5 search & memory_search tool ------------------------------------------
+
+
+def test_fts5_search_basic_and_prefix(tmp_path):
+    store = _store(tmp_path)
+    store.add(
+        "uses PostgreSQL for all relational storage",
+        scope=Scope.WORKSPACE,
+        workspace="/proj",
+    )
+    store.add(
+        "prefers pytest-cov for test coverage metrics",
+        scope=Scope.WORKSPACE,
+        workspace="/proj",
+    )
+    store.add("never deploy on Friday afternoons", scope=Scope.GLOBAL)
+
+    # Prefix and keyword matching
+    res = store.search("postgres", workspace="/proj")
+    assert len(res) == 1
+    assert "PostgreSQL" in res[0].content
+
+    # Multi-word query
+    res = store.search("pytest coverage", workspace="/proj")
+    assert len(res) == 1
+    assert "pytest-cov" in res[0].content
+
+    # Empty / whitespace search
+    assert store.search("") == []
+    assert store.search("   ") == []
+    assert store.search("nonexistentword123") == []
+
+
+def test_fts5_search_scope_and_workspace_filtering(tmp_path):
+    store = _store(tmp_path)
+    store.add("global rule: always write type annotations", scope=Scope.GLOBAL)
+    store.add("proj A uses FastAPI", scope=Scope.WORKSPACE, workspace="/proj/a")
+    store.add("proj B uses Django", scope=Scope.WORKSPACE, workspace="/proj/b")
+
+    # Workspace search matches global + current workspace, but not another workspace
+    res_a = store.search("uses", workspace="/proj/a")
+    contents_a = [m.content for m in res_a]
+    assert "proj A uses FastAPI" in contents_a
+    assert "proj B uses Django" not in contents_a
+
+    # Explicit scope filtering
+    res_global = store.search("annotations", scope=Scope.GLOBAL)
+    assert len(res_global) == 1 and res_global[0].scope == Scope.GLOBAL
+
+    res_ws_b = store.search("Django", scope=Scope.WORKSPACE, workspace="/proj/b")
+    assert len(res_ws_b) == 1 and res_ws_b[0].workspace == "/proj/b"
+
+
+def test_fts5_search_triggers_sync_on_update_and_delete(tmp_path):
+    store = _store(tmp_path)
+    item = store.add(
+        "uses React 18 for frontend", scope=Scope.GLOBAL, summary="React frontend"
+    )
+    assert len(store.search("React")) == 1
+
+    # Update item
+    store.update(
+        item.id,
+        "migrated to Next.js 15 for frontend",
+        summary="Next.js frontend",
+    )
+    assert len(store.search("React")) == 0
+    assert len(store.search("Next")) == 1
+
+    # Delete item
+    store.delete(item.id)
+    assert len(store.search("Next")) == 0
+
+
+def test_fts5_search_fallback_when_disabled(tmp_path):
+    store = _store(tmp_path)
+    store.add("prefers dark mode in UI", scope=Scope.GLOBAL)
+    # Simulate environment without FTS5
+    store._fts_enabled = False
+
+    res = store.search("dark mode")
+    assert len(res) == 1
+    assert "dark mode" in res[0].content
+
+
+def test_fts5_search_rebuild_index(tmp_path):
+    path = tmp_path / "legacy_for_fts.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """CREATE TABLE memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL,
+            key TEXT,
+            content TEXT NOT NULL,
+            summary TEXT,
+            workspace TEXT,
+            session_id TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )"""
+    )
+    conn.execute(
+        "INSERT INTO memories (scope, content, summary) "
+        "VALUES ('global', 'prefers vim keybindings', 'vim mode')"
+    )
+    conn.commit()
+    conn.close()
+
+    # Initializing SQLiteMemoryStore on existing db should rebuild FTS index
+    store = SQLiteMemoryStore(path)
+    res = store.search("vim")
+    assert len(res) == 1
+    assert "vim" in res[0].content
+
+    # Manual rebuild_index works cleanly
+    store.rebuild_index()
+    assert len(store.search("vim")) == 1
+
+
+def test_memory_search_tool(tmp_path):
+    store = _store(tmp_path)
+    reg = ToolRegistry()
+    reg.register_all(memory_tools(store, workspace="/proj"))
+    assert "memory_search" in reg.names()
+
+    reg.execute(
+        "remember",
+        {"content": "use ruff for python linting", "summary": "ruff linter"},
+    )
+    reg.execute(
+        "remember",
+        {"content": "use eslint for typescript", "summary": "eslint"},
+    )
+
+    result = reg.execute("memory_search", {"query": "ruff"})
+    assert "memories" in result
+    assert len(result["memories"]) == 1
+    assert result["memories"][0]["summary"] == "ruff linter"
+    assert "id" in result["memories"][0]
+
+    # Limit check
+    result_all = reg.execute("memory_search", {"query": "use", "limit": 1})
+    assert len(result_all["memories"]) == 1
+
