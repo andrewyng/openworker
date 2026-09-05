@@ -218,3 +218,82 @@ def test_background_unknown_task_errors(executor):
     assert (
         "unknown task" in reg.execute("shell_task_kill", {"task_id": "bg-99"})["error"]
     )
+
+
+def test_is_sensitive_env():
+    from coworker.tools.shell import is_sensitive_env
+
+    assert is_sensitive_env("AWS_SECRET_ACCESS_KEY") is True
+    assert is_sensitive_env("AWS_ACCESS_KEY_ID") is True
+    assert is_sensitive_env("AWS_PROFILE") is True
+    assert is_sensitive_env("AZURE_CLIENT_SECRET") is True
+    assert is_sensitive_env("OPENAI_API_KEY") is True
+    assert is_sensitive_env("GITHUB_TOKEN") is True
+    assert is_sensitive_env("MY_SECRET_TOKEN") is True
+    assert is_sensitive_env("DATABASE_PASSWORD") is True
+    assert is_sensitive_env("ADMIN_PASSWD") is True
+    assert is_sensitive_env("GCP_CREDENTIALS") is True
+    assert is_sensitive_env("SERVICE_KEY") is True
+    assert is_sensitive_env("PROXY_AUTH") is True
+
+    assert is_sensitive_env("PATH") is False
+    assert is_sensitive_env("HOME") is False
+    assert is_sensitive_env("USER") is False
+    assert is_sensitive_env("TERM") is False
+    assert is_sensitive_env("SHELL") is False
+    assert is_sensitive_env("LANG") is False
+    assert is_sensitive_env("TMPDIR") is False
+    assert is_sensitive_env("VIRTUAL_ENV") is False
+    assert is_sensitive_env("PYTHONPATH") is False
+
+
+def test_ambient_sensitive_env_scrubbed(tmp_path, monkeypatch):
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "super-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-live-12345")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_token999")
+    monkeypatch.setenv("DATABASE_PASSWORD", "dbpass")
+    monkeypatch.setenv("SAFE_APP_VAR", "visible")
+
+    ex = LocalExecutor(cwd=tmp_path, default_timeout=5)
+    try:
+        assert "AWS_SECRET_ACCESS_KEY" not in ex._env
+        assert "OPENAI_API_KEY" not in ex._env
+        assert "GITHUB_TOKEN" not in ex._env
+        assert "DATABASE_PASSWORD" not in ex._env
+        assert ex._env.get("SAFE_APP_VAR") == "visible"
+
+        # Verify child shell process cannot see the scrubbed variable
+        echo_cmd = "echo $OPENAI_API_KEY" if not _WIN else "echo $env:OPENAI_API_KEY"
+        res = ex.run(echo_cmd)
+        assert "sk-live-12345" not in res["output"]
+    finally:
+        ex.close()
+
+
+def test_allowed_env_exempts_sensitive_variables(tmp_path, monkeypatch):
+    monkeypatch.setenv("AWS_PROFILE", "staging")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "top-secret")
+
+    ex = LocalExecutor(
+        cwd=tmp_path, allowed_env=["AWS_PROFILE"], default_timeout=5
+    )
+    try:
+        assert ex._env.get("AWS_PROFILE") == "staging"
+        assert "AWS_SECRET_ACCESS_KEY" not in ex._env
+    finally:
+        ex.close()
+
+
+def test_explicit_env_argument_takes_precedence(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "ambient-secret")
+
+    ex = LocalExecutor(
+        cwd=tmp_path,
+        env={"OPENAI_API_KEY": "explicit-provided"},
+        default_timeout=5,
+    )
+    try:
+        assert ex._env.get("OPENAI_API_KEY") == "explicit-provided"
+    finally:
+        ex.close()
+

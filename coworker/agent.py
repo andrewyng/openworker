@@ -264,7 +264,11 @@ def build_engine(
 
     workspace_trusted = bool(ws and WorkspaceTrustStore().is_trusted(ws))
     config = load_config(ws, workspace_trusted=workspace_trusted)
-    executor = LocalExecutor(cwd=ws) if ws is not None else None
+    executor = (
+        LocalExecutor(cwd=ws, allowed_env=config.shell_allowed_env)
+        if ws is not None
+        else None
+    )
     todo = TodoList()
     context = AgentContext(
         workspace=ws, executor=executor, todo=todo, roots=root_list or None
