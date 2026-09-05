@@ -675,7 +675,13 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // The page's session id, from the socket URL — team approval stamps THIS session
     // as the lead (the active conversation IS the lead; workers hang off it).
     const sid = ws.url().split("/ws/session/")[1]?.split("?")[0] || "sess-lead";
-    send("ready", sid === "resume-live-1" ? { running: true } : {});
+    // Mirror the real server: idle sessions explicitly carry `running: false`,
+    // not `{}`. The pre-ready window during conversation switching depends on
+    // the explicit value to distinguish "idle" from "unknown" (#506).
+    send(
+      "ready",
+      sid === "resume-live-1" ? { running: true } : { running: false },
+    );
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
     let hadTurn = false; // a user_message landed — set_model is now a mid-session switch

@@ -217,6 +217,10 @@ export function App() {
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
+  // Tracks which session `running` applies to. Reset to null on every
+  // session switch so the previous session's state cannot leak into the
+  // pre-ready window of the next one (#506).
+  const [runningSessionId, setRunningSessionId] = useState<string | null>(null);
   // Transient "Compacting context…" indicator (OPE-27): set by the `compacting` event,
   // cleared by whatever the engine emits next — the summarizer call is otherwise a
   // multi-second silent stall mid-turn.
@@ -249,6 +253,9 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
+  // True only when `running` actually belongs to the session we're showing —
+  // the value the UI reads, since `running` alone is stale across switches (#506).
+  const displayRunning = running && runningSessionId === sessionId;
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
   // to, driving the banner + "Back to runs". Best-effort — a run session without context still
   // shows a generic banner (detected by its __run__ id).
@@ -705,10 +712,14 @@ export function App() {
           if (typeof d.temp_workspace === "boolean") setTempWorkspace(d.temp_workspace);
           // Server truth on a live turn: a reconnect mid-turn never sees turn_start, so
           // without this the Stop button and waiting row vanish (owner catch 2026-08-24).
-          if (typeof d.running === "boolean") setRunning(d.running);
+          if (typeof d.running === "boolean") {
+            setRunning(d.running);
+            setRunningSessionId(sessionId);
+          }
           break;
         case "turn_start":
           setRunning(true);
+          setRunningSessionId(sessionId);
           setReviewerPaused(false); // a fresh user message resets the denial streak
           setStreaming("");
           setReasoningStream("");
@@ -951,6 +962,7 @@ export function App() {
           break;
         case "turn_done":
           setRunning(false);
+          setRunningSessionId(sessionId);
           setReviewerPaused(false); // the pause is scoped to the turn
           refreshSessions();
           // Catch-all artifact refresh: files created via shell or on a brand-new session (whose
@@ -1191,6 +1203,7 @@ export function App() {
   const retry = () => {
     // Optimistic running: turn_start confirms; a rejected retry still ends in turn_done.
     setRunning(true);
+    setRunningSessionId(sessionId);
     sessionRef.current?.retry();
   };
   const changeMode = (m: string) => {
@@ -1211,6 +1224,7 @@ export function App() {
     setStreaming("");
     setTodo([]);
     setRunning(false);
+    setRunningSessionId(null);
     // "New session" under a browsed persona switches to it (expand≠switch: the header alone
     // doesn't switch; this explicit action does).
     if (target !== agent) {
@@ -1378,7 +1392,10 @@ export function App() {
     setSurface("session"); // selecting a conversation always returns to the conversation view
     setTodo([]);
     setStreaming("");
-    setRunning(false);
+    // Invalidate the previous session's `running` so it cannot leak across
+    // during the new session's pre-ready window (#506). The new session's
+    // `ready` handler repopulates both fields together.
+    setRunningSessionId(null);
     if (ag) setAgent(ag);
     setReviewerPaused(false);
     setDraftFolderPicked(false); // a resumed session's folder is inherited, not a pick
@@ -1413,6 +1430,7 @@ export function App() {
     setStreaming("");
     setTodo([]);
     setRunning(false);
+    setRunningSessionId(null);
 
     // The live workspace is only a valid fallback for a gated persona if it came from
     // another gated persona — a knowledge persona's workspace is a scratch dir, and a
@@ -1483,6 +1501,7 @@ export function App() {
     setStreaming("");
     setTodo([]);
     setRunning(false);
+    setRunningSessionId(null);
     if (target !== agent) setAgent(target);
     setWorkspace(null);
     setBranch(null);
@@ -1508,6 +1527,7 @@ export function App() {
       setStreaming("");
       setTodo([]);
       setRunning(false);
+      setRunningSessionId(null);
       setSessionId(newId());
     }
   };
@@ -1521,6 +1541,7 @@ export function App() {
       setStreaming("");
       setTodo([]);
       setRunning(false);
+      setRunningSessionId(null);
       setSessionId(newId());
     }
   };
@@ -1964,7 +1985,7 @@ export function App() {
                   <Transcript
                     items={items}
                     onApprove={approve}
-                    running={running}
+                    running={displayRunning}
                     onRetry={retry}
                     onOpenConnectors={() => setSurface("integrations")}
                     onAllowAnyway={allowAnyway}
@@ -2073,7 +2094,7 @@ export function App() {
               model={model}
               models={models}
               modelLabels={modelLabels}
-              running={running}
+              running={displayRunning}
               gateOpen={!unattended && (!!pendingTeam || !!pendingItemsReq)}
               connected={connected}
               modelReady={modelReady}
@@ -2182,7 +2203,7 @@ export function App() {
             refreshKey={browserRefreshKey}
             toolNames={items.filter((i) => i.kind === "tool").map((i: any) => i.name)}
             todo={todo}
-            running={running}
+            running={displayRunning}
             onPreviewChange={onArtifactPreview}
             // Universal scratch (UX-036): every session has a scratch surface, so the
             // Artifacts section always shows — the server lists the scratch root only.
