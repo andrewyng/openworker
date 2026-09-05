@@ -16,7 +16,7 @@ const persona = (p: Partial<Persona>): Persona => ({
   name: "Demo",
   icon: "",
   tagline: "",
-  needs_workspace: true,
+  requires_folder: true,
   builtin: false,
   family: "knowledge",
   workspace: "deliverable",

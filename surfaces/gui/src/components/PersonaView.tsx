@@ -108,9 +108,9 @@ export function PersonaView({
   };
 
   const exportBundle = async () => {
-    const dir = await chooseFolder();
-    if (!dir) return;
-    const r = await exportPersona(personaId, dir);
+    const picked = await chooseFolder();
+    if (!picked.path) return;
+    const r = await exportPersona(personaId, picked.path);
     setMsg(r.ok ? t("persona.exported_to", { path: r.path }) : r.error || t("persona.export_failed"));
   };
 

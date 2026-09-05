@@ -55,7 +55,7 @@ export function SessionSetupRow(props: Props) {
 
   const browse = async () => {
     const picked = await chooseFolder();
-    if (picked) await pickFolder(picked);
+    if (picked.path) await pickFolder(picked.path);
   };
 
   const chip =

@@ -43,7 +43,7 @@ export function SendFolderDialog({ coworkerName, onPick, onTemp, onCancel }: Pro
 
   const browse = async () => {
     const picked = await chooseFolder();
-    if (picked) await pick(picked);
+    if (picked.path) await pick(picked.path);
   };
 
   return (

@@ -7,6 +7,7 @@ vi.mock("../api", () => ({
   createAutomation: vi.fn(),
   deleteAutomation: vi.fn(),
   getAutomation: vi.fn(),
+  getAutomationSuggestions: vi.fn().mockResolvedValue([]),
   getAutomations: vi.fn().mockResolvedValue([]),
   markAutomationSeen: vi.fn(),
   updateAutomation: vi.fn(),

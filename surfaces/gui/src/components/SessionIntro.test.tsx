@@ -29,7 +29,7 @@ const BUILDER: Persona = {
   name: "Builder",
   icon: "hammer",
   tagline: "Phase-by-phase implementation",
-  needs_workspace: true,
+  requires_folder: true,
   builtin: false,
   family: "code",
   workspace: "git",

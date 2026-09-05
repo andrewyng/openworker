@@ -104,12 +104,12 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
 
   // Folder installs go through the native picker — no path typing (owner, 2026-08-21).
   const installDir = async () => {
-    const dir = await chooseFolder();
-    if (!dir) return;
+    const picked = await chooseFolder();
+    if (!picked.path) return;
     setBusy(true);
     setMsg(null);
     setConsent(null);
-    finishInstall(await installPersona({ dir }));
+    finishInstall(await installPersona({ dir: picked.path }));
   };
 
   const installZip = async (file: File) => {

@@ -54,6 +54,7 @@ function expand(title: string) {
 describe("RightRail — Progress shows what the run changed", () => {
   it("counts edits and commands, and leaves reads/searches/recalls to Memory", () => {
     renderRail();
+    expand("Progress");
     const activity = screen.getByTestId("rail-activity");
     expect(activity.textContent).toContain("1 file edited");
     expect(activity.textContent).toContain("2 commands");
