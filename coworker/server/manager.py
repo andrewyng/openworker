@@ -2797,7 +2797,7 @@ class SessionManager:
             roots=lambda: getattr(self._engines.get(session_id), "roots", []),
             on_change=self.kick_team_tick,
         ) + journal_tools(
-            self.journal_store, actor=actor, space=space
+            self.journal_store, actor=actor, space=space, store=self.team_store
         )
         from ..teams.artifacts import artifact_tools
 
