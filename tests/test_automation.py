@@ -476,3 +476,158 @@ async def test_scheduled_run_broadcasts_run_started_event(tmp_path, monkeypatch)
     assert event["data"]["session_id"] == run.session_id
     assert event["data"]["trigger"] == "schedule"
     assert dead not in manager._event_clients  # dropped, not fatal
+
+
+# -- Issue #621: Timeout, retry/backoff, force_stop ----------------------------
+@pytest.mark.asyncio
+async def test_scheduler_run_timeout_and_releases_overlap_guard(tmp_path):
+    store = TaskStore(tmp_path / "auto.db")
+    t = _task(timeout_seconds=0.05)
+    store.save(t)
+
+    timeout_called = asyncio.Event()
+    timed_out_task_id = None
+
+    async def on_timeout(task, run):
+        nonlocal timed_out_task_id
+        timed_out_task_id = task.id
+        timeout_called.set()
+
+    async def slow_runner(task, trigger):
+        await asyncio.sleep(1.0)
+        return TaskRun(task_id=task.id, status="ok")
+
+    sched = Scheduler(store, slow_runner, on_timeout=on_timeout)
+    run = await sched.run_task(t, trigger="schedule")
+
+    assert run is not None
+    assert run.status == "timed_out"
+    assert "timed out after 0.05s" in (run.error or "")
+    # Overlap guard must be released
+    assert t.id not in sched._running_ids
+    assert timed_out_task_id == t.id
+
+    # Can immediately run again because overlap guard was cleared
+    async def fast_runner(task, trigger):
+        return TaskRun(task_id=task.id, status="ok")
+
+    sched.runner = fast_runner
+    run2 = await sched.run_task(t, trigger="manual")
+    assert run2 is not None
+    assert run2.status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_error_retry_exponential_backoff(tmp_path):
+    store = TaskStore(tmp_path / "auto.db")
+    t = _task(
+        max_retries=2,
+        retry_backoff_seconds=10.0,
+        schedule=Schedule(kind="cron", cron="0 9 * * *"),
+    )
+    store.save(t)
+
+    attempts = 0
+
+    async def failing_runner(task, trigger):
+        nonlocal attempts
+        attempts += 1
+        return TaskRun(task_id=task.id, status="error", error="service unavailable")
+
+    sched = Scheduler(store, failing_runner)
+
+    # Attempt 1: First failure schedules retry 1 with 10s backoff (10 * 2^0 = 10)
+    before_1 = time.time()
+    run1 = await sched.run_task(t, trigger="schedule")
+    assert run1.status == "error"
+    fresh1 = store.get(t.id)
+    assert fresh1.retry_count == 1
+    assert fresh1.next_run is not None
+    assert fresh1.next_run >= before_1 + 9.9
+    assert fresh1.next_run <= before_1 + 12.0
+
+    # Attempt 2: Second failure schedules retry 2 with 20s backoff (10 * 2^1 = 20)
+    before_2 = time.time()
+    run2 = await sched.run_task(fresh1, trigger="retry")
+    assert run2.status == "error"
+    fresh2 = store.get(t.id)
+    assert fresh2.retry_count == 2
+    assert fresh2.next_run >= before_2 + 19.9
+    assert fresh2.next_run <= before_2 + 23.0
+
+    # Attempt 3: Third failure exhausts retries -> retry_count resets to 0 and cron resumes
+    run3 = await sched.run_task(fresh2, trigger="retry")
+    assert run3.status == "error"
+    fresh3 = store.get(t.id)
+    assert fresh3.retry_count == 0
+    # Next run is computed normally from cron (tomorrow at 9am), not backoff
+    assert fresh3.next_run is not None
+
+
+@pytest.mark.asyncio
+async def test_scheduler_force_stop(tmp_path):
+    store = TaskStore(tmp_path / "auto.db")
+    t = _task(timeout_seconds=10.0)
+    store.save(t)
+
+    hang_event = asyncio.Event()
+
+    async def hanging_runner(task, trigger):
+        await hang_event.wait()
+        return TaskRun(task_id=task.id, status="ok")
+
+    sched = Scheduler(store, hanging_runner)
+    run_task = asyncio.create_task(sched.run_task(t, trigger="schedule"))
+
+    # Give task a moment to start and claim guard
+    await asyncio.sleep(0.05)
+    assert t.id in sched._running_ids
+
+    # User calls force_stop
+    stopped = sched.force_stop(t.id)
+    assert stopped is True
+    assert t.id not in sched._running_ids
+
+    run = await run_task
+    assert run is not None
+    assert run.status == "cancelled"
+    assert "Force stopped" in (run.error or "")
+
+
+def test_automations_rest_force_stop_and_settings(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from coworker.server.app import create_app
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    t = _task(
+        workspace=str(tmp_path / "ws"),
+        timeout_seconds=300.0,
+        max_retries=3,
+        retry_backoff_seconds=30.0,
+    )
+    manager.task_store.save(t)
+    client = TestClient(create_app(manager))
+
+    # Get automation details
+    data = client.get(f"/v1/automations/{t.id}").json()["task"]
+    assert data["timeout_seconds"] == 300.0
+    assert data["max_retries"] == 3
+    assert data["retry_backoff_seconds"] == 30.0
+
+    # Patch timeout and retries
+    res = client.patch(
+        f"/v1/automations/{t.id}",
+        json={"timeout_seconds": 600.0, "max_retries": 5},
+    ).json()
+    assert res["ok"]
+    assert res["task"]["timeout_seconds"] == 600.0
+    assert res["task"]["max_retries"] == 5
+
+    # Force stop endpoint
+    stop_res = client.post(f"/v1/automations/{t.id}/stop").json()
+    assert stop_res["ok"] is True
+    assert stop_res["task_id"] == t.id
+
