@@ -8,6 +8,7 @@ import {
   setAutoApproveShadow,
   setCompactionSettings,
   setContextBar,
+  setHideLiveThinking,
   setOnboarded,
   setPdfSettings,
   setScratchBase,
@@ -473,6 +474,8 @@ function AppearanceSection() {
 
       <ContextBarCard />
 
+      <LiveThinkingCard />
+
       <AutoApproveCard />
 
       <FilesCard />
@@ -869,6 +872,44 @@ function ContextBarCard() {
         <span>
           <span className="block text-[13px] text-ink">{t("settings.context_bar_title")}</span>
           <span className="block text-[12px] text-muted">{t("settings.context_bar_desc")}</span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
+// Live Thinking steps toggle (#611): allows collapsing or hiding reasoning text while
+// running so long agent turns do not produce a fast-scrolling wall of thinking text.
+function LiveThinkingCard() {
+  const { t } = useTranslation();
+  const [hide, setHide] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => setHide(s.hide_live_thinking === true))
+      .catch(() => setHide(false));
+  }, []);
+
+  const save = async (next: boolean) => {
+    setHide(next);
+    await setHideLiveThinking(next);
+  };
+
+  if (hide === null) return null;
+  return (
+    <div className={CARD + " p-4 mb-4"} data-testid="live-thinking-card">
+      <div className={FIELD_LABEL}>{t("settings.thinking_section")}</div>
+      <label className="flex items-start gap-3 py-2">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          data-testid="hide-live-thinking-toggle"
+          checked={hide}
+          onChange={(e) => save(e.target.checked)}
+        />
+        <span>
+          <span className="block text-[13px] text-ink">{t("settings.hide_live_thinking_title")}</span>
+          <span className="block text-[12px] text-muted">{t("settings.hide_live_thinking_desc")}</span>
         </span>
       </label>
     </div>

@@ -3442,6 +3442,7 @@ class SessionManager:
             "nav_layout": self._nav_layout(),
             "sessions_peek": self.sessions_peek(),
             "context_bar": self.context_bar(),
+            "hide_live_thinking": self.hide_live_thinking(),
             # Auto-Approve feature flag + its shadow-eval sibling (spec §1.5). Drive the
             # Settings toggles and gate the composer's Auto-Approve mode entry.
             "auto_approve": self.auto_approve(),
@@ -3514,6 +3515,15 @@ class SessionManager:
         self._prefs["context_bar"] = bool(shown)
         self._save_prefs()
         return {"ok": True, "context_bar": self.context_bar()}
+
+    def hide_live_thinking(self) -> bool:
+        """Hide/collapse live reasoning steps while running (#611)."""
+        return bool(self._prefs.get("hide_live_thinking", False))
+
+    def set_hide_live_thinking(self, hide: Any) -> dict[str, Any]:
+        self._prefs["hide_live_thinking"] = bool(hide)
+        self._save_prefs()
+        return {"ok": True, "hide_live_thinking": self.hide_live_thinking()}
 
     # -- Auto-Approve (spec §1.5, Part 6 step 3) --------------------------------
     # The feature flag and its shadow-eval sibling live in prefs (GUI-writable), falling

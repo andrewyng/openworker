@@ -79,21 +79,64 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
 // Reasoning-model thinking text (model-layer roadmap item 4): a quiet disclosure —
 // collapsed by default, the trace one click away. `live` = still streaming (pulsing label);
 // App renders that variant above the transcript, this one rides a finalized assistant item.
-export function ThinkingBlock({ text, live }: { text: string; live?: boolean }) {
+export function ThinkingBlock({
+  text,
+  live,
+  hidden = false,
+  onToggleHidden,
+}: {
+  text: string;
+  live?: boolean;
+  hidden?: boolean;
+  onToggleHidden?: () => void;
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+
+  if (live && hidden) {
+    return (
+      <div className="thinking thinking-quiet" data-testid="thinking-quiet">
+        <span className="thinking-live">{t("transcript.thinking_live")}</span>
+        {onToggleHidden && (
+          <button
+            type="button"
+            className="thinking-toggle-btn ml-1"
+            onClick={onToggleHidden}
+            data-testid="show-live-thinking-btn"
+          >
+            ({t("transcript.show_thinking")})
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="thinking">
-      <button
-        className="thinking-head"
-        onClick={() => setOpen((v) => !v)}
-        data-testid="thinking-toggle"
-      >
-        <Icon name="chevronDown" size={12} className={"thinking-caret" + (open ? " open" : "")} />
-        <span className={live ? "thinking-live" : undefined}>
-          {live ? t("transcript.thinking_live") : t("transcript.thinking_process")}
-        </span>
-      </button>
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          className="thinking-head"
+          onClick={() => setOpen((v) => !v)}
+          data-testid="thinking-toggle"
+        >
+          <Icon name="chevronDown" size={12} className={"thinking-caret" + (open ? " open" : "")} />
+          <span className={live ? "thinking-live" : undefined}>
+            {live ? t("transcript.thinking_live") : t("transcript.thinking_process")}
+          </span>
+        </button>
+        {live && onToggleHidden && (
+          <button
+            type="button"
+            className="thinking-toggle-btn mr-1"
+            onClick={onToggleHidden}
+            title={t("transcript.hide_live_thinking")}
+            data-testid="hide-live-thinking-btn"
+          >
+            {t("transcript.hide_thinking")}
+          </button>
+        )}
+      </div>
       {open && (
         <div className="thinking-body" data-testid="thinking-body">
           {text}

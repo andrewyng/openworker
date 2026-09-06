@@ -919,6 +919,8 @@ export interface ModelSettings {
   // Composer: show the context-window fill bar (default FALSE; absent → the chip shows
   // the session total). The usage popover keeps both numbers regardless.
   context_bar?: boolean;
+  // Option to hide/collapse live thinking/reasoning steps while running (#611).
+  hide_live_thinking?: boolean;
   // Auto-Approve mode (spec §1.5): the feature flag that offers the reviewer mode, and its
   // shadow-eval sibling. Both default FALSE and are absent on older backends — the composer
   // hides the Auto-Approve mode entry unless auto_approve is explicitly true.
@@ -1071,6 +1073,18 @@ export async function setNavLayout(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ nav_layout: layout }),
+  });
+  return res.json();
+}
+
+/** Persist preference to hide live thinking steps while a task is running (#611). */
+export async function setHideLiveThinking(
+  hide: boolean,
+): Promise<{ ok: boolean; hide_live_thinking?: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/hide-live-thinking`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ hide_live_thinking: hide }),
   });
   return res.json();
 }

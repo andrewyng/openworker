@@ -1931,6 +1931,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         # Composer: show the context-window fill bar, or just the popover (owner ask).
         return manager.set_context_bar((body or {}).get("context_bar", True))
 
+    @app.post("/v1/settings/hide-live-thinking")
+    def settings_set_hide_live_thinking(body: dict) -> dict[str, Any]:
+        # Hide live thinking steps while running (#611).
+        return manager.set_hide_live_thinking((body or {}).get("hide_live_thinking", False))
+
     @app.post("/v1/settings/auto-approve")
     def settings_set_auto_approve(body: dict) -> dict[str, Any]:
         # Auto-Approve feature flag (spec §1.5): when on, Mode.AUTO_APPROVE gets an LLM

@@ -159,6 +159,9 @@
     "copied": "Copied",
     "thinking_live": "Thinking…",
     "thinking_process": "Thought process",
+    "show_thinking": "Show thinking",
+    "hide_thinking": "Hide thinking",
+    "hide_live_thinking": "Hide live thinking",
     "who_assistant": "assistant",
     "retry": "Retry",
     "approval": {
@@ -393,7 +396,10 @@
     "personas_desc": "Coworkers are agents specialized for a particular role or task. They come equipped with the tools and skills to be successful in that role. Enabling a coworker lets you pick it when starting a conversation.",
     "composer_section": "Composer",
     "context_bar_title": "Show the context window bar",
-    "context_bar_desc": "A small meter showing how full the model’s context window is. Turn it off to show the same thing as a number instead."
+    "context_bar_desc": "A small meter showing how full the model’s context window is. Turn it off to show the same thing as a number instead.",
+    "thinking_section": "Reasoning & Thinking",
+    "hide_live_thinking_title": "Hide live thinking steps while a task is running",
+    "hide_live_thinking_desc": "Suppress streaming reasoning text from the live transcript during execution. The full thought process remains available once the turn completes."
   },
   "cloud": {
     "check_browser": "Check your browser…",
