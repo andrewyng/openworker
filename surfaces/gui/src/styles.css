@@ -1726,6 +1726,15 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
   border-left: 2px solid var(--line); padding: 4px 0 4px 10px; margin: 4px 0 6px 4px;
   max-height: 280px; overflow-y: auto;
 }
+.thinking-quiet {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--faint); padding: 2px 0;
+}
+.thinking-toggle-btn {
+  background: none; border: none; font-size: 11px;
+  color: var(--faint); cursor: pointer; padding: 0 4px;
+}
+.thinking-toggle-btn:hover { color: var(--ink); text-decoration: underline; }
 
 /* -- BETA tag (quiet gray chip beside the wordmark; presentation-only, never in
    bundle/artifact names — those feed the updater) --------------------------------- */

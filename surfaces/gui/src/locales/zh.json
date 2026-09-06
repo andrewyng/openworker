@@ -157,6 +157,9 @@
     "copied": "已复制",
     "thinking_live": "思考中…",
     "thinking_process": "思考过程",
+    "show_thinking": "显示思考",
+    "hide_thinking": "隐藏思考",
+    "hide_live_thinking": "隐藏实时思考",
     "who_assistant": "助手",
     "retry": "重试",
     "approval": {
@@ -385,7 +388,10 @@
     "personas_desc": "同事是专精于特定角色或任务的 agent，自带胜任该角色所需的工具与技能。启用同事后，即可在开始会话时选择它。",
     "composer_section": "输入框",
     "context_bar_title": "显示上下文窗口占用条",
-    "context_bar_desc": "一个小指示条，显示模型上下文窗口的占用程度。关闭后将改为以数字形式显示。"
+    "context_bar_desc": "一个小指示条，显示模型上下文窗口的占用程度。关闭后将改为以数字形式显示。",
+    "thinking_section": "推理与思考",
+    "hide_live_thinking_title": "在任务运行时隐藏实时思考步骤",
+    "hide_live_thinking_desc": "在执行期间从实时记录中抑制流式传输的思考文本。回合完成后，完整的思考过程仍可查看。"
   },
   "cloud": {
     "check_browser": "请查看你的浏览器…",
