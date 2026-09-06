@@ -125,13 +125,23 @@ export const clearPendingUpdate = () => invokeStrict<void>("clear_pending_update
  * Windows hands off to the installer). */
 export const installUpdate = () => invokeStrict<void>("install_update");
 
-/** Best-effort open a URL in the user's browser. Uses the Tauri opener plugin if present, else
- * `window.open`. The caller should also render the raw URL so it stays copyable if both no-op
- * (the desktop webview has no opener plugin wired yet). */
+/** Best-effort open a URL in the user's browser. Uses the Tauri opener plugin if present,
+ * native open_url command, or `window.open`. The caller should also render the raw URL so it stays copyable
+ * if both no-op. */
 export function openExternal(url: string): void {
   const opener = (globalThis as any).__TAURI__?.opener;
   if (opener?.openUrl) {
-    opener.openUrl(url).catch(() => window.open(url, "_blank", "noopener,noreferrer"));
+    opener.openUrl(url).catch(() => {
+      invoke<void>("open_url", { url }).catch(() => {
+        window.open(url, "_blank", "noopener,noreferrer");
+      });
+    });
+    return;
+  }
+  if (isTauri()) {
+    invoke<void>("open_url", { url }).catch(() => {
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
     return;
   }
   window.open(url, "_blank", "noopener,noreferrer");

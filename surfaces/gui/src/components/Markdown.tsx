@@ -1,6 +1,7 @@
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { useTranslation } from "react-i18next";
 import remarkGfm from "remark-gfm";
+import { openExternal } from "../tauri";
 import { Icon } from "./Icon";
 
 // §34 (UX-016): the agent ends a deliverable turn with plain markdown —
@@ -77,7 +78,18 @@ export function Markdown({ text }: { text: string }) {
               return <BoardChip label={label} />;
             }
             return (
-              <a href={href} {...props} target="_blank" rel="noreferrer">
+              <a
+                href={href}
+                {...props}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => {
+                  if (href) {
+                    e.preventDefault();
+                    openExternal(href);
+                  }
+                }}
+              >
                 {children}
               </a>
             );
