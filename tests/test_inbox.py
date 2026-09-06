@@ -179,3 +179,84 @@ def test_approval_prompt_data_carries_mcp_evidence():
     plain = PermissionRequest("write_file", {"path": "g.txt"}, None, "requires approval")
     plain_data = SessionManager.approval_prompt_data(fake_mgr, "s1", plain)
     assert "mcp_destination" not in plain_data and "category" not in plain_data
+
+
+def test_inbox_item_expiry_calculation_and_is_expired(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from coworker.inbox import is_expired
+
+    store = InboxStore(tmp_path / "inbox.json")
+    item_ttl = store.add_approval("s1", "Deploy?", ttl_seconds=60)
+    assert item_ttl.expires_at is not None
+    assert is_expired(item_ttl) is False
+
+    past = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+    item_past = store.add_approval("s1", "Old request", expires_at=past)
+    assert is_expired(item_past) is True
+
+
+def test_inbox_store_default_ttl(tmp_path):
+    store = InboxStore(tmp_path / "inbox.json", default_ttl_seconds=120)
+    item = store.add_approval("s1", "Deploy?")
+    assert item.expires_at is not None
+
+    # Explicit ttl overrides default
+    item2 = store.add_approval("s1", "Fast", ttl_seconds=10)
+    assert item2.expires_at is not None
+
+
+def test_inbox_resolve_expired_item_rejected(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    store = InboxStore(tmp_path / "inbox.json")
+    past = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+    item = store.add_approval("s1", "Old request", expires_at=past)
+
+    # Late resolve attempt fails and marks resolution as expired
+    ok = store.resolve(item.id, "allow")
+    assert ok is False
+    assert item.state == STATE_RESOLVED
+    assert item.resolution == "expired"
+
+
+def test_inbox_list_and_get_auto_expire(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    store = InboxStore(tmp_path / "inbox.json")
+    past = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+    item = store.add_approval("s1", "Old request", expires_at=past)
+
+    # Pending list does not include expired item
+    assert len(store.pending("s1")) == 0
+
+    # get() returns it resolved as expired
+    got = store.get(item.id)
+    assert got.state == STATE_RESOLVED
+    assert got.resolution == "expired"
+
+
+def test_inbox_wait_auto_resolves_when_ttl_elapses(tmp_path):
+    async def run():
+        store = InboxStore(tmp_path / "inbox.json")
+        item = store.add_approval("s1", "Quick TTL", ttl_seconds=0.05)
+        res = await store.wait(item.id)
+        assert res == "expired"
+        assert item.state == STATE_RESOLVED
+        assert item.resolution == "expired"
+
+    asyncio.run(run())
+
+
+def test_inbox_approver_expired_outcome(tmp_path):
+    async def run():
+        store = InboxStore(tmp_path / "inbox.json")
+        from coworker.engine import ApprovalOutcome, PermissionRequest
+
+        approver = inbox_approver(store, "s1")
+        req = PermissionRequest("run_shell", {}, None, "needs approval", ttl_seconds=0.05)
+        outcome = await approver(req)
+        assert outcome is ApprovalOutcome.EXPIRED
+
+    asyncio.run(run())
+
