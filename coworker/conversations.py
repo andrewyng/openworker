@@ -115,6 +115,7 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN actor TEXT",
             "ALTER TABLE sessions ADD COLUMN usage TEXT",
             "ALTER TABLE sessions ADD COLUMN spawn TEXT",
+            "ALTER TABLE sessions ADD COLUMN plan TEXT",
         ):
             try:
                 self._conn.execute(ddl)
@@ -347,8 +348,8 @@ class ConversationStore:
             title = record.title or title_from(record.messages)
             self._conn.execute(
                 """
-                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, team, bindings, actor, usage, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, team, bindings, actor, usage, plan, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace, model = excluded.model, mode = excluded.mode,
                     title = COALESCE(sessions.title, excluded.title), agent = excluded.agent,
@@ -356,6 +357,7 @@ class ConversationStore:
                     grants = excluded.grants, compaction = excluded.compaction,
                     actor = COALESCE(NULLIF(sessions.actor, ''), excluded.actor),
                     usage = excluded.usage,
+                    plan = CASE WHEN excluded.plan != '{}' THEN excluded.plan ELSE sessions.plan END,
                     updated_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE sessions.updated_at END
                 """,
                 (
@@ -373,6 +375,7 @@ class ConversationStore:
                     json.dumps(record.bindings or {}),
                     record.actor or "",
                     json.dumps(record.usage or {}),
+                    json.dumps(record.plan or {}),
                     touch,
                 ),
             )
@@ -426,6 +429,7 @@ class ConversationStore:
             ),
             usage=_load_grants(row["usage"] if "usage" in row.keys() else None),
             spawn=_load_grants(row["spawn"] if "spawn" in row.keys() else None),
+            plan=_load_grants(row["plan"] if "plan" in row.keys() else None),
         )
 
     def set_spawn(self, session_id: str, spawn: dict) -> None:
@@ -448,6 +452,24 @@ class ConversationStore:
                 "UPDATE sessions SET team = ? WHERE session_id = ?",
                 (json.dumps(team or {}), session_id),
             )
+            self._conn.commit()
+
+    def set_plan(self, session_id: str, plan: dict) -> None:
+        """Persist an approved plan artifact for a session (#623)."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE sessions SET plan = ? WHERE session_id = ?",
+                (json.dumps(plan or {}), session_id),
+            )
+            if cur.rowcount == 0:
+                self._conn.execute(
+                    """
+                    INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, plan, updated_at)
+                    VALUES (?, '', '', 'interactive', '', 'code', 0, NULL, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(session_id) DO UPDATE SET plan = excluded.plan
+                    """,
+                    (session_id, json.dumps(plan or {})),
+                )
             self._conn.commit()
 
     def names(self):
@@ -509,6 +531,8 @@ class ConversationStore:
                 team=_load_grants(r["team"] if "team" in r.keys() else None),
                 usage=_load_grants(r["usage"] if "usage" in r.keys() else None),
                 spawn=_load_grants(r["spawn"] if "spawn" in r.keys() else None),
+                grants=_load_grants(r["grants"] if "grants" in r.keys() else None),
+                plan=_load_grants(r["plan"] if "plan" in r.keys() else None),
             )
             for r in rows
         ]

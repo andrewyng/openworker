@@ -2610,6 +2610,7 @@ export function App() {
             teamUsage={teamMembers.length ? teamUsage(usage, teamMembers) : undefined}
             onOpenTeamChat={() => setChatTeam(curSession?.team?.team_id || "")}
             onOpenWorker={(w) => { setBoardDetailId(null); setTeamWorkerId(w.session_id); setTeamWorkerFilter(null); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false); }}
+            onOpenSession={(id, ws, ag) => void selectSession(id, ws || "", ag || "code")}
             openBoardKey={boardRailKey}
           />
 

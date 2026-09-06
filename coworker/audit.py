@@ -71,6 +71,7 @@ class AuditStore:
             # this call ran in — "" for local/desktop or automated sessions.
             ("actor", "TEXT DEFAULT ''"),
             ("approved_by", "TEXT DEFAULT ''"),
+            ("plan_id", "TEXT"),
         ):
             try:
                 self._conn.execute(
@@ -114,8 +115,8 @@ class AuditStore:
             self._conn.execute(
                 """
                 INSERT INTO audit_events
-                    (session_id, agent, workspace, connector, tool, stage, status, approval, args, result_preview, reason, resource, call_id, tokens_in, tokens_out, cache_read, cache_write, actor, approved_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (session_id, agent, workspace, connector, tool, stage, status, approval, args, result_preview, reason, resource, call_id, tokens_in, tokens_out, cache_read, cache_write, actor, approved_by, plan_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.get("session_id") or "",
@@ -137,6 +138,7 @@ class AuditStore:
                     int(event.get("cache_write") or 0),
                     str(event.get("actor") or ""),
                     str(event.get("approved_by") or ""),
+                    str(event.get("plan_id") or ""),
                 ),
             )
             self._conn.commit()
@@ -191,6 +193,7 @@ class AuditStore:
         session_id: Optional[str] = None,
         connector: Optional[str] = None,
         tool: Optional[str] = None,
+        plan_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         where = []
         params: list[Any] = []
@@ -203,6 +206,9 @@ class AuditStore:
         if tool:
             where.append("tool = ?")
             params.append(tool)
+        if plan_id:
+            where.append("plan_id = ?")
+            params.append(plan_id)
         sql = "SELECT * FROM audit_events"
         if where:
             sql += " WHERE " + " AND ".join(where)
