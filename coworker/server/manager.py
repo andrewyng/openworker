@@ -2027,7 +2027,7 @@ class SessionManager:
             actor=actor,
             attachments=self.attachment_store,
         ) + journal_tools(
-            self.journal_store, actor=actor, space=space
+            self.journal_store, actor=actor, space=space, store=self.team_store
         )
         if role == "lead":
             tools.append(self._steer_tool(session_id))

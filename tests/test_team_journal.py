@@ -1,6 +1,8 @@
 """Journal store: case-keyed and board-independent, grants ride assignment,
 filtered reads, raw-capture discipline, per-case hash chains."""
 
+import json
+
 import pytest
 
 from coworker.teams import (
@@ -12,7 +14,9 @@ from coworker.teams import (
     Role,
     TeamStore,
 )
+from coworker.teams.dialect import LocalDialect
 from coworker.teams.model import JOURNAL_BODY_LIMIT
+from coworker.teams.tools import journal_tools
 
 USER = Actor(id="user", role=Role.USER)
 LEAD = Actor(id="lead-1", role=Role.LEAD)
@@ -176,3 +180,105 @@ def test_per_case_hash_chains_verify_and_detect_tampering(journal, tmp_path):
     with pytest.raises(ChainError):
         journal.verify_chain("findings")
     assert journal.verify_chain("ops") == 1  # other case unaffected
+
+
+def test_export_markdown_and_json(journal):
+    journal.append(
+        LEAD,
+        "findings",
+        "Vulnerability detected in auth module",
+        kind="finding",
+        entities=["auth.py"],
+        refs=["auth.py:42"],
+    )
+    journal.append(
+        LEAD, "findings", "Refactor session handling", kind="decision"
+    )
+    journal.append(LEAD, "findings", "curl repro output", kind="evidence")
+    journal.append(LEAD, "findings", "temporary trace", kind="raw")
+
+    md = journal.export(LEAD, "findings", format="markdown")
+    assert "# Journal Case Report: findings" in md
+    assert "## Executive Summary" in md
+    assert "- **Findings**: 1" in md
+    assert "- **Decisions**: 1" in md
+    assert "- **Evidence**: 1" in md
+    assert "### Finding #" in md
+    assert "Vulnerability detected in auth module" in md
+    assert "Refactor session handling" in md
+    assert "curl repro output" in md
+    assert "temporary trace" not in md  # raw excluded by default
+
+    md_raw = journal.export(
+        LEAD, "findings", format="markdown", include_raw=True
+    )
+    assert "temporary trace" in md_raw
+
+    raw_json = journal.export(LEAD, "findings", format="json")
+    data = json.loads(raw_json)
+    assert data["case"] == "findings"
+    assert data["summary"]["findings"] == 1
+    assert data["summary"]["decisions"] == 1
+    assert data["summary"]["evidence"] == 1
+    assert len(data["entries"]) == 3
+
+
+def test_export_unauthorized_and_nonexistent(journal):
+    journal.append(LEAD, "findings", "case notes")
+    with pytest.raises(AuthorityError, match="no grant"):
+        journal.export(OTHER, "findings")
+    with pytest.raises(BoardError, match="no case"):
+        journal.export(LEAD, "nonexistent")
+
+
+def test_export_includes_linked_board_items(board, journal):
+    item_id = case_item(board, case="incident-1", assignee="worker-1")
+    journal.append(
+        WORKER,
+        "incident-1",
+        "Root cause identified",
+        kind="finding",
+        item=item_id,
+        space=SPACE,
+    )
+
+    md = journal.export(LEAD, "incident-1", store=board, format="markdown")
+    assert "## Linked Work Items" in md
+    assert f"#{item_id}" in md
+    assert "Task" in md
+    assert "worker-1" in md
+
+    raw_json = journal.export(LEAD, "incident-1", store=board, format="json")
+    data = json.loads(raw_json)
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == item_id
+
+
+def test_local_dialect_journal_export(board, journal):
+    item_id = case_item(board, case="audit", assignee="worker-1")
+    journal.append(
+        WORKER, "audit", "Secret in config", kind="finding", item=item_id
+    )
+    dialect = LocalDialect(board, journal=journal, actor=LEAD)
+
+    res = dialect.journal_export(case="audit", format="markdown")
+    assert "# Journal Case Report: audit" in res
+
+    res_json = dialect.journal_export(case="audit", format="json")
+    data = json.loads(res_json)
+    assert data["case"] == "audit"
+
+
+def test_journal_tools_export(board, journal):
+    journal.append(LEAD, "bug-101", "Memory leak in worker pool", kind="finding")
+    tools = journal_tools(journal, actor=LEAD, space=SPACE, store=board)
+    export_fn = next(t for t in tools if t.__name__ == "export_journal_report")
+
+    res = export_fn(case="bug-101", format="markdown")
+    assert res["case"] == "bug-101"
+    assert res["format"] == "markdown"
+    assert "# Journal Case Report: bug-101" in res["content"]
+
+    res_err = export_fn(case="nonexistent")
+    assert "error" in res_err
+

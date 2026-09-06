@@ -117,6 +117,9 @@ class BoardDialect(Protocol):
         limit: int = 100,
     ) -> list[dict[str, Any]]: ...
     def journal_overview(self) -> list[dict[str, Any]]: ...
+    def journal_export(
+        self, case: str, *, format: str = "markdown", include_raw: bool = False
+    ) -> str: ...
 
 
 class LocalDialect:
@@ -295,6 +298,18 @@ class LocalDialect:
     def journal_overview(self) -> list[dict[str, Any]]:
         self._need_journal()
         return self.journal.overview(self.actor)
+
+    def journal_export(
+        self, case: str, *, format: str = "markdown", include_raw: bool = False
+    ) -> str:
+        self._need_journal()
+        return self.journal.export(
+            self.actor,
+            case,
+            store=self.store,
+            format=format,
+            include_raw=include_raw,
+        )
 
     def _need_journal(self) -> None:
         if self.journal is None:
@@ -535,6 +550,18 @@ class RemoteDialect:
 
     def journal_overview(self) -> list[dict[str, Any]]:
         return self._get("/v1/board/journal/cases")["cases"]
+
+    def journal_export(
+        self, case: str, *, format: str = "markdown", include_raw: bool = False
+    ) -> str:
+        return self._get(
+            "/v1/board/journal/export",
+            {
+                "case": case,
+                "format": format,
+                "include_raw": "1" if include_raw else None,
+            },
+        )["report"]
 
     def close(self) -> None:
         self._client.close()
