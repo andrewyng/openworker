@@ -152,7 +152,11 @@
     "bind_memory": "Project memory",
     "bind_board": "Board",
     "reviewer_paused_tip": "paused for this turn — the reviewer blocked several actions in a row, approvals come to you",
-    "paused": "paused"
+    "paused": "paused",
+    "queue": "Queue",
+    "queue_tooltip": "Queue this message to run after current task finishes",
+    "queued_count": "{{count}} queued",
+    "remove_queued": "Remove from queue"
   },
   "transcript": {
     "copy_message": "Copy message",

@@ -150,7 +150,11 @@
     "bind_memory": "项目记忆",
     "bind_board": "看板",
     "reviewer_paused_tip": "本回合暂停 —— 审查器连续拦截了多个操作，将改为向你请求批准",
-    "paused": "已暂停"
+    "paused": "已暂停",
+    "queue": "加入队列",
+    "queue_tooltip": "将此消息加入队列，在当前任务完成后运行",
+    "queued_count": "已排队 {{count}} 条",
+    "remove_queued": "从队列中移除"
   },
   "transcript": {
     "copy_message": "复制消息",

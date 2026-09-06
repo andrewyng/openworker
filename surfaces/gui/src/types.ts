@@ -125,6 +125,16 @@ export interface Attachment {
   text?: string; // text files
 }
 
+// Queued follow-up message while a task is running (#608)
+export interface QueuedMessage {
+  id: string;
+  sessionId: string;
+  text: string;
+  attachments?: Attachment[];
+  skill?: string;
+  createdAt: number;
+}
+
 // Transcript items
 // `ts` = unix seconds (the server's canonical-message stamp; live items stamp locally).
 // Optional: sessions saved before the server stamped timestamps have none.

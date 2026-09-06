@@ -44,6 +44,7 @@ import type {
   ApprovalDecision,
   Attachment,
   Item,
+  QueuedMessage,
   SessionInfo,
   SessionUsage,
   TodoItem,
@@ -249,6 +250,9 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
+  // Follow-up messages queued while a task is running (#608)
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  const isDrainingQueueRef = useRef(false);
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
   // to, driving the banner + "Back to runs". Best-effort — a run session without context still
   // shows a generic banner (detected by its __run__ id).
@@ -1133,6 +1137,40 @@ export function App() {
     sessionRef.current?.userMessage(text, attachments, model, skill);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
   };
+
+  const handleQueue = (text: string, attachments?: Attachment[], skill?: string) => {
+    if (!text.trim() && (!attachments || attachments.length === 0) && !skill) return;
+    const newQueued: QueuedMessage = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      sessionId,
+      text,
+      attachments,
+      skill,
+      createdAt: Date.now(),
+    };
+    setQueuedMessages((prev) => [...prev, newQueued]);
+  };
+
+  const handleRemoveQueued = (id: string) => {
+    setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
+  };
+
+  useEffect(() => {
+    if (running) {
+      isDrainingQueueRef.current = false;
+      return;
+    }
+    if (!connected || isDrainingQueueRef.current) return;
+    const sessionQueue = queuedMessages.filter((m) => m.sessionId === sessionId);
+    if (sessionQueue.length === 0) return;
+
+    isDrainingQueueRef.current = true;
+    const next = sessionQueue[0];
+    setQueuedMessages((prev) => prev.filter((m) => m.id !== next.id));
+    setRunning(true);
+    send(next.text, next.attachments, next.skill);
+  }, [running, connected, sessionId, queuedMessages]);
+
   // Resolving a LIVE prompt also resolves its parked Inbox mirror server-side, but the polled
   // `sessionInbox` copy stays "pending" for up to a poll cycle — long enough for the docked
   // answer-in-context card to flash the SAME request again right after the user answered it
@@ -2090,6 +2128,9 @@ export function App() {
               onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}
               prefill={composerPrefill}
               resetKey={sessionId}
+              queuedItems={queuedMessages.filter((m) => m.sessionId === sessionId)}
+              onQueue={handleQueue}
+              onRemoveQueued={handleRemoveQueued}
               usage={usage}
               contextWindow={modelContextWindows[model]}
               contextBar={contextBar}
