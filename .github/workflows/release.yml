@@ -76,12 +76,14 @@ jobs:
         # The build scripts expect a venv at .venv with the package + PyInstaller.
         # typer/tzdata are build-time-only (PyInstaller walks mcp.cli, which needs typer;
         # tzdata ships zoneinfo for Windows). aisuite installs like any other dependency
-        # (git-pinned in pyproject.toml).
+        # (git-pinned in pyproject.toml). uv sync --frozen installs the exact pinned set
+        # from uv.lock so release builds are reproducible.
         run: |
           python -m venv .venv
+          python -m pip install --upgrade pip
+          pip install uv
           if [ "$RUNNER_OS" = "Windows" ]; then VPY=.venv/Scripts/python; else VPY=.venv/bin/python; fi
-          "$VPY" -m pip install --upgrade pip
-          "$VPY" -m pip install -e ".[bedrock]" pyinstaller typer tzdata
+          uv sync --frozen --extra bedrock --extra build
           "$VPY" -c "import aisuite, coworker"  # fail fast if either import breaks
 
       - name: npm ci

@@ -12,10 +12,10 @@
 #   - A Python venv at .venv (repo root) with this package installed editable, plus the
 #     build-only deps:
 #       python3 -m venv .venv
-#       .venv/bin/pip install -e '.[bedrock]' pyinstaller tzdata typer
-#     `typer` is needed only at BUILD time: PyInstaller walks the `mcp` package and
-#     `mcp.cli` calls sys.exit() at import if typer is absent, which aborts the freeze.
-#     (aisuite installs like any other dependency — git-pinned in pyproject.toml.)
+#       uv sync --frozen --extra bedrock --extra build
+#     (`build` = pyinstaller + typer, pinned in uv.lock; typer is needed only at BUILD
+#     time: PyInstaller walks the `mcp` package and `mcp.cli` calls sys.exit() at import
+#     if typer is absent, which aborts the freeze. tzdata rides the win32 marker.)
 #
 # SIGNING: set APPLE_SIGNING_IDENTITY to a "Developer ID Application: … (TEAMID)" identity and
 # `tauri build` signs the .app + the bundled sidecar with it. Left unset → UNSIGNED (first launch
@@ -36,9 +36,7 @@
 # the spec strips coworker.connectors.experimental. Self-builders can opt in with:
 #   COWORKER_EXPERIMENTAL=1 ./build_dmg.sh
 # VENV PREREQS (a fresh worktree's venv, discovered the hard way 2026-08-21):
-#   .venv/bin/pip install -e ".[dev,messaging,browser,bedrock]" pyinstaller typer
-# (`typer` because PyInstaller's submodule collection imports mcp.cli, which
-# sys.exit(1)s without it.)
+#   uv sync --frozen --extra dev --extra messaging --extra browser --extra bedrock --extra build
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
