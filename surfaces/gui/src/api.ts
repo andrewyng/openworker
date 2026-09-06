@@ -408,6 +408,47 @@ export async function revealArtifact(
   return res.json();
 }
 
+// -- Replayable plan artifacts (#623) ----------------------------------------
+export interface PlanArtifact {
+  id: string;
+  session_id: string;
+  title: string;
+  path: string;
+  plan: string;
+  created_at?: string;
+  origin_session_id?: string;
+  origin_plan_id?: string;
+}
+
+export async function getSessionPlan(sessionId: string): Promise<PlanArtifact | null> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/plan`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function replayPlan(
+  sessionId: string,
+  planId?: string,
+  workspace?: string,
+): Promise<{ session_id: string; plan_id: string; workspace: string; agent: string; plan: PlanArtifact }> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/plan/replay`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plan_id: planId, workspace }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to replay plan: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function listPlans(): Promise<PlanArtifact[]> {
+  const res = await fetch(`${httpBase()}/v1/plans`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
 // -- session roots (orphan Cowork: scratch + added folders) -------------------
 export interface RootInfo {
   path: string;

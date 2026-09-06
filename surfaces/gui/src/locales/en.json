@@ -270,6 +270,8 @@
     "copy_contents": "Copy contents",
     "open_in_browser": "Open in browser",
     "reveal_in_finder": "Reveal in Finder",
+    "plan_rerun": "Re-run this plan",
+    "plan_replaying": "Replaying…",
     "folder_empty": "This folder is empty.",
     "table_truncated": "Showing first {{max}} of {{total}} rows.",
     "board_chip_blocked_one": "{{count}} blocked",

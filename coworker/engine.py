@@ -1703,6 +1703,8 @@ class TurnEngine:
                 self.permissions.mode = Mode(str(result.get("mode", "interactive")))
             except ValueError:
                 self.permissions.mode = Mode.INTERACTIVE
+            if result.get("plan_id"):
+                self.audit_context["plan_id"] = str(result["plan_id"])
             result = {
                 **result,
                 "mode": self.permissions.mode.value,
