@@ -139,7 +139,17 @@ export const installUpdate = () => invokeStrict<void>("install_update");
 export function openExternal(url: string): void {
   const opener = (globalThis as any).__TAURI__?.opener;
   if (opener?.openUrl) {
-    opener.openUrl(url).catch(() => window.open(url, "_blank", "noopener,noreferrer"));
+    opener.openUrl(url).catch(() => {
+      invoke<void>("open_url", { url }).catch(() => {
+        window.open(url, "_blank", "noopener,noreferrer");
+      });
+    });
+    return;
+  }
+  if (isTauri()) {
+    invoke<void>("open_url", { url }).catch(() => {
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
     return;
   }
   window.open(url, "_blank", "noopener,noreferrer");
