@@ -4267,21 +4267,34 @@ class SessionManager:
     ) -> bool:
         """Persist a standing rule a human minted via "Allow every time" on a run's
         approval card (§25's retrofit path). Server-side validation, not trust in the
-        card: the session must be an automation run and the call must be rule-eligible
-        (external risk, declared target argument, non-empty target). Also applies the
-        rule to the live engine so the run's next call auto-allows."""
-        from ..permissions import standing_rule_candidate
+        card: the session must be an automation run, and the call either names a target
+        (external risk, declared target argument) or is a tool eligible for a
+        target-less grant (egress — see standing_tool_candidate). Also applies the rule
+        to the live engine so the run's next call auto-allows."""
+        from ..permissions import standing_rule_candidate, standing_tool_candidate
 
         task = self.task_store.task_for_run_session(session_id)
         if task is None:
             return False
         target = standing_rule_candidate(tool_name, arguments or {}, metadata)
-        if not target or not task.add_rule(tool_name, target):
+        if target:
+            minted = task.add_rule(tool_name, target)
+        elif standing_tool_candidate(tool_name, metadata):
+            # No target to bind (web_search takes a query, not a destination). Grant the
+            # tool for this task instead of downgrading to a one-off — otherwise the
+            # routine asks the same question on every run and "Always" means nothing.
+            target, minted = None, task.add_tool_rule(tool_name)
+        else:
+            return False
+        if not minted:
             return False
         self.task_store.save(task)
         engine = self._engines.get(session_id)
         if engine is not None:
-            engine.permissions.task_rules.setdefault(tool_name, set()).add(target)
+            if target is None:
+                engine.permissions.allow_tool_for_session(tool_name)
+            else:
+                engine.permissions.task_rules.setdefault(tool_name, set()).add(target)
         try:
             self.audit_store.append(
                 {
@@ -4290,7 +4303,11 @@ class SessionManager:
                     "arguments": arguments or {},
                     "stage": "standing_rule_minted",
                     "status": "granted",
-                    "reason": f"allow every time: {tool_name} → {target} (task {task.id})",
+                    "reason": (
+                        f"allow every time: {tool_name} → {target} (task {task.id})"
+                        if target
+                        else f"allow every time: {tool_name}, any arguments (task {task.id})"
+                    ),
                 }
             )
         except Exception:

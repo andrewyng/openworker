@@ -278,6 +278,26 @@ def standing_rule_candidate(
     return value or None
 
 
+def standing_tool_candidate(
+    tool_name: str,
+    metadata: Any = None,
+    overrides: Optional[RiskOverrides] = None,
+) -> bool:
+    """Whether this tool may earn a task-scoped standing rule with NO target binding.
+
+    Egress only. The reasoning is the strictness table itself: egress (1) ranks below
+    external (2), and an external call already earns a standing rule when it names a
+    target. Refusing the lower class outright meant a routine could be trusted forever
+    to message a chat, but never to read a web page — so a daily sweep asked the same
+    question every morning and "Always" had nothing to bind to.
+
+    Write-local and exec stay out, as they do for target-bound rules: shell asks
+    forever. External stays target-bound — the target IS the safety there, and a
+    blanket "send anything anywhere" is a different proposition entirely.
+    """
+    return classify(tool_name, metadata, overrides) is RiskClass.EGRESS
+
+
 @dataclass
 class PermissionEngine:
     workspace_root: Path
