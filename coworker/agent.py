@@ -247,6 +247,7 @@ def build_engine(
     # Persona-carried skill folders (OPE-58): the bundle's skills/ dir joins the loader so
     # its skills are readable by load_skill, not just listed by the filter.
     extra_skill_dirs: Optional[list[str | Path]] = None,
+    default_approval_ttl_seconds: Optional[float] = None,
 ) -> TurnEngine:
     ws = Path(workspace).expanduser().resolve() if workspace else None
     if agent.requires_folder and ws is None:
@@ -548,6 +549,11 @@ def build_engine(
         tool_requester=tool_requester,
         team_approver=team_approver,
         items_approver=items_approver,
+        default_approval_ttl_seconds=(
+            default_approval_ttl_seconds
+            if default_approval_ttl_seconds is not None
+            else config.inbox_approval_ttl_seconds
+        ),
     )
     engine.executor = executor  # type: ignore[attr-defined]
     engine.todo = todo  # type: ignore[attr-defined]

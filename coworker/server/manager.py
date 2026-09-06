@@ -318,7 +318,10 @@ class SessionManager:
         set_persona_registry(self.personas)
         # Inbox (cross-session human-attention queue), routing (named inboxes + Slack/Telegram
         # bindings), the Unattended toggle, and self-wake records.
-        self.inbox = InboxStore(base / "inbox.json")
+        self.inbox = InboxStore(
+            base / "inbox.json",
+            default_ttl_seconds=load_config().inbox_approval_ttl_seconds,
+        )
         self.inbox_routing = InboxRouting(base / "inbox_routing.json")
         self.unattended = UnattendedRegistry(base / "unattended.json")
         self.wakes = WakeStore(base / "wakes.json")
@@ -1053,6 +1056,8 @@ class SessionManager:
                 session_id,
                 inbox=inbox_name,
                 tool_call_id=tool_call_id,
+                expires_at=args.get("expires_at"),
+                ttl_seconds=args.get("ttl_seconds"),
                 **fields,
             )
             if (
@@ -1079,6 +1084,8 @@ class SessionManager:
                 inbox=self.inbox_routing.route_for(session_id, agent),
                 tool_call_id=getattr(request, "tool_call_id", None),
                 data=self.approval_prompt_data(session_id, request),
+                expires_at=getattr(request, "expires_at", None),
+                ttl_seconds=getattr(request, "ttl_seconds", None),
             )
             if item.state == "pending":
                 self.persist_session(session_id)
@@ -1101,11 +1108,16 @@ class SessionManager:
                     "primary": bool(args.get("primary", False)),
                 },
                 tool_call_id=tool_call_id,
+                expires_at=args.get("expires_at"),
+                ttl_seconds=args.get("ttl_seconds"),
             )
             if item.state == "pending":
                 self.persist_session(session_id)
                 await self.mirror_inbox_item(item)
-            resp = _parse_inbox_json(await self.inbox.wait(item.id))
+            resolution = await self.inbox.wait(item.id)
+            if resolution == "expired":
+                return {"granted": False, "reason": "the request expired (TTL elapsed)"}
+            resp = _parse_inbox_json(resolution)
             if not resp.get("granted"):
                 return {"granted": False, "reason": "the user declined the request"}
             path = (resp.get("path") or args.get("path") or "").strip()
@@ -1157,11 +1169,19 @@ class SessionManager:
                 body=str(args.get("plan", "")),
                 inbox=self.inbox_routing.route_for(session_id, agent),
                 tool_call_id=tool_call_id,
+                expires_at=args.get("expires_at"),
+                ttl_seconds=args.get("ttl_seconds"),
             )
             if item.state == "pending":
                 self.persist_session(session_id)
                 await self.mirror_inbox_item(item)
-            resp = _parse_inbox_json(await self.inbox.wait(item.id))
+            resolution = await self.inbox.wait(item.id)
+            if resolution == "expired":
+                return {
+                    "approved": False,
+                    "feedback": "the plan request expired (TTL elapsed)",
+                }
+            resp = _parse_inbox_json(resolution)
             if not resp.get("approved"):
                 return {
                     "approved": False,
@@ -4321,6 +4341,8 @@ class SessionManager:
             if not minted:
                 self._audit_grant_refused(session_id, request, resolution)
             return ApprovalOutcome.ONCE
+        if resolution == "expired":
+            return ApprovalOutcome.EXPIRED
         try:
             outcome = ApprovalOutcome(resolution)
         except ValueError:
@@ -4434,6 +4456,8 @@ class SessionManager:
                 inbox=self.inbox_routing.route_for(session_id, task.agent),
                 tool_call_id=getattr(request, "tool_call_id", None),
                 data=self.approval_prompt_data(session_id, request),
+                expires_at=getattr(request, "expires_at", None),
+                ttl_seconds=getattr(request, "ttl_seconds", None),
             )
             if item.state == "pending":
                 self.persist_session(session_id)
@@ -4598,14 +4622,31 @@ class SessionManager:
 
     # -- self-wake resumption ---------------------------------------------------
     async def _scheduler_tick(self) -> None:
-        """The shared per-tick work: resume due self-wakes, then drain team queues.
-        Team deliveries dispatch as tasks (a long worker turn must not stall the
-        scheduler)."""
+        """The shared per-tick work: resume due self-wakes, expire due inbox items,
+        then drain team queues. Team deliveries dispatch as tasks (a long worker
+        turn must not stall the scheduler)."""
         await self.resume_due_wakes()
+        try:
+            await self.expire_due_inbox_items()
+        except Exception:
+            logger.exception("inbox expiration check failed")
         try:
             await self.team_tick()
         except Exception:
             logger.exception("team tick failed")
+
+    async def expire_due_inbox_items(self) -> int:
+        """Auto-resolve pending inbox items whose TTL has expired and resume parked sessions."""
+        expired = self.inbox.check_expirations()
+        for item in expired:
+            if not self.is_running(item.session_id):
+                try:
+                    await self._durable_resume(item)
+                except Exception:
+                    logger.exception(
+                        "failed to resume session %s after item expiry", item.session_id
+                    )
+        return len(expired)
 
     async def resume_due_wakes(self) -> int:
         """Resume sessions whose self-wakes are due (called each scheduler tick). A suspended

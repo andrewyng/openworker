@@ -56,6 +56,7 @@ class ApprovalOutcome(str, Enum):
     # nothing persisted. EXTERNAL-risk tools only (validated server-side).
     THIS_RUN = "this_run"
     DENY = "deny"
+    EXPIRED = "expired"
 
 
 def _readonly_ok(arguments: dict) -> bool:
@@ -78,6 +79,8 @@ class PermissionRequest:
     # registration) — carried on the request so a PARKED approval shows the same
     # destination evidence as the live card (§35 parity). None for non-MCP tools.
     mcp_destination: Optional[dict] = None
+    expires_at: Optional[str] = None
+    ttl_seconds: Optional[float] = None
 
 
 Approver = Callable[[PermissionRequest], Awaitable[ApprovalOutcome]]
@@ -123,12 +126,14 @@ class TurnEngine:
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
         interrupt_hooks: Optional[list[Callable[[], None]]] = None,
+        default_approval_ttl_seconds: Optional[float] = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
         self.permissions = permissions
         self.model = model
         self.approver = approver or _deny_all
+        self.default_approval_ttl_seconds = default_approval_ttl_seconds
         self.max_iterations = max_iterations
         self.model_settings = dict(model_settings or {})
         self.messages: list[dict[str, Any]] = list(messages or [])
@@ -1352,11 +1357,30 @@ class TurnEngine:
                             if spec
                             else None
                         ),
+                        ttl_seconds=self.default_approval_ttl_seconds,
                     )
                 ),
                 interrupted=ApprovalOutcome.DENY,
             )
-            if outcome is ApprovalOutcome.DENY:
+            if outcome is ApprovalOutcome.EXPIRED:
+                allowed, reason = (
+                    False,
+                    "approval request expired (TTL elapsed)",
+                )
+                self._approval_origins[tool_call.id] = {
+                    "origin": "timeout",
+                    "grant": "expired",
+                    **({"note": unsure_note} if unsure_note else {}),
+                }
+                self._audit(
+                    tool_call,
+                    stage="approval_resolved",
+                    call_id=tool_call.id,
+                    status="expired",
+                    approval=outcome.value,
+                    reason=reason,
+                )
+            elif outcome is ApprovalOutcome.DENY:
                 allowed, reason = (
                     False,
                     "interrupted by user" if self._cancel.is_set() else "denied by user",
@@ -1421,11 +1445,14 @@ class TurnEngine:
                     **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
                 }
             self.messages.append(err_msg)
+            finish_status = (
+                "expired" if outcome is ApprovalOutcome.EXPIRED else "denied"
+            )
             yield Event(
                 EventType.TOOL_FINISHED,
-                {"name": tool_call.name, "status": "denied", "reason": reason},
+                {"name": tool_call.name, "status": finish_status, "reason": reason},
             )
-            self._audit(tool_call, stage="finished", status="denied", reason=reason)
+            self._audit(tool_call, stage="finished", status=finish_status, reason=reason)
             yield False
             return
 
