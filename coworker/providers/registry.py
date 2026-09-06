@@ -13,6 +13,10 @@ Chat Completions path), `anthropic` (native Messages API via
 (models in the user's own AWS account — Claude natively, everything else via Converse),
 `vertex` (the user's own GCP project — Gemini and Claude natively, open-weight via the
 MaaS endpoint), and `ollama` (local, OpenAI-compatible `/v1`).
+
+OpenCode Zen + Go (added 2026-07-24): a hosted aggregator and a flat-rate subscription tier —
+two independent endpoints (`https://opencode.ai/zen/v1/` for Zen, `https://opencode.ai/zen/go/v1/`
+for Go), each treated as its own first-class provider.
 """
 
 from __future__ import annotations
@@ -667,6 +671,26 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         base_url="https://openrouter.ai/api/v1",
         recommended_model="z-ai/glm-5.2",
         env_key="OPENROUTER_API_KEY",
+    ),
+    # OpenCode (opencode.ai/zen): a hosted aggregator (Zen = credit tier) at
+    # /zen/v1/, and a flat-rate subscription tier (Go) at /zen/go/v1/. Each picker entry
+    # stores its own api_key in its own `provider:<name>` SecretStore profile so the user
+    # can configure them independently; both still read `OPENCODE_API_KEY` from env.
+    _compat(
+        "opencode_zen",
+        "OpenCode Zen",
+        base_url="https://opencode.ai/zen/v1/",
+        recommended_model="gpt-5.6-sol",
+        env_key="OPENCODE_API_KEY",
+        endpoint_help="Zen is OpenCode's hosted credit-tier aggregator — credit-based billing across many model providers.",
+    ),
+    _compat(
+        "opencode_go",
+        "OpenCode Go",
+        base_url="https://opencode.ai/zen/go/v1/",
+        recommended_model="kimi-k3",
+        env_key="OPENCODE_API_KEY",
+        endpoint_help="Go is OpenCode's flat-rate subscription tier with flat-fee access to selected models.",
     ),
     ProviderDescriptor(
         name="ollama",

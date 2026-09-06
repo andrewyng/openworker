@@ -22,6 +22,14 @@ def capabilities_for(model: str) -> ModelCapabilities:
     provider = model.split(":", 1)[0].lower() if ":" in model else ""
     name = model.split(":", 1)[-1].lower()  # strip a provider prefix if present
 
+    # OpenCode must be handled before the generic GPT/vendor-name heuristics below:
+    # custom ids such as `opencode_zen:gpt-5.6-custom` still use the conservative
+    # OpenCode chat-completions contract, not OpenAI's vision/PDF assumptions.
+    if provider in ("opencode_zen", "opencode_go"):
+        return ModelCapabilities(
+            tools=True, vision=False, pdf=False, parallel_tool_calls=True, streaming=True
+        )
+
     # Ollama (local) models vary widely and many fake/mishandle parallel tool calls — assume
     # tools work (we only point at tool-capable models) but stay conservative otherwise.
     # Vision is detected from common model naming conventions (-vl, vision, llava, etc.).

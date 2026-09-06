@@ -21,13 +21,15 @@ def _git(workspace: Path, *args: str) -> Optional[str]:
             ["git", "-C", str(workspace), *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
         return None
     if out.returncode != 0:
         return None
-    return out.stdout.strip()
+    return (out.stdout or "").strip()
 
 
 def _git_snapshot(workspace: Path) -> list[str]:

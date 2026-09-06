@@ -19,6 +19,12 @@ the id refresh.
 Resellers: Together + Fireworks + OpenRouter. TODO: add Groq entries here AND its
 descriptor in ``registry.py`` once the current provider surface is tested — deliberately
 deferred to bound how much needs verifying at once.
+
+OpenCode Zen + Go (2026-07): two independent picker entries that happen to share the
+upstream OpenAI-compatible endpoint and the `OPENCODE_API_KEY` env-var fallback. Each has
+its own curated roster — Zen fronts frontier credit-tier models; Go is the flat-rate
+subscription tier. The user can configure either, both, or neither; the entries don't
+share a stored api_key.
 """
 
 from __future__ import annotations
@@ -275,6 +281,95 @@ MATRIX: dict[str, ModelEntry] = {
     "vertex:openweight/qwen/qwen3-coder-480b-a35b-instruct-maas": ModelEntry(
         "Qwen3 Coder · Vertex AI", _AGENTIC, 256_000
     ),
+    # -- OpenCode (opencode.ai/zen) — curated aggregator rosters. Each picker entry
+    # stores its own api_key and points at its own OpenAI-compatible /v1/chat/completions
+    # endpoint (`https://opencode.ai/zen/v1/` for Zen, `https://opencode.ai/zen/go/v1/` for Go).
+    "opencode_zen:claude-fable-5": ModelEntry("Claude Fable 5 · OpenCode Zen"),
+    "opencode_zen:claude-opus-5": ModelEntry("Claude Opus 5 · OpenCode Zen"),
+    "opencode_zen:claude-opus-4-8": ModelEntry("Claude Opus 4.8 · OpenCode Zen"),
+    "opencode_zen:claude-opus-4-7": ModelEntry("Claude Opus 4.7 · OpenCode Zen"),
+    "opencode_zen:claude-opus-4-6": ModelEntry("Claude Opus 4.6 · OpenCode Zen"),
+    "opencode_zen:claude-opus-4-5": ModelEntry("Claude Opus 4.5 · OpenCode Zen"),
+    "opencode_zen:claude-opus-4-1": ModelEntry("Claude Opus 4.1 · OpenCode Zen"),
+    "opencode_zen:claude-sonnet-5": ModelEntry("Claude Sonnet 5 · OpenCode Zen"),
+    "opencode_zen:claude-sonnet-4-6": ModelEntry("Claude Sonnet 4.6 · OpenCode Zen"),
+    "opencode_zen:claude-sonnet-4-5": ModelEntry("Claude Sonnet 4.5 · OpenCode Zen"),
+    "opencode_zen:claude-sonnet-4": ModelEntry("Claude Sonnet 4 · OpenCode Zen"),
+    "opencode_zen:claude-haiku-4-5": ModelEntry("Claude Haiku 4.5 · OpenCode Zen"),
+    "opencode_zen:gemini-3.6-flash": ModelEntry("Gemini 3.6 Flash · OpenCode Zen"),
+    "opencode_zen:gemini-3.5-flash-lite": ModelEntry("Gemini 3.5 Flash Lite · OpenCode Zen"),
+    "opencode_zen:gemini-3.5-flash": ModelEntry("Gemini 3.5 Flash · OpenCode Zen"),
+    "opencode_zen:gemini-3.1-pro": ModelEntry("Gemini 3.1 Pro · OpenCode Zen"),
+    "opencode_zen:gemini-3-flash": ModelEntry("Gemini 3 Flash · OpenCode Zen"),
+    "opencode_zen:gpt-5.6-sol": ModelEntry("GPT-5.6 Sol · OpenCode Zen"),
+    "opencode_zen:gpt-5.6-terra": ModelEntry("GPT-5.6 Terra · OpenCode Zen"),
+    "opencode_zen:gpt-5.6-luna": ModelEntry("GPT-5.6 Luna · OpenCode Zen"),
+    "opencode_zen:gpt-5.5": ModelEntry("GPT-5.5 · OpenCode Zen"),
+    "opencode_zen:gpt-5.5-pro": ModelEntry("GPT-5.5 Pro · OpenCode Zen"),
+    "opencode_zen:gpt-5.4": ModelEntry("GPT-5.4 · OpenCode Zen"),
+    "opencode_zen:gpt-5.4-pro": ModelEntry("GPT-5.4 Pro · OpenCode Zen"),
+    "opencode_zen:gpt-5.4-mini": ModelEntry("GPT-5.4 Mini · OpenCode Zen"),
+    "opencode_zen:gpt-5.4-nano": ModelEntry("GPT-5.4 Nano · OpenCode Zen"),
+    "opencode_zen:gpt-5.3-codex-spark": ModelEntry("GPT-5.3 Codex Spark · OpenCode Zen"),
+    "opencode_zen:gpt-5.3-codex": ModelEntry("GPT-5.3 Codex · OpenCode Zen"),
+    "opencode_zen:gpt-5.2": ModelEntry("GPT-5.2 · OpenCode Zen"),
+    "opencode_zen:gpt-5.2-codex": ModelEntry("GPT-5.2 Codex · OpenCode Zen"),
+    "opencode_zen:gpt-5.1": ModelEntry("GPT-5.1 · OpenCode Zen"),
+    "opencode_zen:gpt-5.1-codex-max": ModelEntry("GPT-5.1 Codex Max · OpenCode Zen"),
+    "opencode_zen:gpt-5.1-codex": ModelEntry("GPT-5.1 Codex · OpenCode Zen"),
+    "opencode_zen:gpt-5.1-codex-mini": ModelEntry("GPT-5.1 Codex Mini · OpenCode Zen"),
+    "opencode_zen:gpt-5": ModelEntry("GPT-5 · OpenCode Zen"),
+    "opencode_zen:gpt-5-codex": ModelEntry("GPT-5 Codex · OpenCode Zen"),
+    "opencode_zen:gpt-5-nano": ModelEntry("GPT-5 Nano · OpenCode Zen"),
+    "opencode_zen:grok-build-0.1": ModelEntry("Grok Build 0.1 · OpenCode Zen"),
+    "opencode_zen:grok-4.5": ModelEntry("Grok 4.5 · OpenCode Zen"),
+    "opencode_zen:deepseek-v4-pro": ModelEntry("DeepSeek V4 Pro · OpenCode Zen"),
+    "opencode_zen:deepseek-v4-flash": ModelEntry("DeepSeek V4 Flash · OpenCode Zen"),
+    "opencode_zen:deepseek-v4-flash-free": ModelEntry(
+        "DeepSeek V4 Flash Free · OpenCode Zen"
+    ),
+    "opencode_zen:glm-5.2": ModelEntry("GLM 5.2 · OpenCode Zen"),
+    "opencode_zen:glm-5.1": ModelEntry("GLM 5.1 · OpenCode Zen"),
+    "opencode_zen:glm-5": ModelEntry("GLM 5 · OpenCode Zen"),
+    "opencode_zen:minimax-m3": ModelEntry("MiniMax M3 · OpenCode Zen"),
+    "opencode_zen:minimax-m2.7": ModelEntry("MiniMax M2.7 · OpenCode Zen"),
+    "opencode_zen:minimax-m2.5": ModelEntry("MiniMax M2.5 · OpenCode Zen"),
+    "opencode_zen:kimi-k2.7-code": ModelEntry("Kimi K2.7 Code · OpenCode Zen"),
+    "opencode_zen:kimi-k2.6": ModelEntry("Kimi K2.6 · OpenCode Zen"),
+    "opencode_zen:kimi-k2.5": ModelEntry("Kimi K2.5 · OpenCode Zen"),
+    "opencode_zen:qwen3.6-plus": ModelEntry("Qwen3.6 Plus · OpenCode Zen"),
+    "opencode_zen:qwen3.5-plus": ModelEntry("Qwen3.5 Plus · OpenCode Zen"),
+    "opencode_zen:big-pickle": ModelEntry("Big Pickle · OpenCode Zen"),
+    "opencode_zen:mimo-v2.5-free": ModelEntry("Mimo V2.5 Free · OpenCode Zen"),
+    "opencode_zen:ling-3.0-flash-free": ModelEntry("Ling 3.0 Flash Free · OpenCode Zen"),
+    "opencode_zen:nemotron-3-ultra-free": ModelEntry(
+        "Nemotron 3 Ultra Free · OpenCode Zen"
+    ),
+    "opencode_zen:north-mini-code-free": ModelEntry("North Mini Code Free · OpenCode Zen"),
+    "opencode_zen:laguna-s-2.1-free": ModelEntry("Laguna S 2.1 Free · OpenCode Zen"),
+    "opencode_go:minimax-m3": ModelEntry("MiniMax M3 · OpenCode Go"),
+    "opencode_go:minimax-m2.7": ModelEntry("MiniMax M2.7 · OpenCode Go"),
+    "opencode_go:minimax-m2.5": ModelEntry("MiniMax M2.5 · OpenCode Go"),
+    "opencode_go:kimi-k3": ModelEntry("Kimi K3 · OpenCode Go"),
+    "opencode_go:kimi-k2.7-code": ModelEntry("Kimi K2.7 Code · OpenCode Go"),
+    "opencode_go:kimi-k2.6": ModelEntry("Kimi K2.6 · OpenCode Go"),
+    "opencode_go:kimi-k2.5": ModelEntry("Kimi K2.5 · OpenCode Go"),
+    "opencode_go:glm-5.2": ModelEntry("GLM 5.2 · OpenCode Go"),
+    "opencode_go:glm-5.1": ModelEntry("GLM 5.1 · OpenCode Go"),
+    "opencode_go:glm-5": ModelEntry("GLM 5 · OpenCode Go"),
+    "opencode_go:deepseek-v4-pro": ModelEntry("DeepSeek V4 Pro · OpenCode Go"),
+    "opencode_go:deepseek-v4-flash": ModelEntry("DeepSeek V4 Flash · OpenCode Go"),
+    "opencode_go:qwen3.7-max": ModelEntry("Qwen3.7 Max · OpenCode Go"),
+    "opencode_go:qwen3.7-plus": ModelEntry("Qwen3.7 Plus · OpenCode Go"),
+    "opencode_go:qwen3.6-plus": ModelEntry("Qwen3.6 Plus · OpenCode Go"),
+    "opencode_go:qwen3.5-plus": ModelEntry("Qwen3.5 Plus · OpenCode Go"),
+    "opencode_go:mimo-v2-pro": ModelEntry("Mimo V2 Pro · OpenCode Go"),
+    "opencode_go:mimo-v2-omni": ModelEntry("Mimo V2 Omni · OpenCode Go"),
+    "opencode_go:mimo-v2.5-pro": ModelEntry("Mimo V2.5 Pro · OpenCode Go"),
+    "opencode_go:mimo-v2.5": ModelEntry("Mimo V2.5 · OpenCode Go"),
+    "opencode_go:hy3": ModelEntry("Hy3 · OpenCode Go"),
+    "opencode_go:hy3-preview": ModelEntry("Hy3 Preview · OpenCode Go"),
+    "opencode_go:grok-4.5": ModelEntry("Grok 4.5 · OpenCode Go"),
 }
 
 

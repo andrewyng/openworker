@@ -60,7 +60,7 @@ class ProviderRouter(ProviderClient):
         with self._lock:
             client = self._clients.get(name)
             if client is None:
-                profile = {}
+                profile: dict[str, Any] = {}
                 if self._secrets is not None:
                     profile = self._secrets.get(f"provider:{name}") or {}
                 client = build_provider_client(name, profile, self._secrets)
@@ -74,7 +74,7 @@ class ProviderRouter(ProviderClient):
         prefix) is returned unchanged, so the colon isn't mistaken for a provider separator.
         """
         if ":" in model:
-            prefix, rest = model.split(":", 1)
+            prefix, rest = model.split(":", 1)[0], model.split(":", 1)[1]
             if get_descriptor(prefix) is not None:
                 return rest
         return model
@@ -84,8 +84,8 @@ class ProviderRouter(ProviderClient):
         with self._lock:
             if name is None:
                 self._clients.clear()
-            else:
-                self._clients.pop(name, None)
+                return
+            self._clients.pop(name, None)
 
     # -- ProviderClient ---------------------------------------------------------
     def complete(

@@ -5,6 +5,8 @@
 # All keys are optional; unset keys fall back to built-in defaults.
 
 model = "gpt-5.5"            # default model id (override per session in the UI/CLI)
+# OpenCode models use qualified ids, e.g. "opencode_zen:grok-4.5" or
+# "opencode_go:kimi-k3". Zen and Go are separate provider profiles.
 mode = "interactive"         # plan | interactive | auto | custom
 max_iterations = 12          # max model<->tool iterations per turn before stopping
 
