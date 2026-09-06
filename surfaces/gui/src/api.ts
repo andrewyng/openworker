@@ -2111,6 +2111,14 @@ export async function finalizeAutomationRun(id: string, runId: string) {
   return res.json();
 }
 
+/** Force stop a running automation task (Issue #621). */
+export async function stopAutomation(id: string): Promise<{ ok: boolean; stopped?: boolean }> {
+  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}/stop`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
 export async function allowUser(
   name: string,
   userId: string,
