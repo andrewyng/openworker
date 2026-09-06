@@ -131,6 +131,7 @@ class TurnEngine:
         model: str,
         instructions: Optional[str] = None,
         approver: Optional[Approver] = None,
+        session_id: str = "default",
         max_iterations: int = 12,
         model_settings: Optional[dict[str, Any]] = None,
         messages: Optional[list[dict[str, Any]]] = None,
@@ -173,6 +174,9 @@ class TurnEngine:
         self.permissions = permissions
         self.model = model
         self.approver = approver or _deny_all
+        self.session_id = session_id or "default"
+        self.turn_index = 0
+        self._turn_checkpoint_created = False
         self.max_iterations = max_iterations
         self.model_settings = dict(model_settings or {})
         self.messages: list[dict[str, Any]] = list(messages or [])
@@ -378,6 +382,25 @@ class TurnEngine:
     ) -> None:
         self._steering.append((text, source, activity))
 
+    def revert_turn(self, turn: Optional[int] = None) -> dict[str, Any]:
+        """Revert workspace files to the checkpoint taken before turn `turn`."""
+        from .tools.git import list_checkpoints, restore_checkpoint
+
+        target = turn
+        if target is None or target <= 0:
+            ckpts = list_checkpoints(
+                self.permissions.workspace_root, session_id=self.session_id
+            )
+            if not ckpts:
+                return {
+                    "ok": False,
+                    "error": "No checkpoints available to revert.",
+                }
+            target = ckpts[-1]["turn"]
+        return restore_checkpoint(
+            self.permissions.workspace_root, self.session_id, target
+        )
+
     # -- main loop --------------------------------------------------------------
     async def run(
         self,
@@ -418,6 +441,8 @@ class TurnEngine:
                 # Once per engine: the name is the warning, and the transcript keeps it.
                 self._append_notice("dangerous_mode", _attendance.DANGEROUS_MODE_WARNING)
             self._dangerous_warned = True
+        self.turn_index += 1
+        self._turn_checkpoint_created = False
         if self.session_facts is not None:
             self.session_facts.begin_turn()
         # §8.4 retry guard resets per user turn: two reviewer denials in one turn route
@@ -1163,6 +1188,22 @@ class TurnEngine:
                     allowed = item
             if allowed:
                 cleared.append(tool_call)
+
+        if cleared and not self._turn_checkpoint_created:
+            from .risk import WRITE_TOOLS
+
+            if any(tc.name in WRITE_TOOLS for tc in cleared):
+                try:
+                    from .tools.git import create_checkpoint
+
+                    create_checkpoint(
+                        self.permissions.workspace_root,
+                        self.session_id,
+                        self.turn_index,
+                    )
+                    self._turn_checkpoint_created = True
+                except Exception:
+                    pass
 
         concurrent = (
             [tc for tc in cleared if self._parallel_safe(tc)]

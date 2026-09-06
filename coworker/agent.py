@@ -370,7 +370,8 @@ def build_engine(
     executor = sandbox_workspace.executor if sandbox_workspace is not None else None
     todo = TodoList()
     context = AgentContext(
-        workspace=ws, executor=executor, todo=todo, roots=root_list or None, sandbox=sandbox_workspace
+        workspace=ws, executor=executor, todo=todo, roots=root_list or None, sandbox=sandbox_workspace,
+        session_id=session_id,
     )
 
     registry = ToolRegistry()
@@ -713,6 +714,7 @@ def build_engine(
         approver=approver,
         tool_result_max_bytes=cap,
         tool_result_spill_dir=spill_dir,
+        session_id=session_id or "default",
         # Stop kills the in-flight foreground shell command, not just the loop.
         interrupt_hooks=[executor.interrupt_now] if executor is not None else None,
         max_iterations=(
