@@ -694,6 +694,19 @@ def create_app(manager: SessionManager) -> FastAPI:
             trusted=bool((body or {}).get("trusted", False)),
         )
 
+    @app.get("/v1/grants")
+    def active_grants() -> dict[str, Any]:
+        return {"grants": manager.list_active_grants()}
+
+    @app.post("/v1/grants/revoke")
+    def revoke_grant(body: dict) -> dict[str, Any]:
+        return manager.revoke_grant(
+            grant_id=(body or {}).get("grant_id"),
+            kind=(body or {}).get("kind"),
+            target=(body or {}).get("target"),
+            source_id=(body or {}).get("source_id"),
+        )
+
     @app.post("/v1/workspaces/temp")
     def provision_temp_workspace(body: dict) -> dict[str, Any]:
         # UX-029: a code-family session starting "in a temporary folder" — created only

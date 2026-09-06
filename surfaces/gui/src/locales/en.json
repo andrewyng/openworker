@@ -287,8 +287,14 @@
       "personas": "Coworkers",
       "context": "Context optimization",
       "skills": "Skills",
-      "memory": "Memory"
+      "memory": "Memory",
+      "grants": "Active grants"
     },
+    "grants_title": "Active grants",
+    "grants_sub": "Review and revoke standing approvals, workspace trust, MCP tool permissions, and automation rules.",
+    "grants_revoke": "Revoke",
+    "grants_empty": "No active standing grants found.",
+    "grants_loading": "Loading active grants…",
     "general_title": "General",
     "general_sub": "How OpenWorker looks and behaves on this machine.",
     "theme": "Theme",

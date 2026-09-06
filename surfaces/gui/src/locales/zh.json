@@ -280,8 +280,14 @@
       "personas": "同事",
       "context": "上下文优化",
       "skills": "技能",
-      "memory": "记忆"
+      "memory": "记忆",
+      "grants": "活动授权"
     },
+    "grants_title": "活动授权",
+    "grants_sub": "查看并撤销长期授权、受信任工作区、MCP 工具权限和自动化规则。",
+    "grants_revoke": "撤销",
+    "grants_empty": "未找到活动授权。",
+    "grants_loading": "正在加载活动授权…",
     "general_title": "通用",
     "general_sub": "OpenWorker 在本机的外观与行为。",
     "theme": "主题",

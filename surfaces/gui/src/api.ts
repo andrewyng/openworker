@@ -145,6 +145,46 @@ export async function setWorkspaceTrusted(
   return res.json();
 }
 
+export interface ActiveGrant {
+  id: string;
+  kind:
+    | "workspace_trust"
+    | "mcp_tool"
+    | "standing_automation"
+    | "session_tool"
+    | "session_command"
+    | "session_domain"
+    | "session_readonly"
+    | "allowed_domain"
+    | string;
+  name: string;
+  source: string;
+  source_id?: string | null;
+  source_label: string;
+  workspace?: string | null;
+  created_at?: string | null;
+  details?: Record<string, any>;
+}
+
+export async function getActiveGrants(): Promise<ActiveGrant[]> {
+  const res = await fetch(`${httpBase()}/v1/grants`);
+  return (await res.json()).grants ?? [];
+}
+
+export async function revokeGrant(params: {
+  grant_id?: string;
+  kind?: string;
+  target?: string;
+  source_id?: string | null;
+}): Promise<{ ok: boolean; error?: string; revoked?: boolean }> {
+  const res = await fetch(`${httpBase()}/v1/grants/revoke`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
 export async function getSessions(workspace?: string): Promise<SessionInfo[]> {
   const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
   const res = await fetch(`${httpBase()}/v1/sessions${q}`);

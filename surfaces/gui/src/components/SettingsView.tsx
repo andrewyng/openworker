@@ -13,6 +13,9 @@ import {
   setScratchBase,
   setSessionsPeek,
   setWorkspaceTrusted,
+  getActiveGrants,
+  revokeGrant,
+  type ActiveGrant,
   type CompactionSettings,
   type ModelSettings,
   type PdfSettings,
@@ -55,7 +58,7 @@ import { showPersonas } from "../flags";
 // Models + Personas host the existing tab components inside the page shell (field re-skin to follow).
 // "appearance" is the General tab's stable key — callers deep-link with it, so the
 // rename (UX-021) changed only the label. "files" folded into General as a card.
-type SetTab = "appearance" | "models" | "context" | "skills" | "voice" | "memory" | "personas";
+type SetTab = "appearance" | "models" | "context" | "skills" | "voice" | "memory" | "grants" | "personas";
 
 const CARD = "rounded-xl2 border border-line bg-panel";
 const FIELD_LABEL = "text-[13px] font-medium text-ink";
@@ -69,7 +72,7 @@ const BTN_BORDERED =
 const SET_TABS: {
   key: SetTab;
   labelKey: string;
-  icon: "sliders" | "code" | "mic" | "archive" | "sparkle" | "book" | "refresh";
+  icon: "sliders" | "code" | "mic" | "archive" | "sparkle" | "book" | "refresh" | "shield";
 }[] = [
   { key: "appearance", labelKey: "settings.tab.general", icon: "sliders" },
   { key: "models", labelKey: "settings.tab.models", icon: "code" },
@@ -77,6 +80,7 @@ const SET_TABS: {
   { key: "skills", labelKey: "settings.tab.skills", icon: "book" },
   { key: "voice", labelKey: "settings.tab.voice", icon: "mic" },
   { key: "memory", labelKey: "settings.tab.memory", icon: "archive" },
+  { key: "grants", labelKey: "settings.tab.grants", icon: "shield" },
   { key: "personas", labelKey: "settings.tab.personas", icon: "sparkle" },
 ];
 
@@ -150,12 +154,151 @@ export function SettingsView({
             <VoiceInputSection />
           ) : tab === "memory" ? (
             <MemorySection />
+          ) : tab === "grants" ? (
+            <GrantsSection />
           ) : (
             <PersonasSection onOpenPersona={onOpenPersona} />
           )}
         </div>
       </div>
     </main>
+  );
+}
+
+function GrantsSection() {
+  const { t } = useTranslation();
+  const [grants, setGrants] = useState<ActiveGrant[] | null>(null);
+  const [filter, setFilter] = useState<string>("all");
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    try {
+      const list = await getActiveGrants();
+      setGrants(list);
+    } catch {
+      setError("Failed to load active grants");
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const handleRevoke = async (grant: ActiveGrant) => {
+    setRevoking(grant.id);
+    try {
+      await revokeGrant({
+        grant_id: grant.id,
+        kind: grant.kind,
+        target: grant.name,
+        source_id: grant.source_id,
+      });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to revoke grant");
+    } finally {
+      setRevoking(null);
+    }
+  };
+
+  const filtered = (grants || []).filter((g) => {
+    if (filter === "all") return true;
+    if (filter === "workspace") return g.kind === "workspace_trust";
+    if (filter === "mcp") return g.kind === "mcp_tool";
+    if (filter === "task") return g.kind === "standing_automation";
+    if (filter === "session") return g.kind.startsWith("session_");
+    if (filter === "domain") return g.kind === "allowed_domain" || g.kind === "session_domain";
+    return true;
+  });
+
+  const kindBadge = (kind: string) => {
+    if (kind === "workspace_trust") return "Workspace";
+    if (kind === "mcp_tool") return "MCP Tool";
+    if (kind === "standing_automation") return "Automation";
+    if (kind === "session_tool") return "Session Tool";
+    if (kind === "session_command") return "Session Command";
+    if (kind === "session_domain") return "Session Domain";
+    if (kind === "session_readonly") return "Read-Only";
+    if (kind === "allowed_domain") return "Domain Allow";
+    return kind;
+  };
+
+  return (
+    <section>
+      <PanelHead
+        title={t("settings.grants_title", "Active grants")}
+        sub={t(
+          "settings.grants_sub",
+          "Review and revoke standing approvals, workspace trust, MCP tool permissions, and automation rules."
+        )}
+      />
+
+      <div className="flex gap-2 mb-4 overflow-x-auto pb-1 text-[12px]">
+        {[
+          { key: "all", label: "All" },
+          { key: "workspace", label: "Workspaces" },
+          { key: "mcp", label: "MCP Tools" },
+          { key: "task", label: "Automations" },
+          { key: "session", label: "Sessions" },
+          { key: "domain", label: "Domains" },
+        ].map((f) => (
+          <button
+            key={f.key}
+            onClick={() => setFilter(f.key)}
+            className={
+              "px-2.5 py-1 rounded-full border " +
+              (filter === f.key
+                ? "bg-accent text-white border-accent font-medium"
+                : "bg-paper text-muted border-line hover:text-ink")
+            }
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      <div className={`${CARD} p-5`}>
+        {error && (
+          <div className="text-[12px] text-red-500 mb-3">{error}</div>
+        )}
+        {grants === null ? (
+          <div className="text-[12px] text-muted">{t("settings.grants_loading", "Loading active grants…")}</div>
+        ) : filtered.length === 0 ? (
+          <div className="text-[12px] text-muted">{t("settings.grants_empty", "No active standing grants.")}</div>
+        ) : (
+          <div className="divide-y divide-line">
+            {filtered.map((grant) => (
+              <div key={grant.id} className="py-3 flex items-start gap-3 justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-panel border border-line text-muted">
+                      {kindBadge(grant.kind)}
+                    </span>
+                    <span className="text-[13px] font-medium text-ink break-all">
+                      {grant.name}
+                    </span>
+                  </div>
+                  <div className="text-[12px] text-muted mt-1 flex items-center gap-2 flex-wrap">
+                    <span>{grant.source_label}</span>
+                    {grant.workspace && (
+                      <span className="opacity-75">· {grant.workspace}</span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  disabled={revoking === grant.id}
+                  className="text-[12px] text-red-600 hover:text-red-700 font-medium px-2.5 py-1 rounded border border-red-200 hover:border-red-300 dark:border-red-900/40 shrink-0 disabled:opacity-50"
+                  onClick={() => void handleRevoke(grant)}
+                >
+                  {revoking === grant.id ? "Revoking…" : t("settings.grants_revoke", "Revoke")}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

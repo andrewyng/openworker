@@ -485,6 +485,7 @@ class ConversationStore:
                 archived=bool(r["archived"]),
                 origin=r["origin"],
                 origin_label=r["origin_label"],
+                grants=_load_grants(r["grants"] if "grants" in r.keys() else None),
                 team=_load_grants(r["team"] if "team" in r.keys() else None),
             )
             for r in rows
