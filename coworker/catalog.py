@@ -92,7 +92,8 @@ def _files(context: AgentContext) -> list:
 
 def _git(context: AgentContext) -> list:
     ws = str(context.workspace)
-    return [*ai.toolkits.git(root=ws), *git_tools(ws)]  # git_status, git_diff, git_log
+    sid = getattr(context, "session_id", None) or ""
+    return [*ai.toolkits.git(root=ws), *git_tools(ws, session_id=sid)]
 
 
 def _search(context: AgentContext) -> list:

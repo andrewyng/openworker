@@ -55,6 +55,7 @@ EGRESS_TOOLS = {
 
 _BASE: dict[str, RiskClass] = {
     **{name: RiskClass.WRITE_LOCAL for name in WRITE_TOOLS},
+    "revert_turn": RiskClass.WRITE_LOCAL,
     SHELL_TOOL: RiskClass.EXEC,
     **{name: RiskClass.EGRESS for name in EGRESS_TOOLS},
 }
