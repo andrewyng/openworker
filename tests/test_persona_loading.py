@@ -82,6 +82,28 @@ def test_install_from_git_uses_injected_clone(tmp_path):
     assert "acme-ops" in reg.ids()
 
 
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "ext::sh -c 'touch /tmp/pwned'",  # ext transport → command execution at clone time
+        "--upload-pack=touch /tmp/pwned",  # leading "-" → parsed as a git option
+        "-oProxyCommand=touch /tmp/pwned",
+        "file:///etc/passwd",  # non-https transport
+        "git://example.com/x",
+    ],
+)
+def test_install_from_git_rejects_hostile_urls_before_cloning(tmp_path, hostile):
+    reg = PersonaRegistry(state_path=tmp_path / "personas.json")
+    calls: list[str] = []
+
+    def spy_clone(url, dest):  # must never run for a rejected URL
+        calls.append(url)
+
+    with pytest.raises(ValueError):
+        reg.install_from_git(hostile, cache_base=tmp_path / "cache", clone=spy_clone)
+    assert calls == []
+
+
 def test_invalid_third_party_manifest_fails_loud(tmp_path):
     bad = "---\nid: broken\ntools: [does_not_exist]\n---\nbody\n"
     reg = PersonaRegistry(state_path=tmp_path / "personas.json")
