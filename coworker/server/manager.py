@@ -724,6 +724,7 @@ class SessionManager:
             # the next session build without a config.toml edit.
             auto_approve=self.auto_approve(),
             auto_approve_shadow=self.auto_approve_shadow(),
+            reviewer_model=self.reviewer_model(),
         )
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
@@ -3446,6 +3447,7 @@ class SessionManager:
             # Settings toggles and gate the composer's Auto-Approve mode entry.
             "auto_approve": self.auto_approve(),
             "auto_approve_shadow": self.auto_approve_shadow(),
+            "reviewer_model": self.reviewer_model(),
             "scratch_base": self._prefs.get("scratch_base")
             or self.DEFAULT_SCRATCH_BASE,
             # Real on-disk secrets location, so the UI shows the OS-native path instead of a
@@ -3549,6 +3551,25 @@ class SessionManager:
             "ok": True,
             "auto_approve": self.auto_approve(),
             "auto_approve_shadow": self.auto_approve_shadow(),
+        }
+
+    def reviewer_model(self) -> Optional[str]:
+        from ..config import load_config
+
+        if "reviewer_model" in self._prefs and self._prefs["reviewer_model"]:
+            return str(self._prefs["reviewer_model"]).strip() or None
+        return load_config().reviewer_model
+
+    def set_reviewer_model(self, model: Any) -> dict[str, Any]:
+        val = str(model).strip() if model else ""
+        if val:
+            self._prefs["reviewer_model"] = val
+        else:
+            self._prefs.pop("reviewer_model", None)
+        self._save_prefs()
+        return {
+            "ok": True,
+            "reviewer_model": self.reviewer_model(),
         }
 
     # -- PDF attachments / token savings (owner ask, 2026-07-17) ----------------

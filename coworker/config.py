@@ -52,6 +52,9 @@ class Config:
     # gates (zero false-allows; ≥30% fewer prompts) get measured on real sessions. Costs
     # one model call per card while on. Off by default; user-global only.
     auto_approve_shadow: bool = False
+    # Dedicated reviewer model for auto-approve mode (spec §1.5 / Issue #615).
+    # If None or empty, the reviewer inherits the session's model. User-global only.
+    reviewer_model: Optional[str] = None
     host: str = "127.0.0.1"
     port: int = 8765
     # Web search provider: "duckduckgo" (keyless default) | "tavily" | "brave" (need a key).
@@ -84,6 +87,7 @@ _FIELDS = {
     "allowed_domains",
     "auto_approve",
     "auto_approve_shadow",
+    "reviewer_model",
     "host",
     "port",
     "web_search_provider",
@@ -104,6 +108,7 @@ _GLOBAL_ONLY_FIELDS = {
     "allowed_domains",
     "auto_approve",
     "auto_approve_shadow",
+    "reviewer_model",
 }
 _WORKSPACE_FIELDS = _FIELDS - _GLOBAL_ONLY_FIELDS
 
@@ -139,9 +144,16 @@ def load_config(
 
     g = Path(global_path) if global_path is not None else global_config_path()
     if g.is_file():
-        for key, value in _read(g).items():
+        data = _read(g)
+        for key, value in data.items():
             if key in _FIELDS:
                 setattr(cfg, key, value)
+        if "reviewer" in data and isinstance(data["reviewer"], dict):
+            rm = data["reviewer"].get("model")
+            if isinstance(rm, str) and rm.strip():
+                cfg.reviewer_model = rm.strip()
+    if cfg.reviewer_model is not None and not str(cfg.reviewer_model).strip():
+        cfg.reviewer_model = None
     if workspace:
         w = Path(workspace).expanduser() / ".coworker" / "config.toml"
         if w.is_file():

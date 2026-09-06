@@ -1944,6 +1944,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         # every approval card while the human still decides. Independent of the live flag.
         return manager.set_auto_approve_shadow((body or {}).get("auto_approve_shadow", False))
 
+    @app.post("/v1/settings/reviewer-model")
+    def settings_set_reviewer_model(body: dict) -> dict[str, Any]:
+        # Dedicated reviewer model for Auto-Approve (Issue #615).
+        return manager.set_reviewer_model((body or {}).get("reviewer_model"))
+
     @app.post("/v1/settings/pdf")
     def settings_set_pdf(body: dict) -> dict[str, Any]:
         # Token savings (owner ask, 2026-07-17): fallback mode for models without native
