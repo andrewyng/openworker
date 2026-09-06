@@ -48,6 +48,10 @@ messaging = ["python-telegram-bot>=21", "slack-bolt>=1.18", "aiohttp>=3.9"]
 browser = ["playwright>=1.44"]
 # AWS Bedrock provider (lazy-imported; desktop builds bundle it, pip users opt in).
 bedrock = ["boto3>=1.34"]
+# Build-time-only deps for the desktop bundles (PyInstaller freezes the sidecar; typer is
+# needed because PyInstaller walks mcp.cli, which sys.exit(1)s without it). Kept in an
+# extra so `uv lock` pins them too — release builds must be reproducible.
+build = ["pyinstaller", "typer"]
 
 [project.scripts]
 openworker = "coworker.cli:main"

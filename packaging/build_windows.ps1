@@ -15,7 +15,8 @@
     - A Python venv at platform\.venv with this package installed editable, plus pyinstaller.
       `typer` is needed only at build time: PyInstaller walks the `mcp` package and `mcp.cli`
       calls sys.exit() at import if typer is absent, which aborts the freeze.
-        py -m venv .venv ; .\.venv\Scripts\pip install -e ".[bedrock]" pyinstaller tzdata typer
+        py -m venv .venv ; uv sync --frozen --extra bedrock --extra build
+      (`build` = pyinstaller + typer, pinned in uv.lock; tzdata rides the win32 marker.)
 
   The result is UNSIGNED — first launch shows a SmartScreen warning ("More info" -> "Run anyway").
   Authenticode signing is a later step.
