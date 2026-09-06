@@ -169,3 +169,24 @@ def test_emoji_reactions_still_resolve(tmp_path):
     resolve_from_reply(f"❌ [ow:{b.id}]", store.resolve)
     assert store.get(a.id).resolution == "allow"
     assert store.get(b.id).resolution == "deny"
+
+
+def test_always_is_an_intent_the_parser_understands():
+    """Over a chat there was no way to say "stop asking": approve and deny were the
+    only words, so a scheduled run's prompt could be answered but never silenced."""
+    from coworker.inbox_routing import resolve_from_reply
+
+    seen = {}
+
+    def resolve(item_id, resolution):
+        seen[item_id] = resolution
+        return True
+
+    assert resolve_from_reply("always [ow:abc123]", resolve) is True
+    assert seen["abc123"] == "always_task"
+
+    assert resolve_from_reply("approve [ow:def456]", resolve) is True
+    assert seen["def456"] == "allow"
+
+    assert resolve_from_reply("deny [ow:c0ffee]", resolve) is True
+    assert seen["c0ffee"] == "deny"

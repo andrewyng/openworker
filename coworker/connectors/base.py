@@ -143,6 +143,10 @@ class BasePlatformAdapter(ABC):
     `handle_message` for inbound events."""
 
     platform: str = "base"
+    # Whether this platform renders choice buttons. False here is the honest
+    # default: `send_interactive` below falls back to plain text, and a caller
+    # that assumes buttons would leave the reader with no way to answer.
+    supports_interactive: bool = False
 
     def __init__(self) -> None:
         self._handler: Optional[MessageHandler] = None

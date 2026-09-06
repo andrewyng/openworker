@@ -125,6 +125,10 @@ def deliver(item, binding: InboxBinding, sender: Optional[Sender]) -> bool:
 # "No." / "👍" working; everything else is a free-text answer, which the approval path
 # already maps to deny — the safe default for an approval gate.
 _ALLOW_WORDS = frozenset({"approve", "approved", "allow", "allowed", "yes"})
+# "Always" is the answer that makes a routine stop asking. It existed only as a
+# button in an app: over a chat you could approve a scheduled run's prompt but never
+# stop it recurring, so the same question arrived every morning.
+_ALWAYS_WORDS = frozenset({"always", "alwaysallow"})
 _DENY_WORDS = frozenset({"deny", "denied", "reject", "rejected", "no"})
 _ALLOW_EMOJI = ("👍", "✅")
 _DENY_EMOJI = ("👎", "❌")
@@ -139,6 +143,8 @@ def _reply_intent(text: str) -> Optional[str]:
     if first.startswith(_DENY_EMOJI):
         return "deny"
     word = first.strip(_TOKEN_TRIM).lower()
+    if word in _ALWAYS_WORDS:
+        return "always_task"
     if word in _ALLOW_WORDS:
         return "allow"
     if word in _DENY_WORDS:
@@ -151,8 +157,8 @@ def resolve_from_reply(
 ) -> Optional[bool]:
     """Correlate an inbound channel reply to its item (by the embedded id) and resolve it.
 
-    Looks for the ``[ow:<id>]`` token (or legacy ``[ocw:…]``) and an allow/deny intent in the
-    reply's leading word; falls back to treating the whole message as a free-text answer.
+    Looks for the ``[ow:<id>]`` token (or legacy ``[ocw:…]``) and an allow/always/deny intent
+    in the reply's leading word; falls back to treating the whole message as a free-text answer.
     ``resolve(item_id, resolution)`` is the InboxStore.resolve.
     Returns the resolve() result, or None if no item id was found."""
     m = _ID_TOKEN.search(reply or "")
