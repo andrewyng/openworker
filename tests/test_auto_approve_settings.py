@@ -76,8 +76,71 @@ def test_build_engine_override_beats_config(tmp_path, monkeypatch):
     # config has it off by default; override to on → a reviewer is attached.
     engine = build_engine(agent=chat_agent(), auto_approve=True, auto_approve_shadow=False)
     assert engine.reviewer is not None
-    engine2 = build_engine(agent=chat_agent(), auto_approve=False, auto_approve_shadow=False)
+    engine2 = build_engine(
+        agent=chat_agent(), auto_approve=False, auto_approve_shadow=False
+    )
     assert engine2.reviewer is None
+
+
+def test_reviewer_model_endpoint_roundtrip(client):
+    s = client.get("/v1/settings").json()
+    assert s.get("reviewer_model") is None
+
+    # Set dedicated reviewer model
+    r = client.post(
+        "/v1/settings/reviewer-model",
+        json={"reviewer_model": "anthropic:claude-3-5-haiku"},
+    ).json()
+    assert r["ok"] and r["reviewer_model"] == "anthropic:claude-3-5-haiku"
+    assert (
+        client.get("/v1/settings").json()["reviewer_model"]
+        == "anthropic:claude-3-5-haiku"
+    )
+
+    # Clear dedicated model
+    r_clear = client.post(
+        "/v1/settings/reviewer-model", json={"reviewer_model": ""}
+    ).json()
+    assert r_clear["ok"] and r_clear["reviewer_model"] is None
+    assert client.get("/v1/settings").json()["reviewer_model"] is None
+
+
+def test_reviewer_model_falls_back_to_config(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir(parents=True)
+    (state / "config.toml").write_text('[reviewer]\nmodel = "ollama:llama3.2:3b"\n')
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(state))
+    mgr = SessionManager(data_dir=tmp_path / "data")
+    assert mgr.reviewer_model() == "ollama:llama3.2:3b"
+
+    # Prefs override takes precedence
+    mgr.set_reviewer_model("anthropic:claude-3-5-haiku")
+    assert mgr.reviewer_model() == "anthropic:claude-3-5-haiku"
+
+
+def test_build_engine_reviewer_model(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.agent import build_engine
+    from coworker.agents.chat import chat_agent
+
+    # When reviewer_model is supplied, engine.reviewer uses it
+    engine = build_engine(
+        agent=chat_agent(),
+        auto_approve=True,
+        model="gpt-5.6-sol",
+        reviewer_model="anthropic:claude-3-5-haiku",
+    )
+    assert engine.reviewer is not None
+    assert engine.reviewer.model == "anthropic:claude-3-5-haiku"
+
+    # When reviewer_model is omitted, engine.reviewer inherits session model
+    engine_default = build_engine(
+        agent=chat_agent(),
+        auto_approve=True,
+        model="gpt-5.6-sol",
+    )
+    assert engine_default.reviewer is not None
+    assert engine_default.reviewer.model == "gpt-5.6-sol"
 
 
 # -- metering (§1.7): durable reviewer stats from the audit store ------------------
