@@ -16,6 +16,9 @@ ABOUT: dict[str, str] = {
     "telegram": "Chat with your coworker from Telegram. Messages to your bot "
     "reach the agent and replies come back to the same chat — only senders on "
     "your allow-list get through.",
+    "weixin": "Chat with your coworker from WeChat via the official ClawBot "
+    "(iLink) channel. Scan a QR code once; DMs on your phone reach the agent "
+    "on this computer. Group chats are not supported in v1.",
     "slack": "Bring your coworker into Slack: mention it in a channel or DM it, "
     "and replies land in-thread. Any number of workspaces can be connected, "
     "each with its own allow-list of who may talk to the agent.",
@@ -62,6 +65,11 @@ ACCESS: dict[str, list[str]] = {
     "telegram": [
         "Reads messages sent to your bot — never your personal chats.",
         "Sends messages as the bot.",
+        "Only senders on your allow-list are answered.",
+    ],
+    "weixin": [
+        "Reads DMs sent to your WeChat ClawBot identity — not your other chats.",
+        "Sends replies as the ClawBot (requires a prior inbound message).",
         "Only senders on your allow-list are answered.",
     ],
     "slack": [

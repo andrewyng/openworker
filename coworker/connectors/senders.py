@@ -138,9 +138,35 @@ def _send_slack_interactive(
     return SendResult(False, error=data.get("error") or "slack send failed")
 
 
+def _send_weixin(
+    token: str, chat_id: str, text: str, thread_id: Optional[str] = None
+) -> SendResult:
+    """Outbound ClawBot text via iLink. Requires a stored context_token for chat_id."""
+    _ = thread_id
+    from ..secrets import SecretStore
+    from . import weixin_ilink as ilink
+
+    ctx = ilink.context_token_store().get(chat_id)
+    if not ctx:
+        return SendResult(
+            False,
+            error=(
+                "no context_token for this WeChat chat — ask the user to message "
+                "the ClawBot once first"
+            ),
+        )
+    profile = SecretStore().get("weixin:default") or {}
+    base = profile.get("baseurl") or profile.get("base_url") or None
+    result = ilink.send_text(token, chat_id, text, ctx, base_url=base)
+    if result.get("ok"):
+        return SendResult(True, message_id=str(result.get("message_id") or "") or None)
+    return SendResult(False, error=result.get("error") or "weixin send failed")
+
+
 DEFAULT_SENDERS: dict[str, Sender] = {
     "telegram": _send_telegram,
     "slack": _send_slack,
+    "weixin": _send_weixin,
 }
 
 

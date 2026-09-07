@@ -28,7 +28,7 @@ _ID_TOKEN = re.compile(r"\[o(?:c)?w:([0-9a-f]{6,})\]")
 @dataclass
 class InboxBinding:
     name: str
-    channel: Optional[str] = None  # None (in-app only) | "slack" | "telegram"
+    channel: Optional[str] = None  # None (in-app only) | "slack" | "telegram" | "weixin"
     target: str = ""  # channel id / chat id for the binding
 
 

@@ -5,6 +5,8 @@ import {
   connectManaged,
   connectMcpBacked,
   getConnectors,
+  pollWeixinQrStatus,
+  startWeixinQr,
   type CloudStatus,
   type Connector,
 } from "../../api";
@@ -113,6 +115,8 @@ export function AddConnectionModal({
               </div>
             )}
           </>
+        ) : c.auth === "qrcode" || c.name === "weixin" ? (
+          <WeixinQrConnect onConnected={() => { onChanged(); onClose(); }} />
         ) : mcpBacked ? (
           /* MCP-backed with no manual fields (monday): one-click IS the flow. */
           <McpOneClick c={c} onConnected={() => { onChanged(); onClose(); }} />
@@ -123,6 +127,125 @@ export function AddConnectionModal({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** WeChat ClawBot iLink QR login — scan with the WeChat mobile app. */
+function WeixinQrConnect({ onConnected }: { onConnected: () => void }) {
+  const [qrcode, setQrcode] = useState("");
+  const [qrcodeUrl, setQrcodeUrl] = useState("");
+  const [status, setStatus] = useState<"loading" | "wait" | "scaned" | "scanned" | "confirmed" | "expired" | "error">(
+    "loading",
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  const loadQr = async () => {
+    setError(null);
+    setStatus("loading");
+    setQrcode("");
+    setQrcodeUrl("");
+    const res = await startWeixinQr();
+    const img = res.qrcode_data_url || res.qrcode_url || "";
+    if (!res.ok || !res.qrcode || !img.startsWith("data:image/")) {
+      setStatus("error");
+      setError(res.error || "Could not load QR code");
+      return;
+    }
+    setQrcode(res.qrcode);
+    setQrcodeUrl(img);
+    setStatus("wait");
+  };
+
+  useEffect(() => {
+    void loadQr();
+  }, []);
+
+  useEffect(() => {
+    if (!qrcode || status === "confirmed" || status === "expired" || status === "error" || status === "loading") {
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await pollWeixinQrStatus(qrcode);
+        if (cancelled) return;
+        if (!res.ok) {
+          setError(res.error || "QR login failed");
+          return;
+        }
+        const raw = res.status || "wait";
+        const st = raw === "scanned" ? "scaned" : raw;
+        if (res.connected || st === "confirmed") {
+          setStatus("confirmed");
+          onConnected();
+          return;
+        }
+        if (st === "expired") {
+          setStatus("expired");
+          return;
+        }
+        if (st === "scaned" || st === "wait") {
+          setStatus((prev) => (prev === st ? prev : (st as typeof prev)));
+        }
+      } catch {
+        /* keep polling */
+      }
+    };
+    const id = setInterval(tick, 2000);
+    void tick();
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [qrcode, status, onConnected]);
+
+  const statusLabel =
+    status === "loading"
+      ? "Loading QR code…"
+      : status === "wait"
+        ? "Scan with WeChat on your phone"
+        : status === "scaned" || status === "scanned"
+          ? "Scanned — confirm on your phone"
+          : status === "confirmed"
+            ? "Connected"
+            : status === "expired"
+              ? "QR expired"
+              : "QR login failed";
+
+  return (
+    <div className="px-5 py-4 space-y-3" data-testid="weixin-qr-connect">
+      <p className="text-[13px] text-muted">
+        Scan once with the WeChat app to link your ClawBot (iLink). Direct messages to the bot reach
+        this coworker; group chats are not supported yet.
+      </p>
+      <div className="flex flex-col items-center gap-3 py-2">
+        {qrcodeUrl ? (
+          <img
+            src={qrcodeUrl}
+            alt="WeChat ClawBot QR code"
+            className="w-[220px] h-[220px] rounded-lg bg-white p-2 border border-line"
+            data-testid="weixin-qr-image"
+          />
+        ) : (
+          <div className="w-[220px] h-[220px] rounded-lg border border-line bg-paper grid place-items-center text-[13px] text-muted">
+            {status === "loading" ? "Loading QR code…" : "—"}
+          </div>
+        )}
+        <div className="text-[13px] text-ink" data-testid="weixin-qr-status">
+          {statusLabel}
+        </div>
+      </div>
+      {error && <div className="text-[12.5px] text-danger">{error}</div>}
+      {(status === "expired" || status === "error") && (
+        <button className={PILL_ACCENT + " w-full justify-center"} onClick={() => void loadQr()}>
+          Refresh QR code
+        </button>
+      )}
+      <p className="text-[12px] text-faint leading-snug">
+        The account that scans is allow-listed automatically. Replies need a prior inbound message
+        (WeChat 24h window).
+      </p>
     </div>
   );
 }
