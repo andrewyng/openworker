@@ -43,6 +43,7 @@ from ..engine import ApprovalOutcome, Approver, TurnEngine
 from ..roots import RootDir
 from ..workspace_trust import WorkspaceTrustStore
 from ..automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
+from ..automation.models import rule_parts
 from ..connectors import (
     Gateway,
     MessageSource,
@@ -169,6 +170,16 @@ def _grant_offered(outcome, request) -> bool:
             return False
         return name != "save_skill"
     return True
+
+
+def _when(epoch: float) -> str:
+    """A timestamp for a chat: the day and time, in the box's own zone."""
+    import datetime
+
+    try:
+        return datetime.datetime.fromtimestamp(epoch).strftime("%a %H:%M")
+    except Exception:
+        return "?"
 
 
 def _approval_body(request) -> str:
@@ -1084,7 +1095,13 @@ class SessionManager:
                 self.persist_session(session_id)
                 await self.mirror_inbox_item(item)
             resolution = await self.inbox.wait(item.id)
-            return self.approval_outcome(resolution, request, session_id)
+            outcome = self.approval_outcome(resolution, request, session_id)
+            # Say what happened, in the chat that asked. Answering a prompt and hearing
+            # nothing back is indistinguishable from the message not arriving — and for
+            # "always" the outcome is genuinely not knowable from the reply alone, since
+            # a grant can be refused for a tool that cannot carry one.
+            await self._ack_resolution(item, resolution, None, request)
+            return outcome
 
         return approve
 
@@ -4439,9 +4456,38 @@ class SessionManager:
                 self.persist_session(session_id)
                 await self.mirror_inbox_item(item)
             resolution = await self.inbox.wait(item.id)
-            return self.approval_outcome(resolution, request, session_id)
+            outcome = self.approval_outcome(resolution, request, session_id)
+            await self._ack_resolution(item, resolution, task, request)
+            return outcome
 
         return approver
+
+    async def _ack_resolution(self, item, resolution: str, task, request) -> None:
+        """Tell the bound chat what an answer actually did."""
+        binding = self.inbox_routing.binding_for(item.inbox)
+        if not (binding.channel and self.gateway is not None):
+            return
+        tool = getattr(request, "tool_name", "that")
+        who = task.title if task is not None else "the worker"
+        if resolution == "deny":
+            text = f"Declined — {who} did not run `{tool}`."
+        elif resolution == "always_task" and task is not None:
+            fresh = self.task_store.get(task.id)
+            granted = fresh is not None and tool in {
+                t for t, _ in map(rule_parts, fresh.always_allowed_tools)
+            }
+            text = (
+                f"Approved, and `{tool}` is now standing for {task.title} — it won't ask again."
+                if granted
+                else f"Approved once. `{tool}` can't hold a standing grant, so it will ask again."
+            )
+        else:
+            text = f"Approved — {who} is continuing."
+        target = f"{binding.channel}:{binding.target}"
+        try:
+            await self.gateway.deliver(target, text)
+        except Exception:
+            logger.debug("resolution ack failed", exc_info=True)
 
     def _seed_task_permissions(self, engine: TurnEngine, task) -> None:
         """Apply a task's standing allowances to an engine: target-bound rules feed the
@@ -4566,6 +4612,87 @@ class SessionManager:
                 )
             except Exception:
                 pass
+
+    # -- chat commands ----------------------------------------------------------
+    def _chat_context(self):
+        """The narrow view of state that slash commands may read."""
+        from ..connectors.commands import ChatContext, PendingItem, RunLine
+        from ..inbox import KIND_APPROVAL
+
+        def pending() -> list:
+            out = []
+            for item in self.inbox.pending():
+                data = getattr(item, "data", None) or {}
+                out.append(
+                    PendingItem(
+                        id=item.id,
+                        title=item.title,
+                        detail=(item.body or "").strip().splitlines()[0] if item.body else "",
+                        worker=self._session_agent_name(item.session_id),
+                        routine=str(data.get("task_title") or ""),
+                        is_approval=item.kind == KIND_APPROVAL,
+                    )
+                )
+            return out
+
+        def workers() -> list[str]:
+            return [a.get("name") or a.get("id", "") for a in self.list_agents() if a.get("enabled", True)]
+
+        def routines() -> list[str]:
+            lines = []
+            for task in self.task_store.list():
+                state = "paused" if not task.enabled else (task.last_status or "not yet run")
+                lines.append(f"{task.title} · {task.schedule.human()} · {state}")
+            return lines
+
+        def runs() -> list:
+            out = []
+            for task in self.task_store.list():
+                for run in self.task_store.runs(task.id)[:3]:
+                    out.append(
+                        RunLine(
+                            routine=task.title,
+                            when=_when(run.started_at),
+                            status=run.status or "?",
+                        )
+                    )
+            return out[:6]
+
+        return ChatContext(pending=pending, workers=workers, routines=routines, runs=runs)
+
+    def _session_agent_name(self, session_id: str) -> str:
+        record = self.session_store.load(session_id) if session_id else None
+        agent = getattr(record, "agent", "") if record else ""
+        for row in self.list_agents():
+            if row.get("id") == agent:
+                return row.get("name") or agent
+        return agent or ""
+
+    async def handle_chat_command(self, event, text: str) -> bool:
+        """Answer a slash command in the chat it came from. True if handled."""
+        from ..connectors.commands import handle_command
+
+        reply = handle_command(text, self._chat_context())
+        if reply is None:
+            return False
+        await self._reply_in_chat(event, reply)
+        return True
+
+    async def _reply_in_chat(self, event, text: str) -> None:
+        source = getattr(event, "source", None)
+        if self.gateway is None or source is None:
+            return
+        from ..connectors.base import format_target
+
+        target = format_target(
+            getattr(source, "platform", ""),
+            str(getattr(source, "chat_id", "") or ""),
+            getattr(source, "thread_id", None),
+        )
+        try:
+            await self.gateway.deliver(target, text)
+        except Exception:
+            logger.debug("chat reply failed", exc_info=True)
 
     # -- inbox replies over messaging connectors --------------------------------
     def _resolve_inbox_reply(self, event) -> bool:
@@ -4770,6 +4897,11 @@ class SessionManager:
                         pass
                 return
             return  # channel with no subscribers — nobody is listening
+        # A slash command is answered here, in the chat it came from — before any
+        # routing, because "what is waiting on me?" is a question about this bot, not
+        # something to hand to an agent.
+        if await self.handle_chat_command(event, text):
+            return
         # DM (or any non-channel): route to the designated session, else park it for visibility.
         dm = self.dm_session()
         if dm and self._inbound_connector_allowed(dm, src.platform):
@@ -4779,10 +4911,17 @@ class SessionManager:
             self.unrouted.record(
                 src.target, who, text, reason="connector muted for DM session"
             )
+            await self._reply_in_chat(event, "That worker isn't listening to this chat right now.")
         else:
+            # Parked for the app, AND answered here. Silence was the old behaviour: a
+            # message vanished with no reply, which is indistinguishable from a dead bot
+            # — and it happened to every "approve" that arrived without its tag.
             self.unrouted.record(
                 src.target, who, text, reason="no DM session designated"
             )
+            from ..connectors.commands import unmatched_reply
+
+            await self._reply_in_chat(event, unmatched_reply(text, self._chat_context()))
 
     # -- mention router (§31) ----------------------------------------------------
     async def _route_mention(self, event, ms: MessageSource, subs) -> None:

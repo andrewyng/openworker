@@ -110,9 +110,11 @@ class TelegramAdapter(BasePlatformAdapter):
             if event is not None:
                 await self.handle_message(event)
 
-        self._app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, _on_update)
-        )
+        # NOT `& ~filters.COMMAND`: that discards every message beginning with "/",
+        # which is the only syntax people use to talk to a bot. With no CommandHandler
+        # registered either, /help and /status were dropped before anything saw them —
+        # no reply, no record, indistinguishable from a dead bot.
+        self._app.add_handler(MessageHandler(filters.TEXT, _on_update))
         await self._app.initialize()
         await self._app.start()
         await self._app.updater.start_polling(drop_pending_updates=True)
