@@ -25,11 +25,17 @@ from .anthropic_provider import AnthropicProvider
 from .base import ProviderClient
 from .bedrock_provider import BedrockProvider
 from .gemini_provider import GeminiProvider
-from .openai_provider import OpenAIProvider
+from .openai_provider import OpenAIProvider, build_azure_ad_token_provider
 from .openai_responses import OpenAIResponsesProvider
 from .vertex_provider import VertexProvider
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
+OPENAI_AUTH_API_KEY = "api_key"
+OPENAI_AUTH_AZURE_AD = "azure_ad"
+
+
+def _openai_auth_method(profile: dict[str, Any]) -> str:
+    return str((profile or {}).get("auth_method") or OPENAI_AUTH_API_KEY).strip()
 
 
 @dataclass(frozen=True)
@@ -123,7 +129,20 @@ def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # API — the only wire with reasoning + tools on GPT-5.6+. A custom endpoint (Azure
     # OpenAI /openai/v1, vLLM, any OpenAI-compliant gateway) keeps Chat Completions,
     # which is what compat servers implement.
-    base_url = ((profile or {}).get("base_url") or "").strip() or None
+    profile = profile or {}
+    base_url = (profile.get("base_url") or "").strip() or None
+    if _openai_auth_method(profile) == OPENAI_AUTH_AZURE_AD:
+        missing = provider_missing_fields(_BY_NAME["openai"], profile)
+        if missing:
+            raise RuntimeError(
+                "Microsoft Entra ID authentication requires: " + ", ".join(missing)
+            )
+        token_provider = build_azure_ad_token_provider(
+            str(profile["tenant_id"]).strip(),
+            str(profile["client_id"]).strip(),
+            str(profile["client_secret"]).strip(),
+        )
+        return OpenAIProvider(api_key=token_provider, base_url=base_url)
     if base_url:
         return OpenAIProvider(secrets=secrets, base_url=base_url)
     return OpenAIResponsesProvider(secrets=secrets)
@@ -342,23 +361,62 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         needs_key=True,
         fields=[
             ProviderField(
+                "auth_method",
+                "Connect with",
+                required=False,
+                default=OPENAI_AUTH_API_KEY,
+                choices=(
+                    {
+                        "value": OPENAI_AUTH_API_KEY,
+                        "label": "API key",
+                        "tag": "Default",
+                        "desc": "Use an OpenAI key, or a key accepted by your custom OpenAI-compatible endpoint.",
+                    },
+                    {
+                        "value": OPENAI_AUTH_AZURE_AD,
+                        "label": "Microsoft Entra ID",
+                        "desc": "Use an Azure service principal. Set its Azure /openai/v1 endpoint under Custom endpoint below; tokens refresh automatically.",
+                    },
+                ),
+            ),
+            ProviderField(
                 "api_key",
                 "OpenAI API key",
                 secret=True,
                 placeholder="sk-…",
+                show_when={"auth_method": OPENAI_AUTH_API_KEY},
+            ),
+            ProviderField(
+                "tenant_id",
+                "Tenant ID",
+                placeholder="00000000-0000-0000-0000-000000000000",
+                show_when={"auth_method": OPENAI_AUTH_AZURE_AD},
+            ),
+            ProviderField(
+                "client_id",
+                "Client ID",
+                placeholder="00000000-0000-0000-0000-000000000000",
+                show_when={"auth_method": OPENAI_AUTH_AZURE_AD},
+            ),
+            ProviderField(
+                "client_secret",
+                "Client secret",
+                secret=True,
+                show_when={"auth_method": OPENAI_AUTH_AZURE_AD},
             ),
             ProviderField(
                 "base_url",
-                "Custom endpoint (optional)",
+                "Custom endpoint",
                 secret=False,
                 required=False,
                 placeholder="https://…/openai/v1",
-                help="For Azure OpenAI, vLLM, or any OpenAI-compliant server. Leave blank for api.openai.com.",
+                help="Required for Microsoft Entra ID (for example, https://RESOURCE.openai.azure.com/openai/v1). Optional for API-key OpenAI-compatible servers.",
             ),
         ],
         build=_build_openai,
         recommended_model="gpt-5.6-sol",
         env_key="OPENAI_API_KEY",
+        blurb="OpenAI by default; custom endpoints can use an API key or Microsoft Entra ID.",
     ),
     ProviderDescriptor(
         name="openai-codex",
@@ -723,11 +781,47 @@ def descriptor_configured(d: ProviderDescriptor, profile: dict[str, Any]) -> boo
     if not d.needs_key:
         return True  # keyless (Ollama) — usable out of the box
     profile = profile or {}
-    if any(f.key == "api_key" for f in d.fields):
+    if any(f.key == "api_key" for f in provider_active_fields(d, profile)):
         return bool(profile.get("api_key")) or bool(
             d.env_key and os.environ.get(d.env_key)
         )
-    return all(profile.get(f.key) for f in d.fields if f.required)
+    return not provider_missing_fields(d, profile)
+
+
+def provider_active_fields(
+    d: ProviderDescriptor, profile: dict[str, Any]
+) -> list[ProviderField]:
+    """Fields selected by the provider schema's current ``show_when`` values."""
+    profile = profile or {}
+    values = {f.key: profile.get(f.key) or f.default for f in d.fields}
+    return [
+        f
+        for f in d.fields
+        if not f.show_when
+        or all(values.get(key) == value for key, value in f.show_when.items())
+    ]
+
+
+def provider_missing_fields(
+    d: ProviderDescriptor, profile: dict[str, Any]
+) -> list[str]:
+    """Labels of required fields active for the selected provider auth method.
+
+    ``show_when`` is the provider schema's single source of truth for method-specific
+    fields. Azure's shared custom endpoint stays visible for both methods, so its
+    conditional requirement is added here beside the Azure auth policy.
+    """
+    profile = profile or {}
+    missing = [
+        f.label
+        for f in provider_active_fields(d, profile)
+        if f.required and not str(profile.get(f.key) or "").strip()
+    ]
+    if d.name == "openai" and _openai_auth_method(profile) == OPENAI_AUTH_AZURE_AD:
+        endpoint = next(f for f in d.fields if f.key == "base_url")
+        if not str(profile.get("base_url") or "").strip():
+            missing.append(endpoint.label)
+    return missing
 
 
 def detect_provider(api_key: str) -> Optional[str]:
@@ -927,6 +1021,54 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
     return {"ok": False, "error": f"Vertex AI returned HTTP {resp.status_code}."}
 
 
+def _verify_azure_openai_entra(
+    fields: dict[str, Any], timeout: float
+) -> dict[str, Any]:
+    """Acquire one Entra token and use it for Azure OpenAI's read-only model-list probe."""
+    import httpx
+
+    missing = provider_missing_fields(_BY_NAME["openai"], fields)
+    if missing:
+        return {
+            "ok": False,
+            "error": "Microsoft Entra ID requires: " + ", ".join(missing) + ".",
+        }
+    base = str(fields["base_url"]).strip().rstrip("/")
+    try:
+        token_provider = build_azure_ad_token_provider(
+            str(fields["tenant_id"]).strip(),
+            str(fields["client_id"]).strip(),
+            str(fields["client_secret"]).strip(),
+        )
+        token = token_provider()
+        resp = httpx.get(
+            base + "/models",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=timeout,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": "Couldn't authenticate with Microsoft Entra ID "
+            f"({exc.__class__.__name__}).",
+        }
+    if resp.status_code < 300:
+        return {"ok": True}
+    if resp.status_code == 401:
+        return {
+            "ok": False,
+            "error": "Azure OpenAI rejected the Microsoft Entra token.",
+        }
+    if resp.status_code == 403:
+        return {
+            "ok": False,
+            "error": "The service principal lacks access to this Azure OpenAI resource.",
+        }
+    if resp.status_code == 404:
+        return {"ok": False, "error": "Azure OpenAI endpoint not found."}
+    return {"ok": False, "error": f"Azure OpenAI returned HTTP {resp.status_code}."}
+
+
 def verify_provider_key(
     name: str,
     *,
@@ -946,6 +1088,8 @@ def verify_provider_key(
 
     d = _BY_NAME.get(name) or _BY_NAME["openai"]
     key = (api_key or "").strip()
+    if name == "openai" and _openai_auth_method(fields or {}) == OPENAI_AUTH_AZURE_AD:
+        return _verify_azure_openai_entra(fields or {}, timeout)
     if d.auth == "oauth":
         # OAuth providers verify from their stored tokens (needs the SecretStore),
         # which only the manager holds — see SessionManager.verify_provider.

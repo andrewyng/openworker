@@ -87,6 +87,7 @@ export interface ProviderSetupState {
   setShowEndpoint: (v: boolean) => void;
   keylessOk: Set<string>;
   credentialed: boolean;
+  activeCredentialed: boolean;
   savedState: boolean;
   secretFilled: boolean;
   openProvider: (name: string) => void;
@@ -134,6 +135,14 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
 
   const info = providers.find((p) => p.name === sel);
   const credentialed = !!info?.configured && !!info?.needs_key;
+  const authChoice = info?.fields.find((f) => f.choices && f.choices.length);
+  const selectedAuth = authChoice
+    ? fields[authChoice.key] || authChoice.default || ""
+    : "";
+  const storedAuth = authChoice
+    ? info?.values?.[authChoice.key] || authChoice.default || ""
+    : "";
+  const activeCredentialed = credentialed && (!authChoice || selectedAuth === storedAuth);
 
   const openProvider = (name: string) => {
     const p = providers.find((x) => x.name === name);
@@ -273,14 +282,18 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     setShowEndpoint,
     keylessOk,
     credentialed,
+    activeCredentialed,
     // The in-field saved state (§39): green border + pill INSIDE the key box — shown
     // for stored credentials and fresh test-passes alike; typing clears it.
-    savedState: (credentialed && !dirty) || verify.state === "ok",
+    savedState: (activeCredentialed && !dirty) || verify.state === "ok",
     // Only REQUIRED secrets gate the Test button — cloud providers (Bedrock, Vertex)
     // have optional key fields whose credentials may live in ~/.aws or ADC instead.
-    secretFilled: (info?.fields || []).every(
-      (f) => !f.secret || !f.required || (fields[f.key] || "").trim(),
-    ),
+    secretFilled: (info?.fields || []).every((f) => {
+      const active =
+        !f.show_when ||
+        Object.entries(f.show_when).every(([key, value]) => (fields[key] || "") === value);
+      return !active || !f.secret || !f.required || !!(fields[f.key] || "").trim();
+    }),
     openProvider,
     backToGallery,
     runTestAndSave,
@@ -470,7 +483,7 @@ export function ProviderForm({
           <input
             className={input + (ps.savedState && testable ? " border-ok pr-32" : " border-line")}
             type={f.secret ? "password" : "text"}
-            placeholder={f.secret && ps.credentialed && !ps.dirty ? "••••••••" : f.placeholder}
+            placeholder={f.secret && ps.activeCredentialed && !ps.dirty ? "••••••••" : f.placeholder}
             value={ps.fields[f.key] || ""}
             data-testid={`${tp}-field-${f.key}`}
             onChange={(e) => ps.setFieldValue(f.key, e.target.value)}
@@ -498,7 +511,7 @@ export function ProviderForm({
           <button
             className="px-4 rounded-lg border border-line text-[13px] font-medium text-ink hover:border-lineStrong shrink-0 disabled:opacity-40"
             onClick={() => ps.runTestAndSave()}
-            disabled={ps.verify.state === "testing" || (!ps.secretFilled && !ps.credentialed)}
+            disabled={ps.verify.state === "testing" || (!ps.secretFilled && !ps.activeCredentialed)}
             data-testid={`${tp}-test`}
           >
             {ps.verify.state === "testing" ? "…" : info?.needs_key ? t("provider.test_btn") : t("provider.detect_btn")}
@@ -597,7 +610,7 @@ export function ProviderForm({
               <button
                 className="shrink-0 rounded-lg border border-accent bg-accent px-4 py-1.5 text-[13px] font-medium text-white hover:brightness-105 disabled:opacity-40"
                 onClick={() => ps.runTestAndSave()}
-                disabled={ps.verify.state === "testing"}
+                disabled={ps.verify.state === "testing" || (!ps.secretFilled && !ps.activeCredentialed)}
                 data-testid={`${tp}-test`}
               >
                 {ps.verify.state === "testing" ? "…" : t("provider.test_save_btn")}
@@ -607,7 +620,7 @@ export function ProviderForm({
         </div>
       )}
 
-      {info?.needs_key && KEY_HELP[sel] && (
+      {info?.needs_key && KEY_HELP[sel] && (!choice || method === "api_key") && (
         <p className="text-[12px] text-faint mt-2">
           {t("provider.no_key_yet")}{" "}
           <button
