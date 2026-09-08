@@ -229,7 +229,7 @@ MATRIX: dict[str, ModelEntry] = {
         "Ox Alpha · via OpenRouter", _AGENTIC, 1_048_576
     ),
     # DeepInfra curated models (OpenAI-compatible inference). Latest generation:
-    # DeepSeek V4, GLM 5.3, Kimi K3. Pinned snapshots (0731) and canonical slugs.
+    # DeepSeek V4, GLM 5.3, Kimi K3. Pinned snapshots (Flash 0731, Pro 0813) and canonical slugs.
     "deepinfra:deepseek-ai/DeepSeek-V4-Flash": ModelEntry(
         "DeepSeek V4 Flash · via DeepInfra", _AGENTIC, 128_000
     ),
@@ -239,8 +239,8 @@ MATRIX: dict[str, ModelEntry] = {
     "deepinfra:deepseek-ai/DeepSeek-V4-Pro": ModelEntry(
         "DeepSeek V4 Pro · via DeepInfra", _AGENTIC, 128_000
     ),
-    "deepinfra:deepseek-ai/DeepSeek-V4-Pro-0731": ModelEntry(
-        "DeepSeek V4 Pro 0731 · via DeepInfra", _AGENTIC, 128_000
+    "deepinfra:deepseek-ai/DeepSeek-V4-Pro-0813": ModelEntry(
+        "DeepSeek V4 Pro 0813 · via DeepInfra", _AGENTIC, 128_000
     ),
     "deepinfra:zai-org/GLM-5.3-Flash": ModelEntry(
         "GLM-5.3 Flash · via DeepInfra", _AGENTIC_VISION, 1_000_000
