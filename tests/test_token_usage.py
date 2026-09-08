@@ -362,7 +362,7 @@ def test_model_context_windows_covers_verified_entries_only():
     assert windows["deepinfra:deepseek-ai/DeepSeek-V4-Flash"] == 128_000
     assert windows["deepinfra:deepseek-ai/DeepSeek-V4-Flash-0731"] == 128_000
     assert windows["deepinfra:deepseek-ai/DeepSeek-V4-Pro"] == 128_000
-    assert windows["deepinfra:deepseek-ai/DeepSeek-V4-Pro-0731"] == 128_000
+    assert windows["deepinfra:deepseek-ai/DeepSeek-V4-Pro-0813"] == 128_000
     assert windows["deepinfra:zai-org/GLM-5.3-Flash"] == 1_000_000
     assert windows["deepinfra:zai-org/GLM-5.3"] == 1_000_000
     assert windows["deepinfra:moonshotai/Kimi-K3"] == 1_000_000
