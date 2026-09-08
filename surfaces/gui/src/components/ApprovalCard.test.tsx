@@ -805,3 +805,46 @@ describe("ApprovalCard — MCP trust ladder (OPE-136 §4)", () => {
     expect(screen.queryByTestId("approval-always-trust")).toBeNull();
   });
 });
+
+// -- AI intent block (this PR) ------------------------------------------------
+describe("ApprovalCard — AI intent block", () => {
+  it("renders the intent block when item.intent is present", () => {
+    render(<ApprovalCard item={sendApproval({ intent: "\u2022 Danger\n\u2022 Irreversible" })} onApprove={vi.fn()} />);
+    expect(screen.getByText(/Danger/)).toBeTruthy();
+    expect(screen.getByText(/Irreversible/)).toBeTruthy();
+  });
+
+  it("renders bolded critical terms as emphasis", () => {
+    render(
+      <ApprovalCard
+        item={sendApproval({ intent: "\u2022 The file is **permanently deleted**" })}
+        onApprove={vi.fn()}
+      />,
+    );
+    expect(document.querySelector(".approval-intent-em")?.textContent).toBe("permanently deleted");
+  });
+
+  it("does not render the intent block when item.intent is absent", () => {
+    const { container } = render(<ApprovalCard item={sendApproval()} onApprove={vi.fn()} />);
+    expect(container.querySelector(".approval-intent")).toBeNull();
+  });
+
+  it("forces the full card for routine file writes when intent is present", () => {
+    // FILE_WRITES render as a compact row (early return); an intent must upgrade to
+    // the full card so the annotation is actually visible.
+    render(
+      <ApprovalCard
+        item={{
+          kind: "approval",
+          name: "write_file",
+          args: { path: "/x", content: "y" },
+          reason: "test",
+          intent: "\u2022 Overwrites the file",
+        }}
+        onApprove={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Overwrites the file/)).toBeTruthy();
+    expect(screen.queryByTestId("approval-row")).toBeNull();
+  });
+});
