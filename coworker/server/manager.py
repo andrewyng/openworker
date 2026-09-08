@@ -5211,13 +5211,20 @@ class SessionManager:
         ]
 
     # -- LLM auto-titles (FB-010) -------------------------------------------------
+    # The title must speak the user's language: with no language pinned, an English
+    # instruction ("4-5 word title") yields English titles for Chinese/Japanese/…
+    # sessions. Same-language also relaxes the word count to a length that is natural
+    # for the opener's script (CJK titles are a few characters, not 4-5 "words").
     _AUTOTITLE_PROMPT = (
         "You title chat sessions. Given the user's opening message(s) — and, when "
-        "present, the assistant's first reply for context — reply with ONLY a 4-5 word "
-        "title for the session, named after what the session is actually about — no "
-        "quotes or punctuation wrapping it. If there is no topic at all ("
-        '"hey", "how are you", "hi there" and a generic reply), reply with exactly: '
-        "small-talk"
+        "present, the assistant's first reply for context — reply with ONLY a short "
+        "title for the session, named after what the session is actually about. "
+        "Write the title in the same language as the user's opening message "
+        "(4-5 words for English; the natural equivalent brevity for other "
+        "languages) — no quotes or punctuation wrapping it. If there is no topic "
+        "at all ("
+        '"hey", "how are you", "hi there" and a generic reply), reply with '
+        "exactly: small-talk"
     )
 
     def _maybe_autotitle(self, session_id: str) -> None:
