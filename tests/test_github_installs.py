@@ -215,6 +215,13 @@ def _slack_frame():
 async def test_one_hub_fans_out_to_both_adapters(monkeypatch):
     """THE step-3 invariant: slack + github share one relay socket; frames land
     on their own adapter by provider tag."""
+    # Stub name resolution at its chokepoint. A dead port only refuses instantly on
+    # POSIX; on Windows it takes ~2.0s per call and this frame makes two, blowing the
+    # 2.0s wait_dispatched budget below. The env var stays as a no-network backstop.
+    async def _no_slack_api(self, team_id, method, params):
+        return None
+
+    monkeypatch.setattr(SlackRelayAdapter, "_slack_get", _no_slack_api)
     monkeypatch.setenv("SLACK_API_URL", "http://127.0.0.1:9/")
     hub = RelayHub(
         "wss://relay.test/ws",
