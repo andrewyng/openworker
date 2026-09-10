@@ -18,6 +18,10 @@ _SECRET_KEYS = (
     "access_token",
     "bot_token",
     "app_token",
+    "authorization",
+    "cookie",
+    "credential",
+    "private_key",
     "raw",
 )
 _BODY_KEYS = ("body", "content", "html")
@@ -192,29 +196,31 @@ class AuditStore:
 def _sanitize_args(tool: str, args: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(args, dict):
         return {}
-    out: dict[str, Any] = {}
-    for key, value in args.items():
-        lk = str(key).lower()
-        if any(s in lk for s in _SECRET_KEYS):
-            out[key] = "[redacted]"
-        elif tool == "browser_type" and lk == "text":
-            out[key] = "[redacted input]"
-        elif any(b == lk or lk.endswith("_" + b) for b in _BODY_KEYS):
-            out[key] = "[redacted body]"
-        else:
-            out[key] = _summarize(value)
-    return out
+    return {
+        str(key): _summarize(value, tool=tool, key=str(key))
+        for key, value in args.items()
+    }
 
 
-def _summarize(value: Any) -> Any:
+def _summarize(value: Any, *, tool: str = "", key: str = "") -> Any:
+    lower_key = key.lower()
+    if any(secret_key in lower_key for secret_key in _SECRET_KEYS):
+        return "[redacted]"
+    if tool == "browser_type" and lower_key == "text":
+        return "[redacted input]"
+    if any(body_key == lower_key or lower_key.endswith("_" + body_key) for body_key in _BODY_KEYS):
+        return "[redacted body]"
     if isinstance(value, str):
         return _truncate(value)
     if isinstance(value, (int, float, bool)) or value is None:
         return value
     if isinstance(value, list):
-        return [_summarize(v) for v in value[:10]]
+        return [_summarize(item, tool=tool) for item in value[:10]]
     if isinstance(value, dict):
-        return {str(k): _summarize(v) for k, v in list(value.items())[:20]}
+        return {
+            str(item_key): _summarize(item, tool=tool, key=str(item_key))
+            for item_key, item in list(value.items())[:20]
+        }
     return _truncate(str(value))
 
 
