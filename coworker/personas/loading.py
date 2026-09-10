@@ -9,6 +9,7 @@ before the persona is enabled. Loading never writes risk overrides or elevates a
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Callable, Optional
@@ -69,16 +70,59 @@ def capability_set(m: PersonaManifest) -> set[str]:
     return caps
 
 
+# A persona repo is named by whoever asks for the install, and `git clone` treats parts of
+# that string as instructions rather than as an address: `ext::sh -c ...` runs a command
+# through git's remote-helper mechanism, and a URL starting with `-` is read as an option.
+# Both execute code BEFORE any manifest is parsed, so before the consent screen the install
+# flow relies on. The address must therefore be vetted here, not at the consent step.
+_ALLOWED_GIT_SCHEMES = ("https://", "ssh://", "git://")
+# `user@host:path` — git's scp-like form, the usual way a private persona repo is named.
+_SCP_LIKE = re.compile(r"\A[A-Za-z0-9_.+-]+@[A-Za-z0-9_.-]+:[^\s]*\Z")
+
+
+def validate_git_url(url: str) -> str:
+    """The persona repo URL, or ValueError naming why it was refused.
+
+    Allows the transports that only ever fetch a repository (https, ssh, git, and the
+    scp-like `user@host:path`). Everything else is refused, including any `<helper>::`
+    remote-helper form and local `file://` paths.
+    """
+    if not isinstance(url, str):
+        raise ValueError("persona repo URL must be a string")
+    url = url.strip()
+    if not url:
+        raise ValueError("persona repo URL is empty")
+    if any(c.isspace() or ord(c) < 0x20 for c in url):
+        raise ValueError(
+            f"refusing persona repo URL with whitespace or control characters: {url!r}"
+        )
+    if url.startswith("-"):
+        raise ValueError(
+            f"refusing persona repo URL that git would read as an option: {url!r}"
+        )
+    if "::" in url:
+        # `ext::`, `fd::`, or any other git-remote-<helper> transport: the part after the
+        # marker is handed to a helper program, which is arbitrary code execution.
+        raise ValueError(f"refusing persona repo URL using a git remote helper: {url!r}")
+    lowered = url.lower()
+    if lowered.startswith(_ALLOWED_GIT_SCHEMES) or _SCP_LIKE.match(url):
+        return url
+    raise ValueError(
+        f"refusing persona repo URL: {url!r} — use https://, ssh://, git://, "
+        "or user@host:path"
+    )
+
+
 def git_clone(
     url: str, dest: Path
 ) -> None:  # pragma: no cover - exercised via injection
     """Shallow-clone a persona repo. Injectable so tests don't touch the network."""
+    url = validate_git_url(url)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        ["git", "clone", "--depth", "1", url, str(dest)],
-        check=True,
-        capture_output=True,
-    )
+    # `-c protocol.ext.allow=never` is the second lock on the remote-helper path that
+    # `validate_git_url` already refuses; `--` keeps the URL out of git's option parser.
+    git = ["git", "-c", "protocol.ext.allow=never", "clone", "--depth", "1", "--"]
+    subprocess.run(git + [url, str(dest)], check=True, capture_output=True)
 
 
 def cache_dir_for(url: str, base: Path) -> Path:
@@ -95,6 +139,10 @@ def clone_persona_repo(
     url: str, base: Path, *, clone: Callable[[str, Path], None] = git_clone
 ) -> Path:
     """Clone (or reuse) a persona repo under ``base`` and return its directory."""
+    # Vetted here as well as in `git_clone`: an injected clone (tests, future callers) must
+    # not become a way around the address check, and a refused URL should never reach the
+    # cache-directory naming either.
+    url = validate_git_url(url)
     dest = cache_dir_for(url, base)
     if not dest.is_dir():
         clone(url, dest)
