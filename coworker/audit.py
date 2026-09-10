@@ -10,6 +10,10 @@ from typing import Any, Optional
 
 from .connectors import connector_for_tool
 
+# Matched as substrings of a lowercased key name, at EVERY level of a structure (#397):
+# an HTTP-shaped or MCP tool takes its credential in a nested `headers` / `auth` / `config`
+# object, and `_truncate` keeps the first 500 characters, so an unredacted bearer token
+# lands in the log whole.
 _SECRET_KEYS = (
     "token",
     "secret",
@@ -18,9 +22,23 @@ _SECRET_KEYS = (
     "access_token",
     "bot_token",
     "app_token",
+    "authorization",
+    "cookie",
+    "credential",
+    "private_key",
     "raw",
 )
 _BODY_KEYS = ("body", "content", "html")
+# A tool RESULT carries the same content the argument policy redacts, under other names:
+# a shell command's stdout, an email body, one message's text (#525). The audit row is for
+# triage — who ran what, against which resource — never for replaying the content.
+_RESULT_BODY_KEYS = _BODY_KEYS + ("output", "stdout", "stderr", "text", "snippet")
+# The engine's own preview length, so a rebuilt preview is the same size as the one it
+# replaces.
+_PREVIEW_LIMIT = 300
+# How deep the walk goes before it stops describing a structure. Past this the keys are no
+# longer being checked, so the value is dropped rather than copied through.
+_MAX_DEPTH = 6
 
 
 class AuditStore:
@@ -83,6 +101,7 @@ class AuditStore:
         resource = _resource(
             tool, event.get("arguments") or {}, event.get("result") or {}
         )
+        preview = _result_preview(tool, event)
         with self._lock:
             self._conn.execute(
                 """
@@ -100,7 +119,7 @@ class AuditStore:
                     event.get("status") or "",
                     event.get("approval") or "",
                     json.dumps(args, default=str),
-                    _truncate(str(event.get("result_preview") or "")),
+                    preview,
                     _truncate(str(event.get("reason") or "")),
                     _truncate(str(resource or "")),
                     str(event.get("call_id") or ""),
@@ -190,32 +209,77 @@ class AuditStore:
 
 
 def _sanitize_args(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Tool arguments, with every secret-like and body-like value replaced by a marker."""
     if not isinstance(args, dict):
         return {}
-    out: dict[str, Any] = {}
-    for key, value in args.items():
-        lk = str(key).lower()
-        if any(s in lk for s in _SECRET_KEYS):
-            out[key] = "[redacted]"
-        elif tool == "browser_type" and lk == "text":
-            out[key] = "[redacted input]"
-        elif any(b == lk or lk.endswith("_" + b) for b in _BODY_KEYS):
-            out[key] = "[redacted body]"
-        else:
-            out[key] = _summarize(value)
-    return out
+    return _sanitize_mapping(tool, args, _BODY_KEYS, 0)
 
 
-def _summarize(value: Any) -> Any:
+def _sanitize_result(tool: str, result: Any) -> Any:
+    """A tool result under the same policy, plus the result-side content keys."""
+    return _sanitize_value(tool, None, result, _RESULT_BODY_KEYS, 0)
+
+
+def _redaction_marker(
+    tool: str, lower_key: str, body_keys: tuple[str, ...]
+) -> Optional[str]:
+    """The marker this key's value must be replaced by, or None to keep the value."""
+    if any(s in lower_key for s in _SECRET_KEYS):
+        return "[redacted]"
+    if tool == "browser_type" and lower_key == "text":
+        return "[redacted input]"
+    if any(b == lower_key or lower_key.endswith("_" + b) for b in body_keys):
+        return "[redacted body]"
+    return None
+
+
+def _sanitize_mapping(
+    tool: str, mapping: dict[Any, Any], body_keys: tuple[str, ...], depth: int
+) -> dict[str, Any]:
+    return {
+        str(key): _sanitize_value(tool, key, value, body_keys, depth)
+        for key, value in list(mapping.items())[:20]
+    }
+
+
+def _sanitize_value(
+    tool: str, key: Any, value: Any, body_keys: tuple[str, ...], depth: int
+) -> Any:
+    if key is not None:
+        marker = _redaction_marker(tool, str(key).lower(), body_keys)
+        if marker is not None:
+            return marker
     if isinstance(value, str):
         return _truncate(value)
     if isinstance(value, (int, float, bool)) or value is None:
         return value
+    if depth >= _MAX_DEPTH:
+        # Stringifying it here would copy through the very keys we stopped checking.
+        return "[nested]"
     if isinstance(value, list):
-        return [_summarize(v) for v in value[:10]]
+        # An item carries no key of its own; a dict item is checked when we recurse
+        # into it, and a list under a secret-like key never reaches here at all.
+        return [
+            _sanitize_value(tool, None, v, body_keys, depth + 1) for v in value[:10]
+        ]
     if isinstance(value, dict):
-        return {str(k): _summarize(v) for k, v in list(value.items())[:20]}
+        return _sanitize_mapping(tool, value, body_keys, depth + 1)
     return _truncate(str(value))
+
+
+def _result_preview(tool: str, event: dict[str, Any]) -> str:
+    """The stored preview of a tool result, redacted at the structured stage.
+
+    The caller's `result_preview` is already flattened to a string, so nothing can be
+    redacted in it by key any more — when the raw `result` rides along, the preview is
+    rebuilt from the sanitized structure instead (#525).
+    """
+    result = event.get("result")
+    if result is None:
+        return _truncate(str(event.get("result_preview") or ""))
+    sanitized = _sanitize_result(tool, result)
+    text = sanitized if isinstance(sanitized, str) else json.dumps(sanitized, default=str)
+    return _truncate(text, limit=_PREVIEW_LIMIT)
 
 
 def _resource(tool: str, args: dict[str, Any], result: Any) -> str:
