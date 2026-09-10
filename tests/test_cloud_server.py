@@ -174,6 +174,36 @@ def test_gallery_install_runs_consent_flow(client, monkeypatch):
     assert events == ["sales"]  # install event fired
 
 
+NON_ASCII_MANIFEST = """---
+id: sales
+name: Sales Coworker — 销售
+icon: chart
+tagline: It’s a “quality” pitch — 你好
+family: knowledge
+workspace: deliverable
+tools: [files, search, todo]
+description: d
+---
+You are the Sales Coworker. \U0001f680"""
+
+
+def test_gallery_install_handles_non_ascii_manifest(client, monkeypatch):
+    """Gallery copy carries em-dashes, curly quotes, CJK and emoji.
+
+    The install path hashes the markdown as UTF-8 and `personas/manifest.py` reads it
+    back as UTF-8, so the temp file in between must be written as UTF-8 too. Writing it
+    with the locale encoding works on Linux/macOS but not on Windows, where the default
+    is cp1252: CJK and emoji fail to encode outright, while an em-dash silently writes
+    as a single cp1252 byte that the UTF-8 read then rejects.
+    """
+    _stub_gallery(monkeypatch, markdown=NON_ASCII_MANIFEST)
+    body = client.post("/v1/personas/install", json={"gallery_slug": "sales"}).json()
+    assert body["ok"], body
+    installed = {p["id"]: p for p in body["personas"]}
+    assert installed["sales"]["name"] == "Sales Coworker — 销售"
+    assert installed["sales"]["tagline"] == "It’s a “quality” pitch — 你好"
+
+
 def test_gallery_install_rejects_hash_mismatch(client, monkeypatch):
     _stub_gallery(monkeypatch, hash_ok=False)
     body = client.post("/v1/personas/install", json={"gallery_slug": "sales"}).json()
