@@ -2335,6 +2335,10 @@ class TurnEngine:
             for msg in source_messages
             if msg.get("role") != "notice"
         ]
+        # Compaction can leave a ``tool`` row whose assistant parent was summarized
+        # away. Providers reject that shape (OpenAI 400 / issue #655). Drop orphans
+        # on the feed only — ``self.messages`` stays the canonical transcript.
+        out = _compaction.drop_orphan_tool_messages(out)
         # PDF attachments (stored as `file` parts) are adapted to the ACTIVE model right
         # here — never in the persisted history — so a mid-session model switch always
         # re-decides: native PDF models get the real document, the rest get the local

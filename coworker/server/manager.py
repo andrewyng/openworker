@@ -42,6 +42,7 @@ from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
 from ..basedir import OutsideBaseDir, base_dir, ensure_under_base
+from ..events import EventType
 from ..roots import RootDir
 from ..workspace_trust import WorkspaceTrustStore
 from ..automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
@@ -6211,13 +6212,21 @@ class SessionManager:
             f"{task.instructions}"
         )
         try:
-            async for _event in engine.run(opening):
-                pass
-            run.result_text = _last_assistant_text(engine.messages)
-            run.artifacts = _recent_files(task.workspace, since=run.started_at)
-            run.status = "ok"
-            if task.notify_on_completion:
-                await self._notify_task_done(task, run)
+            # engine.run() swallows provider failures into EventType.ERROR and
+            # returns; it does not raise. Treat that as a failed run so last_status
+            # is not recorded as "ok" when the model 400'd (issue #655).
+            error_text: Optional[str] = None
+            async for event in engine.run(opening):
+                if event.type is EventType.ERROR:
+                    error_text = (event.data or {}).get("error") or "error"
+            if error_text:
+                run.status, run.error = "error", error_text
+            else:
+                run.result_text = _last_assistant_text(engine.messages)
+                run.artifacts = _recent_files(task.workspace, since=run.started_at)
+                run.status = "ok"
+                if task.notify_on_completion:
+                    await self._notify_task_done(task, run)
         except Exception as exc:
             run.status, run.error = "error", str(exc)
         finally:
