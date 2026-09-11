@@ -299,6 +299,43 @@ async def test_scheduled_run_persists_continuable_session(tmp_path, monkeypatch)
     assert _last_assistant_text(engine.messages) == "Sure — here is more detail."
 
 
+async def test_scheduled_run_records_provider_error_not_ok(tmp_path, monkeypatch):
+    """A model 400 during a scheduled run must not be recorded as last_status=ok.
+
+    TurnEngine converts provider failures into EventType.ERROR and returns;
+    the runner used to treat a finished generator as success (issue #655).
+    """
+    from coworker.providers import ModelCapabilities, ProviderClient
+    from coworker.server.manager import SessionManager
+
+    class FailingProvider(ProviderClient):
+        def complete(self, *, model, messages, tools=None, **settings):
+            raise RuntimeError(
+                "Error code: 400 - {'error': {'message': "
+                "\"Messages with role 'tool' must be a response to a preceding "
+                "message with 'tool_calls'\"}}"
+            )
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    manager = SessionManager(data_dir=tmp_path / "data", provider=FailingProvider())
+    task = _task(workspace=str(ws), agent="cowork")
+    manager.task_store.save(task)
+
+    run = await manager._run_scheduled_task(task, trigger="schedule")
+    assert run.status == "error"
+    assert "tool_calls" in (run.error or "")
+    fresh = manager.task_store.get(task.id)
+    # Scheduler, not _run_scheduled_task, writes last_status — but the run
+    # record itself must already be 'error' so that write is truthful.
+    stored = next(r for r in manager.task_store.runs(task.id) if r.run_id == run.run_id)
+    assert stored.status == "error"
+
+
 def test_task_engine_has_no_scheduling_tools(tmp_path, monkeypatch):
     """A scheduled run executes its instructions — it must not be able to (re)schedule. With
     instructions like 'every day at 5:32pm, prepare…', an agent holding create_scheduled_task
