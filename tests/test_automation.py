@@ -194,6 +194,28 @@ async def test_scheduler_skips_overlapping_run(tmp_path):
     await first
 
 
+async def test_scheduler_records_error_last_status(tmp_path):
+    """A runner that returns status=error must advance last_status to error, not ok."""
+    store = TaskStore(tmp_path / "auto.db")
+    t = _task()
+    store.save(t)
+
+    async def failing_runner(task, trigger):
+        return TaskRun(
+            task_id=task.id,
+            status="error",
+            error="Error code: 400 - tool_calls",
+            trigger=trigger,
+        )
+
+    sched = Scheduler(store, failing_runner)
+    run = await sched.run_task(t, trigger="schedule")
+    assert run is not None and run.status == "error"
+    fresh = store.get(t.id)
+    assert fresh.last_status == "error"
+    assert fresh.run_count == 1
+
+
 # -- agent-facing tools --------------------------------------------------------
 def test_create_and_list_tools(tmp_path):
     store = TaskStore(tmp_path / "auto.db")
@@ -414,6 +436,41 @@ async def test_manual_run_prepare_and_finalize(tmp_path, monkeypatch):
     assert out["ok"] and out["run"]["status"] == "ok"
     assert out["run"]["result_text"] == "Done — briefing ready."
     assert manager.task_store.get(task.id).run_count == 1
+
+
+async def test_finalize_manual_run_records_provider_error(tmp_path, monkeypatch):
+    """Live manual runs also 400 via EventType.ERROR; finalize must not stamp ok."""
+    from coworker.providers import ModelCapabilities, ProviderClient
+    from coworker.server.manager import SessionManager
+
+    class FailingProvider(ProviderClient):
+        def complete(self, *, model, messages, tools=None, **settings):
+            raise RuntimeError(
+                "Error code: 400 - {'error': {'message': "
+                "\"Messages with role 'tool' must be a response to a preceding "
+                "message with 'tool_calls'\"}}"
+            )
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    manager = SessionManager(data_dir=tmp_path / "data", provider=FailingProvider())
+    task = _task(workspace=str(ws), agent="cowork")
+    manager.task_store.save(task)
+
+    prep = manager.prepare_manual_run(task.id)
+    engine = manager.get_engine(prep["session_id"], workspace=str(ws), agent="cowork")
+    async for _ in engine.run(prep["prompt"]):
+        pass
+    manager.save(prep["session_id"], engine)
+
+    out = manager.finalize_manual_run(task.id, prep["run_id"])
+    assert out["ok"] and out["run"]["status"] == "error"
+    assert "tool_calls" in (out["run"].get("error") or "")
+    assert manager.task_store.get(task.id).last_status == "error"
 
 
 # -- REST ----------------------------------------------------------------------
