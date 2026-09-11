@@ -6431,12 +6431,17 @@ class SessionManager:
             return {"ok": False, "error": "not found"}
         if run.status == "running":
             record = self.session_store.load(run.session_id)
-            run.result_text = _last_assistant_text(record.messages) if record else None
+            messages = record.messages if record else []
+            run.result_text = _last_assistant_text(messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
-            run.status = "ok"
+            error_text = _transcript_error(messages)
+            if error_text:
+                run.status, run.error = "error", error_text
+            else:
+                run.status = "ok"
             run.finished_at = _epoch()
             self.task_store.add_run(run)
-            task.last_run, task.last_status = run.finished_at, "ok"
+            task.last_run, task.last_status = run.finished_at, run.status
             task.run_count += 1
             self.task_store.save(task)
         return {"ok": True, "run": run.to_dict()}
@@ -7503,6 +7508,23 @@ def _last_assistant_text(messages: list[dict[str, Any]]) -> Optional[str]:
     for msg in reversed(messages or []):
         if msg.get("role") == "assistant" and msg.get("content"):
             return msg["content"]
+    return None
+
+
+def _transcript_error(messages: list[dict[str, Any]]) -> Optional[str]:
+    """Provider failures persist as a display-only ``notice`` (kind=error).
+
+    Manual runs are driven over the session WS, then finalized from the saved
+    transcript — so this is the only signal ``finalize_manual_run`` has that
+    the turn 400'd instead of completing (issue #655). Only the tail counts:
+    a later successful retry must still stamp ``ok``.
+    """
+    for msg in reversed(messages or []):
+        if msg.get("role") == "notice":
+            if msg.get("kind") == "error":
+                return str(msg.get("text") or "error")
+            continue
+        break
     return None
 
 
