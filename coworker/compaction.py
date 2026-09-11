@@ -692,6 +692,60 @@ def render_transcript(messages: list[dict[str, Any]], upto: int) -> str:
     return "\n".join(lines)
 
 
+def _align_boundary(messages: list[dict[str, Any]], boundary: int) -> int:
+    """Never let the verbatim tail start on a tool row (or a notice sitting on one).
+
+    ``pick_boundary`` / ``trim_state`` already prefer user/assistant heads, but a
+    persisted ``boundary_index`` can still land on a ``tool`` message — or on a
+    ``notice`` that ``_outbound_messages`` later strips, exposing the tool behind
+    it. Either shape is a provider 400: ``Messages with role 'tool' must be a
+    response to a preceding message with 'tool_calls'``. Rewind to the owning
+    assistant when it is still in history; otherwise skip the orphan tools.
+    """
+    n = len(messages)
+    i = boundary
+    while i < n and messages[i].get("role") == "notice":
+        i += 1
+    if i >= n or messages[i].get("role") != "tool":
+        return boundary
+    j = i - 1
+    while j >= 0:
+        role = messages[j].get("role")
+        if role == "assistant" and messages[j].get("tool_calls"):
+            return j
+        if role in ("user", "system"):
+            break
+        j -= 1
+    while i < n and messages[i].get("role") in ("notice", "tool"):
+        i += 1
+    return i
+
+
+def drop_orphan_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop ``tool`` rows whose parent ``tool_calls`` block is not in this list.
+
+    Used on the provider feed after compaction + notice stripping. Canonical
+    history is not mutated. A tool result whose assistant parent was summarized
+    away is exactly the OpenAI 400 in issue #655.
+    """
+    known: set[str] = set()
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls") or []:
+            call_id = tc.get("id") if isinstance(tc, dict) else None
+            if call_id:
+                known.add(str(call_id))
+    return [
+        msg
+        for msg in messages
+        if not (
+            msg.get("role") == "tool"
+            and str(msg.get("tool_call_id") or "") not in known
+        )
+    ]
+
+
 def apply_to_outbound(
     messages: list[dict[str, Any]], state: Optional[CompactionState]
 ) -> list[dict[str, Any]]:
@@ -701,13 +755,20 @@ def apply_to_outbound(
     point). No-op when state is absent or stale."""
     if state is None:
         return messages
-    boundary = state.boundary_index
-    if boundary <= 0 or boundary >= len(messages):
+    raw = state.boundary_index
+    if raw <= 0 or raw >= len(messages):
+        return messages
+    boundary = _align_boundary(messages, raw)
+    if boundary <= 0:
         return messages
     head: list[dict[str, Any]] = []
     if messages and messages[0].get("role") == "system":
         head.append(messages[0])
     head.append({"role": "user", "content": compacted_block(state)})
+    if boundary >= len(messages):
+        # Tail was only orphan tool/notice rows — keep the compacted block, not
+        # the original uncompacted history (that would re-blow the window).
+        return head
     return head + messages[boundary:]
 
 
