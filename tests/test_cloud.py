@@ -236,6 +236,28 @@ def test_begin_managed_connect_requires_sign_in(secrets, config):
     out = cloud.begin_managed_connect(secrets, config, "gmail")
     assert not out["ok"]
     assert "not signed in" in out["error"]
+    assert out["signed_in"] is False
+
+
+def test_begin_managed_connect_reports_signed_out_on_expired_unrefreshable_session(
+    secrets, config
+):
+    """GitHub issue #658 ("Add to Slack" dead-ends on "not signed in"): the GUI
+    polls /v1/cloud/status every 5s and only checks `access_token` presence
+    (cloud.status), so a stored-but-expired session with no refresh_token still
+    reads signed_in=True there — the button stays live. begin_managed_connect is
+    the flow's actual authority: it calls fresh_access_token, which returns None
+    for exactly this profile, so this is where the rejection has to happen and
+    where the GUI's recovery-into-sign-in depends on `signed_in: False` being set
+    (not just `ok: False`, whose text a UI shouldn't have to pattern-match)."""
+    secrets.put(
+        cloud.CLOUD_AUTH_PROFILE,
+        {"access_token": "stale", "expires": time.time() - 10},  # no refresh_token
+    )
+    assert cloud.status(secrets)["signed_in"] is True  # the stale, misleading read
+
+    out = cloud.begin_managed_connect(secrets, config, "slack")
+    assert out == {"ok": False, "error": "not signed in", "signed_in": False}
 
 
 def test_managed_profile_is_field_compatible_with_manual(secrets):
