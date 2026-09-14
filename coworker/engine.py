@@ -102,6 +102,7 @@ class TurnEngine:
         messages: Optional[list[dict[str, Any]]] = None,
         audit_sink: Optional[Callable[[dict[str, Any]], None]] = None,
         context_provider: Optional[Callable[[], str]] = None,
+        prepare_turn: Optional[Callable[[], Awaitable[None]]] = None,
         directory_requester: Optional[
             Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
         ] = None,
@@ -138,6 +139,7 @@ class TurnEngine:
         # across providers, so dynamic per-turn context (e.g. the live directory list) rides on
         # the latest user turn. Returns "" when there's nothing to add.
         self.context_provider = context_provider
+        self.prepare_turn = prepare_turn
         # Handles the `request_directory` tool: emits a DIRECTORY_REQUESTED prompt, waits for the
         # user to grant/decline a folder out-of-band, applies the grant to this live session, and
         # returns the outcome. None on surfaces that can't prompt (the tool then no-ops).
@@ -330,6 +332,10 @@ class TurnEngine:
         self.permissions.clear_run_allowances()
         yield Event(EventType.TURN_START, data)
         try:
+            error = await self._prepare_tools()
+            if error is not None:
+                yield error
+                return
             async for event in self._loop():
                 yield event
         finally:
@@ -412,6 +418,10 @@ class TurnEngine:
             return
         self._cancel.clear()
         yield Event(EventType.TURN_START, {"input": ""})
+        error = await self._prepare_tools()
+        if error is not None:
+            yield error
+            return
         async for event in self._loop():
             yield event
 
@@ -426,12 +436,27 @@ class TurnEngine:
             return
         self._cancel.clear()
         yield Event(EventType.TURN_START, {"input": "(resumed)"})
+        error = await self._prepare_tools()
+        if error is not None:
+            yield error
+            return
         async for event in self._handle_tool_calls(pending):
             yield event
         yield Event(EventType.ITERATION_END, {"iteration": 0})
         if not self._cancel.is_set():
             async for event in self._loop():
                 yield event
+
+    async def _prepare_tools(self) -> Optional[Event]:
+        """Refresh at a turn boundary, never while a tool or approval is in flight."""
+        if self.prepare_turn is not None:
+            try:
+                await self.prepare_turn()
+            except Exception as exc:
+                text = f"Could not refresh session tools: {exc}"
+                self._append_notice("error", text)
+                return Event(EventType.ERROR, {"error": text})
+        return None
 
     def _unanswered_trailing_tool_calls(self) -> list[ToolCall]:
         """The tool-calls of the last assistant message that don't yet have a tool result —

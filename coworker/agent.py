@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from .agents import Agent, AgentContext, code_agent
 from .automation import scheduling_tools
@@ -221,6 +221,7 @@ def build_engine(
     memory_saving_enabled: Optional[Any] = None,
     messages: Optional[list[dict[str, Any]]] = None,
     extra_tools: Optional[list[Any]] = None,
+    extra_tools_provider: Optional[Callable[[], Awaitable[list[Any]]]] = None,
     secrets: Optional[SecretStore] = None,
     task_store: Optional[Any] = None,
     wake_store: Optional[Any] = None,
@@ -236,7 +237,7 @@ def build_engine(
     subscription_store: Optional[Any] = None,
     channel_buffer: Optional[Any] = None,
     routing_targets: Optional[list[str]] = None,
-    connector_filter: Optional[set[str]] = None,
+    connector_filter: Optional[set[str] | Callable[[], set[str]]] = None,
     # A set (static snapshot) or a zero-arg callable (live, re-evaluated per load_skill).
     skill_filter: Optional[set[str] | Callable[[], set[str]]] = None,
     # Auto-Approve flags (spec Part 8 / §1.5). None ⇒ read the config.toml value; the server
@@ -272,30 +273,64 @@ def build_engine(
 
     registry = ToolRegistry()
     registry.register_all(agent.build_tools(context))
-    # MCP / connector tools (supplied by the manager) carry their own metadata + schema.
-    if extra_tools:
-        registry.register_all(extra_tools)
-    # Messaging personas (Cowork / Ops / MyHelper) expose send_message; MyHelper also uses it as
-    # the reply path for inbound Telegram/Slack super-agent sessions.
     secrets = secrets or SecretStore()
-    if agent.messaging and any(s.enabled for s in load_settings(secrets).values()):
-        registry.register(make_send_message_tool(secrets))
-        # send_file (§34): hand deliverables into the chat — same targets, but its OWN
-        # approval surface (a thread's standing send_message grant never covers uploads).
-        registry.register(
-            make_send_file_tool(secrets, workspace=ws, roots=root_list or None)
-        )
-        # Channel subscriptions (inbound): listen to a channel, catch up, (un)subscribe. The agent
-        # obtains a channel via ask_user or from a channel message it's reacting to.
-        if subscription_store is not None and channel_buffer is not None and session_id:
-            registry.register_all(
-                subscription_tools(
-                    subscription_store,
-                    session_id,
-                    channel_buffer,
-                    routing_targets=routing_targets,
+    def connection_tools(additional: list[Any]) -> list[Any]:
+        # Reuse the same gates at construction and at each new turn. Only this
+        # group changes; file/todo tools, history and permission state stay live.
+        tools = list(additional)
+        if agent.messaging and any(s.enabled for s in load_settings(secrets).values()):
+            tools.append(make_send_message_tool(secrets))
+            tools.append(
+                make_send_file_tool(secrets, workspace=ws, roots=root_list or None)
+            )
+            if (
+                subscription_store is not None
+                and channel_buffer is not None
+                and session_id
+            ):
+                tools.extend(
+                    subscription_tools(
+                        subscription_store,
+                        session_id,
+                        channel_buffer,
+                        routing_targets=routing_targets,
+                    )
+                )
+        if agent.connectors:
+            enabled_connectors, enabled_tools = _enabled_connector_tools(secrets)
+            # A persona's grant and session overrides can only shrink access.
+            if agent.connectors is not True:
+                enabled_connectors &= set(agent.connectors)
+            allowed = (
+                connector_filter() if callable(connector_filter) else connector_filter
+            )
+            if allowed is not None:
+                enabled_connectors &= allowed
+            tools.extend(
+                make_integration_tools(
+                    secrets,
+                    enabled_connectors=enabled_connectors,
+                    enabled_tools=enabled_tools,
+                    roots=root_list or None,
                 )
             )
+        return tools
+
+    connected_tools = connection_tools(extra_tools or [])
+    registry.register_all(connected_tools)
+    connection_names = {tool.__name__ for tool in connected_tools}
+
+    async def refresh_connection_tools() -> None:
+        nonlocal connection_names
+        additional = (
+            await extra_tools_provider()
+            if extra_tools_provider is not None
+            else extra_tools or []
+        )
+        tools = connection_tools(additional)
+        registry.replace(connection_names, tools)
+        connection_names = {tool.__name__ for tool in tools}
+
     # Surfaces with a multi-root workspace can ask the user mid-task for another folder.
     if root_list:
         registry.register(request_directory_tool())
@@ -303,27 +338,7 @@ def build_engine(
     # ask instead of silently dropping the check that needed it (OPE-85).
     if executor is not None:
         registry.register(request_tool_tool())
-    if agent.connectors:
-        enabled_connectors, enabled_tools = _enabled_connector_tools(secrets)
-        # Least-privilege grant (OPE-93): a persona with an allowlist gets ONLY the
-        # connectors it declared — an undeclared connector's tools never enter the
-        # session, no matter what the user has connected. True = general personas
-        # (Cowork) that legitimately drive whatever is connected.
-        if agent.connectors is not True:
-            enabled_connectors = enabled_connectors & set(agent.connectors)
-        # Per-session connection hierarchy (UI-REFRESH §4.3): when the caller supplies the session's
-        # effective connector set, intersect it so only effective-enabled connectors expose tools.
-        # Default None preserves CLI / direct callers (no per-session restriction).
-        if connector_filter is not None:
-            enabled_connectors = enabled_connectors & connector_filter
-        registry.register_all(
-            make_integration_tools(
-                secrets,
-                enabled_connectors=enabled_connectors,
-                enabled_tools=enabled_tools,
-                roots=root_list or None,
-            )
-        )
+
     # Web search + fetch: research tools for every agent (keyless DuckDuckGo default).
     registry.register(make_web_search_tool(secrets))
     registry.register(make_web_fetch_tool())
@@ -542,6 +557,7 @@ def build_engine(
         messages=messages,
         audit_sink=audit_sink,
         context_provider=context_provider,
+        prepare_turn=refresh_connection_tools,
         directory_requester=directory_requester,
         plan_approver=plan_approver,
         question_asker=question_asker,

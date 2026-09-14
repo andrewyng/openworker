@@ -53,6 +53,18 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._tools)
 
+    def replace(self, names: set[str], funcs: list[Callable[..., Any]]) -> None:
+        """Replace one owned tool group, preserving all other tools and their state.
+
+        Resolve the new schemas first so a bad callable cannot leave a partial group.
+        """
+        replacement = ToolRegistry()
+        replacement.register_all(funcs)
+        self._tools = {
+            **{name: spec for name, spec in self._tools.items() if name not in names},
+            **replacement._tools,
+        }
+
     def get(self, name: str) -> Optional[ToolSpec]:
         return self._tools.get(name)
 
