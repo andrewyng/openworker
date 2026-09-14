@@ -3097,6 +3097,10 @@ class SessionManager:
         topped up with the compat-vendor extras the matrix doesn't vouch for."""
         if name == "ollama":
             return [m.split(":", 1)[-1] for m in self._ollama_models()]
+        if name == "openai-compatible":
+            profile = self.secrets.get("provider:openai-compatible") or {}
+            model_id = (profile.get("model_id") or "").strip()
+            return [model_id] if model_id else []
         from ..providers.matrix import models_for_provider
 
         return list(
@@ -3138,7 +3142,14 @@ class SessionManager:
         self._refresh_provider(name)
         # Convenience: if the provider recommends a model and it's actually available, add it to
         # the curated list so it shows up in the composer right after configuring the provider.
-        rec = d.recommended_model
+        # A generic endpoint supplies its model id in the form rather than in the static
+        # matrix. Treat that saved id like a recommendation so it appears in the composer
+        # immediately after a successful Test & save.
+        rec = (
+            (profile.get("model_id") or "").strip()
+            if name == "openai-compatible"
+            else d.recommended_model
+        )
         added: Optional[str] = None
         if rec and rec in self._suggested_models(name):
             # OpenAI models stay bare (the router's default); others carry their prefix.
@@ -3217,7 +3228,7 @@ class SessionManager:
     def verify_provider(
         self, name: str, fields: Optional[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Test a provider's credentials with a live read-only call, WITHOUT persisting them, so
+        """Test a provider's credentials with a live call, WITHOUT persisting them, so
         onboarding can offer a "Test" button. Falls back to stored/env values when the form left
         a field blank (e.g. testing an already-configured provider)."""
         import os
@@ -3242,6 +3253,23 @@ class SessionManager:
         api_key = merged.get("api_key", "")
         if not api_key and d.env_key:
             api_key = os.environ.get(d.env_key, "").strip()
+        if name == "openai-compatible":
+            missing = [
+                f.label
+                for f in d.fields
+                if f.required and not merged.get(f.key)
+            ]
+            if missing:
+                return {"ok": False, "error": "missing: " + ", ".join(missing)}
+            auth_method = merged.get("auth_method") or "none"
+            if auth_method == "api_key" and not api_key:
+                return {"ok": False, "error": "Enter an API key to test."}
+            return verify_provider_key(
+                name,
+                api_key=api_key,
+                base_url=merged.get("base_url", ""),
+                fields={**merged, "auth_method": auth_method},
+            )
         has_key_field = any(f.key == "api_key" for f in d.fields)
         if d.needs_key and has_key_field and not api_key:
             return {"ok": False, "error": "Enter an API key to test."}

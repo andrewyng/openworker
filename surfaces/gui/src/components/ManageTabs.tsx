@@ -91,10 +91,18 @@ export function ModelsTab() {
               className="text-[13px] text-danger/80 hover:text-danger hover:underline underline-offset-2"
               data-testid="set-remove-key"
               onClick={() => {
-                if (window.confirm(t("manage.remove_key_confirm", { title: info?.title || "" }))) ps.removeKey();
+                const generic = info?.name === "openai-compatible";
+                if (
+                  window.confirm(
+                    t(generic ? "manage.remove_provider_confirm" : "manage.remove_key_confirm", {
+                      title: info?.title || "",
+                    }),
+                  )
+                )
+                  ps.removeKey();
               }}
             >
-              {t("manage.remove_key")}
+              {t(info?.name === "openai-compatible" ? "manage.remove_provider" : "manage.remove_key")}
             </button>
           ) : null
         }

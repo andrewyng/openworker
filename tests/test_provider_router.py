@@ -361,6 +361,39 @@ def test_manager_provider_config(tmp_path, monkeypatch):
     assert mgr.set_provider("nope", {})["ok"] is False  # unknown provider rejected
 
 
+def test_manager_generic_compatible_endpoint_auto_adds_model(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    model_id = "/Users/test/models/Qwen-Uncensored"
+    res = mgr.set_provider(
+        "openai-compatible",
+        {
+            "base_url": "http://127.0.0.1:8091/v1",
+            "model_id": model_id,
+            "auth_method": "none",
+        },
+    )
+    assert res == {
+        "ok": True,
+        "provider": "openai-compatible",
+        "recommended_model": model_id,
+    }
+    routed = f"openai-compatible:{model_id}"
+    assert routed in mgr.get_settings()["models"]
+    assert mgr.get_settings()["model"] == routed
+
+    info = {p["name"]: p for p in mgr.get_providers()}["openai-compatible"]
+    assert info["configured"] is True
+    assert info["values"] == {
+        "base_url": "http://127.0.0.1:8091/v1",
+        "model_id": model_id,
+        "auth_method": "none",
+    }
+    assert "api_key" not in info["values"]
+
+
 def test_manager_curated_models(tmp_path, monkeypatch):
     """No seed list: the picker is the curated matrix filtered to key-holding providers,
     plus user-added custom ids. A fresh install shows only the (not-yet-usable) default.

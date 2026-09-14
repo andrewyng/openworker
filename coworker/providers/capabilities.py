@@ -32,6 +32,22 @@ def capabilities_for(model: str) -> ModelCapabilities:
             tools=True, vision=has_vision, parallel_tool_calls=False, streaming=True
         )
 
+    # Nexus routes many backends behind one OpenAI-compatible gateway. Live private-model
+    # probes found incomplete metadata inside streamed parallel batches; the provider
+    # deliberately requests serial tool turns for both curated and custom Nexus models.
+    if provider == "nexus":
+        return ModelCapabilities(
+            tools=True, vision=False, parallel_tool_calls=False, streaming=True
+        )
+
+    # User-defined OpenAI-compatible servers may implement only the common Chat
+    # Completions subset. Assume tool calling and streaming, but serialize calls and
+    # leave vision off until the user-selected model has a dedicated capability entry.
+    if provider == "openai-compatible":
+        return ModelCapabilities(
+            tools=True, vision=False, parallel_tool_calls=False, streaming=True
+        )
+
     # Cloud-account providers (custom-added ids; curated ones answered from the matrix).
     # The family segment decides: Claude keeps its native capabilities; everything else
     # stays conservative until probed (Converse tool calling works across families, but

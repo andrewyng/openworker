@@ -1223,6 +1223,8 @@
     "remove_from_picker": "Remove from the picker",
     "remove_key": "Remove key…",
     "remove_key_confirm": "Remove the {{title}} key from this computer?",
+    "remove_provider": "Remove configuration…",
+    "remove_provider_confirm": "Remove the {{title}} configuration from this computer?",
     "signin_unlocks": "Sign-in unlocks the one-click {{title}} connect — or connect manually below.",
     "tool_asks_approval": "{{name}} · {{kind}} · asks approval",
     "tools_exposed": "Tools exposed to OpenWorker",

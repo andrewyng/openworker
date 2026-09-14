@@ -444,6 +444,9 @@ export function ProviderForm({
     "w-full px-3 py-2 rounded-lg border bg-panel text-[13px] outline-none focus:border-accent";
   const fieldsAll = info?.fields || [];
   const keyed = fieldsAll.some((x) => x.secret);
+  // A generic compatible endpoint is the provider's primary identity, not an advanced
+  // override. Keep it visible even though the same form can optionally reveal a key.
+  const inlineEndpoint = info?.name === "openai-compatible";
   // Cloud providers declare a segmented auth-method choice; the selected method's
   // credential fields render inside a panel with its own Test & save footer.
   const choice = fieldsAll.find((f) => f.choices && f.choices.length);
@@ -530,7 +533,7 @@ export function ProviderForm({
           (f) =>
             !f.show_when &&
             !(f.choices && f.choices.length) &&
-            !(f.key === "base_url" && keyed),
+            !(f.key === "base_url" && keyed && !inlineEndpoint),
         )
         .map((f) => fieldRow(f, !choice && f.key === testKey))}
 
@@ -636,7 +639,7 @@ export function ProviderForm({
           (owner calls 2026-07-18 + 2026-07-19). */}
       {(() => {
         const keyed = (info?.fields || []).some((x) => x.secret);
-        const ep = keyed ? (info?.fields || []).find((f) => f.key === "base_url") : undefined;
+        const ep = keyed && !inlineEndpoint ? (info?.fields || []).find((f) => f.key === "base_url") : undefined;
         if (!ep) return null;
         if (!ps.showEndpoint)
           return (

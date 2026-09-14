@@ -607,7 +607,7 @@ fn show_main(app: &tauri::AppHandle) {
 // else — no global plugin JS): check, background pre-download, install. Update
 // artifacts are minisign-verified against the pubkey in tauri.conf.json before
 // anything is installed; the manifest lives at the endpoints configured there
-// (download.openworker.com → GitHub Releases).
+// (the Nexus fork GitHub Releases channel).
 
 #[derive(serde::Serialize)]
 struct UpdateInfo {
@@ -615,9 +615,25 @@ struct UpdateInfo {
     notes: String,
 }
 
+// Empty public key deliberately disables updates until the fork owner configures
+// their own key. Never retain the upstream key as a fallback.
+fn fork_updates_enabled(app: &tauri::AppHandle) -> bool {
+    app.config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|value| value.get("pubkey"))
+        .and_then(|value| value.as_str())
+        .map(|key| !key.trim().is_empty())
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
     use tauri_plugin_updater::UpdaterExt;
+    if !fork_updates_enabled(&app) {
+        return Ok(None);
+    }
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater.check().await.map_err(|e| e.to_string())?;
     Ok(update.map(|u| UpdateInfo {
@@ -637,6 +653,9 @@ async fn download_update(
     pending: tauri::State<'_, PendingUpdate>,
 ) -> Result<(), String> {
     use tauri_plugin_updater::UpdaterExt;
+    if !fork_updates_enabled(&app) {
+        return Err("Fork automatic updates are not configured".into());
+    }
     let updater = app.updater().map_err(|e| e.to_string())?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
         return Err("no update available".into());
@@ -671,6 +690,9 @@ async fn install_update(
     pending: tauri::State<'_, PendingUpdate>,
 ) -> Result<(), String> {
     use tauri_plugin_updater::UpdaterExt;
+    if !fork_updates_enabled(&app) {
+        return Err("Fork automatic updates are not configured".into());
+    }
     let updater = app.updater().map_err(|e| e.to_string())?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
         return Err("no update available".into());

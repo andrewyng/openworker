@@ -1,5 +1,5 @@
-"""Tests for provider key detection + the live (read-only) Test/verify path. SDK-free: the
-single httpx.get is monkeypatched so no network is touched."""
+"""Tests for provider key detection + the live Test/verify path. SDK-free: httpx is
+monkeypatched so no network is touched."""
 
 from __future__ import annotations
 
@@ -71,6 +71,47 @@ def test_verify_openai_custom_endpoint(monkeypatch):
     assert cap["url"] == "https://gw.example/openai/v1/models"
 
 
+def test_verify_nexus_uses_prefilled_endpoint_and_bearer_key(monkeypatch):
+    cap: dict = {}
+    _patch_post(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("nexus", api_key="nx-test") == {"ok": True}
+    assert cap["url"] == "https://nexus-api.dappnode.com/v1/chat/completions"
+    assert cap["headers"]["Authorization"] == "Bearer nx-test"
+    assert cap["json"] == {
+        "model": "deepseek/deepseek-v4-flash",
+        "messages": [{"role": "user", "content": "Reply OK"}],
+        "max_tokens": 1,
+        "stream": False,
+    }
+
+
+def test_verify_nexus_rejects_invalid_key(monkeypatch):
+    _patch_post(monkeypatch, status=401)
+    assert verify_provider_key("nexus", api_key="not-a-real-key") == {
+        "ok": False,
+        "error": "Invalid API key.",
+    }
+
+
+def test_verify_nexus_custom_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_post(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key(
+        "nexus", api_key="nx-test", base_url="https://proxy.example/nexus/v1/"
+    ) == {"ok": True}
+    assert cap["url"] == "https://proxy.example/nexus/v1/chat/completions"
+
+
+def test_verify_nexus_network_error_is_clean(monkeypatch):
+    import httpx
+
+    _patch_post(monkeypatch, raise_exc=httpx.ConnectError("offline"))
+    assert verify_provider_key("nexus", api_key="nx-test") == {
+        "ok": False,
+        "error": "Couldn't reach Dappnode Nexus (ConnectError).",
+    }
+
+
 def test_verify_bad_key_is_invalid(monkeypatch):
     _patch_get(monkeypatch, status=401)
     assert verify_provider_key("openai", api_key="sk-bad") == {
@@ -101,6 +142,42 @@ def test_verify_ollama_uses_v1_models_no_key(monkeypatch):
     verify_provider_key("ollama", base_url="http://localhost:11434")
     assert cap["url"] == "http://localhost:11434/v1/models"
     assert "headers" not in cap  # keyless
+
+
+def test_verify_generic_compatible_endpoint_without_key(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key(
+        "openai-compatible",
+        base_url="http://127.0.0.1:8091/v1/",
+        fields={"auth_method": "none"},
+    ) == {"ok": True}
+    assert cap["url"] == "http://127.0.0.1:8091/v1/models"
+    assert "headers" not in cap
+
+
+def test_verify_generic_compatible_endpoint_with_its_own_key(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key(
+        "openai-compatible",
+        api_key="endpoint-key",
+        base_url="https://local-gateway.example/v1",
+        fields={"auth_method": "api_key"},
+    ) == {"ok": True}
+    assert cap["headers"]["Authorization"] == "Bearer endpoint-key"
+
+
+def test_verify_generic_compatible_prompts_for_auth_on_unauthorized(monkeypatch):
+    _patch_get(monkeypatch, status=401)
+    assert verify_provider_key(
+        "openai-compatible",
+        base_url="http://127.0.0.1:8091/v1",
+        fields={"auth_method": "none"},
+    ) == {
+        "ok": False,
+        "error": "Server requires authentication. Select API key and try again.",
+    }
 
 
 @pytest.mark.parametrize(

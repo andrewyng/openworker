@@ -53,6 +53,7 @@ export const PROVIDER_LOGOS: Record<string, string> = {
 export const PROVIDER_ORDER = [
   "anthropic",
   "openai",
+  "openai-compatible",
   "gemini",
   "ark",
   "ark-agent-plan-cn",
@@ -60,6 +61,7 @@ export const PROVIDER_ORDER = [
   "ollama",
   "bedrock",
   "vertex",
+  "nexus",
   "openrouter",
   "fireworks",
   "together",

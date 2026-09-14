@@ -1911,7 +1911,7 @@ export async function removeProvider(name: string): Promise<{ ok: boolean; error
   return res.json();
 }
 
-/** Live read-only credential check (does NOT save the key). Triggered by the user's "Test" click. */
+/** Live credential check (does NOT save the key). Triggered by the user's "Test" click. */
 export async function verifyProvider(
   name: string,
   fields: Record<string, string>,

@@ -1206,6 +1206,8 @@
     "remove_from_picker": "从选择器中移除",
     "remove_key": "移除密钥…",
     "remove_key_confirm": "从本机移除 {{title}} 密钥？",
+    "remove_provider": "移除配置…",
+    "remove_provider_confirm": "从本机移除 {{title}} 配置？",
     "signin_unlocks": "登录即可解锁 {{title}} 一键连接 —— 或在下方手动连接。",
     "tool_asks_approval": "{{name}} · {{kind}} · 需审批",
     "tools_exposed": "向 OpenWorker 提供的工具",

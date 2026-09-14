@@ -39,13 +39,46 @@ const BEDROCK: ProviderInfo = {
   ],
 };
 
-function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): ProviderSetupState {
+const OPENAI_COMPATIBLE: ProviderInfo = {
+  name: "openai-compatible",
+  title: "OpenAI-compatible endpoint",
+  needs_key: true,
+  configured: false,
+  values: {},
+  suggested_models: [],
+  recommended_model: null,
+  blurb: "Connect any OpenAI-compatible server.",
+  fields: [
+    { key: "base_url", label: "Endpoint", secret: false, required: true, help: "", placeholder: "http://127.0.0.1:8080/v1" },
+    { key: "model_id", label: "Model ID", secret: false, required: true, help: "", placeholder: "served-model-name" },
+    {
+      key: "auth_method",
+      label: "Authentication",
+      secret: false,
+      required: false,
+      help: "",
+      placeholder: "",
+      default: "none",
+      choices: [
+        { value: "none", label: "No API key" },
+        { value: "api_key", label: "API key" },
+      ],
+    },
+    { key: "api_key", label: "API key", secret: true, required: false, help: "", placeholder: "sk-…", show_when: { auth_method: "api_key" } },
+  ],
+};
+
+function makePs(
+  fields: Record<string, string>,
+  setFieldValue = vi.fn(),
+  info: ProviderInfo = BEDROCK,
+): ProviderSetupState {
   return {
-    providers: [BEDROCK],
-    ordered: [BEDROCK],
+    providers: [info],
+    ordered: [info],
     refreshProviders: async () => {},
     sel: "bedrock",
-    info: BEDROCK,
+    info,
     fields,
     setFieldValue,
     dirty: false,
@@ -92,6 +125,31 @@ describe("ProviderForm auth-method choice", () => {
     render(<ProviderForm ps={makePs({ auth_method: "iam" })} tp="t" />);
     expect(screen.getByTestId("t-field-aws_secret_access_key")).toBeTruthy();
     expect(screen.queryByTestId("t-field-bedrock_api_key")).toBeNull();
+  });
+});
+
+describe("generic OpenAI-compatible provider", () => {
+  it("keeps endpoint and model visible and reveals a key only when selected", () => {
+    const baseFields = {
+      base_url: "http://127.0.0.1:8091/v1",
+      model_id: "Qwen-Uncensored",
+      auth_method: "none",
+    };
+    const { rerender } = render(
+      <ProviderForm ps={makePs(baseFields, vi.fn(), OPENAI_COMPATIBLE)} tp="t" />,
+    );
+    expect(screen.getByTestId("t-field-base_url")).toBeTruthy();
+    expect(screen.getByTestId("t-field-model_id")).toBeTruthy();
+    expect(screen.queryByTestId("t-endpoint-link")).toBeNull();
+    expect(screen.queryByTestId("t-field-api_key")).toBeNull();
+
+    rerender(
+      <ProviderForm
+        ps={makePs({ ...baseFields, auth_method: "api_key" }, vi.fn(), OPENAI_COMPATIBLE)}
+        tp="t"
+      />,
+    );
+    expect(screen.getByTestId("t-field-api_key")).toBeTruthy();
   });
 });
 
