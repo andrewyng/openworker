@@ -1,4 +1,20 @@
 {
+  "openrouter": {
+    "title": "或连接您的 OpenRouter 账户",
+    "note": "使用您的 OpenRouter 额度。登录后使用账户凭据；测试并保存 API 密钥后改用该密钥。",
+    "signin": "使用 OpenRouter 登录",
+    "manual": "手动输入授权码",
+    "waiting": "请在浏览器中完成登录。",
+    "reopen": "重新打开浏览器",
+    "cancel": "取消",
+    "code": "授权码",
+    "connect": "连接",
+    "active": "已连接 · 正在使用账户凭据",
+    "saved": "账户已保存 · 正在使用 API 密钥",
+    "disconnect": "断开账户连接",
+    "manage": "在 OpenRouter 管理或撤销密钥",
+    "unreachable": "无法完成请求。请检查连接后重试。"
+  },
   "boot": {
     "starting": "正在启动 OpenWorker…",
     "restoring": "正在恢复你的会话…"

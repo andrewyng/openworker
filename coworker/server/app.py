@@ -169,6 +169,22 @@ from .manager import SessionManager
 
 
 def create_app(manager: SessionManager) -> FastAPI:
+    from ..providers.openrouter_auth import OpenRouterAuth
+
+    def openrouter_changed() -> None:
+        manager._refresh_provider("openrouter")
+        if manager._provider_configured("openrouter"):
+            from ..providers.registry import get_descriptor
+
+            model = get_descriptor("openrouter").recommended_model
+            if model:
+                qualified = f"openrouter:{model}"
+                manager.add_model(qualified)
+                if not manager._provider_configured(manager._model_provider(manager.model)):
+                    manager.set_default_model(qualified)
+
+    openrouter_auth = OpenRouterAuth(manager.secrets, openrouter_changed)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         try:
@@ -182,6 +198,7 @@ def create_app(manager: SessionManager) -> FastAPI:
 
             traceback.print_exc()
         yield
+        openrouter_auth.cancel()
         await manager.aclose()  # stop gateway + close MCP connections on shutdown
 
     app = FastAPI(title="coworker", version="0.0.0", lifespan=lifespan)
@@ -213,6 +230,10 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.middleware("http")
     async def require_sidecar_token(request: Request, call_next):
+        if request.url.path.startswith("/v1/providers/openrouter/") and not _origin_allowed(
+            request.headers.get("origin")
+        ):
+            return JSONResponse({"error": "origin not allowed"}, status_code=403)
         # Preflights carry the requested header name, not its value. CORS checks the
         # Origin; the actual state-changing request still must authenticate.
         if (
@@ -1824,15 +1845,21 @@ def create_app(manager: SessionManager) -> FastAPI:
         return manager.get_providers()
 
     @app.post("/v1/providers")
-    def providers_set(body: dict) -> dict[str, Any]:
+    async def providers_set(body: dict) -> dict[str, Any]:
         name = (body or {}).get("name", "")
         if not name:
             return {"ok": False, "error": "name required"}
-        return manager.set_provider(name, (body or {}).get("fields"))
+        if name == "openrouter":
+            openrouter_auth.cancel()
+            return manager.set_provider(name, (body or {}).get("fields"))
+        return await asyncio.to_thread(manager.set_provider, name, (body or {}).get("fields"))
 
     @app.delete("/v1/providers/{name}")
-    def providers_remove(name: str) -> dict[str, Any]:
-        return manager.remove_provider(name)
+    async def providers_remove(name: str) -> dict[str, Any]:
+        if name == "openrouter":
+            openrouter_auth.cancel()
+            return manager.remove_provider(name)
+        return await asyncio.to_thread(manager.remove_provider, name)
 
     @app.post("/v1/providers/verify")
     async def providers_verify(body: dict) -> dict[str, Any]:
@@ -1851,6 +1878,26 @@ def create_app(manager: SessionManager) -> FastAPI:
         manager.begin_codex_signin()
         asyncio.create_task(manager.codex_signin())
         return {"ok": True, "started": True}
+
+    @app.get("/v1/providers/openrouter/status")
+    async def openrouter_status():
+        return openrouter_auth.status()
+
+    @app.post("/v1/providers/openrouter/signin")
+    async def openrouter_signin(body: dict):
+        return await openrouter_auth.start(manual=body.get("manual") is True)
+
+    @app.post("/v1/providers/openrouter/complete")
+    async def openrouter_complete(body: dict):
+        return await openrouter_auth.complete(body.get("code"), body.get("attempt_id"))
+
+    @app.post("/v1/providers/openrouter/cancel")
+    async def openrouter_cancel():
+        return openrouter_auth.cancel()
+
+    @app.post("/v1/providers/openrouter/disconnect")
+    async def openrouter_disconnect():
+        return openrouter_auth.disconnect()
 
     @app.get("/v1/providers/openai-codex/status")
     def codex_status() -> dict[str, Any]:
