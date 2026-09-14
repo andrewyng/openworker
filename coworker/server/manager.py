@@ -661,6 +661,30 @@ class SessionManager:
             else:
                 # A session id we won't put in a filesystem path: primary root only.
                 roots = [{"path": ws, "writable": True, "label": "workspace"}, *extra]
+
+        async def tools_for_turn() -> list[Any]:
+            tools = await self.prepare_mcp_tools(
+                session_id, workspace=ws, agent=agent_name, refresh=True
+            )
+            for name, err in self.pop_mcp_failures(session_id):
+                detail = f": {err}" if err else ""
+                engine._append_notice(
+                    "mcp_error",
+                    f"MCP server “{name}” failed to start{detail}"[:500],
+                    server=name,
+                )
+            # MCP callables are rediscovered; unrelated caller-supplied tools stay.
+            supplied = [
+                tool
+                for tool in extra_tools or []
+                if not tool.__name__.startswith("mcp__")
+            ]
+            return [
+                *supplied,
+                *tools,
+                *self._team_tools_for(session_id, ag, record, ws),
+            ]
+
         engine = build_engine(
             agent=ag,
             workspace=ws,
@@ -686,6 +710,7 @@ class SessionManager:
                 *self._team_tools_for(session_id, ag, record, ws),
             ]
             or None,
+            extra_tools_provider=tools_for_turn,
             secrets=self.secrets,
             task_store=self.task_store,
             wake_store=self.wakes,
@@ -709,7 +734,7 @@ class SessionManager:
             channel_buffer=self.channel_buffer,
             routing_targets=self._routing_targets(session_id, agent),
             # Per-session connection hierarchy: expose only effective-enabled connectors' tools.
-            connector_filter=self.effective_connectors(session_id, agent_name),
+            connector_filter=lambda: self.effective_connectors(session_id, agent_name),
             # Per-session skill menu, LIVE (SKILLS-SPEC §3): a callable so load_skill sees
             # disables/new skills immediately; the catalog snapshot is taken at build.
             skill_filter=lambda sid=session_id, w=ws, a=agent_name: (
@@ -1206,14 +1231,22 @@ class SessionManager:
 
     # -- MCP --------------------------------------------------------------------
     async def prepare_mcp_tools(
-        self, session_id: str, *, workspace: Optional[str] = None, agent: str = "code"
+        self,
+        session_id: str,
+        *,
+        workspace: Optional[str] = None,
+        agent: str = "code",
+        refresh: bool = False,
     ) -> list[Any]:
         """Connect enabled MCP servers (global + workspace) and return their tool callables.
 
         Called from the async WS handler before `get_engine`; no-op if the engine is already
-        built (its MCP tools are attached). Servers that fail to connect are skipped.
+        built (its MCP tools are attached). Turn preparation passes refresh=True to
+        re-read enabled servers, tool selections and discovery results without
+        replacing the worker. Live MCP connections are reused by ensure().
+        Servers that fail to connect are skipped.
         """
-        if session_id in self._engines:
+        if session_id in self._engines and not refresh:
             return []
         from ..connectors.descriptors import get_descriptor
         from ..connectors.tool_defs import (
@@ -4478,7 +4511,10 @@ class SessionManager:
             audit_sink=self.audit_store.append,
             # Scheduled runs respect the same per-session connection hierarchy as live sessions:
             # expose only the persona's effective-enabled connectors' tools (§4.3).
-            connector_filter=self.effective_connectors(session_id, task.agent),
+            connector_filter=lambda: self.effective_connectors(session_id, task.agent),
+            extra_tools_provider=lambda: self.prepare_mcp_tools(
+                session_id, workspace=task.workspace, agent=task.agent, refresh=True
+            ),
             skill_filter=lambda sid=session_id, w=task.workspace, a=task.agent: (
                 self.effective_skill_names(sid, w, agent=a)
             ),
