@@ -152,6 +152,7 @@ export interface QueuedMessage {
   attachments?: Attachment[];
   skill?: string;
   createdAt: number;
+  error?: string;
 }
 
 // Transcript items
