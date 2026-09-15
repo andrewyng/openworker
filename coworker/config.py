@@ -155,3 +155,49 @@ def load_config(
                     )
                 )
     return cfg
+
+
+def revoke_allowed_domain(domain: str) -> bool:
+    """Remove one global domain while preserving every other TOML setting."""
+    import copy
+    import json
+    import os
+    import re
+    import tempfile
+
+    path = global_config_path()
+    if not path.exists():
+        return False
+    content = path.read_text(encoding="utf-8")
+    parsed = tomllib.loads(content)
+    domains = parsed.get("allowed_domains", [])
+    if not isinstance(domains, list) or domain not in domains:
+        return False
+    expected = copy.deepcopy(parsed)
+    expected["allowed_domains"] = [d for d in domains if d != domain]
+    replacement = "allowed_domains = " + json.dumps(expected["allowed_domains"], ensure_ascii=False)
+    # Consider complete array spans, then verify the entire parsed document. This
+    # rejects matches in comments, strings or nested tables without rewriting them.
+    pattern = re.compile(r"(?m)^[ \t]*(?:allowed_domains|\"allowed_domains\"|'allowed_domains')[ \t]*=")
+    for match in pattern.finditer(content):
+        for end in range(match.end(), len(content)):
+            if content[end] != "]":
+                continue
+            candidate = content[:match.start()] + replacement + content[end + 1:]
+            try:
+                if tomllib.loads(candidate) != expected:
+                    continue
+            except tomllib.TOMLDecodeError:
+                continue
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as f:
+                tmp = Path(f.name)
+                f.write(candidate)
+            try:
+                os.chmod(tmp, path.stat().st_mode & 0o777)
+                if path.read_text(encoding="utf-8") != content:
+                    raise ValueError("config changed during revocation; retry")
+                tmp.replace(path)
+            finally:
+                tmp.unlink(missing_ok=True)
+            return True
+    raise ValueError("could not safely update allowed_domains in config.toml")

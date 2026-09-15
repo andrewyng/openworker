@@ -37,7 +37,7 @@ from ..subscriptions import ChannelBuffer, SubscriptionStore
 from ..unrouted import UnroutedStore
 from ..unattended import UnattendedRegistry
 from ..audit import AuditStore
-from ..config import load_config, workspace_allowed_commands
+from ..config import load_config, workspace_allowed_commands, revoke_allowed_domain
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
 from ..roots import RootDir
@@ -114,10 +114,13 @@ def _grants_of(engine) -> dict[str, Any]:
     """The engine's session-scoped "Always allow" approvals, in persistable shape."""
     tools = sorted(getattr(engine.permissions, "session_allow_tools", None) or ())
     commands = sorted(getattr(engine.permissions, "session_allow_commands", None) or ())
+    domains = sorted(getattr(engine.permissions, "session_allow_domains", None) or ())
     readonly = bool(getattr(engine.permissions, "session_readonly", False))
     out: dict[str, Any] = {}
-    if tools or commands or readonly:
+    if tools or commands or domains or readonly:
         out = {"tools": tools, "commands": commands}
+        if domains:
+            out["domains"] = domains
         if readonly:
             out["readonly"] = True
     return out
@@ -440,10 +443,38 @@ class SessionManager:
                 engine_workspace
             ) == canonical:
                 engine.permissions.allowed_commands = list(effective)
+        if trusted:
+            try:
+                self.audit_store.append(
+                    {
+                        "workspace": canonical,
+                        "stage": "workspace_trust_granted",
+                        "status": "granted",
+                        "reason": f"workspace trust granted: {canonical}",
+                    }
+                )
+            except Exception:
+                pass
+        else:
+            try:
+                self.audit_store.append(
+                    {
+                        "workspace": canonical,
+                        "stage": "grant_revoked",
+                        "status": "revoked",
+                        "reason": f"workspace trust revoked: {canonical}",
+                    }
+                )
+            except Exception:
+                pass
         return {
             "ok": True,
             **self.workspace_command_trust(canonical),
         }
+
+    def revoke_workspace_trust(self, path: str | Path) -> dict[str, Any]:
+        """Revoke trust for a workspace root, mirroring overrides.py:revoke_trust (#620)."""
+        return self.set_workspace_trust(path, trusted=False)
 
     def trusted_workspaces(self) -> list[dict[str, Any]]:
         return [
@@ -1635,8 +1666,20 @@ class SessionManager:
         }
 
     def revoke_mcp_trust(self, name: str, tool: str) -> dict[str, Any]:
-        self._override_store().revoke_trust(f"mcp__{name}__{tool}")
-        return {"ok": True}
+        pattern = f"mcp__{name}__{tool}"
+        revoked = self._override_store().revoke_trust(pattern)
+        try:
+            self.audit_store.append(
+                {
+                    "tool": pattern,
+                    "stage": "grant_revoked",
+                    "status": "revoked",
+                    "reason": f"MCP tool trust revoked: {pattern}",
+                }
+            )
+        except Exception:
+            pass
+        return {"ok": True, "revoked": revoked}
 
     async def convert_mcp_trust(self, name: str) -> dict[str, Any]:
         """Migrate the legacy server-wide flag to named per-tool trust rules: one rule
@@ -5096,6 +5139,20 @@ class SessionManager:
             # Revocation from the task detail page ("Allowed without asking … · Revoke").
             # Human-only, like minting; the agent-facing update tool has no such field.
             task.revoke_rule(str(changes["revoke"]))
+            try:
+                from ..automation.models import rule_parts
+
+                r_tool, _ = rule_parts(str(changes["revoke"]))
+                self.audit_store.append(
+                    {
+                        "tool": r_tool,
+                        "stage": "grant_revoked",
+                        "status": "revoked",
+                        "reason": f"standing automation rule revoked: {changes['revoke']} (task {task.id})",
+                    }
+                )
+            except Exception:
+                pass
         self.task_store.save(task)
         if changes.get("revoke"):
             # A live run engine may still hold the revoked rule — reseed from the record.
@@ -5188,6 +5245,8 @@ class SessionManager:
             engine.permissions.allow_tool_for_session(str(tool))
         for command in grants.get("commands") or []:
             engine.permissions.allow_command_for_session(str(command))
+        for domain in grants.get("domains") or []:
+            engine.permissions.allow_domain_for_session(str(domain))
         if grants.get("readonly"):
             engine.permissions.allow_readonly_for_session()
 
@@ -6152,6 +6211,394 @@ class SessionManager:
         self, enabled: Optional[bool] = None, user_rules: Optional[str] = None
     ) -> dict[str, Any]:
         return self.memory_settings.set(enabled=enabled, user_rules=user_rules)
+
+    def list_active_grants(self) -> list[dict[str, Any]]:
+        """List all live standing grants across the ladder of earned autonomy (#620):
+        1. Workspace trust (WorkspaceTrustStore)
+        2. MCP per-tool trust (RiskOverrideStore)
+        3. Standing automation rules (TaskStore always_allowed_tools)
+        4. Session grants (active engines and persisted SessionRecord.grants)
+        5. Egress / domain allows (config.allowed_domains)
+        """
+        grants: list[dict[str, Any]] = []
+
+        # 1. Workspace trust
+        for path in self.workspace_trust.list():
+            info = self.workspace_command_trust(path)
+            grants.append(
+                {
+                    "id": f"workspace:{path}",
+                    "kind": "workspace_trust",
+                    "name": path,
+                    "source": "workspace",
+                    "source_id": path,
+                    "source_label": Path(path).name or path,
+                    "workspace": path,
+                    "details": {
+                        "allowed_commands": info.get("allowed_commands", []),
+                        "exists": Path(path).is_dir(),
+                    },
+                }
+            )
+
+        # 2. MCP per-tool trust
+        override_store = self._override_store()
+        for pattern in override_store.trust_patterns():
+            server_name = ""
+            tool_name = pattern
+            if pattern.startswith("mcp__"):
+                parts = pattern[len("mcp__"):].split("__", 1)
+                if len(parts) == 2:
+                    server_name, tool_name = parts[0], parts[1]
+                else:
+                    server_name = parts[0]
+            grants.append(
+                {
+                    "id": f"mcp:{pattern}",
+                    "kind": "mcp_tool",
+                    "name": tool_name,
+                    "source": "mcp",
+                    "source_id": server_name or None,
+                    "source_label": f"MCP: {server_name}" if server_name else "MCP Tool Trust",
+                    "workspace": None,
+                    "details": {
+                        "pattern": pattern,
+                        "server": server_name,
+                        "tool": tool_name,
+                    },
+                }
+            )
+
+        # 3. Standing automation rules
+        for task in self.task_store.list():
+            for entry in getattr(task, "always_allowed_tools", []) or []:
+                from ..automation.models import rule_parts
+
+                tool, target = rule_parts(entry)
+                grants.append(
+                    {
+                        "id": f"task:{task.id}:{entry}",
+                        "kind": "standing_automation",
+                        "name": entry,
+                        "source": "task",
+                        "source_id": task.id,
+                        "source_label": f"Task: {task.title}",
+                        "workspace": task.workspace,
+                        "details": {
+                            "task_id": task.id,
+                            "task_title": task.title,
+                            "tool": tool,
+                            "target": target,
+                        },
+                    }
+                )
+
+        # 4. Session grants
+        seen_sessions: set[str] = set()
+        # Active in-memory engines first
+        for sid, engine in self._engines.items():
+            seen_sessions.add(sid)
+            rec = self.session_store.load(sid)
+            title = rec.title if rec and rec.title else sid
+            executor = getattr(engine, "executor", None)
+            workspace = os.path.realpath(str(executor.cwd)) if executor else ""
+            session_label = f"Session: {title}"
+
+            perms = engine.permissions
+            for tool in sorted(getattr(perms, "session_allow_tools", None) or ()):
+                grants.append(
+                    {
+                        "id": f"session:{sid}:tool:{tool}",
+                        "kind": "session_tool",
+                        "name": tool,
+                        "source": "session",
+                        "source_id": sid,
+                        "source_label": session_label,
+                        "workspace": workspace,
+                        "details": {"session_id": sid, "tool": tool},
+                    }
+                )
+            for cmd in sorted(getattr(perms, "session_allow_commands", None) or ()):
+                grants.append(
+                    {
+                        "id": f"session:{sid}:command:{cmd}",
+                        "kind": "session_command",
+                        "name": cmd,
+                        "source": "session",
+                        "source_id": sid,
+                        "source_label": session_label,
+                        "workspace": workspace,
+                        "details": {"session_id": sid, "command": cmd},
+                    }
+                )
+            for dom in sorted(getattr(perms, "session_allow_domains", None) or ()):
+                grants.append(
+                    {
+                        "id": f"session:{sid}:domain:{dom}",
+                        "kind": "session_domain",
+                        "name": dom,
+                        "source": "session",
+                        "source_id": sid,
+                        "source_label": session_label,
+                        "workspace": workspace,
+                        "details": {"session_id": sid, "domain": dom},
+                    }
+                )
+            if getattr(perms, "session_readonly", False):
+                grants.append(
+                    {
+                        "id": f"session:{sid}:readonly",
+                        "kind": "session_readonly",
+                        "name": "Read-only mode",
+                        "source": "session",
+                        "source_id": sid,
+                        "source_label": session_label,
+                        "workspace": workspace,
+                        "details": {"session_id": sid},
+                    }
+                )
+
+        # Persisted sessions from the store (not active in-memory)
+        for rec in self.session_store.list():
+            if rec.session_id in seen_sessions:
+                continue
+            stored_grants = rec.grants or {}
+            if not stored_grants:
+                continue
+            session_label = f"Session: {rec.title or rec.session_id}"
+            for tool in stored_grants.get("tools") or []:
+                grants.append(
+                    {
+                        "id": f"session:{rec.session_id}:tool:{tool}",
+                        "kind": "session_tool",
+                        "name": tool,
+                        "source": "session",
+                        "source_id": rec.session_id,
+                        "source_label": session_label,
+                        "workspace": rec.workspace,
+                        "details": {"session_id": rec.session_id, "tool": tool},
+                    }
+                )
+            for cmd in stored_grants.get("commands") or []:
+                grants.append(
+                    {
+                        "id": f"session:{rec.session_id}:command:{cmd}",
+                        "kind": "session_command",
+                        "name": cmd,
+                        "source": "session",
+                        "source_id": rec.session_id,
+                        "source_label": session_label,
+                        "workspace": rec.workspace,
+                        "details": {"session_id": rec.session_id, "command": cmd},
+                    }
+                )
+            for dom in stored_grants.get("domains") or []:
+                grants.append(
+                    {
+                        "id": f"session:{rec.session_id}:domain:{dom}",
+                        "kind": "session_domain",
+                        "name": dom,
+                        "source": "session",
+                        "source_id": rec.session_id,
+                        "source_label": session_label,
+                        "workspace": rec.workspace,
+                        "details": {"session_id": rec.session_id, "domain": dom},
+                    }
+                )
+            if stored_grants.get("readonly"):
+                grants.append(
+                    {
+                        "id": f"session:{rec.session_id}:readonly",
+                        "kind": "session_readonly",
+                        "name": "Read-only mode",
+                        "source": "session",
+                        "source_id": rec.session_id,
+                        "source_label": session_label,
+                        "workspace": rec.workspace,
+                        "details": {"session_id": rec.session_id},
+                    }
+                )
+
+        # 5. Egress / allowed domains from user config
+        for domain in load_config().allowed_domains:
+            grants.append(
+                {
+                    "id": f"domain:global:{domain}",
+                    "kind": "allowed_domain",
+                    "name": domain,
+                    "source": "config",
+                    "source_id": None,
+                    "source_label": "Global Config",
+                    "workspace": None,
+                    "details": {"domain": domain},
+                }
+            )
+
+        return grants
+
+    def revoke_grant(
+        self,
+        grant_id: Optional[str] = None,
+        *,
+        kind: Optional[str] = None,
+        target: Optional[str] = None,
+        source_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Revoke a standing grant and record the revocation in the audit trail (#620)."""
+        if grant_id and (not kind or not target):
+            parts = grant_id.split(":", 2)
+            prefix = parts[0]
+            if prefix == "workspace":
+                kind = "workspace_trust"
+                target = grant_id[len("workspace:"):]
+            elif prefix == "mcp":
+                kind = "mcp_tool"
+                target = grant_id[len("mcp:"):]
+            elif prefix == "task" and len(parts) >= 3:
+                kind = "standing_automation"
+                source_id = parts[1]
+                target = parts[2]
+            elif prefix == "session":
+                session_parts = grant_id.split(":", 3)
+                if len(session_parts) >= 3:
+                    source_id = session_parts[1]
+                    subkind = session_parts[2]
+                    kind = f"session_{subkind}"
+                    target = session_parts[3] if len(session_parts) > 3 else subkind
+            elif prefix == "domain" and len(parts) >= 3:
+                kind = "allowed_domain"
+                target = parts[2]
+
+        if not kind or not target:
+            return {"ok": False, "error": "kind and target are required to revoke grant"}
+
+        revoked = False
+        if kind == "workspace_trust":
+            canonical = WorkspaceTrustStore.canonical(target)
+            res = self.revoke_workspace_trust(canonical)
+            return {"ok": res.get("ok", True), "revoked": True, "kind": kind, "target": target}
+
+        elif kind == "mcp_tool":
+            pattern = target
+            revoked = self._override_store().revoke_trust(pattern)
+            try:
+                self.audit_store.append(
+                    {
+                        "tool": pattern,
+                        "stage": "grant_revoked",
+                        "status": "revoked",
+                        "reason": f"MCP tool trust revoked: {pattern}",
+                    }
+                )
+            except Exception:
+                pass
+            return {"ok": True, "revoked": revoked, "kind": kind, "target": pattern}
+
+        elif kind == "standing_automation":
+            task_id = source_id or ""
+            task = self.task_store.get(task_id)
+            if not task:
+                return {"ok": False, "error": "task not found"}
+            revoked = task.revoke_rule(target)
+            if revoked:
+                self.task_store.save(task)
+                for sid, engine in self._engines.items():
+                    owner = self.task_store.task_for_run_session(sid)
+                    if owner is not None and owner.id == task.id:
+                        engine.permissions.task_rules = task.standing_rules()
+            from ..automation.models import rule_parts
+
+            tool, _ = rule_parts(target)
+            try:
+                self.audit_store.append(
+                    {
+                        "tool": tool,
+                        "stage": "grant_revoked",
+                        "status": "revoked",
+                        "reason": f"standing automation rule revoked: {target} (task {task.id})",
+                    }
+                )
+            except Exception:
+                pass
+            return {"ok": True, "revoked": revoked, "kind": kind, "target": target}
+
+        elif kind in ("session_tool", "session_command", "session_domain", "session_readonly"):
+            sid = source_id or ""
+            engine = self._engines.get(sid)
+            if engine is not None:
+                if kind == "session_tool":
+                    revoked = engine.permissions.revoke_tool_for_session(target)
+                elif kind == "session_command":
+                    revoked = engine.permissions.revoke_command_for_session(target)
+                elif kind == "session_domain":
+                    revoked = engine.permissions.revoke_domain_for_session(target)
+                elif kind == "session_readonly":
+                    revoked = engine.permissions.revoke_readonly_for_session()
+
+            rec = self.session_store.load(sid)
+            if rec and rec.grants:
+                grants = dict(rec.grants)
+                if kind == "session_tool" and "tools" in grants:
+                    if target in grants["tools"]:
+                        grants["tools"] = [t for t in grants["tools"] if t != target]
+                        revoked = True
+                elif kind == "session_command" and "commands" in grants:
+                    if target in grants["commands"]:
+                        grants["commands"] = [c for c in grants["commands"] if c != target]
+                        revoked = True
+                elif kind == "session_domain" and "domains" in grants:
+                    if target in grants["domains"]:
+                        grants["domains"] = [d for d in grants["domains"] if d != target]
+                        revoked = True
+                elif kind == "session_readonly" and "readonly" in grants:
+                    del grants["readonly"]
+                    revoked = True
+                rec.grants = grants
+                self.session_store.save(rec, touch=False)
+
+            try:
+                self.audit_store.append(
+                    {
+                        "session_id": sid,
+                        "workspace": rec.workspace if rec else "",
+                        "tool": target if kind != "session_readonly" else "readonly",
+                        "stage": "grant_revoked",
+                        "status": "revoked",
+                        "reason": f"session grant revoked: {kind}:{target}",
+                    }
+                )
+            except Exception:
+                pass
+            return {"ok": True, "revoked": revoked, "kind": kind, "target": target}
+
+        elif kind == "allowed_domain":
+            domain = target
+            try:
+                revoked = revoke_allowed_domain(domain)
+            except (OSError, ValueError) as exc:
+                return {"ok": False, "revoked": False, "error": str(exc)}
+            for engine in self._engines.values():
+                if domain in engine.permissions.allowed_domains:
+                    engine.permissions.allowed_domains = [
+                        d for d in engine.permissions.allowed_domains if d != domain
+                    ]
+                    revoked = True
+            if not revoked:
+                return {"ok": True, "revoked": False, "kind": kind, "target": target}
+            try:
+                self.audit_store.append(
+                    {
+                        "tool": domain,
+                        "stage": "grant_revoked",
+                        "status": "revoked",
+                        "reason": f"allowed domain revoked: {domain}",
+                    }
+                )
+            except Exception:
+                pass
+            return {"ok": True, "revoked": revoked, "kind": kind, "target": target}
+
+        return {"ok": False, "error": f"unknown grant kind: {kind}"}
 
 
 def _parse_inbox_json(s: str) -> dict[str, Any]:
