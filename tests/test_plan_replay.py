@@ -195,7 +195,12 @@ def test_manager_replay_plan(tmp_path):
         plan_id="plan-auto-1",
     )
 
-    replay_res = manager.replay_plan(session_id="s-origin")
+    async def replay():
+        result = await manager.replay_plan(session_id="s-origin")
+        await asyncio.gather(*manager._plan_replay_tasks)
+        return result
+
+    replay_res = asyncio.run(replay())
     new_sid = replay_res["session_id"]
     assert new_sid.startswith("replay-")
     assert replay_res["plan_id"] == "plan-auto-1"
@@ -205,7 +210,12 @@ def test_manager_replay_plan(tmp_path):
     assert new_rec is not None
     assert new_rec.plan["id"] == "plan-auto-1"
     assert new_rec.plan["origin_session_id"] == "s-origin"
-    assert any("Execute the approved plan" in m["content"] for m in new_rec.messages)
+    users = [m for m in new_rec.messages if m["role"] == "user"]
+    assert len(users) == 1
+    assert "Execute the approved plan" in users[0]["content"]
+    assert any(m["role"] == "assistant" for m in new_rec.messages)
+    assert new_rec.mode == Mode.INTERACTIVE.value
+    assert not new_rec.grants
 
     # Verify new session engine carries audit_context
     new_engine = manager.get_engine(new_sid)
@@ -262,3 +272,64 @@ def test_rest_plan_endpoints(tmp_path):
     replay_data2 = resp.json()
     assert replay_data2["session_id"].startswith("replay-")
     assert replay_data2["plan_id"] == "plan-rest-1"
+
+
+def test_replay_selects_saved_version_and_rejects_unknown_id(tmp_path):
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider())
+    manager.save_plan_artifact("versions", "# First version", plan_id="first")
+    manager.save_plan_artifact("versions", "# Second version", plan_id="second")
+    assert {p["id"] for p in manager.list_plans()} == {"first", "second"}
+
+    async def replay():
+        with pytest.raises(ValueError):
+            await manager.replay_plan(session_id="versions", plan_id="missing")
+        result = await manager.replay_plan(session_id="versions", plan_id="first")
+        await asyncio.gather(*manager._plan_replay_tasks)
+        return result
+
+    result = asyncio.run(replay())
+    rec = manager.session_store.load(result["session_id"])
+    assert rec.plan["id"] == "first"
+    users = [m["content"] for m in rec.messages if m["role"] == "user"]
+    assert users == ["Execute the approved plan:\n\n# First version"]
+    # Versions survive a store reopen, including the previous latest version.
+    reopened = ConversationStore(manager.session_store.base)
+    assert {p["id"] for p in reopened.list_plans()} == {"first", "second"}
+    reopened.close()
+
+
+def test_unapproved_workspace_plan_is_not_replayable(tmp_path):
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider())
+    scratch = Path(manager._provision_scratch("unapproved"))
+    (scratch / "plan.md").write_text("agent-written proposal")
+    assert manager.get_session_plan("unapproved") is None
+    with pytest.raises(ValueError):
+        asyncio.run(manager.replay_plan(session_id="unapproved"))
+    with pytest.raises(ValueError):
+        manager.save_plan_artifact("unapproved", "unsafe", plan_id="../../outside")
+
+
+def test_live_socket_approval_persists_plan(tmp_path):
+    provider = ScriptedProvider([
+        _tool_turn("propose_plan", {"plan": "# Live approved plan"}),
+        _text_turn("done"),
+    ])
+    manager = SessionManager(workspace=tmp_path, provider=provider)
+    manager._maybe_autotitle = lambda sid: None
+    with TestClient(create_app(manager)) as client:
+        with client.websocket_connect("/ws/session/live-plan") as ws:
+            while ws.receive_json()["type"] != "ready":
+                pass
+            ws.send_json({"type": "set_mode", "mode": "plan"})
+            ws.send_json({"type": "user_message", "text": "make a plan"})
+            for _ in range(100):
+                event = ws.receive_json()
+                if event["type"] == "plan_proposed":
+                    ws.send_json({"type": "plan_response", "approved": True, "mode": "interactive"})
+                if event["type"] == "turn_done":
+                    break
+            else:
+                pytest.fail("turn did not finish")
+            plan = manager.get_session_plan("live-plan")
+            assert plan and plan["plan"] == "# Live approved plan"
+            assert manager.get_engine("live-plan").audit_context["plan_id"] == plan["id"]

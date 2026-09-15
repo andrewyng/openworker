@@ -871,10 +871,10 @@ def create_app(manager: SessionManager) -> FastAPI:
         return plan
 
     @app.post("/v1/sessions/{session_id}/plan/replay")
-    def session_plan_replay(session_id: str, body: Optional[dict] = None) -> dict[str, Any]:
+    async def session_plan_replay(session_id: str, body: Optional[dict] = None) -> dict[str, Any]:
         body = body or {}
         try:
-            return manager.replay_plan(
+            return await manager.replay_plan(
                 session_id=session_id,
                 plan_id=body.get("plan_id"),
                 workspace=body.get("workspace"),
@@ -887,10 +887,10 @@ def create_app(manager: SessionManager) -> FastAPI:
         return manager.list_plans()
 
     @app.post("/v1/plans/replay")
-    def plans_replay(body: Optional[dict] = None) -> dict[str, Any]:
+    async def plans_replay(body: Optional[dict] = None) -> dict[str, Any]:
         body = body or {}
         try:
-            return manager.replay_plan(
+            return await manager.replay_plan(
                 session_id=body.get("session_id"),
                 plan_id=body.get("plan_id"),
                 workspace=body.get("workspace"),
@@ -2959,7 +2959,9 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "approved": False,
                     "feedback": resp.get("feedback") or "the user rejected the plan",
                 }
-            return {"approved": True, "mode": resp.get("mode") or "interactive"}
+            plan = manager.save_plan_artifact(session_id, str(_args.get("plan", "")))
+            return {"approved": True, "mode": resp.get("mode") or "interactive",
+                    "plan_id": plan["id"]}
 
         # §11.6: the connector asks and the team gates are manager handlers now (they
         # must work on background turns too); the socket only supplies attended
