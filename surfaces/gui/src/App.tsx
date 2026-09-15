@@ -2212,6 +2212,7 @@ export function App() {
             teamChatUnread={curSession?.team?.chat_unread || 0}
             onOpenTeamChat={() => setChatTeam(curSession?.team?.team_id || "")}
             onOpenWorker={(w) => void selectSession(w.session_id, w.workspace, w.agent)}
+            onOpenSession={(id, ws, ag) => void selectSession(id, ws || "", ag || "code")}
             openBoardKey={boardRailKey}
           />
           {boardOpen && board && board.space && (

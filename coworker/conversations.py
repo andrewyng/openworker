@@ -93,6 +93,10 @@ class ConversationStore:
                 auto_title TEXT, renamed INTEGER DEFAULT 0,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS plan_artifacts (
+                session_id TEXT NOT NULL, plan_id TEXT NOT NULL, record TEXT NOT NULL,
+                PRIMARY KEY (session_id, plan_id)
+            );
             CREATE TABLE IF NOT EXISTS workspaces (
                 path TEXT PRIMARY KEY, last_used TEXT DEFAULT CURRENT_TIMESTAMP
             );
@@ -112,6 +116,7 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN compaction TEXT",
             "ALTER TABLE sessions ADD COLUMN team TEXT",
             "ALTER TABLE sessions ADD COLUMN bindings TEXT",
+            "ALTER TABLE sessions ADD COLUMN plan TEXT",
         ):
             try:
                 self._conn.execute(ddl)
@@ -119,6 +124,15 @@ class ConversationStore:
                 pass
         self._conn.commit()
         self._backfill_counts()
+        # Preserve the latest artifact from databases created before version history.
+        for row in self._conn.execute("SELECT session_id, plan FROM sessions WHERE plan IS NOT NULL").fetchall():
+            plan = _load_grants(row["plan"])
+            if plan.get("id"):
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO plan_artifacts VALUES (?, ?, ?)",
+                    (row["session_id"], plan["id"], json.dumps(plan)),
+                )
+        self._conn.commit()
 
     # -- file helpers -----------------------------------------------------------
     def _file(self, sid: str) -> Path:
@@ -344,13 +358,14 @@ class ConversationStore:
             title = record.title or title_from(record.messages)
             self._conn.execute(
                 """
-                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, team, bindings, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, team, bindings, plan, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace, model = excluded.model, mode = excluded.mode,
                     title = COALESCE(sessions.title, excluded.title), agent = excluded.agent,
                     n_msgs = excluded.n_msgs, messages = NULL, extra_roots = excluded.extra_roots,
                     grants = excluded.grants, compaction = excluded.compaction,
+                    plan = CASE WHEN excluded.plan != '{}' THEN excluded.plan ELSE sessions.plan END,
                     updated_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE sessions.updated_at END
                 """,
                 (
@@ -366,9 +381,15 @@ class ConversationStore:
                     json.dumps(record.compaction or {}),
                     json.dumps(record.team or {}),
                     json.dumps(record.bindings or {}),
+                    json.dumps(record.plan or {}),
                     touch,
                 ),
             )
+            if record.plan.get("id"):
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO plan_artifacts VALUES (?, ?, ?)",
+                    (sid, record.plan["id"], json.dumps(record.plan)),
+                )
             self._conn.commit()
         if touch:
             self.touch_workspace(record.workspace)
@@ -416,6 +437,7 @@ class ConversationStore:
             bindings=_load_grants(
                 row["bindings"] if "bindings" in row.keys() else None
             ),
+            plan=_load_grants(row["plan"] if "plan" in row.keys() else None),
         )
 
     def set_team(self, session_id: str, team: dict) -> None:
@@ -429,6 +451,38 @@ class ConversationStore:
                 (json.dumps(team or {}), session_id),
             )
             self._conn.commit()
+
+    def set_plan(self, session_id: str, plan: dict) -> None:
+        """Persist an approved plan artifact for a session (#623)."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE sessions SET plan = ? WHERE session_id = ?",
+                (json.dumps(plan or {}), session_id),
+            )
+            if cur.rowcount == 0:
+                self._conn.execute(
+                    """
+                    INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, plan, updated_at)
+                    VALUES (?, '', '', 'interactive', '', 'code', 0, NULL, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(session_id) DO UPDATE SET plan = excluded.plan
+                    """,
+                    (session_id, json.dumps(plan or {})),
+                )
+            if plan.get("id"):
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO plan_artifacts VALUES (?, ?, ?)",
+                    (session_id, plan["id"], json.dumps(plan)),
+                )
+            self._conn.commit()
+
+    def list_plans(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT p.session_id, p.record, s.title FROM plan_artifacts p "
+                "JOIN sessions s ON s.session_id = p.session_id ORDER BY p.rowid DESC"
+            ).fetchall()
+        return [{**json.loads(row["record"]), "session_id": row["session_id"],
+                 "session_title": row["title"]} for row in rows]
 
     def names(self):
         """The project-names alias table, riding this store's connection."""
@@ -485,7 +539,9 @@ class ConversationStore:
                 archived=bool(r["archived"]),
                 origin=r["origin"],
                 origin_label=r["origin_label"],
+                grants=_load_grants(r["grants"] if "grants" in r.keys() else None),
                 team=_load_grants(r["team"] if "team" in r.keys() else None),
+                plan=_load_grants(r["plan"] if "plan" in r.keys() else None),
             )
             for r in rows
         ]
@@ -537,6 +593,7 @@ class ConversationStore:
             cur = self._conn.execute(
                 "DELETE FROM sessions WHERE session_id = ?", (session_id,)
             )
+            self._conn.execute("DELETE FROM plan_artifacts WHERE session_id = ?", (session_id,))
             self._conn.commit()
         path = self._file(session_id)
         if path.exists():

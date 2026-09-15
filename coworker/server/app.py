@@ -768,6 +768,42 @@ def create_app(manager: SessionManager) -> FastAPI:
             session_id, str(body.get("path", "")), str(body.get("mode", "reveal"))
         )
 
+    # Replayable plan artifacts (#623)
+    @app.get("/v1/sessions/{session_id}/plan")
+    def session_plan(session_id: str) -> dict[str, Any]:
+        plan = manager.get_session_plan(session_id)
+        if not plan:
+            return JSONResponse({"error": f"no plan found for session {session_id}"}, status_code=404)
+        return plan
+
+    @app.post("/v1/sessions/{session_id}/plan/replay")
+    async def session_plan_replay(session_id: str, body: Optional[dict] = None) -> dict[str, Any]:
+        body = body or {}
+        try:
+            return await manager.replay_plan(
+                session_id=session_id,
+                plan_id=body.get("plan_id"),
+                workspace=body.get("workspace"),
+            )
+        except ValueError as err:
+            return JSONResponse({"error": str(err)}, status_code=404)
+
+    @app.get("/v1/plans")
+    def list_plans() -> list[dict[str, Any]]:
+        return manager.list_plans()
+
+    @app.post("/v1/plans/replay")
+    async def plans_replay(body: Optional[dict] = None) -> dict[str, Any]:
+        body = body or {}
+        try:
+            return await manager.replay_plan(
+                session_id=body.get("session_id"),
+                plan_id=body.get("plan_id"),
+                workspace=body.get("workspace"),
+            )
+        except ValueError as err:
+            return JSONResponse({"error": str(err)}, status_code=404)
+
     # Agent teams (OPE-96): the session's board (workspace-keyed space) + journal
     # overview. Mutations act as the USER — the human side of the gates.
     @app.get("/v1/sessions/{session_id}/board")
@@ -2306,7 +2342,9 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "approved": False,
                     "feedback": resp.get("feedback") or "the user rejected the plan",
                 }
-            return {"approved": True, "mode": resp.get("mode") or "interactive"}
+            plan = manager.save_plan_artifact(session_id, str(_args.get("plan", "")))
+            return {"approved": True, "mode": resp.get("mode") or "interactive",
+                    "plan_id": plan["id"]}
 
         async def team_approver(_args: dict, tool_call_id=None) -> dict:
             # The staffing gate. The engine already emitted TEAM_PROPOSED; park an

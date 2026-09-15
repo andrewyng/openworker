@@ -44,3 +44,5 @@ class SessionRecord:
     # lead_session, space}. Leads gain their entry when the staffing gate creates the
     # team. Drives tool binding (board actor identity) + the sidebar's expandable entry.
     team: dict[str, Any] = field(default_factory=dict)
+    # Plan artifact: durable, replayable approved plan artifact (#623).
+    plan: dict[str, Any] = field(default_factory=dict)

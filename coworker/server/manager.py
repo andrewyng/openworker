@@ -237,6 +237,7 @@ class SessionManager:
         # Sessions with an auto-title LLM call in flight (FB-010) — one call at a time.
         self._autotitle_inflight: set[str] = set()
         self._autotitle_tasks: set[asyncio.Task] = set()
+        self._plan_replay_tasks: set[asyncio.Task] = set()
         self._autotitle_attempts: dict[str, int] = {}
         # Opener-count signature of the last attempt: titling fires at TURN START (owner
         # catch 2026-08-24 — waiting for an agentic turn to COMPLETE left sessions
@@ -745,6 +746,8 @@ class SessionManager:
 
             engine.compaction_state = CompactionState.from_dict(record.compaction)
         engine.compaction_settings = self.compaction_settings
+        if record is not None and record.plan and record.plan.get("id"):
+            engine.audit_context["plan_id"] = str(record.plan["id"])
         self._engines[session_id] = engine
         if is_new_session:
             self._emit_session_created(session_id, agent_name)
@@ -1167,9 +1170,184 @@ class SessionManager:
                     "approved": False,
                     "feedback": resp.get("feedback") or "the user rejected the plan",
                 }
-            return {"approved": True, "mode": resp.get("mode") or "interactive"}
+            plan_record = self.save_plan_artifact(session_id, str(args.get("plan", "")))
+            return {
+                "approved": True,
+                "mode": resp.get("mode") or "interactive",
+                "plan_id": plan_record.get("id"),
+            }
 
         return approve
+
+    # -- Plan artifacts (#623) --------------------------------------------------
+    def save_plan_artifact(
+        self,
+        session_id: str,
+        plan_text: str,
+        plan_id: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Persist a plan proposal as a first-class replayable artifact (#623)."""
+        from datetime import datetime, timezone
+
+        from ..conversations import is_safe_session_id
+
+        plan_id = plan_id or f"plan-{uuid.uuid4().hex[:8]}"
+        if not is_safe_session_id(plan_id):
+            raise ValueError("unsafe plan id")
+        if any(p["id"] == plan_id and p["session_id"] == session_id
+               for p in self.list_plans()):
+            raise ValueError("plan id already exists; save revisions with a new id")
+        scratch_dir = Path(self._provision_scratch(session_id))
+        plans_dir = scratch_dir / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+
+        plan_filename = f"{plan_id}.md"
+        plan_path = plans_dir / plan_filename
+        plan_path.write_text(plan_text, encoding="utf-8")
+
+        # Also update plan.md at root of scratch as canonical active plan
+        (scratch_dir / "plan.md").write_text(plan_text, encoding="utf-8")
+
+        # Derive a readable title if not supplied
+        if not title:
+            first_line = plan_text.strip().splitlines()[0] if plan_text.strip() else ""
+            title = first_line.lstrip("#").strip()[:80] or f"Plan {plan_id}"
+
+        plan_record = {
+            "id": plan_id,
+            "session_id": session_id,
+            "title": title,
+            "path": f"plans/{plan_filename}",
+            "plan": plan_text,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Persist in session store
+        self.session_store.set_plan(session_id, plan_record)
+
+        # Update in-memory engine if live
+        engine = self._engines.get(session_id)
+        if engine is not None:
+            engine.audit_context["plan_id"] = plan_id
+            if hasattr(engine, "record") and engine.record:
+                engine.record.plan = plan_record
+
+        # Audit persistence
+        self.audit_store.append(
+            {
+                "session_id": session_id,
+                "stage": "plan_persisted",
+                "status": "approved",
+                "tool": "propose_plan",
+                "resource": str(plan_path),
+                "plan_id": plan_id,
+            }
+        )
+
+        return plan_record
+
+    def get_session_plan(self, session_id: str) -> Optional[dict[str, Any]]:
+        """Return the approved artifact, never infer approval from workspace files."""
+        record = self.session_store.load(session_id)
+        return record.plan if record and record.plan else None
+
+    def list_plans(self) -> list[dict[str, Any]]:
+        return self.session_store.list_plans()
+
+    async def replay_plan(
+        self,
+        session_id: Optional[str] = None,
+        plan_id: Optional[str] = None,
+        workspace: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Replay an approved plan artifact in a fresh session (#623)."""
+        origin_plan: Optional[dict[str, Any]] = None
+        if plan_id:
+            origin_plan = next((p for p in self.list_plans()
+                                if p.get("id") == plan_id
+                                and (not session_id or p.get("session_id") == session_id)), None)
+            if origin_plan:
+                session_id = origin_plan["session_id"]
+        elif session_id:
+            origin_plan = self.get_session_plan(session_id)
+
+        if not origin_plan:
+            raise ValueError(
+                f"No plan artifact found for session={session_id} plan_id={plan_id}"
+            )
+
+        plan_text = origin_plan.get("plan", "")
+        origin_plan_id = origin_plan.get("id") or (f"plan-{session_id[:8]}" if session_id else f"plan-{uuid.uuid4().hex[:8]}")
+        origin_record = self.session_store.load(session_id) if session_id else None
+        target_ws = workspace or (origin_record.workspace if origin_record else None)
+        model = (origin_record.model if origin_record else None) or self.model
+        agent = (origin_record.agent if origin_record else None) or "code"
+
+        new_session_id = f"replay-{uuid.uuid4().hex[:8]}"
+
+        new_scratch = Path(self._provision_scratch(new_session_id))
+        plans_dir = new_scratch / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+        (new_scratch / "plan.md").write_text(plan_text, encoding="utf-8")
+        (plans_dir / f"{origin_plan_id}.md").write_text(plan_text, encoding="utf-8")
+
+        new_plan_record = {
+            **origin_plan,
+            "origin_session_id": session_id,
+            "origin_plan_id": origin_plan_id,
+            "session_id": new_session_id,
+        }
+
+        # The delivery path appends the opening message exactly once.
+        new_record = SessionRecord(
+            session_id=new_session_id,
+            workspace=target_ws or str(new_scratch),
+            model=model,
+            mode=Mode.INTERACTIVE.value,
+            title=f"Replay: {origin_plan.get('title', 'Plan')}",
+            agent=agent,
+            messages=[],
+            plan=new_plan_record,
+        )
+        self.session_store.save(new_record)
+
+        # Build engine to register it and set audit context
+        new_engine = self.get_engine(
+            new_session_id,
+            workspace=target_ws,
+            agent=agent,
+        )
+        if new_engine is not None:
+            new_engine.audit_context["plan_id"] = origin_plan_id
+            new_engine.audit_context["replay_from"] = session_id or ""
+
+        task = asyncio.create_task(self.deliver_to_session(
+            new_session_id, f"Execute the approved plan:\n\n{plan_text}"
+        ))
+        self._plan_replay_tasks.add(task)
+        task.add_done_callback(self._plan_replay_tasks.discard)
+        # Claim the turn before a newly opened socket can submit another message.
+        await asyncio.sleep(0)
+
+        self.audit_store.append(
+            {
+                "session_id": new_session_id,
+                "stage": "plan_replayed",
+                "status": "started",
+                "tool": "replay_plan",
+                "resource": f"session:{session_id or 'none'}",
+                "plan_id": origin_plan_id,
+            }
+        )
+
+        return {
+            "session_id": new_session_id,
+            "plan_id": origin_plan_id,
+            "workspace": target_ws or str(new_scratch),
+            "agent": agent,
+            "plan": new_plan_record,
+        }
 
     def persist_session(self, session_id: str) -> None:
         """Save the cached engine's thread (so a prompt's pending tool call survives a crash)."""
@@ -4218,6 +4396,11 @@ class SessionManager:
                 self.unregister_session_client(session_id, cb)
 
     async def aclose(self) -> None:
+        replay_tasks = list(self._plan_replay_tasks)
+        for task in replay_tasks:
+            task.cancel()
+        if replay_tasks:
+            await asyncio.gather(*replay_tasks, return_exceptions=True)
         await self.scheduler.stop()
         await self.stop_gateway()
         await self.mcp.aclose()
