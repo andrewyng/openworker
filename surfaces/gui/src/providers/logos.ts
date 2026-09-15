@@ -57,6 +57,7 @@ export const PROVIDER_ORDER = [
   "ark",
   "ark-agent-plan-cn",
   "meta",
+  "novita",
   "ollama",
   "bedrock",
   "vertex",
