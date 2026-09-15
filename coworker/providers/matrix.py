@@ -161,11 +161,14 @@ MATRIX: dict[str, ModelEntry] = {
         ),
     ),
     "zai:glm-5.2": ModelEntry("GLM-5.2 · Z AI", _AGENTIC, 128_000),
+    # DeepSeek V4 Pro and V4 Flash both carry a 1M-token context window per the vendor
+    # spec (checked against the DeepSeek catalog 2026-08-12); the matrix had 128k, which
+    # under-reported the GUI's context-fill meter.
     "deepseek:deepseek-v4-flash": ModelEntry(
-        "DeepSeek V4 Flash · DeepSeek", _AGENTIC, 128_000
+        "DeepSeek V4 Flash · DeepSeek", _AGENTIC, 1_000_000
     ),
     "deepseek:deepseek-v4-pro": ModelEntry(
-        "DeepSeek V4 Pro · DeepSeek", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · DeepSeek", _AGENTIC, 1_000_000
     ),
     "kimi:kimi-k2.6": ModelEntry("Kimi K2.6 · Moonshot", _AGENTIC, 256_000),
     "minimax:MiniMax-M2.5": ModelEntry("MiniMax M2.5 · MiniMax"),
@@ -193,7 +196,7 @@ MATRIX: dict[str, ModelEntry] = {
         "Kimi K2.6 · via Together", _AGENTIC, 256_000
     ),
     "together:deepseek-ai/DeepSeek-V4-Pro": ModelEntry(
-        "DeepSeek V4 Pro · via Together", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · via Together", _AGENTIC, 1_000_000
     ),
     "together:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": ModelEntry(
         "Llama 4 Maverick · via Together", _AGENTIC, 1_000_000
@@ -205,7 +208,7 @@ MATRIX: dict[str, ModelEntry] = {
         "Kimi K2.6 · via Fireworks", _AGENTIC, 256_000
     ),
     "fireworks:accounts/fireworks/models/deepseek-v4-pro": ModelEntry(
-        "DeepSeek V4 Pro · via Fireworks", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · via Fireworks", _AGENTIC, 1_000_000
     ),
     "fireworks:accounts/fireworks/models/llama4-maverick-instruct-basic": ModelEntry(
         "Llama 4 Maverick · via Fireworks", _AGENTIC, 1_000_000
@@ -217,7 +220,7 @@ MATRIX: dict[str, ModelEntry] = {
         "Kimi K2.6 · via OpenRouter", _AGENTIC, 256_000
     ),
     "openrouter:deepseek/deepseek-v4-pro": ModelEntry(
-        "DeepSeek V4 Pro · via OpenRouter", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · via OpenRouter", _AGENTIC, 1_000_000
     ),
     "openrouter:meta-llama/llama-4-maverick": ModelEntry(
         "Llama 4 Maverick · via OpenRouter", _AGENTIC, 1_000_000
