@@ -1173,3 +1173,23 @@ def test_connect_banners_a_session_already_in_auto_approve(tmp_path):
     engine = manager._engines["modes2"]
     kinds = [m.get("kind") for m in engine.messages if m.get("role") == "notice"]
     assert kinds.count("mode_notice") == 1
+
+
+def test_ws_echoes_queue_id_on_acceptance_and_rejection(tmp_path):
+    client = _client(tmp_path, [_text("done")])
+    with client.websocket_connect("/ws/session/queue-ack") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "user_message", "text": "hello", "request_id": "queued-1",
+                      "attachments": [{"kind": "text", "name": "note.txt", "mime": "text/plain", "text": "attached"}]})
+        events = []
+        while True:
+            event = ws.receive_json()
+            events.append(event)
+            if event["type"] == "turn_done":
+                break
+        started = next(e for e in events if e["type"] == "turn_start")
+        assert started["data"]["request_id"] == "queued-1"
+        ws.send_json({"type": "user_message", "text": 123, "request_id": "queued-2"})
+        rejected = ws.receive_json()
+        assert rejected["type"] == "input_rejected"
+        assert rejected["data"]["request_id"] == "queued-2"

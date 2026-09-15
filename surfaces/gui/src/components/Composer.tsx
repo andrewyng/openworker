@@ -575,6 +575,7 @@ export function Composer(props: Props) {
                 <span className="truncate max-w-[200px]" title={item.text}>
                   {item.text || (item.attachments?.length ? `[${item.attachments.length} files]` : "")}
                 </span>
+                {item.error && <span role="alert" className="text-danger">{item.error}</span>}
                 {props.onRemoveQueued && (
                   <button
                     type="button"

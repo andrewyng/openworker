@@ -156,7 +156,8 @@
     "queue": "Queue",
     "queue_tooltip": "Queue this message to run after current task finishes",
     "queued_count": "{{count}} queued",
-    "remove_queued": "Remove from queue"
+    "remove_queued": "Remove from queue",
+    "queue_disconnected": "Not sent: connection changed before acknowledgement. Check the conversation before retrying."
   },
   "transcript": {
     "copy_message": "Copy message",
