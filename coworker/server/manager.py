@@ -4901,8 +4901,8 @@ class SessionManager:
             f"⏰ Wake — the timer you set has fired{note}. Continue where you left off."
         )
 
-    async def _run_scheduled_task(self, task, trigger: str) -> TaskRun:
-        run = TaskRun(
+    async def _run_scheduled_task(self, task, trigger: str, run: Optional[TaskRun] = None) -> TaskRun:
+        run = run or TaskRun(
             task_id=task.id, trigger=trigger
         )  # __post_init__ sets run.session_id
         self.task_store.add_run(run)  # mark "running"
@@ -4946,6 +4946,10 @@ class SessionManager:
             run.status = "ok"
             if task.notify_on_completion:
                 await self._notify_task_done(task, run)
+        except asyncio.CancelledError:
+            engine.request_interrupt()
+            run.status, run.error = "cancelled", "Run cancelled"
+            raise
         except Exception as exc:
             run.status, run.error = "error", str(exc)
         finally:
@@ -5165,8 +5169,8 @@ class SessionManager:
         for sid, engine in list(self._engines.items()):
             owner = self.task_store.task_for_run_session(sid)
             if owner is not None and owner.id == task_id:
-                if hasattr(engine, "stop"):
-                    engine.stop()
+                engine.request_interrupt()
+                stopped = True
         for r in self.task_store.runs(task_id, limit=5):
             if r.status == "running":
                 r.status = "cancelled"

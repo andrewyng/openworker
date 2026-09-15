@@ -407,10 +407,11 @@ async def test_blocked_run_does_not_stall_other_tasks(tmp_path):
 
     gate = asyncio.Event()
 
-    async def runner(task, trigger):
+    async def runner(task, trigger, run):
         if task.id == blocked.id:
             await gate.wait()  # parked approval: suspended until a human answers
-        return TaskRun(task_id=task.id, status="ok", trigger=trigger)
+        run.status = "ok"
+        return run
 
     sched = Scheduler(store, runner, tick_seconds=0.05)
     sched.start()
@@ -442,12 +443,13 @@ async def test_tick_while_run_is_parked_never_redispatches_it(tmp_path):
     started = asyncio.Event()
     calls = 0
 
-    async def runner(t, trigger):
+    async def runner(t, trigger, run):
         nonlocal calls
         calls += 1
         started.set()
         await gate.wait()
-        return TaskRun(task_id=t.id, status="ok", trigger=trigger)
+        run.status = "ok"
+        return run
 
     sched = Scheduler(store, runner, tick_seconds=9999)
     await sched._tick(trigger="schedule")  # dispatch; the run parks on the gate
