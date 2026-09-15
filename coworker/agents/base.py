@@ -23,6 +23,7 @@ class AgentContext:
     # When None, tools fall back to the single `workspace` root. Held by reference so runtime
     # add/remove of folders is seen by the file tools built from it.
     roots: Optional[list] = None
+    session_id: Optional[str] = None
 
 
 @dataclass
