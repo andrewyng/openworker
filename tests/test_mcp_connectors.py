@@ -275,3 +275,31 @@ def test_non_interactive_auth_wiring_refuses_the_browser():
     chained.__cause__ = bare
     assert mcp_oauth.is_auth_required(chained)
     assert not mcp_oauth.is_auth_required(ValueError("no"))
+
+
+def test_tinyfish_connector_is_oauth_mcp_with_pinned_tools():
+    """TinyFish (PROD-4064): a one-click, OAuth + MCP-backed connector that pins a
+    curated subset spanning all four TinyFish families (search, fetch, agent,
+    browser), with action-taking tools classified `write` so they gate for approval."""
+    d = {x.name: x for x in list_descriptors()}["tinyfish"]
+    assert d.auth == "oauth"
+    assert d.mcp_url == "https://agent.tinyfish.ai/mcp"
+    assert d.fields == []  # one-click: no API key box is shown
+    assert not d.managed  # local OAuth flow (tokens on this Mac), not cloud-brokered
+
+    pins = {t.name: t.kind for t in mcp_tool_defs("tinyfish")}
+    # all four families represented
+    assert "mcp__tinyfish__search" in pins  # search
+    assert "mcp__tinyfish__fetch_content" in pins  # fetch
+    assert "mcp__tinyfish__run_web_automation" in pins  # agent
+    assert "mcp__tinyfish__create_browser_session" in pins  # browser
+    # read-only lookups stay read; action-taking tools are write (→ approval-gated)
+    assert pins["mcp__tinyfish__search"] == "read"
+    assert pins["mcp__tinyfish__fetch_content"] == "read"
+    assert pins["mcp__tinyfish__run_web_automation"] == "write"
+    assert pins["mcp__tinyfish__create_browser_session"] == "write"
+    # intentionally NOT pinned in v1: batch_*, *_usage, and the non-public
+    # deep-research pair (run_big_search / get_search_result).
+    assert not any("batch_" in n or n.endswith("_usage") for n in pins)
+    assert "mcp__tinyfish__run_big_search" not in pins
+    assert "mcp__tinyfish__get_search_result" not in pins

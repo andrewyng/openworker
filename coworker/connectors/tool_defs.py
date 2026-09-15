@@ -419,6 +419,77 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "write",
         "Post a comment or reply on an item.",
     ),
+    # -- TinyFish (MCP-backed only; pinned subset of TinyFish's automation catalog).
+    # NOTE / follow-up (PROD-4064): this list is HAND-MAINTAINED, so it can drift from
+    # what agent.tinyfish.ai/mcp actually serves. Deliberately omitted for v1: the
+    # batch_* tools, the *_usage listing tools, and the non-public deep-research pair
+    # (run_big_search / get_search_result). Any tool TinyFish adds or renames won't
+    # appear here until this block is updated by hand. Revisit if a task needs those.
+    # Names are `mcp__tinyfish__<tool>` exactly as mcp/tools.py builds them; unlisted
+    # vendor tools never reach a session.
+    ConnectorToolDef(
+        "tinyfish",
+        "mcp__tinyfish__search",
+        "Web search",
+        "read",
+        "Search the web for titles, snippets, and URLs.",
+    ),
+    ConnectorToolDef(
+        "tinyfish",
+        "mcp__tinyfish__fetch_content",
+        "Fetch page",
+        "read",
+        "Fetch clean, extracted content from up to 10 URLs.",
+    ),
+    ConnectorToolDef(
+        "tinyfish",
+        "mcp__tinyfish__run_web_automation",
+        "Run web agent",
+        "write",
+        "Run a multi-step web automation from a URL and a natural-language goal.",
+    ),
+    ConnectorToolDef(
+        "tinyfish",
+        "mcp__tinyfish__run_web_automation_async",
+        "Run web agent (async)",
+        "write",
+        "Start a web automation and return a run id to poll.",
+    ),
+    ConnectorToolDef(
+        "tinyfish",
+        "mcp__tinyfish__get_run",
+        "Read run",
+        "read",
+        "Read the status and result of an automation run.",
+    ),
+    ConnectorToolDef(
+        "tinyfish",
+        "mcp__tinyfish__list_runs",
+        "List runs",
+        "read",
+        "List automation runs.",
+    ),
+    ConnectorToolDef(
+        "tinyfish",
+        "mcp__tinyfish__cancel_run",
+        "Cancel run",
+        "write",
+        "Cancel a running or pending automation run.",
+    ),
+    ConnectorToolDef(
+        "tinyfish",
+        "mcp__tinyfish__create_browser_session",
+        "Open browser session",
+        "write",
+        "Create a remote browser session for direct control.",
+    ),
+    ConnectorToolDef(
+        "tinyfish",
+        "mcp__tinyfish__list_browser_sessions",
+        "List browser sessions",
+        "read",
+        "List your remote browser sessions.",
+    ),
     # -- asana via their hosted V2 MCP server (one-click path; the asana_* REST
     # tools below stay the manual-token set — profile mode picks, as with jira) ---
     ConnectorToolDef(
