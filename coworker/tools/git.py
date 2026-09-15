@@ -73,10 +73,13 @@ _REVERT_TURN_SCHEMA = {
 def _git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = {
         **os.environ,
-        "GIT_CONFIG_GLOBAL": "/dev/null",
-        "GIT_CONFIG_SYSTEM": "/dev/null",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
         "GIT_CONFIG_NOSYSTEM": "1",
-        "HOME": "/tmp",
+        "GIT_AUTHOR_NAME": "OpenWorker",
+        "GIT_AUTHOR_EMAIL": "checkpoint@openworker.invalid",
+        "GIT_COMMITTER_NAME": "OpenWorker",
+        "GIT_COMMITTER_EMAIL": "checkpoint@openworker.invalid",
     }
     if extra:
         env.update(extra)
@@ -124,106 +127,52 @@ def _git_dir(workspace: str | Path) -> Path | None:
     return None
 
 
+def _run_git(root: Path, *args: str, env=None, input=None) -> bytes:
+    return subprocess.run(
+        ["git", "-C", str(root), *args], env=env or _git_env(),
+        input=input, capture_output=True, check=True, timeout=20,
+    ).stdout
+
+
+def _checkpoint_root(root: Path) -> bool:
+    # A subfolder checkout must not snapshot or restore its parent repository.
+    top = os.fsdecode(_run_git(root, "rev-parse", "--show-toplevel")).strip()
+    return Path(top).resolve() == root
+
+
 def create_checkpoint(
     workspace: str | Path, session_id: str, turn_index: int
 ) -> str | None:
-    """Capture workspace working tree as a git shadow ref before writes apply.
-
-    Saves tracked, modified, and untracked files into a temporary index without
-    affecting the repository's real index, HEAD, or branch. Returns the ref name
-    on success, or None if the workspace is not a git repo or checkpointing fails.
-    """
-    if not is_git_repo(workspace):
-        return None
+    """Snapshot working files and the index separately without changing HEAD."""
     root = Path(workspace).expanduser().resolve()
-    git_dir = _git_dir(root)
-    if not git_dir or not git_dir.is_dir():
-        return None
-
-    sid = _sanitize_session_id(session_id)
-    ref = f"{CHECKPOINT_REF_PREFIX}/{sid}/{turn_index}"
-    tmp_name = f"ow_ckpt_{sid}_{turn_index}_{uuid.uuid4().hex[:8]}"
-    tmp_idx = git_dir / tmp_name
-
+    tmp_idx = None
     try:
+        if not _checkpoint_root(root):
+            return None
+        git_dir = _git_dir(root)
+        if git_dir is None:
+            return None
+        sid = _sanitize_session_id(session_id)
+        ref = f"{CHECKPOINT_REF_PREFIX}/{sid}/{turn_index}"
+        index_ref = f"refs/openworker/checkpoint-index/{sid}/{turn_index}"
+        # write-tree fails closed for an unmerged index.
+        index_tree = _run_git(root, "write-tree").decode().strip()
+        tmp_idx = git_dir / f"ow_ckpt_{uuid.uuid4().hex}"
         env = _git_env({"GIT_INDEX_FILE": str(tmp_idx)})
-        add_res = subprocess.run(
-            ["git", "-C", str(root), "--work-tree", str(root), "add", "-A"],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-            timeout=15,
-        )
-        if add_res.returncode != 0:
-            return None
-
-        wt_res = subprocess.run(
-            ["git", "-C", str(root), "write-tree"],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-            timeout=15,
-        )
-        if wt_res.returncode != 0 or not wt_res.stdout.strip():
-            return None
-        tree_sha = wt_res.stdout.strip()
-
-        parent = None
-        head_res = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_env(),
-            timeout=5,
-        )
-        if head_res.returncode == 0 and head_res.stdout.strip():
-            parent = head_res.stdout.strip()
-
-        commit_cmd = [
-            "git",
-            "-C",
-            str(root),
-            "commit-tree",
-            tree_sha,
-            "-m",
-            f"openworker checkpoint {sid} turn {turn_index}",
-        ]
-        if parent:
-            commit_cmd.extend(["-p", parent])
-        ct_res = subprocess.run(
-            commit_cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_env(),
-            timeout=15,
-        )
-        if ct_res.returncode != 0 or not ct_res.stdout.strip():
-            return None
-        commit_sha = ct_res.stdout.strip()
-
-        up_res = subprocess.run(
-            ["git", "-C", str(root), "update-ref", ref, commit_sha],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_env(),
-            timeout=5,
-        )
-        if up_res.returncode != 0:
-            return None
+        _run_git(root, "read-tree", index_tree, env=env)
+        _run_git(root, "add", "-A", env=env)
+        tree = _run_git(root, "write-tree", env=env).decode().strip()
+        commit = _run_git(root, "commit-tree", tree, "-m",
+                          f"openworker checkpoint {sid} turn {turn_index}").decode().strip()
+        # Publish both snapshots atomically; never overwrite an earlier turn.
+        commands = f"start\ncreate {ref} {commit}\ncreate {index_ref} {index_tree}\nprepare\ncommit\n"
+        _run_git(root, "update-ref", "--stdin", input=commands.encode())
         return ref
     except (OSError, subprocess.SubprocessError):
         return None
     finally:
-        if tmp_idx.exists():
-            try:
-                tmp_idx.unlink()
-            except OSError:
-                pass
+        if tmp_idx is not None:
+            tmp_idx.unlink(missing_ok=True)
 
 
 def list_checkpoints(
@@ -288,99 +237,44 @@ def list_checkpoints(
 def restore_checkpoint(
     workspace: str | Path, session_id: str, turn_index: int
 ) -> dict[str, Any]:
-    """Restore workspace files to the checkpoint captured before the turn began."""
-    if not is_git_repo(workspace):
-        return {"ok": False, "error": "workspace is not a git repository"}
+    """Restore exact filenames and the captured staging state; keep HEAD unchanged."""
     root = Path(workspace).expanduser().resolve()
+    if not is_git_repo(root):
+        return {"ok": False, "error": "workspace is not a git repository"}
     sid = _sanitize_session_id(session_id)
     ref = f"{CHECKPOINT_REF_PREFIX}/{sid}/{turn_index}"
-
+    index_ref = f"refs/openworker/checkpoint-index/{sid}/{turn_index}"
     try:
-        chk = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--verify", ref],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_env(),
-            timeout=5,
-        )
-        if chk.returncode != 0:
-            return {
-                "ok": False,
-                "error": f"checkpoint not found for turn {turn_index} ({ref})",
-            }
-
-        checkout = subprocess.run(
-            ["git", "-C", str(root), "checkout", ref, "--", "."],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_env(),
-            timeout=20,
-        )
-        if checkout.returncode != 0:
-            return {
-                "ok": False,
-                "error": (checkout.stderr or "git checkout failed").strip()[:300],
-            }
-
-        tree_out = subprocess.run(
-            ["git", "-C", str(root), "ls-tree", "-r", "--name-only", ref],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_env(),
-            timeout=10,
-        )
-        cp_files = set(tree_out.stdout.splitlines())
-
-        removed_files: list[str] = []
-        for dirpath, dirnames, filenames in os.walk(root, topdown=True):
-            if ".git" in dirnames:
-                dirnames.remove(".git")
-            for filename in filenames:
-                file_path = Path(dirpath) / filename
-                rel = str(file_path.relative_to(root))
-                if rel.startswith(".git") or ".git" in file_path.parts:
-                    continue
-                if rel not in cp_files:
-                    ign = subprocess.run(
-                        ["git", "-C", str(root), "check-ignore", rel],
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                        env=_git_env(),
-                        timeout=5,
-                    )
-                    if ign.returncode != 0:
-                        try:
-                            file_path.unlink()
-                            removed_files.append(rel)
-                        except OSError:
-                            pass
-        for dirpath, dirnames, _ in os.walk(root, topdown=False):
-            if ".git" in Path(dirpath).parts:
-                continue
-            for dirname in dirnames:
-                dpath = Path(dirpath) / dirname
-                if dpath.name != ".git" and ".git" not in dpath.parts:
-                    try:
-                        dpath.rmdir()
-                    except OSError:
-                        pass
-
-        return {
-            "ok": True,
-            "ref": ref,
-            "turn": turn_index,
-            "removed_files": removed_files,
-            "message": (
-                f"Successfully reverted workspace to turn {turn_index} checkpoint "
-                f"({len(removed_files)} post-turn file(s) removed)."
-            ),
-        }
+        if not _checkpoint_root(root):
+            return {"ok": False, "error": "checkpoint restore requires the repository root"}
+        # Resolve and enumerate everything before changing a file. Old checkpoints
+        # without an index snapshot cannot promise a safe staging-state restore.
+        tree = _run_git(root, "rev-parse", "--verify", f"{ref}^{{tree}}").decode().strip()
+        index_tree = _run_git(root, "rev-parse", "--verify", f"{index_ref}^{{tree}}").decode().strip()
+        cp_files = {os.fsdecode(f) for f in _run_git(root, "ls-tree", "-rz", "--name-only", tree).split(b"\0") if f}
+        current = {os.fsdecode(f) for f in _run_git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard").split(b"\0") if f}
+        removed = sorted(current - cp_files)
+        # Worktree-only restore never stages a formerly untracked/unstaged file.
+        if cp_files:
+            _run_git(root, "restore", f"--source={tree}", "--worktree", "--", ".")
+        for name in removed:
+            path = root / name
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+        # Only prune empty parents of files removed by this restore.
+        for name in removed:
+            parent = (root / name).parent
+            while parent != root:
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
+                parent = parent.parent
+        _run_git(root, "read-tree", index_tree)
+        return {"ok": True, "ref": ref, "turn": turn_index, "removed_files": removed,
+                "message": f"Restored workspace and staging state before turn {turn_index}."}
     except (OSError, subprocess.SubprocessError) as exc:
-        return {"ok": False, "error": f"restore failed: {exc}"}
+        return {"ok": False, "error": f"checkpoint not found or restore failed: {exc}"}
 
 
 def git_tools(workspace: str, session_id: str = "") -> list:
