@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="NVIDIA">
+  <rect width="256" height="256" rx="56" fill="#76B900"/>
+  <path d="M72 156V100h28l12 24 12-24h28v56h-22v-27l-18 27h-2l-18-27v27H72z" fill="#fff"/>
+  <path d="M164 100h20l28 56h-24l-4-10h-20l-4 10h-24l28-56zm6 23-6 14h12l-6-14z" fill="#fff"/>
+</svg>

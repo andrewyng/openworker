@@ -46,6 +46,7 @@ const SETTINGS = {
   model_labels: {
     "anthropic:claude-opus-4-8": "Claude Opus 4.8 · Anthropic",
     "zai:glm-5.2": "GLM-5.2 · Z AI",
+    "nvidia:z-ai/glm-5.2": "GLM-5.2 · NVIDIA NIM",
     "ark:dola-seed-evolving-latest-version": "Dola Seed Evolving · BytePlus Ark",
     "ark:dola-seed-2-1-turbo-260628": "Dola Seed 2.1 Turbo · BytePlus Ark",
     "ark-agent-plan-cn:doubao-seed-evolving": "Doubao Seed Evolving · Volcengine Agent Plan",
@@ -363,6 +364,8 @@ const PROVIDERS = [
   { name: "anthropic", title: "Claude (Anthropic)", needs_key: true, fields: [{ key: "api_key", label: "API key", secret: true, required: true, help: "", placeholder: "sk-…" }], configured: true, values: {}, suggested_models: ["claude-opus-4-8"], key_set_at: null, last_used_at: null },
   // zai: an OpenAI-compatible vendor — unconfigured, with a prefilled editable endpoint + blurb.
   { name: "zai", title: "Z AI (GLM)", needs_key: true, blurb: "Uses Z AI's OpenAI-compatible API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "Z AI API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Prefilled with Z AI's international endpoint.", placeholder: "https://api.z.ai/api/paas/v4", default: "https://api.z.ai/api/paas/v4" }], configured: false, values: {}, suggested_models: ["glm-5.2"], key_set_at: null, last_used_at: null },
+  // nvidia: an OpenAI-compatible vendor — unconfigured, with a prefilled editable endpoint + blurb.
+  { name: "nvidia", title: "NVIDIA NIM", needs_key: true, blurb: "Uses NVIDIA NIM's OpenAI-compatible API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "NVIDIA API key", secret: true, required: true, help: "", placeholder: "nvapi-…" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Prefilled with NVIDIA's OpenAI-compatible NIM endpoint.", placeholder: "https://integrate.api.nvidia.com/v1", default: "https://integrate.api.nvidia.com/v1" }], configured: false, values: {}, suggested_models: ["z-ai/glm-5.2"], key_set_at: null, last_used_at: null },
   // Ark uses two provider identities: BytePlus pay-as-you-go and Volcengine Agent Plan CN
   // have independent credentials, endpoints, and strict curated model lists.
   { name: "ark", title: "BytePlus Ark", needs_key: true, blurb: "Uses BytePlus Ark's OpenAI-compatible Responses API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "BytePlus Ark API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "BytePlus Ark's Asia Pacific endpoint.", placeholder: "https://ark.ap-southeast.bytepluses.com/api/v3", default: "https://ark.ap-southeast.bytepluses.com/api/v3" }], configured: false, values: {}, suggested_models: ["dola-seed-evolving-latest-version", "dola-seed-2-1-turbo-260628"], key_set_at: null, last_used_at: null },

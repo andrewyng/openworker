@@ -201,6 +201,17 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     return OpenAIProvider(api_key="ollama", base_url=base_url)
 
 
+def _build_nvidia(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    # NVIDIA NIM is OpenAI-compatible, but it uses its own key namespace and endpoint.
+    api_key = ((profile or {}).get("api_key") or "").strip() or (
+        os.environ.get("NVIDIA_API_KEY", "").strip()
+    )
+    if not api_key:
+        raise RuntimeError("No NVIDIA API key configured — add it in Settings ▸ Models.")
+    base_url = ((profile or {}).get("base_url") or "").strip() or "https://integrate.api.nvidia.com/v1"
+    return OpenAIProvider(api_key=api_key, base_url=base_url)
+
+
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
     Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its
@@ -634,6 +645,31 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         base_url="https://api.mistral.ai/v1",
         recommended_model="mistral-large-latest",
         env_key="MISTRAL_API_KEY",
+    ),
+    ProviderDescriptor(
+        name="nvidia",
+        title="NVIDIA NIM",
+        needs_key=True,
+        fields=[
+            ProviderField(
+                "api_key",
+                "NVIDIA API key",
+                secret=True,
+                placeholder="nvapi-…",
+            ),
+            ProviderField(
+                "base_url",
+                "Endpoint",
+                required=False,
+                default="https://integrate.api.nvidia.com/v1",
+                placeholder="https://integrate.api.nvidia.com/v1",
+                help="Prefilled with NVIDIA's OpenAI-compatible NIM endpoint.",
+            ),
+        ],
+        build=_build_nvidia,
+        recommended_model="z-ai/glm-5.2",
+        env_key="NVIDIA_API_KEY",
+        blurb="Uses NVIDIA NIM's OpenAI-compatible API — the endpoint is prefilled, just add your key.",
     ),
     _compat(
         "meta",

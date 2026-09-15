@@ -101,4 +101,11 @@ describe("Composer voice input (§37)", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("No microphone is available.");
     expect(screen.getByLabelText("Start dictation").hasAttribute("disabled")).toBe(false);
   });
+
+  it("an empty loaded model list shows the dropdown instead of the loading chip", () => {
+    render(<Composer {...props({ models: [], modelsLoaded: true })} />);
+
+    expect(screen.queryByTestId("models-loading")).toBeNull();
+    expect(screen.getByRole("button", { name: /gpt-5.6-sol/i })).toBeTruthy();
+  });
 });
