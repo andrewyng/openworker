@@ -346,13 +346,6 @@ fn start_keep_awake() -> Option<KeepAwakeGuard> {
 
 // -- native commands (invoked from the SPA via window.__TAURI__.core.invoke) -----------------
 
-/// Opens a URL in the user's default system browser.
-#[tauri::command]
-fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
-    app.opener().open_url(&url, None::<&str>).map_err(|e| e.to_string())
-}
-
 /// Native macOS folder picker for the workspace gate.
 #[tauri::command]
 async fn pick_folder(app: tauri::AppHandle) -> Option<String> {
@@ -731,7 +724,6 @@ pub fn run() {
             None,
         ))
         .invoke_handler(tauri::generate_handler![
-            open_url,
             pick_folder,
             get_autostart,
             set_autostart,
