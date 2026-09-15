@@ -506,6 +506,7 @@ def test_matrix_answers_capabilities_for_reseller_ids():
 
     assert capabilities_for("deepinfra:zai-org/GLM-5.3-Flash").vision is True
     assert capabilities_for("deepinfra:deepseek-ai/DeepSeek-V4-Flash").vision is False
+    assert capabilities_for("deepinfra:moonshotai/Kimi-K2.7-Code").vision is True
 
 
 def test_matrix_labels_and_custom_model_fallback():
