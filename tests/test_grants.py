@@ -273,3 +273,33 @@ def test_grants_rest_api(tmp_path: Path):
 
     # Check that it's no longer trusted
     assert manager.workspace_trust.is_trusted(proj) is False
+
+
+def test_manager_revokes_global_domain_and_preserves_config(tmp_path):
+    from coworker.config import global_config_path, load_config
+    from coworker.server.manager import SessionManager
+
+    path = global_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('# allowed_domains = ["comment"]\nallowed_domains = [\n "example.com", # remove\n "other.example",\n]\n[reviewer]\nmodel = "keep"\n', encoding="utf-8")
+    manager = SessionManager(data_dir=tmp_path / "data")
+    result = manager.revoke_grant(grant_id="domain:global:example.com")
+    assert result["ok"] and result["revoked"]
+    assert load_config().allowed_domains == ["other.example"]
+    assert '# allowed_domains = ["comment"]' in path.read_text()
+    assert 'model = "keep"' in path.read_text()
+    assert manager.revoke_grant(grant_id="domain:global:example.com")["revoked"] is False
+
+
+def test_domain_revocation_failure_does_not_mutate_live_grants(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import coworker.server.manager as mod
+
+    manager = mod.SessionManager(data_dir=tmp_path / "data")
+    perms = SimpleNamespace(allowed_domains=["example.com"])
+    manager._engines["test"] = SimpleNamespace(permissions=perms)
+    def fail(_):
+        raise OSError("write failed")
+    monkeypatch.setattr(mod, "revoke_allowed_domain", fail)
+    assert not manager.revoke_grant(grant_id="domain:global:example.com")["ok"]
+    assert perms.allowed_domains == ["example.com"]

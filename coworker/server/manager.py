@@ -37,7 +37,7 @@ from ..subscriptions import ChannelBuffer, SubscriptionStore
 from ..unrouted import UnroutedStore
 from ..unattended import UnattendedRegistry
 from ..audit import AuditStore
-from ..config import load_config, workspace_allowed_commands
+from ..config import load_config, workspace_allowed_commands, revoke_allowed_domain
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
 from ..roots import RootDir
@@ -6573,33 +6573,18 @@ class SessionManager:
 
         elif kind == "allowed_domain":
             domain = target
+            try:
+                revoked = revoke_allowed_domain(domain)
+            except (OSError, ValueError) as exc:
+                return {"ok": False, "revoked": False, "error": str(exc)}
             for engine in self._engines.values():
-                if hasattr(engine.permissions, "allowed_domains"):
+                if domain in engine.permissions.allowed_domains:
                     engine.permissions.allowed_domains = [
                         d for d in engine.permissions.allowed_domains if d != domain
                     ]
-            cfg_path = global_config_path()
-            if cfg_path.is_file():
-                try:
-                    content = cfg_path.read_text(encoding="utf-8")
-                    pattern = re.compile(r"allowed_domains\s*=\s*\[[^\]]*\]")
-                    match = pattern.search(content)
-                    if match:
-                        import tomllib
-
-                        parsed = tomllib.loads(content)
-                        domains = parsed.get("allowed_domains", [])
-                        if isinstance(domains, list) and domain in domains:
-                            new_domains = [d for d in domains if d != domain]
-                            new_content = pattern.sub(
-                                f"allowed_domains = {json.dumps(new_domains)}",
-                                content,
-                                count=1,
-                            )
-                            cfg_path.write_text(new_content, encoding="utf-8")
-                            revoked = True
-                except Exception:
-                    pass
+                    revoked = True
+            if not revoked:
+                return {"ok": True, "revoked": False, "kind": kind, "target": target}
             try:
                 self.audit_store.append(
                     {
@@ -6611,7 +6596,7 @@ class SessionManager:
                 )
             except Exception:
                 pass
-            return {"ok": True, "revoked": True, "kind": kind, "target": target}
+            return {"ok": True, "revoked": revoked, "kind": kind, "target": target}
 
         return {"ok": False, "error": f"unknown grant kind: {kind}"}
 
