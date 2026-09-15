@@ -599,11 +599,8 @@ def build_engine(
     if live_on or shadow_on:
         from .reviewer import Reviewer
 
-        effective_reviewer_model = (
-            reviewer_model
-            or getattr(config, "reviewer_model", None)
-            or model
-        )
+        engine.reviewer_model = reviewer_model or config.reviewer_model or None
+        effective_reviewer_model = engine.reviewer_model or model
         engine.reviewer = Reviewer(
             provider=provider,
             model=effective_reviewer_model,

@@ -128,6 +128,7 @@ class TurnEngine:
         self.registry = registry
         self.permissions = permissions
         self.model = model
+        self.reviewer_model: Optional[str] = None
         self.approver = approver or _deny_all
         self.max_iterations = max_iterations
         self.model_settings = dict(model_settings or {})
@@ -348,11 +349,9 @@ class TurnEngine:
             return None
         had_history = any(m.get("role") != "system" for m in self.messages)
         self.model = model
-        # The reviewer judges with the session's own model (§1.5: "if it's trusted to
-        # drive the agent, it's strong enough to review it"). Bound once at session build,
-        # it would otherwise keep the OLD model for the rest of the session after a
-        # switch — silently reviewing with a model the user moved away from.
-        if self.reviewer is not None:
+        # An inherited reviewer follows the session model. An explicitly configured
+        # reviewer stays pinned when the user changes the main model.
+        if self.reviewer is not None and not self.reviewer_model:
             self.reviewer.model = model
         if not had_history:
             return None

@@ -284,3 +284,15 @@ def test_existing_databases_gain_the_cache_columns(tmp_path):
     assert (live["tokens_in"], live["tokens_out"]) == (175, 110)
     # The pre-migration row contributes zero cached, not garbage.
     assert (live["cache_read"], live["cache_write"]) == (1400, 25)
+
+
+def test_model_switch_preserves_dedicated_reviewer(tmp_path, monkeypatch):
+    from coworker.agent import build_engine
+    from coworker.agents.chat import chat_agent
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    for dedicated in (None, "anthropic:reviewer"):
+        engine = build_engine(agent=chat_agent(), model="openai:initial", auto_approve=True,
+                              reviewer_model=dedicated)
+        engine.switch_model("openai:changed")
+        assert engine.reviewer.model == (dedicated or "openai:changed")
