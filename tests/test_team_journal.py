@@ -282,3 +282,13 @@ def test_journal_tools_export(board, journal):
     res_err = export_fn(case="nonexistent")
     assert "error" in res_err
 
+
+
+def test_export_includes_findings_after_first_page(journal):
+    for i in range(1000):
+        journal.append(USER, "large", f"note {i}")
+    journal.append(USER, "large", "final finding", kind="finding")
+    report = json.loads(journal.export(USER, "large", format="json"))
+    assert len(report["entries"]) == 1001
+    assert report["summary"]["findings"] == 1
+    assert report["entries"][-1]["body"] == "final finding"
