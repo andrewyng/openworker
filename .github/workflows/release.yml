@@ -24,7 +24,16 @@
 #   APPLE_API_KEY                the API key id
 #   APPLE_API_ISSUER             the API issuer id
 # When the secrets are absent (forks, scratch runs) the build degrades to unsigned —
-# installable via `xattr -cr`. Windows remains unsigned (Authenticode is a later step).
+# installable via `xattr -cr`.
+#
+# Windows Authenticode: same shape — build_windows.ps1 signs the sidecar exe and hands
+# Tauri the signing config when credentials are present, and degrades to unsigned when
+# they are absent. Provide ONE of (see docs/windows-signing.md for procurement + details):
+#   WINDOWS_SIGN_COMMAND             custom sign command template, %1 = file to sign
+#                                    (cloud signing CLIs: Azure Trusted Signing et al.)
+#   WINDOWS_CERTIFICATE_THUMBPRINT   cert already provisioned in the runner's store
+#   WINDOWS_CERTIFICATE              base64 PFX (+ WINDOWS_CERTIFICATE_PASSWORD)
+# Optional: WINDOWS_TIMESTAMP_URL (RFC 3161 server; defaults to DigiCert's).
 
 name: Release
 
@@ -120,6 +129,13 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Authenticode (unset secrets arrive as "" — the script treats empty as absent
+          # and builds unsigned, so forks and scratch runs are unaffected).
+          WINDOWS_SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
         run: ./packaging/build_windows.ps1
 
       - name: Stage artifacts (versioned + stable names)
