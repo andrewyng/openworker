@@ -298,7 +298,16 @@ class JournalStore:
             ).fetchone()
             meta = dict(meta_row) if meta_row else {}
 
-        entries = self.read(actor, case, include_raw=include_raw, limit=1000)
+        entries: list[dict[str, Any]] = []
+        since_seq = 0
+        while True:
+            page = self.read(
+                actor, case, include_raw=include_raw, since_seq=since_seq, limit=1000
+            )
+            entries.extend(page)
+            if len(page) < 1000:
+                break
+            since_seq = page[-1]["seq"]
         items: list[dict[str, Any]] = []
         if store is not None:
             spaces = {e.get("space") for e in entries if e.get("space")}
