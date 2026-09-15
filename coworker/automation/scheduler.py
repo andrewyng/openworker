@@ -2,7 +2,7 @@
 
 Policy (agreed): **run-once-catch-up** for runs missed while down (due tasks fire once on
 startup, then resume), and **skip-on-overlap** (don't stack a run if the previous is still
-going). The actual execution is injected as `runner(task, trigger) -> TaskRun` so this stays
+going). The actual execution is injected as `runner(task, trigger, run) -> TaskRun` so this stays
 independent of the engine/manager.
 
 Features (Issue #621):
@@ -23,7 +23,7 @@ from .store import TaskStore
 
 logger = logging.getLogger("coworker.automation")
 
-Runner = Callable[[ScheduledTask, str], Awaitable[TaskRun]]
+Runner = Callable[[ScheduledTask, str, TaskRun], Awaitable[TaskRun]]
 
 
 class Scheduler:
@@ -101,9 +101,6 @@ class Scheduler:
             self._spawned.add(spawned)
             self._active_runs[task.id] = spawned
             spawned.add_done_callback(self._spawned.discard)
-            spawned.add_done_callback(
-                lambda _, tid=task.id: self._active_runs.pop(tid, None)
-            )
         if self.extra_tick is not None:
             try:
                 await self.extra_tick()
@@ -118,9 +115,8 @@ class Scheduler:
         return True
 
     def force_stop(self, task_id: str) -> bool:
-        """Cancel an in-flight run for task_id, immediately releasing the overlap guard."""
-        self._running_ids.discard(task_id)
-        active = self._active_runs.pop(task_id, None)
+        """Request cancellation; retain ownership until runner cleanup completes."""
+        active = self._active_runs.get(task_id)
         if active is not None and not active.done():
             active.cancel()
             return True
@@ -145,52 +141,30 @@ class Scheduler:
             if task.timeout_seconds is not None
             else self.default_timeout
         )
-        run = None
+        run = TaskRun(task_id=task.id, trigger=trigger)
+        self.store.add_run(run)
         try:
             if timeout and timeout > 0:
-                run = await asyncio.wait_for(
-                    self.runner(task, trigger), timeout=timeout
-                )
+                await asyncio.wait_for(self.runner(task, trigger, run), timeout=timeout)
             else:
-                run = await self.runner(task, trigger)
+                await self.runner(task, trigger, run)
         except asyncio.TimeoutError:
-            logger.warning("task %s run timed out after %ss", task.id, timeout)
-            run = TaskRun(
-                task_id=task.id,
-                status="timed_out",
-                error=f"Task run timed out after {timeout}s",
-                trigger=trigger,
-                finished_at=time.time(),
-            )
-            self.store.add_run(run)
+            run.status = "timed_out"
+            run.error = f"Task run timed out after {timeout}s"
             if self.on_timeout is not None:
                 try:
                     await self.on_timeout(task, run)
                 except Exception:
-                    logger.exception(
-                        "scheduler on_timeout callback failed for %s", task.id
-                    )
+                    logger.exception("scheduler on_timeout callback failed for %s", task.id)
         except asyncio.CancelledError:
-            logger.info("task %s was cancelled / force stopped", task.id)
-            run = TaskRun(
-                task_id=task.id,
-                status="cancelled",
-                error="Force stopped by user",
-                trigger=trigger,
-                finished_at=time.time(),
-            )
-            self.store.add_run(run)
+            run.status = "cancelled"
+            run.error = "Force stopped by user"
         except Exception as exc:
             logger.exception("task %s run failed", task.id)
-            run = TaskRun(
-                task_id=task.id,
-                status="error",
-                error=str(exc),
-                trigger=trigger,
-                finished_at=time.time(),
-            )
-            self.store.add_run(run)
+            run.status, run.error = "error", str(exc)
         finally:
+            run.finished_at = time.time()
+            self.store.add_run(run)
             self._running_ids.discard(task.id)
             self._active_runs.pop(task.id, None)
 
