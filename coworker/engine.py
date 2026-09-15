@@ -336,6 +336,10 @@ class TurnEngine:
             message["_display"] = display
         self.messages.append(message)
         self._cancel.clear()
+        if self.turn_index == 0:
+            from .tools.git import list_checkpoints
+            previous = list_checkpoints(self.permissions.workspace_root, self.session_id)
+            self.turn_index = max((c["turn"] for c in previous), default=0)
         self.turn_index += 1
         self._turn_checkpoint_created = False
         if self.session_facts is not None:
@@ -849,12 +853,11 @@ class TurnEngine:
                 try:
                     from .tools.git import create_checkpoint
 
-                    create_checkpoint(
+                    self._turn_checkpoint_created = create_checkpoint(
                         self.permissions.workspace_root,
                         self.session_id,
                         self.turn_index,
-                    )
-                    self._turn_checkpoint_created = True
+                    ) is not None
                 except Exception:
                     pass
 

@@ -280,3 +280,61 @@ async def test_engine_skips_checkpoint_gracefully_in_non_git_workspace(tmp_path)
 
     assert (tmp_path / "file.txt").read_text() == "updated"
     assert list_checkpoints(tmp_path) == []
+
+
+def test_restore_preserves_special_names_and_staged_state(tmp_path):
+    _init_git_repo(tmp_path)
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(tmp_path), *args], env=_git_env())
+    names = ["with ü.txt", "tab\tname", "line\nname"]
+    for name in names:
+        (tmp_path / name).write_text("original")
+    f = tmp_path / "staged.txt"
+    f.write_text("staged")
+    git("add", "--", ".")
+    f.write_text("unstaged")
+    (tmp_path / "untracked.txt").write_text("untracked")
+    before_index = git("write-tree")
+    assert create_checkpoint(tmp_path, "special", 1)
+    f.write_text("agent edit")
+    assert restore_checkpoint(tmp_path, "special", 1)["ok"]
+    assert git("write-tree") == before_index
+    assert f.read_text() == "unstaged"
+    for name in names:
+        assert (tmp_path / name).read_text() == "original"
+    assert b"untracked.txt" in git("ls-files", "--others", "--exclude-standard")
+
+
+def test_restore_enumeration_failure_changes_nothing(tmp_path, monkeypatch):
+    import coworker.tools.git as mod
+    _init_git_repo(tmp_path)
+    f = tmp_path / "file.txt"
+    f.write_text("before")
+    assert create_checkpoint(tmp_path, "s", 1)
+    f.write_text("after")
+    original = mod._run_git
+    def fail(root, *args, **kwargs):
+        if args[0] == "ls-tree":
+            raise OSError("tree unavailable")
+        return original(root, *args, **kwargs)
+    monkeypatch.setattr(mod, "_run_git", fail)
+    assert not restore_checkpoint(tmp_path, "s", 1)["ok"]
+    assert f.read_text() == "after"
+
+
+def test_checkpoint_does_not_overwrite_an_existing_turn(tmp_path):
+    _init_git_repo(tmp_path)
+    f = tmp_path / "file.txt"
+    f.write_text("first")
+    assert create_checkpoint(tmp_path, "s", 1)
+    f.write_text("second")
+    assert create_checkpoint(tmp_path, "s", 1) is None
+    assert restore_checkpoint(tmp_path, "s", 1)["ok"]
+    assert f.read_text() == "first"
+
+
+def test_checkpoint_skips_repository_subfolder(tmp_path):
+    _init_git_repo(tmp_path)
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    assert create_checkpoint(sub, "s", 1) is None
