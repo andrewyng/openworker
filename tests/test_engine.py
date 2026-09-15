@@ -475,3 +475,49 @@ def test_ordinary_text_answer_still_completes(tmp_path):
     events = _collect(engine, "how does qwen format tool calls?")
     assert EventType.ERROR not in _types(events)
     assert next(ev for ev in events if ev.type == EventType.TURN_END).data["status"] == "completed"
+
+
+def test_turn_engine_approval_expired_resumes_with_notice(tmp_path):
+    audits = []
+
+    async def _approver(req: PermissionRequest) -> ApprovalOutcome:
+        return ApprovalOutcome.EXPIRED
+
+    engine, _ = _engine(
+        tmp_path,
+        [
+            _tool_turn("write_file", {"path": "test.txt", "content": "hello"}),
+            _text_turn("Approval lapsed, so I did not write the file."),
+        ],
+        approver=_approver,
+    )
+    engine.audit_sink = audits.append
+
+    events = _collect(engine, "write the file")
+
+    tool_fins = [ev for ev in events if ev.type == EventType.TOOL_FINISHED]
+    assert len(tool_fins) == 1
+    assert tool_fins[0].data["status"] == "expired"
+    assert "approval request expired" in tool_fins[0].data["reason"]
+    assert any(
+        m.get("role") == "tool" and "approval request expired" in m["content"]
+        for m in engine.messages
+    )
+    assert any(
+        a.get("stage") == "approval_resolved" and a.get("status") == "expired"
+        for a in audits
+    )
+    assert any(ev.type == EventType.TURN_END for ev in events)
+
+
+async def test_plan_mode_hard_denial_does_not_require_approval_outcome(tmp_path):
+    from coworker.permissions import Mode
+
+    engine, _ = _engine(tmp_path, [])
+    engine.permissions.mode = Mode.PLAN
+    events = [e async for e in engine._authorize(
+        ToolCall(id="denied", name="write_file", arguments={"path": "file.txt", "content": "x"})
+    )]
+    assert events[-1] is False
+    assert any(getattr(e, "data", {}).get("status") == "denied" for e in events)
+    assert not (tmp_path / "file.txt").exists()

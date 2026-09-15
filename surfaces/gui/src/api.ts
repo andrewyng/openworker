@@ -1549,6 +1549,7 @@ export interface InboxItem {
   session_agent?: string | null;
   session_workspace?: string | null;
   session_exists?: boolean;
+  expires_at?: string | null;
 }
 
 export async function getInbox(sessionId?: string, state?: string): Promise<InboxItem[]> {

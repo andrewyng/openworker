@@ -73,6 +73,8 @@ class Config:
     cloud_relay_ws_url: str = (
         "wss://l4z1paxb83.execute-api.us-east-1.amazonaws.com/ocw-connect"
     )
+    # Default TTL (seconds) for unattended/parked approval items. None means no expiry.
+    inbox_approval_ttl_seconds: Optional[float] = None
 
 
 _FIELDS = {
@@ -92,6 +94,7 @@ _FIELDS = {
     "cloud_client_id",
     "cloud_audience",
     "cloud_relay_ws_url",
+    "inbox_approval_ttl_seconds",
 }
 
 # These fields change what consequential actions can run without a prompt, so the normal
