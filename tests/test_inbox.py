@@ -260,3 +260,19 @@ def test_inbox_approver_expired_outcome(tmp_path):
 
     asyncio.run(run())
 
+
+
+def test_wait_already_expired_does_not_deadlock():
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    result = subprocess.run([sys.executable, "-c", """
+import asyncio
+from coworker.inbox import InboxStore
+s = InboxStore()
+i = s.add_approval('session', 'approval', expires_at='2000-01-01T00:00:00+00:00')
+assert asyncio.run(s.wait(i.id)) == 'expired'
+assert s.get(i.id).resolution == 'expired'
+"""], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, result.stderr

@@ -508,3 +508,16 @@ def test_turn_engine_approval_expired_resumes_with_notice(tmp_path):
         for a in audits
     )
     assert any(ev.type == EventType.TURN_END for ev in events)
+
+
+async def test_plan_mode_hard_denial_does_not_require_approval_outcome(tmp_path):
+    from coworker.permissions import Mode
+
+    engine, _ = _engine(tmp_path, [])
+    engine.permissions.mode = Mode.PLAN
+    events = [e async for e in engine._authorize(
+        ToolCall(id="denied", name="write_file", arguments={"path": "file.txt", "content": "x"})
+    )]
+    assert events[-1] is False
+    assert any(getattr(e, "data", {}).get("status") == "denied" for e in events)
+    assert not (tmp_path / "file.txt").exists()

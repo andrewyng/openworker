@@ -1136,6 +1136,7 @@ class TurnEngine:
         )
         allowed = decision.allowed
         reason = decision.reason
+        outcome: Optional[ApprovalOutcome] = None
 
         # OPE-114 §1: running something the agent DOWNLOADED this session is the classic
         # fetch-then-execute chain, and there is no quiet legitimate version of it — so it

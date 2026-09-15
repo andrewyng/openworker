@@ -469,24 +469,17 @@ class InboxStore:
         suspend the agent until a human answers (from any surface). If the item has an expiry
         and elapses before resolution, it auto-resolves as 'expired'."""
         with self._lock:
+            self._check_expirations_locked()
             item = self._items.get(item_id)
             if item is not None and item.state == STATE_RESOLVED:
                 return item.resolution or ""
-            if item is not None and is_expired(item):
-                self.resolve(item_id, "expired", force=True)
-                return "expired"
-
             timeout: Optional[float] = None
             if item is not None and item.expires_at:
                 try:
                     exp = datetime.fromisoformat(item.expires_at)
                     if exp.tzinfo is None:
                         exp = exp.replace(tzinfo=timezone.utc)
-                    remaining = (exp - datetime.now(timezone.utc)).total_seconds()
-                    if remaining <= 0:
-                        self.resolve(item_id, "expired", force=True)
-                        return "expired"
-                    timeout = remaining
+                    timeout = max(0.0, (exp - datetime.now(timezone.utc)).total_seconds())
                 except (ValueError, TypeError):
                     pass
             ev = self._waiters.setdefault(item_id, asyncio.Event())
@@ -497,8 +490,8 @@ class InboxStore:
             else:
                 await ev.wait()
         except asyncio.TimeoutError:
+            # Resolve outside the lock and preserve a concurrent first response.
             self.resolve(item_id, "expired", force=True)
-            return "expired"
 
         with self._lock:
             resolved = self._items.get(item_id)
