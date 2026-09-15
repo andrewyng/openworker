@@ -2496,7 +2496,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             "iteration_end",
         }
 
-        async def run_turn(content, *, retry: bool = False, display=None) -> None:
+        async def run_turn(content, *, retry: bool = False, display=None, request_id=None) -> None:
             # The receive loop atomically claims this session before scheduling the task.
             # Keeping the claim outside prevents two back-to-back frames from both starting.
             try:
@@ -2506,6 +2506,8 @@ def create_app(manager: SessionManager) -> FastAPI:
                     else engine.run(content, display=display)
                 )
                 async for event in events:
+                    if event.type.value == "turn_start" and request_id:
+                        event.data = {**event.data, "request_id": request_id}
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.
                     await manager.broadcast_session(
@@ -2546,11 +2548,12 @@ def create_app(manager: SessionManager) -> FastAPI:
                 }
             )
         inbound_times: deque[float] = deque()
+        request_id = None
 
         async def reject_input(reason: str) -> None:
             # Input validation failures are not provider failures and must not offer "Retry"
             # or flush an in-progress assistant stream in the GUI.
-            await ws.send_json({"type": "input_rejected", "data": {"error": reason}})
+            await ws.send_json({"type": "input_rejected", "data": {"error": reason, **({"request_id": request_id} if request_id else {})}})
 
         async def claim_turn(*, retry: bool = False, content=None, display=None) -> None:
             if not manager.try_mark_running(session_id):
@@ -2558,12 +2561,17 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "This session is already running a turn. Wait for it to finish or stop it."
                 )
                 return
-            asyncio.create_task(run_turn(content, retry=retry, display=display))
+            asyncio.create_task(run_turn(content, retry=retry, display=display, request_id=request_id))
 
         try:
             while True:
+                request_id = None
                 try:
                     message = await ws.receive_json()
+                    if isinstance(message, dict) and message.get("type") == "user_message":
+                        candidate = message.get("request_id")
+                        if isinstance(candidate, str) and 0 < len(candidate) <= 128:
+                            request_id = candidate
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     await reject_input("Invalid WebSocket message: expected JSON.")
                     continue
