@@ -52,10 +52,10 @@ describe("Composer / message queue (#608)", () => {
   });
 
   it("the queued-count pill renders when queuedCount > 0 and only then", () => {
-    const p = props({ running: true, gateOpen: false, onQueue: vi.fn(), queuedCount: 2 });
+    const p = props({ running: true, gateOpen: false, onQueue: vi.fn(), queuedItems: [{ id: "one", sessionId: "s1", text: "first", createdAt: 1 }, { id: "two", sessionId: "s1", text: "second", createdAt: 2 }] });
     render(<Composer {...p} />);
-    expect(screen.getByTestId("queued-count")).toBeTruthy();
-    expect(screen.getByTestId("queued-count").textContent).toMatch(/2/);
+    expect(screen.getByTestId("composer-queue")).toBeTruthy();
+    expect(screen.getByTestId("composer-queue").textContent).toMatch(/2/);
   });
 
   it("not running: submit still sends via onSend and never calls onQueue", () => {

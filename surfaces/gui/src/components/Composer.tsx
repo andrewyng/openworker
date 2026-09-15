@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { getI18n, useTranslation } from "react-i18next";
-import type { Attachment, SessionUsage } from "../types";
+import type { Attachment, QueuedMessage, SessionUsage } from "../types";
 import { isPdfFile, readFile } from "../attach";
 import { ProjectBindMenu } from "./ProjectBindMenu";
 import { getSettings, inspectPdf, sessionSkills, type SessionSkillRow } from "../api";
@@ -97,11 +97,6 @@ interface Props {
   onConnectModel?: () => void;
   onConfigureVoiceInput?: () => void;
   onSend: (text: string, attachments?: Attachment[], skill?: string) => void;
-  // #608: when a turn is __running__, Send queues the follow-up instead of dropping it; the
-  // session auto-sends queued messages in order when the turn finishes. `onQueue` present =
-  // queueing is on; `queuedCount` drives the "N queued" pill.
-  onQueue?: (text: string, attachments?: Attachment[], skill?: string) => void;
-  queuedCount?: number;
   // Feeds the "/" force-run popup (SKILLS-SPEC §4.1 #3): the popup lists this session's
   // effective skill menu. Absent (e.g. tests without sessions) → the popup never opens.
   sessionId?: string;
@@ -138,6 +133,10 @@ interface Props {
   // §8.4 breaker tripped this turn: the mode chip says so quietly until the turn ends
   // or an ask_user answer resets the streak.
   reviewerPaused?: boolean;
+  // Follow-up messages queued while a task is running (#608)
+  queuedItems?: QueuedMessage[];
+  onQueue?: (text: string, attachments?: Attachment[], skill?: string) => void;
+  onRemoveQueued?: (id: string) => void;
 }
 
 export function Composer(props: Props) {
@@ -390,18 +389,15 @@ export function Composer(props: Props) {
     // the skill rides as its own field. (Named `body`, not `t`, so it can't shadow i18n's t.)
     const skill = prefixIntact ? pendingSkill!.name : undefined;
     const body = (skill ? text.slice(skill.length + 1) : text).trim();
-    if (!body && attachments.length === 0 && !skill) return;
-    // Dictation is live — never submit what's being transcribed mid-sentence.
-    if (dictation?.recording || dictationBusy) return;
-    // #608: while a turn is running a follow-up can't be processed yet. If queueing is wired,
-    // hold it in the session queue (auto-sends when the turn finishes) instead of dropping it.
-    // Without an onQueue handler we keep the old behavior exactly.
+    if (
+      (!body && attachments.length === 0 && !skill) ||
+      dictation?.recording ||
+      dictationBusy
+    )
+      return;
+    // Follow-up queued while a task is running (#608)
     if (props.running && !props.gateOpen) {
       if (props.onQueue) {
-        if (needsModel) {
-          props.onConnectModel?.();
-          return;
-        }
         props.onQueue(body, attachments, skill);
         setText("");
         setAttachments([]);
@@ -549,6 +545,55 @@ export function Composer(props: Props) {
         </div>
       )}
 
+      {/* Queued follow-up messages strip (#608) */}
+      {props.queuedItems && props.queuedItems.length > 0 && (
+        <div
+          data-testid="composer-queue"
+          className="max-w-3xl mx-auto mb-2 flex flex-col gap-1.5 p-2 rounded-xl border border-line bg-paper/60 text-[13px]"
+        >
+          <div className="flex items-center justify-between text-[11.5px] font-medium text-faint px-1">
+            <span className="flex items-center gap-1.5">
+              <Icon name="clock" size={12} />
+              <span>
+                {t("composer.queued_count", {
+                  count: props.queuedItems.length,
+                  defaultValue: `${props.queuedItems.length} queued`,
+                })}
+              </span>
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {props.queuedItems.map((item, idx) => (
+              <div
+                key={item.id}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-panel border border-line text-ink text-[12px] max-w-full shadow-xs"
+              >
+                <span className="text-faint font-mono text-[11px]">#{idx + 1}</span>
+                {item.skill && (
+                  <span className="text-accent font-medium text-[11px]">/{item.skill}</span>
+                )}
+                <span className="truncate max-w-[200px]" title={item.text}>
+                  {item.text || (item.attachments?.length ? `[${item.attachments.length} files]` : "")}
+                </span>
+                {item.error && <span role="alert" className="text-danger">{item.error}</span>}
+                {props.onRemoveQueued && (
+                  <button
+                    type="button"
+                    data-testid={`remove-queued-${idx}`}
+                    className="ml-1 text-faint hover:text-ink transition-colors"
+                    onClick={() => props.onRemoveQueued?.(item.id)}
+                    title={t("composer.remove_queued")}
+                    aria-label={t("composer.remove_queued")}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div
         className={
           "composer max-w-3xl mx-auto rounded-2xl border border-line bg-panel shadow-sm" +
@@ -610,21 +655,6 @@ export function Composer(props: Props) {
           onPaste={onPaste}
           rows={1}
         />
-
-        {/* #608: follow-ups held while a turn runs — auto-sent when it finishes. */}
-        {!!props.queuedCount && props.queuedCount > 0 && (
-          <div className="px-3.5 pb-1.5 -mt-0.5">
-            <span
-              className="inline-flex items-center gap-1.5 text-[12px] text-faint"
-              role="status"
-              aria-live="polite"
-              data-testid="queued-count"
-            >
-              <Icon name="clock" size={13} />
-              {t("composer.queued", { count: props.queuedCount })}
-            </span>
-          </div>
-        )}
 
         {/* Three-control row (§22): + attach · Mode ⌄ …(right)… model (fresh only) · send */}
         <div className="px-2.5 pb-2.5 pt-1 flex items-center gap-1.5">
@@ -788,35 +818,26 @@ export function Composer(props: Props) {
             </button>
           )}
 
-          {/* send / stop — a pending gate re-opens Send: the reply resolves it.
-              While a turn runs (#608) two actions live side by side: Stop stays the
-              primary control, and the send arrow QUEUES the follow-up (it auto-sends
-              when the turn finishes) instead of dropping it — only when queueing is
-              wired (onQueue). Without it we render exactly the old Stop-only state. */}
+          {/* send / stop — a pending gate re-opens Send: the reply resolves it */}
           {props.running && !props.gateOpen ? (
-            <>
-              {props.onQueue && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              {hasContent && props.onQueue && (
                 <button
-                  className={
-                    "w-7 h-7 rounded-full grid place-items-center shrink-0 transition-colors " +
-                    (hasContent && props.connected && !dictation?.recording && !dictationBusy
-                      ? "bg-accent text-white hover:brightness-105"
-                      : "bg-paper border border-line text-faint")
-                  }
+                  type="button"
+                  data-testid="composer-queue-btn"
+                  className="btn sm text-[12px] px-2.5 py-1 rounded-lg bg-accent text-white hover:brightness-105 transition-colors font-medium flex items-center gap-1"
                   onClick={submit}
-                  disabled={!props.connected || !!dictation?.recording || !!dictationBusy}
-                  title={needsModel ? t("composer.connect_to_send") : t("composer.queue_send")}
-                  aria-label={t("composer.queue_send")}
+                  title={t("composer.queue_tooltip")}
+                  aria-label={t("composer.queue")}
                 >
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M12 19V5M5 12l7-7 7 7" />
-                  </svg>
+                  <Icon name="clock" size={13} />
+                  <span>{t("composer.queue")}</span>
                 </button>
               )}
               <button className="btn danger" onClick={props.onInterrupt}>
                 {t("composer.stop")}
               </button>
-            </>
+            </div>
           ) : (
             <button
               className={

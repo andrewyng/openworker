@@ -108,8 +108,6 @@
     "attach_other": "Other files",
     "connect_to_send": "Connect a model to send",
     "stop": "⏹ Stop",
-    "queue_send": "Queue & send when the task finishes",
-    "queued": "{{count}} queued — will send when this task finishes",
     "mode_label": "Mode",
     "approvals_to_inbox": "Send approvals to the Inbox",
     "mode": {
@@ -154,7 +152,12 @@
     "bind_memory": "Project memory",
     "bind_board": "Board",
     "reviewer_paused_tip": "paused for this turn — the reviewer blocked several actions in a row, approvals come to you",
-    "paused": "paused"
+    "paused": "paused",
+    "queue": "Queue",
+    "queue_tooltip": "Queue this message to run after current task finishes",
+    "queued_count": "{{count}} queued",
+    "remove_queued": "Remove from queue",
+    "queue_disconnected": "Not sent: connection changed before acknowledgement. Check the conversation before retrying."
   },
   "transcript": {
     "copy_message": "Copy message",

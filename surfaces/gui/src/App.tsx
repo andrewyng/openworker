@@ -44,6 +44,7 @@ import type {
   ApprovalDecision,
   Attachment,
   Item,
+  QueuedMessage,
   SessionInfo,
   SessionUsage,
   TodoItem,
@@ -124,15 +125,6 @@ const RAIL_HIDDEN_KEY = "coworker:rail-hidden:v1";
 const NAV_COLLAPSED_KEY = "coworker:nav-collapsed:v1";
 
 type LastSession = { sessionId: string; workspace: string; updatedAt: number };
-
-// #608: a follow-up held while a turn runs, auto-sent when that turn finishes.
-type QueuedMsg = {
-  id: string;
-  text: string;
-  attachments?: Attachment[];
-  skill?: string;
-  ts: number;
-};
 
 function readLastSessions(): Record<string, LastSession> {
   try {
@@ -226,16 +218,6 @@ export function App() {
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
-  // #608: follow-ups queued while a turn runs — auto-sent in order when the turn finishes.
-  // State drives the composer's "N queued" pill; the ref mirror lets the drain effect see the
-  // latest queue without re-running on every enqueue.
-  const [queue, setQueue] = useState<QueuedMsg[]>([]);
-  const queueRef = useRef<QueuedMsg[]>([]);
-  // running live-mirrored so the drain effect (keyed on the running→false edge) reads fresh
-  // values; wasRunning tracks the previous render's value to detect the edge in the effect.
-  const runningRef = useRef(running);
-  runningRef.current = running;
-  const wasRunningRef = useRef(running);
   // Transient "Compacting context…" indicator (OPE-27): set by the `compacting` event,
   // cleared by whatever the engine emits next — the summarizer call is otherwise a
   // multi-second silent stall mid-turn.
@@ -268,6 +250,16 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
+  // Follow-up messages queued while a task is running (#608)
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  const pendingQueuedRef = useRef(new Map<string, QueuedMessage>());
+  const [queueReadySession, setQueueReadySession] = useState<string | null>(null);
+  const rejectQueued = (sid: string, error: string) => {
+    const pending = pendingQueuedRef.current.get(sid);
+    if (!pending) return;
+    pendingQueuedRef.current.delete(sid);
+    setQueuedMessages((items) => items.map((m) => m.id === pending.id ? { ...m, error } : m));
+  };
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
   // to, driving the banner + "Back to runs". Best-effort — a run session without context still
   // shows a generic banner (detected by its __run__ id).
@@ -714,6 +706,7 @@ export function App() {
       if (ev.type !== "compacting") setCompacting(false);
       switch (ev.type) {
         case "ready":
+          setQueueReadySession(sessionId);
           setConnected(true);
           if (d.model) setModel(d.model);
           if (d.mode) setMode(d.mode);
@@ -726,7 +719,15 @@ export function App() {
           // without this the Stop button and waiting row vanish (owner catch 2026-08-24).
           if (typeof d.running === "boolean") setRunning(d.running);
           break;
-        case "turn_start":
+        case "turn_start": {
+          const pending = pendingQueuedRef.current.get(sessionId);
+          if (pending && d.request_id === pending.id) {
+            const shown = pending.skill ? `/${pending.skill}${pending.text ? ` ${pending.text}` : ""}` : pending.text;
+            setItems((items) => [...items, { kind: "user", text: shown, attachments: pending.attachments, ts: Date.now() / 1000 }]);
+            pendingQueuedRef.current.delete(sessionId);
+            setQueuedMessages((items) => items.filter((m) => m.id !== pending.id));
+          }
+        }
           setRunning(true);
           setReviewerPaused(false); // a fresh user message resets the denial streak
           setStreaming("");
@@ -963,6 +964,9 @@ export function App() {
           ]);
           break;
         case "input_rejected":
+          if (d.request_id === pendingQueuedRef.current.get(sessionId)?.id) {
+            rejectQueued(sessionId, d.error || t("app.notice.input_rejected"));
+          }
           setItems((p) => [
             ...p,
             { kind: "notice", tone: "warn", text: d.error || t("app.notice.input_rejected") },
@@ -1007,10 +1011,18 @@ export function App() {
           sessionRef.current?.userMessage(p.text, p.attachments, p.model, p.skill);
         }
       },
-      onClose: () => setConnected(false),
+      onClose: () => {
+        setConnected(false);
+        setQueueReadySession(null);
+        rejectQueued(sessionId, t("composer.queue_disconnected"));
+      },
     });
     sessionRef.current = session;
-    return () => session.close();
+    return () => {
+      setQueueReadySession(null);
+      rejectQueued(sessionId, t("composer.queue_disconnected"));
+      session.close();
+    };
     // NOTE: `workspace` is intentionally NOT a dependency. Every real workspace change
     // (pick folder, select/switch session, new session) is paired with a `sessionId`
     // change, so the socket still reconnects when it should. The one workspace-only change
@@ -1152,35 +1164,34 @@ export function App() {
     sessionRef.current?.userMessage(text, attachments, model, skill);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
   };
-  // #608: hold a follow-up typed while a turn runs — the composer calls this instead of
-  // dropping the message. The drain effect below auto-sends them in order when the turn ends.
-  const enqueue = (text: string, attachments?: Attachment[], skill?: string) => {
-    const m: QueuedMsg = {
-      id: newId(),
+
+  const handleQueue = (text: string, attachments?: Attachment[], skill?: string) => {
+    if (!text.trim() && (!attachments || attachments.length === 0) && !skill) return;
+    const newQueued: QueuedMessage = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      sessionId,
       text,
       attachments,
       skill,
-      ts: Date.now() / 1000,
+      createdAt: Date.now(),
     };
-    queueRef.current = [...queueRef.current, m];
-    setQueue(queueRef.current);
+    setQueuedMessages((prev) => [...prev, newQueued]);
   };
-  // Drain the queue the moment a running turn ends (running→false edge). Runs ONLY on that
-  // edge never per enqueue; it reads queueRef for the freshest list.
+
+  const handleRemoveQueued = (id: string) => {
+    setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
+  };
+
   useEffect(() => {
-    const wasRunning = wasRunningRef.current;
-    wasRunningRef.current = running;
-    if (wasRunning && !running) {
-      const pending = queueRef.current;
-      if (pending.length === 0) return;
-      queueRef.current = [];
-      setQueue([]);
-      pending.forEach((m) => send(m.text, m.attachments, m.skill));
-    }
-    // Intentionally not depending on `send`: this effect fires only on the running→false
-    // edge, and we use the closure from the render that flipped it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running]);
+    if (running || !connected || queueReadySession !== sessionId || pendingQueuedRef.current.has(sessionId)) return;
+    const next = queuedMessages.find((m) => m.sessionId === sessionId);
+    if (!next || next.error) return;
+    // Keep the item until turn_start acknowledges it. A rejection leaves an
+    // removable record and must not claim that an agent turn is running.
+    pendingQueuedRef.current.set(sessionId, next);
+    sessionRef.current?.userMessage(next.text, next.attachments, model, next.skill, next.id);
+  }, [running, connected, queueReadySession, sessionId, queuedMessages]);
+
   // Resolving a LIVE prompt also resolves its parked Inbox mirror server-side, but the polled
   // `sessionInbox` copy stays "pending" for up to a poll cycle — long enough for the docked
   // answer-in-context card to flash the SAME request again right after the user answered it
@@ -2130,8 +2141,6 @@ export function App() {
               onConfigureVoiceInput={() => openSettings("voice")}
               onSend={send}
               onInterrupt={interrupt}
-              onQueue={enqueue}
-              queuedCount={queue.length}
               onModeChange={changeMode}
               onModelChange={changeModel}
               sessionId={sessionId}
@@ -2140,6 +2149,9 @@ export function App() {
               onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}
               prefill={composerPrefill}
               resetKey={sessionId}
+              queuedItems={queuedMessages.filter((m) => m.sessionId === sessionId)}
+              onQueue={handleQueue}
+              onRemoveQueued={handleRemoveQueued}
               usage={usage}
               contextWindow={modelContextWindows[model]}
               contextBar={contextBar}
