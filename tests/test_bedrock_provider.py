@@ -364,7 +364,7 @@ def test_converse_client_publishes_api_key_as_bearer_env(monkeypatch):
 
 
 def test_bedrock_capabilities_from_matrix_and_fallback():
-    curated = capabilities_for("bedrock:claude/anthropic.claude-sonnet-4-6-v1:0")
+    curated = capabilities_for("bedrock:claude/us.anthropic.claude-sonnet-4-6")
     assert curated.vision and curated.pdf and curated.parallel_tool_calls
     assert capabilities_for("bedrock:other/amazon.nova-2-pro-v1:0").tools
     # Custom ids fall back on the family segment: Claude keeps native caps,
@@ -375,13 +375,30 @@ def test_bedrock_capabilities_from_matrix_and_fallback():
     assert custom_other.tools and not custom_other.parallel_tool_calls
 
 
+def test_bedrock_claude_5_family_in_matrix():
+    """Claude 5 generation models (Fable, Opus, Sonnet) are curated with 1M context."""
+    from coworker.providers.matrix import MATRIX
+
+    for mid, label, ctx in [
+        ("bedrock:claude/us.anthropic.claude-fable-5", "Claude Fable 5 · AWS Bedrock", 1_000_000),
+        ("bedrock:claude/us.anthropic.claude-opus-5", "Claude Opus 5 · AWS Bedrock", 1_000_000),
+        ("bedrock:claude/us.anthropic.claude-sonnet-5", "Claude Sonnet 5 · AWS Bedrock", 1_000_000),
+    ]:
+        assert mid in MATRIX, f"{mid} missing from matrix"
+        entry = MATRIX[mid]
+        assert entry.label == label
+        assert entry.context_window == ctx
+        caps = capabilities_for(mid)
+        assert caps.tools and caps.vision and caps.parallel_tool_calls
+
+
 def test_router_prefix_survives_bedrock_version_colons():
     from coworker.providers.router import ProviderRouter
 
     router = ProviderRouter.__new__(ProviderRouter)
-    model = "bedrock:claude/anthropic.claude-sonnet-4-6-v1:0"
+    model = "bedrock:claude/us.anthropic.claude-sonnet-4-6"
     assert router._provider_name(model) == "bedrock"
-    assert ProviderRouter._bare(model) == "claude/anthropic.claude-sonnet-4-6-v1:0"
+    assert ProviderRouter._bare(model) == "claude/us.anthropic.claude-sonnet-4-6"
 
 
 # -- registry / manager glue -----------------------------------------------------------
