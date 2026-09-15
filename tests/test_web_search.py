@@ -1,7 +1,7 @@
 """Tests for web search — provider abstraction, the tool, and config resolution.
 
 No network: a FakeProvider is injected; third-party key handling and the REST config path
-are exercised without hitting DuckDuckGo/Tavily/Brave.
+are exercised without hitting DuckDuckGo/Tavily/Brave/Linkup.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from coworker.web import (
 from coworker.web.providers import (
     BraveProvider,
     DuckDuckGoProvider,
+    LinkupProvider,
     TavilyProvider,
     WebSearchProvider,
 )
@@ -77,8 +78,52 @@ def test_build_provider_default_is_keyless_duckduckgo():
 def test_build_provider_third_party_requires_key():
     with pytest.raises(ValueError):
         build_provider("tavily")  # no key
+    with pytest.raises(ValueError):
+        build_provider("linkup")  # no key
     assert isinstance(build_provider("tavily", "tvly-x"), TavilyProvider)
     assert isinstance(build_provider("brave", "brv-x"), BraveProvider)
+    assert isinstance(build_provider("linkup", "lp-x"), LinkupProvider)
+    assert "linkup" in provider_names()
+
+
+def test_linkup_maps_response_to_search_results(monkeypatch):
+    """Linkup names its fields `name`/`content`; check the mapping and the request shape."""
+    import httpx
+
+    sent: dict = {}
+
+    def fake_post(url, **kwargs):
+        sent["url"] = url
+        sent.update(kwargs)
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "type": "text",
+                        "name": "Result one",
+                        "url": "https://example.com/1",
+                        "content": "snippet one",
+                        "favicon": "https://example.com/favicon.ico",
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    results = LinkupProvider("lp-x").search("anthropic", max_results=3)
+
+    assert [(r.title, r.url, r.snippet) for r in results] == [
+        ("Result one", "https://example.com/1", "snippet one")
+    ]
+    assert sent["url"] == "https://api.linkup.so/v1/search"
+    assert sent["headers"]["Authorization"] == "Bearer lp-x"
+    assert sent["json"] == {
+        "q": "anthropic",
+        "depth": "fast",
+        "outputType": "searchResults",
+        "maxResults": 3,
+    }
 
 
 def test_tool_surfaces_missing_key_error(tmp_path):

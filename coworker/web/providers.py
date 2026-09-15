@@ -1,8 +1,8 @@
 """Web search providers — a keyless default + pluggable third-party services.
 
-`duckduckgo` works with no API key (our "starting version of our own"). `tavily` and `brave`
-give better results but need a key (configured via the SecretStore / env). All providers
-return a uniform `list[SearchResult]`; the heavy client libs are lazy-imported.
+`duckduckgo` works with no API key (our "starting version of our own"). `tavily`, `brave`, and
+`linkup` give better results but need a key (configured via the SecretStore / env). All
+providers return a uniform `list[SearchResult]`; the heavy client libs are lazy-imported.
 """
 
 from __future__ import annotations
@@ -108,10 +108,45 @@ class BraveProvider(WebSearchProvider):
         ]
 
 
+class LinkupProvider(WebSearchProvider):
+    name = "linkup"
+    requires_key = True
+
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
+
+    def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        import httpx
+
+        resp = httpx.post(
+            "https://api.linkup.so/v1/search",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json={
+                "q": query,
+                # "fast" is the low-latency tier, the right fit for snippet lookup;
+                # the heavier tiers add passes aimed at multi-step research.
+                "depth": "fast",
+                "outputType": "searchResults",
+                "maxResults": max_results,
+            },
+            timeout=_TIMEOUT,
+        )
+        data = resp.json()
+        return [
+            SearchResult(
+                title=r.get("name", ""),
+                url=r.get("url", ""),
+                snippet=r.get("content", ""),
+            )
+            for r in data.get("results", [])
+        ]
+
+
 _PROVIDERS = {
     "duckduckgo": DuckDuckGoProvider,
     "tavily": TavilyProvider,
     "brave": BraveProvider,
+    "linkup": LinkupProvider,
 }
 
 
