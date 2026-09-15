@@ -8,6 +8,7 @@ from .providers import (
     SearchResult,
     TavilyProvider,
     WebSearchProvider,
+    YouProvider,
     build_provider,
     provider_names,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "DuckDuckGoProvider",
     "TavilyProvider",
     "BraveProvider",
+    "YouProvider",
     "build_provider",
     "provider_names",
     "make_web_search_tool",
