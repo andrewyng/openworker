@@ -443,6 +443,44 @@ def test_emit_is_content_free_and_hashes_session_id(secrets, config, monkeypatch
     }
 
 
+def test_gallery_install_event_sends_nothing_when_opted_out(secrets, config, monkeypatch):
+    """The install event must respect the telemetry toggle — it fired regardless of it
+    before #398, so a user who turned telemetry off was still POSTed to on install."""
+    _signed_in(secrets)
+    cloud.set_telemetry_enabled(secrets, False)
+
+    def boom(*a, **k):
+        raise AssertionError("opted-out users must send no gallery install telemetry")
+
+    monkeypatch.setattr(cloud.httpx, "post", boom)
+    cloud.gallery_install_event(secrets, config, "sales")
+
+
+def test_gallery_install_event_sends_nothing_signed_out(secrets, config, monkeypatch):
+    _signed_in_marker = secrets.get(cloud.CLOUD_AUTH_PROFILE)
+    assert _signed_in_marker is None  # start signed out
+
+    def boom(*a, **k):
+        raise AssertionError("signed-out users must send no gallery install telemetry")
+
+    monkeypatch.setattr(cloud.httpx, "post", boom)
+    cloud.gallery_install_event(secrets, config, "sales")
+
+
+def test_gallery_install_event_posts_when_enabled(secrets, config, monkeypatch):
+    _signed_in(secrets)
+    sent = {}
+
+    def fake_post(url, **kwargs):
+        sent["url"] = url
+        sent["body"] = kwargs["json"]
+        return FakeResponse(200, {"ok": True})
+
+    monkeypatch.setattr(cloud.httpx, "post", fake_post)
+    cloud.gallery_install_event(secrets, config, "sales")
+    assert sent["url"] == "https://cloud.test/v1/personas/gallery/sales/install-events"
+
+
 # --- gallery solo page ------------------------------------------------------
 
 
