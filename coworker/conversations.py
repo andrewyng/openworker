@@ -93,6 +93,10 @@ class ConversationStore:
                 auto_title TEXT, renamed INTEGER DEFAULT 0,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS plan_artifacts (
+                session_id TEXT NOT NULL, plan_id TEXT NOT NULL, record TEXT NOT NULL,
+                PRIMARY KEY (session_id, plan_id)
+            );
             CREATE TABLE IF NOT EXISTS workspaces (
                 path TEXT PRIMARY KEY, last_used TEXT DEFAULT CURRENT_TIMESTAMP
             );
@@ -120,6 +124,15 @@ class ConversationStore:
                 pass
         self._conn.commit()
         self._backfill_counts()
+        # Preserve the latest artifact from databases created before version history.
+        for row in self._conn.execute("SELECT session_id, plan FROM sessions WHERE plan IS NOT NULL").fetchall():
+            plan = _load_grants(row["plan"])
+            if plan.get("id"):
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO plan_artifacts VALUES (?, ?, ?)",
+                    (row["session_id"], plan["id"], json.dumps(plan)),
+                )
+        self._conn.commit()
 
     # -- file helpers -----------------------------------------------------------
     def _file(self, sid: str) -> Path:
@@ -372,6 +385,11 @@ class ConversationStore:
                     touch,
                 ),
             )
+            if record.plan.get("id"):
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO plan_artifacts VALUES (?, ?, ?)",
+                    (sid, record.plan["id"], json.dumps(record.plan)),
+                )
             self._conn.commit()
         if touch:
             self.touch_workspace(record.workspace)
@@ -450,7 +468,21 @@ class ConversationStore:
                     """,
                     (session_id, json.dumps(plan or {})),
                 )
+            if plan.get("id"):
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO plan_artifacts VALUES (?, ?, ?)",
+                    (session_id, plan["id"], json.dumps(plan)),
+                )
             self._conn.commit()
+
+    def list_plans(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT p.session_id, p.record, s.title FROM plan_artifacts p "
+                "JOIN sessions s ON s.session_id = p.session_id ORDER BY p.rowid DESC"
+            ).fetchall()
+        return [{**json.loads(row["record"]), "session_id": row["session_id"],
+                 "session_title": row["title"]} for row in rows]
 
     def names(self):
         """The project-names alias table, riding this store's connection."""
@@ -561,6 +593,7 @@ class ConversationStore:
             cur = self._conn.execute(
                 "DELETE FROM sessions WHERE session_id = ?", (session_id,)
             )
+            self._conn.execute("DELETE FROM plan_artifacts WHERE session_id = ?", (session_id,))
             self._conn.commit()
         path = self._file(session_id)
         if path.exists():

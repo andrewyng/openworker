@@ -237,6 +237,7 @@ class SessionManager:
         # Sessions with an auto-title LLM call in flight (FB-010) — one call at a time.
         self._autotitle_inflight: set[str] = set()
         self._autotitle_tasks: set[asyncio.Task] = set()
+        self._plan_replay_tasks: set[asyncio.Task] = set()
         self._autotitle_attempts: dict[str, int] = {}
         # Opener-count signature of the last attempt: titling fires at TURN START (owner
         # catch 2026-08-24 — waiting for an agentic turn to COMPLETE left sessions
@@ -1189,7 +1190,14 @@ class SessionManager:
         """Persist a plan proposal as a first-class replayable artifact (#623)."""
         from datetime import datetime, timezone
 
+        from ..conversations import is_safe_session_id
+
         plan_id = plan_id or f"plan-{uuid.uuid4().hex[:8]}"
+        if not is_safe_session_id(plan_id):
+            raise ValueError("unsafe plan id")
+        if any(p["id"] == plan_id and p["session_id"] == session_id
+               for p in self.list_plans()):
+            raise ValueError("plan id already exists; save revisions with a new id")
         scratch_dir = Path(self._provision_scratch(session_id))
         plans_dir = scratch_dir / "plans"
         plans_dir.mkdir(parents=True, exist_ok=True)
@@ -1240,64 +1248,14 @@ class SessionManager:
         return plan_record
 
     def get_session_plan(self, session_id: str) -> Optional[dict[str, Any]]:
-        """Retrieve the persisted plan artifact for a session (#623)."""
+        """Return the approved artifact, never infer approval from workspace files."""
         record = self.session_store.load(session_id)
-        if record and record.plan:
-            return record.plan
-        # Fallback to reading from scratch directory if it exists
-        scratch = self.scratch_base() / session_id
-        plans_dir = scratch / "plans"
-        if plans_dir.is_dir():
-            md_files = sorted(
-                plans_dir.glob("*.md"),
-                key=lambda f: f.stat().st_mtime,
-                reverse=True,
-            )
-            if md_files:
-                target_file = md_files[0]
-                try:
-                    content = target_file.read_text(encoding="utf-8")
-                    plan_id = target_file.stem
-                    first_line = content.strip().splitlines()[0] if content.strip() else ""
-                    title = first_line.lstrip("#").strip()[:80] or f"Plan {plan_id}"
-                    return {
-                        "id": plan_id,
-                        "session_id": session_id,
-                        "title": title,
-                        "path": f"plans/{target_file.name}",
-                        "plan": content,
-                    }
-                except Exception:
-                    pass
-        plan_file = scratch / "plan.md"
-        if plan_file.exists():
-            try:
-                content = plan_file.read_text(encoding="utf-8")
-                first_line = content.strip().splitlines()[0] if content.strip() else ""
-                title = first_line.lstrip("#").strip()[:80] or f"Plan {session_id[:8]}"
-                return {
-                    "id": f"plan-{session_id[:8]}",
-                    "session_id": session_id,
-                    "title": title,
-                    "path": "plan.md",
-                    "plan": content,
-                }
-            except Exception:
-                pass
-        return None
+        return record.plan if record and record.plan else None
 
     def list_plans(self) -> list[dict[str, Any]]:
-        """List all saved plan artifacts across sessions (#623)."""
-        plans: list[dict[str, Any]] = []
-        for s in self.session_store.list():
-            if s.plan:
-                item = dict(s.plan)
-                item.setdefault("session_id", s.session_id)
-                item.setdefault("session_title", s.title)
-                plans.append(item)
-        return plans
+        return self.session_store.list_plans()
 
-    def replay_plan(
+    async def replay_plan(
         self,
         session_id: Optional[str] = None,
         plan_id: Optional[str] = None,
@@ -1305,14 +1263,14 @@ class SessionManager:
     ) -> dict[str, Any]:
         """Replay an approved plan artifact in a fresh session (#623)."""
         origin_plan: Optional[dict[str, Any]] = None
-        if session_id:
+        if plan_id:
+            origin_plan = next((p for p in self.list_plans()
+                                if p.get("id") == plan_id
+                                and (not session_id or p.get("session_id") == session_id)), None)
+            if origin_plan:
+                session_id = origin_plan["session_id"]
+        elif session_id:
             origin_plan = self.get_session_plan(session_id)
-        if not origin_plan and plan_id:
-            for p in self.list_plans():
-                if p.get("id") == plan_id:
-                    origin_plan = p
-                    session_id = p.get("session_id")
-                    break
 
         if not origin_plan:
             raise ValueError(
@@ -1341,10 +1299,7 @@ class SessionManager:
             "session_id": new_session_id,
         }
 
-        # Seed initial session record with prompt and plan artifact
-        initial_messages = [
-            {"role": "user", "content": f"Execute the approved plan:\n\n{plan_text}"}
-        ]
+        # The delivery path appends the opening message exactly once.
         new_record = SessionRecord(
             session_id=new_session_id,
             workspace=target_ws or str(new_scratch),
@@ -1352,7 +1307,7 @@ class SessionManager:
             mode=Mode.INTERACTIVE.value,
             title=f"Replay: {origin_plan.get('title', 'Plan')}",
             agent=agent,
-            messages=initial_messages,
+            messages=[],
             plan=new_plan_record,
         )
         self.session_store.save(new_record)
@@ -1366,6 +1321,14 @@ class SessionManager:
         if new_engine is not None:
             new_engine.audit_context["plan_id"] = origin_plan_id
             new_engine.audit_context["replay_from"] = session_id or ""
+
+        task = asyncio.create_task(self.deliver_to_session(
+            new_session_id, f"Execute the approved plan:\n\n{plan_text}"
+        ))
+        self._plan_replay_tasks.add(task)
+        task.add_done_callback(self._plan_replay_tasks.discard)
+        # Claim the turn before a newly opened socket can submit another message.
+        await asyncio.sleep(0)
 
         self.audit_store.append(
             {
@@ -4433,6 +4396,11 @@ class SessionManager:
                 self.unregister_session_client(session_id, cb)
 
     async def aclose(self) -> None:
+        replay_tasks = list(self._plan_replay_tasks)
+        for task in replay_tasks:
+            task.cancel()
+        if replay_tasks:
+            await asyncio.gather(*replay_tasks, return_exceptions=True)
         await self.scheduler.stop()
         await self.stop_gateway()
         await self.mcp.aclose()

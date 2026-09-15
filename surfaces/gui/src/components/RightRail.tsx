@@ -77,6 +77,7 @@ interface Props {
   teamMembers?: SessionInfo[];
   teamChatEnabled?: boolean;
   teamChatUnread?: number;
+  onOpenTeamChat?: () => void;
   onOpenWorker?: (s: SessionInfo) => void;
   onOpenSession?: (id: string, ws?: string, ag?: string) => void;
   // Bumped when a [.](board:) chip in the transcript is clicked — expands the Board section.
