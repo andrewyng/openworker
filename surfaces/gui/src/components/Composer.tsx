@@ -254,6 +254,9 @@ export function Composer(props: Props) {
     if (prev && prev !== next) saveDraft(prev, draftRef.current);
     // Restore the incoming session's saved draft (none → empty box).
     const restored = loadDraft(next);
+    // StrictMode replays effect cleanup before the restored state renders. Keep
+    // that cleanup from persisting the initial empty state over the saved draft.
+    draftRef.current = restored ?? { text: "", attachments: [], skill: null };
     setText(restored?.text ?? "");
     setAttachments(restored?.attachments ?? []);
     setPendingSkill(restored?.skill ?? null);
@@ -263,8 +266,15 @@ export function Composer(props: Props) {
   // Save the draft when the composer unmounts (e.g. navigating to Settings/Inbox or closing
   // the session view), so it survives leaving the page and is restored when you come back.
   useEffect(() => {
-    return () => {
+    const persist = () => {
       if (prevResetKey.current) saveDraft(prevResetKey.current, draftRef.current);
+    };
+    window.addEventListener("pagehide", persist);
+    window.addEventListener("beforeunload", persist);
+    return () => {
+      persist();
+      window.removeEventListener("pagehide", persist);
+      window.removeEventListener("beforeunload", persist);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
