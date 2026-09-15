@@ -668,6 +668,14 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="z-ai/glm-5.2",
         env_key="OPENROUTER_API_KEY",
     ),
+    _compat(
+        "deepinfra",
+        "DeepInfra",
+        base_url="https://api.deepinfra.com/v1/openai",
+        recommended_model="deepseek-ai/DeepSeek-V4-Flash",
+        env_key="DEEPINFRA_API_KEY",
+        endpoint_help="Prefilled with DeepInfra's official OpenAI-compatible endpoint.",
+    ),
     ProviderDescriptor(
         name="ollama",
         title="Ollama (local models)",
