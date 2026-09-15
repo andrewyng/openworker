@@ -8,6 +8,13 @@ model = "gpt-5.5"            # default model id (override per session in the UI/
 mode = "interactive"         # plan | interactive | auto | custom
 max_iterations = 12          # max model<->tool iterations per turn before stopping
 
+# Web search provider for the `web_search` tool.
+#   duckduckgo (keyless default) | tavily | brave | fastcrw
+# The keyed providers read their key from the SecretStore or a <PROVIDER>_API_KEY
+# env var — e.g. FASTCRW_API_KEY (https://docs.fastcrw.com). Note that a keyed
+# provider sends your query to that service.
+web_search_provider = "duckduckgo"
+
 # Commands auto-allowed without an approval prompt (prefix match).
 allowed_commands = [
   "ls", "cat", "pwd", "grep", "find",
