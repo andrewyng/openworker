@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from coworker.selfwake import WakeStore, selfwake_tools
@@ -64,3 +65,30 @@ def test_selfwake_tools(tmp_path):
     pend = store.pending("s1")
     assert len(pend) == 4
     assert {w.kind for w in pend} == {"timer", "completion", "event"}
+
+
+def test_corrupt_state_file_does_not_crash_load(tmp_path):
+    path = tmp_path / "wakes.json"
+    path.write_text('{"wakes": [truncated', encoding="utf-8")
+    store = WakeStore(path)  # must not raise
+    assert store.pending() == []
+    w = store.add_completion("s1", "job-1")
+    assert any(x.id == w.id for x in WakeStore(path).pending("s1"))
+
+
+def test_unknown_wake_fields_are_skipped_not_fatal(tmp_path):
+    path = tmp_path / "wakes.json"
+    good = WakeStore(path).add_completion("s1", "job-1")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["wakes"].append({"id": "x", "future_field": True})
+    path.write_text(json.dumps(data), encoding="utf-8")
+    reloaded = WakeStore(path)
+    assert [w.id for w in reloaded.pending("s1")] == [good.id]
+
+
+def test_save_is_atomic_no_tmp_left_behind(tmp_path):
+    path = tmp_path / "wakes.json"
+    store = WakeStore(path)
+    store.add_timer("s1", _now() + timedelta(seconds=60))
+    assert not path.with_name(path.name + ".tmp").exists()
+    assert len(json.loads(path.read_text(encoding="utf-8"))["wakes"]) == 1
