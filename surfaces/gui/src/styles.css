@@ -277,6 +277,7 @@ body {
   right: 0;
   height: 48px; display: flex; align-items: center; gap: 12px;
   padding: 0 14px 0 20px; color: var(--ink); user-select: none;
+  overflow: hidden; /* clip overflowing button clusters when the side panel is open */
   /* Edgeless glass (§22 amendment): no border, translucent tint + blur — invisible over the
      flat paper at rest, frosts only when the transcript actually scrolls under it. */
   background: color-mix(in srgb, var(--canvas) 72%, transparent);
