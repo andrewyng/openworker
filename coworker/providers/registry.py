@@ -201,7 +201,12 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     return OpenAIProvider(api_key="ollama", base_url=base_url)
 
 
-def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
+def _openai_compat(
+    vendor: str,
+    default_base_url: str,
+    env_key: Optional[str] = None,
+    headers: Optional[dict[str, str]] = None,
+):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
     Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its
     env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a configured OpenAI
@@ -218,7 +223,9 @@ def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = 
             raise RuntimeError(
                 f"No {vendor} API key configured — add it in Settings ▸ Models."
             )
-        return OpenAIProvider(api_key=api_key, base_url=base_url)
+        return OpenAIProvider(
+            api_key=api_key, base_url=base_url, default_headers=headers
+        )
 
     return build
 
@@ -254,6 +261,21 @@ def _openai_responses_compat(
     return build
 
 
+def _zen_headers() -> dict[str, str]:
+    """OpenCode Zen's free tier requires OpenCode's own gateway headers on every request
+    (verified live 2026-09-16): the UA gate + a stable per-conversation session id. The
+    id is generated once per process; the provider is a long-lived per-name cached client.
+    """
+    import uuid
+
+    return {
+        "User-Agent": "opencode/2.0.0",
+        "x-opencode-session": uuid.uuid4().hex,
+        "x-opencode-client": "cli",
+        "x-opencode-project": "global",
+    }
+
+
 def _compat(
     name: str,
     title: str,
@@ -262,6 +284,7 @@ def _compat(
     recommended_model: str,
     env_key: str,
     endpoint_help: str = "",
+    headers: Optional[dict[str, str]] = None,
 ) -> ProviderDescriptor:
     """Descriptor for an OpenAI-compatible vendor: key + a prefilled, editable endpoint."""
     vendor = title.split(" (")[0]
@@ -285,7 +308,7 @@ def _compat(
                 or f"Prefilled with {vendor}'s official endpoint; edit only for a regional or proxy variant.",
             ),
         ],
-        build=_openai_compat(vendor, base_url, env_key),
+        build=_openai_compat(vendor, base_url, env_key, headers=headers),
         recommended_model=recommended_model,
         env_key=env_key,
         blurb=f"Uses {vendor}'s OpenAI-compatible API — the endpoint is prefilled, just add your key.",
@@ -668,6 +691,23 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="z-ai/glm-5.2",
         env_key="OPENROUTER_API_KEY",
     ),
+    # OpenCode Zen — the OpenCode team's curated AI gateway (opencode.ai/zen). Its FREE
+    # models (Big Pickle, MiMo, Ling, Nemotron) are served over its OpenAI-compatible
+    # /chat/completions endpoint. The free tier is gated on its own UA + a stable
+    # per-conversation `x-opencode-session` header (verified live 2026-09-16); paid models
+    # need a paid key, so this provider ships the free catalog. The Test button uses a
+    # one-token request instead of /models, which is public (200 even with no key).
+    _compat(
+        "opencode-zen",
+        "OpenCode Zen",
+        base_url="https://opencode.ai/zen/v1",
+        recommended_model="big-pickle",
+        env_key="OPENCODE_ZEN_API_KEY",
+        headers=_zen_headers(),
+        endpoint_help="Prefilled with OpenCode Zen's OpenAI-compatible endpoint. "
+        "Free models (big-pickle, mimo-v2.5-free, ling-3.0-flash-fin-free, "
+        "nemotron-3-ultra-free, nemotron-3.5-lightning-free) run on this path.",
+    ),
     ProviderDescriptor(
         name="ollama",
         title="Ollama (local models)",
@@ -983,6 +1023,27 @@ def verify_provider_key(
                     "input": "Reply with OK.",
                     "max_output_tokens": 1,
                     "store": False,
+                },
+                timeout=timeout,
+            )
+        elif name == "opencode-zen":
+            # Zen's free tier is UA/session-gated and `/models` is public (HTTP 200 even
+            # with a bad key), so a GET probe proves nothing — send one cheap, real request
+            # with the same gateway headers the provider uses, exactly like the Ark branch.
+            default_base = next(
+                (f.default for f in d.fields if f.key == "base_url" and f.default), ""
+            )
+            base = (base_url or "").strip().rstrip("/") or default_base.rstrip("/")
+            resp = httpx.post(
+                base + "/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    **_zen_headers(),
+                },
+                json={
+                    "model": d.recommended_model,
+                    "messages": [{"role": "user", "content": "Reply with OK."}],
+                    "max_tokens": 1,
                 },
                 timeout=timeout,
             )
