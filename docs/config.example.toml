@@ -1,12 +1,19 @@
 # coworker config — copy to one of:
-#   ~/.config/coworker/config.toml          (global)
+#   ~/.config/coworker/config.toml          (global; Windows: %APPDATA%\coworker\config.toml)
 #   <your-project>/.coworker/config.toml    (per-workspace, overrides global)
 #
 # All keys are optional; unset keys fall back to built-in defaults.
+# Security-sensitive keys (allowed_commands, auto_allow) are honored from the
+# global file only; a workspace file's allowed_commands apply only after you
+# trust that workspace.
 
 model = "gpt-5.5"            # default model id (override per session in the UI/CLI)
 mode = "interactive"         # plan | interactive | auto | custom
 max_iterations = 12          # max model<->tool iterations per turn before stopping
+
+# Web search backend: "duckduckgo" (keyless, default) | "tavily" | "brave"
+# (the latter two need an API key, set in the app's Settings or secret store).
+web_search_provider = "duckduckgo"
 
 # Commands auto-allowed without an approval prompt (prefix match).
 allowed_commands = [
@@ -22,3 +29,14 @@ auto_allow = ["write_file", "replace_in_file", "apply_patch", "apply_unified_dif
 # Server (openworker-server) bind address.
 host = "127.0.0.1"
 port = 8765
+
+# OpenWorker Cloud (sign-in + managed connectors + Slack/GitHub relay).
+# Defaults point at production so a fresh install works out of the box; only
+# dev/staging/BYO-VPC deployments need to change these.
+#cloud_base_url = "https://api.openworker.com"
+#cloud_auth_domain = "opencoworker.us.auth0.com"
+#cloud_client_id = "g1l4Q1lhYWmyS03qPSf4KEJGrgq02Qam"
+#cloud_audience = "https://api.opencoworker.app"
+# Managed relay WebSocket endpoint (Slack/GitHub inbound). Set to "" to disable
+# the relay entirely (manual Socket Mode still works).
+#cloud_relay_ws_url = "wss://l4z1paxb83.execute-api.us-east-1.amazonaws.com/ocw-connect"
