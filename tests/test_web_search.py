@@ -1,7 +1,7 @@
 """Tests for web search — provider abstraction, the tool, and config resolution.
 
 No network: a FakeProvider is injected; third-party key handling and the REST config path
-are exercised without hitting DuckDuckGo/Tavily/Brave.
+are exercised without hitting DuckDuckGo/Tavily/Brave/Serper.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from coworker.web import (
 from coworker.web.providers import (
     BraveProvider,
     DuckDuckGoProvider,
+    SerperProvider,
     TavilyProvider,
     WebSearchProvider,
 )
@@ -77,8 +78,49 @@ def test_build_provider_default_is_keyless_duckduckgo():
 def test_build_provider_third_party_requires_key():
     with pytest.raises(ValueError):
         build_provider("tavily")  # no key
+    with pytest.raises(ValueError):
+        build_provider("serper")  # no key
     assert isinstance(build_provider("tavily", "tvly-x"), TavilyProvider)
     assert isinstance(build_provider("brave", "brv-x"), BraveProvider)
+    assert isinstance(build_provider("serper", "srp-x"), SerperProvider)
+    assert "serper" in provider_names()
+
+
+def test_serper_sends_correct_request_and_maps_organic_results(monkeypatch):
+    """Verify the Serper API request shape and response mapping without a network call."""
+    import httpx
+
+    sent = {}
+
+    class _Resp:
+        @staticmethod
+        def json():
+            return {
+                "organic": [
+                    {
+                        "title": "Example Title",
+                        "link": "https://example.com",
+                        "snippet": "An example snippet.",
+                    }
+                ]
+            }
+
+    def fake_post(url, **kwargs):
+        sent.update(url=url, **kwargs)
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    results = build_provider("serper", "srp-test-key").search("anthropic", max_results=3)
+
+    assert sent["url"] == "https://google.serper.dev/search"
+    assert sent["headers"]["X-API-KEY"] == "srp-test-key"
+    assert sent["json"]["q"] == "anthropic"
+    assert sent["json"]["num"] == 3
+    assert len(results) == 1
+    assert results[0].title == "Example Title"
+    assert results[0].url == "https://example.com"
+    assert results[0].snippet == "An example snippet."
 
 
 def test_tool_surfaces_missing_key_error(tmp_path):
