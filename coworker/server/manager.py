@@ -3089,6 +3089,13 @@ class SessionManager:
         "qwen": ["qwen3-max", "qwen3-coder-plus", "qwen-plus"],
         "xai": ["grok-4.3", "grok-4"],
         "mistral": ["mistral-large-latest", "mistral-small-latest"],
+        "opencode-zen": [
+            "big-pickle",
+            "mimo-v2.5-free",
+            "ling-3.0-flash-fin-free",
+            "nemotron-3-ultra-free",
+            "nemotron-3.5-lightning-free",
+        ],
     }
 
     def _suggested_models(self, name: str) -> list[str]:

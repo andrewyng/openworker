@@ -228,6 +228,24 @@ MATRIX: dict[str, ModelEntry] = {
     "openrouter:stealth/ox-alpha": ModelEntry(
         "Ox Alpha · via OpenRouter", _AGENTIC, 1_048_576
     ),
+    # -- OpenCode Zen (free models, OpenAI-compatible chat completions) ------------
+    # Free-tier slugs from the OpenCode Zen catalog (checked 2026-09-16 against
+    # https://opencode.ai/zen/v1/models): agentic (tool-calling) models, no vision.
+    "opencode-zen:big-pickle": ModelEntry(
+        "Big Pickle · OpenCode Zen", _AGENTIC
+    ),
+    "opencode-zen:mimo-v2.5-free": ModelEntry(
+        "MiMo V2.5 Free · OpenCode Zen", _AGENTIC
+    ),
+    "opencode-zen:ling-3.0-flash-fin-free": ModelEntry(
+        "Ling 3.0 Flash Fin Free · OpenCode Zen", _AGENTIC
+    ),
+    "opencode-zen:nemotron-3-ultra-free": ModelEntry(
+        "Nemotron 3 Ultra Free · OpenCode Zen", _AGENTIC
+    ),
+    "opencode-zen:nemotron-3.5-lightning-free": ModelEntry(
+        "Nemotron 3.5 Lightning Free · OpenCode Zen", _AGENTIC
+    ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
     # Converse) plus AWS's own `-v<n>:<m>` version suffix. Some regions require the

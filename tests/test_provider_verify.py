@@ -149,6 +149,24 @@ def test_verify_ark_profile_endpoint_override(monkeypatch):
     assert cap["url"] == "https://gateway.example/ark/v3/responses"
 
 
+def test_verify_opencode_zen_uses_chat_completions_probe(monkeypatch):
+    """Zen's /models is public (200 even with no key) — the verify probe sends a real
+    one-token chat request with the gateway headers (UA + x-opencode-session) instead."""
+    cap: dict = {}
+    _patch_post(monkeypatch, status=200, capture=cap)
+
+    assert verify_provider_key("opencode-zen", api_key="sk-zen-test") == {"ok": True}
+    assert cap["url"] == "https://opencode.ai/zen/v1/chat/completions"
+    assert cap["headers"]["Authorization"] == "Bearer sk-zen-test"
+    assert cap["headers"]["User-Agent"] == "opencode/2.0.0"
+    assert "x-opencode-session" in cap["headers"]
+    assert cap["json"] == {
+        "model": "big-pickle",
+        "messages": [{"role": "user", "content": "Reply with OK."}],
+        "max_tokens": 1,
+    }
+
+
 def test_verify_network_error_is_clean(monkeypatch):
     _patch_get(monkeypatch, raise_exc=ConnectionError("boom"))
     res = verify_provider_key("openai", api_key="sk-x")

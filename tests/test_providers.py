@@ -288,6 +288,7 @@ COMPAT_VENDORS = {
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "xai": "https://api.x.ai/v1",
     "mistral": "https://api.mistral.ai/v1",
+    "opencode-zen": "https://opencode.ai/zen/v1",
 }
 
 
@@ -467,6 +468,11 @@ def test_compat_models_route_and_get_tool_capabilities():
         "qwen:qwen3-max",
         "xai:grok-4.3",
         "mistral:mistral-large-latest",
+        "opencode-zen:big-pickle",
+        "opencode-zen:mimo-v2.5-free",
+        "opencode-zen:ling-3.0-flash-fin-free",
+        "opencode-zen:nemotron-3-ultra-free",
+        "opencode-zen:nemotron-3.5-lightning-free",
     ):
         prefix = model.split(":", 1)[0]
         assert router._provider_name(model) == prefix
@@ -512,7 +518,9 @@ def test_matrix_labels_and_custom_model_fallback():
     # Deliberately small: agent-capable current models only (owner call, 2026-07-04).
     # 60→65 (2026-08-24): the stealth ox-alpha preview slug tipped it; reclaim slack by
     # pruning retired entries before raising this again.
-    assert len(MATRIX) < 65
+    # 65→70 (2026-09-16): the five OpenCode Zen free-tier models were added; reclaim slack by
+    # pruning retired entries before raising this again.
+    assert len(MATRIX) < 70
     assert all(e.caps.tools for e in MATRIX.values())
     # A custom (unlisted) reseller model falls back to the conservative default — usable,
     # but at the user's own risk (no parallel tool calls assumed).
