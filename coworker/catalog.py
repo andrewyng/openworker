@@ -92,7 +92,8 @@ def _files(context: AgentContext) -> list:
 
 def _git(context: AgentContext) -> list:
     ws = str(context.workspace)
-    return [*ai.toolkits.git(root=ws), *git_tools(ws)]  # git_status, git_diff, git_log
+    # git_status, git_diff + git_log/git_blame/git_show
+    return [*ai.toolkits.git(root=ws), *git_tools(ws)]
 
 
 def _search(context: AgentContext) -> list:
@@ -127,7 +128,7 @@ _CAPS: list[Capability] = [
     Capability(
         id="git",
         name="Git",
-        description="Inspect git state and history (status, diff, log).",
+        description="Inspect git state and history (status, diff, log, blame, show).",
         build=_git,
         requires=("workspace",),
         risk=(RiskClass.READ,),

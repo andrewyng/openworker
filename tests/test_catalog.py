@@ -27,6 +27,8 @@ CODE_TOOLS = {
     "git_status",
     "git_diff",
     "git_log",
+    "git_blame",
+    "git_show",
     "grep",
     "run_shell",
     "shell_task_output",
