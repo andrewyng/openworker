@@ -200,6 +200,9 @@ MATRIX: dict[str, ModelEntry] = {
     "mistral:mistral-large-latest": ModelEntry(
         "Mistral Large · Mistral", _AGENTIC, 128_000
     ),
+    "atlascloud:openai/gpt-4.1-mini": ModelEntry(
+        "GPT-4.1 mini · via Atlas Cloud", _AGENTIC, 1_047_576
+    ),
     # -- resellers (their model namespaces, verbatim) -----------------------------
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
     # Together windows below are the `context_length` values its /v1/models catalog
