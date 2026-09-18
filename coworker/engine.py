@@ -1737,6 +1737,7 @@ class TurnEngine:
             **self.audit_context,
             "tool": tool_call.name,
             "arguments": tool_call.arguments,
+            "call_id": tool_call.id,
             **event,
         }
         try:
