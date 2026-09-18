@@ -43,6 +43,7 @@ const box = () => screen.getByPlaceholderText(/Ask the coworker/);
 
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -146,5 +147,56 @@ describe("Composer — the doorway prefill (SKILLS-SPEC §5.2)", () => {
         "Build a new skill for me: release procedure",
       );
     });
+  });
+
+  it("preserves unsent draft when switching conversations and restores it upon return (#605)", async () => {
+    stubFetch();
+    const { rerender } = render(<Composer {...props({ resetKey: "s1", sessionId: "s1" })} />);
+    fireEvent.change(box(), { target: { value: "draft for s1" } });
+    expect((box() as HTMLTextAreaElement).value).toBe("draft for s1");
+
+    // Switch to session 2
+    rerender(<Composer {...props({ resetKey: "s2", sessionId: "s2" })} />);
+    expect((box() as HTMLTextAreaElement).value).toBe("");
+
+    // Type draft in session 2
+    fireEvent.change(box(), { target: { value: "draft for s2" } });
+    expect((box() as HTMLTextAreaElement).value).toBe("draft for s2");
+
+    // Switch back to session 1
+    rerender(<Composer {...props({ resetKey: "s1", sessionId: "s1" })} />);
+    expect((box() as HTMLTextAreaElement).value).toBe("draft for s1");
+
+    // Switch back to session 2
+    rerender(<Composer {...props({ resetKey: "s2", sessionId: "s2" })} />);
+    expect((box() as HTMLTextAreaElement).value).toBe("draft for s2");
+  });
+
+  it("clears the persisted draft when message is sent (#605)", async () => {
+    stubFetch();
+    const onSend = vi.fn();
+    const { rerender } = render(<Composer {...props({ resetKey: "s1", sessionId: "s1", onSend })} />);
+    fireEvent.change(box(), { target: { value: "send me" } });
+
+    // Send the message via Enter key
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(onSend).toHaveBeenCalledWith("send me", [], undefined);
+    expect((box() as HTMLTextAreaElement).value).toBe("");
+
+    // Switch to session 2 and back to session 1
+    rerender(<Composer {...props({ resetKey: "s2", sessionId: "s2" })} />);
+    rerender(<Composer {...props({ resetKey: "s1", sessionId: "s1" })} />);
+    expect((box() as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("restores draft across unmount and remount (#605)", async () => {
+    stubFetch();
+    const { unmount } = render(<Composer {...props({ resetKey: "s1", sessionId: "s1" })} />);
+    fireEvent.change(box(), { target: { value: "persisted after unmount" } });
+    unmount();
+
+    // Remount with same session
+    render(<Composer {...props({ resetKey: "s1", sessionId: "s1" })} />);
+    expect((box() as HTMLTextAreaElement).value).toBe("persisted after unmount");
   });
 });
