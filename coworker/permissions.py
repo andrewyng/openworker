@@ -87,6 +87,10 @@ PERSISTENT_AUTHORITY_TOOLS = {
     "create_scheduled_task",
     "update_scheduled_task",
     "delete_scheduled_task",
+    # These mutations persist beyond the current session.
+    "remember",
+    "memory_update",
+    "memory_forget",
 }
 
 
