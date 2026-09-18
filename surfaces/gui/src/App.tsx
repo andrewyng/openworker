@@ -1762,6 +1762,7 @@ export function App() {
         collapsed={navCollapsed}
         onCollapse={toggleNav}
         onPeekLeave={() => setNavPeek(false)}
+        onOpenSearch={() => setSearchOpen(true)}
       />
       {surface === "scheduled" ? (
         <ScheduledView
@@ -2260,8 +2261,7 @@ export function App() {
       </div>
       )}
 
-      {/* Search from the collapsed-sidebar topbar cluster (the sidebar's own instance is
-          unreachable while it's collapsed). */}
+      {/* Single SearchModal for sidebar Search and the collapsed topbar cluster. */}
       {searchOpen && (
         <SearchModal
           sessions={sessions}
