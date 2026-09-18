@@ -12,22 +12,46 @@ engine says `needs_user`, the engine emits `PERMISSION_REQUIRED` and awaits the 
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import json
 import time
 from dataclasses import dataclass, replace
 from enum import Enum
+from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from . import compaction as _compaction
 from . import provenance
 from . import session_facts
 from . import toolchain as _toolchain
+from . import toolresult
 from .events import Event, EventType
 
 # §8.4 retry guard: the reviewer pauses for the rest of the turn after this many denials
 # IN A ROW (2→5 + streak semantics, owner ruling 2026-08-24 — a cumulative 2 silently
 # downgraded long agentic turns to hand-approval after one over-strict pair).
+# OPE-171: a reply cut off at the output-token limit (finish_reason "length") that
+# carries no tool call is not an answer — typically thinking consumed the whole budget
+# and nothing else came back. The engine nudges the model to act instead of ending the
+# turn as "completed", at most this many times in a row; then the turn ends as
+# "truncated" so callers can tell "finished" from "gave up".
+MAX_TRUNCATION_CONTINUATIONS = 2
+TRUNCATION_NUDGE = (
+    "Your previous reply hit the output-token limit before you took an action or "
+    "finished. Do not repeat the long reasoning. Decide the next concrete step and "
+    "call a tool now, or give the final answer briefly."
+)
+# What the provider sees in place of the cut-off reply: its partial thinking block has
+# no signature (Anthropic rejects it on replay) and its content is empty or a fragment;
+# the transcript keeps the original, the outbound view sends this.
+TRUNCATION_STUB = "(reply cut off at the output-token limit before any action)"
+# OPE-192: the per-turn context block is ephemeral and volatile (it carries a clock). It is
+# sent as its own trailing message opening with this tag, so a provider can keep its cache
+# breakpoint on the last STABLE block and leave the note outside the cached prefix.
+EPHEMERAL_CONTEXT_OPEN = "<system-context>"
+
 _REVIEWER_TRIP = 5
 _REVIEWER_PAUSED_TEXT = (
     "Auto-approve is paused for the rest of this turn — the reviewer blocked "
@@ -39,6 +63,8 @@ from .providers.errors import friendly_model_error
 from .providers.openai_provider import looks_like_unparsed_tool_call
 from .tools import ToolRegistry
 
+
+logger = logging.getLogger(__name__)
 
 class ApprovalOutcome(str, Enum):
     ONCE = "once"
@@ -123,6 +149,11 @@ class TurnEngine:
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
         interrupt_hooks: Optional[list[Callable[[], None]]] = None,
+        # OPE-186 change 1: bound every tool result before it enters the conversation
+        # (head + marker + tail; full text in a spill file). None = the module default
+        # (10,000 bytes), 0 = off. See coworker/toolresult.py.
+        tool_result_max_bytes: Optional[int] = None,
+        tool_result_spill_dir: Optional[Path] = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -231,6 +262,14 @@ class TurnEngine:
         # the card and in the reviewer's request. Runtime-only, like `_ask_replies`: a
         # restart costs context (more cards), never correctness.
         self._agent_files = provenance.SessionFiles(permissions.workspace_root)
+        self._tool_result_max_bytes = (
+            toolresult.DEFAULT_TOOL_RESULT_MAX_BYTES
+            if tool_result_max_bytes is None
+            else int(tool_result_max_bytes)
+        )
+        self._tool_result_spill_dir = (
+            Path(tool_result_spill_dir) if tool_result_spill_dir is not None else None
+        )
         # Completed tool calls so far, so a fact can say how many steps back the write was.
         self._step = 0
         self._last_context_tokens: Optional[int] = None
@@ -243,6 +282,9 @@ class TurnEngine:
         # Whether the latest assistant turn hit the output-token limit — decides which
         # diagnosis a mangled (unparseable-args) tool call gets answered with.
         self._turn_truncated = False
+        # Consecutive length-truncated, action-free replies nudged this turn (OPE-171).
+        self._continuations = 0
+        self._warned_context_fallback = False
         # Each pending steering message: (text, optional MessageSource sidecar dict).
         self._steering: list[tuple[str, Optional[dict[str, Any]]]] = []
         # tool_call.id → the standing rule that auto-allowed it ("tool → target"), so the
@@ -461,6 +503,7 @@ class TurnEngine:
 
     async def _loop(self) -> AsyncIterator[Event]:
         iterations = 0
+        self._continuations = 0
         while True:
             if iterations >= self.max_iterations:
                 yield Event(
@@ -479,8 +522,9 @@ class TurnEngine:
                 yield Event(EventType.COMPACTING, {})
                 notice = await self._compact_now()
             if notice:
-                self._append_notice("compacted", notice)
-                yield Event(EventType.COMPACTED, {"text": notice})
+                record = self._compaction_record()
+                self._append_notice("compacted", notice, compaction=record)
+                yield Event(EventType.COMPACTED, {"text": notice, "compaction": record})
 
             turn: Optional[AssistantTurn] = None
             streamed: list[str] = []
@@ -517,8 +561,11 @@ class TurnEngine:
                     yield Event(EventType.COMPACTING, {})
                     notice = await self._compact_now(force=True)
                     if notice:
-                        self._append_notice("compacted", notice)
-                        yield Event(EventType.COMPACTED, {"text": notice})
+                        record = self._compaction_record()
+                        self._append_notice("compacted", notice, compaction=record)
+                        yield Event(
+                            EventType.COMPACTED, {"text": notice, "compaction": record}
+                        )
                         continue
                 # Same contract as the stop path below: the partial the user watched
                 # arrive survives the failure.
@@ -549,8 +596,16 @@ class TurnEngine:
                 self._last_context_tokens = turn.usage.context_tokens
 
             self._turn_truncated = turn.finish_reason == "length"
+            if not self._turn_truncated:
+                self._continuations = 0
             _sanitize_mangled_calls(turn)
-            self.messages.append(_assistant_message(turn, model=self.model))
+            self.messages.append(
+                _assistant_message(
+                    turn,
+                    model=self.model,
+                    effort_setting=self.model_settings.get("reasoning_effort"),
+                )
+            )
             payload: dict[str, Any] = {
                 "text": turn.text,
                 "tool_calls": [tc.name for tc in turn.tool_calls],
@@ -559,12 +614,81 @@ class TurnEngine:
                 payload["reasoning"] = turn.reasoning
             if turn.usage is not None:
                 payload["usage"] = {"model": self.model, **turn.usage.as_dict()}
+            if turn.finish_reason:
+                # How the reply ended (OPE-173): `stop` / `tool_calls` / `length`.
+                payload["finish_reason"] = turn.finish_reason
+            if turn.output_limit:
+                # The output ceiling the provider sent (OPE-177).
+                payload["max_output_tokens"] = turn.output_limit
+            effort_record = _effort_record(turn, self.model_settings.get("reasoning_effort"))
+            if effort_record:
+                payload["reasoning_effort"] = effort_record
+            if turn.served_by:
+                payload["served_by"] = turn.served_by
             yield Event(EventType.ASSISTANT_MESSAGE, payload)
 
             if not turn.tool_calls:
                 if self._steering:
                     self._inject_steering()
                     continue
+                if self._turn_truncated:
+                    # OPE-171: cut off at the output limit with nothing actionable. The
+                    # reply just persisted is marked for stub replay (see
+                    # `_outbound_messages`); the model is asked to act, and the turn
+                    # goes round again — unless it has already happened too often.
+                    cut = self.messages[-1]
+                    if cut.get("role") == "assistant":
+                        cut["replay"] = "stub"
+                    if self._continuations < MAX_TRUNCATION_CONTINUATIONS:
+                        self._continuations += 1
+                        self.messages.append(
+                            {
+                                "role": "user",
+                                "content": TRUNCATION_NUDGE,
+                                "ts": time.time(),
+                                "_display": {
+                                    "kind": "continuation",
+                                    "reason": "length",
+                                    "attempt": self._continuations,
+                                },
+                            }
+                        )
+                        yield Event(
+                            EventType.CONTINUATION,
+                            {
+                                "reason": "length",
+                                "attempt": self._continuations,
+                                "remaining": MAX_TRUNCATION_CONTINUATIONS
+                                - self._continuations,
+                                "iterations": iterations,
+                                "text": (
+                                    "Reply cut off at the output-token limit with no "
+                                    f"action; asking the model to continue "
+                                    f"({self._continuations} of "
+                                    f"{MAX_TRUNCATION_CONTINUATIONS})."
+                                ),
+                            },
+                        )
+                        continue
+                    text = (
+                        f"{self.model}'s reply was cut off at the output-token limit with "
+                        f"no action {self._continuations + 1} times in a row, so the turn "
+                        "was stopped rather than reported as complete. Raise "
+                        "max_output_tokens, lower the reasoning effort, or retry."
+                    )
+                    self._append_notice(
+                        "truncated", text, continuations=self._continuations
+                    )
+                    yield Event(
+                        EventType.TURN_END,
+                        {
+                            "status": "truncated",
+                            "iterations": iterations,
+                            "continuations": self._continuations,
+                            "text": text,
+                        },
+                    )
+                    return
                 # The model tried to call a tool and the syntax never parsed — salvage already
                 # had its go. Ending as "completed" here would present a half-written call as
                 # the answer, which is indistinguishable from the model deciding it was done;
@@ -609,8 +733,22 @@ class TurnEngine:
             from .providers.matrix import model_context_windows
 
             cfg["context_window"] = model_context_windows().get(self.model)
+            if not cfg["context_window"] and not self._warned_context_fallback:
+                # OPE-170: an unlisted model compacts on the 128k guess, which for a
+                # 1M-window model means compacting at a tenth of the window and
+                # rebuilding the prompt cache each time. Say so once per engine.
+                self._warned_context_fallback = True
+                logger.warning(
+                    "model %s has no context window in the model matrix; assuming "
+                    "%d tokens (compaction at %d). Add a matrix row or set "
+                    "context_window in the compaction settings.",
+                    self.model,
+                    _compaction.DEFAULT_CONTEXT_WINDOW,
+                    _compaction.trigger_tokens(None),
+                )
         cfg.setdefault("threshold_pct", _compaction.DEFAULT_THRESHOLD_PCT)
         cfg.setdefault("cap_tokens", _compaction.DEFAULT_CAP_TOKENS)
+        cfg.setdefault("summary_max_tokens", _compaction.SUMMARY_MAX_TOKENS)
         return cfg
 
     def _compaction_due(self) -> bool:
@@ -629,6 +767,16 @@ class TurnEngine:
             cap_tokens=int(cfg["cap_tokens"]),
         )
 
+    def _compaction_record(self) -> Optional[dict[str, Any]]:
+        """The compaction that just happened, as persisted on the `compacted` notice and
+        carried on the COMPACTED event (OPE-170 problem 2): summary text, working state,
+        the boundary into the canonical transcript, the summarizer model, and whether it
+        was the no-summary trim. Without it a saved session only showed THAT compaction
+        happened, not what was kept — the app's session record keeps only the latest
+        state, and exported trajectories / run records had nothing at all."""
+        state = self.compaction_state
+        return state.as_dict() if state is not None else None
+
     async def _compact_now(self, *, force: bool = False) -> Optional[str]:
         """Run the compaction policy. Callers gate on `_compaction_due()` (or `force`,
         the overflow path). Returns the user-facing notice text when the outbound view
@@ -639,9 +787,13 @@ class TurnEngine:
         pct = float(cfg["threshold_pct"])
         cap = int(cfg["cap_tokens"])
         window = cfg.get("context_window")
-        keep = int(
-            _compaction.KEEP_RECENT_FRACTION
-            * _compaction.trigger_tokens(window, threshold_pct=pct, cap_tokens=cap)
+        trigger = _compaction.trigger_tokens(window, threshold_pct=pct, cap_tokens=cap)
+        keep = int(_compaction.KEEP_RECENT_FRACTION * trigger)
+        # OPE-189: both budgets scale with the trigger, so lowering it to save tokens can't
+        # be undone by a block that keeps spending the freed space.
+        user_budget = _compaction.user_message_budget(trigger)
+        summary_max = int(
+            cfg.get("summary_max_tokens") or _compaction.SUMMARY_MAX_TOKENS
         )
         model = str(cfg.get("model") or "") or self.model
 
@@ -652,6 +804,8 @@ class TurnEngine:
                 model=model,
                 keep_tokens=keep,
                 prior=self.compaction_state,
+                summary_max_tokens=summary_max,
+                user_budget_tokens=user_budget,
             )
 
         state: Optional[_compaction.CompactionState] = None
@@ -689,11 +843,34 @@ class TurnEngine:
                 except Exception:
                     continue
         if state is not None:
+            # OPE-186 change 3: keep the compacted turns readable. The verbatim transcript
+            # up to the boundary goes to a file next to the spilled tool results, and the
+            # compacted block tells the model where it is, so a detail the summary dropped
+            # costs one read instead of being lost.
+            if self._tool_result_spill_dir is not None:
+                try:
+                    self._tool_result_spill_dir.mkdir(parents=True, exist_ok=True)
+                    path = (
+                        self._tool_result_spill_dir
+                        / f"compacted-transcript-upto-{state.boundary_index:04d}.md"
+                    )
+                    path.write_text(
+                        _compaction.render_transcript(self.messages, state.boundary_index),
+                        encoding="utf-8",
+                        errors="replace",
+                    )
+                    state.transcript_path = str(path)
+                except OSError:
+                    pass
             self.compaction_state = state
             self._last_context_tokens = None  # stale once the outbound view shrank
             return "Context compacted — earlier turns were summarized"
         if failed or force:
-            trimmed = _compaction.trim_state(self.messages, prior=self.compaction_state)
+            trimmed = _compaction.trim_state(
+                self.messages,
+                prior=self.compaction_state,
+                user_budget_tokens=user_budget,
+            )
             if trimmed is not None:
                 self.compaction_state = trimmed
                 self._last_context_tokens = None
@@ -1476,6 +1653,15 @@ class TurnEngine:
                 **({"approval_note": origin["note"]} if origin.get("note") else {}),
                 **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
             }
+        # OPE-186 change 1: what the model sees (and re-reads on every later turn) is
+        # bounded here, once, for every tool. Provenance above recorded the full result.
+        result = toolresult.bound_tool_result(
+            result,
+            max_bytes=self._tool_result_max_bytes,
+            spill_dir=self._tool_result_spill_dir,
+            step=self._step,
+            tool_name=tool_call.name,
+        )
         message = _tool_result_message(tool_call, result)
         if display:
             message["_display"] = display
@@ -1982,10 +2168,22 @@ class TurnEngine:
         """
         # Strip the display-only sidecars — `source` (connector cards), `_display`
         # (e.g. filter-hidden counts), `ts` (append-time timestamps), `reasoning`
-        # (thinking text), and `usage` (token counts) — copying only messages that carry
+        # (thinking text), `usage` (token counts), `finish_reason` (how the reply ended)
+        # and `max_output_tokens` (the ceiling sent) — copying only messages that carry
         # one. Whole `notice` messages (error/interrupted/model-switch markers) are
         # display-only too: dropped entirely.
-        _SIDECARS = ("source", "_display", "ts", "reasoning", "usage")
+        _SIDECARS = (
+            "source",
+            "_display",
+            "ts",
+            "reasoning",
+            "usage",
+            "finish_reason",
+            "max_output_tokens",
+            "reasoning_effort",
+            "served_by",
+            "replay",
+        )
         # Auto-compaction (OPE-27): everything before the boundary is represented by the
         # compacted block. Outbound-only — the canonical history stays intact — and the
         # block+tail are byte-stable between turns, so prompt caching keeps working.
@@ -1994,7 +2192,10 @@ class TurnEngine:
         )
         out = [
             (
-                {k: v for k, v in msg.items() if k not in _SIDECARS}
+                # OPE-171: a length-truncated, action-free reply is replayed as a stub.
+                {"role": "assistant", "content": TRUNCATION_STUB}
+                if msg.get("replay") == "stub"
+                else {k: v for k, v in msg.items() if k not in _SIDECARS}
                 if any(s in msg for s in _SIDECARS)
                 else msg
             )
@@ -2067,7 +2268,22 @@ class TurnEngine:
         ) or ""
         if not context:
             return out
-        block = f"\n\n<system-context>\n{context}\n</system-context>"
+        # The block rides on the LAST user message — one shape for every provider. In a
+        # chat that is the newest message; in a tool loop (tool results carry role "tool")
+        # it is the task prompt, message one. That is only safe because the block holds
+        # nothing that moves on its own. OPE-192: it used to open with a `Now:` line to the
+        # minute, so every minute crossing rewrote message one, and a provider's prompt
+        # cache is reusable only up to the first byte that differs — the whole conversation
+        # was re-processed (measured: 16 of 105 calls on one Fable 5.1 attempt held 95% of
+        # its cache writes; on the Kimi K3 run 60% of minute crossings missed vs 1.5%
+        # otherwise). The time is a tool now (`current_time`). What is left — folders,
+        # skill menu, mode notices — changes only when the user changes something, so the
+        # outbound history stays byte-identical turn to turn. Ephemeral: never persisted.
+        block = (
+            f"\n\n{EPHEMERAL_CONTEXT_OPEN}\n"
+            "(automatic per-turn context, not part of the user's message)\n"
+            f"{context}\n</system-context>"
+        )
         for i in range(len(out) - 1, -1, -1):
             if out[i].get("role") != "user":
                 continue
@@ -2084,7 +2300,24 @@ class TurnEngine:
         return out
 
 
-def _assistant_message(turn: AssistantTurn, model: Optional[str] = None) -> dict[str, Any]:
+def _effort_record(turn: AssistantTurn, setting: Optional[str]) -> Optional[dict[str, Any]]:
+    """What the run record says about reasoning effort for this reply (OPE-176): the
+    provider's own mapping when it reported one; otherwise, when a level was configured,
+    an explicit "requested but not reported" so the setting is never silently lost."""
+    if turn.effort:
+        return dict(turn.effort)
+    if setting:
+        return {
+            "requested": setting,
+            "effective": None,
+            "note": "provider did not report an effort parameter (no knob on this path)",
+        }
+    return None
+
+
+def _assistant_message(
+    turn: AssistantTurn, model: Optional[str] = None, effort_setting: Optional[str] = None
+) -> dict[str, Any]:
     message: dict[str, Any] = {
         "role": "assistant",
         "content": turn.text or "",
@@ -2095,6 +2328,28 @@ def _assistant_message(turn: AssistantTurn, model: Optional[str] = None) -> dict
         # stripped before provider calls. Tagged with the model that produced it so
         # per-model rollups survive mid-session model switches.
         message["usage"] = {"model": model, **turn.usage.as_dict()}
+    if turn.finish_reason:
+        # How the reply ended, in the engine's normalised vocabulary (`stop` /
+        # `tool_calls` / `length`; unknown provider values pass through). Persisted
+        # so a saved session can tell "chose to stop" from "hit the output limit"
+        # without re-deriving it from token counts (OPE-173). Omitted — never null —
+        # for partial turns and providers that report no stop reason. Stripped before
+        # every provider call (`_outbound_messages`). The provider's raw value, where
+        # it differs, lives in that provider's sidecar (e.g. `_anthropic.stop_reason`).
+        message["finish_reason"] = turn.finish_reason
+    if turn.output_limit:
+        # The per-reply output ceiling the provider actually sent (OPE-177), so a
+        # `length` finish can be read against the limit that produced it. Display
+        # sidecar like `usage`: stripped before every provider call.
+        message["max_output_tokens"] = turn.output_limit
+    effort_record = _effort_record(turn, effort_setting)
+    if effort_record:
+        # The reasoning-effort mapping for this reply (OPE-176). Display sidecar like
+        # `usage`: stripped before every provider call.
+        message["reasoning_effort"] = effort_record
+    if turn.served_by:
+        # The upstream host a router reported for this reply (display sidecar).
+        message["served_by"] = turn.served_by
     if turn.reasoning:
         # Display-only thinking text — rendered by the GUI, stripped for every provider
         # (`_outbound_messages`); provider-private replay blocks go via `extras` instead.

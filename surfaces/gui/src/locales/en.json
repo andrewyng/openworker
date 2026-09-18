@@ -423,6 +423,8 @@
       "interrupted": "Interrupted.",
       "error": "Error: ",
       "context_compacted": "Context compacted",
+      "continuation": "Reply cut off at the output-token limit; asking the model to continue.",
+      "truncated": "Stopped: reply cut off at the output-token limit with no action.",
       "input_rejected": "That message was rejected.",
       "unknown": "unknown"
     },

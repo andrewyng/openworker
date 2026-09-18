@@ -41,6 +41,9 @@ class EventType(str, Enum):
     INTERRUPTED = "interrupted"
     COMPACTING = "compacting"  # compaction started — surfaces show a transient signal
     COMPACTED = "compacted"  # outbound history was compacted (summary or trim)
+    # OPE-171: the reply was cut off at the output-token limit with no tool call; the
+    # engine nudged the model to act and is going round the loop again.
+    CONTINUATION = "continuation"
 
 
 @dataclass

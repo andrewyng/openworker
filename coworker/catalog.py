@@ -51,6 +51,51 @@ class Capability:
 # -- capability builders --------------------------------------------------------
 # These reproduce, exactly, what the Code and Cowork agent factories assembled by hand.
 
+# OPE-186 change 2: aisuite's file tools describe themselves in one generic line each
+# ("Write a UTF-8 text file under the configured root."), so nothing tells the model when
+# to rewrite a file and when to edit it. In one long multi-task session Kimi K3 chose
+# write_file 1,812 times against 609 targeted edits, and every whole-file body it wrote
+# rode along in the conversation on every later turn. Building the guidance into the
+# tool description is the usual remedy; these descriptions do that.
+EDIT_TOOL_GUIDANCE: dict[str, str] = {
+    "write_file": (
+        "Create a NEW file, or replace an existing file's ENTIRE content when most of it "
+        "changes. For a small or medium change to an existing file do not rewrite it: read "
+        "it, then use replace_in_file (exact text swap) or apply_patch (multi-line edit). "
+        "The whole `content` you pass stays in the conversation on every later turn, so "
+        "whole-file rewrites of large files are expensive."
+    ),
+    "replace_in_file": (
+        "Edit an existing file in place: replace `old` (an exact, unique text fragment, "
+        "whitespace included) with `new`. Prefer this over write_file for changing part of "
+        "a file; read the file first so `old` matches exactly. Set expected_replacements "
+        "when the fragment appears more than once."
+    ),
+    "apply_patch": (
+        "Apply a Codex-style patch (*** Begin Patch / *** Update File: path / @@ hunks of "
+        "' ' context, '-' removed and '+' added lines / *** End Patch) for targeted "
+        "multi-line edits to one or more existing files, or to add or delete files. Prefer "
+        "this over write_file for edits that touch several places."
+    ),
+    "apply_unified_diff": (
+        "Apply a standard unified diff (the format of `diff -u` or `git diff`) to existing "
+        "files. Use it when you already have the change as a diff."
+    ),
+}
+
+
+def _describe_edit_tools(tools: list) -> list:
+    """Give the file tools descriptions that say WHEN to use each (the registry builds the
+    schema the model sees from the docstring)."""
+    for t in tools:
+        text = EDIT_TOOL_GUIDANCE.get(getattr(t, "__name__", ""))
+        if text:
+            try:
+                t.__doc__ = text
+            except (AttributeError, TypeError):
+                pass
+    return tools
+
 
 def _code_files(context: AgentContext) -> list:
     """Repo-oriented files: line-numbered/windowed `read_file`. Our `grep` and windowed
@@ -63,11 +108,13 @@ def _code_files(context: AgentContext) -> list:
     file_kwargs = (
         {"roots": context.roots} if context.roots else {"root": ws, "allow_write": True}
     )
-    files = [
-        t
-        for t in ai.toolkits.files(**file_kwargs)
-        if getattr(t, "__name__", "") not in replaced
-    ]
+    files = _describe_edit_tools(
+        [
+            t
+            for t in ai.toolkits.files(**file_kwargs)
+            if getattr(t, "__name__", "") not in replaced
+        ]
+    )
     return [*files, *file_tools(ws, roots=context.roots)]
 
 
@@ -82,11 +129,13 @@ def _files(context: AgentContext) -> list:
         {"roots": context.roots} if context.roots else {"root": ws, "allow_write": True}
     )
     replaced = {"search_files", "read_file", "read_file_lines"}
-    files = [
-        t
-        for t in ai.toolkits.files(**file_kwargs)
-        if getattr(t, "__name__", "") not in replaced
-    ]
+    files = _describe_edit_tools(
+        [
+            t
+            for t in ai.toolkits.files(**file_kwargs)
+            if getattr(t, "__name__", "") not in replaced
+        ]
+    )
     return [*files, *file_tools(ws, roots=context.roots)]
 
 

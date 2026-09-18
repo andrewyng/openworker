@@ -142,7 +142,11 @@ class LocalExecutor(Executor):
         env: Optional[dict[str, str]] = None,
         shell_path: Optional[str] = None,
         default_timeout: float = _DEFAULT_TIMEOUT,
-        max_output_chars: int = 20_000,
+        # Memory safety net only (OPE-186): what the MODEL sees is bounded by the engine's
+        # tool-result cap (head + marker + tail, full text in a spill file), which needs
+        # the whole output to spill. This tail-keep cap now only stops a runaway command
+        # from filling memory; it used to be 20,000 and silently dropped the beginning.
+        max_output_chars: int = 2_000_000,
     ) -> None:
         self.cwd = str(Path(cwd).expanduser().resolve())
         self.default_timeout = default_timeout

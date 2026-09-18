@@ -117,7 +117,11 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
                         { kind: "notice", tone: "info", title: (m as any).title || "Auto-approve is on.", text: m.text || "" }
                       : m.kind === "mode_switch"
                         ? { kind: "notice", tone: "info", text: m.text || "" }
-                  : { kind: "notice", tone: "warn", text: "Error: " + (m.text || "unknown"), retriable: true },
+                  : m.kind === "truncated"
+                          ? // OPE-171: the turn stopped after repeated output-limit cut-offs with no
+                            // action. Retriable like an error: a fresh attempt usually acts.
+                            { kind: "notice", tone: "warn", text: m.text || "Stopped: reply cut off at the output-token limit.", retriable: true }
+                          : { kind: "notice", tone: "warn", text: "Error: " + (m.text || "unknown"), retriable: true },
       );
     }
     // system messages are omitted; tool-result messages are folded into the tool row above

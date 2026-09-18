@@ -6,12 +6,12 @@ the skill catalog (progressive disclosure) + load_skill into a TurnEngine.
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .agents import Agent, AgentContext, code_agent
 from .automation import scheduling_tools
+from .clock import clock_tools
 from .selfwake import selfwake_tools
 from .subscriptions import subscription_tools
 from .config import load_config
@@ -188,6 +188,14 @@ def _skill_dirs(workspace: Optional[Path]) -> list[Path]:
     return dirs
 
 
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        Path(path).resolve().relative_to(Path(root).resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
 def build_engine(
     *,
     agent: Agent,
@@ -199,6 +207,11 @@ def build_engine(
     allowed_commands: Optional[list[str]] = None,
     max_iterations: Optional[int] = None,
     model_settings: Optional[dict[str, Any]] = None,
+    # OPE-186: explicit tool-result byte cap (None = config, then the 10,000 default;
+    # 0 = off) and where bounded results' full text is spilled (None = the session's
+    # scratch root if there is one, else a per-process temp directory).
+    tool_result_max_bytes: Optional[int] = None,
+    tool_result_spill_dir: Optional[str | Path] = None,
     memory_store: Optional[MemoryStore] = None,
     # Twentieth pass: the project key memory loads/saves under. Defaults to the
     # workspace path; the manager passes the resolved key (binding > git > path)
@@ -262,8 +275,40 @@ def build_engine(
     else:
         root_list = []
 
+    # OPE-186: bounded tool results keep their full text in a spill file the model can
+    # read, and the compaction transcript is written there too. Prefer the session's
+    # scratch root (already one of the agent's folders). Otherwise the folder joins the
+    # session's directories read-only, BEFORE the tools are built, so read_file can open
+    # it (2026-09-14: the first trial spilled under the run's log folder and read_file
+    # answered "path escapes the session's directories"). The workspace itself is never
+    # written to, so a repository or task tree stays clean.
+    if tool_result_spill_dir is not None:
+        spill_dir: Optional[Path] = Path(tool_result_spill_dir).expanduser().resolve()
+    else:
+        scratch = next((r.path for r in root_list if r.label == "scratch"), None)
+        if scratch is not None:
+            spill_dir = Path(scratch) / "tool-output"
+        else:
+            import os
+            import tempfile
+
+            spill_dir = (
+                Path(tempfile.gettempdir()) / "openworker" / f"tool-output-{os.getpid()}"
+            ).resolve()
+    # Registered, not created: the folder appears on disk only when something is spilled.
+    if root_list and not any(_is_within(spill_dir, r.path) for r in root_list):
+        root_list.append(RootDir(path=spill_dir, writable=False, label="tool-output"))
+
     workspace_trusted = bool(ws and WorkspaceTrustStore().is_trusted(ws))
     config = load_config(ws, workspace_trusted=workspace_trusted)
+    # OPE-177: the configured per-reply output ceiling rides `model_settings`, which
+    # the engine spreads into every provider call (and explorer subagents inherit).
+    # An explicit `max_tokens` from the caller wins over the config value.
+    if config.max_output_tokens is not None and "max_tokens" not in (model_settings or {}):
+        model_settings = {**(model_settings or {}), "max_tokens": config.max_output_tokens}
+    # OPE-176: the reasoning-effort level takes the same route; providers translate it.
+    if config.reasoning_effort and "reasoning_effort" not in (model_settings or {}):
+        model_settings = {**(model_settings or {}), "reasoning_effort": config.reasoning_effort}
     executor = LocalExecutor(cwd=ws) if ws is not None else None
     todo = TodoList()
     context = AgentContext(
@@ -361,6 +406,11 @@ def build_engine(
     # on-completion / on-event). The scheduler tick resumes due wakes.
     if wake_store is not None and session_id and agent.scheduling:
         registry.register_all(selfwake_tools(wake_store, session_id))
+    # The clock, on demand, for every surface: the system prompt's "Today's date" is a
+    # session-start snapshot, and the per-turn context block must not carry a live time
+    # (see context_provider below). Deadlines, "how long ago", and the wake time for
+    # sleep_until all come from here.
+    registry.register_all(clock_tools())
 
     instructions = f"{agent.system_prompt}\n\n{_NARRATION_GUIDANCE}\n\n{_FIRST_CONTACT_GUIDANCE}"
     if ws is not None:
@@ -485,12 +535,14 @@ def build_engine(
     _engine_box: list = []
 
     def context_provider() -> str:
-        # Live clock, every turn (owner ruling 2026-08-20): the environment block's
-        # "Today's date" is a session-START snapshot — stale for long-lived/self-waking
-        # sessions — and carries no time of day, which absolute scheduling
-        # (sleep_until, scheduled tasks) needs to compute wake times.
-        now = datetime.now().astimezone()
-        parts = [f"Now: {now.strftime('%Y-%m-%d %H:%M')} ({now.tzname()})"]
+        # Nothing here may move on its own (OPE-192). The block is glued onto a message
+        # the provider has already cached, so a value that changes by itself — the live
+        # clock this block carried from 2026-08-20 to 2026-09-17 — rewrites that message
+        # on every turn and throws the whole cached conversation away. The time is a
+        # tool now (`current_time`, registered for every session) and a timer wake says
+        # when it fired; the folders, mode notices and skill menu below change only when
+        # the user changes something.
+        parts: list[str] = []
         if permissions.mode is Mode.PLAN:
             parts.append(_PLAN_MODE_CONTEXT)
         elif permissions.mode is Mode.DISCUSS:
@@ -526,6 +578,12 @@ def build_engine(
                 )
         return "\n\n".join(parts)
 
+    cap = (
+        tool_result_max_bytes
+        if tool_result_max_bytes is not None
+        else config.tool_result_max_bytes
+    )
+
     engine = TurnEngine(
         provider=provider,
         registry=registry,
@@ -533,6 +591,8 @@ def build_engine(
         model=model,
         instructions=instructions,
         approver=approver,
+        tool_result_max_bytes=cap,
+        tool_result_spill_dir=spill_dir,
         # Stop kills the in-flight foreground shell command, not just the loop.
         interrupt_hooks=[executor.interrupt_now] if executor is not None else None,
         max_iterations=(
@@ -549,6 +609,19 @@ def build_engine(
         team_approver=team_approver,
         items_approver=items_approver,
     )
+    # OPE-186 change 3: a configured compaction cap makes the summariser fire earlier
+    # than the built-in 250,000-token cap. The window still comes from the model matrix.
+    # OPE-189: the summariser's own output ceiling rides the same settings dict; unset
+    # keys fall back to the engine's defaults, so setting either one alone is safe.
+    _compaction_overrides: dict[str, Any] = {}
+    if config.compaction_cap_tokens:
+        _compaction_overrides["cap_tokens"] = int(config.compaction_cap_tokens)
+    if config.compaction_summary_max_tokens:
+        _compaction_overrides["summary_max_tokens"] = int(
+            config.compaction_summary_max_tokens
+        )
+    if _compaction_overrides:
+        engine.compaction_settings = lambda: dict(_compaction_overrides)
     engine.executor = executor  # type: ignore[attr-defined]
     engine.todo = todo  # type: ignore[attr-defined]
     engine.agent_name = agent.name  # type: ignore[attr-defined]

@@ -7,6 +7,14 @@
 model = "gpt-5.5"            # default model id (override per session in the UI/CLI)
 mode = "interactive"         # plan | interactive | auto | custom
 max_iterations = 12          # max model<->tool iterations per turn before stopping
+# max_output_tokens = 64000  # per-reply output cap sent as max_tokens (thinking + text +
+                             # tool arguments). Unset = provider default (32000; Bedrock
+                             # 4096). Env override: COWORKER_MAX_OUTPUT_TOKENS.
+# reasoning_effort = "high"  # low | medium | high | xhigh | max — how hard the model thinks
+                             # per reply, translated per provider (Anthropic output_config
+                             # .effort; Together/Moonshot reasoning_effort). Unset = provider
+                             # default (Anthropic high, Kimi K3 max). Env override:
+                             # COWORKER_REASONING_EFFORT.
 
 # Commands auto-allowed without an approval prompt (prefix match).
 allowed_commands = [

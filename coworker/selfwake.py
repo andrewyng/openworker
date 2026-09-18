@@ -2,7 +2,8 @@
 
 Converts an always-on agent into suspend/resume (event-driven, ~zero idle cost): the session
 sleeps and the runtime re-invokes it when a wake is due. Two triggers here: a **timer**
-(`sleep_until`) and **on-completion** (`wake_on` a backgrounded job). This module
+(`sleep_for` relative, `sleep_until` absolute) and **on-completion** (`wake_on` a
+backgrounded job). This module
 owns the wake records + the due/complete logic; the scheduler tick consumes ``due()`` /
 ``complete_job()`` and resumes the session (shares the automation scheduler — see
 ``PERMISSIONS-AND-INBOX.md``).
@@ -155,11 +156,21 @@ class WakeStore:
 def selfwake_tools(store: WakeStore, session_id: str) -> list:
     """Tools an agent calls to schedule its own resumption."""
 
+    def sleep_for(seconds: int, note: str = "") -> dict:
+        """Suspend and wake this session after `seconds` (a relative wait: "check again in
+        5 minutes" is sleep_for(300)). Use it for polling/waiting without burning context
+        while idle. No clock arithmetic needed — the runtime computes the wake time."""
+        secs = int(seconds)
+        if secs <= 0:
+            raise ValueError("sleep_for needs a positive number of seconds")
+        w = store.add_timer(session_id, _now() + timedelta(seconds=secs), note=note)
+        return {"ok": True, "wake_id": w.id, "fire_at": w.fire_at}
+
     def sleep_until(when_iso: str, note: str = "") -> dict:
         """Suspend and wake this session at an ISO-8601 timestamp (timezone-aware; bare
-        timestamps are read as UTC). Use it for polling/waiting without burning context
-        while idle — for a relative wait ("check again in 5 minutes"), compute the
-        timestamp from the `Now:` line in your context."""
+        timestamps are read as UTC) — for an absolute time ("at 09:00 tomorrow"). Call
+        `current_time` first if you need today's date or the timezone; for a relative wait
+        use sleep_for instead."""
         when = datetime.fromisoformat(when_iso)
         if when.tzinfo is None:
             when = when.replace(tzinfo=timezone.utc)
@@ -177,4 +188,4 @@ def selfwake_tools(store: WakeStore, session_id: str) -> list:
         w = store.add_event(session_id, event_key, note=note)
         return {"ok": True, "wake_id": w.id, "event_key": event_key}
 
-    return [sleep_until, wake_on, wake_on_event]
+    return [sleep_for, sleep_until, wake_on, wake_on_event]

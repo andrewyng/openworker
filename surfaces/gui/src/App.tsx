@@ -891,6 +891,10 @@ export function App() {
         case "turn_end":
           if (d.status === "max_iterations_exceeded")
             setItems((p) => [...p, { kind: "notice", tone: "warn", text: t("app.notice.max_iterations") }]);
+          // OPE-171: the reply kept hitting the output-token limit with no action; the
+          // engine stopped rather than report a cut-off reply as the answer.
+          else if (d.status === "truncated")
+            setItems((p) => [...p, { kind: "notice", tone: "warn", text: d.text || t("app.notice.truncated") }]);
           break;
         case "mode_notice":
           // Server-authored + persisted (owner ruling 2026-08-24): the Auto-Approve
@@ -923,6 +927,12 @@ export function App() {
             },
           ]);
           announceMemoryChanged(); // Settings ▸ Memory, if open, is now stale
+          break;
+        case "continuation":
+          // OPE-171: a reply cut off at the output limit with no tool call — the engine
+          // nudged the model and is going round again; one quiet line so the pause and
+          // the extra model call are explained.
+          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || t("app.notice.continuation") }]);
           break;
         case "compacting":
           setCompacting(true);

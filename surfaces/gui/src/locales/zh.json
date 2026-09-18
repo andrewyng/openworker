@@ -415,6 +415,8 @@
       "interrupted": "已中断。",
       "error": "错误：",
       "context_compacted": "上下文已压缩",
+      "continuation": "回复在输出上限处被截断，正在让模型继续。",
+      "truncated": "已停止：回复在输出上限处被截断且未执行任何操作。",
       "input_rejected": "该消息已被拒绝。",
       "unknown": "未知"
     },
