@@ -16,6 +16,12 @@ max_iterations = 12          # max model<->tool iterations per turn before stopp
                              # default (Anthropic high, Kimi K3 max). Env override:
                              # COWORKER_REASONING_EFFORT.
 
+# Web search provider for the `web_search` tool.
+#   duckduckgo (keyless default) | tavily | brave | firecrawl
+# The keyed providers read their key from the SecretStore (set in the UI) or a
+# <PROVIDER>_API_KEY env var, e.g. FIRECRAWL_API_KEY. See https://docs.firecrawl.dev
+web_search_provider = "duckduckgo"
+
 # Commands auto-allowed without an approval prompt (prefix match).
 allowed_commands = [
   "ls", "cat", "pwd", "grep", "find",
