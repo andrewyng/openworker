@@ -18,6 +18,10 @@
 
 当前已覆盖常用会话、设置、模型供应商、导航、模型选择和部分连接器文案。少量高级功能、连接器详情和开发者文案仍可能显示英文；遇到问题请在 Fork 仓库提交 Issue，并注明系统、版本和复现步骤。
 
+### Maintainer note
+
+I maintain this community fork and contributed its Simplified Chinese localization, language switcher, fork-specific release builds, and safeguards against upstream auto-updates replacing the localized version. I am responsible for tracking upstream changes, preserving the translation work during upgrades, fixing localization issues, and publishing macOS and Windows builds. Next, I plan to expand translation coverage, improve terminology consistency, and make upstream synchronization and release checks more reliable.
+
 ![OpenWorker 简体中文会话界面](docs/assets/openworker-zh-session.png)
 
 ![OpenWorker 简体中文设置界面](docs/assets/openworker-zh-settings.png)
