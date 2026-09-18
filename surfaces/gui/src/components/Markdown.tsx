@@ -31,14 +31,22 @@ function BoardChip({ label }: { label: string }) {
 
 function ArtifactChip({ path, title }: { path: string; title: string }) {
   const { t } = useTranslation();
-  const file = path.split("/").pop() || path;
+  let decodedPath = path;
+  try {
+    decodedPath = decodeURIComponent(path);
+  } catch {
+    // Literal percent signs are valid in filenames even when they are not URL encoding.
+  }
+  const file = decodedPath.split(/[\\/]/).pop() || decodedPath;
   return (
     <button
       className="art-chip"
       data-testid="artifact-chip"
-      title={path}
+      title={decodedPath}
       onClick={() =>
-        window.dispatchEvent(new CustomEvent(OPEN_ARTIFACT_EVENT, { detail: { path } }))
+        window.dispatchEvent(
+          new CustomEvent(OPEN_ARTIFACT_EVENT, { detail: { path: decodedPath } }),
+        )
       }
     >
       <span className="art-chip-ico">
