@@ -1225,6 +1225,10 @@ def create_app(manager: SessionManager) -> FastAPI:
     def mcp_patch(name: str, body: dict) -> dict[str, Any]:
         return manager.patch_mcp(name, body or {})
 
+    @app.put("/v1/mcp/{name}")
+    async def mcp_replace(name: str, body: dict) -> dict[str, Any]:
+        return await manager.replace_mcp(name, body)
+
     @app.delete("/v1/mcp/{name}")
     def mcp_delete(name: str) -> dict[str, Any]:
         return manager.delete_mcp(name)

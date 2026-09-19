@@ -66,6 +66,7 @@ class MCPManager:
         self._ready: dict[str, asyncio.Future] = {}
         self._interactive: set[str] = set()
         self._closing = False
+        self._disconnecting: set[str] = set()
         self._connect_timeout = connect_timeout
         self._interactive_timeout = interactive_timeout
         # SecretStore for OAuth servers' token persistence (mcp/oauth.py); lazy default
@@ -82,6 +83,8 @@ class MCPManager:
         """
         if self._closing:
             raise RuntimeError("MCP connections are closing; retry shortly")
+        if server.name in self._disconnecting:
+            raise RuntimeError("MCP server is reloading; retry shortly")
         existing = self._conns.get(server.name)
         if existing is not None:
             return existing
@@ -127,6 +130,8 @@ class MCPManager:
         detect a dead server (owner-hit 2026-08-21). Here a cached connection is
         round-tripped (tools/list, refreshing the tool set); a dead one is torn
         down and reconnected fresh."""
+        if server.name in self._disconnecting:
+            raise RuntimeError("MCP server is reloading; retry shortly")
         conn = self._conns.get(server.name)
         if conn is not None:
             try:
@@ -135,15 +140,10 @@ class MCPManager:
                 )
                 return conn
             except Exception:
-                conn.shutdown.set()
-                task = self._tasks.get(server.name)
-                if task is not None:
-                    try:
-                        await asyncio.wait_for(asyncio.shield(task), timeout=5)
-                    except Exception:
-                        task.cancel()
-                        await asyncio.gather(task, return_exceptions=True)
-                self._conns.pop(server.name, None)  # _serve pops too; belt and braces
+                if self._conns.get(server.name) is conn:
+                    await self.disconnect(server.name)
+                else:
+                    raise RuntimeError("MCP connection changed during verification")
         return await self.ensure(server, interactive=interactive)
 
     def last_stderr(self, name: str) -> Optional[str]:
@@ -158,6 +158,33 @@ class MCPManager:
             raise RuntimeError(f"MCP server not connected: {name}")
         result = await conn.session.call_tool(tool, arguments or {})
         return _result_payload(result)
+
+    async def disconnect(self, name: str) -> None:
+        """Close one server, including a pending handshake, before reconfiguration."""
+        self._disconnecting.add(name)
+        task = self._tasks.get(name)
+        ready = self._ready.get(name)
+        try:
+            conn = self._conns.pop(name, None)
+            if conn is not None:
+                conn.shutdown.set()
+            elif task is not None:
+                task.cancel()
+            if task is not None:
+                _, pending = await asyncio.wait({task}, timeout=5)
+                if pending:
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        finally:
+            # A task cancelled before its first instruction never enters _serve's
+            # finally block. Unblock its waiters and clear that attempt here too.
+            if ready is not None and not ready.done():
+                ready.set_exception(RuntimeError(f"MCP server '{name}' disconnected"))
+            if self._tasks.get(name) is task:
+                self._tasks.pop(name, None)
+                self._ready.pop(name, None)
+                self._interactive.discard(name)
+            self._disconnecting.discard(name)
 
     async def aclose(self) -> None:
         self._closing = True

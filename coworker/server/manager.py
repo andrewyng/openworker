@@ -328,6 +328,8 @@ class SessionManager:
         # OAuth MCP servers with a sign-in in flight / their last connect error —
         # feeds list_mcp's status so the GUI can show "authorizing…" and failures.
         self._mcp_authorizing: set[str] = set()
+        self._mcp_reloading: set[str] = set()
+        self._mcp_versions: dict[str, int] = {}
         self._mcp_errors: dict[str, str] = {}
         # ChatGPT-subscription provider sign-in in flight / its last error — feeds
         # the providers list + status route so the GUI can show "authorizing…".
@@ -1781,13 +1783,18 @@ class SessionManager:
             elif persona_mcp is not None and server.name not in persona_mcp:
                 # Raw servers outside the persona's declared scope stay off its sessions.
                 return []
+            version = self._mcp_versions.get(server.name, 0)
             try:
                 conn = await self.mcp.ensure(server)
+                if self._mcp_versions.get(server.name, 0) != version:
+                    return []
                 self._mcp_errors.pop(server.name, None)
                 # Recovery resets the notice dedupe: if this server breaks again
                 # later, the next session gets a fresh transcript notice.
                 self._clear_mcp_notified(server.name)
             except Exception as exc:
+                if self._mcp_versions.get(server.name, 0) != version:
+                    return []
                 if mcp_oauth.is_auth_required(exc):
                     # Stored tokens no longer refresh (vendor rotated/expired
                     # them) — the non-interactive connect refused to open a
@@ -1898,7 +1905,9 @@ class SessionManager:
                 continue
             connected = name in self.mcp._conns
             is_oauth = str(raw.get("auth", "")).lower() == "oauth"
-            if connected:
+            if name in self._mcp_reloading:
+                status = "reloading"
+            elif connected:
                 status = "connected"
             elif not raw.get("enabled", True):
                 status = "disabled"
@@ -1947,7 +1956,7 @@ class SessionManager:
         so a failing Test showed nothing until the lazy 5s tick (owner-hit
         2026-08-21 — the button looked dead). Known names only, so an unknown
         server can't wedge the flag (connect_mcp only clears it on a match)."""
-        if name in read_global():
+        if name in read_global() and name not in self._mcp_reloading:
             self._mcp_authorizing.add(name)
 
     async def connect_mcp(self, name: str) -> dict[str, Any]:
@@ -1956,6 +1965,9 @@ class SessionManager:
         list_mcp for the status flip."""
         from ..mcp import oauth as mcp_oauth
 
+        if name in self._mcp_reloading:
+            return {"ok": False, "error": "MCP server is reloading; retry shortly"}
+        version = self._mcp_versions.get(name, 0)
         for server in load_mcp_servers(
             self.default_workspace,
             secrets=self.secrets,
@@ -1971,6 +1983,8 @@ class SessionManager:
                 # verify (not ensure): an already-live server gets a real round-trip
                 # and a refreshed tool list instead of a cached yes.
                 conn = await self.mcp.verify(server, interactive=True)
+                if self._mcp_versions.get(name, 0) != version:
+                    return {"ok": False, "error": "MCP configuration changed during connect"}
                 # The Connectors row says "Ready · tested ⟨when⟩" — the claim must
                 # survive an app restart, so it lives in prefs, not memory.
                 self._prefs.setdefault("mcp_last_test", {})[name] = int(time.time())
@@ -1978,6 +1992,8 @@ class SessionManager:
                 self._clear_mcp_notified(name)
                 return {"ok": True, "tools": len(conn.tools)}
             except Exception as exc:
+                if self._mcp_versions.get(name, 0) != version:
+                    return {"ok": False, "error": "MCP configuration changed during connect"}
                 if (
                     server.transport == "http"
                     and server.auth != "oauth"
@@ -1995,7 +2011,8 @@ class SessionManager:
                 self._mcp_errors[name] = msg[:500]
                 return {"ok": False, "error": self._mcp_errors[name]}
             finally:
-                self._mcp_authorizing.discard(name)
+                if self._mcp_versions.get(name, 0) == version:
+                    self._mcp_authorizing.discard(name)
         self._mcp_authorizing.discard(name)  # begin_mcp_connect flagged a name we never matched
         return {"ok": False, "error": f"unknown MCP server: {name}"}
 
@@ -2054,6 +2071,64 @@ class SessionManager:
     def patch_mcp(self, name: str, changes: dict[str, Any]) -> dict[str, Any]:
         ok = patch_global_server(name, changes)
         return {"ok": ok, "name": name}
+
+    async def replace_mcp(self, name: str, config: dict[str, Any]) -> dict[str, Any]:
+        """Save an edited config and reconnect only this server with fresh tools."""
+        from ..mcp.config import edited_server_config
+        from ..mcp import oauth as mcp_oauth
+
+        current = read_global().get(name)
+        if current is None:
+            return {"ok": False, "error": "MCP server no longer exists; refresh the list"}
+        if name in self._mcp_reloading:
+            return {"ok": False, "error": "This server is already reloading; retry shortly"}
+        try:
+            updated = edited_server_config(config, current)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        self._mcp_reloading.add(name)
+        self._mcp_versions[name] = self._mcp_versions.get(name, 0) + 1
+        try:
+            await self.mcp.disconnect(name)
+            self._mcp_authorizing.discard(name)
+            put_global_server(name, updated)
+            # OAuth registrations/tokens belong to their server URL. Never reuse
+            # them for a different destination after editing the config.
+            if (current.get("url"), current.get("auth")) != (
+                updated.get("url"), updated.get("auth")
+            ):
+                mcp_oauth.sign_out(name, self.secrets)
+            self._mcp_errors.pop(name, None)
+            self._mcp_auth_hints.discard(name)
+            if self._prefs.get("mcp_last_test", {}).pop(name, None) is not None:
+                self._save_prefs()
+            self._clear_mcp_notified(name)
+            if not updated.get("enabled", True):
+                return {"ok": True, "status": "disabled"}
+            if updated.get("auth") == "oauth" and not mcp_oauth.has_tokens(name, self.secrets):
+                return {"ok": True, "status": "needs_auth"}
+            server = next(s for s in load_mcp_servers(None, secrets=self.secrets) if s.name == name)
+            try:
+                conn = await self.mcp.ensure(server)
+            except Exception as exc:
+                error = (
+                    "Sign-in required — reconnect this server from its page"
+                    if mcp_oauth.is_auth_required(exc)
+                    else str(exc) or exc.__class__.__name__
+                )
+                if server.transport == "http" and server.auth != "oauth" and mcp_oauth.is_http_auth_error(exc):
+                    self._mcp_auth_hints.add(name)
+                    error = "authentication required — sign in to connect"
+                tail = self.mcp.last_stderr(name)
+                if tail:
+                    error = f"{error} — {tail}"
+                self._mcp_errors[name] = error[:500]
+                return {"ok": True, "status": "error", "error": error}
+            self._mcp_errors.pop(name, None)
+            return {"ok": True, "status": "connected", "tool_count": len(conn.tools)}
+        finally:
+            self._mcp_reloading.discard(name)
 
     def delete_mcp(self, name: str) -> dict[str, Any]:
         ok = delete_global_server(name)

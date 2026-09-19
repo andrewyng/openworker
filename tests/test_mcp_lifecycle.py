@@ -240,3 +240,38 @@ async def test_real_stalled_subprocess_is_reaped(stdio_server, tmp_path):
     pid = int((tmp_path / 'stall.pid').read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+async def test_disconnect_one_server_reloads_new_tools_without_closing_others(transport):
+    sessions, entered, exited = transport
+    sessions.update(edited=Session(), other=Session())
+    manager = MCPManager()
+    try:
+        await manager.ensure(server('edited'))
+        other = await manager.ensure(server('other'))
+        await manager.disconnect('edited')
+        assert exited == ['edited']
+        assert await manager.ensure(server('other')) is other
+        sessions['edited'] = Session(pages={None: (['updated_tool'], None)})
+        conn = await manager.ensure(server('edited'))
+        assert [t.name for t in conn.tools] == ['updated_tool']
+        assert entered == ['edited', 'other', 'edited']
+    finally:
+        await manager.aclose()
+
+
+async def test_disconnect_pending_handshake_allows_reconnect(transport):
+    sessions, _, _ = transport
+    sessions['edited'] = Session(hang='initialize')
+    manager = MCPManager()
+    waiter = asyncio.create_task(manager.ensure(server('edited')))
+    try:
+        await sessions['edited'].started.wait()
+        await manager.disconnect('edited')
+        with pytest.raises(RuntimeError, match='cancelled'):
+            await waiter
+        sessions['edited'] = Session()
+        await manager.ensure(server('edited'))
+        assert 'edited' in manager._conns
+    finally:
+        await manager.aclose()
