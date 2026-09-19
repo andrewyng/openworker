@@ -14,6 +14,7 @@ import {
 } from "../api";
 import { openExternal } from "../tauri";
 import { PROVIDER_LOGOS, providerRank } from "./logos";
+import { OpenRouterSignIn } from "./OpenRouterSignIn";
 
 // The provider gallery ⇄ key form, shared by Onboarding step 1 (§39) and
 // Settings ▸ Models (UX-021) so the two can never drift apart visually. The hook
@@ -133,7 +134,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   }, []);
 
   const info = providers.find((p) => p.name === sel);
-  const credentialed = !!info?.configured && !!info?.needs_key;
+  const credentialed = (info?.api_key_configured ?? !!info?.configured) && !!info?.needs_key;
 
   const openProvider = (name: string) => {
     const p = providers.find((x) => x.name === name);
@@ -168,7 +169,13 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
       setVerify({ state: "error", msg: res.error || t("provider.err_couldnt_verify") });
       return false;
     }
-    if (dirty || !info?.configured) await setProvider(sel, fields).catch(() => {});
+    if (dirty || !info?.configured || sel === "openrouter") {
+      const saved = await setProvider(sel, fields).catch(() => ({ ok: false }));
+      if (!saved.ok) {
+        setVerify({ state: "error", msg: t("provider.err_unreachable") });
+        return false;
+      }
+    }
     if (!info?.needs_key) setKeylessOk((s) => new Set(s).add(sel));
     setVerify({ state: "ok" });
     setDirty(false);
@@ -533,6 +540,8 @@ export function ProviderForm({
             !(f.key === "base_url" && keyed),
         )
         .map((f) => fieldRow(f, !choice && f.key === testKey))}
+
+      {sel === "openrouter" && <OpenRouterSignIn tp={tp} onChanged={ps.refreshProviders} />}
 
       {/* Auth-method segmented control + the selected method's panel (owner call
           2026-07-26): one joined track, then a soft inset card holding only that

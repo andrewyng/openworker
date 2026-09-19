@@ -22,6 +22,15 @@ It runs on your machine and doesn't lock you into any model: bring your own API 
 
 Open the app, add a model key (or point it at Ollama), and ask for something real.
 
+For OpenRouter, open **Settings → Models → OpenRouter** (also available during
+setup). Enter an API key and click **Test**, or choose **Sign in with OpenRouter**
+below the key field. Browser sign-in uses your OpenRouter credits and stores the
+issued key locally. For a remote backend, choose **Use a manual code** and paste
+the code shown by OpenRouter. Signing in selects account credentials; testing and
+saving an API key explicitly switches back. Disconnecting an active account does
+not silently fall back to a saved or environment key. To revoke the issued key
+remotely, use the **Manage or revoke keys on OpenRouter** link.
+
 ## Use cases
 
 Pick a coworker, point it at real work, get a finished deliverable:

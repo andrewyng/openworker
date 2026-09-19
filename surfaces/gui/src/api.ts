@@ -2207,6 +2207,7 @@ export interface ProviderField {
 }
 
 export interface ProviderInfo {
+  api_key_configured?: boolean;
   name: string;
   title: string;
   needs_key: boolean;
@@ -2227,6 +2228,26 @@ export interface ProviderInfo {
 }
 
 // -- ChatGPT-subscription provider sign-in (OAuth; tokens never reach the GUI) ------
+export interface OpenRouterAuthStatus {
+  connected: boolean;
+  active: boolean;
+  authorizing: boolean;
+  attempt_id: string | null;
+  authorize_url: string | null;
+  error: string | null;
+}
+
+export async function openRouterAuth(
+  action: "status" | "signin" | "complete" | "cancel" | "disconnect",
+  body: Record<string, unknown> = {},
+): Promise<OpenRouterAuthStatus> {
+  const response = await fetch(`${httpBase()}/v1/providers/openrouter/${action}`, action === "status" ? undefined : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error("OpenRouter authentication request failed");
+  return response.json();
+}
+
 export interface CodexAuthStatus {
   signed_in: boolean;
   account?: string | null;

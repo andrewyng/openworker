@@ -210,6 +210,16 @@ def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = 
     """
 
     def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+        if vendor == "OpenRouter" and profile.get("auth_method") == "account":
+            account = (secrets.get("provider:openrouter-account") or {}) if secrets else {}
+            if not profile.get("account_connected") or not account.get("api_key"):
+                raise RuntimeError(
+                    "OpenRouter account disconnected — sign in or explicitly save an API key."
+                )
+            # Browser credentials must never be sent to a custom gateway.
+            return OpenAIProvider(
+                api_key=account["api_key"], base_url="https://openrouter.ai/api/v1"
+            )
         base_url = ((profile or {}).get("base_url") or "").strip() or default_base_url
         api_key = ((profile or {}).get("api_key") or "").strip() or (
             os.environ.get(env_key, "").strip() if env_key else ""
@@ -717,6 +727,8 @@ def descriptor_configured(d: ProviderDescriptor, profile: dict[str, Any]) -> boo
     a stored or env key. Multi-field cloud providers (no `api_key` field, e.g. Bedrock):
     every required field present — their actual credentials may be ambient (~/.aws, ADC).
     """
+    if d.name == "openrouter" and profile.get("auth_method") == "account":
+        return bool(profile.get("account_connected"))
     if d.auth == "oauth":
         # A stored token set = signed in (the tokens live in the same profile).
         return bool((profile or {}).get("tokens"))

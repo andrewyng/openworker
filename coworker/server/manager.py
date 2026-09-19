@@ -3581,6 +3581,10 @@ class SessionManager:
                     d.name
                 ),
             }
+            if d.name == "openrouter":
+                row["api_key_configured"] = bool(
+                    profile.get("api_key") or os.environ.get("OPENROUTER_API_KEY")
+                )
             if d.auth == "oauth":
                 # Sign-in state instead of key state; the token values themselves
                 # never leave the SecretStore.
@@ -3695,7 +3699,10 @@ class SessionManager:
                 profile[f.key] = val
             elif not f.required:
                 profile.pop(f.key, None)
-        missing = [f.label for f in d.fields if f.required and not profile.get(f.key)]
+        missing = [
+            f.label for f in d.fields if f.required and not profile.get(f.key)
+            and not (name == "openrouter" and f.key == "api_key" and os.environ.get("OPENROUTER_API_KEY"))
+        ]
         if missing:
             return {"ok": False, "error": "missing: " + ", ".join(missing)}
         # A (re)pasted key stamps its save date — Settings shows "key added <date>" so stale
@@ -3704,6 +3711,8 @@ class SessionManager:
             from datetime import date
 
             profile["key_set_at"] = date.today().isoformat()
+        if name == "openrouter" and "api_key" in fields:
+            profile["auth_method"] = "api_key"
         self.secrets.put(f"provider:{name}", profile)
         self.adopt_provider_default(name)
         return {"ok": True, "provider": name, "recommended_model": d.recommended_model}
@@ -3740,7 +3749,14 @@ class SessionManager:
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
-        self.secrets.delete(f"provider:{name}")
+        if name == "openrouter":
+            profile = self.secrets.get("provider:openrouter") or {}
+            self.secrets.put("provider:openrouter", {
+                key: value for key, value in profile.items()
+                if key in {"auth_method", "account_connected"}
+            })
+        else:
+            self.secrets.delete(f"provider:{name}")
         self._refresh_provider(name)
         return {"ok": True, "provider": name}
 

@@ -1,4 +1,20 @@
 {
+  "openrouter": {
+    "title": "Or connect your OpenRouter account",
+    "note": "Uses your OpenRouter credits. Signing in selects account billing; testing and saving an API key selects that key instead.",
+    "signin": "Sign in with OpenRouter",
+    "manual": "Use a manual code",
+    "waiting": "Complete sign-in in your browser.",
+    "reopen": "Reopen browser",
+    "cancel": "Cancel",
+    "code": "Authorization code",
+    "connect": "Connect",
+    "active": "Connected · account credentials active",
+    "saved": "Account saved · API key active",
+    "disconnect": "Disconnect account",
+    "manage": "Manage or revoke keys on OpenRouter",
+    "unreachable": "Could not complete the request. Check the connection and try again."
+  },
   "boot": {
     "starting": "Starting OpenWorker…",
     "restoring": "Restoring your session…"
