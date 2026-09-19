@@ -472,6 +472,7 @@ class PermissionEngine:
             honor_session_grants
             and tool_name in self.session_allow_tools
             and not is_connector
+            and not is_shell
         ):
             return Decision(True, "tool allowed for session")
         # Run grant (OPE-136 "Allow for this request"): same checkpoint, shorter life —
