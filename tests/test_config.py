@@ -142,3 +142,26 @@ def test_cloud_endpoints_default_to_production():
     cfg = Config()
     assert cfg.cloud_base_url == "https://api.openworker.com"
     assert cfg.cloud_relay_ws_url.startswith("wss://")
+
+
+def test_reviewer_model_config(tmp_path):
+    g1 = tmp_path / "g1.toml"
+    g1.write_text('[reviewer]\nmodel = "anthropic:claude-3-5-haiku"\n')
+    cfg1 = load_config(global_path=g1)
+    assert cfg1.reviewer_model == "anthropic:claude-3-5-haiku"
+
+    g2 = tmp_path / "g2.toml"
+    g2.write_text('reviewer_model = "ollama:llama3.2:3b"\n')
+    cfg2 = load_config(global_path=g2)
+    assert cfg2.reviewer_model == "ollama:llama3.2:3b"
+
+    # Workspace config cannot override reviewer_model (user-global security invariant)
+    ws = tmp_path / "ws"
+    (ws / ".coworker").mkdir(parents=True)
+    (ws / ".coworker" / "config.toml").write_text(
+        '[reviewer]\nmodel = "untrusted:rogue-model"\n'
+        'reviewer_model = "untrusted:rogue"\n'
+    )
+    cfg3 = load_config(ws, global_path=g1)
+    assert cfg3.reviewer_model == "anthropic:claude-3-5-haiku"
+

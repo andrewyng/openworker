@@ -283,6 +283,8 @@ def build_engine(
     # are user-global, preserving the "a repo can't enable this" invariant.
     auto_approve: Optional[bool] = None,
     auto_approve_shadow: Optional[bool] = None,
+    # Dedicated reviewer model (Issue #615). None ⇒ config.toml or session model.
+    reviewer_model: Optional[str] = None,
     # Persona-carried skill folders (OPE-58): the bundle's skills/ dir joins the loader so
     # its skills are readable by load_skill, not just listed by the filter.
     extra_skill_dirs: Optional[list[str | Path]] = None,
@@ -717,9 +719,11 @@ def build_engine(
     if live_on or shadow_on:
         from .reviewer import Reviewer
 
+        engine.reviewer_model = reviewer_model or config.reviewer_model or None
+        effective_reviewer_model = engine.reviewer_model or model
         engine.reviewer = Reviewer(
             provider=provider,
-            model=model,
+            model=effective_reviewer_model,
             known_world=engine.session_facts.world.render(),
         )
         # Shadow evaluation (Part 6 step 3): with only the shadow flag on, the reviewer is
