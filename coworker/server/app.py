@@ -1143,6 +1143,26 @@ def create_app(manager: SessionManager) -> FastAPI:
             ),
         )
 
+    @app.get("/v1/board/journal/export")
+    def board_journal_export(
+        request: Request,
+        case: str,
+        format: str = "markdown",
+        include_raw: str = "",
+    ):
+        return _board(
+            request,
+            lambda actor: {
+                "report": manager.journal_store.export(
+                    actor,
+                    case,
+                    store=manager.team_store,
+                    format=format,
+                    include_raw=bool(include_raw),
+                )
+            },
+        )
+
     @app.get("/v1/memory")
     def memory() -> dict[str, Any]:
         return {"memory": manager.list_memory()}

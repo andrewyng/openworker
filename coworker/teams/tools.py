@@ -11,7 +11,7 @@ session) and passes it at construction — the model never self-reports provenan
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import aisuite as ai
 
@@ -26,7 +26,7 @@ LEAD_VERBS = ("create_item", "list_items", "transition", "comment", "assign", "l
 # open, unassigned item — the store arbitrates races, the lead supervises by
 # exception (every claim lands in its feed; reassign/cancel revokes).
 WORKER_VERBS = ("create_item", "list_items", "transition", "comment", "claim")
-JOURNAL_VERBS = ("journal_append", "journal_read")
+JOURNAL_VERBS = ("journal_append", "journal_read", "export_journal_report")
 
 # Explicit schema: the auto-generator's normalizer strips every `title` key to drop
 # pydantic metadata, which also deletes a PARAMETER named `title` from properties.
@@ -193,6 +193,7 @@ def journal_tools(
     actor: Actor,
     space: str = "",
     taint: Callable[[], bool] = lambda: False,
+    store: Optional[Any] = None,
 ) -> list:
     def journal_append(
         case: str,
@@ -246,6 +247,25 @@ def journal_tools(
                     limit=limit,
                 )
             }
+        except (BoardError, ValueError) as error:
+            return {"error": str(error)}
+
+    def export_journal_report(
+        case: str,
+        format: str = "markdown",
+        include_raw: bool = False,
+    ) -> dict:
+        """Export a journal case and its referenced board items into a compiled
+        deliverable report (markdown or json)."""
+        try:
+            content = journal.export(
+                actor,
+                case,
+                store=store,
+                format=format,
+                include_raw=include_raw,
+            )
+            return {"case": case, "format": format, "content": content}
         except (BoardError, ValueError) as error:
             return {"error": str(error)}
 

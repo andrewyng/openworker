@@ -24,7 +24,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from .model import BoardError, space_for_workspace
 from .store import CLAIM_POLICIES
@@ -159,6 +159,20 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--item", type=int, default=None)
     p.add_argument("--entity", action="append", default=[], dest="entities")
     p.add_argument("--ref", action="append", default=[], dest="refs")
+
+    p = cmd(
+        "export",
+        _cmd_export,
+        "export a case and linked items into a report",
+        parent=journal_sub,
+    )
+    p.add_argument("case", nargs="?", default="")
+    p.add_argument("--case", dest="case_opt", default="", help="case identifier")
+    p.add_argument(
+        "--format", choices=("markdown", "json"), default="markdown"
+    )
+    p.add_argument("-o", "--out", default="", help="output path (default: stdout)")
+    p.add_argument("--raw", action="store_true", dest="include_raw")
 
     return parser
 
@@ -497,6 +511,28 @@ def _cmd_append(args) -> int:
         refs=args.refs,
     )
     print("ok" if not args.json else json.dumps({"ok": True}))
+    return 0
+
+
+def _cmd_export(args) -> int:
+    case = args.case or args.case_opt
+    if not case:
+        raise BoardError(
+            "case is required (pass case as argument or --case <id>)"
+        )
+    fmt = "json" if args.json else args.format
+    report = _dialect(args).journal_export(
+        case,
+        format=fmt,
+        include_raw=args.include_raw,
+    )
+    if args.out:
+        out_path = Path(args.out).expanduser()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(report, encoding="utf-8")
+        print(f"wrote {out_path}")
+    else:
+        print(report)
     return 0
 
 

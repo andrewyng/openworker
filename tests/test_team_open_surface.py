@@ -442,6 +442,10 @@ def test_remote_dialect_round_trip(api):
     assert "branch:x" in shown["refs"]
     entries = lead.journal_read("case-r")
     assert entries[0]["body"] == "wire finding"
+    exported = lead.journal_export("case-r", format="markdown")
+    assert "# Journal Case Report: case-r" in exported
+    assert "wire finding" in exported
+    assert "Remote item" in exported
     done = lead.transition("proj", item["id"], "done")
     assert done["state"] == "done"
 
@@ -1009,6 +1013,18 @@ def test_cli_headless_flow(tmp_path, capsys):
     capsys.readouterr()
     assert main(["journal", "read", "case-cli", *space_args]) == 0
     assert "found it" in capsys.readouterr().out
+    # journal export
+    assert main(["journal", "export", "case-cli", *space_args]) == 0
+    export_out = capsys.readouterr().out
+    assert "# Journal Case Report: case-cli" in export_out
+    assert "found it" in export_out
+
+    out_file = tmp_path / "report.md"
+    assert main(
+        ["journal", "export", "case-cli", "-o", str(out_file), *space_args]
+    ) == 0
+    assert out_file.exists()
+    assert "# Journal Case Report: case-cli" in out_file.read_text()
 
 
 def test_cli_worker_cannot_show_a_foreign_item(tmp_path, capsys):
