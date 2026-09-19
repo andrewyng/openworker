@@ -47,6 +47,27 @@ def test_connect_managed_requires_sign_in(client):
     assert "not signed in" in body["error"]
 
 
+def test_connect_managed_reports_signed_in_false_on_expired_session(client, monkeypatch):
+    """GitHub issue #658: /v1/cloud/status can still say signed_in=True from a
+    stale-but-present access_token (cloud.status only checks presence, not
+    freshness) while the actual connect attempt — which needs a token it can use
+    right now — correctly fails. The GUI (AddConnectionModal's SlackOneClick)
+    relies on this route's `signed_in: False` to recover into a sign-in prompt
+    instead of dead-ending on the bare error text."""
+    import time
+
+    from coworker import cloud
+
+    client.manager.secrets.put(
+        cloud.CLOUD_AUTH_PROFILE,
+        {"access_token": "stale", "expires": time.time() - 10},  # no refresh_token
+    )
+    assert client.get("/v1/cloud/status").json()["signed_in"] is True
+
+    body = client.post("/v1/connectors/slack/connect-managed").json()
+    assert body == {"ok": False, "error": "not signed in", "signed_in": False}
+
+
 def test_oauth_callback_writes_profile_and_returns_page(client):
     _allow_managed_state()
     resp = client.post(

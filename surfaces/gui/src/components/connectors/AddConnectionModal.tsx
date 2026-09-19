@@ -217,10 +217,17 @@ function SlackOneClick({ c, cloud }: { c: Connector; cloud: CloudStatus | null }
   const { t: tt } = useTranslation();
   const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The cloud-status poll runs every 5s (ConnectorsSection), so `cloud.signed_in`
+  // can still say true for a few seconds after the session actually expired.
+  // "Add to Slack" then dead-ended on a bare "not signed in" (issue #658) instead
+  // of recovering — this flag switches the pane to sign-in once the connect
+  // attempt itself (the authoritative check) says the session isn't usable.
+  const [sessionExpired, setSessionExpired] = useState(false);
   const go = async () => {
     setError(null);
     const res = await connectManaged(c.name);
     if (res.ok) setWaiting(true);
+    else if (res.signed_in === false) setSessionExpired(true);
     else setError(res.error || tt("modal.could_not_start_install"));
   };
   return (
@@ -228,12 +235,22 @@ function SlackOneClick({ c, cloud }: { c: Connector; cloud: CloudStatus | null }
       <p className="text-ui text-muted">
         {tt("modal.slack_blurb")}
       </p>
-      {cloud?.signed_in ? (
-        <button className={PILL_ACCENT + " w-full !py-2"} data-testid="modal-add-to-slack" onClick={go} disabled={waiting}>
-          {waiting ? tt("cloud.check_browser") : tt("modal.add_to_slack")}
+      {waiting ? (
+        // The sign-in retry (if any) already happened — always land here once
+        // connectManaged has actually succeeded, so a just-completed sign-in
+        // doesn't flash the "Sign in" button again while Slack's own consent
+        // tab is open.
+        <button className={PILL_ACCENT + " w-full !py-2"} data-testid="modal-add-to-slack" disabled>
+          {tt("cloud.check_browser")}
+        </button>
+      ) : sessionExpired ? (
+        <CloudSignInInline onSignedIn={go} />
+      ) : cloud?.signed_in ? (
+        <button className={PILL_ACCENT + " w-full !py-2"} data-testid="modal-add-to-slack" onClick={go}>
+          {tt("modal.add_to_slack")}
         </button>
       ) : cloud ? (
-        <CloudSignInInline />
+        <CloudSignInInline onSignedIn={go} />
       ) : (
         <CloudStatusPending />
       )}
