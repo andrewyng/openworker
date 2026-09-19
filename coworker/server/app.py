@@ -2446,6 +2446,10 @@ def create_app(manager: SessionManager) -> FastAPI:
     def automation_run_finalize(task_id: str, run_id: str) -> dict[str, Any]:
         return manager.finalize_manual_run(task_id, run_id)
 
+    @app.post("/v1/automations/{task_id}/stop")
+    def automation_stop(task_id: str) -> dict[str, Any]:
+        return manager.force_stop_automation(task_id)
+
     @app.websocket("/ws/session/{session_id}")
     async def ws_session(ws: WebSocket, session_id: str) -> None:
         if not _websocket_authenticated(ws):

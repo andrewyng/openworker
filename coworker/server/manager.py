@@ -361,7 +361,10 @@ class SessionManager:
         # The scheduler also resumes self-wake'd sessions each tick (extra_tick).
         self.task_store = TaskStore(base / "automation.db")
         self.scheduler = Scheduler(
-            self.task_store, self._run_scheduled_task, extra_tick=self._scheduler_tick
+            self.task_store,
+            self._run_scheduled_task,
+            extra_tick=self._scheduler_tick,
+            on_timeout=self._on_task_timeout,
         )
         # Agent teams: two append-only stores, one record discipline. The journal is
         # case-keyed (knowledge outlives boards/teams); the board log is space-scoped,
@@ -6173,8 +6176,8 @@ class SessionManager:
             f"⏰ Wake — the timer you set has fired{at}{note}. Continue where you left off."
         )
 
-    async def _run_scheduled_task(self, task, trigger: str) -> TaskRun:
-        run = TaskRun(
+    async def _run_scheduled_task(self, task, trigger: str, run: Optional[TaskRun] = None) -> TaskRun:
+        run = run or TaskRun(
             task_id=task.id, trigger=trigger
         )  # __post_init__ sets run.session_id
         self.task_store.add_run(run)  # mark "running"
@@ -6218,6 +6221,10 @@ class SessionManager:
             run.status = "ok"
             if task.notify_on_completion:
                 await self._notify_task_done(task, run)
+        except asyncio.CancelledError:
+            engine.request_interrupt()
+            run.status, run.error = "cancelled", "Run cancelled"
+            raise
         except Exception as exc:
             run.status, run.error = "error", str(exc)
         finally:
@@ -6266,6 +6273,33 @@ class SessionManager:
             except Exception:
                 pass
 
+    async def _on_task_timeout(self, task: ScheduledTask, run: TaskRun) -> None:
+        """Called by Scheduler when a task run times out (Issue #621)."""
+        if self.inbox:
+            try:
+                self.inbox.add_notification(
+                    run.session_id or task.task_session_id,
+                    f"⏰ Automation '{task.title}' timed out",
+                    body=(
+                        f"Task run timed out after {task.timeout_seconds or 900}s. "
+                        "The overlap guard has been released."
+                    ),
+                )
+            except Exception:
+                logger.exception("Failed to add timeout notification to inbox")
+        await self.broadcast_event(
+            {
+                "type": "automation_run_timeout",
+                "data": {
+                    "task_id": task.id,
+                    "task_title": task.title,
+                    "session_id": run.session_id,
+                    "run_id": run.run_id,
+                    "timeout_seconds": task.timeout_seconds,
+                },
+            }
+        )
+
     # -- automation REST --------------------------------------------------------
     def list_automations(self) -> dict[str, Any]:
         # Unseen = runs started after the task's seen mark (UX-023 sidebar badges).
@@ -6279,7 +6313,7 @@ class SessionManager:
                 {
                     **t.public(),
                     "unseen_runs": len(unseen),
-                    "unseen_failed": bool(unseen) and unseen[0].status == "error",
+                    "unseen_failed": bool(unseen) and unseen[0].status in ("error", "timed_out"),
                 }
             )
         return {"tasks": tasks}
@@ -6344,6 +6378,21 @@ class SessionManager:
             # rendered the grants, the submit IS the consent. Same validation as the
             # agent tool — only target-bound write grants survive.
             always_allowed_tools=grant_entries(payload.get("permissions")),
+            timeout_seconds=(
+                float(payload["timeout_seconds"])
+                if payload.get("timeout_seconds") is not None
+                else 900.0
+            ),
+            max_retries=(
+                int(payload["max_retries"])
+                if payload.get("max_retries") is not None
+                else 0
+            ),
+            retry_backoff_seconds=(
+                float(payload["retry_backoff_seconds"])
+                if payload.get("retry_backoff_seconds") is not None
+                else 60.0
+            ),
         )
         task.workspace = self._provision_scratch(task.task_session_id)
         self.task_store.save(task)
@@ -6361,6 +6410,12 @@ class SessionManager:
             task.instructions = changes["instructions"]
         if changes.get("title") is not None:
             task.title = changes["title"]
+        if changes.get("timeout_seconds") is not None:
+            task.timeout_seconds = float(changes["timeout_seconds"])
+        if changes.get("max_retries") is not None:
+            task.max_retries = int(changes["max_retries"])
+        if changes.get("retry_backoff_seconds") is not None:
+            task.retry_backoff_seconds = float(changes["retry_backoff_seconds"])
         if changes.get("cron") is not None:
             from croniter import croniter
 
@@ -6379,6 +6434,25 @@ class SessionManager:
                 if owner is not None and owner.id == task.id:
                     engine.permissions.task_rules = task.standing_rules()
         return {"ok": True, "task": task.public()}
+
+    def force_stop_automation(self, task_id: str) -> dict[str, Any]:
+        """Force-stop an in-flight automation run (Issue #621)."""
+        task = self.task_store.get(task_id)
+        if task is None:
+            return {"ok": False, "error": "not found"}
+        stopped = self.scheduler.force_stop(task_id)
+        for sid, engine in list(self._engines.items()):
+            owner = self.task_store.task_for_run_session(sid)
+            if owner is not None and owner.id == task_id:
+                engine.request_interrupt()
+                stopped = True
+        for r in self.task_store.runs(task_id, limit=5):
+            if r.status == "running":
+                r.status = "cancelled"
+                r.error = "Force stopped by user"
+                r.finished_at = _epoch()
+                self.task_store.add_run(r)
+        return {"ok": True, "task_id": task_id, "stopped": stopped}
 
     def delete_automation(self, task_id: str) -> dict[str, Any]:
         return {"ok": self.task_store.delete(task_id), "id": task_id}
