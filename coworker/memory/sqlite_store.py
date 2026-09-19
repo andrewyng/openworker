@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
 from pathlib import Path
@@ -41,6 +42,53 @@ class SQLiteMemoryStore(MemoryStore):
         if "summary" not in cols:
             self._conn.execute("ALTER TABLE memories ADD COLUMN summary TEXT")
         self._conn.commit()
+
+        # FTS5 full-text search index (companion virtual table + triggers)
+        self._fts_enabled = False
+        try:
+            fts_exists = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories_fts'"
+            ).fetchone()
+            self._conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                    content,
+                    summary,
+                    content=memories,
+                    content_rowid=id
+                )
+            """)
+            self._conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+                    INSERT INTO memories_fts(rowid, content, summary)
+                    VALUES (new.id, new.content, new.summary);
+                END;
+            """)
+            self._conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, content, summary)
+                    VALUES('delete', old.id, old.content, old.summary);
+                END;
+            """)
+            self._conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, content, summary)
+                    VALUES('delete', old.id, old.content, old.summary);
+                    INSERT INTO memories_fts(rowid, content, summary)
+                    VALUES (new.id, new.content, new.summary);
+                END;
+            """)
+            if not fts_exists:
+                mem_count = self._conn.execute(
+                    "SELECT count(*) FROM memories"
+                ).fetchone()[0]
+                if mem_count > 0:
+                    self._conn.execute(
+                        "INSERT INTO memories_fts(memories_fts) VALUES('rebuild')"
+                    )
+            self._conn.commit()
+            self._fts_enabled = True
+        except sqlite3.OperationalError:
+            self._fts_enabled = False
 
     def add(
         self,
@@ -142,6 +190,94 @@ class SQLiteMemoryStore(MemoryStore):
             )
             self._conn.commit()
         return cursor.rowcount
+
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        scope: Optional[Scope] = None,
+        workspace: Optional[str] = None,
+    ) -> list[MemoryItem]:
+        """Search memories using FTS5 full-text index with fallback to LIKE matching."""
+        if not query or not query.strip():
+            return []
+        if not getattr(self, "_fts_enabled", False):
+            return self._search_like(
+                query, limit=limit, scope=scope, workspace=workspace
+            )
+
+        tokens = re.findall(r"\w+", query)
+        if not tokens:
+            return []
+        fts_query = " ".join(f'"{t}"*' for t in tokens)
+
+        sql = (
+            "SELECT m.* FROM memories m "
+            "JOIN memories_fts f ON m.id = f.rowid "
+            "WHERE memories_fts MATCH ?"
+        )
+        params: list[object] = [fts_query]
+        if scope is not None:
+            sql += " AND m.scope = ?"
+            params.append(Scope(scope).value)
+            if workspace is not None:
+                sql += " AND m.workspace = ?"
+                params.append(workspace)
+        elif workspace is not None:
+            sql += (
+                " AND (m.scope = 'global' OR (m.scope = 'workspace' AND m.workspace = ?))"
+            )
+            params.append(workspace)
+        sql += " ORDER BY f.rank LIMIT ?"
+        params.append(limit)
+
+        with self._lock:
+            try:
+                rows = self._conn.execute(sql, params).fetchall()
+                return [_row_to_item(row) for row in rows]
+            except sqlite3.OperationalError:
+                return self._search_like(
+                    query, limit=limit, scope=scope, workspace=workspace
+                )
+
+    def _search_like(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        scope: Optional[Scope] = None,
+        workspace: Optional[str] = None,
+    ) -> list[MemoryItem]:
+        like_pattern = f"%{query.strip()}%"
+        sql = "SELECT * FROM memories WHERE (content LIKE ? OR summary LIKE ?)"
+        params: list[object] = [like_pattern, like_pattern]
+        if scope is not None:
+            sql += " AND scope = ?"
+            params.append(Scope(scope).value)
+            if workspace is not None:
+                sql += " AND workspace = ?"
+                params.append(workspace)
+        elif workspace is not None:
+            sql += (
+                " AND (scope = 'global' OR (scope = 'workspace' AND workspace = ?))"
+            )
+            params.append(workspace)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [_row_to_item(row) for row in rows]
+
+    def rebuild_index(self) -> None:
+        """Rebuild the FTS5 search index."""
+        if not getattr(self, "_fts_enabled", False):
+            return
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO memories_fts(memories_fts) VALUES('rebuild')"
+            )
+            self._conn.commit()
 
     def close(self) -> None:
         self._conn.close()
