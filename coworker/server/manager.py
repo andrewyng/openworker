@@ -1741,7 +1741,6 @@ class SessionManager:
         ws = self.engine_workspace(session_id, workspace=workspace, agent=agent)
         loop = asyncio.get_running_loop()
         effective: Optional[set[str]] = None  # computed lazily, once
-        out: list[Any] = []
         # Persona `mcp:` wiring (OPE-58 sibling stub): a persona that declares an `mcp:`
         # list SCOPES its sessions to those servers — the consent screen already presents
         # that list as what the persona uses, so honoring it keeps consent truthful. It
@@ -1749,13 +1748,10 @@ class SessionManager:
         # and a persona with no list changes nothing. Connector-backed servers keep their
         # own per-persona connector gating instead.
         persona_mcp = self.persona_mcp_scope(agent)
-        for server in load_mcp_servers(
-            ws,
-            secrets=self.secrets,
-            workspace_trusted=self._mcp_workspace_trusted(ws),
-        ):
+        async def prepare_server(server) -> list[Any]:
+            nonlocal effective
             if not server.enabled:
-                continue
+                return []
             if server.auth == "oauth" and not mcp_oauth.has_tokens(
                 server.name, self.secrets
             ):
@@ -1764,7 +1760,7 @@ class SessionManager:
                 # full flow timeout (owner-hit 2026-07-20 — a failed one-click's
                 # leftover config froze all new sessions). Flows start only from an
                 # explicit connect in Settings/Connectors.
-                continue
+                return []
             descriptor = get_descriptor(server.name)
             backed = descriptor is not None and bool(descriptor.mcp_url)
             if backed:
@@ -1775,7 +1771,7 @@ class SessionManager:
                 if effective is None:
                     effective = self.effective_connectors(session_id, agent)
                 if server.name not in effective:
-                    continue
+                    return []
                 prefix = f"mcp__{server.name}__"
                 server.include_tools = [
                     t.name.removeprefix(prefix)
@@ -1784,7 +1780,7 @@ class SessionManager:
                 ]
             elif persona_mcp is not None and server.name not in persona_mcp:
                 # Raw servers outside the persona's declared scope stay off its sessions.
-                continue
+                return []
             try:
                 conn = await self.mcp.ensure(server)
                 self._mcp_errors.pop(server.name, None)
@@ -1829,7 +1825,7 @@ class SessionManager:
                     self._mcp_session_failures.setdefault(session_id, []).append(
                         server.name
                     )
-                continue
+                return []
             callables = build_callables(
                 server,
                 conn.tools,
@@ -1852,8 +1848,15 @@ class SessionManager:
                         fn.__aisuite_tool_metadata__.name, default=True
                     )
                     fn.__aisuite_tool_metadata__.category = "connector"
-            out.extend(callables)
-        return out
+            return callables
+
+        servers = load_mcp_servers(
+            ws,
+            secrets=self.secrets,
+            workspace_trusted=self._mcp_workspace_trusted(ws),
+        )
+        results = await asyncio.gather(*(prepare_server(server) for server in servers))
+        return [tool for tools in results for tool in tools]
 
     def _should_notify_mcp_failure(self, name: str, error: str) -> bool:
         """True once per failure episode: the first session after `name` starts

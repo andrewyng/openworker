@@ -434,8 +434,11 @@ async def test_verify_round_trips_a_live_connection_and_refreshes_tools():
     mgr = MCPManager()
 
     class _Session:
-        async def list_tools(self):
-            return SimpleNamespace(tools=[SimpleNamespace(name="fresh_tool")])
+        async def list_tools(self, cursor=None):
+            if cursor is None:
+                return SimpleNamespace(tools=[SimpleNamespace(name="fresh_tool")], nextCursor="page2")
+            assert cursor == "page2"
+            return SimpleNamespace(tools=[SimpleNamespace(name="last_tool")], nextCursor=None)
 
     conn = _Conn(_Session(), tools=[SimpleNamespace(name="stale_tool")])
     mgr._conns["srv"] = conn
@@ -443,7 +446,7 @@ async def test_verify_round_trips_a_live_connection_and_refreshes_tools():
 
     out = await mgr.verify(server)
     assert out is conn
-    assert [t.name for t in out.tools] == ["fresh_tool"]
+    assert [t.name for t in out.tools] == ["fresh_tool", "last_tool"]
 
 
 @pytest.mark.asyncio
@@ -455,7 +458,7 @@ async def test_verify_tears_down_a_dead_connection_and_reconnects():
     mgr = MCPManager()
 
     class _DeadSession:
-        async def list_tools(self):
+        async def list_tools(self, cursor=None):
             raise RuntimeError("connection reset")
 
     dead = _Conn(_DeadSession(), tools=[])
