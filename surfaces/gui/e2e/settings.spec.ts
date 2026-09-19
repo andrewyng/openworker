@@ -117,6 +117,29 @@ test("Models: BytePlus and Volcengine Ark stay visually and operationally separa
   await expect(preview).not.toContainText("Dola Seed");
 });
 
+test("Models: aimlapi.com is named aimlapi.com and previews its own model ids", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("account-row").click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Models", exact: true }).click();
+
+  // One display name everywhere, and its own brand mark rather than the fallback monogram.
+  const card = page.getByTestId("set-provider-aimlapi");
+  await expect(card).toContainText("aimlapi.com");
+  await expect(card).toContainText("Not set up");
+  expect(await card.locator("img").getAttribute("src")).toBeTruthy();
+
+  await card.click();
+  await page.getByTestId("set-endpoint-link").click();
+  await expect(page.getByTestId("set-field-base_url")).toHaveValue("https://api.aimlapi.com/v1");
+
+  // The reseller's ids are its own; OpenRouter's slug for the same model is not shown.
+  const preview = page.getByTestId("model-preview");
+  await expect(preview).toContainText("GLM-5.2 · via aimlapi.com");
+  await expect(preview).toContainText("DeepSeek V4 Pro · via aimlapi.com");
+  await expect(preview).not.toContainText("via OpenRouter");
+});
+
 // UX-021: a configured provider's form shows the in-field saved state and the Remove key…
 // affordance; removing reverts the card to "Not set up".
 test("Models: Remove key reverts a configured provider", async ({ page }) => {

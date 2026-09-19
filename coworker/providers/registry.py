@@ -31,6 +31,35 @@ from .vertex_provider import VertexProvider
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
+# aimlapi.com identifies the calling app with OpenRouter's `HTTP-Referer`/`X-Title` pair
+# plus two headers of its own. They name OpenWorker (the app making the call), not the
+# gateway, and they carry no user data — they exist so the gateway can tell OpenWorker
+# traffic apart from everyone else's. Deliberately NOT applied to any other vendor.
+AIMLAPI_BASE_URL = "https://api.aimlapi.com/v1"
+_AIMLAPI_ORIGIN = "https://api.aimlapi.com"
+AIMLAPI_ATTRIBUTION_HEADERS: dict[str, str] = {
+    "HTTP-Referer": "https://github.com/andrewyng/openworker",
+    "X-Title": "OpenWorker",
+    "X-AIMLAPI-Partner-ID": "part_nLTCEqZPnFgQDrMIuu7M5CoQ",
+    "X-AIMLAPI-Source": "agent/openworker",
+}
+
+
+def _aimlapi_headers(base_url: str) -> Optional[dict[str, str]]:
+    """Attribution headers, but only when the request is actually going to aimlapi.com.
+
+    `base_url` is a user-editable field, so a key repointed at a corporate proxy — or at
+    a different vendor entirely — must not carry these along. Scoping on the resolved
+    ORIGIN (not on the provider name) is what makes that impossible. Returns a fresh dict
+    so the module constant is never handed out to be mutated.
+    """
+    from urllib.parse import urlsplit
+
+    parts = urlsplit((base_url or "").strip())
+    if f"{parts.scheme}://{parts.netloc}".lower() != _AIMLAPI_ORIGIN:
+        return None
+    return dict(AIMLAPI_ATTRIBUTION_HEADERS)
+
 
 @dataclass(frozen=True)
 class ProviderField:
@@ -201,12 +230,22 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     return OpenAIProvider(api_key="ollama", base_url=base_url)
 
 
-def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
+def _openai_compat(
+    vendor: str,
+    default_base_url: str,
+    env_key: Optional[str] = None,
+    headers_for: Optional[Callable[[str], Optional[dict[str, str]]]] = None,
+):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
     Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its
     env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a configured OpenAI
     key is never silently sent to a different vendor's endpoint. Missing key ⇒ fail fast with a
     vendor-named error (these are only built on demand, when one of their models is selected).
+
+    `headers_for(base_url)` is the opt-in hook for a vendor that wants app-identifying headers
+    on its own endpoint (aimlapi.com). It receives the RESOLVED base URL so it can decline when
+    the user has repointed the provider elsewhere; returning None keeps the request byte-identical
+    to every other compat vendor's.
     """
 
     def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -218,7 +257,11 @@ def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = 
             raise RuntimeError(
                 f"No {vendor} API key configured — add it in Settings ▸ Models."
             )
-        return OpenAIProvider(api_key=api_key, base_url=base_url)
+        return OpenAIProvider(
+            api_key=api_key,
+            base_url=base_url,
+            default_headers=headers_for(base_url) if headers_for else None,
+        )
 
     return build
 
@@ -262,6 +305,7 @@ def _compat(
     recommended_model: str,
     env_key: str,
     endpoint_help: str = "",
+    headers_for: Optional[Callable[[str], Optional[dict[str, str]]]] = None,
 ) -> ProviderDescriptor:
     """Descriptor for an OpenAI-compatible vendor: key + a prefilled, editable endpoint."""
     vendor = title.split(" (")[0]
@@ -285,7 +329,7 @@ def _compat(
                 or f"Prefilled with {vendor}'s official endpoint; edit only for a regional or proxy variant.",
             ),
         ],
-        build=_openai_compat(vendor, base_url, env_key),
+        build=_openai_compat(vendor, base_url, env_key, headers_for),
         recommended_model=recommended_model,
         env_key=env_key,
         blurb=f"Uses {vendor}'s OpenAI-compatible API — the endpoint is prefilled, just add your key.",
@@ -668,6 +712,17 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="z-ai/glm-5.2",
         env_key="OPENROUTER_API_KEY",
     ),
+    # Model ids here are aimlapi.com's OWN namespace and do NOT match OpenRouter's slugs
+    # even where the model is identical — checked against their live catalog 2026-09-03,
+    # three of OpenRouter's four ids above resolve to nothing there. See matrix.py.
+    _compat(
+        "aimlapi",
+        "aimlapi.com",
+        base_url=AIMLAPI_BASE_URL,
+        recommended_model="zhipu/glm-5.2",
+        env_key="AIMLAPI_API_KEY",
+        headers_for=_aimlapi_headers,
+    ),
     ProviderDescriptor(
         name="ollama",
         title="Ollama (local models)",
@@ -985,6 +1040,25 @@ def verify_provider_key(
                     "input": "Reply with OK.",
                     "max_output_tokens": 1,
                     "store": False,
+                },
+                timeout=timeout,
+            )
+        elif name == "aimlapi":
+            # aimlapi.com's /models is PUBLIC: it answers 200 to a bogus key, an empty key
+            # and no Authorization header at all (verified 2026-09-03), so the usual
+            # list-models probe would green-light a typo'd key and leave the user to
+            # discover it at the first real turn. A one-token chat completion is the
+            # cheapest call that actually exercises the credential (401 on a bad key).
+            base = (base_url or "").strip().rstrip("/") or AIMLAPI_BASE_URL
+            headers = {"Authorization": f"Bearer {key}"}
+            headers.update(_aimlapi_headers(base) or {})
+            resp = httpx.post(
+                base + "/chat/completions",
+                headers=headers,
+                json={
+                    "model": d.recommended_model,
+                    "messages": [{"role": "user", "content": "Reply with OK."}],
+                    "max_tokens": 1,
                 },
                 timeout=timeout,
             )
