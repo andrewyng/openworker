@@ -65,11 +65,18 @@ def validate_level(value: Any, source: str = "reasoning_effort") -> Optional[str
 
 
 def nearest_supported(level: str, supported: Sequence[str]) -> Optional[str]:
-    """The accepted level closest in rank to `level`; ties resolve to the higher one."""
+    """The accepted level closest in rank to `level`; ties resolve to the higher one.
+
+    Levels outside `_RANK` (e.g. "none", an effort value OpenAI-compatible endpoints
+    accept but which is not a ranking level) return None — the caller omits the
+    parameter instead of crashing, since absence of the parameter is valid for
+    OpenAI-compatible endpoints."""
     if not supported:
         return None
     if level in supported:
         return level
+    if level not in _RANK:
+        return None
     target = _RANK[level]
     return min(supported, key=lambda s: (abs(_RANK[s] - target), -_RANK[s]))
 
@@ -155,7 +162,8 @@ _OPENAI_DEFAULT = ("low", "medium", "high")
 def openai_compat_effort(model: str, level: str) -> EffortPlan:
     supported = _OPENAI_COMPAT.get(model) or _OPENAI_COMPAT.get(model.lower()) or _OPENAI_DEFAULT
     effective = nearest_supported(level, supported)
-    assert effective is not None
+    if effective is None:
+        return unsupported(level, f"effort level {level!r} unknown for {model}; no effort parameter sent")
     verified = model in _OPENAI_COMPAT or model.lower() in _OPENAI_COMPAT
     note = ""
     if effective != level:
