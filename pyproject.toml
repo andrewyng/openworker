@@ -73,6 +73,7 @@ coworker = [
     "personas/builtin/*.md",
     "personas/builtin/*/manifest.md",
     "personas/builtin/*/skills/*/SKILL.md",
+    "headless/*.yaml",
 ]
 
 [tool.pytest.ini_options]

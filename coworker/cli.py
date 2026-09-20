@@ -1,9 +1,10 @@
 """CLI entry point.
 
 Public surface: `openworker join <link>` and `openworker up` (the two everyday commands),
-`openworker machine <command>` (status, keys, logs, service, leave), `openworker version`,
-and help. The terminal UI (`openworker tui`, or a skill name as before) is unlisted until
-it has been tested as a product surface.
+`openworker run` (one task, no human, a record left behind), `openworker machine
+<command>` (status, keys, logs, service, leave), `openworker version`, and help. The
+terminal UI (`openworker tui`, or a skill name as before) is unlisted until it has been
+tested as a product surface.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ commands:
                 (the link comes from the app: Settings > Machines > Add a machine;
                  give the controller's address instead to approve a code there)
   up            serve again with the stored identity
+  run <task>    run one task with no human and exit (writes a record and a trajectory)
   machine       manage this machine
                   status    show enrollment and the sealing-key fingerprint (--json)
                   keys      manage provider keys stored on this machine
@@ -77,6 +79,11 @@ def main(argv: Optional[list[str]] = None) -> None:
         from .remote.joiner import cli as remote_cli
 
         raise SystemExit(remote_cli(args, prog="openworker", only=TOP_COMMANDS))
+    if args[0] == "run":
+        from .headless.runner import main as run_main
+
+        run_main(args[1:])  # exits with the run's code
+        return
     if args[0] == "machine":
         from .remote.joiner import cli as remote_cli
 

@@ -12,7 +12,7 @@ def test_no_arguments_prints_help_that_lists_every_public_command(capsys):
     ow_cli.main([])
     out = capsys.readouterr().out
     assert "usage: openworker <command>" in out
-    for verb in ("join <link>", "up", "machine", "status", "keys", "logs", "service", "leave", "version"):
+    for verb in ("join <link>", "up", "run <task>", "machine", "status", "keys", "logs", "service", "leave", "version"):
         assert verb in out
     # Unlisted until tested as a product surface.
     for hidden in ("tui", "sessions", "inbox", "doctor"):
