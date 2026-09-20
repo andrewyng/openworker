@@ -45,17 +45,24 @@ const PERMISSION_OPTIONS: ModeOption[] = [
     gated: true,
   },
   {
-    value: "auto",
+    // The wire value is the server's real name; "auto" (the legacy spelling saved by
+    // older sessions and configs) is folded onto it by `canonicalMode`.
+    value: "bypass-approvals",
     label: "composer.mode.auto",
     description: "composer.mode.auto_desc",
     caution: true,
   },
 ];
 
+/** The server's name for a mode value: the legacy "auto" reads as "bypass-approvals". */
+export function canonicalMode(value: string): string {
+  return value === "auto" ? "bypass-approvals" : value;
+}
+
 /** The picker's label for a mode value ("auto-approve" -> "Auto-approve"). Exported so the
  * transcript's mode markers read the same names the user just chose from. */
 export function modeLabel(value: string): string {
-  const option = PERMISSION_OPTIONS.find((o) => o.value === value);
+  const option = PERMISSION_OPTIONS.find((o) => o.value === canonicalMode(value));
   return option ? getI18n().t(option.label) : value;
 }
 
@@ -122,6 +129,10 @@ interface Props {
   // when" is one mental model. Absent handler = no toggle (e.g. Chat).
   unattended?: boolean;
   onUnattendedChange?: (on: boolean) => void;
+  // Attendance "auto" (the third position): the engine answers questions and requests
+  // by fixed rule while nobody is there. Absent handler = no toggle.
+  attendance?: "attended" | "inbox" | "auto";
+  onAutoAnswerChange?: (on: boolean) => void;
   // The pending-approval card rendered above the input (plan / work-items / team / tool /
   // folder requests). Attended sessions only — Unattended parks the prompt in the Inbox.
   approvalSlot?: ReactNode;
@@ -750,6 +761,8 @@ export function Composer(props: Props) {
               onModeChange={props.onModeChange}
               unattended={props.unattended}
               onUnattendedChange={props.onUnattendedChange}
+              attendance={props.attendance}
+              onAutoAnswerChange={props.onAutoAnswerChange}
             />
           ) : null}
 
@@ -905,14 +918,23 @@ function ModeMenu({
   onModeChange,
   unattended,
   onUnattendedChange,
+  attendance,
+  onAutoAnswerChange,
   reviewerPaused,
 }: {
   mode: string;
   onModeChange: (mode: string) => void;
   unattended?: boolean;
   onUnattendedChange?: (on: boolean) => void;
+  attendance?: "attended" | "inbox" | "auto";
+  onAutoAnswerChange?: (on: boolean) => void;
   reviewerPaused?: boolean;
 }) {
+  // A session saved under the legacy "auto" spelling is the same mode as the picker's
+  // "bypass-approvals" entry: compare on the canonical value so its tick shows.
+  const canonical = canonicalMode(mode);
+  const inboxOn = attendance ? attendance === "inbox" : !!unattended;
+  const autoOn = attendance === "auto";
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   // The Auto-Approve entry is gated on the server flag. Fetch once on first open; a session
@@ -926,9 +948,9 @@ function ModeMenu({
       .catch(() => {});
   }, [open]);
   const options = PERMISSION_OPTIONS.filter(
-    (o) => !o.gated || autoApproveEnabled || o.value === mode,
+    (o) => !o.gated || autoApproveEnabled || o.value === canonical,
   );
-  const current = PERMISSION_OPTIONS.find((o) => o.value === mode);
+  const current = PERMISSION_OPTIONS.find((o) => o.value === canonical);
   return (
     <div className="relative">
       {/* Borderless, and it names the CHOSEN mode (owner ask 2026-07-11, competitor composer
@@ -972,14 +994,14 @@ function ModeMenu({
                 <span
                   className={
                     "flex items-center text-ui " +
-                    (o.value === mode ? "font-medium text-accent" : "text-ink")
+                    (o.value === canonical ? "font-medium text-accent" : "text-ink")
                   }
                 >
                   {o.caution && (
                     <Icon name="warning" size={13} className="mr-1.5 shrink-0 text-warnInk" />
                   )}
                   {t(o.label)}
-                  {o.value === mode && <span className="ml-1.5">✓</span>}
+                  {o.value === canonical && <span className="ml-1.5">✓</span>}
                 </span>
                 <span className="text-label text-faint leading-snug">{t(o.description ?? "")}</span>
               </button>
@@ -995,12 +1017,27 @@ function ModeMenu({
                     </span>
                   </span>
                   <Toggle
-                    checked={!!unattended}
+                    checked={inboxOn}
                     onChange={onUnattendedChange}
                     title={t("composer.send_approvals_to_inbox")}
                   />
                 </div>
               </>
+            )}
+            {onAutoAnswerChange && (
+              <div className="flex items-center gap-2 px-2.5 py-1.5" data-testid="auto-answer-row">
+                <span className="flex-1 min-w-0">
+                  <span className="block text-ui text-ink">{t("composer.answer_for_me")}</span>
+                  <span className="block text-label text-faint leading-snug">
+                    {t("composer.answer_for_me_help")}
+                  </span>
+                </span>
+                <Toggle
+                  checked={autoOn}
+                  onChange={onAutoAnswerChange}
+                  title={t("composer.answer_for_me")}
+                />
+              </div>
             )}
           </div>
         </>

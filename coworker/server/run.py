@@ -166,11 +166,31 @@ def main(argv=None) -> None:
     parser.add_argument(
         "--mode",
         default=cfg.mode,
-        choices=["discuss", "plan", "interactive", "auto", "bypass-approvals", "auto-approve"],
+        choices=[
+            "discuss",
+            "plan",
+            "interactive",
+            "auto",
+            "bypass-approvals",
+            "dangerously-bypass-approvals",
+            "auto-approve",
+        ],
+    )
+    parser.add_argument(
+        "--allow-dangerous-mode",
+        action="store_true",
+        help=(
+            "let sessions run in dangerously-bypass-approvals (all approvals granted, "
+            "safety checks off); only on a disposable machine or container"
+        ),
     )
     parser.add_argument("--host", default=cfg.host)
     parser.add_argument("--port", type=int, default=cfg.port)
     args = parser.parse_args(argv)
+    if args.allow_dangerous_mode:
+        os.environ["COWORKER_ALLOW_DANGEROUS_MODE"] = "1"
+    elif args.mode == "dangerously-bypass-approvals":
+        parser.error("--mode dangerously-bypass-approvals requires --allow-dangerous-mode")
 
     # Publish the ACTUAL bound port so loopback URLs (the managed-OAuth callback)
     # target this process, not config.port. The desktop shell runs the sidecar on

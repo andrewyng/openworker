@@ -284,6 +284,13 @@ class SessionManager:
         self.model = model
         self.mode = mode
         self.provider = provider
+        # The dangerous mode is never offered by the desktop app: a session may run in it
+        # only when this server was started with it enabled (`openworker-server
+        # --allow-dangerous-mode`, or the environment switch the CLI's one-shot `run`
+        # sets). Stored sessions in that mode fall back to plain bypass otherwise.
+        self.allow_dangerous_mode = (
+            os.environ.get("COWORKER_ALLOW_DANGEROUS_MODE", "").strip() == "1"
+        )
 
         if data_dir is not None:
             base = Path(data_dir).expanduser()
@@ -736,6 +743,7 @@ class SessionManager:
         if record:
             ws = record.workspace or None
             model, mode, messages = record.model, Mode(record.mode), record.messages
+            mode = self.permitted_mode(mode)
         else:
             ws = self.resolve_workspace(workspace)
             # A coworker with a `models:` list starts on the first entry this machine
@@ -1061,6 +1069,14 @@ class SessionManager:
                     }
                 )
         return granted
+
+    def permitted_mode(self, mode: Mode) -> Mode:
+        """The mode a session may actually run in on this server: the dangerous mode
+        needs the start-up switch; without it the session runs as plain bypass (the same
+        checks minus the cleared floors) rather than failing to open."""
+        if mode is Mode.DANGEROUSLY_BYPASS_APPROVALS and not self.allow_dangerous_mode:
+            return Mode.BYPASS_APPROVALS
+        return mode
 
     @staticmethod
     def _mode_value(raw: str) -> Optional[Mode]:
@@ -5825,11 +5841,21 @@ class SessionManager:
             "auto-approve": 3,
             "auto": 4,
             "bypass-approvals": 4,
+            "dangerously-bypass-approvals": 5,
         }
+        # Attendance: attended < inbox (prompts leave the screen) < auto (the engine
+        # answers). The legacy boolean maps onto the first two.
+        attendance_order = {"attended": 0, "inbox": 1, "auto": 2}
+
+        def _attendance_rank(value: Any) -> int:
+            from ..unattended import normalize_attendance
+
+            return attendance_order.get(normalize_attendance(value), 0)
+
         raised = (
             order.get(str(after), 0) > order.get(str(before), 0)
             if kind == "mode"
-            else bool(after) and not bool(before)
+            else _attendance_rank(after) > _attendance_rank(before)
         )
         try:
             self.audit_store.append(
@@ -5845,16 +5871,22 @@ class SessionManager:
         except Exception:
             pass
 
-    def set_unattended(self, session_id: str, on: bool) -> dict[str, Any]:
-        """Flip the attended/unattended toggle, with an audit row. Note this changes only
-        WHERE the human is reached, never the autonomy ceiling (that's the mode) — but it is
-        still worth recording, since an unattended session routes prompts away from the
-        screen the user is looking at."""
-        before = self.unattended.is_unattended(session_id)
-        self.unattended.set(session_id, on)
-        if before != on:
-            self.audit_autonomy_change(session_id, "unattended", before, on)
-        return {"ok": True, "session_id": session_id, "unattended": on}
+    def set_unattended(self, session_id: str, value: Any) -> dict[str, Any]:
+        """Set the session's attendance (attended / inbox / auto, or the legacy boolean),
+        with an audit row. Note this changes only WHO ANSWERS when the agent asks, never
+        the autonomy ceiling (that's the mode) — but it is still worth recording, since an
+        unattended session routes prompts away from the screen the user is looking at, and
+        `auto` answers them by rule."""
+        before = self.unattended.attendance(session_id)
+        after = self.unattended.set(session_id, value)
+        if before != after:
+            self.audit_autonomy_change(session_id, "unattended", before, after)
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "unattended": after != "attended",
+            "attendance": after,
+        }
 
     def _audit_grant_refused(self, session_id: str, request, resolution: str) -> None:
         try:

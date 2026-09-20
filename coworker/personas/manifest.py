@@ -24,7 +24,16 @@ _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 VALID_FAMILIES = {"code", "knowledge"}  # legacy key, shimmed in parse()
 VALID_TEAM = {"lead", "worker"}
 # "auto" kept as the legacy spelling of "bypass-approvals" (Mode._missing_).
-VALID_MODES = {"discuss", "plan", "interactive", "custom", "auto", "bypass-approvals", "auto-approve"}
+VALID_MODES = {
+    "discuss",
+    "plan",
+    "interactive",
+    "custom",
+    "auto",
+    "bypass-approvals",
+    "dangerously-bypass-approvals",
+    "auto-approve",
+}
 VALID_REC_KINDS = {"connector", "mcp"}
 VALID_REC_TIERS = {"core", "optional"}
 VALID_GROUPS = {"general", "security"}

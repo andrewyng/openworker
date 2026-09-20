@@ -149,7 +149,7 @@
       "interactive": "Ask for approval",
       "interactive_desc": "Ask before edits and commands",
       "auto": "Bypass approvals",
-      "auto_desc": "Run everything without asking — approvals off",
+      "auto_desc": "No reviewer, fewer prompts, basic safety checks kept",
       "auto_approve": "Auto-approve",
       "auto_approve_desc": "Let your session model classify actions and handle approvals, prompting you for anything it's unsure about"
     },
@@ -165,6 +165,8 @@
     "err_mic_start": "Could not start the microphone.",
     "starting_mic": "Starting microphone…",
     "approvals_to_inbox_help": "When a run is unattended, approval asks go to the Inbox.",
+    "answer_for_me": "Answer for me while I'm away",
+    "answer_for_me_help": "Questions get a safe default answer and requests are answered by rule; anything only you could approve is refused.",
     "listening_sr": "Listening, {{time}}",
     "pdf_could_not_read": "Couldn't read that PDF.",
     "pdf_too_big": "{{name}} skipped — {{mb}} MB is over your {{limit}} MB limit (Settings → Token savings)",

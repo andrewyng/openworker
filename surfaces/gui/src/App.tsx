@@ -19,7 +19,7 @@ import {
   getSettings,
   getPersonas,
   getInbox,
-  getUnattended,
+  getAttendance,
   PERSONAS_CHANGED,
   resolveInboxItem,
   routeInboxItemLike,
@@ -37,6 +37,7 @@ import {
   renameSession,
   runAutomation,
   setSessionFlags,
+  setAttendance,
   setUnattended,
   Session,
   type InboxItem,
@@ -48,6 +49,7 @@ import {
   type SurfaceVisibility,
   type WorkspaceCommandTrust,
   type TeamMemberDecision,
+  type Attendance,
   API_UNAUTHORIZED,
 } from "./api";
 import type {
@@ -531,17 +533,31 @@ export function App() {
   // so we suppress the inline live cards (the Inbox / answer-in-context path shows them instead).
   // A ref too, because the WS event handler closes over stale state.
   const [unattended, setUnattendedState] = useState(false);
+  // The three-way attendance value behind the boolean: "inbox" and "auto" are both
+  // unattended; only "auto" makes the engine answer on the user's behalf.
+  const [attendance, setAttendanceState] = useState<Attendance>("attended");
   const unattendedRef = useRef(false);
-  const markUnattended = useCallback((on: boolean) => {
-    unattendedRef.current = on;
-    setUnattendedState(on);
+  const markAttendance = useCallback((value: Attendance) => {
+    unattendedRef.current = value !== "attended";
+    setUnattendedState(value !== "attended");
+    setAttendanceState(value);
   }, []);
+  const markUnattended = useCallback(
+    (on: boolean) => markAttendance(on ? "inbox" : "attended"),
+    [markAttendance],
+  );
   // The Mode menu's "Send approvals to Inbox" toggle (§22 — the old InboxControl, folded in).
   const toggleUnattended = async (on: boolean) => {
     await setUnattended(sessionId, on);
     markUnattended(on);
     // First Unattended enable = Inbox machinery engaged → the account row's chip unlocks (§26).
     if (on) announceInboxUnlock();
+  };
+  // The Mode menu's "Answer for me while I'm away" toggle: attendance "auto".
+  const toggleAutoAnswer = async (on: boolean) => {
+    const value: Attendance = on ? "auto" : "attended";
+    await setAttendance(sessionId, value);
+    markAttendance(value);
   };
   const resolveSessionInbox = async (id: string, resolution: string) => {
     await resolveInboxItem(id, resolution);
@@ -1305,14 +1321,14 @@ export function App() {
         setSessionInbox(pendingInbox(inbox));
         setItems(items => reconcileResolvedGates(items, inbox));
       }).catch(() => {});
-      getUnattended(sessionId).then(value => {
-        if (!canceled && current === request) markUnattended(value);
+      getAttendance(sessionId).then(value => {
+        if (!canceled && current === request) markAttendance(value);
       }).catch(() => {});
     };
     load();
     const t = setInterval(load, 4000);
     return () => { canceled = true; clearInterval(t); };
-  }, [surface, sessionId, browserRefreshKey, markUnattended, pendingInbox, gateScope]);
+  }, [surface, sessionId, browserRefreshKey, markAttendance, pendingInbox, gateScope]);
 
   const send = (text: string, attachments?: Attachment[], skill?: string) => {
     // UX-029: folder enforcement AT SEND. A code-family session with no folder has no
@@ -2391,6 +2407,8 @@ export function App() {
               workspace={workspace || ""}
               unattended={unattended}
               onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}
+              attendance={attendance}
+              onAutoAnswerChange={agent !== "chat" ? toggleAutoAnswer : undefined}
               prefill={composerPrefill}
               resetKey={sessionId}
               usage={usage}

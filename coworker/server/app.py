@@ -426,7 +426,10 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.get("/v1/sessions/{session_id}/unattended")
     def get_unattended(session_id: str) -> dict[str, Any]:
-        return {"unattended": manager.unattended.is_unattended(session_id)}
+        return {
+            "unattended": manager.unattended.is_unattended(session_id),
+            "attendance": manager.unattended.attendance(session_id),
+        }
 
     @app.get("/v1/sessions/{session_id}/reviewer-stats")
     def get_reviewer_stats(session_id: str) -> dict[str, Any]:
@@ -437,8 +440,10 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/sessions/{session_id}/unattended")
     def set_unattended(session_id: str, body: dict) -> dict[str, Any]:
         # The GUI gates the on-transition behind a one-tap confirm; the manager records the
-        # transition either way, so the change is answerable from the audit store.
-        return manager.set_unattended(session_id, bool(body.get("unattended")))
+        # transition either way, so the change is answerable from the audit store. Newer
+        # clients send `attendance` ("attended" / "inbox" / "auto"); older ones the boolean.
+        value = body["attendance"] if "attendance" in body else bool(body.get("unattended"))
+        return manager.set_unattended(session_id, value)
 
     @app.get("/v1/sessions/{session_id}/skills")
     def session_skills(session_id: str, workspace: str = "") -> dict[str, Any]:
@@ -2842,6 +2847,9 @@ def create_app(manager: SessionManager) -> FastAPI:
         # configuration, or a worker under an auto-approve lead) is reviewed even when
         # nobody attends it.
         engine.is_attended = lambda: _visibility() == VIS_INLINE or manager.reviewer_opted(session_id)
+        # Attendance "auto" (coworker/unattended.py): the engine answers by rule instead of
+        # routing to the Inbox. Read live, so the toggle applies mid-session.
+        engine.attendance = lambda: manager.unattended.attendance(session_id)
         await ws.send_json(
             {
                 "type": "ready",
@@ -3055,6 +3063,16 @@ def create_app(manager: SessionManager) -> FastAPI:
                     except (TypeError, ValueError):
                         pass
                     else:
+                        if (
+                            new_mode is Mode.DANGEROUSLY_BYPASS_APPROVALS
+                            and not manager.allow_dangerous_mode
+                        ):
+                            await reject_input(
+                                "dangerously-bypass-approvals is not available here: "
+                                "start the server with --allow-dangerous-mode, and only "
+                                "on a disposable machine or container."
+                            )
+                            continue
                         previous = engine.permissions.mode
                         engine.permissions.mode = new_mode
                         if previous is not new_mode:

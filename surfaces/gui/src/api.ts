@@ -2043,11 +2043,41 @@ export async function unsubscribeChannel(
   return res.json();
 }
 
+// Who answers when the agent asks (server: coworker/unattended.py). "attended" = inline,
+// "inbox" = parked in the Inbox until someone returns, "auto" = the engine answers by
+// fixed rule and refuses anything only a person could approve.
+export type Attendance = "attended" | "inbox" | "auto";
+
 export async function getUnattended(sessionId: string): Promise<boolean> {
   const res = await fetch(
     `${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/unattended`,
   );
   return (await res.json()).unattended;
+}
+
+export async function getAttendance(sessionId: string): Promise<Attendance> {
+  const res = await fetch(
+    `${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/unattended`,
+  );
+  const body = await res.json();
+  const value = body.attendance;
+  if (value === "inbox" || value === "auto") return value;
+  return body.unattended ? "inbox" : "attended";
+}
+
+export async function setAttendance(
+  sessionId: string,
+  attendance: Attendance,
+): Promise<{ ok: boolean; unattended: boolean; attendance: Attendance }> {
+  const res = await fetch(
+    `${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/unattended`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ attendance }),
+    },
+  );
+  return res.json();
 }
 
 export async function setUnattended(
