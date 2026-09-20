@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from conftest import assert_user_only
+
 from coworker.config import load_config
 
 
@@ -77,7 +79,7 @@ def test_workspace_trust_is_canonical_and_user_owned(tmp_path):
     assert canonical == str(real.resolve())
     assert store.is_trusted(real)
     assert store.list() == [str(real.resolve())]
-    assert (store.path.stat().st_mode & 0o777) == 0o600
+    assert_user_only(store.path)
 
     store.set_trusted(real, False)
     assert not store.is_trusted(alias)
