@@ -1,9 +1,15 @@
-"""Line-numbered file reading (`read_file`) — replaces the aisuite toolkit's reader.
+"""Line-numbered file reading (`read_file`) and folder-aware listing (`list_files`) —
+both replace the aisuite toolkit's versions.
 
 The toolkit's `read_file` returns raw text (the agent can't cite path:line without
 counting) and raises outright on large files (the agent errors and guesses). This one
 returns `cat -n`-style numbered lines, windows big files instead of failing, and tells
-the agent how to continue reading. Read-only, workspace-scoped.
+the agent how to continue reading.
+
+The toolkit's `list_files` returns files only, so a workspace whose top level holds
+nothing but a subfolder lists as `[]` and the agent concludes it is empty (OPE-203). This
+one lists folders too, marked with a trailing `/`, so one non-recursive look shows the
+shape of the tree. Both tools are read-only and scoped to the session's roots.
 """
 
 from __future__ import annotations
@@ -13,8 +19,49 @@ from typing import Any, Optional
 
 import aisuite as ai
 
+try:  # the toolkit's own skip-list, so both listings hide the same folders
+    from aisuite.toolkits.files import DEFAULT_IGNORES as _IGNORED_DIRS
+except ImportError:  # pragma: no cover - older aisuite without the constant
+    _IGNORED_DIRS = (".git", ".venv", "__pycache__", "node_modules")
+
 _DEFAULT_MAX_LINES = 2000
 _MAX_LINE_CHARS = 500
+_DEFAULT_MAX_RESULTS = 100
+_MAX_RESULTS_CAP = 2000
+
+_LIST_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "list_files",
+        "description": (
+            "List files and folders under a path; folders end with '/'. Use "
+            "recursive=false to see one level, and pattern (a glob such as '*.py') to "
+            "filter by name. Read-only."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Folder to list, relative to the workspace (default '.').",
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Glob to match names against (default '*').",
+                },
+                "recursive": {
+                    "type": "boolean",
+                    "description": "Descend into subfolders (default true).",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": f"Stop after this many entries (default {_DEFAULT_MAX_RESULTS}).",
+                },
+            },
+            "required": [],
+        },
+    },
+}
 
 _SCHEMA = {
     "type": "function",
@@ -123,4 +170,65 @@ def file_tools(workspace: str, roots: Optional[list] = None) -> list:
         requires_approval=False,
     )
     read_file.__coworker_schema__ = _SCHEMA
-    return [read_file]
+
+    def _home_for(target: Path) -> Optional[Path]:
+        for r in (root, *extra_roots):
+            try:
+                target.relative_to(r)
+                return r
+            except ValueError:
+                continue
+        return None
+
+    def list_files(
+        path: str = ".",
+        pattern: str = "*",
+        recursive: bool = True,
+        max_results: int = _DEFAULT_MAX_RESULTS,
+    ) -> Any:
+        n = (
+            max_results
+            if isinstance(max_results, int) and max_results > 0
+            else _DEFAULT_MAX_RESULTS
+        )
+        n = min(n, _MAX_RESULTS_CAP)
+        p = Path(str(path or ".")).expanduser()
+        base = p.resolve() if p.is_absolute() else (root / p).resolve()
+        home = _home_for(base)
+        if home is None:
+            return {"error": "path escapes the session's directories"}
+        if not base.is_dir():
+            return {"error": f"not a directory: {path}"}
+
+        results: list[str] = []
+        try:
+            iterator = base.rglob(pattern or "*") if recursive else base.glob(pattern or "*")
+            for item in iterator:
+                if any(part in _IGNORED_DIRS for part in item.relative_to(home).parts):
+                    continue
+                shown = (
+                    item.relative_to(root).as_posix() if home == root else str(item)
+                )
+                if item.is_dir():
+                    results.append(shown + "/")
+                elif item.is_file():
+                    results.append(shown)
+                else:
+                    continue
+                if len(results) >= n:
+                    break
+        except OSError as exc:
+            return {"error": f"list failed: {exc}"}
+        return sorted(results)
+
+    list_files.__name__ = "list_files"
+    list_files.__doc__ = _LIST_SCHEMA["function"]["description"]
+    list_files.__aisuite_tool_metadata__ = ai.ToolMetadata(
+        name="list_files",
+        category="filesystem",
+        risk_level="low",
+        capabilities=["list_files"],
+        requires_approval=False,
+    )
+    list_files.__coworker_schema__ = _LIST_SCHEMA
+    return [read_file, list_files]

@@ -52,7 +52,7 @@ def build_explorer_engine(
     registry = ToolRegistry()
     # Read-only slice of the Code agent's toolset, with the same toolkit replacements
     # (our grep for search_files, our windowed read_file for read_file/read_file_lines).
-    replaced = {"search_files", "read_file", "read_file_lines"}
+    replaced = {"search_files", "read_file", "read_file_lines", "list_files"}
     registry.register_all(
         [
             t
