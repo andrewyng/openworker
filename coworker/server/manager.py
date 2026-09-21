@@ -84,6 +84,7 @@ from ..providers import (
     provider_descriptors,
     verify_provider_key,
 )
+from ..providers.registry import _normalize_ollama_url
 from ..secrets import SecretStore, state_dir
 from ..sessions import SessionRecord, usage_totals
 from ..teams import Actor as TeamActor
@@ -3705,6 +3706,8 @@ class SessionManager:
 
             profile["key_set_at"] = date.today().isoformat()
         self.secrets.put(f"provider:{name}", profile)
+        if name == "ollama":
+            self._ollama_catalog_cache = None
         self.adopt_provider_default(name)
         return {"ok": True, "provider": name, "recommended_model": d.recommended_model}
 
@@ -3741,6 +3744,8 @@ class SessionManager:
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
         self.secrets.delete(f"provider:{name}")
+        if name == "ollama":
+            self._ollama_catalog_cache = None
         self._refresh_provider(name)
         return {"ok": True, "provider": name}
 
@@ -3882,50 +3887,89 @@ class SessionManager:
         self._save_prefs()
         return {"ok": True, "dm_session": self.dm_session()}
 
-    def _ollama_alive(self) -> bool:
-        """Best-effort local-Ollama liveness, cached 30s (get_settings runs on every GUI
-        fetch — no 2s probe inline). Keyless is not the same as PRESENT: `ollama:*` picker
-        entries render only when an Ollama actually answers, so a machine with no Ollama
-        never shows phantom local models (e.g. a stray pasted string saved as a model id,
-        caught 2026-07-21)."""
-        import time
+    def _ollama_catalog(self) -> Optional[list[str]]:
+        """Discover models from either native Ollama or an OpenAI-compatible local server.
 
+        ``None`` means neither endpoint answered with a recognized catalog; an empty list
+        means the server answered successfully but currently has no models. Keeping that
+        distinction lets the picker hide stale Ollama entries without hiding an available
+        server that simply has not pulled a model yet.
+        """
         now = time.monotonic()
-        cached = getattr(self, "_ollama_alive_cache", None)
-        if cached and now - cached[0] < 30:
-            return cached[1]
+        cached = getattr(self, "_ollama_catalog_cache", None)
+        if cached is not None and now - cached[0] < 30:
+            return list(cached[1]) if cached[1] is not None else None
+
         profile = self.secrets.get("provider:ollama") or {}
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
+        if not profile:
+            self._ollama_catalog_cache = (now, None)
+            return None
+
+        compat_base = _normalize_ollama_url(profile.get("base_url"))
+        root = compat_base[: -len("/v1")] if compat_base.endswith("/v1") else compat_base
+
+        def parse_models(payload: Any, *, native: bool) -> Optional[list[str]]:
+            if not isinstance(payload, dict):
+                return None
+            raw = payload.get("models" if native else "data")
+            # A few local servers use the native key even though they expose the
+            # OpenAI-compatible endpoint, so accept it as a fallback there.
+            if not isinstance(raw, list) and not native:
+                raw = payload.get("models")
+            if not isinstance(raw, list):
+                return None
+            names: list[str] = []
+            for item in raw:
+                if isinstance(item, str):
+                    name = item.strip()
+                elif isinstance(item, dict):
+                    key = "name" if native else "id"
+                    name = str(
+                        item.get(key) or item.get("id") or item.get("name") or ""
+                    ).strip()
+                else:
+                    name = ""
+                if name:
+                    names.append(name)
+            return names
+
+        # Native Ollama is preferred so its richer `/api/tags` names remain intact. If
+        # that endpoint is absent, fall back to the same `/v1/models` path used by the
+        # provider verification flow and by OpenAI-compatible local servers.
+        endpoints = ((root + "/api/tags", True), (compat_base + "/models", False))
         try:
             import httpx
 
-            alive = httpx.get(base + "/api/tags", timeout=0.8).status_code == 200
+            for url, native in endpoints:
+                try:
+                    response = httpx.get(url, timeout=2.0)
+                    if not 200 <= response.status_code < 300:
+                        continue
+                    models = parse_models(response.json(), native=native)
+                except Exception:
+                    continue
+                if models is None:
+                    continue
+                catalog = list(dict.fromkeys(f"ollama:{name}" for name in models))
+                self._ollama_catalog_cache = (now, catalog)
+                return list(catalog)
         except Exception:
-            alive = False
-        self._ollama_alive_cache = (now, alive)
-        return alive
+            pass
+
+        self._ollama_catalog_cache = (now, None)
+        return None
+
+    def _ollama_alive(self) -> bool:
+        """Best-effort local-model-server liveness, cached 30s.
+
+        Keyless is not the same as PRESENT: ``ollama:*`` picker entries render only while
+        either native Ollama or its OpenAI-compatible models endpoint answers.
+        """
+        return self._ollama_catalog() is not None
 
     def _ollama_models(self) -> list[str]:
-        """Live list of models pulled into the configured Ollama server (via its native
-        `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama isn't
-        configured or unreachable — best-effort, never raises."""
-        profile = self.secrets.get("provider:ollama")
-        if not profile:
-            return []
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
-        try:
-            import httpx
-
-            data = httpx.get(base + "/api/tags", timeout=2.0).json()
-            return [
-                f"ollama:{m['name']}" for m in data.get("models", []) if m.get("name")
-            ]
-        except Exception:
-            return []
+        """Live models from the configured native or OpenAI-compatible local server."""
+        return self._ollama_catalog() or []
 
     def model_selectable(self, model: str) -> bool:
         """Can this machine run `model` right now? Its provider has a key — or, for the
