@@ -62,6 +62,17 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     src.add_argument("--prompt-file", help="file containing the task text (UTF-8)")
     p.add_argument("--workspace", required=True, help="folder the agent works in")
     p.add_argument(
+        "--root",
+        action="append",
+        default=None,
+        metavar="DIR",
+        help="an extra folder the agent may read and write, beside the workspace "
+        "(repeatable), for a harness whose output contract lives outside the workspace, "
+        "e.g. --root /output. The file tools only write under a declared root, in every "
+        "mode; the shell is not scoped, so without this a delivery would depend on which "
+        "tool the model happened to pick.",
+    )
+    p.add_argument(
         "--model", required=True, help="provider:model (OpenWorker) or provider/model"
     )
     p.add_argument("--persona", default="cowork", help="OpenWorker persona id (default: cowork)")
@@ -582,6 +593,21 @@ def _agent_version(explicit: Optional[str]) -> str:
     return "openworker unknown"
 
 
+def _extra_roots(args: argparse.Namespace, workspace: Path) -> list:
+    """The `--root DIR` folders as writable roots: created if missing, deduplicated, and
+    without the workspace itself (always the first root)."""
+    from ..roots import RootDir
+
+    found: list = []
+    for raw in args.root or []:
+        path = Path(raw).expanduser().resolve()
+        if path == workspace or any(path == r.path for r in found):
+            continue
+        path.mkdir(parents=True, exist_ok=True)
+        found.append(RootDir(path=path, writable=True))
+    return found
+
+
 def run(args: argparse.Namespace) -> int:
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -597,11 +623,17 @@ def run(args: argparse.Namespace) -> int:
     from ..events import EventType
     from ..permissions import Mode
     from ..providers import ProviderRouter
+    from ..roots import RootDir
     from ..secrets import SecretStore, state_dir
     from ..unattended import DANGEROUS_MODE_WARNING
 
     workspace = Path(args.workspace).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
+    # `--root DIR`: extra writable folders. An explicit list replaces the engine's default
+    # single-workspace root, so the workspace goes first and stays the folder that
+    # relative paths resolve against.
+    extra_roots = _extra_roots(args, workspace)
+    roots = [RootDir(path=workspace, writable=True), *extra_roots] if extra_roots else None
     model = normalize_model(args.model)
     mode = Mode(args.mode)
     run_id = uuid.uuid4().hex[:12]
@@ -625,6 +657,7 @@ def run(args: argparse.Namespace) -> int:
     engine = build_engine(
         agent=get_agent(args.persona),
         workspace=workspace,
+        roots=roots,
         model=model,
         mode=mode,
         provider=provider,
@@ -1009,6 +1042,7 @@ def _write_records(
             "provider_order": args.provider_order,
             "timeout_seconds": args.timeout_seconds,
             "workspace": str(Path(args.workspace).resolve()),
+            "roots": [str(Path(r).expanduser().resolve()) for r in (args.root or [])],
             "scripted": bool(args.scripted),
         },
         "isolation": isolation,
