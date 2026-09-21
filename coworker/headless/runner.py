@@ -62,15 +62,16 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     src.add_argument("--prompt-file", help="file containing the task text (UTF-8)")
     p.add_argument("--workspace", required=True, help="folder the agent works in")
     p.add_argument(
-        "--root",
+        "--add-dir",
+        dest="add_dir",
         action="append",
         default=None,
         metavar="DIR",
         help="an extra folder the agent may read and write, beside the workspace "
         "(repeatable), for a harness whose output contract lives outside the workspace, "
-        "e.g. --root /output. The file tools only write under a declared root, in every "
-        "mode; the shell is not scoped, so without this a delivery would depend on which "
-        "tool the model happened to pick.",
+        "e.g. --add-dir /output. The file tools only write inside the session's folders, in "
+        "every mode; the shell is not scoped, so without this a delivery would depend on "
+        "which tool the model happened to pick.",
     )
     p.add_argument(
         "--model", required=True, help="provider:model (OpenWorker) or provider/model"
@@ -593,13 +594,13 @@ def _agent_version(explicit: Optional[str]) -> str:
     return "openworker unknown"
 
 
-def _extra_roots(args: argparse.Namespace, workspace: Path) -> list:
-    """The `--root DIR` folders as writable roots: created if missing, deduplicated, and
+def _extra_dirs(args: argparse.Namespace, workspace: Path) -> list:
+    """The `--add-dir DIR` folders as writable roots: created if missing, deduplicated, and
     without the workspace itself (always the first root)."""
     from ..roots import RootDir
 
     found: list = []
-    for raw in args.root or []:
+    for raw in args.add_dir or []:
         path = Path(raw).expanduser().resolve()
         if path == workspace or any(path == r.path for r in found):
             continue
@@ -629,11 +630,11 @@ def run(args: argparse.Namespace) -> int:
 
     workspace = Path(args.workspace).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
-    # `--root DIR`: extra writable folders. An explicit list replaces the engine's default
-    # single-workspace root, so the workspace goes first and stays the folder that
-    # relative paths resolve against.
-    extra_roots = _extra_roots(args, workspace)
-    roots = [RootDir(path=workspace, writable=True), *extra_roots] if extra_roots else None
+    # `--add-dir DIR`: extra writable folders. An explicit list replaces the engine's
+    # default single-workspace root, so the workspace goes first and stays the folder
+    # that relative paths resolve against.
+    extra_dirs = _extra_dirs(args, workspace)
+    roots = [RootDir(path=workspace, writable=True), *extra_dirs] if extra_dirs else None
     model = normalize_model(args.model)
     mode = Mode(args.mode)
     run_id = uuid.uuid4().hex[:12]
@@ -1042,7 +1043,7 @@ def _write_records(
             "provider_order": args.provider_order,
             "timeout_seconds": args.timeout_seconds,
             "workspace": str(Path(args.workspace).resolve()),
-            "roots": [str(Path(r).expanduser().resolve()) for r in (args.root or [])],
+            "extra_dirs": [str(Path(r).expanduser().resolve()) for r in (args.add_dir or [])],
             "scripted": bool(args.scripted),
         },
         "isolation": isolation,

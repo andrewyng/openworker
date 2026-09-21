@@ -71,7 +71,7 @@ Options:
 |---|---|
 | `--prompt TEXT` / `--prompt-file PATH` | the task |
 | `--workspace DIR` | the folder the agent works in |
-| `--root DIR` | an extra folder the agent may read and write, beside the workspace (repeatable), for a harness whose output contract lives outside the workspace — e.g. `--root /output`. The file tools only write under a declared root, in every mode; the shell is not scoped, so without this a delivery would depend on which tool the model happened to pick. Recorded under `args.roots` in `summary.json`. |
+| `--add-dir DIR` | an extra folder the agent may read and write, beside the workspace (repeatable), for a harness whose output contract lives outside the workspace — e.g. `--add-dir /output`. The file tools only write inside the session's folders, in every mode; the shell is not scoped, so without this a delivery would depend on which tool the model happened to pick. Recorded under `args.extra_dirs` in `summary.json`. |
 | `--model ID` | `provider:model` or `provider/model` (first slash splits) |
 | `--mode` | see above; default `bypass-approvals` |
 | `--attendance` | `auto` (the only value here) |

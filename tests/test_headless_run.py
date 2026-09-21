@@ -307,7 +307,7 @@ def test_large_tool_result_is_bounded_and_spilled(tmp_path: Path) -> None:
     assert _summary(out)["tool_results_bounded"] == 1
 
 
-# -- extra roots (--root) -------------------------------------------------------------------
+# -- extra folders (--add-dir) --------------------------------------------------------------
 
 
 def _patch_script(target: Path) -> list[dict]:
@@ -317,33 +317,33 @@ def _patch_script(target: Path) -> list[dict]:
     ]
 
 
-def test_root_lets_the_file_tools_write_outside_the_workspace(tmp_path: Path) -> None:
+def test_add_dir_lets_the_file_tools_write_outside_the_workspace(tmp_path: Path) -> None:
     # A harness whose output contract lives outside the workspace (CyberGym: /output).
     outdir = tmp_path / "output"
     outdir.mkdir()
     target = outdir / "fix.patch"
     proc, _ws, out = _run(
-        tmp_path, "bypass-approvals", _patch_script(target), extra=["--root", str(outdir)]
+        tmp_path, "bypass-approvals", _patch_script(target), extra=["--add-dir", str(outdir)]
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert target.read_text(encoding="utf-8").startswith("--- a/x")
     summary = _summary(out)
     assert summary["outcome"] == "completed" and summary["tool_calls_denied"] == 0
-    assert summary["args"]["roots"] == [str(outdir.resolve())]
+    assert summary["args"]["extra_dirs"] == [str(outdir.resolve())]
     # The model is told about the folder in the session's directories block (a per-turn
     # context, not the cached system prompt), the same way the workspace is announced.
     everything = "\n".join(str(m.get("content") or "") for m in _messages(out))
     assert str(outdir.resolve()) in everything
 
 
-def test_without_root_the_same_write_stays_inside_the_workspace(tmp_path: Path) -> None:
+def test_without_add_dir_the_same_write_stays_inside_the_workspace(tmp_path: Path) -> None:
     outdir = tmp_path / "output"
     outdir.mkdir()
     target = outdir / "fix.patch"
     proc, _ws, out = _run(tmp_path, "bypass-approvals", _patch_script(target))
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert not target.exists()
-    assert _summary(out)["args"]["roots"] == []
+    assert _summary(out)["args"]["extra_dirs"] == []
 
 
 def test_run_help_and_the_top_level_help_mention_the_command() -> None:
