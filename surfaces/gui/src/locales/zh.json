@@ -147,7 +147,7 @@
       "interactive": "需审批",
       "interactive_desc": "编辑和执行命令前先询问",
       "auto": "绕过审批",
-      "auto_desc": "无需询问，全部执行 —— 审批已关闭",
+      "auto_desc": "不用审查器，减少询问，保留基本安全检查",
       "auto_approve": "自动审批",
       "auto_approve_desc": "由会话模型对操作分类并处理审批，拿不准的仍会询问你"
     },
@@ -163,6 +163,8 @@
     "err_mic_start": "无法启动麦克风。",
     "starting_mic": "正在启动麦克风…",
     "approvals_to_inbox_help": "无人值守运行时，审批请求会进入收件箱。",
+    "answer_for_me": "无人时替我作答",
+    "answer_for_me_help": "问题使用安全的默认回答，请求按规则处理；只有你能批准的事项会被拒绝。",
     "listening_sr": "正在聆听，{{time}}",
     "pdf_could_not_read": "无法读取该 PDF。",
     "pdf_too_big": "已跳过 {{name}} —— {{mb}} MB 超过 {{limit}} MB 上限（设置 → Token 节省）",

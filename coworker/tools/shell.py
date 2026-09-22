@@ -94,6 +94,9 @@ class _BackgroundTask:
             stderr=subprocess.STDOUT,
             cwd=cwd,
             text=True,
+            # Never let one non-UTF-8 byte in a command's output (a binary dump, a
+            # Latin-1 log line) kill the reader thread; keep the rest of the output.
+            errors="replace",
             bufsize=1,
             env=env,
             **spawn_kwargs,
@@ -209,6 +212,9 @@ class LocalExecutor(Executor):
             stderr=subprocess.STDOUT,
             cwd=self.cwd,
             text=True,
+            # Never let one non-UTF-8 byte in a command's output (a binary dump, a
+            # Latin-1 log line) kill the reader thread; keep the rest of the output.
+            errors="replace",
             bufsize=1,
             env=self._env,
             **spawn_kwargs,

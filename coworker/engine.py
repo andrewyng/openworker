@@ -28,6 +28,7 @@ from . import provenance
 from . import session_facts
 from . import toolchain as _toolchain
 from . import toolresult
+from . import unattended as _attendance
 from .events import Event, EventType
 
 # §8.4 retry guard: the reviewer pauses for the rest of the turn after this many denials
@@ -58,7 +59,7 @@ _REVIEWER_PAUSED_TEXT = (
     "Auto-approve is paused for the rest of this turn — the reviewer blocked "
     f"{_REVIEWER_TRIP} actions in a row, so approvals now come to you."
 )
-from .permissions import Mode, PermissionEngine
+from .permissions import CLEARED_BY_MODE, Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
 from .providers.errors import friendly_model_error
 from .providers.openai_provider import looks_like_unparsed_tool_call
@@ -213,6 +214,12 @@ class TurnEngine:
         self.compaction_state: Optional[_compaction.CompactionState] = None
         self.compaction_settings: Optional[Callable[[], dict[str, Any]]] = None
         self.is_attended: Optional[Callable[[], bool]] = None
+        # Attendance (coworker/unattended.py): who answers when the agent asks. A live
+        # getter returning "attended" / "inbox" / "auto"; None reads as attended. In "auto"
+        # the engine answers questions, folder requests and pinned installs itself by fixed
+        # rule, and refuses any approval card only a person could clear — never a hang.
+        self.attendance: Optional[Callable[[], str]] = None
+        self._dangerous_warned = False
         # Session facts (spec Part 0 / §2.4) — the known world frozen at session start, plus
         # the per-turn ingestion record. Set post-construction by the surface, same as
         # compaction above, so the constructor footprint stays put. None ⇒ nothing recorded
@@ -399,6 +406,11 @@ class TurnEngine:
             message["_activity"] = activity
         self.messages.append(message)
         self._cancel.clear()
+        if not self._dangerous_warned:
+            if self.permissions.mode is Mode.DANGEROUSLY_BYPASS_APPROVALS:
+                # Once per engine: the name is the warning, and the transcript keeps it.
+                self._append_notice("dangerous_mode", _attendance.DANGEROUS_MODE_WARNING)
+            self._dangerous_warned = True
         if self.session_facts is not None:
             self.session_facts.begin_turn()
         # §8.4 retry guard resets per user turn: two reviewer denials in one turn route
@@ -1174,19 +1186,29 @@ class TurnEngine:
 
     # -- Auto-Approve reviewer (spec Part 8) ----------------------------------------
 
+    def _auto_answering(self) -> bool:
+        """Attendance is "auto": nobody will answer, so the engine answers by fixed rule."""
+        try:
+            return self.attendance is not None and self.attendance() == _attendance.AUTO
+        except Exception:  # noqa: BLE001 - a broken getter must read as attended
+            return False
+
     def _reviewer_active(self) -> bool:
         """The reviewer is consulted only when ALL of these hold. Any miss ⇒ today's
-        behaviour (the card). Attended is required explicitly: `is_attended` unset counts
-        as NOT attended, so automations — which never set it — can never be reviewed
-        (§1.5: the mode is attended-only)."""
+        behaviour (the card). Someone must be accountable for the asks it cannot clear:
+        a person attending (`is_attended` unset counts as NOT attended, so automations —
+        which never set it — can never be reviewed; §1.5), or attendance "auto", where
+        every escalation is refused by rule instead of parked."""
         from .permissions import Mode
 
         return (
             self.reviewer is not None
             and self.reviewer_enabled
             and self.permissions.mode is Mode.AUTO_APPROVE
-            and self.is_attended is not None
-            and self.is_attended()
+            and (
+                (self.is_attended is not None and self.is_attended())
+                or self._auto_answering()
+            )
             and self._reviewer_denials < _REVIEWER_TRIP
         )
 
@@ -1488,15 +1510,24 @@ class TurnEngine:
         if self._downloaded_target(tool_call) is not None and (
             decision.needs_user or allowed
         ):
-            allowed = False
-            reason = f"this file was downloaded by the agent this session — {provenance_note}"
-            decision = replace(
-                decision,
-                allowed=False,
-                reason=reason,
-                needs_user=True,
-                human_only=True,
-            )
+            if self.permissions.mode is Mode.DANGEROUSLY_BYPASS_APPROVALS:
+                # The dangerous mode grants this floor too — recorded like every other
+                # clearance, with the provenance fact the card would have carried.
+                allowed = True
+                reason = f"{CLEARED_BY_MODE}: file the agent downloaded — {provenance_note}"
+                decision = replace(
+                    decision, allowed=True, reason=reason, needs_user=False, human_only=False
+                )
+            else:
+                allowed = False
+                reason = f"this file was downloaded by the agent this session — {provenance_note}"
+                decision = replace(
+                    decision,
+                    allowed=False,
+                    reason=reason,
+                    needs_user=True,
+                    human_only=True,
+                )
 
         if allowed and decision.rule:
             # A task-scoped standing rule auto-allowed this call: audit the exact rule
@@ -1511,6 +1542,16 @@ class TurnEngine:
         # "full access" is the exact reason string of permissions.py's bypass branch.
         if allowed and decision.reason == "full access":
             self._approval_origins[tool_call.id] = {"origin": "bypass"}
+        # (d) The dangerous mode crossed a floor a person would otherwise have seen:
+        # annotated AND audited per call, so the record can count exactly what was cleared.
+        if allowed and decision.reason.startswith("cleared by mode"):
+            self._approval_origins[tool_call.id] = {
+                "origin": "bypass",
+                "note": decision.reason,
+            }
+            self._audit(
+                tool_call, stage="auto_allowed", status="allowed", reason=decision.reason
+            )
 
         # OPE-136: a trusted-MCP allow ran cardless on standing config (a user trust
         # rule, or the legacy server flag) — audited and chip-annotated like every
@@ -1642,6 +1683,26 @@ class TurnEngine:
             if verdict.verdict == "unsure":
                 self._reviewer_denials = 0  # streak semantics: any non-deny resets
                 unsure_note = verdict.reason
+
+        if not allowed and decision.needs_user and self._auto_answering():
+            # Attendance "auto": nobody can answer a card, and the mode did not allow
+            # the call — so the answer is no, recorded, never a hang. (The dangerous mode
+            # never reaches here: it grants the floors before a card exists.)
+            reason = "refused: no one is available to approve this (attendance: auto)"
+            self._approval_origins[tool_call.id] = {
+                "origin": "unattended_auto",
+                "grant": "deny",
+                **({"note": unsure_note} if unsure_note else {}),
+            }
+            self._audit(
+                tool_call,
+                stage="approval_resolved",
+                call_id=tool_call.id,
+                status="denied",
+                approval="auto_refused",
+                reason=reason,
+            )
+            decision = replace(decision, needs_user=False)
 
         if not allowed and decision.needs_user:
             escalation = (
@@ -2237,16 +2298,37 @@ class TurnEngine:
         args = tool_call.arguments or {}
         name = str(args.get("name", "")).strip()
         reason = str(args.get("reason", ""))
+        fallback_guidance = (
+            "Continue without it: use a fallback check if you have one, and say in "
+            "your report which checks were degraded."
+        )
 
-        if self.tool_requester is None or not name:
+        if not name or (self.tool_requester is None and not self._auto_answering()):
             result: dict[str, Any] = {
                 "installed": False,
                 "error": "tool requests aren't available here",
-                "guidance": (
-                    "Continue without it: use a fallback check if you have one, and say in "
-                    "your report which checks were degraded."
-                ),
+                "guidance": fallback_guidance,
             }
+        elif _toolchain.describe(name) is not None and self._auto_answering():
+            # Attendance "auto": nobody will approve the card, and the install is the
+            # verified pinned build (version + digest fixed in the catalog) — run it and
+            # record the outcome. The rule follows the catalog, not a list of names.
+            info = _toolchain.describe(name) or {}
+            self._audit(tool_call, stage="tool_auto_install", reason=reason)
+            try:
+                path = await asyncio.to_thread(_toolchain.install, name)
+                result = {
+                    "installed": True,
+                    "path": path,
+                    "version": info.get("version", ""),
+                    "note": "installed by the unattended-auto rule (pinned, checksum-verified)",
+                }
+            except Exception as exc:  # noqa: BLE001 - the agent must hear why
+                result = {
+                    "installed": False,
+                    "error": f"install failed: {exc}",
+                    "guidance": fallback_guidance,
+                }
         elif _toolchain.describe(name) is None:
             # Not in the pinned catalog: no card at all (owner-hit 2026-08-20 — agents
             # routed ordinary brew/pip installs through the install card, which could
@@ -2330,8 +2412,26 @@ class TurnEngine:
         """Emit the grant prompt, await the user's out-of-band decision (which the requester also
         applies to this session's roots), and return the outcome as the tool result."""
         args = tool_call.arguments or {}
-        if self.directory_requester is None:
+        if self._auto_answering():
+            # Attendance "auto": there is no picker and no person to choose. The reply
+            # says what the agent can still do, and to stop rather than guess when the
+            # task truly needs the user. No grant, no card.
+            unscoped = self.permissions.mode is Mode.DANGEROUSLY_BYPASS_APPROVALS
             result: dict[str, Any] = {
+                "granted": False,
+                "error": (
+                    _attendance.AUTO_DIRECTORY_REPLY_UNSCOPED
+                    if unscoped
+                    else _attendance.AUTO_DIRECTORY_REPLY
+                ),
+            }
+            self._audit(
+                tool_call,
+                stage="directory_auto_refused",
+                reason=str(args.get("reason", "")),
+            )
+        elif self.directory_requester is None:
+            result = {
                 "granted": False,
                 "error": "directory requests aren't available here",
             }
@@ -2391,7 +2491,7 @@ class TurnEngine:
                 if isinstance(entry, dict) and str(entry.get("question", "")).strip():
                     question = str(entry["question"]).strip()
                     break
-        if self.question_asker is None or not question:
+        if not question or (self.question_asker is None and not self._auto_answering()):
             result: dict[str, Any] = {
                 "answer": "",
                 "error": (
@@ -2400,6 +2500,24 @@ class TurnEngine:
                     else "asking isn't available here"
                 ),
             }
+        elif self._auto_answering():
+            # Attendance "auto": the fixed least-destructive answer stands in for the
+            # person, one copy per grouped question, keyed the way the surfaces key them.
+            grouped = [
+                entry
+                for entry in (args.get("questions") or [])
+                if isinstance(entry, dict) and str(entry.get("question", "")).strip()
+            ]
+            if grouped:
+                result = {
+                    "answers": {
+                        str(entry.get("header") or entry.get("question")): _attendance.AUTO_QUESTION_ANSWER
+                        for entry in grouped
+                    }
+                }
+            else:
+                result = {"answer": _attendance.AUTO_QUESTION_ANSWER}
+            self._audit(tool_call, stage="question_auto_answered", reason=question)
         else:
             # The asker is mode-aware (attended → live inline prompt; unattended → Inbox), so it
             # owns surfacing the question. The engine just awaits the answer.

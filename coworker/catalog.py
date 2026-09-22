@@ -99,12 +99,13 @@ def _describe_edit_tools(tools: list) -> list:
 
 def _code_files(context: AgentContext) -> list:
     """Repo-oriented files: line-numbered/windowed `read_file`. Our `grep` and windowed
-    `read_file` replace aisuite's slower `search_files` / `read_file`/`read_file_lines`.
+    `read_file` replace aisuite's slower `search_files` / `read_file`/`read_file_lines`,
+    and our folder-aware `list_files` replaces the toolkit's files-only one (OPE-203).
     Multi-root aware (universal scratch): with session roots, writes/reads reach the
     scratch and granted dirs too; the workspace stays the relative-path anchor.
     """
     ws = str(context.workspace)
-    replaced = {"search_files", "read_file", "read_file_lines"}
+    replaced = {"search_files", "read_file", "read_file_lines", "list_files"}
     file_kwargs = (
         {"roots": context.roots} if context.roots else {"root": ws, "allow_write": True}
     )
@@ -121,14 +122,15 @@ def _code_files(context: AgentContext) -> list:
 def _files(context: AgentContext) -> list:
     """Knowledge-work files: multi-root aware (reads/writes across the session's roots).
     One reader everywhere (owner ruling 2026-08-20): the windowed, line-numbered
-    `read_file` replaces aisuite's `read_file`/`read_file_lines`, and our `grep`
-    replaces the slow `search_files` — same set Code uses.
+    `read_file` replaces aisuite's `read_file`/`read_file_lines`, our `grep`
+    replaces the slow `search_files`, and our folder-aware `list_files` replaces the
+    toolkit's files-only one (OPE-203) — same set Code uses.
     """
     ws = str(context.workspace)
     file_kwargs = (
         {"roots": context.roots} if context.roots else {"root": ws, "allow_write": True}
     )
-    replaced = {"search_files", "read_file", "read_file_lines"}
+    replaced = {"search_files", "read_file", "read_file_lines", "list_files"}
     files = _describe_edit_tools(
         [
             t

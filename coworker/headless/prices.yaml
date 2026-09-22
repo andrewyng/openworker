@@ -1,0 +1,94 @@
+# Token prices in USD per MILLION tokens, keyed by the OpenWorker model id (provider:model).
+#
+# Fields: input, output, cache_read, cache_write. cache_write is the 5-minute cache write
+# price; OpenWorker's usage does not distinguish 5-minute from 1-hour cache writes, so
+# the cheaper rate is assumed. A model with no entry gets cost = null in summary.json and
+# in the trajectory; token counts are always recorded.
+#
+# This table is a cross-check for a run's own record. Re-check every row against the
+# vendor's page before relying on it, and update the date in its source line.
+models:
+  "anthropic:claude-sonnet-5":
+    input: 2.00
+    output: 10.00
+    cache_read: 0.20
+    cache_write: 2.50
+    source: "https://claude.com/pricing (checked 2026-09-06)"
+  "anthropic:claude-opus-5":
+    input: 5.00
+    output: 25.00
+    cache_read: 0.50
+    cache_write: 6.25
+    source: "https://claude.com/pricing (checked 2026-09-06)"
+  "anthropic:claude-fable-5":
+    input: 10.00
+    output: 50.00
+    cache_read: 1.00
+    cache_write: 12.50
+    source: "https://claude.com/pricing (checked 2026-09-06), listed under legacy models; cache read is 1.00 vs 0.25 for Fable 5.1"
+  "anthropic:claude-fable-5-1":
+    input: 10.00
+    output: 50.00
+    cache_read: 0.25
+    cache_write: 12.50
+    source: "https://claude.com/pricing (checked 2026-09-06)"
+  "anthropic:claude-haiku-4-5":
+    input: 1.00
+    output: 5.00
+    cache_read: 0.10
+    cache_write: 1.25
+    source: "https://claude.com/pricing (checked 2026-09-06)"
+  "anthropic:claude-sonnet-4-6":
+    input: 3.00
+    output: 15.00
+    cache_read: 0.30
+    cache_write: 3.75
+    source: "https://claude.com/pricing (checked 2026-09-06), listed as legacy"
+  "anthropic:claude-opus-4-6":
+    input: 5.00
+    output: 25.00
+    cache_read: 0.50
+    cache_write: 6.25
+    source: "https://claude.com/pricing (checked 2026-09-16), listed as legacy"
+  "anthropic:claude-opus-4-5":
+    input: 5.00
+    output: 25.00
+    cache_read: 0.50
+    cache_write: 6.25
+    source: "https://claude.com/pricing (checked 2026-09-16), listed as legacy"
+  "anthropic:claude-sonnet-4-5":
+    input: 3.00
+    output: 15.00
+    cache_read: 0.30
+    cache_write: 3.75
+    source: "https://claude.com/pricing (checked 2026-09-16), listed as legacy"
+  # Together serverless prices copied from https://www.together.ai/pricing on 2026-09-06.
+  # Together lists a cached-input price but no separate cache-write price; cache_write is
+  # set to the plain input price.
+  "together:zai-org/GLM-5.1":
+    input: 1.40
+    output: 4.40
+    cache_read: 0.26
+    cache_write: 1.40
+    source: "Together /v1/models pricing field for zai-org/GLM-5.1 (read 2026-09-06); not on the public price page"
+  "together:zai-org/GLM-5.2":
+    input: 1.40
+    output: 4.40
+    cache_read: 0.26
+    cache_write: 1.40
+    source: "https://www.together.ai/pricing (checked 2026-09-06)"
+  "together:moonshotai/Kimi-K3":
+    input: 3.00
+    output: 15.00
+    cache_read: 0.30
+    cache_write: 3.00
+    source: "https://www.together.ai/pricing (checked 2026-09-06)"
+  # Kimi K3 via OpenRouter, pinned to the Together host (`--provider-order Together`).
+  # OpenRouter's own default row for this model is the cheapest host's price, which is
+  # not what a Together-pinned run pays; these are the Together endpoint's rates.
+  "openrouter:moonshotai/kimi-k3":
+    input: 3.00
+    output: 15.00
+    cache_read: 0.30
+    cache_write: 3.00
+    source: "https://openrouter.ai/api/v1/models/moonshotai/kimi-k3/endpoints (read 2026-09-09), Together endpoint"

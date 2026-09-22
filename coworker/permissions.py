@@ -206,6 +206,7 @@ MODE_LABELS = {
     "interactive": "Ask for approval",
     "auto": "Bypass approvals",
     "bypass-approvals": "Bypass approvals",
+    "dangerously-bypass-approvals": "Dangerously bypass approvals",
     "auto-approve": "Auto-approve",
 }
 
@@ -221,6 +222,16 @@ class Mode(str, Enum):
     # NOT "bypass-ALL-approvals": Phase 1's floors (settings files, out-of-root writes,
     # `.git/hooks`) still hold in this mode, so "all" would be a false promise.
     BYPASS_APPROVALS = "bypass-approvals"  # full access (minus the hard floors)
+    # Everything BYPASS_APPROVALS keeps is granted too: the three floors that otherwise
+    # reach a person (running a file the agent downloaded, writing outside the session's
+    # folders, files that run later such as git hooks / CI configs, and authority that
+    # outlives the session) are cleared by the mode and each clearance is recorded. The
+    # name follows the convention other harnesses use for the same switch, because the
+    # name is the warning: only for a disposable machine or container. Never offered in
+    # the desktop picker; the server accepts it only when started with the flag. The
+    # self-protection floor (OpenWorker's own settings files) is a refusal, not an
+    # approval, and stays.
+    DANGEROUSLY_BYPASS_APPROVALS = "dangerously-bypass-approvals"
     # Interactive, but an LLM reviewer judges each would-be approval card first: clear
     # allows run without a prompt, everything else still reaches the human. The reviewer
     # can only turn "ask" into "allow", never "blocked" into "allow" (spec §1.2). With no
@@ -239,6 +250,17 @@ class Mode(str, Enum):
 # Modes whose enforcement is read-only. DISCUSS and PLAN share the same gate; they differ
 # only in intent — PLAN additionally drives the agent toward a propose_plan approval.
 READ_ONLY_MODES = frozenset({Mode.DISCUSS, Mode.PLAN})
+# Modes that grant every ordinary approval without a card. Only the second also clears
+# the floors below.
+BYPASS_MODES = frozenset({Mode.BYPASS_APPROVALS, Mode.DANGEROUSLY_BYPASS_APPROVALS})
+
+# Reason prefix on every decision the dangerous mode granted in place of a person. The
+# engine audits these individually ("recorded, never invisible") and the tool card says so.
+CLEARED_BY_MODE = "cleared by mode"
+
+
+def _cleared(floor: str) -> "Decision":
+    return Decision(True, f"{CLEARED_BY_MODE}: {floor}")
 
 
 @dataclass
@@ -251,6 +273,8 @@ class Decision:
     # sees them — protected in-project files that execute later (git hooks, CI configs:
     # "never WITHOUT a human — no auto-approve path may clear them") and writes whose path
     # could not be located for scoping (an allow would bypass root scoping unverified).
+    # The one exception is DANGEROUSLY_BYPASS_APPROVALS, which never produces these asks:
+    # it grants them up front (see `_cleared`) and the engine records each grant.
     human_only: bool = False
     # Set when a task-scoped standing rule allowed the call ("tool → target") so the
     # engine can audit the exact rule and the tool card can say so (§25).
@@ -377,6 +401,12 @@ class PermissionEngine:
                 False, f"{self.mode.value} mode is read-only", needs_user=False
             )
 
+        # The dangerous mode clears every floor below that would otherwise reach a person.
+        # Each clearance keeps its own reason so the record says which floor was crossed.
+        # (The self-protection refusal above and the read-only modes are not approvals and
+        # are untouched.)
+        dangerous = self.mode is Mode.DANGEROUSLY_BYPASS_APPROVALS
+
         # Path scoping for writes (all modes): every path the write touches must land in a
         # writable root. A write whose path can't be located is not scoped-able, so it fails
         # closed to approval rather than slipping through auto/custom unscoped.
@@ -384,6 +414,8 @@ class PermissionEngine:
         if is_write:
             paths, located = write_paths(tool_name, arguments)
             if not located:
+                if dangerous:
+                    return _cleared("write path could not be scoped")
                 return Decision(
                     False,
                     "cannot determine the write path to scope",
@@ -392,6 +424,11 @@ class PermissionEngine:
                 )
             for path in paths:
                 if not self._under_writable_root(path):
+                    if dangerous:
+                        # The permission floor is cleared; the file tools still resolve
+                        # paths against the session's roots by construction, so this
+                        # mostly matters for tools that write wherever they are pointed.
+                        return _cleared(f"write outside the session's directories: {path}")
                     return Decision(
                         False, f"path is not in a writable directory: {path}"
                     )
@@ -405,6 +442,8 @@ class PermissionEngine:
         # purpose: these tools are consequential today, but a metadata slip must not be
         # able to switch the floor off. Read-only modes still hard-deny above this.
         if tool_name in PERSISTENT_AUTHORITY_TOOLS:
+            if dangerous:
+                return _cleared("authority that outlives the session")
             return Decision(
                 False,
                 "this outlives the session — approval required",
@@ -419,6 +458,8 @@ class PermissionEngine:
         # A protected in-project target (git hooks, CI config) skips every auto-approve path
         # below — including auto mode and the session/config allowlists — and asks.
         if needs_human_for_protected:
+            if dangerous:
+                return _cleared("file that runs automatically later")
             return Decision(
                 False,
                 "this file runs automatically later — approval required",
@@ -427,7 +468,7 @@ class PermissionEngine:
             )
 
         # Full access.
-        if self.mode is Mode.BYPASS_APPROVALS:
+        if self.mode in BYPASS_MODES:
             return Decision(True, "full access")
 
         # interactive / custom / auto-approve: allowlists.
