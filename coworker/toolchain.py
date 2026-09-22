@@ -117,6 +117,11 @@ MANAGED: dict[str, ManagedTool] = {
                 sha256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb",
                 member="gitleaks",
             ),
+            "linux_arm64": Download(
+                url="https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_arm64.tar.gz",
+                sha256="e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080",
+                member="gitleaks",
+            ),
         },
     ),
     "trivy": ManagedTool(
@@ -139,6 +144,11 @@ MANAGED: dict[str, ManagedTool] = {
                 sha256="2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a",
                 member="trivy",
             ),
+            "linux_arm64": Download(
+                url="https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-ARM64.tar.gz",
+                sha256="b94ce1976bbf3c15b514b605ee88be7c6d94a29be2302847ff01cb794d47aad5",
+                member="trivy",
+            ),
         },
     ),
     "osv-scanner": ManagedTool(
@@ -157,6 +167,10 @@ MANAGED: dict[str, ManagedTool] = {
             "linux_amd64": Download(
                 url="https://github.com/google/osv-scanner/releases/download/v2.5.0/osv-scanner_linux_amd64",
                 sha256="edcfc41d257db36148f065055655fe3fcfc434b0b423ea67468a84c207524e0c",
+            ),
+            "linux_arm64": Download(
+                url="https://github.com/google/osv-scanner/releases/download/v2.5.0/osv-scanner_linux_arm64",
+                sha256="fe152e1a546af223e6c557cc3111a8bb3e5dc02fcbf7dbe95d26567c0f0041f2",
             ),
         },
     ),
