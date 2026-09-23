@@ -40,13 +40,34 @@ class SkillLoader:
             self._discover(directory)
 
     def _discover(self, directory: Path) -> None:
-        if not directory.is_dir():
+        """Read one skill dir, best-effort.
+
+        Every filesystem call here is guarded, because `rescan()` runs on EVERY TURN to
+        rebuild the live skill menu: a dir that is merely unreadable must degrade to "no
+        skills here", never abort the run. Seen in the wild with an agent running headless
+        as an unprivileged user — a root-owned `.coworker/` appeared in the workspace
+        mid-session and `is_dir()` raised EACCES (pathlib ignores ENOENT/ENOTDIR/EBADF/
+        ELOOP but propagates EACCES). Long sessions died outright, some ~100 turns deep,
+        over an OPTIONAL dir that was empty anyway.
+
+        Per-skill parsing is guarded separately so one unreadable or malformed folder
+        costs only that skill, not the rest of the dir.
+        """
+        try:
+            if not directory.is_dir():
+                return
+            entries = sorted(directory.iterdir())
+        except OSError:
             return
-        for sub in sorted(directory.iterdir()):
-            md = sub / "SKILL.md"
-            if md.is_file():
+        for sub in entries:
+            try:
+                md = sub / "SKILL.md"
+                if not md.is_file():
+                    continue
                 skill = _parse_skill(md)
-                self._skills[skill.name] = skill
+            except (OSError, UnicodeDecodeError, ValueError):
+                continue
+            self._skills[skill.name] = skill
 
     def names(self) -> list[str]:
         return list(self._skills)
