@@ -40,7 +40,9 @@ class MentionSessionStore:
         if self.path and self.path.is_file():
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
-                self._threads = [MentionThread(**raw) for raw in data.get("threads", [])]
+                self._threads = [
+                    MentionThread(**raw) for raw in data.get("threads", [])
+                ]
             except (OSError, ValueError, TypeError):
                 self._threads = []  # a corrupt file must never block startup
 
