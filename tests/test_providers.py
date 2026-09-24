@@ -622,3 +622,172 @@ def test_over_limit_max_tokens_is_dropped_and_retried():
     calls = client.chat.completions.calls
     assert turn.text == "ok" and len(calls) == 2
     assert "max_tokens" not in calls[1]
+
+
+# -- aimlapi.com --------------------------------------------------------------
+# A reseller like the three above, plus one thing none of them do: it reads app
+# attribution headers. Those are the only reason OpenAIProvider grew a
+# `default_headers` kwarg, so they get pinned here — a malformed partner id is
+# accepted by the gateway and silently earns nothing, which no runtime check catches.
+AIMLAPI_BASE_URL = "https://api.aimlapi.com/v1"
+
+
+def test_aimlapi_descriptor_matches_the_reseller_shape():
+    from coworker.providers.registry import get_descriptor
+
+    d = get_descriptor("aimlapi")
+    assert d is not None and d.needs_key
+    assert d.title == "aimlapi.com"  # the name users see, everywhere
+    assert d.env_key == "AIMLAPI_API_KEY"
+    assert d.recommended_model == "zhipu/glm-5.2"
+    base = next(f for f in d.fields if f.key == "base_url")
+    assert base.default == AIMLAPI_BASE_URL and not base.required
+
+
+def test_aimlapi_attribution_headers_are_wellformed():
+    """`X-AIMLAPI-Partner-ID` is validated as `part_<alnum>` server-side and a value that
+    fails the pattern is dropped silently — no error, no attribution. Only a test catches
+    a typo here. `X-AIMLAPI-Source` is `<channel>/<client>` with a closed channel enum."""
+    import re
+
+    from coworker.providers.registry import AIMLAPI_ATTRIBUTION_HEADERS as H
+
+    assert re.fullmatch(r"part_[A-Za-z0-9]{1,64}", H["X-AIMLAPI-Partner-ID"])
+    channel, _, client = H["X-AIMLAPI-Source"].partition("/")
+    assert channel in ("web", "agent", "mcp")
+    assert re.fullmatch(r"[a-z0-9-]{1,32}", client)
+    # HTTP-Referer/X-Title identify the CALLING app — OpenWorker, not the gateway.
+    assert H["X-Title"] == "OpenWorker"
+    assert "openworker" in H["HTTP-Referer"]
+
+
+def test_aimlapi_client_carries_attribution_and_never_mutates_the_constant():
+    from coworker.providers.registry import AIMLAPI_ATTRIBUTION_HEADERS as H
+    from coworker.providers.registry import build_provider_client
+
+    before = dict(H)
+    p = build_provider_client("aimlapi", {"api_key": "aiml-key"}, None)
+    assert isinstance(p, OpenAIProvider)
+    assert p._base_url == AIMLAPI_BASE_URL
+    assert p._default_headers == H
+    p._default_headers["X-Title"] = "tampered"  # a per-instance copy, not the constant
+    assert H == before
+
+
+def test_aimlapi_attribution_is_scoped_to_its_own_origin():
+    """The endpoint field is user-editable. A key repointed at a proxy — or at another
+    vendor entirely — must not carry our partner tag onto someone else's wire."""
+    from coworker.providers.registry import build_provider_client
+
+    for elsewhere in (
+        "https://gateway.example/v1",
+        "https://api.openai.com/v1",
+        "http://api.aimlapi.com.evil.test/v1",
+    ):
+        p = build_provider_client(
+            "aimlapi", {"api_key": "k", "base_url": elsewhere}, None
+        )
+        assert p._default_headers is None, elsewhere
+
+
+def test_other_compat_vendors_send_no_attribution_headers():
+    """Lockdown: the new kwarg is opt-in per descriptor, not a global default."""
+    from coworker.providers.registry import build_provider_client
+
+    for name in ("openrouter", "together", "fireworks", "deepseek"):
+        p = build_provider_client(name, {"api_key": "k"}, None)
+        assert p._default_headers is None, name
+
+
+def test_aimlapi_requests_omit_unset_params_rather_than_sending_null():
+    """aimlapi.com's validator 400s on an explicit null for temperature, top_p, seed,
+    tools, tool_choice, response_format, stream, stream_options, parallel_tool_calls,
+    max_tokens and max_completion_tokens (swept live 2026-09-03) — precisely the shape a
+    provider produces when it forwards its unset optionals. Both wire paths here build
+    kwargs from what the caller actually passed and gate `tools` on truthiness, so no key
+    may reach the wire holding None.
+
+    `tools` is the one that bites in an agent loop rather than on the first call: a host
+    that clears tools between turns by nulling the field succeeds on turn 1 and fails on
+    turn 2, every time.
+    """
+    for tools in (None, [], [{"type": "function", "function": {"name": "f"}}]):
+        client = _FakeClient(_response(content="ok"))
+        provider = OpenAIProvider(
+            client=client, base_url=AIMLAPI_BASE_URL, api_key="aiml-key"
+        )
+        provider.complete(
+            model="zhipu/glm-5.2",
+            messages=[{"role": "user", "content": "hi"}],
+            tools=tools,
+        )
+        sent = client.chat.completions.calls[0]
+        assert [k for k, v in sent.items() if v is None] == [], tools
+        assert "temperature" not in sent and "top_p" not in sent
+        assert ("tools" in sent) is bool(tools)
+
+
+def test_aimlapi_streaming_requests_send_no_null_params():
+    """Same contract on the streaming path, which additionally always sets `stream` and
+    `stream_options` — both of which aimlapi.com rejects as null."""
+
+    class _StreamingFake:
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            return iter(())
+
+    client = _FakeClient(_response(content="ok"))
+    client.chat.completions = _StreamingFake()
+    provider = OpenAIProvider(
+        client=client, base_url=AIMLAPI_BASE_URL, api_key="aiml-key"
+    )
+    list(provider.stream(model="zhipu/glm-5.2", messages=[], tools=None))
+
+    sent = client.chat.completions.calls[0]
+    assert [k for k, v in sent.items() if v is None] == []
+    assert sent["stream"] is True and sent["stream_options"] == {"include_usage": True}
+    assert "tools" not in sent
+
+
+def test_aimlapi_curated_models_are_its_own_namespace():
+    """Every id here was checked against aimlapi.com's live catalog AND round-tripped;
+    OpenRouter's slugs for the same models do not resolve there, so none are reused."""
+    from coworker.providers.matrix import models_for_provider
+
+    ours = models_for_provider("aimlapi")
+    assert ours == [
+        "openai/gpt-5.6-sol",
+        "anthropic/claude-sonnet-4.6",
+        "zhipu/glm-5.2",
+        "deepseek/deepseek-v4-pro",
+    ]
+    # These three OpenRouter slugs resolve to nothing on aimlapi.com — neither an id nor
+    # an alias (checked 2026-09-03). Copying a reseller's array across is the failure
+    # mode this guards; where the two namespaces genuinely agree, reuse is fine.
+    assert not {
+        "z-ai/glm-5.2",
+        "moonshotai/kimi-k2.6",
+        "meta-llama/llama-4-maverick",
+    } & set(ours)
+
+
+def test_aimlapi_recommended_model_is_curated_and_routes():
+    from coworker.providers.matrix import models_for_provider
+    from coworker.providers.registry import get_descriptor
+    from coworker.providers.router import ProviderRouter
+
+    recommended = get_descriptor("aimlapi").recommended_model
+    assert recommended in models_for_provider("aimlapi")
+
+    router = ProviderRouter.__new__(ProviderRouter)
+    for bare in models_for_provider("aimlapi"):
+        full = f"aimlapi:{bare}"
+        assert router._provider_name(full) == "aimlapi"
+        assert ProviderRouter._bare(full) == bare
+        caps = capabilities_for(full)
+        assert caps.tools and caps.parallel_tool_calls and caps.streaming
+        # No reseller row claims native PDF ingestion — pdf_support.py handles those.
+        assert not caps.pdf
