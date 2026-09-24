@@ -43,6 +43,6 @@ test("switching away and back preserves Stop on the running session (#506)", asy
   // Two idle sessions in a row → Stop must not show on either (no pre-ready leak).
   await page.getByText("Draft the launch note").first().click();
   await expect(page.getByRole("button", { name: /Stop/ })).toHaveCount(0);
-  await page.getByText("Brainstorm launch positioning").first().click();
+  await page.getByText("Weekly plan 1").first().click();
   await expect(page.getByRole("button", { name: /Stop/ })).toHaveCount(0);
 });
