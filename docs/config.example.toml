@@ -30,3 +30,17 @@ auto_allow = ["write_file", "replace_in_file", "apply_patch", "apply_unified_dif
 # Server (openworker-server) bind address.
 host = "127.0.0.1"
 port = 8765
+
+# --- Sandbox (machine-level; a project's config cannot change it) ---------------------
+# Where a session's commands and file tools run: "direct" (in the OpenWorker process,
+# the default) or "openshell" (one NVIDIA OpenShell container per agent).
+# See docs/openshell.md.
+# sandbox_provider = "openshell"
+# Network allow list inside a sandbox: "strict" (code hosts and package registries) or
+# "standard" (plus the search APIs).
+# sandbox_network_profile = "strict"
+# Credentials an agent may be given, copied into the sandbox for the session and deleted
+# with it. All off unless enabled here or in Settings ▸ Sandbox.
+# [[sandbox_credentials]]
+# name = "ssh"
+# enabled = true
