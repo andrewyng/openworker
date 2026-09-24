@@ -4041,6 +4041,7 @@ class SessionManager:
         "qwen": ["qwen3-max", "qwen3-coder-plus", "qwen-plus"],
         "xai": ["grok-4.3", "grok-4"],
         "mistral": ["mistral-large-latest", "mistral-small-latest"],
+        "atlascloud": ["openai/gpt-4.1-mini"],
     }
 
     def _suggested_models(self, name: str) -> list[str]:
