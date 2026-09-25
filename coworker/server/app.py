@@ -157,6 +157,7 @@ from ..attachments import (
     MAX_TEXT_CHARS,
     build_user_content,
 )
+from ..attachment_workspace import materialize_pdf_attachments
 from ..engine import ApprovalOutcome
 from ..events import EventType
 from ..connectors import connector_list
@@ -2904,6 +2905,25 @@ def create_app(manager: SessionManager) -> FastAPI:
             # The receive loop atomically claims this session before scheduling the task.
             # Keeping the claim outside prevents two back-to-back frames from both starting.
             try:
+                if not retry and isinstance(content, list) and any(
+                    isinstance(part, dict) and part.get("type") == "file"
+                    for part in content
+                ):
+                    try:
+                        content = await asyncio.to_thread(
+                            materialize_pdf_attachments,
+                            content,
+                            manager._provision_scratch(session_id),
+                        )
+                    except (OSError, ValueError) as exc:
+                        await manager.broadcast_session(
+                            session_id,
+                            {
+                                "type": "input_rejected",
+                                "data": {"error": f"Could not save PDF attachment: {exc}"},
+                            },
+                        )
+                        return
                 events = (
                     engine.retry()
                     if retry

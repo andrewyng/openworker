@@ -7564,6 +7564,30 @@ class SessionManager:
                     shutil.rmtree(resolved)
             except OSError:
                 pass  # a stale/foreign path must not fail the delete
+        # Project-backed sessions keep their primary folder, but PDF originals copied
+        # into conversation scratch must go away when the conversation is deleted.
+        if (
+            ok
+            and record
+            and self._SESSION_ID_RE.fullmatch(session_id)
+            and session_id not in {".", ".."}
+        ):
+            team = record.team or {}
+            lead = str(team.get("lead_session") or "")
+            scratch = self.scratch_base().resolve()
+            if (
+                team.get("role") == "worker"
+                and self._SESSION_ID_RE.fullmatch(lead)
+                and lead not in {".", "..", session_id}
+            ):
+                attachment_dir = scratch / lead / "workers" / session_id / "attachments"
+            else:
+                attachment_dir = scratch / session_id / "attachments"
+            try:
+                if attachment_dir.is_dir() and attachment_dir.resolve() == attachment_dir:
+                    shutil.rmtree(attachment_dir)
+            except OSError:
+                pass  # a missing or inaccessible scratch folder must not fail deletion
         return {"ok": ok, "session_id": session_id}
 
     # -- provider proxy ---------------------------------------------------------
