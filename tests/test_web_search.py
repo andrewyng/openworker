@@ -20,6 +20,7 @@ from coworker.web.providers import (
     DuckDuckGoProvider,
     TavilyProvider,
     WebSearchProvider,
+    YouProvider,
 )
 
 
@@ -79,6 +80,85 @@ def test_build_provider_third_party_requires_key():
         build_provider("tavily")  # no key
     assert isinstance(build_provider("tavily", "tvly-x"), TavilyProvider)
     assert isinstance(build_provider("brave", "brv-x"), BraveProvider)
+
+
+def test_build_provider_you_is_keyless_with_optional_key(monkeypatch):
+    monkeypatch.delenv("YDC_API_KEY", raising=False)
+    assert "you" in provider_names()
+    keyless = build_provider("you")  # no key needed
+    assert isinstance(keyless, YouProvider) and keyless.api_key is None
+    assert build_provider("you", "ydc-x").api_key == "ydc-x"  # key is passed through
+    monkeypatch.setenv("YDC_API_KEY", "from-env")
+    assert build_provider("you").api_key == "from-env"
+
+
+def _fake_you_get(captured, payload):
+    """Stand-in for httpx.get that records the request and replays a canned response."""
+
+    class Resp:
+        def json(self):
+            return payload
+
+    def get(url, **kw):
+        captured.update(url=url, **kw)
+        return Resp()
+
+    return get
+
+
+def test_you_provider_keyless_request_and_parsing(monkeypatch):
+    import httpx
+
+    monkeypatch.delenv("YDC_API_KEY", raising=False)
+    got = {}
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        _fake_you_get(
+            got,
+            {
+                "results": {
+                    "web": [
+                        {"title": "w", "url": "https://w", "description": "wd"},
+                        {"title": "s", "url": "https://s", "snippets": ["a", "b"]},
+                    ],
+                    "news": [{"title": "n", "url": "https://n", "description": "nd"}],
+                }
+            },
+        ),
+    )
+
+    out = YouProvider().search("openworker", max_results=3)
+    assert got["url"] == YouProvider._KEYLESS_URL  # free tier, no key
+    assert "X-API-Key" not in got["headers"]
+    assert got["headers"]["User-Agent"] == "youdotcom-integration/andrewyng-openworker"
+    assert got["params"] == {"query": "openworker", "count": 3}
+    assert [(r.title, r.url, r.snippet) for r in out] == [
+        ("w", "https://w", "wd"),
+        ("s", "https://s", "a b"),  # falls back to snippets when description is absent
+        ("n", "https://n", "nd"),  # web first, news fills the remainder
+    ]
+
+
+def test_you_provider_with_key_uses_search_api(monkeypatch):
+    import httpx
+
+    got = {}
+    monkeypatch.setattr(httpx, "get", _fake_you_get(got, {"results": {}}))
+
+    assert YouProvider("ydc-123").search("q", max_results=2) == []
+    assert got["url"] == YouProvider._KEYED_URL
+    assert got["headers"]["X-API-Key"] == "ydc-123"
+
+
+def test_you_provider_truncates_to_max_results(monkeypatch):
+    import httpx
+
+    rows = [{"title": f"r{i}", "url": f"https://x/{i}"} for i in range(10)]
+    monkeypatch.setattr(
+        httpx, "get", _fake_you_get({}, {"results": {"web": rows, "news": rows}})
+    )
+    assert len(YouProvider().search("q", max_results=4)) == 4
 
 
 def test_tool_surfaces_missing_key_error(tmp_path):
