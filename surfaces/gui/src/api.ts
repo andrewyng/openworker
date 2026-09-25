@@ -690,6 +690,18 @@ export async function patchMcpServer(name: string, changes: Record<string, any>)
   return res.json();
 }
 
+export async function replaceMcpServer(
+  name: string, config: Record<string, any>,
+): Promise<{ ok: boolean; status?: string; error?: string; tool_count?: number }> {
+  const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error(`Could not save configuration (HTTP ${res.status}). Try again.`);
+  return res.json();
+}
+
 export async function deleteMcpServer(name: string) {
   const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}`, { method: "DELETE" });
   return res.json();
