@@ -7,6 +7,7 @@ streamable-HTTP transport. We supply its three integration points:
   - token persistence  → the SecretStore (profile `mcp-oauth:<server>`; 0600 file,
     never the mcp.json config, which is plain text and paste-shareable)
   - redirect           → open the system browser at the authorize URL
+                          (http(s) only; destinations are origin-checked, #527)
   - callback           → the sidecar's loopback `GET /mcp/oauth/callback` resolves a
     single-slot pending future (one interactive sign-in at a time — the flow is
     user-driven, so concurrency is meaningless)
@@ -29,6 +30,13 @@ from mcp.client.auth import OAuthClientProvider, TokenStorage
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 
 from ..secrets import SecretStore
+from .ssrf import (
+    UnsafeMcpUrl,
+    check_metadata,
+    refuse_destination,
+    refuse_metadata,
+    require_http_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +71,13 @@ class SecretStoreTokenStorage(TokenStorage):
 
     def _merge(self, patch: dict[str, Any]) -> None:
         self._secrets.put(_profile(self._name), {**self._data(), **patch})
+
+    def _drop_metadata(self) -> None:
+        """Forget cached AS metadata (poisoned or incompatible) without touching tokens."""
+        data = dict(self._data())
+        if data.pop("oauth_metadata", None) is None:
+            return
+        self._secrets.put(_profile(self._name), data)
 
     async def get_tokens(self) -> Optional[OAuthToken]:
         data = self._data()
@@ -201,6 +216,13 @@ def deliver_callback(code: str, state: Optional[str]) -> bool:
 
 async def _open_browser(url: str) -> None:
     global last_authorize_url, _expected_state
+    # Last-line scheme gate: even a future caller that skips refuse_destination
+    # must not hand file:// / javascript: / custom schemes to webbrowser.open.
+    # Destination (loopback/metadata) checks need the MCP server origin and live
+    # in the redirect_handler closure build_auth installs.
+    reason = require_http_url(url)
+    if reason:
+        raise UnsafeMcpUrl(f"refusing authorize page: {reason}")
     last_authorize_url = url
     _expected_state = _state_from_url(url)
     import webbrowser
@@ -213,6 +235,9 @@ async def _refuse_browser(url: str) -> None:
     """Non-interactive redirect handler: never open a browser, but keep the URL so
     the GUI's "reopen sign-in page" affordance still works after the refusal."""
     global last_authorize_url
+    reason = require_http_url(url)
+    if reason:
+        raise UnsafeMcpUrl(f"refusing authorize page: {reason}")
     last_authorize_url = url
     raise InteractiveAuthRequired(
         "sign-in required — reconnect this server from its page"
@@ -261,9 +286,19 @@ class _MetadataSeededProvider(OAuthClientProvider):
             try:
                 from mcp.shared.auth import OAuthMetadata
 
-                self.context.oauth_metadata = OAuthMetadata.model_validate(raw)
+                md = OAuthMetadata.model_validate(raw)
             except Exception:
-                pass  # stale/incompatible cache: discovery will refill it
+                md = None  # stale/incompatible cache: discovery will refill it
+            if md is not None:
+                # Cached token_endpoint is used on the *next* refresh POST, before
+                # the SDK rediscovers — so poison here is a durable SSRF. Drop it.
+                if check_metadata(md, self.context.server_url):
+                    logger.warning(
+                        "mcp oauth: dropping cached metadata with unsafe endpoints"
+                    )
+                    self._ocw_storage._drop_metadata()
+                else:
+                    self.context.oauth_metadata = md
         if self.context.oauth_metadata is None and self._ocw_storage._data().get(
             "tokens"
         ):
@@ -279,23 +314,55 @@ class _MetadataSeededProvider(OAuthClientProvider):
 
                 pr = urlparse(self.context.server_url)
                 url = f"{pr.scheme}://{pr.netloc}/.well-known/oauth-authorization-server"
-                async with httpx.AsyncClient(timeout=10) as c:
+                refuse_destination(
+                    url, self.context.server_url, what="OAuth well-known"
+                )
+                # follow_redirects=False: a 302 to metadata would otherwise skip the
+                # destination check. Non-200 just falls through to SDK discovery.
+                async with httpx.AsyncClient(timeout=10, follow_redirects=False) as c:
                     r = await c.get(url, headers={"Accept": "application/json"})
                 if r.status_code == 200:
-                    self.context.oauth_metadata = OAuthMetadata.model_validate(r.json())
+                    md = OAuthMetadata.model_validate(r.json())
+                    refuse_metadata(
+                        md, self.context.server_url, what="OAuth well-known metadata"
+                    )
+                    self.context.oauth_metadata = md
                     self._persist_metadata()
             except Exception:
                 pass
 
     def _persist_metadata(self) -> None:
         md = self.context.oauth_metadata
-        if md is not None:
-            try:
-                self._ocw_storage._merge(
-                    {"oauth_metadata": md.model_dump(mode="json", exclude_none=True)}
+        if md is None:
+            return
+        if check_metadata(md, self.context.server_url):
+            logger.warning("mcp oauth: refusing to persist unsafe metadata")
+            self.context.oauth_metadata = None
+            self._ocw_storage._drop_metadata()
+            return
+        try:
+            self._ocw_storage._merge(
+                {"oauth_metadata": md.model_dump(mode="json", exclude_none=True)}
+            )
+        except Exception:
+            logger.debug("could not persist oauth metadata", exc_info=True)
+
+    async def async_auth_flow(self, request: Any) -> Any:
+        """Vet every URL the SDK yields (PRM, AS metadata, DCR, token) before
+        httpx sends it. Redirect hops are a separate gap — those never re-enter
+        Auth — and are closed by `mcp_httpx_client_factory`'s request hook."""
+        flow = super().async_auth_flow(request)
+        try:
+            sent = await flow.asend(None)
+            while True:
+                refuse_destination(
+                    str(sent.url), self.context.server_url, what="OAuth request"
                 )
-            except Exception:
-                logger.debug("could not persist oauth metadata", exc_info=True)
+                sent = await flow.asend((yield sent))
+        except StopAsyncIteration:
+            return
+        finally:
+            await flow.aclose()
 
     async def _handle_token_response(self, response: Any) -> None:
         await super()._handle_token_response(response)
@@ -331,11 +398,21 @@ def build_auth(
             "token_endpoint_auth_method": "none",
         }
     )
+
+    async def redirect_handler(url: str) -> None:
+        # Authorize URL comes from AS metadata, not from server_url. Scheme-gate
+        # plus destination check before webbrowser.open / last_authorize_url.
+        refuse_destination(url, server_url, what="authorize page")
+        if interactive:
+            await _open_browser(url)
+        else:
+            await _refuse_browser(url)
+
     return _MetadataSeededProvider(
         server_url=server_url,
         client_metadata=metadata,
         storage=SecretStoreTokenStorage(server_name, secrets),
-        redirect_handler=_open_browser if interactive else _refuse_browser,
+        redirect_handler=redirect_handler,
         callback_handler=_wait_for_callback if interactive else _refuse_callback,
     )
 
