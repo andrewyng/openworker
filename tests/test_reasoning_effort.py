@@ -173,6 +173,27 @@ def test_openai_compat_mapping(model, level, effective, noted):
     assert plan.params == {"reasoning_effort": effective}
     assert bool(plan.note) == noted
 
+def test_nearest_supported_unknown_level_returns_none():
+    """Levels outside _RANK (e.g. "none") must not raise — see #676."""
+    assert nearest_supported("none", ("low", "medium", "high")) is None
+
+
+def test_openai_compat_unknown_level_sends_no_parameter():
+    """Effort "none" (used by the compaction summariser) and unlisted model ids
+    (Ollama, any OpenAI-compatible endpoint) must omit the parameter rather
+    than crash the turn — see #676."""
+    plan = openai_compat_effort("ollama:glm-5.3:cloud", "none")
+    assert plan.effective is None
+    assert plan.params == {}
+    assert "unknown" in plan.note
+
+    # Known models behave identically — "none" omits the parameter there too
+    plan = openai_compat_effort("moonshotai/Kimi-K3", "none")
+    assert plan.effective is None
+    assert plan.params == {}
+
+
+
 
 def test_every_curated_model_resolves_every_level():
     """No level on any curated row may raise; providers without a knob are simply skipped."""
