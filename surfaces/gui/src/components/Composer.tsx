@@ -149,16 +149,74 @@ interface Props {
   reviewerPaused?: boolean;
 }
 
+interface ComposerDraft {
+  text: string;
+  attachments?: Attachment[];
+  pendingSkill?: SessionSkillRow | null;
+}
+
+const DRAFT_PREFIX = "ocw:composer-draft:";
+
+function loadDraft(key?: string): ComposerDraft | null {
+  if (!key) return null;
+  try {
+    const raw = localStorage.getItem(`${DRAFT_PREFIX}${key}`);
+    if (!raw) return null;
+    return JSON.parse(raw) as ComposerDraft;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(key?: string, draft?: ComposerDraft | null): void {
+  if (!key) return;
+  try {
+    if (
+      !draft ||
+      (!draft.text.trim() &&
+        (!draft.attachments || draft.attachments.length === 0) &&
+        !draft.pendingSkill)
+    ) {
+      localStorage.removeItem(`${DRAFT_PREFIX}${key}`);
+    } else {
+      localStorage.setItem(`${DRAFT_PREFIX}${key}`, JSON.stringify(draft));
+    }
+  } catch {
+    /* best effort */
+  }
+}
+
+function clearDraft(key?: string): void {
+  if (!key) return;
+  try {
+    localStorage.removeItem(`${DRAFT_PREFIX}${key}`);
+  } catch {
+    /* best effort */
+  }
+}
+
 export function Composer(props: Props) {
   const { t } = useTranslation();
-  const [text, setText] = useState("");
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const currentKey = props.resetKey || props.sessionId;
+  const initialDraft = loadDraft(currentKey);
+  const [text, setText] = useState(initialDraft?.text ?? "");
+  const [attachments, setAttachments] = useState<Attachment[]>(initialDraft?.attachments ?? []);
   // "/" force-run (SKILLS-SPEC §4.1 #3). The popup derives from the draft: it is open while
   // the text is a bare "/query" (no whitespace yet) and no skill is picked. Selecting a row
   // inserts "/name " INLINE in the box (Claude-Code style — the slash text IS the state);
   // the user keeps typing after it, and on send the prefix is stripped while the skill name
   // rides the user_message as its own field. Editing the prefix away un-picks the skill.
-  const [pendingSkill, setPendingSkill] = useState<SessionSkillRow | null>(null);
+  const [pendingSkill, setPendingSkill] = useState<SessionSkillRow | null>(initialDraft?.pendingSkill ?? null);
+  const prevKeyRef = useRef<string | undefined>(currentKey);
+  const draftRef = useRef<ComposerDraft>({ text, attachments, pendingSkill });
+  draftRef.current = { text, attachments, pendingSkill };
+
+  // Persist the current draft as it changes
+  useEffect(() => {
+    if (currentKey) {
+      saveDraft(currentKey, { text, attachments, pendingSkill });
+    }
+  }, [currentKey, text, attachments, pendingSkill]);
   const [slashSkills, setSlashSkills] = useState<SessionSkillRow[] | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
   const prefixIntact =
@@ -245,16 +303,39 @@ export function Composer(props: Props) {
     el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
   }, [text]);
 
-  // Clear the draft when the conversation changes, so a half-typed message / picked file doesn't
-  // bleed from one session into another. Declared BEFORE the prefill effect: when both fire in
-  // the same render (the Skills doorway starts a new session AND prefills it), effects run in
-  // declaration order — clear first, then the prefill lands on the fresh session.
-  useEffect(() => {
-    setText("");
-    setAttachments([]);
-    setPendingSkill(null);
+  // Switch session: persist outgoing draft under old session, then restore draft (if any)
+  // for incoming session. Kept declared BEFORE prefill effect so doorway prefill still overrides.
+  useLayoutEffect(() => {
+    const newKey = props.resetKey || props.sessionId;
+    const oldKey = prevKeyRef.current;
+    if (oldKey !== newKey) {
+      if (oldKey) {
+        saveDraft(oldKey, draftRef.current);
+      }
+      prevKeyRef.current = newKey;
+      const restored = loadDraft(newKey);
+      if (restored) {
+        setText(restored.text ?? "");
+        setAttachments(restored.attachments ?? []);
+        setPendingSkill(restored.pendingSkill ?? null);
+      } else {
+        setText("");
+        setAttachments([]);
+        setPendingSkill(null);
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.resetKey]);
+  }, [props.resetKey, props.sessionId]);
+
+  // Save on unmount (e.g. navigating to Settings or Inbox)
+  useEffect(() => {
+    return () => {
+      const k = prevKeyRef.current;
+      if (k) {
+        saveDraft(k, draftRef.current);
+      }
+    };
+  }, []);
 
   // Apply a prefill (text + attachments) pushed from outside, then focus the composer. Applied at
   // most once per nonce (a ref guards against StrictMode/re-render double-fires), and attachments
@@ -414,6 +495,7 @@ export function Composer(props: Props) {
       props.onConnectModel?.();
       return;
     }
+    clearDraft(currentKey);
     props.onSend(body, attachments, skill);
     setText("");
     setAttachments([]);
