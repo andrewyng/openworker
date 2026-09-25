@@ -14,7 +14,7 @@
 //! passes `OPENAI_API_KEY` through. A Finder-launched app has no shell env — there the key
 //! comes from the SecretStore (Settings tab), see `coworker.providers.resolve_api_key`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -90,7 +90,12 @@ fn sidecar_env() -> std::collections::HashMap<String, String> {
         return out;
     }
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let default_shell = if cfg!(target_os = "macos") {
+        "/bin/zsh"
+    } else {
+        "/bin/bash"
+    };
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| default_shell.to_string());
     let script = format!("echo {START}; env; echo {END}");
     let spawned = Command::new(&shell)
         .args(["-ilc", &script])
@@ -151,7 +156,11 @@ fn sidecar_env() -> std::collections::HashMap<String, String> {
         .cloned()
         .or_else(|| std::env::var("PATH").ok())
         .unwrap_or_default();
-    let mut parts: Vec<String> = base.split(':').filter(|s| !s.is_empty()).map(String::from).collect();
+    let mut parts: Vec<String> = base
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
     for dir in KNOWN_TOOL_DIRS {
         if !parts.iter().any(|p| p == dir) && std::path::Path::new(dir).is_dir() {
             parts.push((*dir).to_string());
@@ -169,14 +178,14 @@ fn sidecar_env() -> std::collections::HashMap<String, String> {
 
 /// Path to the server entrypoint. Resolution order:
 ///   1. `COWORKER_SERVER_BIN` env override.
-///   2. The bundled onedir sidecar shipped via Tauri `resources` (production): the
-///      `sidecar/` folder lands in Contents/Resources on macOS and in the install dir
-///      (next to the app exe) on Windows.
+///   2. The bundled onedir sidecar shipped via Tauri `resources` (production). The caller's
+///      resource directory handles every bundle layout, including `/usr/lib/<app>` in a
+///      Linux `.deb`; executable-relative candidates cover macOS, Windows, and older builds.
 ///   3. Legacy onefile slot: `openworker-server[.exe]` next to the app binary (pre-onedir
 ///      builds used Tauri externalBin).
 ///   4. Dev fallback: the repo venv, relative to this crate (`src-tauri` → repo-root `.venv`;
 ///      `bin/` on POSIX, `Scripts\` on Windows).
-fn server_bin() -> PathBuf {
+fn server_bin(resource_dir: Option<&Path>) -> PathBuf {
     if let Ok(p) = std::env::var("COWORKER_SERVER_BIN") {
         return PathBuf::from(p);
     }
@@ -185,6 +194,12 @@ fn server_bin() -> PathBuf {
     } else {
         "openworker-server"
     };
+    if let Some(dir) = resource_dir {
+        let bundled = dir.join("sidecar").join(exe_name);
+        if bundled.exists() {
+            return bundled;
+        }
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             // macOS: Contents/MacOS/<app> → Contents/Resources/sidecar/; Windows: resources
@@ -264,7 +279,8 @@ fn write_keep_awake_pref(enabled: bool) {
 
 // -- keep-awake: hold off idle + system sleep so the scheduler keeps firing -------------------
 // Cross-platform behind a uniform `start_keep_awake() -> Option<KeepAwakeGuard>`; dropping the
-// guard releases the hold. macOS uses the built-in `caffeinate`; Windows uses the
+// guard releases the hold. macOS uses the built-in `caffeinate`; Linux uses
+// `systemd-inhibit`; Windows uses the
 // SetThreadExecutionState API (a dedicated thread holds ES_CONTINUOUS so the state survives
 // regardless of which Tauri worker thread toggled it); other platforms are a no-op.
 
@@ -334,14 +350,40 @@ fn start_keep_awake() -> Option<KeepAwakeGuard> {
     })
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
+struct KeepAwakeGuard(Child);
+
+#[cfg(target_os = "linux")]
+impl Drop for KeepAwakeGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn start_keep_awake() -> Option<KeepAwakeGuard> {
+    Command::new("systemd-inhibit")
+        .args([
+            "--what=sleep:idle",
+            "--why=OpenWorker scheduled tasks",
+            "--mode=block",
+            "sleep",
+            "infinity",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()
+        .map(KeepAwakeGuard)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 struct KeepAwakeGuard;
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn start_keep_awake() -> Option<KeepAwakeGuard> {
-    // No portable built-in inhibitor on Linux; keep-awake is a no-op (the toggle still reflects
-    // state so the UI behaves, but the OS sleep policy is left to the user).
-    Some(KeepAwakeGuard)
+    None
 }
 
 // -- native commands (invoked from the SPA via window.__TAURI__.core.invoke) -----------------
@@ -645,7 +687,11 @@ async fn download_update(
     // (Guard scope stays sync: a std MutexGuard must not live across an await.)
     {
         let slot = pending.0.lock().unwrap();
-        if slot.as_ref().map(|(v, _)| v == &update.version).unwrap_or(false) {
+        if slot
+            .as_ref()
+            .map(|(v, _)| v == &update.version)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
     }
@@ -746,7 +792,8 @@ pub fn run() {
         ])
         .setup(move |app| {
             // 1. Start the Python server sidecar on the chosen port (inherits our env).
-            let mut server_cmd = Command::new(server_bin());
+            let resource_dir = app.path().resource_dir().ok();
+            let mut server_cmd = Command::new(server_bin(resource_dir.as_deref()));
             server_cmd
                 .args(["--host", "127.0.0.1", "--port", &port.to_string()])
                 // The user's real shell environment (PATH to their tools, AWS_PROFILE,
