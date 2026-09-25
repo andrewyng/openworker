@@ -284,6 +284,7 @@ class SessionManager:
         )
         self.model = model
         self.mode = mode
+        self._configured_mode = mode
         self.provider = provider
 
         if data_dir is not None:
@@ -359,6 +360,7 @@ class SessionManager:
         self._prefs = self._load_prefs()
         if self._prefs.get("default_model"):
             self.model = self._prefs["default_model"]
+        self.mode = self.default_mode()
         # Seed the PDF-fallback module global from prefs so engines see the user's
         # choice from the first turn (set_pdf_settings keeps it in sync after).
         from ..pdf_support import set_fallback_mode
@@ -4550,6 +4552,7 @@ class SessionManager:
         return {
             "provider": "openai",
             "model": self.model,
+            "default_mode": self.default_mode().value,
             "models": selectable,
             # Visible governance (spec §Audit export): what this machine exports,
             # where, and how far along — shown in its settings, never hidden.
@@ -4682,12 +4685,14 @@ class SessionManager:
 
     def set_auto_approve(self, on: Any) -> dict[str, Any]:
         self._prefs["auto_approve"] = bool(on)
+        self.mode = self.default_mode()
         self._save_prefs()
         self.sync_cached_reviewers()
         return {
             "ok": True,
             "auto_approve": self.auto_approve(),
             "auto_approve_shadow": self.auto_approve_shadow(),
+            "default_mode": self.mode.value,
         }
 
     def set_auto_approve_shadow(self, on: Any) -> dict[str, Any]:
@@ -4821,6 +4826,30 @@ class SessionManager:
         profile.update({"type": "api_key", "api_key": api_key})
         self.secrets.put("provider:openai", profile)
         self._refresh_provider("openai")  # rebuild the OpenAI client with the new key
+        return {"ok": True, **self.get_settings()}
+
+    def default_mode(self) -> Mode:
+        """Effective mode for new sessions; existing sessions keep their saved mode."""
+        value = self._prefs.get("default_mode")
+        if value is None:
+            return self._configured_mode
+        if value == Mode.AUTO_APPROVE.value and self.auto_approve():
+            return Mode.AUTO_APPROVE
+        if value == Mode.DISCUSS.value:
+            return Mode.DISCUSS
+        if value == Mode.INTERACTIVE.value:
+            return Mode.INTERACTIVE
+        return Mode.INTERACTIVE
+
+    def set_default_mode(self, mode: str) -> dict[str, Any]:
+        """Persist only modes safe to offer as a sticky GUI default."""
+        if mode not in (Mode.DISCUSS.value, Mode.INTERACTIVE.value, Mode.AUTO_APPROVE.value):
+            return {"ok": False, "error": "unsupported default mode"}
+        if mode == Mode.AUTO_APPROVE.value and not self.auto_approve():
+            return {"ok": False, "error": "enable Auto-Approve before making it the default"}
+        self._prefs["default_mode"] = mode
+        self.mode = self.default_mode()
+        self._save_prefs()
         return {"ok": True, **self.get_settings()}
 
     def set_default_model(self, model: str) -> dict[str, Any]:

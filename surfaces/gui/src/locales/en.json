@@ -142,6 +142,9 @@
     "connect_to_send": "Connect a model to send",
     "stop": "⏹ Stop",
     "mode_label": "Mode",
+    "set_mode_default": "Make this the default for new sessions",
+    "mode_is_default": "Default for new sessions",
+    "mode_default_error": "Could not save the default mode.",
     "approvals_to_inbox": "Send approvals to the Inbox",
     "mode": {
       "discuss": "Discuss",

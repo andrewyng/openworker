@@ -1154,6 +1154,7 @@ export interface ModelSettings {
   provider: string;
   model: string;
   models: string[];
+  default_mode?: string; // effective mode for new sessions; existing sessions retain theirs
   audit_export?: AuditExportStatus;
   has_key: boolean;
   model_ready: boolean; // can the default model's provider actually run (any provider)?
@@ -2138,6 +2139,17 @@ export async function setModelKey(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ api_key: apiKey }),
+  });
+  return res.json();
+}
+
+export async function setDefaultMode(
+  mode: string,
+): Promise<{ ok: boolean; error?: string; default_mode?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/default-mode`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
   });
   return res.json();
 }

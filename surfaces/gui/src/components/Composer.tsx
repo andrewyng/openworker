@@ -3,7 +3,7 @@ import { getI18n, useTranslation } from "react-i18next";
 import type { Attachment, SessionUsage } from "../types";
 import { isPdfFile, readFile } from "../attach";
 import { ProjectBindMenu } from "./ProjectBindMenu";
-import { getSettings, inspectPdf, sessionSkills, type SessionSkillRow } from "../api";
+import { getSettings, inspectPdf, sessionSkills, setDefaultMode, type SessionSkillRow } from "../api";
 import { formatTokens, totalTokens } from "../usage";
 import { Dropdown, type Option } from "./Dropdown";
 import { Icon } from "./Icon";
@@ -919,10 +919,15 @@ function ModeMenu({
   // already IN auto-approve mode always shows its own entry so the current mode is legible
   // even if the flag was later turned off.
   const [autoApproveEnabled, setAutoApproveEnabled] = useState(false);
+  const [defaultMode, setDefaultModeValue] = useState<string | null>(null);
+  const [defaultError, setDefaultError] = useState("");
   useEffect(() => {
     if (!open) return;
     getSettings()
-      .then((s) => setAutoApproveEnabled(s.auto_approve === true))
+      .then((s) => {
+        setAutoApproveEnabled(s.auto_approve === true);
+        setDefaultModeValue(s.default_mode ?? null);
+      })
       .catch(() => {});
   }, [open]);
   const options = PERMISSION_OPTIONS.filter(
@@ -984,6 +989,33 @@ function ModeMenu({
                 <span className="text-label text-faint leading-snug">{t(o.description ?? "")}</span>
               </button>
             ))}
+            {["discuss", "interactive", "auto-approve"].includes(mode) &&
+              (mode !== "auto-approve" || autoApproveEnabled) && (
+                <>
+                  <div className="my-1 border-t border-line" />
+                  {defaultMode === mode ? (
+                    <span className="block px-2.5 py-1.5 text-label text-faint">
+                      {t("composer.mode_is_default")}
+                    </span>
+                  ) : (
+                    <button
+                      className="w-full px-2.5 py-1.5 text-left text-ui text-accent hover:bg-paper rounded-lg"
+                      onClick={() => {
+                        setDefaultError("");
+                        setDefaultMode(mode)
+                          .then((result) => {
+                            if (result.ok) setDefaultModeValue(result.default_mode ?? mode);
+                            else setDefaultError(result.error ?? t("composer.mode_default_error"));
+                          })
+                          .catch(() => setDefaultError(t("composer.mode_default_error")));
+                      }}
+                    >
+                      {t("composer.set_mode_default")}
+                    </button>
+                  )}
+                  {defaultError && <span role="alert" className="block px-2.5 text-label text-warnInk">{defaultError}</span>}
+                </>
+              )}
             {onUnattendedChange && (
               <>
                 <div className="my-1 border-t border-line" />
