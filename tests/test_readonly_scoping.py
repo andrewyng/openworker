@@ -62,10 +62,24 @@ def test_reads_inside_the_granted_folder_still_run_unprompted(session, command):
         "grep -r AWS_SECRET /",
         "find / -name id_rsa",
         "head -n 5 ~/.aws/credentials",
+        # find's global options must not hide the starting point from the root check:
+        # before, these returned no targets and the grant waved them through.
+        "find -L /etc -name shadow",
+        "find -H ~/.ssh -type f",
+        "find -P ~/.aws -name credentials",
+        "find -D search ~/.aws",
+        "find -O3 /etc -name shadow",
     ],
 )
 def test_reads_outside_every_root_now_ask(session, command):
-    assert not runs(session, command), command
+    assert not runs(session, command)
+
+
+def test_find_with_a_global_option_inside_the_root_still_runs(session):
+    # The scoping must not undo the convenience: the prefixed form over an in-scope path
+    # keeps auto-running, exactly like the unprefixed one.
+    assert runs(session, "find -L . -name '*.py'")
+    assert runs(session, "find -D search src"), command
 
 
 def test_openworkers_own_secrets_are_no_longer_readable(session):
@@ -150,6 +164,17 @@ def test_without_the_grant_nothing_changes(tmp_path):
         ("jq .foo data.json", ["data.json"]),  # the filter is not a file
         ("find /tmp -name x", ["/tmp"]),  # predicates end the path list
         ("nl a.txt | sed -n 2p", ["a.txt"]),
+        # find's global options precede the starting points and must not end the path
+        # list: `find -L /etc …` reads /etc just like the unprefixed form.
+        ("find -L /tmp -name x", ["/tmp"]),
+        ("find -H /tmp -type f", ["/tmp"]),
+        ("find -P /tmp -type f", ["/tmp"]),
+        ("find -D search /tmp", ["/tmp"]),  # -D takes a value
+        ("find -O3 /tmp -name x", ["/tmp"]),
+        ("find -E /tmp -regex x", ["/tmp"]),  # BSD global options
+        ("find -f /tmp -name x", ["/tmp"]),  # BSD -f carries the starting point
+        ("find -L /tmp /var -name x", ["/tmp", "/var"]),
+        ("find -L -name x", []),  # no starting point: find defaults to `.`
     ],
 )
 def test_read_targets_names_the_files_and_not_the_arguments(command, expected):
