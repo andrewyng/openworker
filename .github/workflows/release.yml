@@ -1,8 +1,9 @@
-# Desktop release builds — macOS (.dmg, arm64 + Intel) and Windows (.msi + NSIS .exe).
+# Desktop release builds — macOS (.dmg, arm64 + Intel), Windows (.msi + NSIS .exe), and
+# Linux x64 (.AppImage + .deb).
 #
-# CI calls the SAME scripts developers run locally (packaging/build_dmg.sh and
-# build_windows.ps1); this file only provisions the toolchain (Node, Rust, a Python venv at
-# .venv with PyInstaller) and publishes the results.
+# CI calls the SAME scripts developers run locally (packaging/build_dmg.sh,
+# build_windows.ps1, build_linux.sh); this file only provisions the toolchain (Node, Rust, a
+# Python venv at .venv with PyInstaller) and publishes the results.
 #
 # Triggers:
 #   - tag push `v*`  → builds all targets and attaches them to a DRAFT GitHub Release
@@ -52,6 +53,8 @@ jobs:
             slug: macos-x64
           - os: windows-latest
             slug: windows
+          - os: ubuntu-latest # x64
+            slug: linux-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +70,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: surfaces/gui/src-tauri
+
+      - name: Install Linux bundler dependencies
+        if: runner.os == 'Linux'
+        # Tauri's AppImage/.deb bundlers shell out to these; webkit2gtk is the embedded
+        # webview, the rest is the standard Tauri Linux prerequisite set.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libappindicator3-dev librsvg2-dev patchelf libfuse2 fakeroot dpkg desktop-file-utils
 
       - uses: actions/setup-python@v5
         with:
@@ -122,6 +135,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: ./packaging/build_windows.ps1
 
+      - name: Build AppImage + .deb (Linux)
+        if: runner.os == 'Linux'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash packaging/build_linux.sh
+
       - name: Stage artifacts (versioned + stable names)
         run: |
           mkdir -p out
@@ -135,6 +155,15 @@ jobs:
             # secret is configured). The .sig signs CONTENT, so the stable rename is safe.
             SIG=$(ls "$BUNDLE"/nsis/*.exe.sig 2>/dev/null | head -1 || true)
             [ -n "$SIG" ] && cp "$SIG" out/OpenWorker-windows-setup.exe.sig
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            cp "$BUNDLE"/appimage/*.AppImage out/
+            cp "$BUNDLE"/appimage/*.AppImage out/OpenWorker-${{ matrix.slug }}.AppImage
+            cp "$BUNDLE"/deb/*.deb out/
+            cp "$BUNDLE"/deb/*.deb out/OpenWorker-${{ matrix.slug }}.deb
+            # Updater signature for the AppImage (present only when the updater key secret
+            # is configured). The .sig signs CONTENT, so the stable rename is safe.
+            SIG=$(ls "$BUNDLE"/appimage/*.AppImage.sig 2>/dev/null | head -1 || true)
+            [ -n "$SIG" ] && cp "$SIG" out/OpenWorker-${{ matrix.slug }}.AppImage.sig
           else
             cp "$BUNDLE"/dmg/*.dmg out/
             cp "$BUNDLE"/dmg/*.dmg out/OpenWorker-${{ matrix.slug }}.dmg
