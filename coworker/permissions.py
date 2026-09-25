@@ -39,8 +39,11 @@ _INTERPRETERS = {
     "sh", "bash", "zsh", "dash", "ksh", "fish", "powershell", "pwsh", "cmd",
     "python", "python3", "node", "deno", "bun", "ruby", "perl", "php",
 }
-# Flags that turn a search/list tool into an execution or deletion tool.
-_DANGEROUS_FLAGS = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprintf"}
+# Flags that turn a search/list tool into an execution, deletion, or file-writing tool.
+# The fprint family writes find's output to an arbitrary path; omitting it let a bare
+# `find` allowlist entry auto-run `find . -fprint /tmp/exfil.txt`. readonly.py's
+# `_FIND_BAD` is the complete copy of this set, so keep the two in step.
+_DANGEROUS_FLAGS = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprintf", "-fprint", "-fprint0", "-fls"}
 
 
 def _split_commands(command: str) -> list[str]:
