@@ -155,6 +155,7 @@ class LocalExecutor(Executor):
         *,
         cwd: str | Path,
         env: Optional[dict[str, str]] = None,
+        base_env: Optional[dict[str, str]] = None,
         shell_path: Optional[str] = None,
         default_timeout: float = _DEFAULT_TIMEOUT,
         # Memory safety net only (OPE-186): what the MODEL sees is bounded by the engine's
@@ -182,7 +183,11 @@ class LocalExecutor(Executor):
         if shell_path is None:
             shell_path = "powershell.exe" if self._is_windows else "/bin/bash"
         self._shell_path = shell_path
-        self._env = {**os.environ, **_NONINTERACTIVE_ENV, **(env or {})}
+        self._env = {
+            **(os.environ if base_env is None else base_env),
+            **_NONINTERACTIVE_ENV,
+            **(env or {}),
+        }
         for extra in extra_path_dirs:
             path = self._env.get("PATH", "")
             if extra not in path.split(os.pathsep):
