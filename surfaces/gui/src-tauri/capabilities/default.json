@@ -10,6 +10,7 @@
     "core:window:allow-set-focus",
     "core:window:allow-unminimize",
     "dialog:default",
+    "opener:default",
     "autostart:default"
   ]
 }
