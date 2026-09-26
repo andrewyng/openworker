@@ -289,6 +289,48 @@ def test_non_low_risk_tool_calls_stay_sequential(tmp_path):
     assert order == ["first-start", "first-end", "second-start", "second-end"]
 
 
+def test_ordinary_lifecycle_audit_rows_carry_call_id(tmp_path):
+    # Regression for the call_id gap in `_audit()`: with two calls in flight
+    # concurrently, proposed/started/finished rows must be joinable by call_id —
+    # insertion order alone cannot tell you which started matches which finished.
+    barrier = threading.Barrier(2, timeout=5)
+    low = ai.ToolMetadata(category="search", risk_level="low", requires_approval=False)
+
+    def side_a():
+        """Wait for side_b."""
+        barrier.wait()
+        return {"side": "a"}
+
+    def side_b():
+        """Wait for side_a."""
+        barrier.wait()
+        return {"side": "b"}
+
+    provider = ScriptedProvider(
+        [_multi_tool_turn([("side_a", {}), ("side_b", {})]), _text_turn("done")]
+    )
+    registry = ToolRegistry()
+    registry.register(side_a, metadata=low)
+    registry.register(side_b, metadata=low)
+    rows: list[dict] = []
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+        audit_sink=rows.append,
+    )
+
+    _collect(engine, "go")
+
+    ordinary = [r for r in rows if r.get("stage") in ("proposed", "started", "finished")]
+    assert ordinary, "expected proposed/started/finished audit rows"
+    assert all(r.get("call_id") for r in ordinary)
+    for call_id in ("call_0", "call_1"):
+        stages = {r["stage"] for r in ordinary if r["call_id"] == call_id}
+        assert stages == {"proposed", "started", "finished"}
+
+
 class StreamingProvider(ProviderClient):
     def complete(self, **kwargs):  # pragma: no cover - streamed instead
         raise NotImplementedError
