@@ -87,26 +87,36 @@ def grep(
         # last because ripgrep resolves conflicting globs with the later one winning.
         for ignored in sorted(_IGNORE_DIRS):
             cmd += ["--glob", f"!**/{ignored}/**"]
-        cmd.append(str(base))
+        # Search from the workspace itself: ripgrep resolves --glob patterns against paths
+        # relative to the *current working directory*, so passing an absolute path made the
+        # exclusion globs match the workspace's ancestors too — a workspace under e.g.
+        # .../node_modules/ excluded itself entirely (issue #576). With cwd anchored to the
+        # search root and "." as the target, only directory names inside the workspace can match.
+        cmd.append(".")
         try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=str(base))
         except Exception as exc:
             return {"error": f"grep failed: {exc}"}
         if out.returncode not in (0, 1):  # 1 = no matches
             return {"error": (out.stderr or "ripgrep error").strip()[:300]}
-        return {"engine": "ripgrep", **_parse_rg(out.stdout, root, n)}
+        return {"engine": "ripgrep", **_parse_rg(out.stdout, root, n, base=base)}
 
     return {"engine": "python", **_py_grep(root, base, pattern, glob, n)}
 
 
-def _rel(path: str, root: Path) -> str:
+def _rel(path: str, root: Path, base: Path | None = None) -> str:
     try:
-        return str(Path(path).resolve().relative_to(root))
+        p = Path(path)
+        # ripgrep emits paths relative to its own cwd (the search base); resolve them against
+        # that, not the process cwd, before relativizing.
+        if not p.is_absolute() and base is not None:
+            p = base / p
+        return str(p.resolve().relative_to(root))
     except (ValueError, OSError):
         return path
 
 
-def _parse_rg(stdout: str, root: Path, n: int) -> dict[str, Any]:
+def _parse_rg(stdout: str, root: Path, n: int, base: Path | None = None) -> dict[str, Any]:
     # `rg --null` emits each match as `<path>\0<line>:<text>`. Splitting the path off
     # on the NUL byte first means the colon inside a Windows drive letter (C:\...) is
     # never confused with the line/text separators — the old `split(":", 2)` parsed
@@ -119,7 +129,7 @@ def _parse_rg(stdout: str, root: Path, n: int) -> dict[str, Any]:
         ln, _, txt = rest.partition(":")
         matches.append(
             {
-                "file": _rel(path, root),
+                "file": _rel(path, root, base),
                 "line": int(ln) if ln.isdigit() else 0,
                 "text": txt[:300],
             }
