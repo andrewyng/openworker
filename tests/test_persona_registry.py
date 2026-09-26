@@ -34,11 +34,15 @@ def test_release_lineup(tmp_path, monkeypatch):
     # Code is listed in Settings but disabled + unsurfaced (the recovery path).
     monkeypatch.delenv("OPENWORKER_UNSHIPPED", raising=False)
     reg = _reg(tmp_path)
+    # 2026-09-04: the Reviewer (a solo PR reviewer for the GitHub configurations) and
+    # the SWE Lead ship too (owner vision: an SWE team on a machine).
     assert [e["name"] for e in reg.sidebar()] == [
-        "cowork", "cloud-posture", "dep-audit", "security",
+        "cowork", "cloud-posture", "dep-audit", "reviewer", "security", "swe-lead",
     ]
     listed = {p["id"]: p for p in reg.list_all()}
-    assert set(listed) == {"cowork", "code", "cloud-posture", "dep-audit", "security"}
+    assert set(listed) == {
+        "cowork", "code", "cloud-posture", "dep-audit", "reviewer", "security", "swe-lead",
+    }
     assert listed["code"]["enabled"] is False and listed["code"]["surfaced"] is False
     assert listed["cloud-posture"]["group"] == "security"
     assert listed["cowork"]["group"] == "general"
@@ -50,12 +54,12 @@ def test_release_lineup(tmp_path, monkeypatch):
 def test_unshipped_hidden_unless_enabled(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENWORKER_UNSHIPPED", raising=False)
     reg = _reg(tmp_path)
-    assert "swe-lead" not in {p["id"] for p in reg.list_all()}
+    assert "devsecops-lead" not in {p["id"] for p in reg.list_all()}
     # Still resolvable (a session born on it keeps working)…
-    assert reg.agent("swe-lead").name == "swe-lead"
+    assert reg.agent("devsecops-lead").name == "devsecops-lead"
     # …and an explicit user enable (made on an internal build) keeps it visible.
-    reg.set_enabled("swe-lead", True)
-    assert "swe-lead" in {p["id"] for p in reg.list_all()}
+    reg.set_enabled("devsecops-lead", True)
+    assert "devsecops-lead" in {p["id"] for p in reg.list_all()}
 
 
 def test_sidebar_defaults_to_surfaced_builtins(tmp_path, internal):
@@ -68,7 +72,7 @@ def test_sidebar_defaults_to_surfaced_builtins(tmp_path, internal):
     # Leads surface (the user's entry to a team — "the team IS the lead"); team
     # workers never do.
     assert set(ids) == {
-        "cowork", "ops", "security", "cloud-posture", "dep-audit",
+        "cowork", "ops", "security", "cloud-posture", "dep-audit", "reviewer",
         "swe-lead", "devsecops-lead", "devops-lead", "triage-lead",
     }
     assert not any(

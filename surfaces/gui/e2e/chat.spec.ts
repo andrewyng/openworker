@@ -22,9 +22,9 @@ test("send → user bubble → streamed echo reply renders", async ({ page }) =>
   // user sees at send time is exactly what serves the turn.
   await expect(page.getByText("[model=anthropic:claude-opus-4-8]")).toBeVisible();
   // …and the picker STAYS actionable after the first turn (§17 rev 2026-07-22 — mid-session
-  // switching shipped); the fact also reads in the topbar's facts subtitle.
+  // switching shipped); the fact also reads in the title's tooltip (UX-048: no subtitle).
   await expect(page.locator(".dd").filter({ hasText: "Claude Opus" })).toBeVisible();
-  await expect(page.getByTestId("session-subtitle")).toContainText("Claude Opus 4.8");
+  await expect(page.getByTestId("session-title")).toHaveAttribute("title", /Claude Opus 4.8/);
   // Composer cleared and re-armed for the next turn.
   await expect(box).toHaveValue("");
 });

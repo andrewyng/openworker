@@ -34,5 +34,7 @@ def myhelper_agent(name: str = DEFAULT_HELPER_NAME) -> Agent:
         system_prompt=myhelper_instructions(name),
         tool_factory=cowork_tool_factory,
         scheduling=True,
-        messaging=True,
+        # The reply path for inbound Telegram/Slack sessions: chat tools come through
+        # the connector gate now (spec §11), so the platforms are declared here.
+        connectors=("slack", "telegram"),
     )

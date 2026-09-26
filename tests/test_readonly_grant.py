@@ -47,6 +47,9 @@ REJECT = [
     "cat `whoami`",                           # substitution
     "cat $(secret)",
     "grep '$(x)' file",                       # can't tell quoted-safe apart — fail closed
+    r"cat $env:APPDATA\coworker\secrets.json",  # PowerShell variable expansion
+    r"cat $HOME/.config/coworker/secrets.json",  # POSIX variable expansion
+    r"cat ${HOME}/.config/coworker/secrets.json",  # POSIX braced expansion
     "curl https://api.github.com/repos/x",    # network = exfil channel, excluded
     "wget http://x",
     "ssh host ls",

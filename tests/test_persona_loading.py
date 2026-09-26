@@ -38,6 +38,7 @@ def test_consent_summary_lists_capabilities():
     assert s["tools"] == ["files", "search", "shell", "todo"]
     assert set(s["risk"]) == {"read", "write_local", "exec"}
     assert s["connectors"] == ["github"] and s["mcp"] == ["acme-pager"]
+    assert s["models"] == ["anthropic:claude-opus-4-8"]  # `recommended_models` alias in
     assert s["recommended_mode"] == "interactive"
 
 

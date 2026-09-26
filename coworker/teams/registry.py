@@ -25,6 +25,7 @@ class TeamWorker:
     session_id: str
     model: str = ""
     reason: str = ""  # why the lead staffed it — surfaces in teammates' rosters
+    approval_guidance: str = ""  # exact human-approved staffing text, not live steering
 
 
 @dataclass

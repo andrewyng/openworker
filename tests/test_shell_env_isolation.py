@@ -9,6 +9,7 @@ scripts, test suites, npm lifecycle hooks.
 
 import os
 
+from coworker.sandbox.runner.executor import LocalExecutor as RunnerLocalExecutor
 from coworker.tools.shell import LocalExecutor, _shell_base_env
 
 
@@ -67,3 +68,14 @@ def test_explicit_env_overrides_still_apply(tmp_path):
     finally:
         ex.close()
     assert "present" in out
+
+
+def test_sandbox_runner_still_inherits_its_parent_environment(monkeypatch, tmp_path):
+    """The direct-mode filter must not change the standalone runner's defaults."""
+    monkeypatch.setenv("OW_TEST_MARKER", "inherited")
+    ex = RunnerLocalExecutor(cwd=str(tmp_path))
+    try:
+        out = _stdout(ex.run('echo "[$OW_TEST_MARKER]"', timeout=20))
+    finally:
+        ex.close()
+    assert "[inherited]" in out

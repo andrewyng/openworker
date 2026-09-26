@@ -53,9 +53,15 @@ const DETAIL_PAGES: Record<string, (p: DetailProps) => JSX.Element> = {
   hunter: (p) => <AccountsDetail {...p} />,
 };
 
-export function ConnectorsSection() {
+export function ConnectorsSection({
+  onConfigure,
+  initialDetail = null,
+}: { onConfigure?: (name: string) => void; initialDetail?: string | null } = {}) {
   const { t: tt } = useTranslation();
-  const [detail, setDetail] = useState<string | null>(null);
+  // The per-machine management page (workspaces / installations on THIS Mac:
+  // add, disconnect, token health, people picker). Slack/GitHub rows open the
+  // account-wide glance page instead (UX-049); the glance page links here.
+  const [detail, setDetail] = useState<string | null>(initialDetail);
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
@@ -91,14 +97,14 @@ export function ConnectorsSection() {
     return (
       <div>
         <button
-          className="text-[13px] text-accent mb-3"
+          className="text-ui text-accent mb-3"
           data-testid="connectors-breadcrumb"
           onClick={() => setDetail(null)}
         >
-          ‹ Connectors
+          {tt("connector.back_to_connectors")}
         </button>
         {!s ? (
-          <div className="text-[13px] text-muted">Loading…</div>
+          <div className="text-ui text-muted">{tt("connector.loading")}</div>
         ) : (
           <McpServerDetail server={s} onChanged={refresh} onGone={() => setDetail(null)} />
         )}
@@ -112,14 +118,14 @@ export function ConnectorsSection() {
     return (
       <div>
         <button
-          className="text-[13px] text-accent mb-3"
+          className="text-ui text-accent mb-3"
           data-testid="connectors-breadcrumb"
           onClick={() => setDetail(null)}
         >
           {tt("connector.back_to_connectors")}
         </button>
         {!c ? (
-          <div className="text-[13px] text-muted">{tt("connector.loading")}</div>
+          <div className="text-ui text-muted">{tt("connector.loading")}</div>
         ) : !c.connected ? (
           /* Pre-connect page (§38). When a connect completes, the poll flips
              c.connected and this same route re-renders as the connected page. */
@@ -145,7 +151,7 @@ export function ConnectorsSection() {
       mcpServers={mcpServers}
       cloud={cloud}
       slack={slack}
-      onOpen={setDetail}
+      onOpen={(name) => (onConfigure && (name === "slack" || name === "github") ? onConfigure(name) : setDetail(name))}
       onChanged={refresh}
     />
   );
@@ -167,15 +173,15 @@ function GenericDetail({
       <div className="flex items-center gap-3.5 mb-5">
         <ConnectorBadge connector={c} size={44} title={c.title} />
         <div className="min-w-0 flex-1">
-          <h2 className="text-[20px] font-semibold tracking-tight leading-tight">{c.title}</h2>
-          <div className="text-[13px] text-muted flex items-center gap-1.5">
+          <h2 className="text-title font-semibold tracking-tight leading-tight">{c.title}</h2>
+          <div className="text-ui text-muted flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-ok" />
             {c.account || (c.auth === "none" ? t("connector.built_in") : t("connector.connected"))}
           </div>
         </div>
         {c.auth !== "none" && (
           <button
-            className="text-[13px] text-danger/80 hover:text-danger shrink-0"
+            className="text-ui text-danger/80 hover:text-danger shrink-0"
             onClick={async () => {
               await disconnectConnector(c.name);
               onChanged();

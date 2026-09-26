@@ -9,11 +9,16 @@
     "preview": "vite preview",
     "test": "vitest run",
     "e2e": "playwright test",
+    "gallery:contract": "UPDATE_CONTRACT=1 vitest run --config vitest.contract.config.ts",
     "e2e:ui": "playwright test --ui",
     "e2e:live": "playwright test -c playwright.live.config.ts",
     "tauri": "tauri"
   },
   "dependencies": {
+    "@auth0/auth0-spa-js": "^2.24.1",
+    "@noble/ciphers": "^2.4.0",
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
     "i18next": "^26.3.6",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",

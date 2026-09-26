@@ -98,12 +98,12 @@ export function SearchModal({
         onMouseEnter={() => setActive(idx)}
         onClick={() => choose(s)}
       >
-        <span className="min-w-0 flex-1 truncate text-[13px] text-ink">
+        <span className="min-w-0 flex-1 truncate text-ui text-ink">
           {s.title || s.session_id}
         </span>
-        <span className="text-[12px] text-faint shrink-0">{tagFor(s)}</span>
+        <span className="text-meta text-faint shrink-0">{tagFor(s)}</span>
         {idx < 9 && (
-          <kbd className="text-[11px] text-faint bg-paper border border-line rounded px-1.5 py-0.5 shrink-0 font-sans">
+          <kbd className="text-label text-faint bg-paper border border-line rounded px-1.5 py-0.5 shrink-0 font-sans">
             ⌘{idx + 1}
           </kbd>
         )}
@@ -122,20 +122,20 @@ export function SearchModal({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t("search.placeholder")}
-            className="flex-1 bg-transparent outline-none text-[14px] text-ink placeholder:text-faint"
+            className="flex-1 bg-transparent outline-none text-body text-ink placeholder:text-faint"
           />
-          <kbd className="text-[11px] text-faint bg-paper border border-line rounded px-1.5 py-0.5 font-sans">
+          <kbd className="text-label text-faint bg-paper border border-line rounded px-1.5 py-0.5 font-sans">
             Esc
           </kbd>
         </div>
         <div className="max-h-[52vh] overflow-y-auto hairline-scroll py-2">
           {ordered.length === 0 ? (
-            <div className="px-4 py-8 text-center text-[13px] text-faint">{t("search.no_results")}</div>
+            <div className="px-4 py-8 text-center text-ui text-faint">{t("search.no_results")}</div>
           ) : (
             <>
               {pinned.length > 0 && (
                 <div className="px-2">
-                  <div className="px-2 py-1 text-[11px] uppercase tracking-[0.05em] text-faint font-semibold">
+                  <div className="px-2 py-1 text-label text-faint font-medium">
                     {t("search.pinned")}
                   </div>
                   {pinned.map((s, i) => row(s, i))}
@@ -143,7 +143,7 @@ export function SearchModal({
               )}
               {recent.length > 0 && (
                 <div className="px-2 mt-1">
-                  <div className="px-2 py-1 text-[11px] uppercase tracking-[0.05em] text-faint font-semibold">
+                  <div className="px-2 py-1 text-label text-faint font-medium">
                     {t("search.recent")}
                   </div>
                   {recent.map((s, i) => row(s, pinned.length + i))}

@@ -339,6 +339,8 @@ class PersonaRegistry:
                 "ships": e.ships,
                 "group": e.group,
                 "version": e.manifest.version if e.manifest else "",
+                # Ordered allowed models (§4); the server annotates `models_available`.
+                "models": list(e.manifest.models) if e.manifest else [],
                 "installed_at": self._installed_meta.get(e.id, {}).get("installed_at", ""),
             }
             for e in self._entries.values()

@@ -54,7 +54,7 @@ export function ToolRow({
         onChange={onToggle}
       />
       <span className="min-w-0 flex-1">
-        <span className={mono ? "font-mono text-[12px]" : "text-[13px] font-medium"}>{name}</span>
+        <span className={mono ? "font-mono text-meta" : "text-ui font-medium"}>{name}</span>
         {badge}
         {description}
       </span>
@@ -96,7 +96,7 @@ export function ToolsCountLine({
 }) {
   const { t } = useTranslation();
   return (
-    <span className="block text-[12px] text-faint">
+    <span className="block text-meta text-faint">
       {showCount && (
         <>
           {t("tools.enabled_count", { checked, total })}
@@ -123,7 +123,7 @@ export function SavedTick({ show, testId }: { show: boolean; testId?: string }) 
   const { t } = useTranslation();
   if (!show) return null;
   return (
-    <span className="text-[12px] text-ok" data-testid={testId}>
+    <span className="text-meta text-ok" data-testid={testId}>
       {t("tools.saved")}
     </span>
   );

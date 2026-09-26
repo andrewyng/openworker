@@ -31,6 +31,14 @@ _SLACK_MENTION_RE = re.compile(r"<@([UW][A-Z0-9]+)(?:\|[^>]*)?>")
 
 
 # -- pure mappers --------------------------------------------------------------
+
+def _poll_cursor_path(connection_id: str):
+    """Where a box keeps its machine-events poll cursor for one connection."""
+    from ..secrets import state_dir
+
+    safe = "".join(ch for ch in connection_id if ch.isalnum() or ch in "-_")
+    return state_dir() / "poll-cursors" / f"{safe}.cursor"
+
 def telegram_message_to_event(msg: Any) -> Optional[MessageEvent]:
     text = getattr(msg, "text", None)
     if not text:
@@ -99,7 +107,7 @@ class TelegramAdapter(BasePlatformAdapter):
             from telegram.ext import Application, MessageHandler, filters
         except ImportError:
             logger.warning(
-                "python-telegram-bot not installed — `pip install coworker[messaging]`"
+                "python-telegram-bot not installed — `pip install 'openworker[messaging]'`"
             )
             return False
 
@@ -187,7 +195,7 @@ class SlackAdapter(BasePlatformAdapter):
             from slack_sdk.web.async_client import AsyncWebClient
         except ImportError:
             logger.warning(
-                "slack-bolt not installed — `pip install coworker[messaging]`"
+                "slack-bolt not installed — `pip install 'openworker[messaging]'`"
             )
             return False
 
@@ -425,6 +433,8 @@ def make_adapter(
     relay_url: Optional[str] = None,
     relay_hub=None,
     github_token_client=None,
+    machine_unseal=None,
+    machine_poll_base: Optional[str] = None,
 ) -> Optional[BasePlatformAdapter]:
     """Build the adapter for a connected platform from its SecretStore profile.
 
@@ -443,6 +453,38 @@ def make_adapter(
         return TelegramAdapter(profile["bot_token"])
     if platform == "slack":
         if profile.get("mode") == "relay":
+            # Machine-held Slack (machines spec §Managed events): on a box
+            # there is no cloud sign-in — inbound events drain the broker's
+            # sealed queue by machine credential instead of riding the WS.
+            # Same adapter, different transport; `machine_unseal` (the box's
+            # identity key) only exists on joined boxes, so the desktop never
+            # takes this branch.
+            if (
+                machine_unseal is not None
+                and machine_poll_base
+                and profile.get("machine_credential")
+                and profile.get("broker_user_id")
+                and profile.get("connection_id")
+            ):
+                from .machine_poll import MachinePollTransport
+                from .relay_client import SlackRelayAdapter
+
+                def _poll_transport():
+                    return MachinePollTransport(
+                        machine_poll_base,
+                        connection_id=str(profile["connection_id"]),
+                        user_id=str(profile["broker_user_id"]),
+                        credential=str(profile["machine_credential"]),
+                        unseal=machine_unseal,
+                        cursor_path=_poll_cursor_path(str(profile["connection_id"])),
+                    )
+
+                return SlackRelayAdapter(
+                    machine_poll_base,
+                    lambda: "",  # unused: the poll transport owns its auth
+                    teams=_load_slack_teams(secrets),
+                    transport_factory=_poll_transport,
+                )
             if not (relay_url and token_provider):
                 logger.warning(
                     "slack managed-relay configured but relay endpoint / sign-in unavailable "
@@ -460,20 +502,49 @@ def make_adapter(
         if profile.get("bot_token") and profile.get("app_token"):
             return SlackAdapter(profile["bot_token"], profile["app_token"])
     if platform == "github" and profile.get("mode") == "relay":
+        from .github_installs import list_installs
+        from .github_relay import GitHubRelayAdapter
+        from .relay_client import RelayHub
+
+        installs = (
+            {iid: prof for iid, prof in list_installs(secrets)} if secrets else {}
+        )
+        # Machine-held GitHub (machines spec §Managed events, increment 2):
+        # events drain the sealed queue by machine credential; tokens mint on
+        # the delegated route (github_installation_token's box fallback). Own
+        # hub — the poll transport is per-connection, so it can't share
+        # Slack's. Boxes only: machine_unseal never exists on the desktop.
+        if (
+            machine_unseal is not None
+            and machine_poll_base
+            and profile.get("machine_credential")
+            and profile.get("broker_user_id")
+            and profile.get("connection_id")
+        ):
+            from .machine_poll import MachinePollTransport
+
+            def _gh_poll_transport():
+                return MachinePollTransport(
+                    machine_poll_base,
+                    connection_id=str(profile["connection_id"]),
+                    user_id=str(profile["broker_user_id"]),
+                    credential=str(profile["machine_credential"]),
+                    unseal=machine_unseal,
+                    cursor_path=_poll_cursor_path(str(profile["connection_id"])),
+                )
+
+            return GitHubRelayAdapter(
+                RelayHub(machine_poll_base, lambda: "", transport_factory=_gh_poll_transport),
+                installs=installs,
+                token_client=github_token_client,
+            )
         if not (relay_url and token_provider):
             logger.warning(
                 "github managed-relay configured but relay endpoint / sign-in "
                 "unavailable — sign in and set cloud_relay_ws_url; skipping"
             )
             return None
-        from .github_installs import list_installs
-        from .github_relay import GitHubRelayAdapter
-        from .relay_client import RelayHub
-
         hub = relay_hub or RelayHub(relay_url, token_provider)
-        installs = (
-            {iid: prof for iid, prof in list_installs(secrets)} if secrets else {}
-        )
         return GitHubRelayAdapter(
             hub, installs=installs, token_client=github_token_client
         )

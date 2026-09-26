@@ -29,9 +29,9 @@ test("an unsure escalation shows the reviewer's hesitation on the card", async (
   await box.fill("run an unsure tool");
   await box.press("Enter");
 
-  const note = page.getByTestId("approval-reviewer-unsure");
+  const note = page.getByTestId("approval-escalation");
   await expect(note).toBeVisible();
-  await expect(note).toContainText("reviewer wasn\u2019t sure: This runs a newly created script");
+  await expect(note).toContainText("Auto-approve needs your judgment: This runs a newly created script");
 });
 
 test("mode notices: full explainer once, one-line markers after", async ({ page }) => {

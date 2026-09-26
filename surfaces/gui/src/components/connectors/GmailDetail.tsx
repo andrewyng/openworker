@@ -17,7 +17,7 @@ import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_ACCENT, TAG_WARN, XBTN } from "
 // Adding an account launches managed OAuth DIRECTLY — Gmail has one connect mode,
 // so no modal (the pill-modal is only for ≥2-mode connectors like Slack).
 
-const LABEL = "text-[13px] text-muted w-24 shrink-0";
+const LABEL = "text-ui text-muted w-24 shrink-0";
 
 export function GmailDetail({ c, cloud, slack: _slack, onChanged }: DetailProps) {
   const { t } = useTranslation();
@@ -35,8 +35,8 @@ export function GmailDetail({ c, cloud, slack: _slack, onChanged }: DetailProps)
       <div className="flex items-center gap-3.5 mb-5">
         <ConnectorBadge connector={c} size={44} title="Gmail" />
         <div className="min-w-0 flex-1">
-          <h2 className="text-[20px] font-semibold tracking-tight leading-tight">Gmail</h2>
-          <div className="text-[13px] text-muted flex items-center gap-1.5">
+          <h2 className="text-title font-semibold tracking-tight leading-tight">Gmail</h2>
+          <div className="text-ui text-muted flex items-center gap-1.5">
             {c.connected ? (
               <>
                 <span className="w-2 h-2 rounded-full bg-ok" />
@@ -68,7 +68,7 @@ export function GmailDetail({ c, cloud, slack: _slack, onChanged }: DetailProps)
 
       {!c.connected && (
         <div className={GRP}>
-          <div className={ROW + " text-[13px] text-muted"}>
+          <div className={ROW + " text-ui text-muted"}>
             {t("gmail.setup_blurb")}
             {cloud?.signed_in ? "" : " " + t("gmail.requires_cloud")}
           </div>
@@ -102,13 +102,13 @@ function AccountRow({ a, onChanged }: { a: GmailAccount; onChanged: () => void }
   return (
     <div className={ROW} data-testid={`gmail-account-${a.email}`}>
       <span className="min-w-0 flex-1 flex items-center gap-2">
-        <span className="text-[13px] font-medium truncate">{a.email}</span>
+        <span className="text-ui font-medium truncate">{a.email}</span>
         {a.default && <span className={TAG_ACCENT}>{t("connector.default")}</span>}
         {a.needs_reauth && <span className={TAG_WARN}>{t("gmail.sign_in_again")}</span>}
       </span>
       {!a.default && (
         <button
-          className="text-[12px] text-muted hover:text-ink shrink-0"
+          className="text-meta text-muted hover:text-ink shrink-0"
           data-testid={`gmail-make-default-${a.email}`}
           onClick={async () => {
             await setGmailDefaultAccount(a.email);
@@ -199,7 +199,7 @@ function ChipListRow({
         {values.map((v) => (
           <span
             key={v}
-            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-paper border border-line text-[13px]"
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-paper border border-line text-ui"
           >
             {v}
             <button
@@ -212,7 +212,7 @@ function ChipListRow({
           </span>
         ))}
         <input
-          className="flex-1 min-w-[140px] bg-transparent text-[13px] outline-none placeholder:text-faint"
+          className="flex-1 min-w-[140px] bg-transparent text-ui outline-none placeholder:text-faint"
           placeholder={placeholder}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}

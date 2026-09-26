@@ -104,3 +104,46 @@ test("viewer breadcrumb goes back and ✕ closes (UX-038)", async ({ page }) => 
   await page.getByTestId("artifact-close").click();
   await expect(page.getByTestId("rail-toggle-artifacts")).toBeVisible();
 });
+
+test("an open artifact widens the rail and the chat and topbar make room for it", async ({
+  page,
+}) => {
+  // Owner catch 2026-09-16: `--artifact-rail-w` was declared only under the "large" text
+  // size, so at the default size the rail shrank to fit, the chat ran underneath it, and the
+  // topbar lost its right edge — collapsing to ~240px and parking the centered title on top
+  // of the nav reveal button. Lock all three geometries to the one variable.
+  await openReport(page);
+  const rail = page.locator(".right-rail.artifact-mode");
+  await expect(rail).toBeVisible();
+  const g = await page.evaluate(() => {
+    const px = (v: string) => parseFloat(v);
+    const rail = document.querySelector(".right-rail.artifact-mode") as HTMLElement;
+    const chat = document.querySelector(".main-chat") as HTMLElement;
+    const top = document.querySelector(".main-topbar") as HTMLElement;
+    const want = Math.min(0.62 * window.innerWidth, 960);
+    return {
+      want,
+      railW: rail.getBoundingClientRect().width,
+      chatMargin: px(getComputedStyle(chat).marginRight),
+      chatRight: chat.getBoundingClientRect().right,
+      railLeft: rail.getBoundingClientRect().left,
+      topRight: px(getComputedStyle(top).right),
+    };
+  });
+  expect(Math.abs(g.railW - g.want)).toBeLessThan(2);
+  expect(Math.abs(g.chatMargin - g.want)).toBeLessThan(2);
+  expect(g.chatRight).toBeLessThanOrEqual(g.railLeft + 1); // the chat never runs under the rail
+  expect(Math.abs(g.topRight - g.want)).toBeLessThan(2);
+
+  // With the nav collapsed the session topbar carries an inline cluster at its left; the
+  // centered title must clear that cluster's last control (the bug parked it on top).
+  // (The e2e shell starts with the nav collapsed — the "Dock sidebar" state.)
+  await expect(page.locator(".app.nav-collapsed")).toBeVisible();
+  const overlap = await page.evaluate(() => {
+    const t = document.querySelector(".main-title")?.getBoundingClientRect();
+    const btns = document.querySelectorAll(".main-topbar-side:not(.main-topbar-actions) button");
+    const last = btns.length ? btns[btns.length - 1].getBoundingClientRect() : null;
+    return t && last ? t.left < last.right && t.right > last.left : false;
+  });
+  expect(overlap).toBe(false);
+});

@@ -56,7 +56,9 @@ PROVIDER_FOR_CONNECTOR = {
 # outlives the sidecar process simply has to be restarted.
 _pending_logins: dict[str, dict[str, float | str]] = {}
 _PENDING_TTL = 600
-_pending_managed_states: dict[str, float] = {}
+# Each pending managed connect records when it started and (optionally) which
+# machine the grant is destined for — the callback routes on that record.
+_pending_managed_states: dict[str, dict[str, Any]] = {}
 _MANAGED_STATE_TTL = 600
 
 
@@ -349,6 +351,8 @@ def begin_managed_connect(
     *,
     access: str = "",
     flow: str = "",
+    machine_id: str = "",
+    machine_name: str = "",
 ) -> dict[str, Any]:
     """Authenticated start: returns the provider consent URL for the browser.
     Requires sign-in — the manual token path stays available regardless.
@@ -384,7 +388,13 @@ def begin_managed_connect(
         return {"ok": False, "error": f"cloud unreachable: {type(exc).__name__}"}
     if resp.status_code != 200:
         return {"ok": False, "error": f"start failed ({resp.status_code})"}
-    _pending_managed_states[app_state] = _now()
+    _pending_managed_states[app_state] = {
+        "created": _now(),
+        # A machine-targeted connect (machines spec §Remote OAuth): the callback
+        # ships the grant to this machine instead of storing it locally.
+        "machine_id": machine_id,
+        "machine_name": machine_name,
+    }
     return {
         "ok": True,
         "authorize_url": resp.json()["authorize_url"],
@@ -392,12 +402,18 @@ def begin_managed_connect(
     }
 
 
-def consume_managed_state(state: str) -> bool:
-    """Consume one recent managed-OAuth callback state exactly once."""
+def consume_managed_state(state: str) -> Optional[dict[str, Any]]:
+    """Consume one recent managed-OAuth callback state exactly once.
+
+    Returns the pending record ({"machine_id": …, "machine_name": …}) so the
+    callback can route a machine-targeted grant, or None for an unknown or
+    expired state."""
     if not state:
-        return False
-    created = _pending_managed_states.pop(state, None)
-    return created is not None and created >= _now() - _MANAGED_STATE_TTL
+        return None
+    record = _pending_managed_states.pop(state, None)
+    if record is None or record["created"] < _now() - _MANAGED_STATE_TTL:
+        return None
+    return record
 
 
 def managed_profile_from_callback(form: dict[str, str]) -> dict[str, Any]:
@@ -427,6 +443,56 @@ def managed_profile_from_callback(form: dict[str, str]) -> dict[str, Any]:
     return profile
 
 
+def delegate_connection(
+    secrets: SecretStore,
+    config: Config,
+    connection_id: str,
+    *,
+    seal_pubkey: str = "",
+    machine_id: str = "",
+) -> Optional[dict[str, str]]:
+    """Handoff step (machines spec §Remote OAuth): mark a managed connection
+    machine-held at the broker, so the machine can renew it by possession.
+
+    Returns {"user_id": …, "machine_credential": …} — both travel with the
+    grant. The credential arrives only when `seal_pubkey` (the machine's
+    pinned sealing key) is sent: the broker then mints the connection-scoped
+    secret that authenticates the machine's event polling (spec §Managed
+    events) and switches the connection's relay events to that machine's
+    sealed queue. `machine_id` (spec §Fly sandboxes) names the holding
+    machine as the hosted control plane knows it, so the broker can wake a
+    sleeping sandbox after queueing an event; only hosted (`cloud:`) rows
+    have one. None = not delegated."""
+    token = fresh_access_token(secrets, config)
+    if not token:
+        return None
+    body: dict[str, str] = {}
+    if seal_pubkey:
+        body["seal_pubkey"] = seal_pubkey
+    if machine_id:
+        body["machine_id"] = machine_id
+    try:
+        resp = httpx.post(
+            config.cloud_base_url.rstrip("/")
+            + f"/v1/connections/{connection_id}/delegate",
+            headers={"Authorization": f"Bearer {token}"},
+            **({"json": body} if body else {}),
+            timeout=20,
+        )
+    except httpx.HTTPError:
+        return None
+    if resp.status_code != 200:
+        return None
+    body = resp.json()
+    user_id = str(body.get("user_id") or "")
+    if not user_id:
+        return None
+    return {
+        "user_id": user_id,
+        "machine_credential": str(body.get("machine_credential") or ""),
+    }
+
+
 def refresh_managed_token(
     secrets: SecretStore,
     config: Config,
@@ -443,20 +509,39 @@ def refresh_managed_token(
     if not (profile.get("managed") and profile.get("refresh_token")):
         return None
     provider = profile.get("provider") or PROVIDER_FOR_CONNECTOR.get(connector)
-    token = fresh_access_token(secrets, config)
-    if not provider or not token:
+    if not provider:
         return None
-    try:
-        resp = httpx.post(
-            config.cloud_base_url.rstrip("/") + f"/v1/oauth/{provider}/refresh",
-            json={
-                "refresh_token": profile["refresh_token"],
-                "connection_id": profile.get("connection_id", ""),
-                "connector": connector,
-            },
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=20,
+    token = fresh_access_token(secrets, config)
+    if token:
+        url = config.cloud_base_url.rstrip("/") + f"/v1/oauth/{provider}/refresh"
+        headers = {"Authorization": f"Bearer {token}"}
+        body = {
+            "refresh_token": profile["refresh_token"],
+            "connection_id": profile.get("connection_id", ""),
+            "connector": connector,
+        }
+    else:
+        # Machine-held grant (machines spec §Remote OAuth): no cloud session
+        # here — renew by possession against the delegated route. Works only
+        # for grants a signed-in user delegated at handoff; the broker's
+        # guardrails (pacing, uniform 401s, failure auto-suspend) apply.
+        user_id = str(profile.get("broker_user_id") or "")
+        connection_id = str(profile.get("connection_id") or "")
+        if not (user_id and connection_id):
+            return None
+        url = (
+            config.cloud_base_url.rstrip("/")
+            + f"/v1/oauth/{provider}/refresh-delegated"
         )
+        headers = {}
+        body = {
+            "refresh_token": profile["refresh_token"],
+            "connection_id": connection_id,
+            "user_id": user_id,
+            "connector": connector,
+        }
+    try:
+        resp = httpx.post(url, json=body, headers=headers, timeout=20)
     except httpx.HTTPError:
         return None
     if resp.status_code != 200:
@@ -488,6 +573,48 @@ def ensure_fresh_connector_token(
     if expires and expires > _now() + leeway:
         return
     refresh_managed_token(secrets, config, connector, profile_key=profile_key)
+
+
+def revoke_connector_connections(
+    secrets: SecretStore, config: Config, connector: str
+) -> int:
+    """Revoke every live broker connection for a connector, by NAME.
+
+    The machine-held case (machines spec §Managed events, drill finding): a
+    box's own disconnect deletes its copy but cannot reach the broker (no
+    session — by design), which would leave the delegation lingering and the
+    connection's events black-holed. The DESKTOP holds the session, so it
+    performs the revocation — without needing any local profile (the desktop
+    forgot the grant at handoff). Returns how many connections were revoked."""
+    token = fresh_access_token(secrets, config)
+    if not token:
+        return 0
+    base = config.cloud_base_url.rstrip("/")
+    try:
+        resp = httpx.get(
+            base + "/v1/connections",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+    except httpx.HTTPError:
+        return 0
+    if resp.status_code != 200:
+        return 0
+    revoked = 0
+    for row in resp.json().get("connections", []):
+        if row.get("connector") != connector or row.get("status") == "disconnected":
+            continue
+        try:
+            r = httpx.post(
+                base + f"/v1/connections/{row['connection_id']}/disconnect",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10,
+            )
+        except httpx.HTTPError:
+            continue
+        if r.status_code == 200:
+            revoked += 1
+    return revoked
 
 
 def cloud_disconnect(
@@ -539,15 +666,31 @@ def github_installation_token(
         if cached and cached[1] > _now() + _GITHUB_TOKEN_LEEWAY:
             return cached[0]
     token = fresh_access_token(secrets, config)
-    if not token:
-        return ""
+    if token:
+        url = config.cloud_base_url.rstrip("/") + "/v1/github/token"
+        payload: dict[str, str] = {"installation_id": installation_id}
+        headers = {"Authorization": f"Bearer {token}"}
+    else:
+        # Machine-held GitHub (machines spec §Managed events, increment 2):
+        # a box has no cloud session — it mints by machine credential on the
+        # delegated route, using the stamps the handoff wrote to the pointer.
+        pointer = secrets.get("github:default") or {}
+        credential = str(pointer.get("machine_credential") or "")
+        if not (
+            credential
+            and pointer.get("connection_id")
+            and pointer.get("broker_user_id")
+        ):
+            return ""
+        url = config.cloud_base_url.rstrip("/") + "/v1/machine/github/mint"
+        payload = {
+            "installation_id": installation_id,
+            "connection_id": str(pointer["connection_id"]),
+            "user_id": str(pointer["broker_user_id"]),
+        }
+        headers = {"Authorization": f"Bearer {credential}"}
     try:
-        resp = httpx.post(
-            config.cloud_base_url.rstrip("/") + "/v1/github/token",
-            json={"installation_id": installation_id},
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=20,
-        )
+        resp = httpx.post(url, json=payload, headers=headers, timeout=20)
     except httpx.HTTPError:
         return ""
     if resp.status_code != 200:
@@ -687,3 +830,30 @@ def gallery_detail(secrets: SecretStore, config: Config, slug: str) -> Optional[
         "capabilities": capabilities,
         "recommends": recommends,
     }
+
+
+def broker_request(
+    secrets: SecretStore,
+    config: Config,
+    method: str,
+    path: str,
+    body: Optional[dict[str, Any]] = None,
+) -> tuple[int, Any]:
+    """One user-authed call to the broker for the desktop GUI's cloud views
+    (UX-049 4c). Returns (status, json); (401, …) when signed out; (0, …)
+    when unreachable. The token stays in this process."""
+    token = fresh_access_token(secrets, config)
+    if not token:
+        return 401, {"error": "not signed in"}
+    url = config.cloud_base_url.rstrip("/") + path
+    try:
+        resp = httpx.request(
+            method, url, json=body, headers={"Authorization": f"Bearer {token}"}, timeout=20
+        )
+    except httpx.HTTPError:
+        return 0, {"error": "cloud unreachable"}
+    try:
+        data = resp.json()
+    except ValueError:
+        data = {"error": resp.text[:200]}
+    return resp.status_code, data

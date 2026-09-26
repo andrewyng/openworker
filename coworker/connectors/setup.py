@@ -7,7 +7,7 @@ public bot identity captured at connect time.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from ..secrets import SecretStore
 from .catalog_copy import about_for, access_for
@@ -418,6 +418,118 @@ def managed_connect_connector(
     return {"ok": True, "account": profile.get("account") or None}
 
 
+def store_managed_grant(
+    secrets: SecretStore, connector: str, form: dict[str, str], profile: dict[str, Any]
+) -> dict[str, Any]:
+    """Store a managed OAuth grant into `secrets`, routing to the connector's
+    storage family (multi-account gmail/gcal, multi-portal hubspot, or the
+    generic path). One dispatch for both destinations: the local store on a
+    plain connect, an EphemeralSecretStore when the grant is being staged for
+    another machine (machines spec §Remote OAuth) — so the two paths can never
+    drift. Slack (relay install) and GitHub (cloud runtime) have their own
+    branches in the callback and never come through here."""
+    if connector == "gmail":
+        from . import gmail_accounts
+
+        return gmail_accounts.managed_connect_account(secrets, profile)
+    if connector == "google_calendar":
+        from . import gcal_accounts
+
+        return gcal_accounts.managed_connect_account(secrets, profile)
+    if connector == "hubspot" and form.get("hub_id"):
+        from . import hubspot_portals
+
+        profile = {**profile, "hub_id": form.get("hub_id", "")}
+        if form.get("sandbox"):
+            profile["sandbox"] = True
+        return hubspot_portals.managed_connect_portal(secrets, profile)
+    return managed_connect_connector(secrets, connector, profile)
+
+
+def store_managed_grant_bundle(
+    secrets: SecretStore,
+    connector: str,
+    form: dict[str, Any],
+    grant: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Turn a broker OAuth callback (`form` = the callback's fields) into this
+    connector's profile records in `secrets`, stamped with the delegation
+    (`grant` = {"user_id", "machine_credential"} when the grant is machine-
+    held). ONE routine for every destination — the desktop staging a grant
+    for another machine (EphemeralSecretStore, then sealed), and a box
+    landing a browser-sealed grant into its own store (machines spec §Cloud-
+    dashboard connect-direct) — so the families cannot drift:
+    - GitHub: one profile per installation the callback returned + pointer;
+    - Slack: the per-workspace bot token + pointer;
+    - everything else: the connector's storage family (multi-account, portal,
+      or generic)."""
+    import json as _json
+
+    from .. import cloud
+    from .github_installs import managed_connect_install
+
+    form = {k: str(v) for k, v in (form or {}).items()}
+    grant = grant or {}
+    connection_id = form.get("connection_id", "")
+    if connector == "github":
+        if not form.get("installation_id"):
+            return {"ok": False, "error": "no installation"}
+        try:
+            rows = _json.loads(form.get("installations") or "[]")
+        except ValueError:
+            rows = []
+        if not rows:
+            rows = [
+                {
+                    "installation_id": form.get("installation_id", ""),
+                    "account_login": form.get("account_login", ""),
+                    "account_type": form.get("account_type", ""),
+                    "repo_selection": form.get("repo_selection", ""),
+                }
+            ]
+        out: dict[str, Any] = {"ok": False, "error": "no installations"}
+        for row in rows:
+            out = managed_connect_install(
+                secrets,
+                {
+                    **row,
+                    "github_login": form.get("github_login", ""),
+                    "connection_id": connection_id,
+                },
+            )
+            if not out.get("ok"):
+                return out
+    elif connector == "slack" and form.get("team_id"):
+        out = managed_connect_slack_install(secrets, form)
+        if not out.get("ok"):
+            return out
+    else:
+        if not form.get("access_token"):
+            return {"ok": False, "error": "missing fields"}
+        profile = cloud.managed_profile_from_callback(form)
+        if grant.get("user_id"):
+            profile["broker_user_id"] = grant["user_id"]
+        if grant.get("machine_credential"):
+            profile["machine_credential"] = grant["machine_credential"]
+        return store_managed_grant(secrets, connector, form, profile)
+    if connector in ("slack", "github") and grant:
+        # Stamp the delegation into every profile of the connector (pointer
+        # included) — the pointer feeds the box's poll adapter (slack) and the
+        # delegated token mint (github).
+        for key in connector_profile_keys(secrets, connector):
+            prof = dict(secrets.get(key) or {})
+            if not prof:
+                continue
+            if connection_id:
+                prof["connection_id"] = connection_id
+            if grant.get("user_id"):
+                prof["broker_user_id"] = grant["user_id"]
+            if grant.get("machine_credential"):
+                prof["machine_credential"] = grant["machine_credential"]
+            secrets.put(key, prof)
+    return out
+
+
 def managed_connect_slack_install(
     secrets: SecretStore, form: dict[str, Any]
 ) -> dict[str, Any]:
@@ -522,3 +634,97 @@ def disconnect_connector(secrets: SecretStore, name: str) -> dict[str, Any]:
         dropped_accounts = mcp_oauth.sign_out(name, secrets) or dropped_accounts
         mcp_config.delete_global_server(name)
     return {"ok": secrets.delete(f"{name}:default") or dropped_accounts}
+
+
+def connector_profile_keys(secrets: SecretStore, name: str) -> list[str]:
+    """Every stored profile key belonging to one connector — the unit a grant
+    handoff moves to a machine. Mirrors disconnect_connector's enumeration."""
+    keys: list[str] = []
+    from . import accounts as _accounts
+
+    if _accounts.is_account_connector(name):
+        keys += [
+            _accounts.prefix(name) + account_id
+            for account_id, _profile in _accounts.list_accounts(secrets, name)
+        ]
+    if name == "gmail":
+        from . import gmail_accounts
+
+        keys += [
+            gmail_accounts.PREFIX + email
+            for email, _profile in gmail_accounts.list_accounts(secrets)
+        ]
+    if name == "google_calendar":
+        from . import gcal_accounts
+
+        keys += [
+            gcal_accounts.PREFIX + email
+            for email, _profile in gcal_accounts.list_accounts(secrets)
+        ]
+    if name == "hubspot":
+        from . import hubspot_portals
+
+        keys += [
+            hubspot_portals.PREFIX + hub_id
+            for hub_id, _profile in hubspot_portals.list_portals(secrets)
+        ]
+    if name == "slack":
+        # Managed relay: one bot-token profile per workspace.
+        keys += sorted(
+            row["profile"]
+            for row in secrets.status()
+            if str(row.get("profile", "")).startswith("slack:team:")
+        )
+    if name == "github":
+        # Managed App relay: one metadata profile per installation — routing
+        # only, no secrets (tokens mint on demand).
+        keys += sorted(
+            row["profile"]
+            for row in secrets.status()
+            if str(row.get("profile", "")).startswith("github:install:")
+        )
+    if secrets.get(f"{name}:default") is not None:
+        keys.append(f"{name}:default")
+    return keys
+
+
+def connector_handoff_info(secrets: SecretStore, name: str) -> dict[str, Any]:
+    """Whether this connector's grant can MOVE to a machine, and which profile
+    keys the move carries. One grant, one holder (spec §Remote OAuth): the
+    handoff deploys these sealed, then the desktop forgets its copy.
+
+    Not portable: MCP-backed connects (their OAuth + server registration are
+    local by construction). Relay-mode Slack and managed GitHub ARE portable
+    since machine events (spec §Managed events + increment 2): Slack's bot
+    tokens move sealed and its inbound rides the sealed queue; a GitHub
+    handoff moves NO secrets at all — installation routing metadata plus the
+    machine credential, which the box uses both to drain events and to mint
+    1-hour installation tokens on the delegated route."""
+    d = get_descriptor(name)
+    if d is None:
+        return {"ok": False, "error": "unknown connector"}
+    default = secrets.get(f"{name}:default") or {}
+    if default.get("mode") == "mcp":
+        return {"ok": True, "portable": False, "reason": "mcp_local", "profiles": []}
+    # Managed (broker-refreshed) grants move via DELEGATION (spec §Remote
+    # OAuth): the handoff marks each connection machine-held at the broker,
+    # and the machine renews by possession on the delegated route. That
+    # needs the connection_id the broker issued — a managed profile without
+    # one (pre-connection-tracking era) can't be delegated and stays gated.
+    # The slack/github pointer profiles are managed METADATA only — mode +
+    # delegation stamps, no grant — so they don't gate.
+    keys = connector_profile_keys(secrets, name)
+    managed = [
+        k
+        for k in keys
+        if (secrets.get(k) or {}).get("managed")
+        and not (name in ("slack", "github") and k == f"{name}:default")
+    ]
+    if any(not (secrets.get(k) or {}).get("connection_id") for k in managed):
+        return {"ok": True, "portable": False, "reason": "refresh_binding", "profiles": []}
+    return {
+        "ok": True,
+        "portable": bool(keys),
+        "profiles": keys,
+        "needs_delegation": bool(managed),
+    }

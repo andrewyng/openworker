@@ -83,8 +83,16 @@ def managed_connect_install(
         "repo_selection": form.get("repo_selection", ""),
         "connection_id": form.get("connection_id", ""),
     }
-    if existing.get("allowed_users"):
-        profile["allowed_users"] = list(existing["allowed_users"])
+    allowed = set(existing.get("allowed_users") or [])
+    installer = _norm(form.get("github_login"))
+    if installer:
+        # Pre-add the installer (Slack's UX-027 rule, applied here 2026-09-02):
+        # connecting the App is consent to talk to your own coworker — without
+        # this the very first @mention comes from the installer and parks
+        # (the 2026-09-01 GitHub drill's first catch).
+        allowed.add(installer)
+    if allowed:
+        profile["allowed_users"] = sorted(allowed)
     if existing.get("allow_all"):
         profile["allow_all"] = True
     secrets.put(PREFIX + installation_id, profile)

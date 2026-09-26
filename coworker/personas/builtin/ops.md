@@ -7,7 +7,7 @@ tagline: Operate and investigate — runbooks, logs, infrastructure
 tools: [files, search, shell, todo]
 messaging: true
 connectors: true
-recommended_models: [anthropic:claude-opus-4-8, openai:gpt-5.5]
+models: [anthropic:claude-opus-4-8, openai:gpt-5.5]
 default_permission_mode: interactive
 description: An operations-focused coworker for investigating incidents, running runbooks, and producing operational deliverables.
 recommends:

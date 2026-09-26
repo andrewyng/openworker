@@ -54,7 +54,7 @@ def test_event_due_only_after_event_fires(tmp_path):
 
 def test_selfwake_tools(tmp_path):
     store = WakeStore(tmp_path / "wakes.json")
-    sleep_until, wake_on, wake_on_event = selfwake_tools(store, "s1")
+    sleep_for, sleep_until, wake_on, wake_on_event = selfwake_tools(store, "s1")
 
     assert wake_on("job-9")["job_id"] == "job-9"
     assert sleep_until((_now() + timedelta(minutes=5)).isoformat())["fire_at"]
@@ -62,5 +62,5 @@ def test_selfwake_tools(tmp_path):
     assert wake_on_event("alert-fired")["event_key"] == "alert-fired"
 
     pend = store.pending("s1")
-    assert len(pend) == 4
+    assert len(pend) == 3  # the second sleep replaces the first
     assert {w.kind for w in pend} == {"timer", "completion", "event"}

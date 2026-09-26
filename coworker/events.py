@@ -20,6 +20,7 @@ class EventType(str, Enum):
     PERMISSION_REQUIRED = "permission_required"
     DIRECTORY_REQUESTED = "directory_requested"  # agent asks the user to grant a folder
     TOOL_REQUESTED = "tool_requested"  # agent asks for a missing CLI tool (scanner, etc.)
+    CONNECTOR_REQUESTED = "connector_requested"  # request_connector / grant_connector gate (§11.6)
     QUESTION_REQUESTED = (
         "question_requested"  # agent asks the user a free-text/multiple-choice question
     )
@@ -41,6 +42,9 @@ class EventType(str, Enum):
     INTERRUPTED = "interrupted"
     COMPACTING = "compacting"  # compaction started — surfaces show a transient signal
     COMPACTED = "compacted"  # outbound history was compacted (summary or trim)
+    # OPE-171: the reply was cut off at the output-token limit with no tool call; the
+    # engine nudged the model to act and is going round the loop again.
+    CONTINUATION = "continuation"
 
 
 @dataclass

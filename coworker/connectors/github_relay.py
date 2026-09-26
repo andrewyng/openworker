@@ -40,6 +40,15 @@ def split_thread(chat_id: str) -> tuple[str, Optional[int]]:
         return repo, None
 
 
+# How an event kind reads in the opening line (spec §10: the lifecycle kinds).
+_KIND_LABELS = {
+    "mention": "mention",
+    "label": "label",
+    "pr_open": "PR opened",
+    "pr_merge": "PR merged",
+    "issue_open": "issue opened",
+}
+
 class GitHubRelayAdapter(BasePlatformAdapter):
     platform = "github"
 
@@ -138,7 +147,8 @@ class GitHubRelayAdapter(BasePlatformAdapter):
         title = frame.get("title", "")
         body = frame.get("body", "")
         kind = frame.get("kind", "mention")
-        header = f"[{kind} in {owner_repo}#{number}" + (f": {title}]" if title else "]")
+        label = _KIND_LABELS.get(kind, kind)
+        header = f"[{label} in {owner_repo}#{number}" + (f": {title}]" if title else "]")
         event = MessageEvent(
             text=f"{header} {body}".strip(),
             source=SessionSource(
@@ -151,6 +161,15 @@ class GitHubRelayAdapter(BasePlatformAdapter):
                 team_id=installation_id,  # the allow-list scope (≙ Slack team)
             ),
             raw=frame,
+            # Every routed GitHub frame is a DIRECTED ask (the broker only
+            # forwards wave-1 triggers: @-mention or the slug label) — without
+            # this the §31 mention router never spawns a session for it.
+            mentions_me=True,
+            target_session_id=str(frame.get("target_session_id") or "") or None,
+            mention_persona=str(frame.get("mention_persona") or "") or None,
+            configuration=frame.get("configuration") if isinstance(frame.get("configuration"), dict) else None,
+            reply_only=str(frame.get("reply_only") or "") or None,
+            known_names=[str(n) for n in (frame.get("known_names") or [])],
         )
         await self.handle_message(event)
 

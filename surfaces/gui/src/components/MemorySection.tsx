@@ -8,9 +8,12 @@ import {
   setMemorySettings,
   updateMemory,
   MEMORY_CHANGED,
+  type Machine,
   type MemoryEntry,
   type MemorySettings,
 } from "../api";
+import { useMachineData } from "../useMachineData";
+import { CachedNote, LoadingRow, UnreachableRow } from "./ScopedStatus";
 import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { Toggle } from "./Toggle";
@@ -20,24 +23,35 @@ import { Toggle } from "./Toggle";
 // no scope vocabulary, no markdown, no files. Everything else memory does happens in
 // chat (toast §5.1, attribution §5.2).
 const CARD = "rounded-xl2 border border-line bg-panel";
-const FIELD_LABEL = "text-[13px] font-medium text-ink";
-const FIELD_HELP = "text-[12px] text-muted mt-1.5 leading-relaxed";
+const FIELD_LABEL = "text-ui font-medium text-ink";
+const FIELD_HELP = "text-meta text-muted mt-1.5 leading-relaxed";
 const BTN_ACCENT =
-  "text-[13px] px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
+  "text-ui px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
 
-export function MemorySection() {
+export function MemorySection({
+  machine,
+  onAskWorker,
+}: {
+  // UX-046 machine scope: a remote machine's memory is VIEW-ONLY (owner
+  // ruling 2026-08-30) — memory belongs to that machine's worker; changing
+  // it is a conversation, and `onAskWorker` starts one on that machine.
+  machine?: Machine | null;
+  onAskWorker?: (machineId: string) => void;
+} = {}) {
   const { t } = useTranslation();
-  const [settings, setSettings] = useState<MemorySettings | null>(null);
-  const [entries, setEntries] = useState<MemoryEntry[] | null>(null);
+  const mid = machine?.id ?? null;
+  const readOnly = !!machine;
+  const mem = useMachineData(`memory:${mid ?? "local"}`, async () => ({
+    settings: await getMemorySettings(mid),
+    entries: await getMemory(mid),
+  }));
+  const settings = mem.data?.settings ?? null;
+  const entries = mem.data?.entries ?? null;
   // State-change copy (§5.3): shown under the toggle / list after an action.
   const [toggleMsg, setToggleMsg] = useState<string | null>(null);
   const [listMsg, setListMsg] = useState<string | null>(null);
 
-  const refresh = () => {
-    getMemorySettings().then(setSettings).catch(() => setSettings(null));
-    getMemory().then(setEntries).catch(() => setEntries([]));
-  };
-  useEffect(refresh, []);
+  const refresh = mem.refresh;
   // Stay current while the screen is open: a save/edit landing in a conversation, or
   // the window regaining focus after one did. Without this the list is a snapshot from
   // whenever the page mounted — it showed "Nothing yet" seconds after a real save
@@ -52,9 +66,9 @@ export function MemorySection() {
   }, []);
 
   const toggleEnabled = async () => {
-    if (!settings) return;
+    if (!settings || readOnly) return;
     const next = await setMemorySettings({ enabled: !settings.enabled });
-    setSettings(next);
+    refresh();
     setToggleMsg(next.enabled ? t("memory.on_msg") : t("memory.off_msg"));
   };
 
@@ -65,37 +79,81 @@ export function MemorySection() {
     refresh();
   };
 
-  if (!settings || entries === null)
-    return <div className="text-[13px] text-muted">{t("memory.loading")}</div>;
+  if (!settings || entries === null) {
+    if (mem.error && machine)
+      return (
+        <section>
+          <PanelHead title={t("settings.tab.memory")} sub={t("onmachine.memory.on_machine", { machine: machine.name })} />
+          <div className={CARD}>
+            <UnreachableRow machineName={machine.name} />
+          </div>
+        </section>
+      );
+    return <LoadingRow what={machine ? t("onmachine.memory.loading_what_machine", { machine: machine.name }) : t("onmachine.memory.loading_what")} />;
+  }
 
   return (
     <section>
-      <PanelHead title={t("settings.tab.memory")} sub={t("memory.section_sub")} />
+      <PanelHead
+        title={t("settings.tab.memory")}
+        sub={
+          machine
+            ? t("onmachine.memory.remote_sub", { machine: machine.name })
+            : t("memory.section_sub")
+        }
+      />
+      {mem.cachedAt ? <CachedNote at={mem.cachedAt} /> : null}
+
+      {readOnly && (
+        <div className={CARD + " p-4 mb-4 flex items-center gap-3"} data-testid="memory-remote-cta">
+          <div className="min-w-0 flex-1">
+            <div className={FIELD_LABEL}>
+              {settings.enabled ? t("onmachine.memory.remote_on") : t("onmachine.memory.remote_off")}
+            </div>
+            <div className="text-meta text-muted mt-0.5">
+              {t("onmachine.memory.remote_help")}
+            </div>
+          </div>
+          {onAskWorker && (
+            <button
+              className={BTN_ACCENT}
+              onClick={() => onAskWorker(machine!.id)}
+              data-testid="memory-ask-worker"
+            >
+              {t("onmachine.memory.ask_worker")}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* On/off — one switch, no other setup (§5.4). */}
+      {!readOnly && (
       <div className={CARD + " p-4 mb-4"} data-testid="memory-toggle-card">
         <div className="flex items-center gap-3">
           <Toggle checked={settings.enabled} onChange={toggleEnabled} title={t("memory.toggle_title")} />
           <div className="min-w-0 flex-1">
             <div className={FIELD_LABEL}>{t("memory.toggle_label")}</div>
-            <div className="text-[12px] text-muted mt-0.5">{t("memory.toggle_help")}</div>
+            <div className="text-meta text-muted mt-0.5">{t("memory.toggle_help")}</div>
           </div>
         </div>
         {toggleMsg && (
-          <div className="text-[13px] text-muted mt-3 pt-3 border-t border-line" data-testid="memory-toggle-msg">
+          <div className="text-ui text-muted mt-3 pt-3 border-t border-line" data-testid="memory-toggle-msg">
             {toggleMsg}
           </div>
         )}
       </div>
+      )}
 
       {/* What I've learned (§5.3): directly under the toggle that governs it — the off
           message ("what I already know is kept, delete it below") points here. */}
       <div className={CARD + " p-4 mb-4"} data-testid="memory-list-card">
         <div className="flex items-center gap-2">
-          <div className={FIELD_LABEL + " flex-1"}>{t("memory.learned_title")}</div>
-          {entries.length > 0 && (
+          <div className={FIELD_LABEL + " flex-1"}>
+            {readOnly ? t("onmachine.memory.learned_title") : t("memory.learned_title")}
+          </div>
+          {entries.length > 0 && !readOnly && (
             <button
-              className="text-[12px] text-danger/80 hover:text-danger"
+              className="text-meta text-danger/80 hover:text-danger"
               data-testid="memory-delete-all"
               onClick={wipeAll}
             >
@@ -103,22 +161,26 @@ export function MemorySection() {
             </button>
           )}
         </div>
-        <div className={FIELD_HELP}>{t("memory.learned_help")}</div>
+        <div className={FIELD_HELP}>
+          {readOnly
+            ? t("onmachine.memory.learned_help")
+            : t("memory.learned_help")}
+        </div>
         {listMsg && (
-          <div className="text-[13px] text-muted mt-2.5" data-testid="memory-list-msg">
+          <div className="text-ui text-muted mt-2.5" data-testid="memory-list-msg">
             {listMsg}
           </div>
         )}
         {entries.length === 0 ? (
           !listMsg && (
-            <div className="text-[12px] text-muted mt-3" data-testid="memory-empty">
+            <div className="text-meta text-muted mt-3" data-testid="memory-empty">
               {t("memory.empty")}
             </div>
           )
         ) : (
           <div className="mt-3 divide-y divide-line">
             {entries.map((m) => (
-              <MemoryRow key={m.id} entry={m} onChanged={refresh} />
+              <MemoryRow key={m.id} entry={m} onChanged={refresh} readOnly={readOnly} />
             ))}
           </div>
         )}
@@ -126,7 +188,7 @@ export function MemorySection() {
 
       {/* Your instructions (§6): user-authored, toggle-independent — so it sits apart
           from the auto-memory pair above. The agent never edits these. */}
-      <UserRulesCard settings={settings} onSaved={setSettings} />
+      <UserRulesCard settings={settings} onSaved={() => refresh()} readOnly={readOnly} />
     </section>
   );
 }
@@ -134,9 +196,11 @@ export function MemorySection() {
 function UserRulesCard({
   settings,
   onSaved,
+  readOnly,
 }: {
   settings: MemorySettings;
   onSaved: (s: MemorySettings) => void;
+  readOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState(settings.user_rules);
@@ -157,11 +221,13 @@ function UserRulesCard({
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         rows={4}
+        disabled={readOnly}
         placeholder={t("memory.rules_placeholder")}
         data-testid="user-rules-input"
-        className="w-full mt-2.5 px-3 py-2.5 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent resize-y leading-relaxed"
+        className="w-full mt-2.5 px-3 py-2.5 rounded-lg border border-line bg-paper text-ui text-ink outline-none focus:border-accent resize-y leading-relaxed"
       />
       <div className="flex items-center gap-3 mt-2">
+        {!readOnly && (
         <button
           className={BTN_ACCENT}
           onClick={save}
@@ -170,15 +236,24 @@ function UserRulesCard({
         >
           {t("memory.save")}
         </button>
+        )}
         {savedMsg && (
-          <span className="text-[13px] text-muted">{t("memory.rules_saved")}</span>
+          <span className="text-ui text-muted">{t("memory.rules_saved")}</span>
         )}
       </div>
     </div>
   );
 }
 
-function MemoryRow({ entry, onChanged }: { entry: MemoryEntry; onChanged: () => void }) {
+function MemoryRow({
+  entry,
+  onChanged,
+  readOnly,
+}: {
+  entry: MemoryEntry;
+  onChanged: () => void;
+  readOnly?: boolean;
+}) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(entry.content);
@@ -202,7 +277,7 @@ function MemoryRow({ entry, onChanged }: { entry: MemoryEntry; onChanged: () => 
           onChange={(e) => setDraft(e.target.value)}
           rows={2}
           autoFocus
-          className="w-full px-3 py-2 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent resize-y leading-relaxed"
+          className="w-full px-3 py-2 rounded-lg border border-line bg-paper text-ui text-ink outline-none focus:border-accent resize-y leading-relaxed"
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -215,7 +290,7 @@ function MemoryRow({ entry, onChanged }: { entry: MemoryEntry; onChanged: () => 
           <button className={BTN_ACCENT} onClick={() => void save()}>
             {t("memory.save")}
           </button>
-          <button className="text-[13px] text-muted hover:text-ink" onClick={() => setEditing(false)}>
+          <button className="text-ui text-muted hover:text-ink" onClick={() => setEditing(false)}>
             {t("manage.cancel")}
           </button>
         </div>
@@ -224,7 +299,8 @@ function MemoryRow({ entry, onChanged }: { entry: MemoryEntry; onChanged: () => 
 
   return (
     <div className="py-2.5 flex items-start gap-2.5 group" data-testid={`memory-row-${entry.id}`}>
-      <div className="min-w-0 flex-1 text-[13px] leading-relaxed">{entry.content}</div>
+      <div className="min-w-0 flex-1 text-ui leading-relaxed">{entry.content}</div>
+      {!readOnly && (<>
       <button
         className="text-faint hover:text-ink shrink-0 mt-0.5"
         title={t("memory.fix_tip")}
@@ -244,6 +320,7 @@ function MemoryRow({ entry, onChanged }: { entry: MemoryEntry; onChanged: () => 
       >
         <Icon name="trash" size={14} />
       </button>
+      </>)}
     </div>
   );
 }

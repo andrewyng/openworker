@@ -303,13 +303,13 @@ export function AutomationQuickstart({
       ? t("automations.gate_pick_channel")
       : "";
 
-  const label = "block text-[12px] text-muted mt-3 mb-1";
+  const label = "block text-meta text-muted mt-3 mb-1";
   const input =
-    "w-full px-3 py-2 rounded-lg border border-line bg-panel text-[13px] outline-none focus:border-accent";
+    "w-full px-3 py-2 rounded-lg border border-line bg-panel text-ui outline-none focus:border-accent";
 
   return (
     <div className="mb-4">
-      <div className="text-[11px] uppercase tracking-[0.05em] text-faint mb-2.5">
+      <div className="text-label text-faint mb-2.5">
         {t("automations.start_from_template")}
       </div>
       {/* Equal-height cards (owner ask 2026-07-12): 1fr rows + h-full — <button> grid items
@@ -327,8 +327,8 @@ export function AutomationQuickstart({
             }
             onClick={() => pick(tpl)}
           >
-            <span className="text-[13px] font-semibold">{t(tpl.titleKey)}</span>
-            <span className="text-[12px] text-muted leading-relaxed flex-1">{t(tpl.blurbKey)}</span>
+            <span className="text-ui font-semibold">{t(tpl.titleKey)}</span>
+            <span className="text-meta text-muted leading-relaxed flex-1">{t(tpl.blurbKey)}</span>
             <span className="flex items-center gap-1.5 mt-1">
               {tpl.conns.map((c) => {
                 const cs = connState(c.name);
@@ -347,7 +347,7 @@ export function AutomationQuickstart({
                   </span>
                 );
               })}
-              <span className="text-[11px] text-faint ml-0.5">
+              <span className="text-label text-faint ml-0.5">
                 {tpl.conns.length === 0 ? t("automations.no_conns_with_cadence", { cadence: t(tpl.cadenceKey) }) : t(tpl.cadenceKey)}
               </span>
             </span>
@@ -363,11 +363,11 @@ export function AutomationQuickstart({
         >
           {/* §30: the card names its template — without this it starts abruptly after the grid. */}
           <div className="flex items-baseline gap-2 pb-2.5 mb-1 border-b border-line">
-            <span className="text-[11px] uppercase tracking-[0.05em] text-accent font-semibold">
+            <span className="text-label text-accent font-medium">
               {t("automations.set_up")}
             </span>
-            <span className="text-[14px] font-semibold">{t(picked.titleKey)}</span>
-            <span className="ml-auto text-[12px] text-faint max-sm:hidden">
+            <span className="text-body font-semibold">{t(picked.titleKey)}</span>
+            <span className="ml-auto text-meta text-faint max-sm:hidden">
               {picked.conns.length ? t("automations.conns_delivery_sched") : t("automations.delivery_sched")} ·{" "}
               {t(picked.cadenceKey)}
             </span>
@@ -380,13 +380,13 @@ export function AutomationQuickstart({
                 <div className="flex items-center gap-3 py-2.5">
                   {c && <ConnectorBadge connector={c} size={26} title={c.title} />}
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[13px] font-medium">{c?.title || name}</span>
-                    <span className="block text-[12px] text-faint">{t(whyKey)}</span>
+                    <span className="block text-ui font-medium">{c?.title || name}</span>
+                    <span className="block text-meta text-faint">{t(whyKey)}</span>
                   </span>
                   {c?.connected ? (
-                    <span className="text-[13px] text-ok">{t("automations.connected_ok")}</span>
+                    <span className="text-ui text-ok">{t("automations.connected_ok")}</span>
                   ) : flow ? (
-                    <span className="inline-flex items-center gap-2 text-[12px] text-muted">
+                    <span className="inline-flex items-center gap-2 text-meta text-muted">
                       <Spinner />
                       {flow.phase === "opening"
                         ? t("automations.opening_browser")
@@ -394,7 +394,7 @@ export function AutomationQuickstart({
                     </span>
                   ) : (
                     <button
-                      className="px-3.5 py-1 rounded-full border border-line text-[13px] hover:bg-paper"
+                      className="px-3.5 py-1 rounded-full border border-line text-ui hover:bg-paper"
                       onClick={() => startConnect(name)}
                       data-testid={`ob-connect-${name}`}
                     >
@@ -406,7 +406,7 @@ export function AutomationQuickstart({
                     and let Cancel clear the LOCAL state (the browser tab is the user's). */}
                 {flow?.phase === "waiting" && (
                   <div
-                    className="flex items-start gap-2 bg-accentSoft/50 rounded-lg px-3 py-2 mb-2.5 text-[12px] text-muted"
+                    className="flex items-start gap-2 bg-accentSoft/50 rounded-lg px-3 py-2 mb-2.5 text-meta text-muted"
                     data-testid="ob-connect-wait"
                   >
                     <span>↗</span>
@@ -431,22 +431,22 @@ export function AutomationQuickstart({
 
           {pendingConn && !cloud?.signed_in && (
             <div
-              className="bg-accentSoft/50 rounded-xl px-4 py-3 mt-3 text-[13px] text-muted"
+              className="bg-accentSoft/50 rounded-xl px-4 py-3 mt-3 text-ui text-muted"
               data-testid="ob-cloudpane"
             >
-              <span className="block text-[13px] text-ink font-medium">
+              <span className="block text-ui text-ink font-medium">
                 {t("automations.one_signin_unlocks")}
               </span>
               {t("automations.cloud_brokered")}
               <div className="flex items-center gap-3 mt-2">
                 {signinPhase ? (
                   <>
-                    <span className="inline-flex items-center gap-2 text-[12px]">
+                    <span className="inline-flex items-center gap-2 text-meta">
                       <Spinner />
                       {signinPhase === "opening" ? t("automations.opening_browser") : t("automations.waiting_signin")}
                     </span>
                     {signinPhase === "waiting" && (
-                      <span className="text-[12px] text-faint">
+                      <span className="text-meta text-faint">
                         {t("automations.finish_signin_desc")}{" "}
                         <button
                           className="underline hover:text-muted"
@@ -460,7 +460,7 @@ export function AutomationQuickstart({
                   </>
                 ) : (
                   <button
-                    className="px-3.5 py-1 rounded-full border border-line text-[13px] text-accent hover:bg-panel"
+                    className="px-3.5 py-1 rounded-full border border-line text-ui text-accent hover:bg-panel"
                     onClick={signInThenConnect}
                     data-testid="ob-cloud-signin"
                   >
@@ -498,7 +498,7 @@ export function AutomationQuickstart({
                       }
                     />
                   </div>
-                  <p className="text-[11px] text-warnInk mt-1">
+                  <p className="text-label text-warnInk mt-1">
                     {t("automations.bot_member_hint")}
                   </p>
                 </>
@@ -514,7 +514,7 @@ export function AutomationQuickstart({
                   />
                 </div>
                 <input
-                  className="w-28 px-3 py-2 rounded-lg border border-line bg-panel text-[13px] outline-none focus:border-accent"
+                  className="w-28 px-3 py-2 rounded-lg border border-line bg-panel text-ui outline-none focus:border-accent"
                   type="time"
                   aria-label={t("automations.time_aria")}
                   value={time}
@@ -536,7 +536,7 @@ export function AutomationQuickstart({
                 </>
               )}
               {picked.consent ? (
-                <label className="flex items-start gap-2.5 mt-3.5 text-[13px] text-muted select-none">
+                <label className="flex items-start gap-2.5 mt-3.5 text-ui text-muted select-none">
                   <input
                     type="checkbox"
                     className="mt-0.5"
@@ -554,7 +554,7 @@ export function AutomationQuickstart({
                   </span>
                 </label>
               ) : picked.conns.length > 0 ? (
-                <p className="text-[13px] text-muted mt-3">
+                <p className="text-ui text-muted mt-3">
                   {t("automations.read_only_pref")} <b className="text-ink">{t("automations.reads")}</b> {t("automations.read_only_suff")}
                 </p>
               ) : null}
@@ -563,21 +563,21 @@ export function AutomationQuickstart({
 
           <div className="flex items-center gap-3 mt-4">
             <button
-              className="text-[13px] text-faint hover:text-muted"
+              className="text-ui text-faint hover:text-muted"
               onClick={() => setPickedKey(null)}
             >
               {t("automations.cancel")}
             </button>
             {/* A silently-disabled primary reads as a bug — always name the missing piece. */}
             {gateHint && (
-              <span className="ml-auto text-[12px] text-faint" data-testid="ob-create-hint">
+              <span className="ml-auto text-meta text-faint" data-testid="ob-create-hint">
                 {gateHint}
               </span>
             )}
             <button
               className={
                 (gateHint ? "" : "ml-auto ") +
-                "px-5 py-2 rounded-full bg-ink text-panel text-[13px] disabled:opacity-40"
+                "px-5 py-2 rounded-full bg-ink text-panel text-ui disabled:opacity-40"
               }
               disabled={busy || !allConnected || (picked.needsChannel && !channel)}
               onClick={create}

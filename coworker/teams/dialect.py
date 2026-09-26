@@ -48,6 +48,8 @@ class BoardDialect(Protocol):
         assignee: Optional[str] = None,
     ) -> list[dict[str, Any]]: ...
     def get_item(self, space: str, item_id: int) -> dict[str, Any]: ...
+    def comment_page(self, space: str, item_id: int, *, after_seq: int = 0, limit: int = 20) -> dict: ...
+    def comment_text(self, space: str, item_id: int, *, seq: int, offset: int = 0, max_chars: int = 12000) -> dict: ...
     def create_item(
         self,
         space: str,
@@ -74,9 +76,11 @@ class BoardDialect(Protocol):
         body: str,
         *,
         refs: Optional[list[str]] = None,
+        needs_attention: bool = False,
     ) -> dict[str, Any]: ...
     def assign(self, space: str, item_id: int, assignee: str) -> dict[str, Any]: ...
     def claim(self, space: str, item_id: int) -> dict[str, Any]: ...
+    def set_status(self, space: str, item_id: int, text: str) -> dict[str, Any]: ...
     def link(self, space: str, src: int, kind: str, dst: int) -> dict[str, Any]: ...
     def attach(
         self,
@@ -153,6 +157,12 @@ class LocalDialect:
     def get_item(self, space: str, item_id: int) -> dict[str, Any]:
         return self.store.get_item(space, item_id, actor=self.actor)
 
+    def comment_page(self, space: str, item_id: int, *, after_seq: int = 0, limit: int = 20) -> dict:
+        return self.store.comment_page(space, item_id, actor=self.actor, after_seq=after_seq, limit=limit)
+
+    def comment_text(self, space: str, item_id: int, *, seq: int, offset: int = 0, max_chars: int = 12000) -> dict:
+        return self.store.comment_text(space, item_id, actor=self.actor, seq=seq, offset=offset, max_chars=max_chars)
+
     def create_item(
         self,
         space: str,
@@ -193,14 +203,18 @@ class LocalDialect:
         body: str,
         *,
         refs: Optional[list[str]] = None,
+        needs_attention: bool = False,
     ) -> dict[str, Any]:
-        return self.store.comment(space, self.actor, item_id, body, refs=refs)
+        return self.store.comment(space, self.actor, item_id, body, refs=refs, needs_attention=needs_attention)
 
     def assign(self, space: str, item_id: int, assignee: str) -> dict[str, Any]:
         return self.store.assign(space, self.actor, item_id, assignee)
 
     def claim(self, space: str, item_id: int) -> dict[str, Any]:
         return self.store.claim(space, self.actor, item_id)
+
+    def set_status(self, space: str, item_id: int, text: str) -> dict[str, Any]:
+        return self.store.set_status(space, self.actor, item_id, text)
 
     def link(self, space: str, src: int, kind: str, dst: int) -> dict[str, Any]:
         return self.store.link(space, self.actor, src, kind, dst)
@@ -218,6 +232,7 @@ class LocalDialect:
         # authority IS attach authority (workers attach on their slice only).
         if self.attachments is None:
             raise BoardError("no attachment store is attached to this board")
+        self.store.require_attachment_write(space, self.actor, item_id)
         ref = self.attachments.put(data, filename)
         return self.store.attach_ref(
             space,
@@ -370,6 +385,13 @@ class RemoteDialect:
     def get_item(self, space: str, item_id: int) -> dict[str, Any]:
         return self._get("/v1/board/item", {"space": space, "id": item_id})
 
+    def comment_page(self, space: str, item_id: int, *, after_seq: int = 0, limit: int = 20) -> dict:
+        return self._get("/v1/board/comments", {"space": space, "id": item_id, "after_seq": after_seq, "limit": limit})
+
+    def comment_text(self, space: str, item_id: int, *, seq: int, offset: int = 0, max_chars: int = 12000) -> dict:
+        return self._get("/v1/board/comment", {"space": space, "id": item_id, "seq": seq,
+                         "offset": offset, "max_chars": max_chars})
+
     def create_item(
         self,
         space: str,
@@ -419,10 +441,11 @@ class RemoteDialect:
         body: str,
         *,
         refs: Optional[list[str]] = None,
+        needs_attention: bool = False,
     ) -> dict[str, Any]:
         return self._post(
             "/v1/board/items/comment",
-            {"space": space, "id": item_id, "body": body, "refs": refs or []},
+            {"space": space, "id": item_id, "body": body, "refs": refs or [], "needs_attention": needs_attention},
         )
 
     def assign(self, space: str, item_id: int, assignee: str) -> dict[str, Any]:
@@ -433,6 +456,9 @@ class RemoteDialect:
 
     def claim(self, space: str, item_id: int) -> dict[str, Any]:
         return self._post("/v1/board/items/claim", {"space": space, "id": item_id})
+
+    def set_status(self, space: str, item_id: int, text: str) -> dict[str, Any]:
+        return self._post("/v1/board/items/status", {"space": space, "id": item_id, "text": text})
 
     def link(self, space: str, src: int, kind: str, dst: int) -> dict[str, Any]:
         return self._post(

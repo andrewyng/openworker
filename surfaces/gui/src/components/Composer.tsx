@@ -78,9 +78,18 @@ const mergeAttachments = (cur: Attachment[], add: Attachment[]): Attachment[] =>
 };
 
 interface Props {
+  // Worker-pane variant: retain the shared input, attachments and send/stop;
+  // omit session rebinding, model changes and global native dictation controls.
+  compact?: boolean;
   mode: string;
   model: string;
   models?: string[];
+  // Entries of `models` this machine cannot run (a coworker's `models:` list names them
+  // regardless, spec §4): shown in the menu with a note, never hidden.
+  unavailableModels?: string[];
+  // The coworker's own `models:` list when none of it runs here: the "No model" chip
+  // names what would work instead of a bare warning.
+  wantedModels?: string[];
   modelLabels?: Record<string, string>; // curated display names (raw id when absent)
   // The model is FIXED once the session has history (§17): the picker renders ONLY on a fresh
   // session; after the first turn the fact lives in the topbar subtitle (§22) — no
@@ -102,6 +111,9 @@ interface Props {
   sessionId?: string;
   onInterrupt: () => void;
   onModeChange: (mode: string) => void;
+  // §11.6: a team worker has no mode of its own — approvals follow its lead. Renders a
+  // read-only chip in place of the Mode menu.
+  followsLead?: boolean;
   onModelChange: (model: string) => void;
   // When set (Code/Cowork), the Mode menu is shown. The folder/roots + branch controls left the
   // composer for the Session settings drawer (§22) — folder access is standing session config.
@@ -113,6 +125,8 @@ interface Props {
   // The pending-approval card rendered above the input (plan / work-items / team / tool /
   // folder requests). Attended sessions only — Unattended parks the prompt in the Inbox.
   approvalSlot?: ReactNode;
+  statusSlot?: ReactNode;
+  teamSlot?: ReactNode;
   // UX-044: "View & edit…" in the Project memory submenu routes to the memory panel.
   onOpenMemory?: () => void;
   // Push text + attachments into the composer (e.g. a start-panel task card). The `nonce` makes
@@ -184,11 +198,11 @@ export function Composer(props: Props) {
   // UX-044: which "This session" submenu is open (bindings live server-side).
   const [bindMenu, setBindMenu] = useState<"memory" | "board" | null>(null);
   // Bindings need a session and a workspace surface (Chat has neither).
-  const sessionRows = Boolean(props.sessionId && props.workspace !== undefined);
+  const sessionRows = !props.compact && Boolean(props.sessionId && props.workspace !== undefined);
   const bindRow = (icon: "book" | "table", label: string, kind: "memory" | "board") => (
     <button
       className={
-        "w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-left hover:bg-paper" +
+        "w-full flex items-center gap-2.5 px-3 py-1.5 text-ui text-left hover:bg-paper" +
         (bindMenu === kind ? " bg-paper" : "")
       }
       onClick={() => setBindMenu(bindMenu === kind ? null : kind)}
@@ -245,11 +259,13 @@ export function Composer(props: Props) {
   // Apply a prefill (text + attachments) pushed from outside, then focus the composer. Applied at
   // most once per nonce (a ref guards against StrictMode/re-render double-fires), and attachments
   // are de-duplicated so the same file never lands twice.
-  const appliedNonce = useRef<number>(-1);
   useEffect(() => {
     const p = props.prefill;
-    if (!p || p.nonce === appliedNonce.current) return;
-    appliedNonce.current = p.nonce;
+    if (!p) return;
+    // No once-per-nonce ref guard: StrictMode's dev double-effect re-runs the
+    // clear above AFTER a guarded prefill had applied, leaving the composer
+    // empty. Re-applying is safe — setText is idempotent and the attachment
+    // merge de-duplicates — and the [nonce] dep still scopes when this fires.
     setText(p.text);
     if (p.attachments?.length) setAttachments((cur) => mergeAttachments(cur, p.attachments!));
     textareaRef.current?.focus();
@@ -259,7 +275,7 @@ export function Composer(props: Props) {
   // Dictation is intentionally native-only: the browser/dev build remains a local server client
   // and never turns on the browser microphone or ships audio anywhere.
   useEffect(() => {
-    if (!isTauri()) return;
+    if (props.compact || !isTauri()) return;
     const refresh = (event?: Event) => {
       const supplied = (event as CustomEvent<DictationStatus> | undefined)?.detail;
       if (supplied) {
@@ -386,6 +402,7 @@ export function Composer(props: Props) {
     const skill = prefixIntact ? pendingSkill!.name : undefined;
     const body = (skill ? text.slice(skill.length + 1) : text).trim();
     if (
+      !props.connected ||
       (!body && attachments.length === 0 && !skill) ||
       (props.running && !props.gateOpen) ||
       dictation?.recording ||
@@ -485,10 +502,48 @@ export function Composer(props: Props) {
   ).map((m) => ({
     value: m,
     label: props.modelLabels?.[m] || shortModel(m),
+    ...(props.unavailableModels?.includes(m)
+      ? { description: t("onmachine.composer.model_unavailable") }
+      : {}),
   }));
 
   const iconBtn =
-    "w-7 h-7 grid place-items-center rounded-md text-muted hover:text-ink hover:bg-paper shrink-0";
+    "w-7 h-7 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper shrink-0";
+
+  // UX-048: the model pill shows the model NAME; provider and the context line live in its
+  // tooltip. Curated labels read "Claude Sonnet 4.6 · Anthropic" — the part before the dot is
+  // the name (same split the old header subtitle used). The context ring (OPE-42 meter, now
+  // inside the pill) needs a known window; the setting governs the ring, never the tooltip.
+  const fullModelLabel = props.modelLabels?.[props.model] || shortModel(props.model);
+  const modelName = fullModelLabel.split(" · ")[0];
+  const hasUsage = !!props.usage && totalTokens(props.usage) > 0;
+  const ctxPct =
+    hasUsage && props.contextWindow
+      ? Math.min(100, Math.round((props.usage!.context / props.contextWindow) * 100))
+      : null;
+  const ctxLine = !hasUsage
+    ? ""
+    : ctxPct !== null
+      ? t("onmachine.composer.context_line", {
+          pct: ctxPct,
+          used: formatTokens(props.usage!.context),
+          window: formatTokens(props.contextWindow as number),
+        })
+      : t("onmachine.composer.context_unknown", { used: formatTokens(props.usage!.context) });
+  const providerName =
+    fullModelLabel.split(" · ")[1] ||
+    (props.model.includes(":") ? props.model.split(":")[0] : "");
+  const modelTip = (
+    <>
+      <div className="dd-tip-title">{modelName}</div>
+      {providerName && <div className="dd-tip-sub">{providerName}</div>}
+      <div className="dd-tip-row">
+        <ContextRing pct={ctxPct} size={14} />
+        <span>{ctxLine || t("onmachine.composer.no_usage")}</span>
+      </div>
+      <div className="dd-tip-hint">{t("onmachine.composer.click_change_model")}</div>
+    </>
+  );
 
   // The send button is accent only when there's something to send — subtle grey otherwise, so the
   // composer isn't carrying a constant blue dot.
@@ -498,10 +553,11 @@ export function Composer(props: Props) {
 
   return (
     <div className="composer-wrap px-6 pb-5 pt-4">
+      {props.statusSlot && <div className="max-w-3xl mx-auto mb-3">{props.statusSlot}</div>}
       {props.approvalSlot}
 
       {dictationError && (
-        <div className="max-w-3xl mx-auto mb-2 px-1 text-[12px] text-red-600" role="alert">
+        <div className="max-w-3xl mx-auto mb-2 px-1 text-meta text-red-600" role="alert">
           {dictationError}
         </div>
       )}
@@ -510,7 +566,7 @@ export function Composer(props: Props) {
       {attachNotice && (
         <div
           data-testid="attach-notice"
-          className="max-w-3xl mx-auto mb-1.5 flex items-center gap-2 rounded-lg border border-warnInk/30 bg-warnSoft px-3 py-1.5 text-[13px] text-warnInk"
+          className="max-w-3xl mx-auto mb-1.5 flex items-center gap-2 rounded-lg border border-warnInk/30 bg-warnSoft px-3 py-1.5 text-ui text-warnInk"
         >
           <span className="flex-1">{attachNotice}</span>
           <button
@@ -532,9 +588,10 @@ export function Composer(props: Props) {
         </div>
       )}
 
+      {props.teamSlot}
       <div
         className={
-          "composer max-w-3xl mx-auto rounded-2xl border border-line bg-panel shadow-sm" +
+          "composer max-w-3xl mx-auto rounded-2xl border border-ink/[0.08] bg-panel shadow-[0_1px_2px_rgba(0,0,0,0.03),0_4px_14px_-10px_rgba(0,0,0,0.08)]" +
           (dragging ? " dragging" : "")
         }
         onDragOver={(e) => {
@@ -551,11 +608,11 @@ export function Composer(props: Props) {
         {/* "/" force-run popup — in-flow above the textarea; rows are the session's
             effective menu only (muted/disabled skills never appear). */}
         {slashQuery !== null && (
-          <div className="px-2 pt-2" data-testid="skill-popup" role="listbox" aria-label="Skills">
+          <div className="px-2 pt-2" data-testid="skill-popup" role="listbox" aria-label={t("onmachine.composer.skills_aria")}>
             {slashSkills === null ? (
-              <div className="px-2 py-1.5 text-[12px] text-faint">Loading skills…</div>
+              <div className="px-2 py-1.5 text-meta text-faint">{t("onmachine.composer.skills_loading")}</div>
             ) : slashMatches.length === 0 ? (
-              <div className="px-2 py-1.5 text-[12px] text-faint">No matching skills.</div>
+              <div className="px-2 py-1.5 text-meta text-faint">{t("onmachine.composer.skills_none")}</div>
             ) : (
               slashMatches.map((s, i) => (
                 <button
@@ -569,9 +626,9 @@ export function Composer(props: Props) {
                   onMouseEnter={() => setSlashIndex(i)}
                   onClick={() => pickSkill(s)}
                 >
-                  <span className="text-[13px] font-medium text-accent shrink-0">/{s.name}</span>
-                  <span className="text-[12px] text-faint truncate flex-1">{s.description}</span>
-                  <span className="text-[11px] px-1.5 py-0.5 rounded-full border border-line text-faint shrink-0">
+                  <span className="text-ui font-medium text-accent shrink-0">/{s.name}</span>
+                  <span className="text-meta text-faint truncate flex-1">{s.description}</span>
+                  <span className="text-label px-1.5 py-0.5 rounded-full border border-line text-faint shrink-0">
                     {s.scope}
                   </span>
                 </button>
@@ -580,8 +637,9 @@ export function Composer(props: Props) {
           </div>
         )}
         <textarea
+          aria-label={props.placeholder}
           ref={textareaRef}
-          className="w-full block px-3.5 pt-3.5 pb-1.5 text-[14px]"
+          className="w-full block px-3.5 pt-3.5 pb-1.5 text-body"
           placeholder={
             props.gateOpen
               ? t("composer.placeholder_gate")
@@ -617,7 +675,7 @@ export function Composer(props: Props) {
                 />
                 <div className="absolute z-40 bottom-full mb-1 left-0 min-w-[200px] rounded-xl border border-line bg-panel shadow-2xl py-1.5">
                   {sessionRows && (
-                    <div className="px-3 pt-1 pb-0.5 text-[10.5px] font-semibold tracking-wide uppercase text-faint">
+                    <div className="px-3 pt-1 pb-0.5 text-[10.5px] font-medium text-faint">
                       {t("composer.attach_this_message")}
                     </div>
                   )}
@@ -631,7 +689,7 @@ export function Composer(props: Props) {
                   {sessionRows && (
                     <>
                       <div className="my-1 border-t border-line" />
-                      <div className="px-3 pt-0.5 pb-0.5 text-[10.5px] font-semibold tracking-wide uppercase text-faint">
+                      <div className="px-3 pt-0.5 pb-0.5 text-[10.5px] font-medium text-faint">
                         {t("composer.attach_this_session")}
                       </div>
                       {bindRow("book", t("composer.bind_memory"), "memory")}
@@ -675,8 +733,16 @@ export function Composer(props: Props) {
                   return <i key={index} style={{ height: Math.round(4 + level * 24) }} />;
                 })}
               </span>
-              <span className="text-[12px] text-muted tabular-nums">{recordingTime}</span>
+              <span className="text-meta text-muted tabular-nums">{recordingTime}</span>
             </div>
+          ) : props.followsLead ? (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-meta text-muted shrink-0"
+              data-testid="mode-follows-lead"
+              title={t("onmachine.composer.follows_lead_title")}
+            >
+              {t("onmachine.composer.follows_lead")}
+            </span>
           ) : props.workspace !== undefined ? (
             <ModeMenu
               reviewerPaused={props.reviewerPaused}
@@ -687,38 +753,43 @@ export function Composer(props: Props) {
             />
           ) : null}
 
-          {dictationBusy === t("composer.starting_transcribe") && <span className="text-[12px] text-accent">{dictationBusy}</span>}
+          {dictationBusy === t("composer.starting_transcribe") && <span className="text-meta text-accent">{dictationBusy}</span>}
 
           <span className="ml-auto" />
-
-          {/* token usage (OPE-42) — a quiet chip; hidden until the server reports usage.
-              Shows the context-window fill bar alone (the session total lives in the
-              popover), or the session total when there's no window / the bar is off. */}
-          {!dictation?.recording && props.usage && totalTokens(props.usage) > 0 && (
-            <UsageChip
-              usage={props.usage}
-              contextWindow={props.contextWindow}
-              contextBar={props.contextBar}
-              model={props.model}
-              modelLabels={props.modelLabels}
-            />
-          )}
 
           {/* model — a quiet chip, now for the session's whole life (§17 rev 2026-07-22:
               mid-session switching shipped, so the picker stays actionable; the topbar
               subtitle still states the current model). */}
-          {!dictation?.recording && (needsModel ? (
+          {!props.compact && !dictation?.recording && (needsModel ? (
             <button
               className="pill model-warn chip"
               onClick={() => props.onConnectModel?.()}
-              title={t("composer.model.connect")}
+              title={
+                props.wantedModels?.length
+                  ? t("onmachine.composer.runs_on_models", {
+                      models: props.wantedModels.map(shortModel).join(t("onmachine.list_or")),
+                    })
+                  : t("composer.model.connect")
+              }
               aria-label={t("composer.model.none_aria")}
             >
               <span className="pill-label">{t("composer.model.none")}</span>
               <span className="model-warn-ico" aria-hidden>⚠</span>
             </button>
           ) : modelsLoaded ? (
-            <Dropdown value={props.model} options={modelOptions} onChange={props.onModelChange} align="right" />
+            <Dropdown
+              value={props.model}
+              options={modelOptions}
+              onChange={props.onModelChange}
+              align="right"
+              displayLabel={modelName}
+              tooltip={modelTip}
+              leading={
+                props.contextBar === true && hasUsage ? (
+                  <ContextRing pct={ctxPct} label={ctxLine} testId="usage-chip" />
+                ) : null
+              }
+            />
           ) : (
             <button
               className="pill chip text-faint cursor-default"
@@ -731,7 +802,7 @@ export function Composer(props: Props) {
           ))}
 
           {/* mic — immediately before send (owner call, DMG #28 walkthrough) */}
-          {isTauri() && (
+          {!props.compact && isTauri() && (
             <button
               className={
                 iconBtn +
@@ -788,148 +859,41 @@ export function Composer(props: Props) {
   );
 }
 
-// Token-usage chip + popover (OPE-42). Trigger: a tiny context-fill meter (only when the
-// active model's window is known) + the session's total token count. Click → per-model
-// breakdown. Tokens only, never dollars (true cost is unknowable client-side — discounted
-// pricing, per-provider cache billing).
-function UsageChip({
-  usage,
-  contextWindow,
-  contextBar,
-  model,
-  modelLabels,
+// Context ring (OPE-42 meter, UX-048 placement): a small ring at the left of the model name
+// and inside its hover card. Accent arc = context-window fill, warn color from 80%; with no
+// known window (custom / Ollama models) the track renders empty. The old popover is gone —
+// the hover card carries the figures.
+function ContextRing({
+  pct,
+  size = 12,
+  label,
+  testId,
 }: {
-  usage: SessionUsage;
-  contextWindow?: number;
-  contextBar?: boolean;
-  model: string;
-  modelLabels?: Record<string, string>;
+  pct: number | null;
+  size?: number;
+  label?: string;
+  testId?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const total = totalTokens(usage);
-  const pct = contextWindow
-    ? Math.min(100, Math.round((usage.context / contextWindow) * 100))
-    : null;
-  // Settings can hide the bar; without a known window there is nothing to fill either.
-  const showBar = pct !== null && contextBar === true;
-  // Release hold (owner call 2026-08-24): cumulative session totals need more vetting
-  // before they ship — cache-read sums across turns read like a bill. Until then the
-  // chip and popover speak context-window only. Flip this to restore the breakdown.
-  const SHOW_SESSION_TOTALS = false;
-  const labelFor = (id: string) =>
-    id === "unknown" ? "Unknown model" : modelLabels?.[id] || shortModel(id);
-  // One field per line, session-summed (owner ask 2026-07-28). Values are cumulative
-  // across the whole session, never just the last turn; "Input" is the fresh
-  // (uncached) share — the cached share sits in the cache rows at its own price.
-  const stat = (label: string, value: number) => (
-    <div className="flex items-baseline justify-between text-[12px] leading-snug">
-      <span className="text-faint">{label}</span>
-      <span className="text-ink tabular-nums">{formatTokens(value)}</span>
-    </div>
-  );
+  const color = pct !== null && pct >= 80 ? "var(--warn-ink)" : "var(--accent)";
+  const fill = pct === null ? 0 : Math.max(pct, 3);
   return (
-    <div className="relative">
-      <button
-        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[12px] text-muted hover:text-ink hover:bg-paper shrink-0"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Token usage"
-        title={
-          pct !== null
-            ? `Context window ${pct}% full — ${formatTokens(usage.context)} of ${formatTokens(contextWindow as number)}`
-            : `In context now: ${formatTokens(usage.context)} tokens`
-        }
-        data-testid="usage-chip"
-      >
-        {/* The bar is the context-window fill. With totals on release hold, the numeric
-            fallback is the in-context size — the one figure we trust — never the
-            cumulative session total. */}
-        {showBar ? (
-          <span className="w-12 h-1.5 rounded-full bg-line overflow-hidden" aria-hidden="true">
-            <span
-              className="block h-full bg-accent transition-all"
-              style={{ width: `${Math.max(pct as number, 4)}%` }}
-            />
-          </span>
-        ) : (
-          <span className="tabular-nums">
-            {SHOW_SESSION_TOTALS ? formatTokens(total) : formatTokens(usage.context)}
-          </span>
-        )}
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div
-            className="absolute z-40 bottom-full mb-1 right-0 w-[280px] rounded-xl border border-line bg-panel shadow-2xl p-3"
-            role="menu"
-            data-testid="usage-popover"
-          >
-            {contextWindow ? (
-              <div className="mb-2.5">
-                <div className="text-[11px] uppercase tracking-[0.06em] text-faint font-semibold mb-1">
-                  Context window
-                </div>
-                <div className="h-1.5 rounded-full bg-line overflow-hidden">
-                  <div
-                    className="h-full bg-accent transition-all"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <div className="mt-1 text-[12px] text-muted tabular-nums">
-                  {formatTokens(usage.context)} of {formatTokens(contextWindow)} · {pct}%
-                </div>
-              </div>
-            ) : usage.context > 0 ? (
-              <div className="mb-2.5 text-[12px] text-muted tabular-nums">
-                In context now: {formatTokens(usage.context)} tokens
-              </div>
-            ) : null}
-            {SHOW_SESSION_TOTALS && (<>
-            <div className="text-[11px] uppercase tracking-[0.06em] text-faint font-semibold mb-1">
-              Session totals
-            </div>
-            <div className="flex flex-col gap-1.5">
-              {Object.entries(usage.byModel).map(([id, t]) => (
-                <div key={id}>
-                  <div className="text-[12px] text-ink font-medium truncate" title={id}>
-                    {labelFor(id)}
-                  </div>
-                  {/* Every row is a session sum. With a cache split, the input rows are
-                      the three BILLING CLASSES of input (each priced differently) and
-                      read as components: uncached + cache reads + cache writes = total.
-                      Without one (Ollama, compat vendors), plain "Input" says it all. */}
-                  <div className="mt-0.5 flex flex-col gap-0.5">
-                    {t.cache_read + t.cache_write > 0 ? (
-                      <>
-                        {stat("Uncached input", t.input)}
-                        {stat("Cache reads", t.cache_read)}
-                        {stat("Cache writes", t.cache_write)}
-                        {stat("Total input", t.input + t.cache_read + t.cache_write)}
-                      </>
-                    ) : (
-                      stat("Input", t.input)
-                    )}
-                    {stat("Output", t.output)}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-2 pt-2 border-t border-line flex items-baseline justify-between text-[12px]">
-              <span className="text-faint">Total</span>
-              <span className="text-ink tabular-nums">{formatTokens(total)} tokens</span>
-            </div>
-            </>)}
-            {model && !modelLabels?.[model] && contextWindow === undefined && (
-              <div className="mt-1 text-[11px] text-faint leading-snug">
-                Context meter unavailable for custom models.
-              </div>
-            )}
-          </div>
-        </>
-      )}
-    </div>
+    <span
+      className="relative inline-block rounded-full shrink-0"
+      style={{
+        width: size,
+        height: size,
+        background: `conic-gradient(${color} ${fill}%, color-mix(in srgb, currentColor 18%, transparent) 0)`,
+      }}
+      data-testid={testId}
+      aria-label={label}
+      role={label ? "img" : undefined}
+    >
+      <span
+        className="absolute rounded-full"
+        style={{ inset: Math.max(2, Math.round(size / 7)), background: "var(--tip-hole, var(--panel))" }}
+        aria-hidden="true"
+      />
+    </span>
   );
 }
 
@@ -971,7 +935,7 @@ function ModeMenu({
           comparison): "Ask for approval ⌄" not a generic "Mode ⌄" pill. aria-label stays
           "Mode" so the accessible name is stable across mode changes. */}
       <button
-        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[12px] text-muted hover:text-ink hover:bg-paper shrink-0"
+        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-meta text-muted hover:text-ink hover:bg-paper shrink-0"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -984,7 +948,7 @@ function ModeMenu({
       >
         {current ? t(current.label) : mode}
         {reviewerPaused && mode === "auto-approve" && (
-          <span className="text-[11px] text-warnInk" data-testid="mode-paused">· {t("composer.paused")}</span>
+          <span className="text-label text-warnInk" data-testid="mode-paused">· {t("composer.paused")}</span>
         )}
         <Icon name="chevronDown" size={11} className="text-faint" />
       </button>
@@ -1007,7 +971,7 @@ function ModeMenu({
               >
                 <span
                   className={
-                    "flex items-center text-[13px] " +
+                    "flex items-center text-ui " +
                     (o.value === mode ? "font-medium text-accent" : "text-ink")
                   }
                 >
@@ -1017,7 +981,7 @@ function ModeMenu({
                   {t(o.label)}
                   {o.value === mode && <span className="ml-1.5">✓</span>}
                 </span>
-                <span className="text-[11px] text-faint leading-snug">{t(o.description ?? "")}</span>
+                <span className="text-label text-faint leading-snug">{t(o.description ?? "")}</span>
               </button>
             ))}
             {onUnattendedChange && (
@@ -1025,8 +989,8 @@ function ModeMenu({
                 <div className="my-1 border-t border-line" />
                 <div className="flex items-center gap-2 px-2.5 py-1.5">
                   <span className="flex-1 min-w-0">
-                    <span className="block text-[13px] text-ink">{t("composer.approvals_to_inbox")}</span>
-                    <span className="block text-[11px] text-faint leading-snug">
+                    <span className="block text-ui text-ink">{t("composer.approvals_to_inbox")}</span>
+                    <span className="block text-label text-faint leading-snug">
                       {t("composer.approvals_to_inbox_help")}
                     </span>
                   </span>
@@ -1049,7 +1013,7 @@ function ModeMenu({
 function attachItem(icon: "image" | "file" | "fileCode", label: string, onClick: () => void) {
   return (
     <button
-      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-left hover:bg-paper"
+      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-ui text-left hover:bg-paper"
       onClick={onClick}
     >
       <Icon name={icon} size={15} className="shrink-0 text-muted" /> {label}

@@ -176,3 +176,43 @@ def test_generic_account_routes(acme, secrets, tmp_path, monkeypatch):
     out = client.post("/v1/connectors/linear/accounts/x/default").json()
     assert not out["ok"] and "not a multi-account" in out["error"]
 
+
+# -- grant handoff (spec §Remote OAuth): profile-key enumeration + portability --
+
+
+def test_connector_profile_keys_and_handoff_info(acme, secrets):
+    from coworker.connectors.setup import (
+        connector_handoff_info,
+        connector_profile_keys,
+    )
+
+    # Nothing stored → nothing to move.
+    assert connector_profile_keys(secrets, "acmeapp") == []
+    assert connector_handoff_info(secrets, "acmeapp")["portable"] is False
+
+    # Two accounts + the default pointer = the full move unit.
+    connect_connector(secrets, "acmeapp", {"api_key": "k1", "project_id": "11"}, validate=False)
+    connect_connector(secrets, "acmeapp", {"api_key": "k2", "project_id": "22"}, validate=False)
+    keys = connector_profile_keys(secrets, "acmeapp")
+    assert set(keys) == {"acmeapp:account:11", "acmeapp:account:22", "acmeapp:default"}
+    info = connector_handoff_info(secrets, "acmeapp")
+    assert info["portable"] is True and set(info["profiles"]) == set(keys)
+
+    # A managed grant WITH a broker connection_id moves via delegation
+    # (needs_delegation tells the GUI to run the delegate step first).
+    profile = secrets.get("acmeapp:account:11")
+    profile["managed"] = True
+    profile["connection_id"] = "conn_abc"
+    secrets.put("acmeapp:account:11", profile)
+    delegable = connector_handoff_info(secrets, "acmeapp")
+    assert delegable["portable"] is True and delegable["needs_delegation"] is True
+
+    # A managed grant WITHOUT a connection_id (pre-tracking era) cannot be
+    # delegated and stays gated.
+    profile.pop("connection_id")
+    secrets.put("acmeapp:account:11", profile)
+    gated = connector_handoff_info(secrets, "acmeapp")
+    assert gated["portable"] is False and gated["reason"] == "refresh_binding"
+
+    # Unknown connector is an error, not an empty success.
+    assert connector_handoff_info(secrets, "nope")["ok"] is False

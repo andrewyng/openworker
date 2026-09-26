@@ -3,9 +3,11 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "coworker"
-version = "0.0.0"
-description = "Agent coworker platform — provider-agnostic agentic coworker runtime"
+name = "openworker"
+version = "0.2.3"
+description = "OpenWorker — an open-source AI coworker you govern. The headless runtime and CLI."
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.0",
@@ -15,15 +17,15 @@ dependencies = [
     "textual>=1.0",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
-    # aisuite (toolkits/tracing), pinned to the commit this repo was imported from;
-    # swap for a PyPI pin ("aisuite>=x.y") once the next aisuite release ships.
-    "aisuite @ git+https://github.com/andrewyng/aisuite.git@1b4bbf303ec21968230b1ec869a144d054e9b3c4",
+    # aisuite (tool metadata, toolkits, tracing). 0.2.0 is the first PyPI release with those modules.
+    "aisuite>=0.2.0",
     "docstring_parser",
     "pyyaml>=6",  # persona manifest frontmatter (YAML)
     "pydantic>=2",
     "mcp>=1.28.1,<2",  # MCP client (stdio + streamable-http); floor >=1.28.1 avoids PYSEC-2026-3481/3482/3483 (fixed in 1.27.2/1.28.1); <2 since 2.0.0 removed streamablehttp_client
     "httpx>=0.27",  # sync outbound senders for messaging connectors (send_message tool)
-    "websockets>=13",  # managed Slack relay client transport (relay_client.py)
+    "websockets>=13",  # managed Slack relay client transport (relay_client.py) + remote-home joiner
+    "cryptography>=42",  # ed25519 machine identity for remote homes (already transitive via google-auth)
     "ddgs>=9",  # keyless default web-search provider (DuckDuckGo); Tavily/Brave use httpx
     "croniter>=2",  # cron next-fire math for the automation scheduler
     # PDF attachments for models without native PDF support (pdf_support.py):
@@ -38,8 +40,12 @@ dependencies = [
     "tomli>=2; python_version < '3.11'",
 ]
 
+[project.urls]
+Homepage = "https://openworker.com"
+Source = "https://github.com/andrewyng/openworker"
+
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio", "httpx"]
+dev = ["pytest>=8", "pytest-asyncio", "pytest-cov>=5", "httpx", "httpx2"]
 # Inbound messaging listeners (outbound send_message needs only httpx, already a core dep).
 # aiohttp is slack-bolt's Socket Mode transport at runtime (and the FakeSlack test harness
 # drives the real handler) — declare it so CI installs it, not just transitively.
@@ -48,11 +54,14 @@ messaging = ["python-telegram-bot>=21", "slack-bolt>=1.18", "aiohttp>=3.9"]
 browser = ["playwright>=1.44"]
 # AWS Bedrock provider (lazy-imported; desktop builds bundle it, pip users opt in).
 bedrock = ["boto3>=1.34"]
+# OpenShell sandbox provider: the runner's stream is a gRPC call to the OpenShell gateway.
+openshell = ["grpcio>=1.60"]
 
 [project.scripts]
 openworker = "coworker.cli:main"
 openworker-server = "coworker.server.run:main"
 openworker-connectors = "coworker.connectors.cli:main"
+openworker-acceptor = "coworker.remote.service:main"
 # The board as an open surface (OPE-100): `ocw board …` / `ocw journal …`,
 # including `ocw board mcp` — the stdio MCP server external harnesses attach to.
 ocw = "coworker.teams.cli:main"
@@ -74,3 +83,27 @@ testpaths = ["tests"]
 # console script (CI) does not put the root on sys.path the way `python -m pytest` does.
 pythonpath = ["."]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["coworker"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/migrations/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+precision = 1
+# Ratchet floor — only goes up, never down.
+# Run `pytest tests --cov=coworker --cov-report=term-missing` to see current coverage.
+fail_under = 0
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

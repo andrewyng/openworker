@@ -480,7 +480,9 @@ You are the Sales Coworker."""
     assert out["card"]["pitch_markdown"] == "**pitch**"
     caps = out["capabilities"]
     assert caps["tools"] == ["files", "search", "todo"]
-    assert caps["messaging"] is True
+    # `messaging: true` decides nothing (spec §11): the legacy `connectors: true` grants
+    # the recommended connectors (hubspot), none of which is a chat platform.
+    assert caps["messaging"] is False and caps["connectors"] == ["hubspot"]
     assert out["recommends"] == [
         {"kind": "connector", "ref": "hubspot", "reason": "read deals", "tier": "core"}
     ]
@@ -496,3 +498,80 @@ def test_gallery_detail_rejects_malformed_manifest(secrets, config, monkeypatch)
     out = cloud.gallery_detail(secrets, config, "bad")
     assert not out["ok"]
     assert "validation" in out["error"]
+
+
+# --- delegated (machine-held) renewal — machines spec §Remote OAuth ------------
+
+
+def test_refresh_managed_token_delegated_fallback(secrets, config, monkeypatch):
+    """No cloud session (a box): a delegated managed profile renews by
+    possession on the delegated route — no Authorization header, opaque
+    user_id in the body. The renewed tokens land back in the profile."""
+    secrets.put(
+        "notion:default",
+        {
+            "managed": True,
+            "provider": "notion",
+            "refresh_token": "1//MOVED",
+            "connection_id": "conn_abc",
+            "broker_user_id": "u_opaque",
+        },
+    )
+    seen = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        seen["url"] = url
+        seen["headers"] = headers or {}
+        seen["json"] = json
+        return FakeResponse(200, {"access_token": "at.NEW", "expires_in": 3600})
+
+    monkeypatch.setattr(cloud.httpx, "post", fake_post)
+    profile = cloud.refresh_managed_token(secrets, config, "notion")
+    assert profile is not None and profile["access_token"] == "at.NEW"
+    assert seen["url"].endswith("/v1/oauth/notion/refresh-delegated")
+    assert "Authorization" not in seen["headers"]
+    assert seen["json"]["user_id"] == "u_opaque"
+    assert seen["json"]["connection_id"] == "conn_abc"
+
+
+def test_refresh_managed_token_undelegated_box_gives_up(secrets, config, monkeypatch):
+    """No session AND no delegation ids: nothing to present — return None
+    rather than hammering the broker."""
+    secrets.put(
+        "notion:default",
+        {"managed": True, "provider": "notion", "refresh_token": "1//X"},
+    )
+    monkeypatch.setattr(
+        cloud.httpx, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no call"))
+    )
+    assert cloud.refresh_managed_token(secrets, config, "notion") is None
+
+
+def test_delegate_connection_returns_opaque_user_id(secrets, config, monkeypatch):
+    secrets.put(
+        cloud.CLOUD_AUTH_PROFILE,
+        {"access_token": "sess", "expires": 9999999999},
+    )
+    seen = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        seen["url"] = url
+        seen["json"] = json
+        seen["headers"] = headers or {}
+        return FakeResponse(
+            200, {"ok": True, "user_id": "u_opaque", "machine_credential": "mc_x"}
+        )
+
+    monkeypatch.setattr(cloud.httpx, "post", fake_post)
+    # Plain delegation: no seal key sent, credential passed through if minted.
+    out = cloud.delegate_connection(secrets, config, "conn_abc")
+    assert out == {"user_id": "u_opaque", "machine_credential": "mc_x"}
+    assert seen["url"].endswith("/v1/connections/conn_abc/delegate")
+    assert seen["headers"]["Authorization"] == "Bearer sess"
+    assert seen["json"] is None  # no body without a seal key
+    # With the machine's seal key: it rides the body (the broker mints there).
+    cloud.delegate_connection(secrets, config, "conn_abc", seal_pubkey="PUBKEY")
+    assert seen["json"] == {"seal_pubkey": "PUBKEY"}
+    # Hosted machine: its id rides along so the broker can wake a sandbox.
+    cloud.delegate_connection(secrets, config, "conn_abc", seal_pubkey="PUBKEY", machine_id="m1")
+    assert seen["json"] == {"seal_pubkey": "PUBKEY", "machine_id": "m1"}

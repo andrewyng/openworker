@@ -4,10 +4,6 @@ import {
   announceInboxUnlock,
   createTempWorkspace,
   finalizeAutomationRun,
-  boardComment,
-  boardTransition,
-  fetchBoardAttachment,
-  getBoardItem,
   getArtifacts,
   getBoard,
   type Board,
@@ -26,19 +22,33 @@ import {
   getUnattended,
   PERSONAS_CHANGED,
   resolveInboxItem,
+  routeInboxItemLike,
   deleteSession,
+  getAllSessions,
+  getCapabilities,
+  getCloudMachines,
+  getMachines,
+  isCloudMode,
+  getMachineSettings,
+  setAppMode,
+  setWalletAvailable,
+  machineOfSession,
+  registerSessionMachine,
   renameSession,
   runAutomation,
-  saveSessionAsProject,
   setSessionFlags,
   setUnattended,
   Session,
   type InboxItem,
   type MessageSource,
+  type Machine,
+  type ModelSettings,
   type Persona,
   type RecentWorkspace,
   type SurfaceVisibility,
   type WorkspaceCommandTrust,
+  type TeamMemberDecision,
+  API_UNAUTHORIZED,
 } from "./api";
 import type {
   ApprovalDecision,
@@ -49,13 +59,19 @@ import type {
   TodoItem,
   WsEvent,
 } from "./types";
+import {
+  hasPendingApproval,
+  initialSessionId,
+  initialSettingsTab,
+  reflectSession,
+} from "./routes";
 import { fullPersonaName, isProjectScoped } from "./personaScope";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
-import { addTurnUsage, emptyUsage, usageFromMessages } from "./usage";
+import { addTurnUsage, emptyUsage, teamUsage, usageFromMessages } from "./usage";
 import { streamMode } from "./streamGate";
 import { InboxItemCard, approvalItemFromParked } from "./components/InboxItemCard";
-import { chooseFolder, isTauri, platformOS, startWindowDrag } from "./tauri";
+import { isTauri, platformOS, startWindowDrag } from "./tauri";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
@@ -68,18 +84,34 @@ import { SessionSetupRow } from "./components/SessionSetupRow";
 import { SendFolderDialog } from "./components/SendFolderDialog";
 import { Onboarding } from "./components/Onboarding";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { reconcileResolvedGates, retireFinishedGate } from "./gateReconciliation";
 import { ScheduledView } from "./components/ScheduledView";
 import { RightRail } from "./components/RightRail";
-import { IntegrationsView } from "./components/IntegrationsView";
-import { SettingsView } from "./components/SettingsView";
+import { SettingsView, type SetTab } from "./components/SettingsView";
 import { PersonaView } from "./components/PersonaView";
 import { AuditView } from "./components/AuditView";
 import { InboxView } from "./components/InboxView";
+import {
+  approvalItemFromPayload,
+  connectorItemFromPayload,
+  directoryItemFromPayload,
+  liveQuestionInboxItem,
+  planItemFromPayload,
+  questionItemFromPayload,
+  teamItemFromPayload,
+  toolItemFromPayload,
+  workItemsItemFromPayload,
+} from "./cardPayloads";
 import { ApprovalCard } from "./components/ApprovalCard";
 import { ToolRequestCard } from "./components/ToolRequestCard";
+import { ConnectorRequestCard } from "./components/ConnectorRequestCard";
 import { DirectoryRequestCard } from "./components/DirectoryRequestCard";
 import { PlanCard } from "./components/PlanCard";
-import { BoardOverlay } from "./components/BoardPanel";
+import { TeamView, TeamQuickLook } from "./components/TeamView";
+import type { WorkerFilter } from "./teamRoster";
+import type { TeamSummary } from "./teamView";
+import { getTeamSummary } from "./api";
+import { TaskBoardContext, OPEN_TASK_EVENT } from "./components/TaskChip";
 import { TeamRequestCard } from "./components/TeamRequestCard";
 import { WorkItemsCard } from "./components/WorkItemsCard";
 import { TeamChatView } from "./components/TeamChatView";
@@ -249,6 +281,58 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
+  // Remote homes (UX-045): which joined machine the CURRENT session runs on
+  // (null = This Mac). Fixed at creation via the setup row's runs-on chip;
+  // restored from the session row on select/resume. Routes the session socket
+  // over the bridged path and REST through the proxy prefix.
+  const [machine, setMachine] = useState<string | null>(null);
+  const [machines, setMachines] = useState<Machine[]>([]);
+  // mode:"cloud" — this SPA is running against the acceptor-only service: no
+  // local home, so local-only surfaces (folder pickers, This-Mac options)
+  // don't exist and every session needs a machine.
+  const [cloudMode, setCloudMode] = useState(false);
+  // Remote homes: while viewing an offline machine's cached transcript, watch
+  // for its return — reload the live transcript and reconnect the bridged
+  // socket the moment the sessions refresh marks it back online.
+  const currentRowOffline =
+    sessions.find((s) => s.session_id === sessionId)?.machine_offline ?? false;
+  const wasOfflineRef = useRef(false);
+  useEffect(() => {
+    if (wasOfflineRef.current && !currentRowOffline && machine) {
+      getSessionMessages(sessionId)
+        .then((m) => {
+          setItems(itemsFromMessages(m));
+          setUsage(usageFromMessages(m));
+        })
+        .catch(() => {});
+      setConnectNonce((n) => n + 1);
+    }
+    wasOfflineRef.current = currentRowOffline;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentRowOffline, machine, sessionId]);
+  // Machine-scoped model picker (§Keys wallet W3): a draft on a machine offers
+  // THAT machine's models — its keys, its config — loaded through the proxy.
+  const [machineSettings, setMachineSettings] = useState<ModelSettings | null>(null);
+  useEffect(() => {
+    if (!machine) {
+      setMachineSettings(null);
+      return;
+    }
+    let stale = false;
+    getMachineSettings(machine)
+      .then((s) => {
+        if (stale) return;
+        setMachineSettings(s);
+        // A fresh draft adopts the machine's default model; a resumed session's
+        // `ready` event overrides with its own recorded model right after.
+        if (s.model) setModel(s.model);
+      })
+      .catch(() => setMachineSettings(null));
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [machine]);
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
   // to, driving the banner + "Back to runs". Best-effort — a run session without context still
   // shows a generic banner (detected by its __run__ id).
@@ -260,12 +344,8 @@ export function App() {
   const [scheduledOpenId, setScheduledOpenId] = useState<string | null>(null);
   const [gateCreate, setGateCreate] = useState(false);
   // Which Settings section the full-page Settings surface opens on (§ Settings-as-page).
-  const [settingsTab, setSettingsTab] = useState<
-    "appearance" | "models" | "skills" | "voice" | "memory" | "personas"
-  >("appearance");
-  const openSettings = (
-    tab: "appearance" | "models" | "skills" | "voice" | "memory" | "personas" = "appearance",
-  ) => {
+  const [settingsTab, setSettingsTab] = useState<SetTab>("appearance");
+  const openSettings = (tab: SetTab = "appearance") => {
     setSettingsTab(tab);
     setSurface("settings");
   };
@@ -274,29 +354,50 @@ export function App() {
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
   const [surface, setSurface] = useState<
-    "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings"
+    "session" | "scheduled" | "audit" | "inbox" | "persona" | "settings"
   >("session");
+  // The active session rides the URL (#/s/{id}) so refresh and bookmarks
+  // come back here. Deep-link intent (approve) wins until consumed, and the
+  // Settings surface reflects its own routes — leaving it hands the URL back.
+  useEffect(() => {
+    if (surface === "session") reflectSession(sessionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, surface]);
   // A remembered Scheduled-detail target must not outlive the surface (see the
   // scheduledOpenId comment above): nav re-entry lands on the list, never a
   // possibly-deleted automation's dead detail.
   useEffect(() => {
     if (surface !== "scheduled") setScheduledOpenId(null);
   }, [surface]);
+  // Machine scope the persona page was opened under (UX-046): its reads and
+  // writes ride the proxy to that machine; null = the local engine.
+  const [personaViewMachine, setPersonaViewMachine] = useState<string | null>(null);
   // The persona whose detail page is showing (surface === "persona"); empty falls back to the
   // active session's persona. Phase 5 wires the grouped-nav gear + "Manage personas…" entry points.
   const [personaViewId, setPersonaViewId] = useState<string>("");
   // Where the persona page returns on "back": the active session, or Settings ▸ Personas when it
   // was opened from there (persona config now lives in Settings).
   const [personaViewReturn, setPersonaViewReturn] = useState<"session" | "settings">("session");
-  const openPersona = (id: string, from: "session" | "settings" = "session") => {
+  const openPersona = (
+    id: string,
+    from: "session" | "settings" = "session",
+    machineId?: string | null,
+  ) => {
     setPersonaViewReturn(from);
     setPersonaViewId(id);
+    setPersonaViewMachine(machineId ?? null);
     setSurface("persona");
   };
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
   // Agent teams (OPE-96): board for the current session's workspace space.
   const [board, setBoard] = useState<Board | null>(null);
-  const [boardOpen, setBoardOpen] = useState(false);
+  const boardSessionRef = useRef(sessionId);
+  boardSessionRef.current = sessionId;
+  const [boardOwner, setBoardOwner] = useState("");
+  const [teamViewOpen, setTeamViewOpen] = useState(false);
+  const [teamWorkerId, setTeamWorkerId] = useState<string | null>(null);
+  const [teamWorkerFilter, setTeamWorkerFilter] = useState<WorkerFilter | null>(null);
+  const [teamSummary, setTeamSummary] = useState<TeamSummary | null>(null);
   // A rail row click deep-opens the overlay on that item's detail pane.
   const [boardDetailId, setBoardDetailId] = useState<number | null>(null);
   // # team chat overlay — opened from the team entry's chat row.
@@ -378,7 +479,7 @@ export function App() {
   // §34 (UX-016): clicking an artifact chip in the transcript must land somewhere visible —
   // RightRail opens the viewer; this just makes sure the rail isn't hidden.
   useEffect(() => {
-    const show = () => setRailHidden(false);
+    const show = () => { setRailHidden(false); setTeamViewOpen(false); };
     window.addEventListener("ocw-open-artifact", show);
     return () => window.removeEventListener("ocw-open-artifact", show);
   }, []);
@@ -389,6 +490,7 @@ export function App() {
     const show = () => {
       setRailHidden(false);
       setBoardRailKey((k) => k + 1);
+      setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); setTeamViewOpen(true);
     };
     window.addEventListener("ocw-open-board", show);
     return () => window.removeEventListener("ocw-open-board", show);
@@ -420,6 +522,11 @@ export function App() {
   // unattended session's blocking question/approval can be answered in context (resolving the
   // same item the Inbox shows; first responder wins).
   const [sessionInbox, setSessionInbox] = useState<InboxItem[]>([]);
+  const finishedGateCalls = useRef(new Map<string, Set<string>>());
+  const gateScope = `${machine || "local"}:${sessionId}`;
+  const pendingInbox = useCallback((inbox: InboxItem[]) => inbox.filter(it =>
+    it.state === "pending" && !(it.tool_call_id && finishedGateCalls.current.get(gateScope)?.has(it.tool_call_id)),
+  ), [gateScope]);
   // Whether the active session is Unattended — when true, the agent's prompts route to the Inbox,
   // so we suppress the inline live cards (the Inbox / answer-in-context path shows them instead).
   // A ref too, because the WS event handler closes over stale state.
@@ -438,7 +545,7 @@ export function App() {
   };
   const resolveSessionInbox = async (id: string, resolution: string) => {
     await resolveInboxItem(id, resolution);
-    getInbox(sessionId, "pending").then(setSessionInbox).catch(() => setSessionInbox([]));
+    getInbox(sessionId, "pending").then(inbox => setSessionInbox(pendingInbox(inbox))).catch(() => {});
     refreshSessions(); // attention badge should drop right away
   };
   // MUST pick a folder before starting — requires_folder personas (git-bound Code, the
@@ -481,8 +588,22 @@ export function App() {
 
   // Fetch ALL sessions + known projects so the sidebar can group them.
   const refreshSessions = useCallback(() => {
-    getSessions().then(setSessions).catch(() => setSessions([]));
+    // Machine-aware: local sessions + every connected machine's, tagged ⌂.
+    getAllSessions().then(setSessions).catch(() => setSessions([]));
     getRecentWorkspaces().then(setProjects).catch(() => setProjects([]));
+    // Union view: local registry + (on a signed-in desktop) the cloud's rows,
+    // origin-tagged. A cloud-session problem yields zero cloud rows — the
+    // local list is never blocked by it.
+    Promise.all([
+      getMachines().catch(() => ({ machines: [] as Machine[] })),
+      isCloudMode()
+        ? Promise.resolve({ machines: [] as Machine[] })
+        : getCloudMachines().catch(() => ({ machines: [] as Machine[] })),
+    ])
+      .then(([local, cloud]) =>
+        setMachines([...(local.machines ?? []), ...(cloud.machines ?? [])]),
+      )
+      .catch(() => {});
   }, []);
 
   // initial: adopt the server's seed workspace if any, else force the gate.
@@ -495,6 +616,14 @@ export function App() {
   // Latched: keep the boot splash up until the restored session is actually CONNECTED (not just
   // until `booting` clears), so an early click can't land on a session that's still settling.
   const [uiReady, setUiReady] = useState(false);
+  // Our own backend rejected this window's launch token (see api.ts API_UNAUTHORIZED):
+  // render a plain signed-out state — never the error body as if it were data.
+  const [unauthorized, setUnauthorized] = useState(false);
+  useEffect(() => {
+    const on = () => setUnauthorized(true);
+    window.addEventListener(API_UNAUTHORIZED, on);
+    return () => window.removeEventListener(API_UNAUTHORIZED, on);
+  }, []);
 
   // On boot with no seeded workspace, reopen the last thing the user had — most recent
   // conversation (restores its folder + agent + transcript), else the most recent project
@@ -502,13 +631,19 @@ export function App() {
   const resumeLastOrGate = async () => {
     let loadedSessions: SessionInfo[] = [];
     try {
-      loadedSessions = (await getSessions()).filter((s) => s.session_id && !s.session_id.startsWith("__"));
+      loadedSessions = (await getAllSessions()).filter((s) => s.session_id && !s.session_id.startsWith("__"));
       setSessions(loadedSessions);
       const sess = loadedSessions;
       const ts = (s: SessionInfo) => Date.parse(s.updated_at || "") || Number(s.updated_at) || 0;
-      const last = [...sess].sort((a, b) => ts(b) - ts(a))[0];
+      // Deep link: #/s/{id} names the session to land on (bookmark/refresh);
+      // fall back to the latest when it is gone.
+      const wanted = initialSessionId;
+      const last =
+        (wanted && sess.find((s) => s.session_id === wanted)) ||
+        [...sess].sort((a, b) => ts(b) - ts(a))[0];
       if (last) {
         setResumedExisting(true);
+        setMachine(last.machine ?? null);
         if (last.agent) setAgent(last.agent);
         if (last.workspace) {
           setWorkspace(last.workspace);
@@ -553,6 +688,18 @@ export function App() {
       getHealth()
         .then(async (h) => {
           if (cancelled) return;
+          // Deployment mode before anything renders post-boot: the same bundle
+          // serves desktop and cloud; the backend says which one this is.
+          const caps = await getCapabilities();
+          if (cancelled) return;
+          setAppMode(caps.mode);
+          setWalletAvailable(caps.wallet);
+          setCloudMode(caps.mode === "cloud");
+          // #/approve/CODE deep link (the joiner prints it): land on the
+          // approval surface before anything else grabs attention. Otherwise
+          // a #/settings/{page} link opens Settings on that page.
+          if (hasPendingApproval()) openSettings("machines");
+          else if (initialSettingsTab) openSettings(initialSettingsTab as SetTab);
           setModel(h.model);
           // First-run setup wizard (desktop): show until the user completes/dismisses it.
           if (isTauri()) {
@@ -660,6 +807,24 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent, personas]);
 
+  // Models per coworker (connectors-across-machines §4): a `models:` list restricts the
+  // composer picker to the list — unrunnable entries stay visible with a note — and a
+  // fresh draft binds to the first entry this machine can run. Availability = the
+  // machine's own selectable list (its keys, its Ollama); a draft on a remote machine
+  // asks that machine's list, like the picker already does.
+  const personaModels = personaOf(agent)?.models ?? [];
+  const selectableModels = machine ? machineSettings?.models || [] : models;
+  const pickerModels = personaModels.length ? personaModels : selectableModels;
+  const unavailableModels = personaModels.filter((m) => !selectableModels.includes(m));
+  const selectableKey = selectableModels.join("|");
+  useEffect(() => {
+    if (!personaModels.length || items.length > 0 || running) return;
+    if (personaModels.includes(model)) return;
+    const first = personaModels.find((m) => selectableModels.includes(m)) ?? personaModels[0];
+    if (first) changeModel(first);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent, personas, items.length, running, selectableKey]);
+
   useEffect(() => {
     if (surface === "session") rememberLastSession(agent, sessionId, workspace);
   }, [surface, agent, sessionId, workspace]);
@@ -668,6 +833,11 @@ export function App() {
   useEffect(() => {
     if (booting) return; // wait until boot/resume settles the session before connecting
     if (gatesWorkspace(agent) && !workspace) return; // Code needs a folder (gate handles it)
+    // Hosted dashboard: the controller has no engine of its own, so a draft
+    // with no machine chosen has nothing to connect to — opening the socket
+    // would only loop on a refusal and show a "reconnecting" strip on a
+    // brand-new session (owner-hit 2026-09-02). The runs-on chip is the gate.
+    if (isCloudMode() && !machine) return;
     const handleEvent = (ev: WsEvent) => {
       const d = ev.data || {};
       // An interrupted/errored turn never emits assistant_message, so its streamed partial
@@ -774,93 +944,66 @@ export function App() {
           ]);
           break;
         case "permission_required":
+          if (d.tool_call_id && finishedGateCalls.current.get(gateScope)?.has(d.tool_call_id)) break;
           // Unattended → the backend parked it in the Inbox; don't also surface a live card.
           if (unattendedRef.current) break;
-          setItems((p) => [
-            ...p,
-            {
-              kind: "approval",
-              name: d.name,
-              args: d.arguments,
-              reason: d.reason,
-              category: d.category,
-              standingTarget: d.standing_target || undefined,
-              searchProvider: d.search_provider || undefined,
-              provenance: d.provenance || undefined,
-              reviewerUnsure: d.reviewer_unsure || undefined,
-              readonlyOk: !!d.readonly_ok,
-              mcpDestination: d.mcp_destination || undefined,
-            },
-          ]);
+          setItems((p) => [...p, approvalItemFromPayload(d)]);
           break;
         case "directory_requested":
           if (unattendedRef.current) break;
-          setItems((p) => [
-            ...p,
-            { kind: "dirreq", reason: d.reason || "", path: d.path || "", writable: !!d.writable, primary: !!d.primary },
-          ]);
+          setItems((p) => [...p, directoryItemFromPayload(d)]);
           break;
         case "tool_requested":
           if (unattendedRef.current) break;
-          setItems((p) => [
-            ...p,
-            {
-              kind: "toolreq",
-              tool: d.name || "",
-              reason: d.reason || "",
-              // Fail CLOSED: only offer Install when the event says a pinned build exists.
-              installable: d.installable === true,
-              version: d.version || "",
-              summary: d.summary || "",
-              source: d.source || "",
-            },
-          ]);
+          setItems((p) => [...p, toolItemFromPayload(d)]);
           break;
         case "plan_proposed":
           if (unattendedRef.current) break;
-          setItems((p) => [...p, { kind: "planreq", plan: d.plan || "" }]);
+          setItems((p) => [...p, planItemFromPayload(d)]);
           break;
         case "team_proposed":
           // The staffing gate (agent teams) — approval pre-spawns the worker sessions.
           if (unattendedRef.current) break;
-          setItems((p) => [
-            ...p,
-            {
-              kind: "teamreq",
-              members: Array.isArray(d.members) ? d.members : [],
-              enable_chat: !!d.enable_chat,
-              note: d.note || "",
-            },
-          ]);
+          if (d.tool_call_id && finishedGateCalls.current.get(gateScope)?.has(d.tool_call_id)) break;
+          setItems((p) => [...p, teamItemFromPayload(d)]);
+          break;
+        case "connector_requested":
+          // Spec §11.6: connect a service / grant a worker a connector — a human decision.
+          if (unattendedRef.current) break;
+          setItems((p) => [...p, connectorItemFromPayload(d)]);
           break;
         case "items_proposed":
           // The decomposition gate — approval creates the items on the board.
           if (unattendedRef.current) break;
-          setItems((p) => [
-            ...p,
-            {
-              kind: "itemsreq",
-              items: Array.isArray(d.items) ? d.items : [],
-              note: d.note || "",
-            },
-          ]);
+          if (d.tool_call_id && finishedGateCalls.current.get(gateScope)?.has(d.tool_call_id)) break;
+          setItems((p) => [...p, workItemsItemFromPayload(d)]);
           break;
         case "question_requested":
           // ask_user in an attended session — answered inline (not routed to the Inbox).
-          setItems((p) => [
-            ...p,
-            {
-              kind: "question",
-              question: d.question || "",
-              options: d.options || [],
-              allow_text: d.allow_text !== false,
-              multi: !!d.multi,
-              header: d.header || "",
-              questions: d.questions || [],
-            },
-          ]);
+          setItems((p) => [...p, questionItemFromPayload(d)]);
           break;
         case "tool_finished":
+          if (d.tool_call_id) {
+            const calls = finishedGateCalls.current.get(gateScope) || new Set<string>();
+            calls.add(d.tool_call_id);
+            finishedGateCalls.current.set(gateScope, calls);
+          }
+          setItems(p => retireFinishedGate(p, d.name, d.tool_call_id));
+          if (d.tool_call_id) {
+            setSessionInbox(p => p.filter(it => it.tool_call_id !== d.tool_call_id));
+          }
+          if (d.superseded_worker_call) {
+            // Retire exactly the decision whose worker prompt was answered
+            // elsewhere. The tool result remains as the non-action audit receipt.
+            setItems(p => p.filter(it => !(it.kind === "approval" &&
+              it.name === "decide_worker_call" && it.args?.call_id === d.superseded_worker_call)));
+            setSessionInbox(p => p.filter(it => !(it.data?.tool === "decide_worker_call" &&
+              it.data?.arguments?.call_id === d.superseded_worker_call)));
+          }
+          if (d.display?.team_created?.team_id) {
+            const c = d.display.team_created;
+            setItems(p => [...p, { kind: "teamcreated", teamId: c.team_id, workers: c.workers || [], ts: Date.now() / 1000 }]);
+          }
           setItems((p) =>
             updateLastTool(
               p,
@@ -891,8 +1034,13 @@ export function App() {
         case "turn_end":
           if (d.status === "max_iterations_exceeded")
             setItems((p) => [...p, { kind: "notice", tone: "warn", text: t("app.notice.max_iterations") }]);
+          // OPE-171: the reply kept hitting the output-token limit with no action; the
+          // engine stopped rather than report a cut-off reply as the answer.
+          else if (d.status === "truncated")
+            setItems((p) => [...p, { kind: "notice", tone: "warn", text: d.text || t("app.notice.truncated") }]);
           break;
         case "mode_notice":
+          if (["interactive", "auto-approve", "bypass-approvals", "plan", "discuss", "custom"].includes(d.mode)) setMode(d.mode);
           // Server-authored + persisted (owner ruling 2026-08-24): the Auto-Approve
           // explainer once per session ever, one-line markers for later switches.
           setItems((p) => [
@@ -923,6 +1071,12 @@ export function App() {
             },
           ]);
           announceMemoryChanged(); // Settings ▸ Memory, if open, is now stale
+          break;
+        case "continuation":
+          // OPE-171: a reply cut off at the output limit with no tool call — the engine
+          // nudged the model and is going round again; one quiet line so the pause and
+          // the extra model call are explained.
+          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || t("app.notice.continuation") }]);
           break;
         case "compacting":
           setCompacting(true);
@@ -968,10 +1122,29 @@ export function App() {
       }
     };
 
+    // Remote homes: register the draft's machine binding before connecting, so the
+    // session-scoped REST helpers (messages on reopen, bindings, skills) route
+    // through the proxy prefix from the very first turn. For remote sessions the
+    // workspace state only ever holds paths ON that machine (typed/validated,
+    // box recents, or a box-provisioned temp — the local picker is hidden).
+    registerSessionMachine(sessionId, machine);
     const session = new Session(sessionId, workspace || "", agent, {
       onEvent: handleEvent,
-      onOpen: () => {
+      onOpen: (reconnected) => {
         setConnected(true);
+        if (reconnected) {
+          // The socket came back after a drop: anything the engine did meanwhile
+          // (turn tail, a prompt it parked and we promoted to the Inbox) is on the
+          // server, not in this view — reload rather than trust the stream.
+          getSessionMessages(sessionId)
+            .then((m) => {
+              setItems(itemsFromMessages(m));
+              setUsage(usageFromMessages(m));
+            })
+            .catch(() => {});
+          getInbox(sessionId, "pending").then(inbox => setSessionInbox(pendingInbox(inbox))).catch(() => {});
+          return;
+        }
         // Auto-send the pending message once the session connects ("Run now" prompts and
         // UX-029's deferred first send).
         const p = pendingPromptRef.current;
@@ -989,7 +1162,7 @@ export function App() {
         }
       },
       onClose: () => setConnected(false),
-    });
+    }, machine);
     sessionRef.current = session;
     return () => session.close();
     // NOTE: `workspace` is intentionally NOT a dependency. Every real workspace change
@@ -1000,7 +1173,7 @@ export function App() {
     // first connect, dropping the user's first message (the "send twice" bug). The scratch
     // dir is deterministic from `sessionId` server-side, so skipping that reconnect is safe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booting, sessionId, agent, refreshSessions, connectNonce]);
+  }, [booting, sessionId, agent, machine, refreshSessions, connectNonce]);
 
   // Stream-following (FB-004): auto-scroll only while the user is AT the bottom, so scrolling
   // up to read during a streaming turn sticks. `atBottomRef` is the live truth (per scroll
@@ -1070,34 +1243,76 @@ export function App() {
       setBoard(null);
       return;
     }
-    getBoard(sessionId).then(setBoard).catch(() => setBoard(null));
+    let canceled = false;
+    getBoard(sessionId).then(b => { if (!canceled) { setBoard(b); setBoardOwner(sessionId); } }).catch(() => { if (!canceled) setBoard(null); });
+    return () => { canceled = true; };
   }, [agent, surface, sessionId, browserRefreshKey, running]);
 
-  const refreshBoard = () => getBoard(sessionId).then(setBoard).catch(() => {});
-  const moveBoardItem = async (item: number, to: string, comment = "") => {
-    await boardTransition(sessionId, item, to, comment);
-    await refreshBoard();
-  };
+  const refreshBoard = () => getBoard(sessionId).then(b => { if (boardSessionRef.current === sessionId) { setBoard(b); setBoardOwner(sessionId); } }).catch(() => {});
+  useEffect(() => {
+    const open = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d?.sessionId !== sessionId || d.space !== board?.space || !board?.items.some(i => i.id === d.id)) return;
+      setBoardDetailId(d.id); setTeamWorkerId(null); setTeamWorkerFilter(null); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false);
+    };
+    window.addEventListener(OPEN_TASK_EVENT, open);
+    return () => window.removeEventListener(OPEN_TASK_EVENT, open);
+  }, [sessionId, board]);
+
 
   // Seventeenth pass: the drawer's Team panel — this session's staff (workers whose
   // lead is the current session). The sidebar shows ONE entry per team; members live here.
   const curSession = sessions.find((s) => s.session_id === sessionId);
+  // Follow the stored team relationship, not browser history: a worker may
+  // have been opened directly, from the Inbox, or after a reload.
+  const workerLeadId = curSession?.team?.role === "worker"
+    ? curSession.team.lead_session
+    : undefined;
+  const workerLead = sessions.find((s) => s.session_id === workerLeadId);
   const teamMembers = sessions.filter(
     (s) => s.team?.role === "worker" && s.team.lead_session === sessionId,
   );
+
+  useEffect(() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); setTeamSummary(null); }, [sessionId]);
+  const activeTeamId = curSession?.team?.team_id;
+  useEffect(() => {
+    if (!activeTeamId || surface !== "session") { setTeamSummary(null); return; }
+    let canceled = false;
+    getTeamSummary(sessionId, activeTeamId).then(s => {
+      if (!canceled) { setTeamSummary(s); setBoard(b => b?.space === s.space ? { ...b, items: [...b.items.filter(i => !s.items.some(x => x.id === i.id)), ...s.items] } : b); }
+    }).catch(() => { if (!canceled) setTeamSummary(null); });
+    return () => { canceled = true; };
+  }, [sessionId, activeTeamId, surface, sessions, browserRefreshKey, running]);
+  const openTeamView = (id?: number) => { setBoardDetailId(id ?? null); setTeamWorkerId(null); setTeamWorkerFilter(null); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false); };
 
   // Keep the active session's pending Inbox items fresh (answer-in-context card). Loads on session
   // change + after each turn, plus a slow poll so an unattended agent's new question surfaces.
   useEffect(() => {
     if (surface !== "session") return;
+    let canceled = false;
+    let request = 0;
     const load = () => {
-      getInbox(sessionId, "pending").then(setSessionInbox).catch(() => setSessionInbox([]));
-      getUnattended(sessionId).then(markUnattended).catch(() => markUnattended(false));
+      const current = ++request;
+      getInbox(sessionId).then(inbox => {
+        if (canceled || current !== request) return;
+        // Persist authoritative resolutions too: another in-flight pending-only
+        // fetch or a late gate event must not resurrect an already answered call.
+        const calls = finishedGateCalls.current.get(gateScope) || new Set<string>();
+        for (const item of inbox) {
+          if (item.state === "resolved" && item.tool_call_id) calls.add(item.tool_call_id);
+        }
+        finishedGateCalls.current.set(gateScope, calls);
+        setSessionInbox(pendingInbox(inbox));
+        setItems(items => reconcileResolvedGates(items, inbox));
+      }).catch(() => {});
+      getUnattended(sessionId).then(value => {
+        if (!canceled && current === request) markUnattended(value);
+      }).catch(() => {});
     };
     load();
     const t = setInterval(load, 4000);
-    return () => clearInterval(t);
-  }, [surface, sessionId, browserRefreshKey, markUnattended]);
+    return () => { canceled = true; clearInterval(t); };
+  }, [surface, sessionId, browserRefreshKey, markUnattended, pendingInbox, gateScope]);
 
   const send = (text: string, attachments?: Attachment[], skill?: string) => {
     // UX-029: folder enforcement AT SEND. A code-family session with no folder has no
@@ -1158,10 +1373,20 @@ export function App() {
     sessionRef.current?.respondPlan(approved, mode, feedback);
     if (approved && mode) setMode(mode); // the server flips the live engine to this mode
   };
-  const respondTeam = (approved: boolean, feedback?: string, enableChat?: boolean) => {
+  const respondTeam = (
+    approved: boolean,
+    feedback?: string,
+    enableChat?: boolean,
+    members?: TeamMemberDecision[],
+  ) => {
     setItems((p) => resolveLastTeam(p, approved ? "approved" : "rejected"));
     dropSessionInbox("plan"); // the gate parks as a plan-kind Inbox item
-    sessionRef.current?.respondTeam(approved, feedback, enableChat);
+    sessionRef.current?.respondTeam(approved, feedback, enableChat, members);
+  };
+  const respondConnector = (approved: boolean) => {
+    setItems((p) => resolveLastConnReq(p, approved ? "approved" : "declined"));
+    dropSessionInbox("connector");
+    sessionRef.current?.respondConnector(approved);
   };
   const respondItemsReq = (approved: boolean, feedback?: string) => {
     setItems((p) => resolveLastItemsReq(p, approved ? "approved" : "rejected"));
@@ -1206,6 +1431,7 @@ export function App() {
   const startNewSession = (forAgent?: string) => {
     const target = forAgent || agent;
     setSurface("session"); // return to the conversation view if we were on a sub-view
+    setMachine(null); // a fresh draft starts on This Mac; the runs-on chip re-targets it
     setItems([]);
     setUsage(emptyUsage());
     setStreaming("");
@@ -1281,7 +1507,7 @@ export function App() {
     const gate = sendGate;
     if (!gate) return;
     const sid = newId();
-    const res = await createTempWorkspace(sid, true);
+    const res = await createTempWorkspace(sid, true, machine);
     if (!res.ok || !res.path) {
       setSendGate(null);
       setItems((p) => [
@@ -1310,29 +1536,6 @@ export function App() {
   };
   // UX-029 "Save as project…": move the temporary folder somewhere real, then reconnect
   // so the engine rebinds to the new path (same session id — the transcript stays).
-  const saveAsProject = async () => {
-    if (running) return;
-    const dest = await chooseFolder();
-    if (!dest) return;
-    const res = await saveSessionAsProject(sessionId, dest);
-    if (!res.ok || !res.path) {
-      setItems((p) => [
-        ...p,
-        { kind: "notice", tone: "warn", text: res.error || t("app.save_project_failed") },
-      ]);
-      return;
-    }
-    const newPath = res.path;
-    setWorkspace(newPath);
-    setBranch(null);
-    setTempWorkspace(false);
-    setItems((p) => [
-      ...p,
-      { kind: "notice", tone: "info", text: t("app.saved_as_project", { name: baseName(newPath) }) },
-    ]);
-    setConnectNonce((n) => n + 1);
-    refreshSessions();
-  };
   // Inbox → session: the item carries its session's workspace/agent, so open it directly.
   // UX-026: 5s top-right toast when a SCHEDULED automation run starts (never for
   // manual Run-now — the user is already watching). Rides the app-wide /ws/events
@@ -1388,7 +1591,40 @@ export function App() {
       setWorkspace(ws); // switch project to the session's folder
       setBranch(null);
     }
+    // Remote homes: adopt the session's machine BEFORE the socket effect fires, so
+    // the reconnect rides the bridged path (row tag first, routing map as fallback).
+    const row = sessions.find((s) => s.session_id === id);
+    setMachine(row?.machine ?? machineOfSession(id));
     setSessionId(id);
+    if (row?.machine_offline) {
+      // Offline box: show the last synced transcript READ-ONLY (desktop
+      // cache-on-view, owner amendment 2026-08-25). The composer stays inert
+      // because the bridged socket can't connect. No cached copy yet → explain.
+      const offlineNotice: Item = {
+        kind: "notice",
+        tone: "info",
+        text: t("misc.app.offline_readonly", { name: row.machine_name || t("misc.app.this_machine") }),
+      };
+      try {
+        const messages = await getSessionMessages(id);
+        if (messages.length) {
+          setItems([...itemsFromMessages(messages), offlineNotice]);
+          setUsage(usageFromMessages(messages));
+          return;
+        }
+      } catch {
+        /* fall through to the explainer */
+      }
+      setItems([
+        {
+          kind: "notice",
+          tone: "info",
+          text: t("misc.app.offline_explainer", { name: row.machine_name || t("misc.app.this_machine") }),
+        },
+      ]);
+      setUsage(emptyUsage());
+      return;
+    }
     try {
       const messages = await getSessionMessages(id);
       setItems(itemsFromMessages(messages));
@@ -1552,6 +1788,7 @@ export function App() {
   const pendingApproval = [...items].reverse().find((i) => i.kind === "approval" && !i.resolved);
   const pendingDirReq = [...items].reverse().find((i) => i.kind === "dirreq" && !i.resolved);
   const pendingToolReq = [...items].reverse().find((i) => i.kind === "toolreq" && !i.resolved);
+  const pendingConnReq = [...items].reverse().find((i) => i.kind === "connreq" && !i.resolved);
   const pendingPlan = [...items].reverse().find((i) => i.kind === "planreq" && !i.resolved);
   const pendingTeam = [...items].reverse().find((i) => i.kind === "teamreq" && !i.resolved);
   const pendingItemsReq = [...items].reverse().find((i) => i.kind === "itemsreq" && !i.resolved);
@@ -1564,14 +1801,13 @@ export function App() {
   // noise in a facts line. Fall back to the raw id without its provider prefix.
   const modelDisplay =
     modelLabels[model]?.split(" · ")[0] ||
-    (model.includes(":") ? model.split(":").slice(1).join(":") : model);
+    ((model || "").includes(":") ? model.split(":").slice(1).join(":") : model || "");
   // UX-029: with the coworker picker shipping, the coworker's name is a fixed fact again
   // (it was dropped 2026-07-22 while personas were hidden). For temporary folders the raw
   // path never shows — "Temporary folder" + the Save as project… affordance instead.
   const subtitleParts = [fullPersonaName(personaOf(agent)?.name, agent), modelDisplay];
   if (isProjectScoped(personaOf(agent)) && workspace)
     subtitleParts.push(tempWorkspace ? t("root.temporary_space") : baseName(workspace));
-  const showSaveAsProject = hasHistory && tempWorkspace && isProjectScoped(personaOf(agent));
   const activeInfo = sessions.find((s) => s.session_id === sessionId);
   const activeTitle = activeInfo?.title || t("sidebar.new_session");
 
@@ -1589,6 +1825,25 @@ export function App() {
     startWindowDrag();
   };
 
+  if (unauthorized) {
+    return (
+      <div className="app boot-splash" data-testid="unauthorized-gate">
+        <div className="boot-mark">
+          <Icon name="logo" size={28} className="mark" />
+        </div>
+        <div className="unauthorized-card">
+          <div className="unauthorized-title">{t("misc.app.unauthorized_title")}</div>
+          <div className="unauthorized-body">
+            {t("misc.app.unauthorized_body")}
+          </div>
+          <button className="btn" onClick={() => window.location.reload()}>
+            {t("misc.app.reload")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (booting || !uiReady) {
     return (
       <div className={"app boot-splash" + (overlay ? " tauri-overlay" : "")}>
@@ -1597,7 +1852,7 @@ export function App() {
         {overlay && (
           <div className="titlebar-drag" data-tauri-drag-region>
             <span className="titlebar-brand brand-wordmark">
-              <Icon name="logo" size={13} className="mark" /> OpenWorker<span className="beta-tag">BETA</span>
+              <Icon name="logo" size={13} className="mark" /> OpenWorker<span className="beta-tag">beta</span>
             </span>
           </div>
         )}
@@ -1613,13 +1868,14 @@ export function App() {
         </div>
         <div className="boot-text">
           {resumedExisting ? t("boot.restoring") : t("boot.starting")}
-          <span className="beta-tag">BETA</span>
+          <span className="beta-tag">beta</span>
         </div>
       </div>
     );
   }
 
   return (
+    <TaskBoardContext.Provider value={{ board: boardOwner === sessionId ? board : null, sessionId }}>
     <div
       className={
         "app" +
@@ -1643,16 +1899,16 @@ export function App() {
           className="fixed top-3 right-3 z-[45] w-[290px] bg-panel border border-line rounded-xl shadow-lg px-3.5 pt-3 pb-2.5"
           data-testid="automation-toast"
         >
-          <div className="flex items-center gap-2 text-[13px] font-semibold">
+          <div className="flex items-center gap-2 text-ui font-semibold">
             <span className="w-[7px] h-[7px] rounded-full bg-faint toast-pulse" />
             {t("toast.automation_started")}
           </div>
-          <div className="text-[13px] text-muted mt-0.5 ml-[15px] truncate">
+          <div className="text-ui text-muted mt-0.5 ml-[15px] truncate">
             {runToast.title} · {runToast.time} {t("toast.run_count")}
           </div>
           <div className="flex items-center justify-between ml-[15px] mt-1.5">
             <button
-              className="text-[13px] text-accent font-medium"
+              className="text-ui text-accent font-medium"
               data-testid="toast-view-run"
               onClick={() => {
                 selectSession(runToast.sessionId, runToast.workspace, runToast.agent);
@@ -1662,7 +1918,7 @@ export function App() {
               {t("toast.view_run")} ›
             </button>
             <button
-              className="text-[12px] text-faint px-0.5"
+              className="text-meta text-faint px-0.5"
               data-testid="toast-dismiss"
               title={t("common.dismiss")}
               onClick={() => setRunToast(null)}
@@ -1719,6 +1975,8 @@ export function App() {
         />
       )}
       <Sidebar
+        settingsRail={surface === "settings"}
+        machines={machines}
         agent={agent}
         workspace={workspace || ""}
         surfaces={surfaces}
@@ -1726,6 +1984,7 @@ export function App() {
         projects={projects}
         activeSession={sessionId}
         onSwitchAgent={switchAgent}
+        hasMachines={machines.length > 0}
         onNewSession={startNewSession}
         onSelectSession={selectSession}
         onNewProject={newProject}
@@ -1742,11 +2001,11 @@ export function App() {
           setScheduledOpenId(id);
           setSurface("scheduled");
         }}
-        onOpenIntegrations={() => setSurface("integrations")}
+        onOpenIntegrations={() => openSettings("connectors")}
         onOpenAudit={() => setSurface("audit")}
         onOpenInbox={() => setSurface("inbox")}
         scheduledActive={surface === "scheduled"}
-        integrationsActive={surface === "integrations"}
+        integrationsActive={surface === "settings" && settingsTab === "connectors"}
         auditActive={surface === "audit"}
         inboxActive={surface === "inbox"}
         collapsed={navCollapsed}
@@ -1759,18 +2018,27 @@ export function App() {
           onRunNow={runTaskNow}
           initialOpenId={scheduledOpenId}
         />
-      ) : surface === "integrations" ? (
-        <IntegrationsView />
       ) : surface === "settings" ? (
         <SettingsView
           key={settingsTab}
           initialTab={settingsTab}
-          onOpenPersona={(id) => openPersona(id, "settings")}
-          onCreateSkill={(description) => {
+          onBack={() => setSurface("session")}
+          onOpenPersona={(id, machineId) => openPersona(id, "settings", machineId)}
+          onAskWorker={(machineId) => {
+            // Memory's remote CTA: the conversation IS the edit surface — a
+            // fresh draft on that machine, prompt started.
+            startNewSession();
+            setMachine(machineId);
+            prefillComposer(t("misc.app.memory_prefill"));
+          }}
+          onCreateSkill={(description, machineId) => {
             // The Skills doorway (SKILLS-SPEC §5.2): creation is a conversation. Fresh
             // session, description in the composer — the user reads and hits send. With
             // no description, the prefill invites them to finish the sentence there.
+            // A machine scope makes the conversation run ON that machine, so the
+            // skill materializes where it was being managed.
             startNewSession();
+            if (machineId) setMachine(machineId);
             prefillComposer(
               description
                 ? t("app.build_skill_prefill", { description })
@@ -1784,11 +2052,12 @@ export function App() {
         <InboxView onOpenSession={openSessionFromInbox} />
       ) : surface === "persona" ? (
         <PersonaView
+          machine={machines.find((m) => m.id === personaViewMachine) ?? null}
           personaId={personaViewId || agent}
           onBack={() =>
             personaViewReturn === "settings" ? openSettings("personas") : setSurface("session")
           }
-          onOpenIntegrations={() => setSurface("integrations")}
+          onOpenIntegrations={() => openSettings("connectors")}
         />
       ) : (
       <div className={"main" + (surface === "session" && agent !== "chat" && !railHidden ? " rail-open" : "")}>
@@ -1829,6 +2098,21 @@ export function App() {
                 </button>
               </div>
             )}
+            {workerLeadId && workerLeadId !== sessionId && (
+              <button
+                className="text-meta text-muted hover:text-ink shrink-0 px-2 py-1 disabled:opacity-50"
+                data-testid="back-to-lead"
+                onPointerDown={(e) => e.stopPropagation()}
+                disabled={!workerLead}
+                title={workerLead ? t("teamview.back_to_lead") : t("teamview.lead_unavailable")}
+                aria-label={t("teamview.back_to_lead")}
+                onClick={() => {
+                  if (workerLead) void selectSession(workerLead.session_id, workerLead.workspace, workerLead.agent);
+                }}
+              >
+                ← {t("teamview.lead")}
+              </button>
+            )}
             {/* §32: no session-settings row up here anymore — the §23 rest/hover/click glance
                 machinery retired with the drawer. "What can this touch" lives permanently on
                 the rail's Access section header; the panel toggle is the one entry. */}
@@ -1837,32 +2121,17 @@ export function App() {
               hover cluster owns pin/rename/archive/delete). The title stays: with the sidebar
               collapsed it is the only session identifier, and it anchors the subtitle. */}
           <div className="main-title" onPointerDown={beginWindowDrag}>
+            {/* UX-048: title only. The facts (coworker · model · folder) moved into the
+                title's tooltip once the session has history; the model is always visible in
+                the composer pill. "Save as project…" was dropped with the subtitle (owner
+                2026-09-03) — promotion stays available through the directory-request tool. */}
             <span
               className={"main-title-text" + (activeInfo ? "" : " title-ghost")}
-              title={activeTitle}
+              title={hasHistory ? `${activeTitle}\n${subtitleParts.join(" · ")}` : activeTitle}
+              data-testid="session-title"
             >
               {activeTitle}
             </span>
-            {/* Plain facts, no affordance: the persona page it used to open is hidden for
-                this release (owner ask 2026-07-22). */}
-            {hasHistory && (
-              <span className="title-sub" data-testid="session-subtitle">
-                {subtitleParts.join(" · ")}
-                {showSaveAsProject && (
-                  <>
-                    {" · "}
-                    <button
-                      className="text-accent hover:underline"
-                      data-testid="save-as-project"
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={() => void saveAsProject()}
-                    >
-                      {t("app.save_as_project")}
-                    </button>
-                  </>
-                )}
-              </span>
-            )}
           </div>
           {/* Right: session-settings icon (§23) + panel toggle. Model/mode/persona chrome is
               gone — the facts live in the subtitle, the controls in the composer (§22). */}
@@ -1897,7 +2166,7 @@ export function App() {
         {/* # team chat replaces the session view in place (owner ask 2026-08-16 —
             not a modal): the sidebar stays live, Esc/back returns to the session. */}
         {chatTeam && surface === "session" && (
-          <TeamChatView teamId={chatTeam} onClose={() => setChatTeam(null)} />
+          <TeamChatView teamId={chatTeam} sessionId={sessionId} onClose={() => setChatTeam(null)} />
         )}
         <div className={"main-workspace" + (railHidden ? " rail-hidden" : "")}>
           <div className="main-chat">
@@ -1907,7 +2176,7 @@ export function App() {
                 it underneath the topbar; owner-reported CSS bug). */}
             {sessionId.startsWith("__run__") && (
               <div
-                className="flex items-center gap-2 px-4 py-2 mb-1 rounded-lg text-[13px] border border-line bg-accentSoft/40"
+                className="flex items-center gap-2 px-4 py-2 mb-1 rounded-lg text-ui border border-line bg-accentSoft/40"
                 data-testid="run-banner"
               >
                 <Icon name="clock" size={14} className="text-accent shrink-0" />
@@ -1966,7 +2235,7 @@ export function App() {
                     onApprove={approve}
                     running={running}
                     onRetry={retry}
-                    onOpenConnectors={() => setSurface("integrations")}
+                    onOpenConnectors={() => openSettings("connectors")}
                     onAllowAnyway={allowAnyway}
                     onUndoMemory={(id, previous) => void undoMemorySave(id, previous)}
                     // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
@@ -2009,7 +2278,7 @@ export function App() {
             {!following && (running || !!streaming) && (
               <div className="relative h-0 z-10">
                 <button
-                  className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-line bg-panel shadow-md text-[12px] text-muted hover:text-ink cursor-pointer whitespace-nowrap"
+                  className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-line bg-panel shadow-md text-meta text-muted hover:text-ink cursor-pointer whitespace-nowrap"
                   data-testid="jump-to-latest"
                   onClick={followLatest}
                 >
@@ -2027,8 +2296,21 @@ export function App() {
               <SessionSetupRow
                 personas={personas}
                 agent={agent}
-                showFolder
+                showFolder={!machine && !cloudMode}
                 folderName={workspace && !tempWorkspace ? baseName(workspace) : null}
+                machines={machines}
+                machine={machine}
+                cloud={cloudMode}
+                onPickMachine={(id) => {
+                  setMachine(id);
+                  // A remote draft never carries a LOCAL folder — the box provisions
+                  // its own scratch (remote folder browsing is a follow-up).
+                  if (id) {
+                    setWorkspace(null);
+                    setBranch(null);
+                    setShowGate(false);
+                  }
+                }}
                 onPickCoworker={pickCoworker}
                 onPickFolder={pickDraftFolder}
                 onManage={() => openSettings("personas")}
@@ -2042,41 +2324,62 @@ export function App() {
                 }}
               />
             )}
-            {/* A scheduled agent must never read as a dead one: while a self-wake is
-                pending and no turn is running, say so and offer the obvious action. */}
-            {activeInfo?.liveness === "sleeping" && !running && (
-              <div className="sleep-strip" data-testid="sleep-strip">
-                <span className="sleep-dot" />
-                <span className="sleep-text">
-                  {t("app.sleep.label")}
-                  {activeInfo.sleeping_until
-                    ? t("app.sleep.until", {
-                        time: new Date(activeInfo.sleeping_until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
-                      })
-                    : ""}
-                  {activeInfo.team?.role === "lead"
-                    ? t("app.sleep.team_clause")
-                    : t("app.sleep.trigger_clause")}{" "}
-                  {t("app.sleep.talk_anytime")}
+            {!connected && !booting && !currentRowOffline && !(isCloudMode() && !machine) && (
+              <div className="reconnecting-strip" data-testid="session-reconnecting" role="status">
+                {machine ? t("misc.app.machine_reconnecting") : t("misc.app.reconnecting")}
+                <span className="reconnecting-sub">
+                  {machine
+                    ? t("misc.app.machine_reconnecting_sub")
+                    : t("misc.app.reconnecting_sub")}
                 </span>
-                <button
-                  className="btn sm"
-                  data-testid="sleep-status-btn"
-                  onClick={() => send(t("app.sleep.status_prompt"))}
-                >
-                  {t("app.sleep.ask_status")}
-                </button>
               </div>
             )}
             <Composer
+              statusSlot={activeInfo?.liveness === "sleeping" && !running ? (
+                <div className="sleep-strip" data-testid="sleep-strip">
+                  <span className="sleep-dot" />
+                  <span className="sleep-text">
+                    {t("app.sleep.label")}
+                    {activeInfo.sleeping_until
+                      ? t("app.sleep.until", {
+                          time: new Date(activeInfo.sleeping_until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+                        }) : ""}
+                    {activeInfo.team?.role === "lead"
+                      ? t("app.sleep.team_clause") : t("app.sleep.trigger_clause")}{" "}
+                    {t("app.sleep.talk_anytime")}
+                  </span>
+                  <button className="btn sm" data-testid="sleep-status-btn"
+                    onClick={() => send(t("app.sleep.status_prompt"))}>
+                    {t("app.sleep.ask_status")}
+                  </button>
+                </div>
+              ) : undefined}
+              teamSlot={curSession?.team?.role === "lead" && teamSummary?.lead_session === sessionId ? <TeamQuickLook key={sessionId} summary={teamSummary} onOpen={openTeamView} machine={curSession?.machine_name} /> : undefined}
               mode={mode}
+              // §11.6: a worker's approvals follow its lead — the picker is read-only for it.
+              followsLead={curSession?.team?.role === "worker"}
               model={model}
-              models={models}
-              modelLabels={modelLabels}
+              models={pickerModels}
+              unavailableModels={unavailableModels}
+              wantedModels={personaModels}
+              modelLabels={machine ? machineSettings?.model_labels || {} : modelLabels}
               running={running}
               gateOpen={!unattended && (!!pendingTeam || !!pendingItemsReq)}
-              connected={connected}
-              modelReady={modelReady}
+              // An offline machine's cached transcript is read-only: the send
+              // path is dead by construction, so say so explicitly rather than
+              // letting a hopeful socket state enable the button.
+              connected={connected && !currentRowOffline}
+              // A draft on a machine asks THAT machine's readiness (its keys,
+              // its config), like the models/labels above; the controller's
+              // own flag is desktop-only (the cloud shim always says false).
+              // While machine settings load, stay true — same no-flash default
+              // as the desktop boot.
+              modelReady={
+                (machine ? (machineSettings ? machineSettings.model_ready : true) : modelReady) &&
+                // A coworker bound to a model this machine cannot run shows the honest
+                // "No model" state, whatever the machine default says.
+                !(personaModels.length > 0 && unavailableModels.includes(model))
+              }
               onConnectModel={openModelSetup}
               onOpenMemory={() => openSettings("memory")}
               onConfigureVoiceInput={() => openSettings("voice")}
@@ -2109,9 +2412,20 @@ export function App() {
                 ) : !unattended && pendingItemsReq?.kind === "itemsreq" ? (
                   <WorkItemsCard item={pendingItemsReq} onRespond={respondItemsReq} />
                 ) : !unattended && pendingTeam?.kind === "teamreq" ? (
-                  <TeamRequestCard item={pendingTeam} onRespond={respondTeam} />
+                  <TeamRequestCard
+                    item={pendingTeam}
+                    leadMode={mode}
+                    modelLabels={machine ? machineSettings?.model_labels || {} : modelLabels}
+                    onRespond={respondTeam}
+                  />
                 ) : !unattended && pendingToolReq?.kind === "toolreq" ? (
                   <ToolRequestCard item={pendingToolReq} onRespond={respondTool} />
+                ) : !unattended && pendingConnReq?.kind === "connreq" ? (
+                  <ConnectorRequestCard
+                    item={pendingConnReq}
+                    onRespond={respondConnector}
+                    onOpenConnectors={() => openSettings("connectors")}
+                  />
                 ) : !unattended && pendingDirReq?.kind === "dirreq" ? (
                   <DirectoryRequestCard item={pendingDirReq} onRespond={respondDirectory} />
                 ) : !unattended && pendingApproval?.kind === "approval" ? (
@@ -2120,28 +2434,17 @@ export function App() {
                     onApprove={approve}
                     runTask={runContext}
                     autoApprove={mode === "auto-approve"}
+                    onAnswerWorkerCall={(callId, resolution) => {
+                      // The human overrides the lead: answer the worker's waiting call itself.
+                      routeInboxItemLike(callId, { sessionId });
+                      resolveInboxItem(callId, resolution).catch(() => {});
+                    }}
                     compact
                   />
                 ) : !unattended && pendingQuestion?.kind === "question" ? (
                   // Live ask_user in an attended session — answer inline (reuses the Inbox card UI).
                   <InboxItemCard
-                    item={{
-                      id: "live-question",
-                      session_id: sessionId,
-                      kind: "question",
-                      title: pendingQuestion.question,
-                      body: "",
-                      state: "pending",
-                      resolution: null,
-                      inbox: "default",
-                      created_at: "",
-                      resolved_at: null,
-                      options: pendingQuestion.options,
-                      allow_text: pendingQuestion.allow_text,
-                      multi: pendingQuestion.multi,
-                      header: pendingQuestion.header,
-                      questions: pendingQuestion.questions,
-                    }}
+                    item={liveQuestionInboxItem(pendingQuestion, sessionId)}
                     onResolve={(_id, answer) => answerQuestion(answer)}
                     compact
                   />
@@ -2150,10 +2453,12 @@ export function App() {
                   // APPROVAL with tool data renders through the REAL ApprovalCard (OPE-136:
                   // one renderer, no second dress to drift out of evidence or buttons); its
                   // decisions resolve through the same server-validated vocabulary as the
-                  // live path. Everything else keeps the Inbox card.
+                  // live path. A lead's decision on a worker's call, and everything else,
+                  // keeps the Inbox card (it answers the worker's item on an override).
                   (() => {
-                    const parked = approvalItemFromParked(sessionInbox[0]);
                     const d = sessionInbox[0].data;
+                    const parked =
+                      d?.tool === "decide_worker_call" ? null : approvalItemFromParked(sessionInbox[0]);
                     return parked ? (
                       <ApprovalCard
                         item={parked}
@@ -2169,7 +2474,12 @@ export function App() {
                         compact
                       />
                     ) : (
-                      <InboxItemCard item={sessionInbox[0]} onResolve={resolveSessionInbox} compact />
+                      <InboxItemCard
+                        item={sessionInbox[0]}
+                        onResolve={resolveSessionInbox}
+                        modelLabels={machine ? machineSettings?.model_labels || {} : modelLabels}
+                        compact
+                      />
                     );
                   })()
                 ) : undefined
@@ -2177,6 +2487,7 @@ export function App() {
             />
                   </div>
           <RightRail
+            teamView={teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} initialWorkerFilter={teamWorkerFilter} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} /> : undefined}
             active={surface === "session" && agent !== "chat" && !railHidden}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}
@@ -2193,13 +2504,11 @@ export function App() {
             branch={branch}
             scratchPrimary={tempWorkspace || !isProjectScoped(personaOf(agent))}
             openAccessKey={accessKey}
-            onOpenIntegrations={() => setSurface("integrations")}
+            onOpenIntegrations={() => openSettings("connectors")}
             board={board}
-            onExpandBoard={() => setBoardOpen(true)}
-            onOpenBoardItem={(id) => {
-              setBoardDetailId(id);
-              setBoardOpen(true);
-            }}
+            onExpandBoard={() => openTeamView()}
+            onOpenBoardItem={openTeamView}
+            onOpenTeamView={() => openTeamView()}
             /* team serializes as {} for plain sessions — lead-ness needs an actual
                role, else every solo session loses its Progress panel (owner-hit
                2026-08-21: the rail showed nothing but "More"). */
@@ -2208,44 +2517,17 @@ export function App() {
               (curSession?.team?.role != null && curSession.team.role !== "worker")
             }
             teamMembers={teamMembers}
+            teamSummary={teamSummary?.lead_session === sessionId ? teamSummary : null}
+            teamMachine={curSession?.machine_name}
+            onOpenWorkers={(filter) => { setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(filter); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false); }}
             teamChatEnabled={!!curSession?.team?.chat_enabled}
             teamChatUnread={curSession?.team?.chat_unread || 0}
+            teamUsage={teamMembers.length ? teamUsage(usage, teamMembers) : undefined}
             onOpenTeamChat={() => setChatTeam(curSession?.team?.team_id || "")}
-            onOpenWorker={(w) => void selectSession(w.session_id, w.workspace, w.agent)}
+            onOpenWorker={(w) => { setBoardDetailId(null); setTeamWorkerId(w.session_id); setTeamWorkerFilter(null); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false); }}
             openBoardKey={boardRailKey}
           />
-          {boardOpen && board && board.space && (
-            <BoardOverlay
-              board={board}
-              onClose={() => {
-                setBoardOpen(false);
-                setBoardDetailId(null);
-              }}
-              onTransition={moveBoardItem}
-              onComment={(item, body) => boardComment(sessionId, item, body)}
-              loadItem={(id) => getBoardItem(sessionId, id)}
-              loadAttachment={(stored) => fetchBoardAttachment(sessionId, stored)}
-              onOpenWorker={(actor) => {
-                // The assignee is a team actor whose worker session the sidebar
-                // already knows — jump straight into its transcript.
-                const match =
-                  sessions.find(
-                    (s) =>
-                      s.team?.role === "worker" &&
-                      s.team?.actor === actor &&
-                      s.workspace === board.space
-                  ) ||
-                  sessions.find(
-                    (s) => s.team?.role === "worker" && s.team?.actor === actor
-                  );
-                if (!match) return;
-                setBoardOpen(false);
-                setBoardDetailId(null);
-                void selectSession(match.session_id, match.workspace, match.agent);
-              }}
-              initialItem={boardDetailId}
-            />
-          )}
+
         </div>
       </div>
       )}
@@ -2269,6 +2551,7 @@ export function App() {
       {sendGate && surface === "session" && (
         <SendFolderDialog
           coworkerName={fullPersonaName(personaOf(agent)?.name, agent)}
+          machine={machine ? machines.find((m) => m.id === machine) ?? null : null}
           onPick={resolveSendFolder}
           onTemp={() => void startTempAndSend()}
           onCancel={cancelSendGate}
@@ -2295,6 +2578,7 @@ export function App() {
         />
       )}
     </div>
+    </TaskBoardContext.Provider>
   );
 }
 
@@ -2405,6 +2689,18 @@ function resolveLastTeam(items: Item[], resolved: "approved" | "rejected"): Item
   for (let i = copy.length - 1; i >= 0; i--) {
     const it = copy[i];
     if (it.kind === "teamreq" && !it.resolved) {
+      copy[i] = { ...it, resolved };
+      break;
+    }
+  }
+  return copy;
+}
+
+function resolveLastConnReq(items: Item[], resolved: "approved" | "declined"): Item[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i >= 0; i--) {
+    const it = copy[i];
+    if (it.kind === "connreq" && !it.resolved) {
       copy[i] = { ...it, resolved };
       break;
     }

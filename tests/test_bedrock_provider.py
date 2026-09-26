@@ -219,6 +219,7 @@ def test_converse_stream_accumulates_text_and_tool():
 
 
 def test_no_credentials_error_becomes_friendly():
+    pytest.importorskip("botocore")
     from botocore.exceptions import NoCredentialsError
 
     class _Raises:
@@ -341,7 +342,7 @@ def test_auth_method_narrows_out_other_methods_fields(monkeypatch):
 def test_converse_client_publishes_api_key_as_bearer_env(monkeypatch):
     import os
 
-    import boto3
+    boto3 = pytest.importorskip("boto3")
 
     from coworker.providers.bedrock_provider import _BedrockConverseClient
 
@@ -461,7 +462,7 @@ class _FakeBedrockControl:
 
 
 def _patch_session(monkeypatch, control: Any, captured: dict):
-    import boto3
+    boto3 = pytest.importorskip("boto3")
 
     class _FakeSession:
         def __init__(self, **kwargs):
@@ -503,7 +504,12 @@ def test_verify_bedrock_per_method_required_fields(monkeypatch):
         fields={"region": "us-east-1", "auth_method": "iam", "aws_access_key_id": "AKIA"},
     )
     assert not out["ok"] and "secret access key" in out["error"]
-    # Blank profile is fine — it means the default credential chain.
+
+
+def test_verify_bedrock_blank_profile_uses_default_chain(monkeypatch):
+    """A blank profile is fine — it means the default credential chain."""
+    from coworker.providers.registry import verify_provider_key
+
     captured: dict = {}
     _patch_session(monkeypatch, _FakeBedrockControl(), captured)
     out = verify_provider_key(
@@ -553,6 +559,7 @@ def test_verify_bedrock_api_key_rides_the_bearer_env(monkeypatch):
 
 
 def test_verify_bedrock_maps_client_errors(monkeypatch):
+    pytest.importorskip("botocore")
     from botocore.exceptions import ClientError
 
     from coworker.providers.registry import verify_provider_key
@@ -582,6 +589,7 @@ def test_verify_bedrock_maps_modeled_client_error_subclasses(monkeypatch):
     # Live boto3 raises MODELED subclasses (class name "AccessDeniedException", not
     # "ClientError"). The old name-based check sent these to the generic "Couldn't reach"
     # fallback and hid the specific guidance (owner report 2026-08-17, real Bedrock key).
+    pytest.importorskip("botocore")
     from botocore.exceptions import ClientError
 
     from coworker.providers.registry import verify_provider_key

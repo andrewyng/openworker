@@ -67,6 +67,10 @@ class AuditStore:
             # layer further out.
             ("cache_read", "INTEGER DEFAULT 0"),
             ("cache_write", "INTEGER DEFAULT 0"),
+            # Fleet under the org (2026-09-02): the verified login behind the session
+            # this call ran in — "" for local/desktop or automated sessions.
+            ("actor", "TEXT DEFAULT ''"),
+            ("approved_by", "TEXT DEFAULT ''"),
         ):
             try:
                 self._conn.execute(
@@ -75,6 +79,29 @@ class AuditStore:
             except sqlite3.OperationalError:
                 pass  # column already exists
         self._conn.commit()
+        # Export hooks (remote/audit_export.py): told after every commit, outside the
+        # lock, with the row's id — the emitter reads the row back by cursor.
+        self._listeners: list[Any] = []
+
+    def subscribe(self, callback) -> None:
+        self._listeners.append(callback)
+
+    def list_since(self, after_id: int, *, limit: int = 200) -> list[dict[str, Any]]:
+        """Rows with id > after_id, OLDEST first — the export cursor's read."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM audit_events WHERE id > ? ORDER BY id ASC LIMIT ?",
+                (int(after_id), max(1, min(int(limit or 200), 1000))),
+            ).fetchall()
+        out = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["args"] = json.loads(item.get("args") or "{}")
+            except json.JSONDecodeError:
+                item["args"] = {}
+            out.append(item)
+        return out
 
     def append(self, event: dict[str, Any]) -> None:
         tool = str(event.get("tool") or event.get("tool_name") or "")
@@ -87,8 +114,8 @@ class AuditStore:
             self._conn.execute(
                 """
                 INSERT INTO audit_events
-                    (session_id, agent, workspace, connector, tool, stage, status, approval, args, result_preview, reason, resource, call_id, tokens_in, tokens_out, cache_read, cache_write)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (session_id, agent, workspace, connector, tool, stage, status, approval, args, result_preview, reason, resource, call_id, tokens_in, tokens_out, cache_read, cache_write, actor, approved_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.get("session_id") or "",
@@ -108,9 +135,17 @@ class AuditStore:
                     int(event.get("tokens_out") or 0),
                     int(event.get("cache_read") or 0),
                     int(event.get("cache_write") or 0),
+                    str(event.get("actor") or ""),
+                    str(event.get("approved_by") or ""),
                 ),
             )
             self._conn.commit()
+            row_id = self._conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        for cb in list(self._listeners):
+            try:
+                cb(row_id)
+            except Exception:
+                pass  # an export hook must never break the audited action
 
     def reviewer_stats(self, session_id: str) -> dict[str, Any]:
         """Per-session Auto-Approve metering (§1.7), computed from the durable rows so it

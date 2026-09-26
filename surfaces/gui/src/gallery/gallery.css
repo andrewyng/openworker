@@ -1,0 +1,57 @@
+/* Card gallery chrome (dev only). Uses the app's own tokens so the page follows the
+   theme and text-size toggles; nothing here styles a card. */
+.gal { display: flex; height: 100vh; background: var(--chrome); color: var(--ink); font-size: var(--fs-ui); }
+.gal-rail { width: 220px; flex: none; border-right: 1px solid var(--line); padding: 16px 10px; overflow-y: auto; }
+.gal-brand { font-weight: 600; font-size: var(--fs-body); padding: 0 8px 14px; display: flex; align-items: center; gap: 8px; }
+.gal-dev { font-size: var(--fs-label); font-weight: 500; color: var(--warn-ink); background: var(--warn-soft); border-radius: 999px; padding: 1px 7px; }
+.gal-group { margin-bottom: 14px; }
+.gal-group-title { font-size: var(--fs-label); color: var(--faint); font-weight: 500; padding: 0 8px 4px; }
+.gal-nav { display: flex; width: 100%; justify-content: space-between; align-items: center; border: none; background: none; color: var(--ink); padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: var(--fs-ui); text-align: left; }
+.gal-nav:hover { background: var(--chrome-hover); }
+.gal-nav.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.gal-count { font-size: var(--fs-label); color: var(--faint); font-weight: 400; }
+
+.gal-main { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 28px 40px; }
+.gal-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
+.gal-title { font-size: var(--fs-heading); font-weight: 600; margin: 0; }
+.gal-sub { color: var(--muted); font-size: var(--fs-meta); margin-top: 2px; }
+.gal-sub code, .gal-file { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-mono); color: var(--muted); }
+.gal-toggles { display: flex; gap: 14px; flex-wrap: wrap; }
+.gal-seg { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.gal-seg-label { padding: 4px 8px; font-size: var(--fs-label); color: var(--faint); border-right: 1px solid var(--line); }
+.gal-seg-btn { border: none; background: none; color: var(--muted); padding: 4px 9px; cursor: pointer; font-size: var(--fs-meta); }
+.gal-seg-btn:hover { color: var(--ink); }
+.gal-seg-btn.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+.gal-states { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
+.gal-chip { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 4px 11px; cursor: pointer; font-size: var(--fs-meta); }
+.gal-chip:hover { border-color: var(--accent); }
+.gal-chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.gal-state-line { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; margin: 10px 0 8px; }
+.gal-state-note { color: var(--muted); font-size: var(--fs-meta); }
+.gal-state-actions { display: inline-flex; gap: 14px; flex: none; }
+.gal-link { border: none; background: none; padding: 0; color: var(--accent); cursor: pointer; font-size: var(--fs-meta); }
+
+/* The stage is the app's reading column: same canvas, same wrappers around the card. */
+.gal-stage-wrap { border: 1px dashed var(--line-strong); border-radius: 12px; background: var(--canvas); }
+.gal-stage-wrap.narrow { max-width: 460px; }
+.gal-stage { padding: 12px 0 4px; }
+
+.gal-panel { margin-top: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 10px 14px; }
+.gal-panel-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: var(--fs-meta); }
+.gal-empty { color: var(--faint); font-size: var(--fs-meta); margin-top: 6px; }
+.gal-sent { margin-top: 10px; }
+.gal-sent-head { display: flex; justify-content: space-between; color: var(--faint); font-size: var(--fs-label); }
+.gal-json { margin: 4px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--paper); color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-mono); white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto; }
+
+/* Scenario badge: floats over the real app while a scenario is open. */
+.gal-badge { position: fixed; left: 10px; bottom: 44px; z-index: 9999; font-size: var(--fs-meta); color: var(--ink); }
+.gal-badge-pill { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); padding: 4px 10px 4px 4px; cursor: pointer; color: var(--muted); font-size: var(--fs-label); }
+.gal-badge-body { position: absolute; left: 0; bottom: 34px; width: 440px; max-height: 60vh; overflow: auto; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16); padding: 10px 12px; }
+.gal-badge-line { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.gal-badge-line .gal-link { white-space: nowrap; }
+.gal-badge-title { font-weight: 600; }
+.gal-scn { display: block; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 12px 14px; margin-top: 10px; cursor: pointer; color: var(--ink); text-decoration: none; }
+.gal-scn:hover { border-color: var(--line-strong); }
+.gal-scn-title { font-weight: 600; font-size: var(--fs-body); }
+.gal-scn-meta { color: var(--faint); font-size: var(--fs-label); margin-top: 2px; }

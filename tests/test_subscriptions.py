@@ -1,6 +1,7 @@
 """Channel subscriptions: the store, the agent tools, and the gateway fan-out dispatch."""
 
 import asyncio
+import json
 
 import pytest
 
@@ -328,3 +329,220 @@ def test_refresh_gateway_replaces_listeners(tmp_path):
     asyncio.run(mgr.refresh_gateway())
     assert mgr.gateway is not None and mgr.gateway is not first
     asyncio.run(mgr.aclose())
+
+
+# --- cloud-first subscribe + one-responder delivery (spec §3.3) -----------------
+
+
+def test_subscribe_route_registers_at_the_cloud_first(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from coworker import subscription_sync
+    from coworker.server import create_app
+
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    client = TestClient(create_app(mgr))
+    seen = []
+
+    def fake_register(secrets, config, *, source, session_id, title="", move=False):
+        seen.append((source, session_id, move))
+        if source == "slack:CHELD" and not move:
+            return {"ok": False, "error": "held", "move_allowed": True,
+                    "held_by": {"session_id": "other", "title": "Lead", "machine_id": "m-a"}, "also": []}
+        return {"ok": True, "registered": True, "moved_from": [{"session_id": "other", "source": source}] if move else []}
+
+    monkeypatch.setattr(subscription_sync, "register", fake_register)
+    r = client.post("/v1/subscriptions", json={"session_id": "s1", "channel": "slack:CHELD"}).json()
+    assert r["ok"] is False and r["error"] == "held" and r["held_by"]["title"] == "Lead"
+    assert mgr.subscriptions.for_session("s1") == []  # nothing written locally
+    r = client.post("/v1/subscriptions", json={"session_id": "s1", "channel": "slack:CHELD", "move": True}).json()
+    assert r["ok"] is True and r["registered"] is True
+    assert [x.channel for x in mgr.subscriptions.for_session("s1")] == ["slack:CHELD"]
+    assert seen == [("slack:CHELD", "s1", False), ("slack:CHELD", "s1", True)]
+    # A move retires the previous holder's local mirror when it lived here.
+    mgr.subscriptions.subscribe("other", "slack:C2")
+    client.post("/v1/subscriptions", json={"session_id": "s1", "channel": "slack:C2", "move": True})
+    assert mgr.subscriptions.for_session("other") == []
+    # Unsubscribe releases the row at the cloud.
+    released = []
+    monkeypatch.setattr(subscription_sync, "remove", lambda s, c, *, source, session_id: released.append((source, session_id)))
+    client.post("/v1/subscriptions/remove", json={"session_id": "s1", "channel": "slack:C2"})
+    assert released == [("slack:C2", "s1")]
+
+
+def test_agent_subscribe_tool_obeys_the_cloud(tmp_path, monkeypatch):
+    from coworker import subscription_sync
+
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    monkeypatch.setattr(
+        subscription_sync, "register",
+        lambda *a, **k: {"ok": False, "error": "held", "held_by": {"title": "Lead"}, "also": [], "move_allowed": True},
+    )
+    sub, *_ = subscription_tools(
+        mgr.subscriptions, "sX", mgr.channel_buffer,
+        register=lambda sid, addr: mgr.subscribe_session(sid, addr),
+    )
+    out = sub("slack:C1")
+    assert out["ok"] is False and out["held_by"]["title"] == "Lead"
+    assert mgr.subscriptions.for_session("sX") == []
+
+
+def test_targeted_event_goes_only_to_the_named_session(tmp_path, monkeypatch):
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    _connect_slack(mgr)
+    delivered: list[tuple[str, str]] = []
+
+    async def fake_deliver(session_id, message, *, source=None):
+        delivered.append((session_id, message))
+
+    monkeypatch.setattr(mgr, "deliver_to_session", fake_deliver)
+    # Two local subscribers plus the cloud's named responder (a third session).
+    mgr.subscriptions.subscribe("sA", "slack:C1")
+    mgr.subscriptions.subscribe("sB", "slack:C1")
+    for sid in ("sA", "sB", "sT"):
+        mgr.get_engine(sid)
+        mgr.save(sid, mgr.get_engine(sid))
+    ev = _event("deploy failed", chat_type="channel")
+    ev.target_session_id = "sT"
+    asyncio.run(mgr._dispatch_inbound(ev))
+    assert [sid for sid, _ in delivered] == ["sT"]
+    assert "NOT mentioned" in delivered[0][1]
+    # A mention to the target gets the must-respond framing, still only there.
+    delivered.clear()
+    ev = _event("<@UBOT> help", chat_type="channel")
+    ev.target_session_id = "sT"
+    ev.mentions_me = True
+    asyncio.run(mgr._dispatch_inbound(ev))
+    assert [sid for sid, _ in delivered] == ["sT"] and "must respond" in delivered[0][1]
+
+
+def test_unknown_target_is_reported_and_falls_through(tmp_path, monkeypatch):
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    _connect_slack(mgr)
+    delivered: list[str] = []
+
+    async def fake_deliver(session_id, message, *, source=None):
+        delivered.append(session_id)
+
+    monkeypatch.setattr(mgr, "deliver_to_session", fake_deliver)
+    orphaned: list[str] = []
+    monkeypatch.setattr(mgr, "_report_orphan_subscription", lambda channel: orphaned.append(channel))
+    mgr.subscriptions.subscribe("sA", "slack:C1")
+    ev = _event("hello", chat_type="channel")
+    ev.target_session_id = "no-such-session"
+    asyncio.run(mgr._dispatch_inbound(ev))
+    assert orphaned == ["slack:C1"]
+    assert delivered == ["sA"]  # today's fan-out, unchanged
+
+
+# --- mirror refresh + box-to-box handoff (UX-049 4b) --------------------------------
+
+
+def test_refresh_mirrors_applies_broker_view(tmp_path, monkeypatch):
+    from coworker import subscription_sync
+
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    mgr.secrets.put("slack:team:T1", {"managed": True, "bot_token": "xoxb", "allowed_users": ["U_OLD"]})
+    for sid in ("s1", "s2"):
+        mgr.get_engine(sid)
+        mgr.save(sid, mgr.get_engine(sid))
+    mgr.subscriptions.subscribe("s2", "slack:C2")  # moved away at the cloud
+    orphaned: list[str] = []
+    monkeypatch.setattr(mgr, "_report_orphan_subscription", lambda channel: orphaned.append(channel))
+    monkeypatch.setattr(subscription_sync, "pull", lambda s, c: {
+        "subscriptions": [
+            {"source": "slack:C1", "session_id": "s1"},
+            {"source": "slack:C3", "session_id": "gone"},
+        ],
+        "elsewhere": [{"source": "slack:C2", "session_id": "x", "machine_id": "m-b"}],
+        "people": {"slack": [{"scope": "T1", "member": "U_BOB", "name": "Bob"}, {"scope": "T1", "member": "U_AMY", "name": ""}]},
+    })
+    counts = asyncio.run(mgr.refresh_subscription_mirrors())
+    assert counts == {"added": 1, "removed": 1, "orphans": 1, "people": 2}
+    assert [s.channel for s in mgr.subscriptions.for_session("s1")] == ["slack:C1"]
+    assert mgr.subscriptions.for_session("s2") == []
+    assert orphaned == ["slack:C3"]
+    assert mgr.secrets.get("slack:team:T1")["allowed_users"] == ["U_AMY", "U_BOB"]
+
+
+def test_handoff_sealed_stamps_grant_and_seals_to_target(tmp_path):
+    from fastapi.testclient import TestClient
+    from coworker.remote.identity import load_or_create
+    from coworker.server import create_app
+
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    mgr.secrets.put("slack:default", {"mode": "relay", "connection_id": "conn_1", "broker_user_id": "u_src", "machine_credential": "mc_src"})
+    mgr.secrets.put("slack:team:T1", {"managed": True, "connection_id": "conn_1", "bot_token": "xoxb-1", "team_id": "T1"})
+    client = TestClient(create_app(mgr))
+    target = load_or_create(tmp_path / "target-id")
+    r = client.post("/v1/connectors/slack/handoff-sealed", json={}).json()
+    assert r["ok"] is False and "seal_pubkey" in r["error"]
+    r = client.post("/v1/connectors/slack/handoff-sealed", json={"seal_pubkey": target.seal_public_key_b64}).json()
+    assert r["ok"] is False and "grant" in r["error"]
+    r = client.post(
+        "/v1/connectors/slack/handoff-sealed",
+        json={"seal_pubkey": target.seal_public_key_b64, "grant": {"user_id": "u_src", "machine_credential": "mc_target"}},
+    ).json()
+    assert r["ok"] is True and r["profiles"] == ["slack:default", "slack:team:T1"]
+    opened = json.loads(target.unseal_b64(r["sealed_b64"]))["profiles"]
+    assert opened["slack:team:T1"]["bot_token"] == "xoxb-1"
+    assert opened["slack:team:T1"]["machine_credential"] == "mc_target"
+    assert opened["slack:default"]["machine_credential"] == "mc_target"
+    # The source keeps its own credential — Enable is a copy.
+    assert mgr.secrets.get("slack:default")["machine_credential"] == "mc_src"
+    assert "xoxb-1" not in r["sealed_b64"]
+
+
+def test_desktop_broker_views_pass_through(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from coworker import cloud
+    from coworker.server import create_app
+
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    client = TestClient(create_app(mgr))
+    seen = []
+
+    def fake_request(secrets, config, method, path, body=None):
+        seen.append((method, path, body))
+        if path.startswith("/v1/people"):
+            return 200, {"people": [{"member": "U_BOB"}]}
+        if path.startswith("/v1/connections/c1/holders/"):
+            return 404, {"detail": "unknown connection or holder"}
+        return 0, {"error": "cloud unreachable"}
+
+    monkeypatch.setattr(cloud, "broker_request", fake_request)
+    assert client.get("/v1/cloud/people?connector=slack&scope=T1").json()["people"][0]["member"] == "U_BOB"
+    assert client.delete("/v1/cloud/connections/c1/holders/m-a").status_code == 404
+    assert client.get("/v1/cloud/subscriptions?connector=slack").status_code == 502
+    assert client.post("/v1/cloud/connections/c1/default-machine", json={"machine_id": "m-a"}).status_code == 502
+    assert seen[0] == ("GET", "/v1/people?connector=slack&scope=T1", None)
+    assert seen[3] == ("POST", "/v1/connections/c1/default-machine", {"machine_id": "m-a"})
+
+
+def test_mention_spawn_uses_the_routed_coworker_when_present(tmp_path, monkeypatch):
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    _connect_slack(mgr)
+    ids = [p.id for p in mgr.personas.list()] if hasattr(mgr.personas, "list") else []
+    other = next((i for i in ids if i != mgr.personas.default_id()), None)
+    spawned: list[str] = []
+
+    def fake_get_engine(sid, agent=None, **kw):
+        spawned.append(agent)
+        return None  # spawn records "could not spawn" and stops — enough to see the choice
+
+    monkeypatch.setattr(mgr, "get_engine", fake_get_engine)
+    ev = _event("<@UBOT> hi", chat_type="channel")
+    ev.mentions_me = True
+    ev.mention_persona = other or "no-such-coworker"
+    asyncio.run(mgr._dispatch_inbound(ev))
+    assert spawned[-1] == (other or mgr.personas.default_id())
+    ev2 = _event("<@UBOT> again", chat_type="channel", chat_id="C9")
+    ev2.mentions_me = True
+    ev2.mention_persona = "no-such-coworker"
+    asyncio.run(mgr._dispatch_inbound(ev2))
+    assert spawned[-1] == mgr.personas.default_id()  # missing coworker → the machine default
+
+
+def test_relay_people_may_approve_too(tmp_path):
+    mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    mgr.secrets.put("slack:team:T1", {"managed": True, "mode": "relay", "slack_user_id": "U_ME", "allowed_users": ["U_BOB"]})
+    assert mgr.slack_approval_owner_ids("T1") == {"U_ME", "U_BOB"}

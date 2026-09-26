@@ -20,6 +20,7 @@ spawns this sidecar with the Windows CREATE_NO_WINDOW flag (see src-tauri/src/li
 hides the window while keeping stdio intact.
 """
 
+import glob
 import os
 import sys
 
@@ -51,6 +52,19 @@ for pkg in ("coworker", "aisuite", "mcp", "ddgs", "croniter", "docstring_parser"
 # PyInstaller needs its own instruction.) Keep this even if the persona set changes — it
 # collects whatever non-.py files the package carries.
 datas += collect_data_files("coworker")
+
+# The tool runner is packed into a zipapp FROM SOURCE at run time (coworker/sandbox/bundle.py)
+# and mounted into sandboxes, so its .py files, and aisuite's two toolkit modules it carries,
+# must ship as data next to their compiled modules. Nothing else needs sources.
+# They go under a folder of their own (`*_src`): PyInstaller drops a data file whose path
+# is also a collected module's, so shipping them beside the compiled modules loses them.
+# Listed by path from ROOT, not through collect_data_files: that resolves `coworker` through
+# the environment's import path, which in a development checkout can be another worktree.
+datas += [
+    (path, "coworker/sandbox/runner_src")
+    for path in sorted(glob.glob(os.path.join(ROOT, "coworker", "sandbox", "runner", "*.py")))
+]
+datas += [(src, "aisuite/toolkits_src") for src, _ in collect_data_files("aisuite.toolkits", include_py_files=True)]
 
 if not INCLUDE_EXPERIMENTAL:
     hiddenimports = [

@@ -8,13 +8,12 @@ the agent how to continue reading. Read-only, workspace-scoped.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Optional
 
 import aisuite as ai
 
-_DEFAULT_MAX_LINES = 2000
-_MAX_LINE_CHARS = 500
+from ..sandbox.runner import tools_read as _impl
+from ..sandbox.runner.tools_read import _DEFAULT_MAX_LINES, _MAX_LINE_CHARS  # noqa: F401
 
 _SCHEMA = {
     "type": "function",
@@ -51,67 +50,15 @@ def file_tools(workspace: str, roots: Optional[list] = None) -> list:
     """Windowed read_file rooted at `workspace`. With `roots` (RootDir list), absolute
     paths inside ANY root also resolve — multi-root sessions (universal scratch) address
     their scratch/extra dirs by the absolute paths the roots context advertises."""
-    root = Path(workspace).resolve()
-    extra_roots = [Path(str(r.path)).resolve() for r in (roots or [])]
-
     def read_file(
         path: str,
         start_line: int = 1,
         max_lines: int = _DEFAULT_MAX_LINES,
     ) -> dict[str, Any]:
-        start = start_line if isinstance(start_line, int) and start_line > 0 else 1
-        n = (
-            max_lines
-            if isinstance(max_lines, int) and max_lines > 0
-            else _DEFAULT_MAX_LINES
+        # `roots` is the session's live list: read it on every call.
+        return _impl.read_file(
+            workspace, path, start_line, max_lines, roots=[str(r.path) for r in (roots or [])]
         )
-        n = min(n, _DEFAULT_MAX_LINES)
-        target = (root / path).resolve()
-        home = root
-        try:
-            target.relative_to(root)  # keep reads inside the workspace
-        except ValueError:
-            for r in extra_roots:
-                try:
-                    target.relative_to(r)
-                    home = r
-                    break
-                except ValueError:
-                    continue
-            else:
-                return {"error": "path escapes the session's directories"}
-        if not target.is_file():
-            return {"error": f"not a file: {path}"}
-
-        selected: list[str] = []
-        total = 0
-        try:
-            with open(target, "r", encoding="utf-8", errors="replace") as fh:
-                for i, line in enumerate(fh, 1):
-                    total = i
-                    if i < start or len(selected) >= n:
-                        continue
-                    text = line.rstrip("\n")
-                    if len(text) > _MAX_LINE_CHARS:
-                        text = text[:_MAX_LINE_CHARS] + "… (line truncated)"
-                    selected.append(f"{i:>6}\t{text}")
-        except OSError as exc:
-            return {"error": f"read failed: {exc}"}
-
-        end = start + len(selected) - 1 if selected else start - 1
-        result: dict[str, Any] = {
-            "path": str(target.relative_to(home)) if home == root else str(target),
-            "start_line": start,
-            "end_line": end,
-            "total_lines": total,
-            "content": "\n".join(selected),
-        }
-        if end < total:
-            result["note"] = (
-                f"showing lines {start}-{end} of {total}; "
-                f"call again with start_line={end + 1} to continue"
-            )
-        return result
 
     read_file.__name__ = "read_file"
     read_file.__doc__ = _SCHEMA["function"]["description"]

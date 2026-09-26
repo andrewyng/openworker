@@ -1,0 +1,287 @@
+{
+  "id": "lead-team-running-approval",
+  "title": "SWE Lead · team running, approval waiting",
+  "note": "The same lead later, attended in Manual mode: the team exists (Team panel and board in the rail), a board wake has arrived, and a shell command waits on a live approval card.",
+  "session": {
+    "session_id": "scn-lead-3b",
+    "title": "Mention #3 · Invoice PDF download",
+    "agent": "swe-lead",
+    "model": "anthropic:claude-sonnet-4-8",
+    "mode": "interactive",
+    "workspace": "/home/parallels/work/billing-service",
+    "unattended": false
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "[lead] Add a PDF download to every invoice in the drawer. The statements worker already renders them; the API needs a route and the web client a button.",
+      "source": {
+        "connector": "github",
+        "kind": "channel",
+        "channel_id": "acme/billing-service#3",
+        "channel_name": "acme/billing-service #3",
+        "sender_id": "demo-user",
+        "sender_name": "demo-user",
+        "ts": 1789900000,
+        "text": "[lead] Add a PDF download to every invoice in the drawer. The statements worker already renders them; the API needs a route and the web client a button."
+      },
+      "ts": 1789900000
+    },
+    {
+      "role": "assistant",
+      "content": "I'll read the issue and the code it touches before splitting the work.",
+      "tool_calls": [
+        {
+          "id": "t1",
+          "function": {
+            "name": "run_shell",
+            "arguments": "{\"command\": \"gh issue view 3 --repo acme/billing-service\"}"
+          }
+        },
+        {
+          "id": "t2",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"api/src/invoices.ts\"}"
+          }
+        },
+        {
+          "id": "t3",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"web/src/components/InvoiceDrawer.tsx\"}"
+          }
+        }
+      ],
+      "ts": 1789900010
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "t1",
+      "content": "title: Invoice PDF download\nstate: OPEN\nlabels: enhancement"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "t2",
+      "content": "export async function getInvoice(accountId: string, id: string) { … }"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "t3",
+      "content": "export function InvoiceDrawer({ invoice }: Props) { … }"
+    },
+    {
+      "role": "assistant",
+      "content": "The statements worker already writes each PDF to S3 and records `pdf_key` on the invoice. What is missing is a route that streams it and a button that calls the route. I'll split this into three items.",
+      "tool_calls": [
+        {
+          "id": "t4",
+          "function": {
+            "name": "propose_work_items",
+            "arguments": "{\"items\": [{\"title\": \"Add GET /invoices/:id/pdf\", \"criteria\": \"Returns the stored PDF for the caller's own invoice; 404 for a missing file; 403 for another account.\"}, {\"title\": \"Download button in the invoice drawer\", \"criteria\": \"The button downloads the PDF and shows an error toast when the API fails.\"}, {\"title\": \"Tests for both\", \"criteria\": \"API and UI tests pass in CI.\"}], \"note\": \"Split by surface so the API and the web client can move in parallel.\"}"
+          }
+        }
+      ],
+      "ts": 1789900040
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "t4",
+      "content": "{\"approved\": true, \"created\": [1, 2, 3]}"
+    },
+    {
+      "role": "assistant",
+      "content": "The three items are on the board. Two workers are enough: one to build both halves, one to verify them.",
+      "tool_calls": [
+        {
+          "id": "t5",
+          "function": {
+            "name": "team_options",
+            "arguments": "{}"
+          }
+        },
+        {
+          "id": "t6",
+          "function": {
+            "name": "propose_team",
+            "arguments": "{\"members\": [{\"persona\": \"swe-worker\", \"name\": \"nia\", \"reason\": \"Builds the PDF route and the download button\", \"connectors\": [\"github\"], \"connector_reasons\": {\"github\": \"pushes the branch and opens the PR\"}}, {\"persona\": \"test-worker\", \"name\": \"checks\", \"reason\": \"Writes the API and UI tests, runs the suites\"}], \"note\": \"Two workers: one builds, one verifies.\"}"
+          }
+        }
+      ],
+      "ts": 1789900070
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "t5",
+      "content": "{\"workers\": {\"swe-worker\": {\"connectors\": {\"ready\": [\"github\"]}}, \"test-worker\": {\"connectors\": {\"ready\": [\"github\"]}}}, \"not_connected\": [\"jira\"]}"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "t6",
+      "content": "{\"approved\": true, \"team\": \"t-billing-3\", \"workers\": [\"nia\", \"checks\"]}"
+    },
+    {
+      "role": "assistant",
+      "content": "The team is staffed. nia has item 1 and 2, checks has item 3. I'll check in when the board moves.",
+      "ts": 1789900100
+    },
+    {
+      "role": "user",
+      "content": "⏰ Board wake",
+      "ts": 1789903000,
+      "source": {
+        "connector": "board",
+        "kind": "channel",
+        "channel_id": "/home/parallels/work/billing-service",
+        "channel_name": "Team board",
+        "sender_id": "board",
+        "sender_name": "Board",
+        "ts": 1789903000,
+        "text": "⏰ Board wake — your team needs decisions:\n- #1 moved to review by nia",
+        "board": {
+          "rows": [
+            {
+              "kind": "moved",
+              "item": 1,
+              "title": "Add GET /invoices/:id/pdf",
+              "actor": "nia",
+              "to": "review",
+              "note": "Route is up on lead/invoice-pdf, commit 4c1e9aa. 404 and 403 paths covered; needs checks' verdict."
+            },
+            {
+              "kind": "claimed",
+              "item": 3,
+              "title": "Tests for both",
+              "actor": "checks"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "role": "assistant",
+      "content": "nia's route is ready for review. I'll run the API tests on her branch before handing it to checks.",
+      "tool_calls": [
+        {
+          "id": "t7",
+          "function": {
+            "name": "run_shell",
+            "arguments": "{\"command\": \"git fetch origin lead/invoice-pdf && git checkout lead/invoice-pdf\"}"
+          }
+        },
+        {
+          "id": "t8",
+          "function": {
+            "name": "run_shell",
+            "arguments": "{\"command\": \"npm test --prefix api -- --run invoices\"}"
+          }
+        }
+      ],
+      "ts": 1789903020
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "t7",
+      "content": "Switched to branch 'lead/invoice-pdf'"
+    }
+  ],
+  "events": [
+    {
+      "type": "tool_proposed",
+      "data": {
+        "name": "run_shell",
+        "arguments": {
+          "command": "npm test --prefix api -- --run invoices"
+        }
+      }
+    },
+    {
+      "type": "permission_required",
+      "data": {
+        "name": "run_shell",
+        "arguments": {
+          "command": "npm test --prefix api -- --run invoices"
+        },
+        "reason": "Run the API tests on nia's branch",
+        "category": "shell"
+      }
+    }
+  ],
+  "team": {
+    "team_id": "t-billing-3",
+    "chat_enabled": true,
+    "workers": [
+      {
+        "name": "nia",
+        "persona": "swe-worker",
+        "model": "anthropic:claude-opus-4-8",
+        "status": "review",
+        "current_item": "#1 in review",
+        "usage": {
+          "anthropic:claude-opus-4-8": {
+            "input": 182000,
+            "output": 21000,
+            "cache_read": 640000,
+            "cache_write": 41000,
+            "turns": 14
+          }
+        }
+      },
+      {
+        "name": "checks",
+        "persona": "test-worker",
+        "model": "anthropic:claude-sonnet-4-8",
+        "status": "in_progress",
+        "current_item": "#3 in progress",
+        "usage": {
+          "anthropic:claude-sonnet-4-8": {
+            "input": 44000,
+            "output": 6000,
+            "cache_read": 120000,
+            "cache_write": 9000,
+            "turns": 5
+          }
+        }
+      }
+    ]
+  },
+  "board": {
+    "space": "/home/parallels/work/billing-service",
+    "name": "billing-service",
+    "items": [
+      {
+        "id": 1,
+        "title": "Add GET /invoices/:id/pdf",
+        "description": "",
+        "criteria": "Returns the stored PDF for the caller's own invoice; 404 for a missing file; 403 for another account.",
+        "state": "review",
+        "assignee": "nia",
+        "creator": "lead",
+        "refs": [],
+        "links": []
+      },
+      {
+        "id": 2,
+        "title": "Download button in the invoice drawer",
+        "description": "",
+        "criteria": "The button downloads the PDF and shows an error toast when the API fails.",
+        "state": "in_progress",
+        "assignee": "nia",
+        "creator": "lead",
+        "refs": [],
+        "links": []
+      },
+      {
+        "id": 3,
+        "title": "Tests for both",
+        "description": "",
+        "criteria": "API and UI tests pass in CI.",
+        "state": "in_progress",
+        "assignee": "checks",
+        "creator": "lead",
+        "refs": [],
+        "links": []
+      }
+    ]
+  }
+}

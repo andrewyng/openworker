@@ -9,6 +9,7 @@ async function openSlackPage(page) {
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Connectors", exact: true }).click();
   await page.getByTestId("connector-slack").click();
+  await page.getByTestId("manage-local-slack").click();
 }
 
 test("post-connect card: personalized status line + the installer's 'you' chip", async ({

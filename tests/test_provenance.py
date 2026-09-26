@@ -6,6 +6,7 @@ that file, and how long ago.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -163,6 +164,28 @@ def test_download_over_a_written_path_becomes_a_download(files):
     _wrote(files, "tool.sh", 2)
     files.record("run_shell", {"command": "curl -o tool.sh https://x.io/a"}, None, step=6)
     assert files.match("run_shell", {"command": "bash tool.sh"}, step=7).downloaded
+
+
+def test_device_download_sink_does_not_taint_later_health_checks(files):
+    files.record("run_shell", {"command": f"curl -o {os.devnull} https://example.test"}, None, step=1)
+    assert files.match("run_shell", {"command": f"curl -o {os.devnull} http://127.0.0.1:8000"}, step=2) is None
+
+
+def test_device_symlink_is_ignored_but_regular_null_named_script_is_not(files, tmp_path):
+    alias = tmp_path / "sink.sh"
+    alias.symlink_to(os.devnull)
+    files.record("run_shell", {"command": "curl -o sink.sh https://example.test"}, None, step=1)
+    assert files.match("run_shell", {"command": "bash sink.sh"}, step=2) is None
+    (tmp_path / "null.sh").write_text("echo test")
+    files.record("run_shell", {"command": "curl -o null.sh https://example.test"}, None, step=3)
+    assert files.match("run_shell", {"command": "bash null.sh"}, step=4).downloaded
+
+
+def test_device_does_not_hide_a_real_download_or_keep_legacy_taint(files):
+    files._files[prov.resolve(os.devnull, files.root)] = prov.Origin(step=9, kind=DOWNLOADED)
+    files.record("run_shell", {"command": "curl -o tool.sh https://example.test"}, None, step=1)
+    found = files.match("run_shell", {"command": f"bash tool.sh > {os.devnull}"}, step=10)
+    assert found.path == "tool.sh" and found.downloaded
 
 
 # -- the documented blind spot -------------------------------------------------

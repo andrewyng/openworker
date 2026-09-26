@@ -27,8 +27,8 @@ import { Icon } from "./Icon";
 // also deleted a duplication: the mirror channel used to be editable BOTH on this page and
 // via an inline configurator on the Inbox list.
 const CARD = "rounded-xl2 border border-line bg-panel";
-const SELECT = "px-2.5 py-1.5 rounded-lg border border-line bg-paper text-[13px] text-ink";
-const BTN_ACCENT_SM = "text-[12px] px-2.5 py-1 rounded-md bg-accent text-white disabled:opacity-50";
+const SELECT = "px-2.5 py-1.5 rounded-lg border border-line bg-paper text-ui text-ink";
+const BTN_ACCENT_SM = "text-meta px-2.5 py-1 rounded-md bg-accent text-white disabled:opacity-50";
 
 export function InboxConfigure() {
   const { t } = useTranslation();
@@ -42,8 +42,8 @@ export function InboxConfigure() {
       {/* Unrouted = delivery FAILURES ("messages that never reached you"), so it lives with
           the Inbox now (§28; previously with routing under Connectors, §26). */}
       <div className="mt-6" data-testid="unrouted-section">
-        <h3 className="text-[14px] font-semibold mb-1">{t("inbox.unrouted_title")}</h3>
-        <p className="text-[13px] text-muted mb-3">
+        <h3 className="text-body font-semibold mb-1">{t("inbox.unrouted_title")}</h3>
+        <p className="text-ui text-muted mb-3">
           {t("inbox.unrouted_sub")}
         </p>
         <UnroutedTable />
@@ -125,8 +125,8 @@ function InboxRoutingCard() {
 
   return (
     <div className={CARD + " p-4"} data-testid="inbox-mirror-card">
-      <div className="font-semibold text-[13px] mb-1">{tt("inbox.unattended_approvals")}</div>
-      <p className="text-[12px] text-muted mb-3">
+      <div className="font-semibold text-ui mb-1">{tt("inbox.unattended_approvals")}</div>
+      <p className="text-meta text-muted mb-3">
         {tt("inbox.mirror_desc_prefix")}{" "}
         <strong className="text-ink font-medium" title={target || undefined}>
           {known ? `#${known}` : target || tt("inbox.in_app_inbox_only")}
@@ -146,17 +146,17 @@ function InboxRoutingCard() {
           {tt("inbox.set")}
         </button>
         {target && (
-          <button className="text-[12px] text-danger/80 hover:text-danger" onClick={clear}>
+          <button className="text-meta text-danger/80 hover:text-danger" onClick={clear}>
             {tt("inbox.clear")}
           </button>
         )}
       </div>
       {missingSlackOwner && (
-        <p className="text-[12px] text-warnInk mt-2">
+        <p className="text-meta text-warnInk mt-2">
           {tt("inbox.missing_slack_owner")}
         </p>
       )}
-      {error && <p className="text-[12px] text-warnInk mt-2">{error}</p>}
+      {error && <p className="text-meta text-warnInk mt-2">{error}</p>}
     </div>
   );
 }
@@ -186,8 +186,8 @@ function DmRouteCard() {
 
   return (
     <div className={CARD + " p-4"}>
-      <div className="font-semibold text-[13px] mb-1">{tt("inbox.direct_messages")}</div>
-      <p className="text-[12px] text-muted mb-3">
+      <div className="font-semibold text-ui mb-1">{tt("inbox.direct_messages")}</div>
+      <p className="text-meta text-muted mb-3">
         {tt("inbox.dm_desc")}
       </p>
       <div className="flex items-center gap-2">
@@ -229,9 +229,21 @@ function SubscriptionsCard() {
   }, []);
 
   const real = sessions.filter((s) => !s.session_id.startsWith("__"));
+  const [addErr, setAddErr] = useState<string | null>(null);
   const add = async () => {
     if (!addSession || !addChannel.trim()) return;
-    await subscribeChannel(addSession, addChannel.trim());
+    const r = await subscribeChannel(addSession, addChannel.trim());
+    if (!r.ok) {
+      // Held by another session (any machine): this global list only reports it —
+      // the move lives in the session's own Access panel.
+      setAddErr(
+        r.error === "held" && r.held_by
+          ? tt("misc.inbox_configure.held_by", { session: r.held_by.title || r.held_by.session_id })
+          : r.error || tt("misc.inbox_configure.add_failed"),
+      );
+      return;
+    }
+    setAddErr(null);
     setAddChannel("");
     load();
   };
@@ -246,13 +258,13 @@ function SubscriptionsCard() {
         <span className="text-muted shrink-0">
           <Icon name="plug" size={15} />
         </span>
-        <span className="font-semibold text-[13px]">{tt("inbox.channel_subscriptions")}</span>
-        <span className="text-[12px] text-muted">{tt("inbox.subscriptions_sub")}</span>
+        <span className="font-semibold text-ui">{tt("inbox.channel_subscriptions")}</span>
+        <span className="text-meta text-muted">{tt("inbox.subscriptions_sub")}</span>
       </div>
 
       {subs && subs.length > 0 ? (
-        <table className="w-full text-[13px]">
-          <thead className="text-[11px] uppercase tracking-[0.04em] text-faint">
+        <table className="w-full text-ui">
+          <thead className="text-label text-faint">
             <tr className="text-left">
               <th className="font-medium px-4 py-2">{tt("inbox.col_session")}</th>
               <th className="font-medium px-4 py-2">{tt("inbox.col_listens_to")}</th>
@@ -273,12 +285,12 @@ function SubscriptionsCard() {
                     </span>
                     {s.channel_name ? `#${s.channel_name}` : s.channel}
                     {s.channel_name && (
-                      <span className="text-[11px] text-faint">{s.channel}</span>
+                      <span className="text-label text-faint">{s.channel}</span>
                     )}
                   </span>
                   {s.collision && (
                     <span
-                      className="ml-1.5 text-[11px] text-warnInk bg-warnSoft/70 border border-warnInk/15 rounded px-1.5 py-0.5"
+                      className="ml-1.5 text-label text-warnInk bg-warnSoft/70 border border-warnInk/15 rounded px-1.5 py-0.5"
                       title={tt("inbox.collision_title")}
                     >
                       {tt("inbox.collides")}
@@ -300,7 +312,7 @@ function SubscriptionsCard() {
           </tbody>
         </table>
       ) : (
-        <div className="px-4 py-3 text-[13px] text-muted">
+        <div className="px-4 py-3 text-ui text-muted">
           {tt("inbox.no_subscriptions")}
         </div>
       )}
@@ -323,6 +335,11 @@ function SubscriptionsCard() {
           {tt("inbox.subscribe")}
         </button>
       </div>
+      {addErr && (
+        <p className="text-label text-warnInk mt-1.5 leading-snug" data-testid="inbox-subscribe-error">
+          {addErr}
+        </p>
+      )}
     </div>
   );
 }
@@ -342,15 +359,15 @@ function UnroutedTable() {
 
   if (items && items.length === 0)
     return (
-      <div className={CARD + " p-4 text-[13px] text-muted"}>
+      <div className={CARD + " p-4 text-ui text-muted"}>
         {tt("inbox.unrouted_empty")}
       </div>
     );
 
   return (
     <div className={CARD + " overflow-hidden"}>
-      <table className="w-full text-[13px]">
-        <thead className="text-[11px] uppercase tracking-[0.04em] text-faint">
+      <table className="w-full text-ui">
+        <thead className="text-label text-faint">
           <tr className="text-left">
             <th className="font-medium px-4 py-2">{tt("inbox.col_when")}</th>
             <th className="font-medium px-4 py-2">{tt("inbox.col_source")}</th>

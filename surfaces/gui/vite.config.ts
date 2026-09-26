@@ -24,10 +24,23 @@ export default defineConfig(({ command }) => {
       // shows the normal startup retry until the standalone server/token file exists.
     }
   }
+  // COWORKER_DEV_PROXY=http://127.0.0.1:8790 points the dev GUI at a hosted-
+  // shaped backend (the machines service) through vite's own origin, so the
+  // browser sees no cross-origin calls — the hosted service serves its bundle
+  // same-origin and deliberately has no CORS. Pair it with
+  // VITE_COWORKER_HTTP/WS set to the vite origin. Off unless set.
+  const devProxy = process.env.COWORKER_DEV_PROXY || "";
+  const proxy = devProxy
+    ? {
+        "/v1": { target: devProxy, changeOrigin: true },
+        "/ws": { target: devProxy.replace(/^http/, "ws"), ws: true, changeOrigin: true },
+        "/j": { target: devProxy, changeOrigin: true },
+      }
+    : undefined;
   return {
     base: "./",
     plugins: [react()],
-    server: { port: 1420, strictPort: true },
+    server: { port: 1420, strictPort: true, ...(proxy ? { proxy } : {}) },
     define: { __COWORKER_DEV_TOKEN__: JSON.stringify(devToken) },
     // Tauri CLI looks for these; harmless for the browser build.
     clearScreen: false,

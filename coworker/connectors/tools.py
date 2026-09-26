@@ -144,6 +144,14 @@ def make_send_message_tool(
             platform, chat_id, thread_id = _parse_or_coerce(target)
         except ValueError as exc:
             return {"error": str(exc)}
+        # GitHub replies are issue/PR comments: no bot token exists (the App
+        # mints per-call — on a box, by machine credential), so it bypasses
+        # the token/sender machinery below (drill finding: this path simply
+        # didn't exist, on any deployment).
+        if platform == "github":
+            from .github_send import send_github_comment
+
+            return send_github_comment(secrets, chat_id, text)
         sender = senders.get(platform)
         if sender is None:
             return {"error": f"unknown platform: {platform}"}

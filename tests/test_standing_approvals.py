@@ -125,6 +125,36 @@ def test_standing_rule_candidate():
     assert standing_rule_candidate("send_message", {"text": "hi"}, _Meta()) is None
     # local writes are covered by path scoping, not standing rules
     assert standing_rule_candidate("write_file", {"path": "a"}, None) is None
+    # composite targets (§10.7 (b)): a GitHub thread is owner + repo + number, and the
+    # handle is the thread grant's own `github:owner/repo#N`
+    meta = _Meta("connector")
+    assert (
+        standing_rule_candidate("github_reply", {"owner": "acme", "repo": "site", "number": 42, "body": "x"}, meta)
+        == "github:acme/site#42"
+    )
+    assert (
+        standing_rule_candidate("github_review", {"owner": "acme", "repo": "site", "pull_number": "42"}, meta)
+        == "github:acme/site#42"
+    )
+    # a call that does not fully name the thread is not eligible
+    assert standing_rule_candidate("github_reply", {"owner": "acme", "body": "x"}, meta) is None
+
+
+def test_engine_matches_github_thread_rules(tmp_path):
+    # One thread grant covers replying and reviewing on THAT pull request only.
+    e = PermissionEngine(
+        workspace_root=tmp_path,
+        task_rules={t: {"github:acme/site#42"} for t in ("send_message", "github_reply", "github_review")},
+    )
+    meta = _Meta(category="connector")
+    hit = e.evaluate("github_review", {"owner": "acme", "repo": "site", "pull_number": 42, "event": "COMMENT"}, meta)
+    assert hit.allowed and hit.rule == "github_review → github:acme/site#42"
+    hit = e.evaluate("github_reply", {"owner": "acme", "repo": "site", "number": 42, "body": "lgtm"}, meta)
+    assert hit.allowed
+    other = e.evaluate("github_reply", {"owner": "acme", "repo": "site", "number": 43, "body": "x"}, meta)
+    assert not other.allowed and other.needs_user
+    elsewhere = e.evaluate("github_reply", {"owner": "acme", "repo": "api", "number": 42, "body": "x"}, meta)
+    assert not elsewhere.allowed
 
 
 def test_engine_matches_target(tmp_path):

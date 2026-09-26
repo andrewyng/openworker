@@ -556,6 +556,11 @@ def make_integration_tools(
     # Email needs the session roots: attachment downloads land in the primary scratch
     # and outgoing attachments must resolve inside a granted directory.
     tools.extend(make_email_tools(secrets, roots=roots))
+    # Chat connectors (spec §11): posting is a catalog tool, filtered below by the
+    # session's enabled connectors like everything else here.
+    from .chat_tools import make_chat_tools
+
+    tools.extend(make_chat_tools(secrets, roots=roots))
 
     def github_search(
         query: str, search_type: str = "issues", max_results: int = 10
@@ -789,18 +794,30 @@ def make_integration_tools(
         writable = [r.path for r in (roots or []) if r.writable]
         if not writable:
             return None, {"error": "no writable session directory to clone into"}
-        path = (
-            _Path(str(raw)).expanduser().resolve()
-            if raw
-            else (writable[0] / default_name).resolve()
-        )
+        listed = ", ".join(str(r) for r in writable)
+        if raw:
+            given = _Path(str(raw)).expanduser()
+            # Strict (owner ruling 2026-09-06): a relative name is never guessed
+            # against the process cwd or a root — the agent resends the absolute
+            # path github_clone handed back. The error names the roots so the
+            # retry is a one-turn fix, not a dead end.
+            if not given.is_absolute():
+                return None, {
+                    "error": f"directory must be an absolute path inside a "
+                    f"writable session directory ({listed}); got {raw!r}"
+                }
+            path = given.resolve()
+        else:
+            path = (writable[0] / default_name).resolve()
         if not any(path.is_relative_to(root) for root in writable):
             return None, {
-                "error": f"{path} is outside the session's writable directories"
+                "error": f"{path} is outside the session's writable directories ({listed})"
             }
         return path, None
 
-    def github_clone(owner: str, repo: str, directory: str = "") -> dict[str, Any]:
+    def github_clone(owner: str, repo: str, directory: str = "", ref: str = "") -> dict[str, Any]:
+        if ref and (ref.startswith("-") or any(c.isspace() for c in ref) or ":" in ref):
+            return {"error": "ref must be a single branch, tag, commit SHA, or refs/pull/N/head"}
         target, err = _writable_target(directory, default_name=repo)
         if err:
             return err
@@ -822,7 +839,18 @@ def make_integration_tools(
 
             shutil.rmtree(target)
             return {"error": "clone aborted: credentials would have persisted"}
-        head, _ = _run_git(["rev-parse", "--short", "HEAD"], cwd=target)
+        if ref:
+            _out, git_err = _run_git(
+                [*_github_git_auth_args(secrets, owner), "fetch", "origin", ref], cwd=target
+            )
+            if git_err:
+                return {"error": f"clone exists at {target}, but ref fetch failed: {git_err}", "path": str(target)}
+            _out, git_err = _run_git(["checkout", "--detach", "FETCH_HEAD"], cwd=target)
+            if git_err:
+                return {"error": f"clone exists at {target}, but checkout failed: {git_err}", "path": str(target)}
+        head, git_err = _run_git(["rev-parse", "HEAD"], cwd=target)
+        if git_err:
+            return {"error": f"clone has no readable HEAD: {git_err}", "path": str(target)}
         return {"ok": True, "path": str(target), "head": head}
 
     github_clone.__name__ = "github_clone"
@@ -837,9 +865,13 @@ def make_integration_tools(
                 {
                     "owner": {"type": "string"},
                     "repo": {"type": "string"},
+                    "ref": {
+                        "type": "string",
+                        "description": "Optional branch, tag, commit SHA or refs/pull/N/head. Fetches and checks out that revision detached; omitted uses the default branch. Returns full HEAD SHA.",
+                    },
                     "directory": {
                         "type": "string",
-                        "description": "target path inside a granted folder (default: <primary>/<repo>)",
+                        "description": "absolute target path inside a granted folder (default: <primary>/<repo>)",
                     },
                 },
                 ["owner", "repo"],
@@ -882,11 +914,135 @@ def make_integration_tools(
                 "github_pull",
                 "Fast-forward an existing clone in a session folder to the latest "
                 "upstream commits. Requires user approval.",
-                {"directory": {"type": "string"}},
+                {"directory": {"type": "string", "description": "absolute path of the clone, as returned by github_clone"}},
                 ["directory"],
             ),
             approval=True,
             caps=["github", "read"],
+        )
+    )
+
+    def _repo_of(target) -> tuple[str, str, dict[str, Any] | None]:
+        """(owner, repo) from the clone's origin remote, or an error dict."""
+        remote, git_err = _run_git(["remote", "get-url", "origin"], cwd=target)
+        if git_err:
+            return "", "", {"error": f"no origin remote: {git_err}"}
+        m = re.search(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?/?$", remote)
+        if not m:
+            return "", "", {"error": f"could not parse origin remote: {remote}"}
+        return m.group(1), m.group(2), None
+
+    def github_push(directory: str, branch: str = "") -> dict[str, Any]:
+        """The runtime pushes — the agent never handles a credential (machines
+        spec: tools are the boundary the sandbox will later harden). Same
+        per-invocation header auth as clone/pull: process-only, never at rest."""
+        target, err = _writable_target(directory)
+        if err:
+            return err
+        if not (target / ".git").exists():
+            return {"error": f"{target} is not a git repository"}
+        owner, _repo, rerr = _repo_of(target)
+        if rerr:
+            return rerr
+        if not branch:
+            branch, git_err = _run_git(
+                ["rev-parse", "--abbrev-ref", "HEAD"], cwd=target
+            )
+            if git_err or branch == "HEAD":
+                return {"error": "could not determine the current branch — pass `branch`"}
+        _out, git_err = _run_git(
+            [
+                *_github_git_auth_args(secrets, owner),
+                "-C",
+                str(target),
+                "push",
+                "--set-upstream",
+                "origin",
+                branch,
+            ]
+        )
+        if git_err:
+            return {"error": f"push failed: {git_err}"}
+        head, _ = _run_git(["rev-parse", "--short", "HEAD"], cwd=target)
+        return {"ok": True, "branch": branch, "head": head}
+
+    github_push.__name__ = "github_push"
+    tools.append(
+        _attach(
+            github_push,
+            _schema(
+                "github_push",
+                "Push the clone's current (or named) branch to GitHub — first "
+                "publish and every follow-up push to an open PR's branch alike. "
+                "The runtime authenticates with a short-lived token that is "
+                "never written to disk. Requires user approval.",
+                {
+                    "directory": {"type": "string", "description": "absolute path of the clone, as returned by github_clone"},
+                    "branch": {
+                        "type": "string",
+                        "description": "branch to push (default: the current branch)",
+                    },
+                },
+                ["directory"],
+            ),
+            approval=True,
+            caps=["github", "write"],
+        )
+    )
+
+    def github_open_pr(
+        directory: str, title: str, body: str = "", base: str = "main", head: str = ""
+    ) -> dict[str, Any]:
+        target, err = _writable_target(directory)
+        if err:
+            return err
+        owner, repo, rerr = _repo_of(target)
+        if rerr:
+            return rerr
+        if not head:
+            head, git_err = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=target)
+            if git_err or head == "HEAD":
+                return {"error": "could not determine the current branch — pass `head`"}
+        out = _github_call(
+            secrets,
+            "POST",
+            f"/repos/{owner}/{repo}/pulls",
+            install=owner,
+            json={"title": title, "body": body, "base": base, "head": head},
+        )
+        if out.get("error"):
+            return out
+        created = out.get("data") if isinstance(out.get("data"), dict) else {}
+        return {
+            "ok": True,
+            "number": created.get("number"),
+            "url": created.get("html_url"),
+            "head": head,
+            "base": base,
+        }
+
+    github_open_pr.__name__ = "github_open_pr"
+    tools.append(
+        _attach(
+            github_open_pr,
+            _schema(
+                "github_open_pr",
+                "Open a pull request for a pushed branch (push first with "
+                "github_push). Requires user approval.",
+                {
+                    "directory": {"type": "string", "description": "absolute path of the clone, as returned by github_clone"},
+                    "title": {"type": "string"},
+                    "body": {"type": "string"},
+                    "base": {"type": "string", "description": "target branch (default main)"},
+                    "head": {
+                        "type": "string",
+                        "description": "source branch (default: the clone's current branch)",
+                    },
+                },
+                ["directory", "title"],
+            ),
+            approval=True,
+            caps=["github", "write"],
         )
     )
 
