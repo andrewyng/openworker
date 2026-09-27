@@ -37,6 +37,11 @@ def state_dir() -> Path:
     base = os.environ.get("COWORKER_STATE_DIR")
     if base:
         return Path(base).expanduser()
+    # A box confined to OPENWORKER_BASE_DIR keeps its state there too
+    # (coworker/basedir.py) — nothing of the machine's lives outside it.
+    confined = os.environ.get("OPENWORKER_BASE_DIR", "").strip()
+    if confined:
+        return Path(confined).expanduser() / "state"
     if sys.platform == "win32":
         appdata = os.environ.get("APPDATA")
         if appdata:
@@ -213,3 +218,28 @@ class SecretStore:
 
     def _write(self, store: dict[str, Any]) -> None:
         _atomic_private_write(self.path, json.dumps(store, indent=2))
+
+
+class EphemeralSecretStore(SecretStore):
+    """A SecretStore that never touches disk.
+
+    Used to stage a connector grant that is destined for ANOTHER machine
+    (machines spec §Remote OAuth): the normal storage layers run against this
+    store, producing exactly the profile keys a fresh connect would write, and
+    the result is sealed and shipped — the grant never lands in the local
+    secrets file.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(path="/dev/null/ephemeral")  # never read or written
+        self._data: dict[str, Any] = {}
+
+    def _read(self) -> dict[str, Any]:
+        return dict(self._data)
+
+    def _write(self, store: dict[str, Any]) -> None:
+        self._data = dict(store)
+
+    def profiles(self) -> dict[str, Any]:
+        """Every staged profile, by key — the payload a sealed deploy ships."""
+        return dict(self._data)

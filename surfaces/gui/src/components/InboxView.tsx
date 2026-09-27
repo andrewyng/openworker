@@ -31,14 +31,14 @@ const KIND_TABS: { key: string; labelKey: string }[] = [
 ];
 
 const CHIP = (active: boolean) =>
-  "text-[12px] px-2.5 py-1 rounded-full border " +
+  "text-meta px-2.5 py-1 rounded-full border " +
   (active
     ? "border-accent text-accent bg-accentSoft"
     : "border-line text-muted hover:border-lineStrong");
 
 // Page-level tabs (§28): underline style, one visual level ABOVE the filter chips.
 const TAB = (active: boolean) =>
-  "pb-2 -mb-px text-[13px] border-b-2 flex items-center gap-1.5 " +
+  "pb-2 -mb-px text-ui border-b-2 flex items-center gap-1.5 " +
   (active
     ? "text-ink font-medium border-accent"
     : "text-muted border-transparent hover:text-ink");
@@ -134,6 +134,11 @@ export function InboxView({
           <Icon name={icon} size={11} />
         </span>
         <span className="inbox-chip-label">{label}</span>
+        {it.machine_name && (
+          <span className="text-label text-faint" title={`on ${it.machine_name}`}>
+            ⌂ {it.machine_name}
+          </span>
+        )}
         {exists && <Icon name="chevronRight" size={13} className="inbox-chip-go" />}
       </button>
     );
@@ -165,7 +170,7 @@ export function InboxView({
             >
               {tt("inbox.tab_pending")}
               {items.length > 0 && (
-                <span className="text-[11px] px-1.5 rounded-full bg-accentSoft text-accent leading-4">
+                <span className="text-label px-1.5 rounded-full bg-accentSoft text-accent leading-4">
                   {items.length}
                 </span>
               )}
@@ -177,7 +182,7 @@ export function InboxView({
             >
               {tt("inbox.tab_configure")}
               {unroutedCount > 0 && (
-                <span className="text-[11px] px-1.5 rounded-full bg-warnSoft text-warnInk leading-4">
+                <span className="text-label px-1.5 rounded-full bg-warnSoft text-warnInk leading-4">
                   ⚠ {unroutedCount}
                 </span>
               )}
@@ -188,7 +193,7 @@ export function InboxView({
             <InboxConfigure />
           ) : (
             <>
-              <div className="text-[12px] text-faint -mt-1 mb-4" data-testid="inbox-routing">
+              <div className="text-meta text-faint -mt-1 mb-4" data-testid="inbox-routing">
                 {routing ? (
                   <span>
                     {tt("inbox.also_delivered_to")}{" "}

@@ -73,3 +73,18 @@ export function formatTokens(n: number): string {
   const m = n / 1_000_000;
   return (m < 100 ? m.toFixed(2).replace(/\.?0+$/, "") : String(Math.round(m))) + "M";
 }
+
+/** Roll a team up (spec §5): the lead's live accumulation plus each worker's persisted
+ * per-model totals, keyed by model. Dollars never appear. */
+export function teamUsage(
+  lead: SessionUsage,
+  workers: { usage?: Record<string, TurnUsage> }[],
+): SessionUsage {
+  let acc: SessionUsage = { byModel: { ...lead.byModel }, context: lead.context };
+  for (const w of workers) {
+    for (const [model, u] of Object.entries(w.usage || {})) {
+      acc = addTurnUsage(acc, { ...u, model });
+    }
+  }
+  return { byModel: acc.byModel, context: lead.context };
+}

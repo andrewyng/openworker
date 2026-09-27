@@ -14,6 +14,7 @@ import json
 import re
 from typing import Any, Optional
 
+from .effort import EffortPlan, mentions_effort, openai_compat_effort
 from .base import (
     AssistantTurn,
     ModelCapabilities,
@@ -58,6 +59,42 @@ def _pin_reasoning_effort(kwargs: dict[str, Any]) -> None:
         kwargs.setdefault("reasoning_effort", "none")
 
 
+def _reasoning_field(obj: Any) -> Optional[str]:
+    """Which field the thinking arrived in: `reasoning_content` (Together, Moonshot,
+    DeepSeek, GLM) or `reasoning` (OpenRouter, xAI). The same name is used to send it
+    back (OPE-178)."""
+    for name in ("reasoning_content", "reasoning"):
+        value = getattr(obj, name, None)
+        if isinstance(value, str) and value:
+            return name
+    return None
+
+
+def _reasoning_extras(field: Optional[str], text: Optional[str]) -> dict[str, Any]:
+    """The `_openai_compat` sidecar persisted on the assistant message: the thinking text
+    and the field it arrived in, replayed verbatim by `replay_reasoning`. Kimi K3 requires
+    the complete assistant message — reasoning included — back on later turns; other
+    reasoning models on this path document the same. Empty when nothing arrived."""
+    if field and text:
+        return {"_openai_compat": {"field": field, "text": text}}
+    return {}
+
+
+def replay_reasoning(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Re-attach each assistant message's persisted thinking under the field name it
+    arrived in (OPE-178). Messages without the sidecar are returned untouched, so models
+    that never send reasoning see byte-identical requests. Call before
+    `_strip_foreign_sidecars`, which then removes the underscore key itself."""
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        sidecar = m.get("_openai_compat") if m.get("role") == "assistant" else None
+        if isinstance(sidecar, dict) and sidecar.get("text") and sidecar.get("field"):
+            out.append({**m, str(sidecar["field"]): str(sidecar["text"])})
+        else:
+            out.append(m)
+    return out
+
+
 def _delta_reasoning(obj: Any) -> Optional[str]:
     """Thinking text off a delta/message: `reasoning_content` (DeepSeek, GLM, Kimi, and
     most compat vendors) or `reasoning` (xAI, OpenRouter). Extra response fields survive
@@ -100,6 +137,16 @@ def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
     msg = str(exc).lower()
     if _EFFORT_ERROR in msg and kwargs.get("reasoning_effort") != "none":
         return {**kwargs, "reasoning_effort": "none"}
+    if (
+        "reasoning_effort" in kwargs
+        and kwargs.get("reasoning_effort") != "none"
+        and ("reasoning_effort" in msg or "effort" in msg)
+    ):
+        # OPE-176: the endpoint has no effort knob under that name — drop it and run on
+        # the server default; the reply's `effort` record says it was rejected.
+        fixed = dict(kwargs)
+        fixed.pop("reasoning_effort")
+        return fixed
     if _MAX_TOKENS_ERROR in msg and "max_tokens" in kwargs:
         fixed = dict(kwargs)
         fixed["max_completion_tokens"] = fixed.pop("max_tokens")
@@ -118,6 +165,37 @@ def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
         fixed.pop("max_tokens")
         return fixed
     raise exc
+
+
+def _effort_record(plan: Optional[EffortPlan], kwargs: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """The effort record for a reply, read from the kwargs that were finally sent (after
+    the param-fix retries may have dropped or pinned the parameter)."""
+    if plan is None:
+        return None
+    if not plan.params:
+        return plan.record()
+    sent = kwargs.get("reasoning_effort")
+    if sent is None:
+        return plan.without_param("endpoint rejected reasoning_effort; resent without it").record()
+    if sent != plan.effective:
+        return EffortPlan(
+            plan.requested, str(sent), {"reasoning_effort": sent}, f"endpoint accepted only {sent}"
+        ).record()
+    return plan.record()
+
+
+def _served_by(obj: Any) -> Optional[str]:
+    """OpenRouter (and compatible routers) put the upstream host's name in a top-level
+    `provider` field on responses and stream chunks; the OpenAI SDK keeps unknown fields."""
+    value = getattr(obj, "provider", None)
+    return str(value) if isinstance(value, str) and value else None
+
+
+def _output_limit(kwargs: dict[str, Any]) -> Optional[int]:
+    """The completion ceiling actually sent, after `_param_fix_retry` may have renamed
+    `max_tokens` to `max_completion_tokens` or dropped it (server default -> None)."""
+    value = kwargs.get("max_tokens", kwargs.get("max_completion_tokens"))
+    return int(value) if value else None
 
 
 def _usage_from(usage: Any) -> Optional[TokenUsage]:
@@ -186,14 +264,17 @@ class OpenAIProvider(ProviderClient):
         tools: Optional[list[dict[str, Any]]] = None,
         **settings: Any,
     ) -> AssistantTurn:
+        plan = self._effort_plan(model, settings)
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": _strip_foreign_sidecars(messages),
+            "messages": _strip_foreign_sidecars(replay_reasoning(messages)),
             **settings,
         }
         if tools:
             kwargs["tools"] = tools
         kwargs.setdefault("max_tokens", DEFAULT_MAX_TOKENS)
+        if plan is not None and plan.params:
+            kwargs.update(plan.params)
         _pin_reasoning_effort(kwargs)
 
         client = self._ensure_client()
@@ -212,17 +293,45 @@ class OpenAIProvider(ProviderClient):
         text = getattr(message, "content", None)
         tool_calls = _parse_tool_calls(getattr(message, "tool_calls", None))
         text, tool_calls = _maybe_salvage_tool_calls(text, tool_calls, tools=tools)
+        reasoning_text = _delta_reasoning(message)
         return AssistantTurn(
             text=text,
             tool_calls=tool_calls,
             finish_reason=getattr(choice, "finish_reason", None),
             raw=response,
-            reasoning=_delta_reasoning(message),
+            reasoning=reasoning_text,
+            extras=_reasoning_extras(_reasoning_field(message), reasoning_text),
             usage=_usage_from(getattr(response, "usage", None)),
+            output_limit=_output_limit(kwargs),
+            effort=self._note_effort(model, plan, kwargs),
+            served_by=_served_by(response),
         )
 
     def capabilities(self, model: str) -> ModelCapabilities:
         return capabilities_for(model)
+
+    # -- reasoning effort (OPE-176) ---------------------------------------------------
+
+    def _effort_plan(self, model: str, settings: dict[str, Any]) -> Optional[EffortPlan]:
+        """Pop the engine-level `reasoning_effort` setting (it must never ride the wire
+        unmapped) and translate it for this model; None when unset."""
+        level = settings.pop("reasoning_effort", None)
+        if not level:
+            return None
+        rejected = self.__dict__.setdefault("_effort_rejected", set())
+        if model in rejected:
+            return EffortPlan(
+                str(level), None, {}, "endpoint rejected reasoning_effort earlier in this run; not sent"
+            )
+        return openai_compat_effort(model, str(level))
+
+    def _note_effort(
+        self, model: str, plan: Optional[EffortPlan], kwargs: dict[str, Any]
+    ) -> Optional[dict[str, Any]]:
+        record = _effort_record(plan, kwargs)
+        if plan is not None and plan.params and kwargs.get("reasoning_effort") is None:
+            self.__dict__.setdefault("_effort_rejected", set()).add(model)
+        return record
 
     def stream(
         self,
@@ -232,9 +341,10 @@ class OpenAIProvider(ProviderClient):
         tools: Optional[list[dict[str, Any]]] = None,
         **settings: Any,
     ):
+        plan = self._effort_plan(model, settings)
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": _strip_foreign_sidecars(messages),
+            "messages": _strip_foreign_sidecars(replay_reasoning(messages)),
             "stream": True,
             # Usage on the final chunk (empty `choices`). Compat servers that reject
             # the option get a one-shot retry without it (_param_fix_retry).
@@ -244,14 +354,18 @@ class OpenAIProvider(ProviderClient):
         if tools:
             kwargs["tools"] = tools
         kwargs.setdefault("max_tokens", DEFAULT_MAX_TOKENS)
+        if plan is not None and plan.params:
+            kwargs.update(plan.params)
         _pin_reasoning_effort(kwargs)
         client = self._ensure_client()
 
         text_parts: list[str] = []
         reasoning_parts: list[str] = []
+        reasoning_field: Optional[str] = None
         tool_accum: dict[int, dict[str, str]] = {}
         finish_reason = None
         usage: Optional[TokenUsage] = None
+        served: Optional[str] = None
 
         # Up to three param-fix retries: effort, the max_tokens rename, and the
         # max_tokens over-limit drop can ALL need fixing on one call.
@@ -264,6 +378,7 @@ class OpenAIProvider(ProviderClient):
         else:
             chunks = client.chat.completions.create(**kwargs)
         for chunk in chunks:
+            served = _served_by(chunk) or served
             chunk_usage = _usage_from(getattr(chunk, "usage", None))
             if chunk_usage is not None:
                 usage = chunk_usage
@@ -275,6 +390,7 @@ class OpenAIProvider(ProviderClient):
             if delta is not None:
                 reasoning = _delta_reasoning(delta)
                 if reasoning:
+                    reasoning_field = reasoning_field or _reasoning_field(delta)
                     reasoning_parts.append(reasoning)
                     yield StreamChunk(reasoning_delta=reasoning)
                 content = getattr(delta, "content", None)
@@ -316,7 +432,11 @@ class OpenAIProvider(ProviderClient):
                 tool_calls=tool_calls,
                 finish_reason=finish_reason,
                 reasoning="".join(reasoning_parts) or None,
+                extras=_reasoning_extras(reasoning_field, "".join(reasoning_parts) or None),
                 usage=usage,
+                output_limit=_output_limit(kwargs),
+                effort=self._note_effort(model, plan, kwargs),
+                served_by=served,
             )
         )
 

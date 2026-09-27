@@ -373,6 +373,7 @@ def test_digest_clamps_long_comments_and_carries_structured_rows(manager):
     # sidecar rows: structured, softer clamp for the human on click
     moved = [r for r in rows if r["kind"] == "moved" and r["to"] == "review"]
     assert moved and moved[0]["item"] == item["id"]
+    assert f"get_item_comment(item={item['id']}, seq={moved[0]['seq']})" in message
     assert moved[0]["note"].endswith("…") and len(moved[0]["note"]) < 700
 
 

@@ -1,8 +1,20 @@
 import { test as base, expect, type Page } from "@playwright/test";
+// Card payloads live in the gallery's state files (one source for the gallery, the unit
+// tests and this fixture) — replay them by id instead of writing the event by hand.
+import { statePayload, type CardId } from "../src/gallery/states";
 
 // The app-wide /ws/events socket each page opened (UX-026 toast et al.) — specs
 // push server events through it via sendAppEvent below.
 const eventSockets = new WeakMap<Page, { send: (data: string) => void }>();
+const sessionSockets = new WeakMap<Page, { send: (data: string) => void }>();
+
+/** Simulate a session event caused by another viewer/API client. */
+export async function sendSessionEvent(page: Page, obj: unknown): Promise<void> {
+  for (let i = 0; i < 50 && !sessionSockets.get(page); i++) await page.waitForTimeout(100);
+  const ws = sessionSockets.get(page);
+  if (!ws) throw new Error("the app never opened its session socket");
+  ws.send(JSON.stringify(obj));
+}
 
 /** Push an app-wide event exactly as the server would over /ws/events. Waits for
  * the GUI to have connected its socket first. */
@@ -65,7 +77,9 @@ const PERSONAS = {
   personas: [
     { id: "cowork", name: "OpenWorker", icon: "cowork", tagline: "Produce a deliverable — research, analysis, scripts", requires_folder: false, builtin: true, tools: ["files", "search"], enabled: true, surfaced: true, default: true, ships: true, group: "general" },
     { id: "code", name: "Code", icon: "code", tagline: "Work in a codebase — files, git, shell", requires_folder: true, builtin: true, tools: ["code_files", "git"], enabled: false, surfaced: false, default: false, ships: true, group: "general" },
-    { id: "security", name: "Security Coworker", icon: "shield", tagline: "Find and fix security issues — scan, triage, PR", requires_folder: true, builtin: true, tools: ["code_files", "git", "shell"], enabled: true, surfaced: true, default: false, ships: true, group: "security" },
+    // Carries a `models:` list (spec §4): the picker shows only these two; the Ollama one
+    // is not runnable on the mocked machine (its /v1/settings list lacks it).
+    { id: "security", name: "Security Coworker", icon: "shield", tagline: "Find and fix security issues — scan, triage, PR", requires_folder: true, builtin: true, tools: ["code_files", "git", "shell"], enabled: true, surfaced: true, default: false, ships: true, group: "security", models: ["anthropic:claude-opus-4-8", "ollama:qwen3-coder:30b"], models_available: ["anthropic:claude-opus-4-8"] },
     { id: "ops", name: "Ops Coworker", icon: "wrench", tagline: "Operate and investigate — runbooks, logs, infrastructure", requires_folder: false, builtin: true, tools: ["files", "shell"], enabled: true, surfaced: true, default: false, ships: false, group: "general" },
     // A non-builtin install (disabled pending consent — invisible to picker specs) so the
     // Personas page's delete/enable affordances have a target.
@@ -281,6 +295,8 @@ const PERSONA_DETAIL = {
   description: "",
   enabled: true,
   tools: ["files", "search"],
+  models: ["anthropic:claude-opus-4-8"],
+  models_available: ["anthropic:claude-opus-4-8"],
   recommended_models: ["anthropic:claude-opus-4-8"],
   default_permission_mode: "interactive",
   workspace: "deliverable",
@@ -564,6 +580,10 @@ export async function mockApi(page: import("@playwright/test").Page) {
   // Sessions — mutable so archive (PATCH), rename (PATCH), and delete round-trip.
   // UX-044: mutable binding state for the project-menu mocks.
   const projectBindings: Record<string, string> = {};
+  // Remote homes (P1b): mutable machines list + enrollment arming, so specs can
+  // arm, "join" a box (push into the array), rename, and remove.
+  const machines: any[] = [];
+  const enrollment = { armed: false, join_url: "", expires_at: 0 };
   const projectNames: Record<string, { name: string; key: string }[]> = {
     memory: [
       { name: "openworker", key: "/k/openworker" },
@@ -670,8 +690,10 @@ export async function mockApi(page: import("@playwright/test").Page) {
   });
 
   await page.routeWebSocket(/\/ws\/session\//, (ws) => {
+    sessionSockets.set(page, ws);
     const send = (type: string, data: Record<string, unknown> = {}) =>
       ws.send(JSON.stringify({ type, data }));
+    const sendState = (type: string, card: CardId, id: string) => send(type, statePayload(card, id));
     // The page's session id, from the socket URL — team approval stamps THIS session
     // as the lead (the active conversation IS the lead; workers hang off it).
     const sid = ws.url().split("/ws/session/")[1]?.split("?")[0] || "sess-lead";
@@ -683,6 +705,14 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const msg = JSON.parse(String(raw));
       if (msg.type === "user_message") {
         hadTurn = true;
+        // Simulated link loss (machine rollover / sidecar restart): the server side
+        // closes the socket mid-conversation. The client must show a reconnecting
+        // state and come back on its own — Playwright re-runs this handler for the
+        // new connection, which sends `ready` again.
+        if (/drop the socket/i.test(msg.text)) {
+          ws.close();
+          return;
+        }
         // Force-run (SKILLS-SPEC §6): like the real server, TURN_START ships the user's
         // literal "/name …" line as `display` so the client dedupes on what the user sees.
         send("turn_start", {
@@ -706,23 +736,13 @@ export async function mockApi(page: import("@playwright/test").Page) {
           // The Auto-Approve reviewer answered `unsure`: the card carries its reason.
           pendingTool = "run_shell";
           send("tool_proposed", { name: "run_shell", arguments: { command: "python3 helper.py" } });
-          send("permission_required", {
-            name: "run_shell",
-            arguments: { command: "python3 helper.py" },
-            reason: "requires approval",
-            reviewer_unsure: "This runs a newly created script whose effects cannot be determined from the command.",
-          });
+          sendState("permission_required", "approval", "reviewer-unsure");
           return; // suspended on the approval
         }
         if (/run a tool/i.test(msg.text)) {
           pendingTool = "run_shell";
           send("tool_proposed", { name: "run_shell", arguments: { command: "ls" } });
-          send("permission_required", {
-            name: "run_shell",
-            arguments: { command: "ls" },
-            reason: "The coworker wants to run a command.",
-            readonly_ok: true, // `ls` classifies read-only server-side
-          });
+          sendState("permission_required", "approval", "read-only-command");
           return; // suspended on the approval
         }
         // Agent teams: the decomposition gate — the lead proposes work items and
@@ -730,60 +750,30 @@ export async function mockApi(page: import("@playwright/test").Page) {
         // A board wake arriving on this session: the digest rides `source` with
         // structured rows — the BoardWakeCard renders collapsed by default.
         if (/board wake/i.test(msg.text)) {
-          send("turn_start", {
-            source: {
-              connector: "board",
-              kind: "channel",
-              channel_id: "/Users/test/OpenWorker/launch-note",
-              channel_name: "Team board",
-              sender_id: "board",
-              sender_name: "Board",
-              ts: Date.now() / 1000,
-              text: "⏰ Board wake — your team needs decisions:\n- #2 moved to review by webb",
-              board: {
-                rows: [
-                  {
-                    kind: "moved",
-                    item: 2,
-                    title: "Statements page",
-                    actor: "webb",
-                    to: "review",
-                    note: "Ready for review on feat/customer-statements, commit 029f9f7. Build verified; final verdict stays with the tester.",
-                  },
-                  { kind: "filed", item: 5, title: "Follow-up: rate limit", actor: "nia" },
-                ],
-              },
-            },
-          });
+          sendState("turn_start", "board-wake", "review-and-filed");
           send("assistant_message", { text: "Reviewing the hand-off now." });
           send("turn_done");
           return;
         }
-        if (/propose the split/i.test(msg.text)) {
-          send("items_proposed", {
-            items: [
-              { title: "Statement API endpoint", criteria: "returns opening/closing balances over the chosen range; 8 endpoint tests green; malformed, missing, and reversed date ranges return 400; draft invoices are excluded from issued totals; inclusive boundaries verified end to end" },
-              { title: "Statements dashboard page", criteria: "renders seeded data for Ada / Northgate; empty + error states covered" },
-              { title: "Statement totals reconcile", criteria: "running balance matches invoices minus payments for the range" },
-              { title: "Verification pass", criteria: "tester confirms page renders with live API data" },
-            ],
-            note: "Shared journal case: statements.",
-          });
+        if (/propose the split|propose security split/i.test(msg.text)) {
+          sendState("items_proposed", "work-items", /security/.test(msg.text) ? "security-plan" : "statements-split");
           return; // suspended on the items decision
         }
         // Agent teams (OPE-97): the staffing gate — the lead proposes a roster and
         // SUSPENDS until the team_response verdict arrives.
         if (/staff the team/i.test(msg.text)) {
-          send("team_proposed", {
-            members: [
-              { persona: "swe-worker", name: "nia", model: "anthropic:claude-opus-4-8", reason: "implementation" },
-              { persona: "design-worker", name: "webb", reason: "UI polish" },
-              { persona: "test-worker", name: "checks", reason: "verifies against acceptance criteria" },
-            ],
-            enable_chat: false,
-            note: "Three workers cover the plan; checks verifies before anything closes.",
-          });
+          sendState("team_proposed", "team-request", "model-fallback");
           return; // suspended on the staffing decision
+        }
+        // Spec §11.6: the lead asks to give a worker a connector after staffing, or a
+        // coworker asks for a service to be connected — both suspend on the verdict.
+        if (/grant nia github/i.test(msg.text)) {
+          sendState("connector_requested", "connector-request", "grant-github");
+          return;
+        }
+        if (/connect linear/i.test(msg.text)) {
+          sendState("connector_requested", "connector-request", "connect-linear");
+          return;
         }
         // Agent teams (OPE-96): a decomposition turn — the plan was approved in
         // conversation (plan-approval flow); the agent files the items and the
@@ -808,48 +798,29 @@ export async function mockApi(page: import("@playwright/test").Page) {
         // — an older sidecar, or any surface that forgets the field. Must render NOT
         // installable, never a guessed Install offer.
         if (/request an unpinned tool/i.test(msg.text)) {
-          send("tool_requested", {
-            name: "somescanner",
-            reason: "scan the Terraform for misconfigurations",
-          });
+          sendState("tool_requested", "tool-request", "not-installable");
           return; // suspended on the tool request
         }
         // OPE-85: the agent hits a missing scanner and asks instead of skipping the check.
         if (/scan for secrets/i.test(msg.text)) {
-          send("tool_requested", {
-            name: "gitleaks",
-            reason: "scan the git history for committed secrets",
-            installable: true,
-            version: "8.30.1",
-            summary: "scans git history and the working tree for committed secrets",
-            source: "github.com/gitleaks",
-          });
+          sendState("tool_requested", "tool-request", "installable");
           return; // suspended on the tool request
         }
         // §35 compact row: a routine workspace write (content rides in the args).
         if (/write a file/i.test(msg.text)) {
           pendingTool = "write_file";
-          const args = {
-            path: "src/fetch_data.py",
-            content: "import json\nimport urllib.request\n\ncompanies = [\"NVDA\", \"AMD\"]\nprint(len(companies))\ndone = True",
-          };
+          const args = statePayload("approval", "write-file").arguments;
           send("tool_proposed", { name: "write_file", arguments: args });
-          send("permission_required", { name: "write_file", arguments: args, reason: "" });
+          sendState("permission_required", "approval", "write-file");
           return; // suspended on the approval
         }
         // A one-paragraph digest with NO newlines — the owner-repro shape that once
         // ballooned the card to full-transcript height (char clamp, 2026-07-15).
         if (/post the long digest/i.test(msg.text)) {
           pendingTool = "send_message";
-          const args = {
-            target: "slack:T1/C1",
-            text:
-              "aisuite — last 24 hours of work (through Jul 15): 5 PRs merged covering chat-completion streaming with unified chunks across providers, multimodal input conversion, Slack collaboration improvements, human attribution for outbound posts, and repo-wide formatting. ".repeat(
-                6,
-              ),
-          };
+          const args = statePayload("approval", "long-message").arguments;
           send("tool_proposed", { name: "send_message", arguments: args });
-          send("permission_required", { name: "send_message", arguments: args, reason: "", category: "messaging" });
+          sendState("permission_required", "approval", "long-message");
           return;
         }
         // Standing scoped approvals (§25): an eligible connector-ish write — the event
@@ -860,13 +831,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
             name: "send_message",
             arguments: { target: "slack:T1/C1", text: "Weekly digest ready" },
           });
-          send("permission_required", {
-            name: "send_message",
-            arguments: { target: "slack:T1/C1", text: "Weekly digest ready" },
-            reason: "",
-            category: "messaging",
-            standing_target: "slack:T1/C1",
-          });
+          sendState("permission_required", "approval", "automation-run");
           return;
         }
         // §25 consent card: the agent proposes the automation's permission set on the
@@ -874,20 +839,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
         if (/create an automation/i.test(msg.text)) {
           pendingTool = "create_scheduled_task";
           send("tool_proposed", { name: "create_scheduled_task", arguments: {} });
-          send("permission_required", {
-            name: "create_scheduled_task",
-            arguments: {
-              title: "Weekly digest",
-              instructions: "Summarize the week and post it.",
-              cron: "0 9 * * 1",
-              permissions: [
-                { tool: "send_message", target: "slack:T1/C1", access: "write" },
-                { tool: "github_list_commits", target: "rohit/agent-platform", access: "read" },
-              ],
-            },
-            reason: "",
-            category: "automation",
-          });
+          sendState("permission_required", "approval", "automation-consent");
           return;
         }
         // A reasoning model's turn: thinking deltas tick in slowly, then the answer —
@@ -1043,14 +995,43 @@ export async function mockApi(page: import("@playwright/test").Page) {
                 status,
                 current_item: item,
               },
+              // Persisted per-model totals (spec §5) — nia has worked, the others not yet.
+              usage:
+                actor === "nia"
+                  ? { "anthropic:claude-opus-4-8": { input: 20_000, output: 4_000, cache_read: 0, cache_write: 0, turns: 3 } }
+                  : {},
             });
           }
           send("assistant_message", {
-            text: "Team created — nia, webb and checks are standing by. Assigning items now.",
+            // Echo the human's per-worker decisions so the spec can see them arrive.
+            text:
+              "Team created — " +
+              (Array.isArray(msg.members) && msg.members.length
+                ? msg.members
+                    .map(
+                      (m: any) =>
+                        `${m.name} (${(m.connectors || []).join(", ") || "no connectors"})`,
+                    )
+                    .join(", ")
+                : "nia, webb and checks are standing by") +
+              ". Assigning items now." +
+              // …and the per-worker model picks, when the card sent them.
+              (Array.isArray(msg.members) && msg.members.some((m: any) => m.model)
+                ? " Models — " +
+                  msg.members.map((m: any) => `${m.name}: ${m.model || "default"}`).join(", ") +
+                  "."
+                : ""),
           });
         } else {
           send("assistant_message", { text: "Understood — tell me how to change the roster." });
         }
+        send("turn_done");
+      } else if (msg.type === "connector_response") {
+        send("assistant_message", {
+          text: msg.approved
+            ? "Granted — nia can push the branch now."
+            : "Understood — I'll route that step through myself.",
+        });
         send("turn_done");
       } else if (msg.type === "tool_response") {
         // Either way the turn continues — the point of the contract is that declining
@@ -1081,6 +1062,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
         if (msg.mode === "auto-approve" && !anyWs.__modeNoticeShown) {
           anyWs.__modeNoticeShown = true;
           send("mode_notice", {
+            mode: msg.mode,
             title: "Auto-approve is on.",
             text:
               "Auto-approve uses a model to let routine actions through without asking; " +
@@ -1095,7 +1077,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
             "bypass-approvals": "Bypass approvals",
             "auto-approve": "Auto-approve",
           };
-          send("mode_notice", { text: `${labels[msg.mode] || msg.mode} is on.` });
+          send("mode_notice", { text: `${labels[msg.mode] || msg.mode} is on.`, mode: msg.mode });
         }
       } else if (msg.type === "set_model") {
         // Mid-session switch: the server applies it and broadcasts the persisted marker.
@@ -1114,6 +1096,13 @@ export async function mockApi(page: import("@playwright/test").Page) {
     });
   });
 
+  await page.route("**/v1/capabilities", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ mode: "desktop" }),
+    }),
+  );
   await page.route("**/v1/**", async (route) => {
     const req = route.request();
     const p = new URL(req.url()).pathname;
@@ -1132,6 +1121,39 @@ export async function mockApi(page: import("@playwright/test").Page) {
         return json({ ok: true });
       }
       return json(connections);
+    }
+    // Remote homes (P1b): machines list + arming.
+    if (p === "/v1/machines" && m === "GET") {
+      return json({ machines, armed: enrollment.armed });
+    }
+    if (/^\/v1\/machines\/[^/]+$/.test(p) && m === "PATCH") {
+      const id = p.split("/").pop();
+      const b = req.postDataJSON() || {};
+      const row = machines.find((x) => x.id === id);
+      if (!row) return json({ error: "unknown machine" }, 404);
+      if (machines.some((x) => x.id !== id && x.name === b.name))
+        return json({ error: `a machine named '${b.name}' already exists` }, 409);
+      row.name = b.name;
+      return json({ machine: { id: row.id, name: row.name } });
+    }
+    if (/^\/v1\/machines\/[^/]+$/.test(p) && m === "DELETE") {
+      const id = p.split("/").pop();
+      const row = machines.find((x) => x.id === id);
+      if (!row) return json({ error: "unknown machine" }, 404);
+      if (row.connected)
+        return json({ error: "machine is connected; it must leave (or go offline) first" }, 409);
+      machines.splice(machines.indexOf(row), 1);
+      return json({ removed: id });
+    }
+    if (p === "/v1/remote/arm" && m === "POST") {
+      enrollment.armed = true;
+      enrollment.join_url = "http://127.0.0.1:9787/j/e2e-token";
+      enrollment.expires_at = Date.now() / 1000 + 600;
+      return json({ join_url: enrollment.join_url, expires_at: enrollment.expires_at, ttl_seconds: 600 });
+    }
+    if (p === "/v1/remote/arm" && m === "DELETE") {
+      enrollment.armed = false;
+      return json({ armed: false });
     }
     // UX-044 project bindings: stateful per-run so specs can bind/unbind/name.
     if (/\/v1\/sessions\/[^/]+\/project-menu$/.test(p)) {
@@ -2221,8 +2243,18 @@ export async function mockApi(page: import("@playwright/test").Page) {
         });
       const link = raw.match(/slack\.com\/archives\/([A-Za-z0-9]+)/);
       const channel = link ? `slack:${link[1].toUpperCase()}` : raw;
+      // Cloud-first claim (one session across all machines answers a source): CHELD is
+      // held by another session until the caller moves it.
+      if (channel === "slack:CHELD" && !b.move)
+        return json({
+          ok: false,
+          error: "held",
+          held_by: { session_id: "s-other", title: "Release watcher", machine_id: "m-cloud-vm", source: channel },
+          also: [],
+          move_allowed: true,
+        });
       subscriptions.push({ session_id: b.session_id, session_title: "", agent: "", channel, routing_target: null, collision: false });
-      return json({ ok: true, channel });
+      return json({ ok: true, channel, registered: channel === "slack:CHELD" });
     }
     if (p.endsWith("/v1/subscriptions/remove") && m === "POST") {
       const b = req.postDataJSON();
@@ -2255,6 +2287,176 @@ export async function seedSessionMessages(
       body: JSON.stringify({ messages }),
     }),
   );
+}
+
+/** Seed the machines list for one spec (remote homes, UX-045). Registers LATER
+ * routes (later routes win) with their own closure state, so rename/remove/arm
+ * round-trip against the seeded rows; returns a handle whose `join()` pushes a
+ * newly-"joined" box, the way a real enrollment appears mid-poll. */
+export async function seedMachines(
+  page: Page,
+  rows: Record<string, unknown>[],
+  remoteSessions: Record<string, Record<string, unknown>[]> = {},
+  // Cached transcripts keyed "machineId/sessionId" — served by the controller-
+  // view messages endpoint whether the machine is online (live) or not (cached).
+  remoteTranscripts: Record<string, Record<string, unknown>[]> = {},
+  remoteInboxItems: Record<string, any[]> = {},
+): Promise<{ join: (row: Record<string, unknown>) => void }> {
+  const machines = rows.map((r) => ({ ...r }));
+  await page.route(/\/v1\/machines\/[^/]+\/sessions\/[^/]+\/messages$/, (route) => {
+    const parts = new URL(route.request().url()).pathname.split("/");
+    const mid = parts[3];
+    const sid = parts[5];
+    const row = machines.find((x: any) => x.id === mid);
+    const cached = remoteTranscripts[`${mid}/${sid}`];
+    return route.fulfill({
+      status: row ? 200 : 404,
+      contentType: "application/json",
+      body: JSON.stringify(
+        row
+          ? {
+              messages: cached ?? [],
+              live: !!(row as any).connected,
+              cached: !!cached,
+            }
+          : { error: "unknown machine" },
+      ),
+    });
+  });
+  // Controller-view per-machine session lists (getAllSessions fans out over ALL
+  // machines): live rows for a connected machine, the stored snapshot
+  // (live:false) for an offline one — greyed, never vanished.
+  await page.route(/\/v1\/machines\/[^/]+\/sessions$/, (route) => {
+    const mid = new URL(route.request().url()).pathname.split("/")[3];
+    const row = machines.find((x: any) => x.id === mid);
+    return route.fulfill({
+      status: row ? 200 : 404,
+      contentType: "application/json",
+      body: JSON.stringify(
+        row
+          ? { sessions: remoteSessions[mid] ?? [], live: !!(row as any).connected }
+          : { error: "unknown machine" },
+      ),
+    });
+  });
+  // Proxied transcripts: reopening a remote session starts blank, like the shared mock.
+  await page.route(/\/v1\/machines\/[^/]+\/p\/v1\/sessions\/[^/]+\/messages$/, (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ messages: [] }) }),
+  );
+  const enrollment = { armed: false };
+  const json = (route: any, body: unknown, status = 200) =>
+    route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+  await page.route("**/v1/machines", (route) =>
+    json(route, { machines, armed: enrollment.armed }),
+  );
+  await page.route(/\/v1\/machines\/[^/]+$/, (route) => {
+    const req = route.request();
+    const id = new URL(req.url()).pathname.split("/").pop();
+    const row = machines.find((x: any) => x.id === id);
+    if (!row) return json(route, { error: "unknown machine" }, 404);
+    if (req.method() === "PATCH") {
+      const b = req.postDataJSON() || {};
+      if (machines.some((x: any) => x.id !== id && x.name === b.name))
+        return json(route, { error: `a machine named '${b.name}' already exists` }, 409);
+      (row as any).name = b.name;
+      return json(route, { machine: { id, name: b.name } });
+    }
+    if (req.method() === "DELETE") {
+      if ((row as any).connected)
+        return json(route, { error: "machine is connected; it must leave (or go offline) first" }, 409);
+      machines.splice(machines.indexOf(row), 1);
+      return json(route, { removed: id });
+    }
+    return route.fallback();
+  });
+  await page.route("**/v1/remote/arm", (route) => {
+    if (route.request().method() === "DELETE") {
+      enrollment.armed = false;
+      return json(route, { armed: false });
+    }
+    enrollment.armed = true;
+    return json(route, {
+      join_url: "http://127.0.0.1:9787/j/e2e-token",
+      expires_at: Date.now() / 1000 + 600,
+      ttl_seconds: 600,
+    });
+  });
+  // Keys wallet: names-only listing + per-machine deployed-profiles ledger.
+  await page.route("**/v1/wallet", (route) =>
+    json(route, { profiles: [{ profile: "provider:openai", type: null }] }),
+  );
+  const deployed: Record<string, Set<string>> = {};
+  await page.route(/\/v1\/machines\/[^/]+\/secrets$/, (route) => {
+    const req = route.request();
+    const mid = new URL(req.url()).pathname.split("/")[3];
+    if (!machines.some((x: any) => x.id === mid))
+      return json(route, { error: "unknown machine" }, 404);
+    const set = (deployed[mid] ||= new Set());
+    if (req.method() === "POST") {
+      const names: string[] = req.postDataJSON()?.profiles ?? [];
+      names.forEach((n) => set.add(n));
+      return json(route, { ok: true, deployed: names });
+    }
+    if (req.method() === "DELETE") {
+      const names: string[] = req.postDataJSON()?.profiles ?? [];
+      names.forEach((n) => set.delete(n));
+      return json(route, { ok: true, revoked: names });
+    }
+    return json(route, {
+      secrets: [...set].map((profile) => ({
+        profile,
+        deployed_at: Date.now() / 1000,
+        stale: false,
+        missing_from_wallet: false,
+      })),
+    });
+  });
+  // Aggregated Inbox: each machine's parked items via the proxy, stateful so a
+  // resolve routed to the machine clears it.
+  const remoteInbox: Record<string, any[]> = { ...remoteInboxItems };
+  await page.route(/\/v1\/machines\/[^/]+\/p\/v1\/inbox\?/, (route) => {
+    const mid = new URL(route.request().url()).pathname.split("/")[3];
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: (remoteInbox[mid] ?? []).filter((i) => i.state === "pending") }),
+    });
+  });
+  await page.route(/\/v1\/machines\/[^/]+\/p\/v1\/inbox\/[^/]+\/resolve$/, (route) => {
+    const parts = new URL(route.request().url()).pathname.split("/");
+    const mid = parts[3];
+    const itemId = parts[7];
+    const item = (remoteInbox[mid] ?? []).find((i) => i.id === itemId);
+    if (item) item.state = "resolved";
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true }),
+    });
+  });
+  // Remote folder flows: the box's recents, path validation, and temp dirs.
+  await page.route(/\/v1\/machines\/[^/]+\/p\/v1\/workspaces\/recent$/, (route) =>
+    json(route, { workspaces: [] }),
+  );
+  await page.route(/\/v1\/machines\/[^/]+\/p\/v1\/workspaces\/open$/, (route) => {
+    const b = route.request().postDataJSON() || {};
+    return String(b.path).startsWith("/")
+      ? json(route, { ok: true, path: b.path, git_branch: null })
+      : json(route, { ok: false, error: "no such folder on this machine" });
+  });
+  await page.route(/\/v1\/machines\/[^/]+\/p\/v1\/workspaces\/temp$/, (route) =>
+    json(route, { ok: true, path: "/home/ow/OpenWorker/tmp-e2e", git: true }),
+  );
+  // Machine-scoped settings (the proxied /v1/settings the runs-on picker loads).
+  await page.route(/\/v1\/machines\/[^/]+\/p\/v1\/settings$/, (route) =>
+    json(route, {
+      model: "ollama:qwen3-coder:30b",
+      models: ["ollama:qwen3-coder:30b"],
+      model_labels: { "ollama:qwen3-coder:30b": "qwen3-coder:30b · Ollama" },
+      model_ready: true,
+    }),
+  );
+  return { join: (row) => void machines.push({ ...row }) };
 }
 
 // A `test` whose page has the API mocked before navigation.

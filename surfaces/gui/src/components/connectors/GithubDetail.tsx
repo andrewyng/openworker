@@ -26,7 +26,7 @@ import { FOOT, GRP, GRP_H, PILL_ACCENT, PILL_LINE, ROW, TAG_WARN, XBTN } from ".
 // thread, which the GUI can't map back to an installation). Adding an
 // installation goes through the ONE entry point: header button → modal.
 
-const LABEL = "text-[13px] text-muted w-24 shrink-0";
+const LABEL = "text-ui text-muted w-24 shrink-0";
 
 /** The relay status line, one honest layer at a time (the Slack rule). */
 function relayHealth(gh: GithubStatus | null, t: (k: string) => string): { dot: string; text: string } {
@@ -66,8 +66,8 @@ export function GithubDetail({ c, cloud, onChanged }: DetailProps) {
       <div className="flex items-center gap-3.5 mb-5">
         <ConnectorBadge connector={c} size={44} title="GitHub" />
         <div className="min-w-0 flex-1">
-          <h2 className="text-[20px] font-semibold tracking-tight leading-tight">GitHub</h2>
-          <div className="text-[13px] text-muted flex items-center gap-1.5">
+          <h2 className="text-title font-semibold tracking-tight leading-tight">GitHub</h2>
+          <div className="text-ui text-muted flex items-center gap-1.5">
             {c.connected ? (
               <>
                 <span
@@ -99,7 +99,7 @@ export function GithubDetail({ c, cloud, onChanged }: DetailProps) {
 
       {!c.connected && (
         <div className={GRP}>
-          <div className={ROW + " text-[13px] text-muted"}>
+          <div className={ROW + " text-ui text-muted"}>
             {t("github.setup_blurb")}
             {cloud?.signed_in ? "" : " " + t("github.setup_cloud_note")}
           </div>
@@ -120,7 +120,7 @@ export function GithubDetail({ c, cloud, onChanged }: DetailProps) {
       {/* Manual PAT: request/response tools only — no inbound triggers. */}
       {c.connected && !relay && (
         <div className={GRP} data-testid="github-manual-card">
-          <div className={ROW + " text-[13px] text-muted"}>
+          <div className={ROW + " text-ui text-muted"}>
             {t("github.manual_card_note")}
           </div>
         </div>
@@ -147,6 +147,7 @@ export function GithubDetail({ c, cloud, onChanged }: DetailProps) {
           c={c}
           cloud={cloud}
           title={t("github.add_installation_title")}
+          githubFlow="install"
           onClose={() => setAdding(false)}
           onChanged={changed}
         />
@@ -196,7 +197,7 @@ function InstallationGroup({
       <div className={GRP}>
         {empty ? (
           <div className={ROW}>
-            <span className="min-w-0 flex-1 text-[13px] text-muted">
+            <span className="min-w-0 flex-1 text-ui text-muted">
               {t("github.empty_parked_note")}
             </span>
             <DisconnectBtn id={inst.installation_id} busy={busy} onClick={disconnect} />
@@ -226,7 +227,7 @@ function DisconnectBtn({ id, busy, onClick }: { id: string; busy: boolean; onCli
   const { t } = useTranslation();
   return (
     <button
-      className="text-[13px] text-danger/80 hover:text-danger shrink-0"
+      className="text-ui text-danger/80 hover:text-danger shrink-0"
       data-testid={`disconnect-install-${id}`}
       title={t("github.disconnect_install_title")}
       onClick={onClick}
@@ -252,12 +253,12 @@ function PeopleRow({
       <span className={LABEL}>{t("connector.people")}</span>
       <span className="min-w-0 flex-1 flex flex-wrap items-center gap-1.5">
         {allowed.length === 0 && (
-          <span className="text-[12px] text-faint">{t("github.nobody_yet")}</span>
+          <span className="text-meta text-faint">{t("github.nobody_yet")}</span>
         )}
         {allowed.map((login) => (
           <span
             key={login}
-            className="inline-flex items-center gap-1.5 pl-2 pr-2 py-0.5 rounded-full bg-paper border border-line text-[13px]"
+            className="inline-flex items-center gap-1.5 pl-2 pr-2 py-0.5 rounded-full bg-paper border border-line text-ui"
           >
             {/* GitHub logins ARE the readable identity — no resolution needed. */}
             @{login}
@@ -285,9 +286,9 @@ function WaitingRow({ m, onChanged }: { m: ParkedMessage; onChanged: () => void 
     <div className={ROW + " bg-warnSoft/25"} data-testid={`waiting-${m.id}`}>
       <span className={LABEL}>{t("connector.waiting")}</span>
       <span className="min-w-0 flex-1">
-        <span className="font-medium text-[13px]">@{m.user_name || m.user_id}</span>{" "}
-        <span className="text-[13px] text-muted">{t("connector.in_channel", { name: m.chat_name || m.chat_id })}</span>
-        <span className="block text-[13px] text-muted truncate">“{m.text}”</span>
+        <span className="font-medium text-ui">@{m.user_name || m.user_id}</span>{" "}
+        <span className="text-ui text-muted">{t("connector.in_channel", { name: m.chat_name || m.chat_id })}</span>
+        <span className="block text-ui text-muted truncate">“{m.text}”</span>
       </span>
       <button
         className={PILL_ACCENT + " !py-1"}
@@ -319,7 +320,7 @@ function ListeningRows({ subs, onChanged }: { subs: Subscription[]; onChanged: (
       <span className={LABEL}>{t("connector.listening")}</span>
       <span className="min-w-0 flex-1 space-y-1">
         {subs.map((s) => (
-          <span key={s.session_id + s.channel} className="flex items-center gap-2 text-[13px]">
+          <span key={s.session_id + s.channel} className="flex items-center gap-2 text-ui">
             <span className="font-medium truncate" title={s.session_id}>
               {s.session_title || s.session_id}
             </span>

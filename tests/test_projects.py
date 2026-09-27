@@ -143,6 +143,21 @@ class TestMigration:
         assert store.rekey_space("/old", "/new") is False
         assert store.event_count("/old") == 1  # dormant, untouched
 
+    def test_board_rekey_leaves_lookalike_space_cursors_alone(self, tmp_path):
+        """`_` is ordinary in a path but a LIKE wildcard: a neighbouring space
+        whose key differs only there must keep its consumed position."""
+        store = TeamStore(tmp_path / "b.db")
+        lead = Actor(id="lead", role=Role.LEAD)
+        old, other = "/w/my_app", "/w/myXapp"
+        store.create_item(old, lead, title="one", criteria="c")
+        store.create_item(other, lead, title="two", criteria="c")
+        store.consume_feed(old, "worker", 1)
+        store.consume_feed(other, "worker", 2)
+
+        assert store.rekey_space(old, "git:acme/app") is True
+        assert store._cursor("feed:worker:git:acme/app") == 1
+        assert store._cursor(f"feed:worker:{other}") == 2
+
 
 class TestResolvers:
     def test_binding_beats_derivation(self, tmp_path):

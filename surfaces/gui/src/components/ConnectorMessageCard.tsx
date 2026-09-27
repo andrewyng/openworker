@@ -79,22 +79,22 @@ export function ConnectorMessageCard({
       >
         <ConnectorBadge connector={{ logo: source.connector, brand_color: color }} size={20} title={entry.label} />
         {showIds ? (
-          <span className="font-mono text-[12px] text-faint">{ids}</span>
+          <span className="font-mono text-meta text-faint">{ids}</span>
         ) : (
           <>
-            <span className="text-[13px] font-semibold" style={{ color: "var(--brand)" }}>
+            <span className="text-ui font-semibold" style={{ color: "var(--brand)" }}>
               {source.channel_name}
             </span>
             <span className="text-faint">·</span>
-            <span className="text-[13px] font-medium">{source.sender_name}</span>
-            <span className="text-[11px] text-faint ml-0.5">{t("inbox.connector_via", { label: entry.label })}</span>
+            <span className="text-ui font-medium">{source.sender_name}</span>
+            <span className="text-label text-faint ml-0.5">{t("inbox.connector_via", { label: entry.label })}</span>
           </>
         )}
-        <time className="ml-auto text-[11px] text-faint whitespace-nowrap" title={clockTime(source.ts)}>
+        <time className="ml-auto text-label text-faint whitespace-nowrap" title={clockTime(source.ts)}>
           {relativeTime(source.ts, t)}
         </time>
       </header>
-      <div className="px-3.5 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap">{source.text}</div>
+      <div className="px-3.5 py-2.5 text-body leading-relaxed whitespace-pre-wrap">{source.text}</div>
     </article>
   );
 }

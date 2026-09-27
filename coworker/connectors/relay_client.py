@@ -91,6 +91,7 @@ class RelayHub:
         self._connections = 0  # total successful opens; reconnects == connections-1
         self._connected = False  # the desktop↔relay socket is open RIGHT NOW
         self._dispatched = 0  # frames dispatched (observable for tests)
+        self._tasks: set[asyncio.Task] = set()  # in-flight frame handlers
         self.last_error: str = ""  # last connect/reconnect failure ("" once healthy)
         self._progress = asyncio.Event()
 
@@ -125,6 +126,15 @@ class RelayHub:
         self._task = asyncio.create_task(self._run())
         return True
 
+    async def _dispatch(self, handler, frame: dict) -> None:
+        try:
+            await handler(frame)
+        except Exception:
+            logger.exception("relay frame dispatch failed")
+        finally:
+            self._dispatched += 1
+            self._progress.set()
+
     async def _run(self) -> None:
         """Read frames; on a dropped connection, reconnect (fresh transport) —
         the relay's own watchdog analogue on the desktop side."""
@@ -137,12 +147,16 @@ class RelayHub:
             if frame is not None:
                 handler = self._handlers.get(frame.get("provider") or "slack")
                 if handler is not None:
-                    try:
-                        await handler(frame)
-                    except Exception:
-                        logger.exception("relay frame dispatch failed")
-                self._dispatched += 1
-                self._progress.set()
+                    # Each frame runs as its own task: a frame that starts a
+                    # session turn (minutes) must not hold the next frame
+                    # back (drill finding 2026-09-04: a merge sat behind a
+                    # review). Follow-ups to a busy session steer into it.
+                    task = asyncio.create_task(self._dispatch(handler, frame))
+                    self._tasks.add(task)
+                    task.add_done_callback(self._tasks.discard)
+                else:
+                    self._dispatched += 1
+                    self._progress.set()
                 continue
             # Connection closed → reconnect unless we're shutting down.
             self._connected = False
@@ -204,10 +218,10 @@ class RelayHub:
                 )
             try:
                 await asyncio.wait_for(self._progress.wait(), timeout=remaining)
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError as exc:
                 raise TimeoutError(
                     f"only {self._dispatched} frames dispatched (< {at_least})"
-                )
+                ) from exc
 
     # -- default transport ---------------------------------------------------
     def _default_transport_factory(self) -> RelayTransport:
@@ -317,16 +331,26 @@ class SlackRelayAdapter(BasePlatformAdapter):
 
     async def _on_event(self, frame: dict) -> None:
         await self._dispatch_slack_event(
-            frame.get("team_id", ""), frame.get("event") or {}
+            frame.get("team_id", ""),
+            frame.get("event") or {},
+            target_session_id=str(frame.get("target_session_id") or ""),
+            mention_persona=str(frame.get("mention_persona") or ""),
         )
 
-    async def _dispatch_slack_event(self, team_id: str, event: dict) -> None:
+    async def _dispatch_slack_event(
+        self, team_id: str, event: dict, *, target_session_id: str = "", mention_persona: str = ""
+    ) -> None:
         """Map a raw Slack event → MessageEvent, resolve display names via the
-        per-team bot token, team-qualify the reply handle, and dispatch."""
+        per-team bot token, team-qualify the reply handle, and dispatch.
+        `target_session_id` = the broker's subscribed responder, when any."""
         self.last_event_at = time.time()
         mapped = slack_event_to_event(event, self._bot_user_id(team_id))
         if mapped is None:
             return
+        if target_session_id:
+            mapped.target_session_id = target_session_id
+        if mention_persona:
+            mapped.mention_persona = mention_persona
         channel = mapped.source.chat_id  # bare channel id before qualification
         # Resolve friendly names with THIS workspace's bot token (cached per team),
         # mirroring the Socket-Mode adapter — so cards read "@OpenWorker"/"Rohit"/"#ocw-test"

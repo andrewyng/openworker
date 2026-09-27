@@ -16,7 +16,7 @@ export function CloudSignInInline({ blurb }: { blurb?: string }) {
   return (
     <div className="space-y-1.5">
       <button
-        className="w-full px-3 py-2 rounded-lg border border-accent text-accent text-[13px] font-medium hover:bg-accentSoft/40"
+        className="w-full px-3 py-2 rounded-lg border border-accent text-accent text-ui font-medium hover:bg-accentSoft/40"
         data-testid="inline-cloud-sign-in"
         onClick={async () => {
           setWaiting(true);
@@ -30,8 +30,8 @@ export function CloudSignInInline({ blurb }: { blurb?: string }) {
       >
         {waiting ? t("cloud.check_browser") : t("cloud.sign_in")}
       </button>
-      <div className="text-[12px] text-faint">
-        {blurb || "Sign-in unlocks one-click connects — or switch to Manual, which works without it."}
+      <div className="text-meta text-faint">
+        {blurb || t("misc.cloud_signin.blurb")}
       </div>
     </div>
   );
@@ -44,7 +44,7 @@ export function CloudStatusPending() {
   const { t } = useTranslation();
   return (
     <div
-      className="text-[12px] text-faint py-2 text-center"
+      className="text-meta text-faint py-2 text-center"
       data-testid="cloud-status-pending"
     >
       {t("cloud.checking")}

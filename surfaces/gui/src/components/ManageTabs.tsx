@@ -22,6 +22,7 @@ import {
 import { CloudSignInInline, CloudStatusPending } from "./connectors/CloudSignIn";
 import { ModelChecklist } from "./ModelChecklist";
 import { ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
+import { WalletChips } from "./WalletChips";
 
 // "2h ago"-style label for the providers' Last-used line (null when never used).
 const relTime = (epoch?: number | null): string | null => {
@@ -39,10 +40,10 @@ const relTime = (epoch?: number | null): string | null => {
 // Shared tab bodies for the Settings and Integrations pages (the old top-tab ManageModal was retired
 // when Settings/Activity became full-page surfaces): ModelsTab → Settings ▸ Models; ConnectorsTab →
 // Integrations ▸ Connectors (the MCP tab retired into the Connectors page, UX-034).
-const SEC_H = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
+const SEC_H = "text-label text-faint font-medium";
 const BTN_BORDERED =
-  "text-[13px] px-3 py-1.5 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
-const BTN_ACCENT = "text-[13px] px-3 py-1.5 rounded-lg bg-accent text-white shrink-0 disabled:opacity-50";
+  "text-ui px-3 py-1.5 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
+const BTN_ACCENT = "text-ui px-3 py-1.5 rounded-lg bg-accent text-white shrink-0 disabled:opacity-50";
 
 /** Two-letter initials for a chip/avatar (first+last word, else first two chars). */
 function initials(name: string): string {
@@ -66,7 +67,7 @@ export function ModelsTab() {
     refreshSettings();
   }, []);
 
-  if (!settings) return <div className="text-[13px] text-muted">{t("manage.loading")}</div>;
+  if (!settings) return <div className="text-ui text-muted">{t("manage.loading")}</div>;
 
   const info = ps.info;
   const knownNames = ps.providers.map((p) => p.name);
@@ -88,7 +89,7 @@ export function ModelsTab() {
         footer={
           ps.credentialed ? (
             <button
-              className="text-[13px] text-danger/80 hover:text-danger hover:underline underline-offset-2"
+              className="text-ui text-danger/80 hover:text-danger hover:underline underline-offset-2"
               data-testid="set-remove-key"
               onClick={() => {
                 if (window.confirm(t("manage.remove_key_confirm", { title: info?.title || "" }))) ps.removeKey();
@@ -101,15 +102,20 @@ export function ModelsTab() {
       />
 
       {ps.sel === "openai" && settings.source === "env" && (
-        <p className="text-[12px] text-muted mt-3 leading-relaxed">
+        <p className="text-meta text-muted mt-3 leading-relaxed">
           {t("manage.openai_env_help")}
         </p>
       )}
 
+      {/* Keys wallet: once a machine is enrolled, a provider with a STORED key can
+          deploy it (sealed; the machine owns its copy). Keyless providers (Ollama)
+          have nothing in the wallet — no row. */}
+      {ps.credentialed && ps.sel && <WalletChips profiles={[`provider:${ps.sel}`]} />}
+
       {info?.configured ? (
         <div className="mt-6">
           <div className={SEC_H + " mb-1.5"}>{t("manage.models")}</div>
-          <p className="text-[12px] text-muted mb-2.5 leading-relaxed">
+          <p className="text-meta text-muted mb-2.5 leading-relaxed">
             {t("manage.models_help")}
           </p>
           <ModelChecklist
@@ -128,7 +134,7 @@ export function ModelsTab() {
         (info?.suggested_models?.length || 0) > 0 && (
           <div className="mt-6" data-testid="model-preview">
             <div className={SEC_H + " mb-1.5"}>{t("manage.included_models")}</div>
-            <p className="text-[12px] text-muted mb-2.5 leading-relaxed">
+            <p className="text-meta text-muted mb-2.5 leading-relaxed">
               {t("manage.included_models_help")}
             </p>
             <div className="space-y-1">
@@ -137,7 +143,7 @@ export function ModelsTab() {
                 return (
                   <div
                     key={m}
-                    className="px-2.5 py-1.5 rounded-lg border border-line bg-paper text-[13px] text-muted"
+                    className="px-2.5 py-1.5 rounded-lg border border-line bg-paper text-ui text-muted"
                     title={full}
                   >
                     {settings.model_labels?.[full] || m}
@@ -177,7 +183,7 @@ function ComposerPickerCard({
   return (
     <div className="mt-6" data-testid="composer-picker">
       <div className={SEC_H + " mb-1.5"}>{t("manage.composer_picker_title")}</div>
-      <p className="text-[12px] text-muted mb-2.5 leading-relaxed">
+      <p className="text-meta text-muted mb-2.5 leading-relaxed">
         {t("manage.composer_picker_help")}
       </p>
       <div className="mlist">
@@ -197,7 +203,7 @@ function ComposerPickerCard({
                   {settings.model_labels?.[id] || id}
                 </span>
               </label>
-              <span className="text-[11px] text-faint mr-2 shrink-0">{tag(id)}</span>
+              <span className="text-label text-faint mr-2 shrink-0">{tag(id)}</span>
               {isDefault ? (
                 <span className="mlist-default">{t("models.default_badge")}</span>
               ) : (
@@ -253,15 +259,15 @@ export function UnauthorizedBlock({
       <div className="space-y-2">
         {items.map((m) => (
           <div key={m.id} className="rounded-xl border border-line bg-paper p-2.5">
-            <div className="flex items-center gap-2 text-[12px] text-muted">
+            <div className="flex items-center gap-2 text-meta text-muted">
               <span className="font-medium text-ink">{m.user_name || m.user_id}</span>
               <span>{t("manage.parked_in", { chat: m.chat_name || m.chat_id })}</span>
               <span className="ml-auto shrink-0">{relTime(m.ts) || ""}</span>
             </div>
-            <div className="text-[13px] mt-1 break-words">{m.text}</div>
+            <div className="text-ui mt-1 break-words">{m.text}</div>
             <div className="flex items-center gap-1.5 mt-2">
               <button
-                className="text-[12px] px-2 py-1 rounded-md bg-accent text-white"
+                className="text-meta px-2 py-1 rounded-md bg-accent text-white"
                 data-testid={`parked-allow-deliver-${m.id}`}
                 title={t("manage.parked_allow_deliver_tip")}
                 onClick={() => act(m.id, "allow_deliver")}
@@ -277,7 +283,7 @@ export function UnauthorizedBlock({
                 {t("manage.parked_allow_only")}
               </button>
               <button
-                className="text-[12px] px-2 py-1 rounded-md text-faint hover:text-danger"
+                className="text-meta px-2 py-1 rounded-md text-faint hover:text-danger"
                 data-testid={`parked-dismiss-${m.id}`}
                 title={t("manage.parked_dismiss_tip")}
                 onClick={() => act(m.id, "dismiss")}
@@ -309,13 +315,13 @@ export function ListeningSessionsBlock({ c }: { c: Connector }) {
     <div className="border-t border-line px-3.5 py-3" data-testid={`listening-${c.name}`}>
       <div className={SEC_H + " mb-2"}>{t("manage.listening_title", { title: c.title, n: mine.length })}</div>
       {mine.length === 0 ? (
-        <div className="text-[12px] text-faint">
+        <div className="text-meta text-faint">
           {t("manage.listening_empty")}
         </div>
       ) : (
         <div className="space-y-1.5">
           {mine.map((s) => (
-            <div className="flex items-center gap-2 text-[13px]" key={s.session_id + s.channel}>
+            <div className="flex items-center gap-2 text-ui" key={s.session_id + s.channel}>
               <span className="min-w-0 truncate" title={s.session_id}>
                 {s.session_title || s.session_id}
                 {s.agent ? <span className="text-faint"> · {s.agent}</span> : null}
@@ -372,12 +378,12 @@ export function AllowlistBlock({
         <div className={SEC_H + " mb-2"}>{t("manage.allowed_to_message")}</div>
         <div className="flex flex-wrap gap-1.5">
           {allowedUsers.length === 0 && (
-            <span className="text-[12px] text-faint">{t("manage.allowed_empty")}</span>
+            <span className="text-meta text-faint">{t("manage.allowed_empty")}</span>
           )}
           {allowedUsers.map((u) => (
             <span
               key={u}
-              className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-full bg-paper border border-line text-[12px]"
+              className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-full bg-paper border border-line text-meta"
               title={t("manage.id_title", { id: u })}
             >
               <span className="w-4 h-4 rounded-full bg-accentSoft text-accent grid place-items-center text-[9px] font-bold">
@@ -401,11 +407,11 @@ export function AllowlistBlock({
       <div>
         <div className={SEC_H + " mb-2"}>{t("manage.recent_senders")}</div>
         {unknownRecent.length === 0 ? (
-          <div className="text-[12px] text-faint">{t("manage.recent_empty")}</div>
+          <div className="text-meta text-faint">{t("manage.recent_empty")}</div>
         ) : (
           <div className="space-y-1.5">
             {unknownRecent.map((r) => (
-              <div className="flex items-center gap-2 text-[13px]" key={r.user_id}>
+              <div className="flex items-center gap-2 text-ui" key={r.user_id}>
                 <span className="w-5 h-5 rounded-full bg-paper border border-line grid place-items-center text-[9px] font-bold text-muted shrink-0">
                   {initials(r.user_name || "?")}
                 </span>
@@ -413,7 +419,7 @@ export function AllowlistBlock({
                   {r.user_name || t("manage.unknown")} <span className="text-faint">· {r.chat_type}</span>
                 </span>
                 <button
-                  className="ml-auto text-[12px] px-2 py-0.5 rounded-md bg-accent text-white shrink-0"
+                  className="ml-auto text-meta px-2 py-0.5 rounded-md bg-accent text-white shrink-0"
                   onClick={async () => {
                     await allowUser(c.name, r.user_id, teamId);
                     onChanged();
@@ -438,7 +444,7 @@ export function ConnectorTools({ c, onChanged }: { c: Connector; onChanged: () =
   };
   if (!c.tools?.length)
     return (
-      <div className="border-t border-line px-3.5 py-3 text-[13px] text-muted">
+      <div className="border-t border-line px-3.5 py-3 text-ui text-muted">
         {t("manage.connector_no_tools")}
       </div>
     );
@@ -458,11 +464,11 @@ export function ConnectorTools({ c, onChanged }: { c: Connector; onChanged: () =
               onChange={(e) => toggle(tool.name, e.target.checked)}
             />
             <span className="min-w-0">
-              <span className="block text-[13px]">{tool.label}</span>
-              <span className="block text-[12px] text-faint">
+              <span className="block text-ui">{tool.label}</span>
+              <span className="block text-meta text-faint">
                 {t("manage.tool_asks_approval", { name: tool.name, kind: tool.kind })}
               </span>
-              <span className="block text-[12px] text-faint">{tool.description}</span>
+              <span className="block text-meta text-faint">{tool.description}</span>
             </span>
           </label>
         ))}
@@ -528,7 +534,7 @@ export function ConnectSetup({
             {waiting ? t("manage.check_browser") : t("manage.connect_one_click", { title: c.title })}
           </button>
           {c.fields.length > 0 && (
-            <div className="text-[12px] text-faint">{t("manage.or_connect_manually")}</div>
+            <div className="text-meta text-faint">{t("manage.or_connect_manually")}</div>
           )}
         </div>
       )}
@@ -540,11 +546,11 @@ export function ConnectSetup({
             <>
               <button className={BTN_ACCENT + " opacity-50"} disabled data-testid="managed-coming-soon">
                 {t("manage.connect_one_click", { title: c.title })}
-                <span className="ml-2 text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-white/25">
+                <span className="ml-2 text-label font-medium px-1.5 py-0.5 rounded-full bg-white/25">
                   {t("manage.coming_soon")}
                 </span>
               </button>
-              <div className="text-[12px] text-faint">
+              <div className="text-meta text-faint">
                 {t("manage.one_click_coming")}
               </div>
             </>
@@ -562,12 +568,12 @@ export function ConnectSetup({
             <CloudStatusPending />
           )}
           {!c.managed_paused && cloud?.signed_in && (
-            <div className="text-[12px] text-faint">{t("manage.or_connect_manually")}</div>
+            <div className="text-meta text-faint">{t("manage.or_connect_manually")}</div>
           )}
         </div>
       )}
       {c.instructions.length > 0 && (
-        <ol className="list-decimal pl-4 text-[13px] text-muted leading-relaxed space-y-1">
+        <ol className="list-decimal pl-4 text-ui text-muted leading-relaxed space-y-1">
           {c.instructions.map((step, i) => (
             <li key={i}>{step}</li>
           ))}
@@ -594,7 +600,7 @@ export function ConnectSetup({
           {busy ? t("manage.validating") : t("manage.connect")}
         </button>
       </div>
-      {error && <div className="text-[13px] text-danger">{error}</div>}
+      {error && <div className="text-ui text-danger">{error}</div>}
     </div>
   );
 }

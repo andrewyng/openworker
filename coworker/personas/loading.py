@@ -30,12 +30,13 @@ def consent_summary(m: PersonaManifest) -> dict:
         # never a bare "uses connectors" bit (OPE-93).
         "connectors": "all" if m.connectors is True else list(m.connectors or ()),
         "mcp": list(m.mcp),
-        "messaging": m.messaging,
+        "messaging": m.can_chat,  # derived from connectors (spec §11)
         # "lead" personas can create and direct worker coworkers — the consent
         # screen says that plainly (capability firebreak as a manifest fact).
         "team": m.team,
         "recommended_mode": m.default_permission_mode,
-        "recommended_models": list(m.recommended_models),
+        "models": list(m.models),
+        "recommended_models": list(m.models),  # old name, one release
         # Recommended connectors/MCP with reasons + tiers — the consent screen shows
         # these so the user knows what the coworker hopes to use (sharing v1).
         "recommends": [
@@ -60,7 +61,7 @@ def capability_set(m: PersonaManifest) -> set[str]:
         caps.add("connectors:all")
     else:
         caps |= {f"connector:{c}" for c in m.connectors or ()}
-    if m.messaging:
+    if m.can_chat:
         caps.add("messaging")
     # An update that turns a solo persona into a lead/worker must re-consent —
     # team capability changes who the coworker can direct or be directed by.

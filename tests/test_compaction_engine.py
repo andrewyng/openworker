@@ -16,7 +16,22 @@ from coworker.providers import (
 from coworker.providers.base import TokenUsage
 from coworker.tools import ToolRegistry
 
-SUMMARY = "## Primary request and intent\nkeep building the report"
+# Must clear the OPE-189 quality gate: all eight sections, past the minimum length. A
+# summary that fails it is refused and the engine falls back to trimming, which is what
+# these tests would otherwise be asserting against.
+SUMMARY = "\n".join(
+    f"## {name}\nenough detail in this section to clear the summary minimum length"
+    for name in (
+        "Primary request and intent",
+        "Key concepts and decisions",
+        "Artifacts and files",
+        "Errors and fixes",
+        "All user messages",
+        "Pending tasks",
+        "Current work",
+        "Next step",
+    )
+)
 
 
 class CompactingProvider(ProviderClient):

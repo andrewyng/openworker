@@ -107,8 +107,21 @@ MATRIX: dict[str, ModelEntry] = {
     "openai-codex:gpt-5.1-codex-mini": ModelEntry(
         "GPT-5.1 Codex Mini · ChatGPT plan", _AGENTIC, 400_000
     ),
-    # Fable 5 (2026-06-09) is GA; its Mythos 5 sibling is approved-orgs-only, so it
-    # stays out of a picker meant for the public.
+    # Claude 5 generation (platform.claude.com/docs/en/models/overview, read 2026-09-08):
+    # 1M context is the default and only size; 128K max output; adaptive thinking.
+    # Fable 5.1 (2026-09-01) is GA; its Mythos 5.1 sibling is approved-orgs-only, so it
+    # stays out of a picker meant for the public. Missing rows fell back to the 128k
+    # compaction guess and compacted at 102,400 tokens (OPE-170).
+    "anthropic:claude-fable-5-1": ModelEntry(
+        "Claude Fable 5.1 · Anthropic", _AGENTIC_VISION, 1_000_000
+    ),
+    "anthropic:claude-opus-5": ModelEntry(
+        "Claude Opus 5 · Anthropic", _AGENTIC_VISION, 1_000_000
+    ),
+    "anthropic:claude-sonnet-5": ModelEntry(
+        "Claude Sonnet 5 · Anthropic", _AGENTIC_VISION, 1_000_000
+    ),
+    # Fable 5 (2026-06-09) stays listed as the registry's recommended model.
     "anthropic:claude-fable-5": ModelEntry(
         "Claude Fable 5 · Anthropic", _AGENTIC_VISION, 1_000_000
     ),
@@ -120,6 +133,17 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "anthropic:claude-haiku-4-5": ModelEntry(
         "Claude Haiku 4.5 · Anthropic", _AGENTIC_VISION, 200_000
+    ),
+    # Claude 4.5/4.6: kept for comparability with published evaluations of those
+    # models, so OpenWorker can be measured against them on the same model.
+    "anthropic:claude-opus-4-6": ModelEntry(
+        "Claude Opus 4.6 · Anthropic", _AGENTIC_VISION, 200_000
+    ),
+    "anthropic:claude-opus-4-5": ModelEntry(
+        "Claude Opus 4.5 · Anthropic", _AGENTIC_VISION, 200_000
+    ),
+    "anthropic:claude-sonnet-4-5": ModelEntry(
+        "Claude Sonnet 4.5 · Anthropic", _AGENTIC_VISION, 200_000
     ),
     # Gemini 3 (thought signatures required in tool loops — carried via the `_gemini`
     # message sidecar, see gemini_provider.py; ids from the vendor catalog 2026-07-22).
@@ -160,7 +184,9 @@ MATRIX: dict[str, ModelEntry] = {
             tools=True, vision=True, parallel_tool_calls=True, streaming=True
         ),
     ),
-    "zai:glm-5.2": ModelEntry("GLM-5.2 · Z AI", _AGENTIC, 128_000),
+    # GLM-5.2 shipped with a 1M window (docs.z.ai, read 2026-09-08: "1M" context,
+    # 128K output); the 128,000 here was stale and compacted it at 102,400 (OPE-170).
+    "zai:glm-5.2": ModelEntry("GLM-5.2 · Z AI", _AGENTIC, 1_000_000),
     "deepseek:deepseek-v4-flash": ModelEntry(
         "DeepSeek V4 Flash · DeepSeek", _AGENTIC, 128_000
     ),
@@ -176,7 +202,11 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     # -- resellers (their model namespaces, verbatim) -----------------------------
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
-    "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together", _AGENTIC, 128_000),
+    # Together windows below are the `context_length` values its /v1/models catalog
+    # reported on 2026-09-08 (exact, per model; GLM-5.2 really is 1,048,575 there).
+    "together:zai-org/GLM-5.2": ModelEntry(
+        "GLM-5.2 · via Together", _AGENTIC, 1_048_575
+    ),
     # Kimi K3 on Together (landed late July 2026): 1M window, native vision; PDFs
     # unverified over the compat surface (falls back via pdf_support.py, like Muse Spark).
     "together:moonshotai/Kimi-K3": ModelEntry(
@@ -184,22 +214,23 @@ MATRIX: dict[str, ModelEntry] = {
         ModelCapabilities(
             tools=True, vision=True, parallel_tool_calls=True, streaming=True
         ),
-        1_000_000,
+        1_048_576,
     ),
     "together:moonshotai/Kimi-K2.7-Code": ModelEntry(
-        "Kimi K2.7 Code · via Together", _AGENTIC, 256_000
+        "Kimi K2.7 Code · via Together", _AGENTIC, 262_144
     ),
     "together:moonshotai/Kimi-K2.6": ModelEntry(
-        "Kimi K2.6 · via Together", _AGENTIC, 256_000
+        "Kimi K2.6 · via Together", _AGENTIC, 262_144
     ),
     "together:deepseek-ai/DeepSeek-V4-Pro": ModelEntry(
-        "DeepSeek V4 Pro · via Together", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · via Together", _AGENTIC, 512_000
     ),
     "together:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": ModelEntry(
         "Llama 4 Maverick · via Together", _AGENTIC, 1_000_000
     ),
+    # fireworks.ai/models/fireworks/glm-5p2 lists "1040k tokens" (read 2026-09-08).
     "fireworks:accounts/fireworks/models/glm-5p2": ModelEntry(
-        "GLM-5.2 · via Fireworks", _AGENTIC, 128_000
+        "GLM-5.2 · via Fireworks", _AGENTIC, 1_040_000
     ),
     "fireworks:accounts/fireworks/models/kimi-k2p6": ModelEntry(
         "Kimi K2.6 · via Fireworks", _AGENTIC, 256_000
@@ -212,7 +243,20 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     # OpenRouter slugs are lowercase `<lab>/<model>` (checked against their catalog
     # 2026-07-25); same labs as above, one key for all of them.
-    "openrouter:z-ai/glm-5.2": ModelEntry("GLM-5.2 · via OpenRouter", _AGENTIC, 128_000),
+    # openrouter.ai/z-ai/glm-5.2: 1,048,576 context, 163,840 completion (read 2026-09-08).
+    "openrouter:z-ai/glm-5.2": ModelEntry(
+        "GLM-5.2 · via OpenRouter", _AGENTIC, 1_048_576
+    ),
+    # Kimi K3 via OpenRouter (openrouter.ai/api/v1/models, read 2026-09-09: 1,048,576
+    # context; served by Together among others — OpenRouter's `provider` routing can pin
+    # it). Same capabilities as the Together row.
+    "openrouter:moonshotai/kimi-k3": ModelEntry(
+        "Kimi K3 · via OpenRouter",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_048_576,
+    ),
     "openrouter:moonshotai/kimi-k2.6": ModelEntry(
         "Kimi K2.6 · via OpenRouter", _AGENTIC, 256_000
     ),

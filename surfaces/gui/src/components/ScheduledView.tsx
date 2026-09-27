@@ -128,14 +128,14 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
           <PanelHead title={t("automations.title")} sub={t("automations.sub")} />
         </div>
         <button
-          className="text-[13px] px-3 py-1.5 rounded-lg border border-lineStrong bg-panel hover:border-accent hover:text-accent shrink-0"
+          className="text-ui px-3 py-1.5 rounded-lg border border-lineStrong bg-panel hover:border-accent hover:text-accent shrink-0"
           onClick={() => setShowForm((v) => !v)}
         >
           {t("automations.new_btn")}
         </button>
       </div>
 
-      <div className="text-[12px] text-faint flex gap-1.5 mb-4">
+      <div className="text-meta text-faint flex gap-1.5 mb-4">
         <span aria-hidden>ⓘ</span>
         <span>{t("automations.server_hint")}</span>
       </div>
@@ -154,7 +154,7 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
 
       {empty ? (
         !showForm && (
-          <div className={CARD + " p-4 text-[13px] text-muted"}>
+          <div className={CARD + " p-4 text-ui text-muted"}>
             <Trans
               i18nKey="automations.empty_state"
               components={{ strong: <strong /> }}
@@ -170,7 +170,7 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
               onClick={() => setOpenId(task.id)}
             >
               <div className="flex items-center justify-between gap-2.5 mb-1">
-                <span className="text-[13px] font-semibold truncate">{task.title}</span>
+                <span className="text-ui font-semibold truncate">{task.title}</span>
                 <button
                   className="sched-card-del"
                   title={t("automations.delete_title")}
@@ -184,7 +184,7 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
                   <Icon name="trash" size={14} />
                 </button>
               </div>
-              <div className="flex items-center gap-1.5 text-[12px] text-muted">
+              <div className="flex items-center gap-1.5 text-meta text-muted">
                 <Icon name="clock" size={13} className="text-faint shrink-0" />
                 {task.enabled ? task.schedule : t("automations.paused")} · {t("automations.next", { time: fmt(task.next_run) })} · {t("automations.run_count", { count: task.run_count })}
                 {task.last_status ? ` · ${t("automations.last", { status: task.last_status })}` : ""}
@@ -216,7 +216,7 @@ function NewAutomationForm({
 
   return (
     <div className={CARD + " tmpl-form p-4 mb-4"}>
-      <div className="text-[11px] uppercase tracking-[0.05em] text-faint mb-2.5">
+      <div className="text-label text-faint mb-2.5">
         {t("automations.new_automation")}
       </div>
       <input
@@ -331,7 +331,7 @@ function TaskDetail({
   if (!task)
     return (
       <Shell>
-        <div className="text-[13px] text-muted">{tt("automations.loading")}</div>
+        <div className="text-ui text-muted">{tt("automations.loading")}</div>
       </Shell>
     );
 
@@ -369,7 +369,7 @@ function TaskDetail({
 
   return (
     <Shell>
-      <button className="text-[13px] text-muted hover:text-ink mb-3" onClick={onBack}>
+      <button className="text-ui text-muted hover:text-ink mb-3" onClick={onBack}>
         {tt("automations.back_to_automations")}
       </button>
       <div className="sched-detail">
@@ -382,7 +382,7 @@ function TaskDetail({
               placeholder={tt("automations.title_label")}
             />
           ) : (
-            <h2 className="text-[20px] font-semibold tracking-tight">{task.title}</h2>
+            <h2 className="text-title font-semibold tracking-tight">{task.title}</h2>
           )}
           <div className="sched-actions">
             {editing ? (

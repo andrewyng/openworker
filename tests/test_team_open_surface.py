@@ -189,6 +189,23 @@ def test_board_api_requires_a_token(api):
     assert "board token" in response.json()["error"]
 
 
+def test_status_over_http_is_owned_and_never_kicks_a_wake(api, monkeypatch):
+    client, manager, app = api
+    item = manager.team_store.create_item("proj", LEAD, title="Invoice PDF", criteria="verified")
+    manager.team_store.assign("proj", LEAD, item["id"], "sam")
+    sam = manager.board_tokens.mint("sam", "worker")
+    maya = manager.board_tokens.mint("maya", "worker")
+    kicks = []
+    monkeypatch.setattr(manager, "kick_team_tick", lambda: kicks.append(True))
+    body = {"space": "proj", "id": item["id"], "text": "Running tests"}
+    allowed = client.post("/v1/board/items/status", json=body, headers={"Authorization": f"Bearer {sam}"})
+    assert allowed.status_code == 200
+    assert allowed.json()["status"] == "Running tests"
+    denied = client.post("/v1/board/items/status", json=body, headers={"Authorization": f"Bearer {maya}"})
+    assert denied.status_code >= 400
+    assert kicks == []
+
+
 def test_board_api_rejects_the_sidecar_token_as_a_board_token(api):
     client, _, _ = api
     response = client.get(
@@ -513,7 +530,7 @@ def test_attachment_store_validates(tmp_path):
     from coworker.teams.attachments import AttachmentStore
 
     store = AttachmentStore(tmp_path / "attachments")
-    with pytest.raises(BoardError, match="images only"):
+    with pytest.raises(BoardError, match="unsupported attachment type"):
         store.put(b"#!/bin/sh", "run.sh")
     with pytest.raises(BoardError, match="does not look like"):
         store.put(b"not a png at all", "fake.png")

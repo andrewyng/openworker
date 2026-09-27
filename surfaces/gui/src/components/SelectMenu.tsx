@@ -38,7 +38,7 @@ export function SelectMenu({
     <div className="relative">
       <button
         type="button"
-        className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border border-line bg-paper text-[13px] text-ink hover:border-lineStrong"
+        className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border border-line bg-paper text-ui text-ink hover:border-lineStrong"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={ariaLabel}
@@ -63,7 +63,7 @@ export function SelectMenu({
                 o.group && o.group !== options[i - 1]?.group ? (
                   <div
                     className={
-                      "px-2.5 pb-1 text-[11px] uppercase tracking-[0.06em] text-faint font-semibold " +
+                      "px-2.5 pb-1 text-label text-faint font-medium " +
                       (i === 0 ? "pt-1" : "pt-2.5 mt-1.5 border-t border-line")
                     }
                   >
@@ -89,14 +89,14 @@ export function SelectMenu({
                   <span className="min-w-0 flex-1">
                     <span
                       className={
-                        "block text-[13px] truncate " + (sel ? "font-semibold text-ink" : "text-ink")
+                        "block text-ui truncate " + (sel ? "font-semibold text-ink" : "text-ink")
                       }
                     >
                       {o.label}
                     </span>
-                    {o.sub && <span className="block text-[12px] text-faint truncate">{o.sub}</span>}
+                    {o.sub && <span className="block text-meta text-faint truncate">{o.sub}</span>}
                   </span>
-                  {sel && <span className="text-accent text-[12px] shrink-0">✓</span>}
+                  {sel && <span className="text-accent text-meta shrink-0">✓</span>}
                   <span
                     className={
                       "w-1.5 h-1.5 rounded-full shrink-0 " + (o.dot ? "bg-ok" : "bg-transparent")

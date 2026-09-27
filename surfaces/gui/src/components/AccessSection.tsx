@@ -10,16 +10,19 @@
 // to expand it and scroll it into view.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import {
   CLOUD_CHANGED,
   getCloudStatus,
   getConnectors,
   getRecentChannels,
+  getMachines,
   getSessionConnections,
+  machineOfSession,
   getSubscriptions,
   setSessionConnection,
   subscribeChannel,
+  type SubscriptionHolder,
   unsubscribeChannel,
   type CloudStatus,
   type Connector,
@@ -42,12 +45,12 @@ import { Toggle } from "./Toggle";
 // slack (the backend's own default when no platform prefix is given).
 const platformOf = (channel: string) => (channel.includes(":") ? channel.split(":")[0] : "slack");
 
-const SEC_H = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
+const SEC_H = "text-label text-faint font-medium";
 const TAG_CORE =
-  "text-[11px] px-1.5 py-0.5 rounded-full bg-warnSoft/70 text-warnInk border border-warnInk/15";
-const BTN_ACCENT = "text-[12px] px-2.5 py-1.5 rounded-lg bg-accent text-white shrink-0";
+  "text-label px-1.5 py-0.5 rounded-full bg-warnSoft/70 text-warnInk border border-warnInk/15";
+const BTN_ACCENT = "text-meta px-2.5 py-1.5 rounded-lg bg-accent text-white shrink-0";
 const BTN_BORDERED =
-  "text-[12px] px-2.5 py-1.5 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
+  "text-meta px-2.5 py-1.5 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
 
 export function AccessSection({
   sessionId,
@@ -93,7 +96,10 @@ export function AccessSection({
   // expand so a single failed fetch at mount can't hide them for the session's whole lifetime.
   useEffect(() => {
     let live = true;
-    getConnectors()
+    // The session's ENGINE owns the catalog: a remote session's connectors live on
+    // its box, and the machines dashboard has none of its own (owner report
+    // 2026-09-03: "slack" found no match on a sandbox session).
+    getConnectors(machineOfSession(sessionId))
       .then((list) => live && setByName(indexConnectors(list)))
       .catch(() => {});
     return () => {
@@ -144,11 +150,15 @@ export function AccessSection({
   const [recent, setRecent] = useState<RecentChannel[]>([]);
   const [draft, setDraft] = useState("");
   const [addErr, setAddErr] = useState<string | null>(null);
-  const loadSubs = () => getSubscriptions().then(setSubs).catch(() => setSubs([]));
+  const [held, setHeld] = useState<{ holder: SubscriptionHolder; movable: boolean } | null>(null);
+  // Subscriptions and the recent-channel picker live on the session's engine (same
+  // rule as the catalog above): the dashboard origin has no box behind it.
+  const loadSubs = () =>
+    getSubscriptions(machineOfSession(sessionId)).then(setSubs).catch(() => setSubs([]));
   useEffect(() => {
     if (!open) return;
     loadSubs();
-    getRecentChannels().then(setRecent).catch(() => setRecent([]));
+    getRecentChannels(machineOfSession(sessionId)).then(setRecent).catch(() => setRecent([]));
   }, [open]);
 
   // Collapsing the section also closes any child view — reopening starts at the top level.
@@ -169,15 +179,19 @@ export function AccessSection({
   };
   const channelsOf = (connector: string) =>
     subs.filter((s) => s.session_id === sessionId && platformOf(s.channel) === connector);
-  const addChannel = async () => {
+  const addChannel = async (move = false) => {
     const raw = draft.trim();
     if (!raw || !channelsFor) return;
     const channel = raw.includes(":") || raw.startsWith("#") ? raw : `${channelsFor}:${raw}`;
-    const r = await subscribeChannel(sessionId, channel);
+    const r = await subscribeChannel(sessionId, channel, { move });
     if (!r.ok) {
-      setAddErr(r.error || t("access.channel_add_error"));
+      // One session across all machines answers a source: the cloud names the
+      // holder and the user decides whether to move it here.
+      setHeld(r.error === "held" && r.held_by ? { holder: r.held_by, movable: r.move_allowed !== false } : null);
+      setAddErr(r.error === "held" ? null : r.error || t("access.channel_add_error"));
       return;
     }
+    setHeld(null);
     setAddErr(null);
     setDraft("");
     loadSubs();
@@ -236,7 +250,7 @@ export function AccessSection({
           <Icon name={open ? "chevronDown" : "chevronRight"} size={14} className="rail-chev" />
           <span>{t("access.section_title")}</span>
           <span
-            className="ml-auto min-w-0 truncate text-[11px] font-normal text-faint"
+            className="ml-auto min-w-0 truncate text-label font-normal text-faint"
             data-testid="access-summary"
             title={summary}
           >
@@ -250,6 +264,7 @@ export function AccessSection({
             <ConnectInline
               c={connectFor}
               cloud={cloud}
+              machineId={machineOfSession(sessionId)}
               onDone={() => {
                 const name = connectFor.name;
                 setConnectFor(null);
@@ -278,8 +293,12 @@ export function AccessSection({
               onDraft={(v) => {
                 setDraft(v);
                 setAddErr(null);
+                setHeld(null);
               }}
-              onAdd={addChannel}
+              onAdd={() => addChannel(false)}
+              onMove={() => addChannel(true)}
+              machineId={machineOfSession(sessionId)}
+              held={held}
               error={addErr}
               onRemove={removeChannel}
               onBack={() => setChannelsFor(null)}
@@ -290,7 +309,7 @@ export function AccessSection({
               <div>
                 <div className={`${SEC_H} mb-1.5`}>{t("access.sources")}</div>
                 {connected.length === 0 && (
-                  <div className="text-[12px] text-faint py-0.5">
+                  <div className="text-meta text-faint py-0.5">
                     {t("access.no_connectors")}
                   </div>
                 )}
@@ -299,13 +318,13 @@ export function AccessSection({
                     <div className="flex items-center gap-2 py-1" key={c.connector}>
                       <ConnectorBadge connector={visualFor(c.connector, "connector", byName)} size={24} />
                       <div className="min-w-0 flex-1">
-                        <div className="text-[13px] font-medium leading-tight truncate">
+                        <div className="text-ui font-medium leading-tight truncate">
                           <span>{labelFor(c.connector, byName)}</span>
                           {c.detail && <span className="text-faint font-normal"> · {c.detail}</span>}
                         </div>
                         {byName[c.connector]?.channels && (
                           <button
-                            className="inline-flex items-center gap-0.5 text-[11px] text-accent hover:underline"
+                            className="inline-flex items-center gap-0.5 text-label text-accent hover:underline"
                             onClick={() => {
                               setDraft("");
                               setChannelsFor(c.connector);
@@ -330,7 +349,7 @@ export function AccessSection({
                 {adding ? (
                   <div className="mt-1.5">
                     <input
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-line bg-panel text-[13px] outline-none focus:border-accent"
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-line bg-panel text-ui outline-none focus:border-accent"
                       placeholder={t("access.search_placeholder")}
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
@@ -346,7 +365,7 @@ export function AccessSection({
                     {results.length === 0 && (
                       // Also covers a failed/empty catalog fetch: an open picker must never
                       // be silently blank — point at the Connectors page either way.
-                      <div className="text-[12px] text-faint mt-1.5 px-0.5">
+                      <div className="text-meta text-faint mt-1.5 px-0.5">
                         {t("access.no_match")}
                       </div>
                     )}
@@ -365,10 +384,10 @@ export function AccessSection({
                         >
                           <ConnectorBadge connector={visualFor(c.name, "connector", byName)} size={22} />
                           <span className="min-w-0 flex-1">
-                            <span className="block text-[13px] font-medium leading-tight">
+                            <span className="block text-ui font-medium leading-tight">
                               {c.title}
                             </span>
-                            <span className="block text-[11px] text-faint truncate">{c.blurb}</span>
+                            <span className="block text-label text-faint truncate">{c.blurb}</span>
                           </span>
                           <Icon name="chevronRight" size={11} className="text-faint shrink-0" />
                         </button>
@@ -379,7 +398,7 @@ export function AccessSection({
                   /* UX-038 (owner ruling: option C): ONE footer row, both verbs — the
                      in-session add flow (with its lands-enabled-here guarantee) and the
                      global-page jump. The mute explainer lives on the toggles' tooltip. */
-                  <div className="mt-1.5 flex items-center gap-1.5 text-[12px]">
+                  <div className="mt-1.5 flex items-center gap-1.5 text-meta">
                     <button
                       className="text-accent hover:underline text-left"
                       onClick={() => setAdding(true)}
@@ -407,11 +426,11 @@ export function AccessSection({
                       <div className="flex items-center gap-2 py-1" key={r.connector}>
                         <ConnectorBadge connector={visualFor(r.connector, "connector", byName)} size={24} />
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5 text-[13px] font-medium leading-tight">
+                          <div className="flex items-center gap-1.5 text-ui font-medium leading-tight">
                             <span className="truncate">{labelFor(r.connector, byName)}</span>
                             {r.tier === "core" && <span className={TAG_CORE}>{t("access.core_tag")}</span>}
                           </div>
-                          <div className="text-[11px] text-faint truncate" title={r.reason}>
+                          <div className="text-label text-faint truncate" title={r.reason}>
                             {r.reason}
                           </div>
                         </div>
@@ -462,7 +481,7 @@ export function AccessSection({
                   </div>
                 ) : (
                   <button
-                    className="mt-1 text-[12px] text-accent hover:underline text-left"
+                    className="mt-1 text-meta text-accent hover:underline text-left"
                     onClick={() => setAddingFolder(true)}
                   >
                     + {t("access.give_folder")}
@@ -484,11 +503,13 @@ export function AccessSection({
 function ConnectInline({
   c,
   cloud,
+  machineId,
   onDone,
   onBack,
 }: {
   c: Connector;
   cloud: CloudStatus | null;
+  machineId?: string | null;
   onDone: () => void;
   onBack: () => void;
 }) {
@@ -496,7 +517,7 @@ function ConnectInline({
   useEffect(() => {
     const t = setInterval(async () => {
       try {
-        const list = await getConnectors();
+        const list = await getConnectors(machineId);
         if (list.find((x) => x.name === c.name)?.connected) onDone();
       } catch {
         /* poll again */
@@ -508,19 +529,19 @@ function ConnectInline({
   return (
     <div>
       <button
-        className="inline-flex items-center gap-1 text-[12px] text-faint hover:text-ink mb-2"
+        className="inline-flex items-center gap-1 text-meta text-faint hover:text-ink mb-2"
         onClick={onBack}
         aria-label={tt("access.back_to_sources")}
       >
         <Icon name="arrowLeft" size={13} /> {tt("access.connect_title", { title: c.title })}
       </button>
-      {c.blurb && <p className="text-[12px] text-muted mb-1 leading-relaxed">{c.blurb}</p>}
+      {c.blurb && <p className="text-meta text-muted mb-1 leading-relaxed">{c.blurb}</p>}
       <div className="-mx-2">
         <ConnectSetup c={c} cloud={cloud} onConnected={onDone} />
       </div>
       {/* Scope semantics, stated once (owner ask 2026-07-13): connecting is account-level,
           the toggle above is what scopes it to a session. */}
-      <p className="text-[11px] text-faint mt-2 leading-snug">
+      <p className="text-label text-faint mt-2 leading-snug">
         {tt("access.scope_note", { title: c.title })}
       </p>
     </div>
@@ -536,6 +557,9 @@ function ChannelsInline({
   draft,
   onDraft,
   onAdd,
+  onMove,
+  machineId,
+  held,
   error,
   onRemove,
   onBack,
@@ -546,15 +570,39 @@ function ChannelsInline({
   draft: string;
   onDraft: (v: string) => void;
   onAdd: () => void;
+  onMove: () => void;
+  machineId?: string | null;
+  held?: { holder: SubscriptionHolder; movable: boolean } | null;
   error?: string | null;
   onRemove: (channel: string) => void;
   onBack: () => void;
 }) {
   const { t: tt } = useTranslation();
+  // Name the holding machine (UX-049 D): the machines list is cheap and cached
+  // by the browser; unknown ids fall back to "another machine".
+  const [machineNames, setMachineNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!held || !held.holder.machine_id || held.holder.machine_id === "desktop") return;
+    getMachines()
+      .then((r) => {
+        const map: Record<string, string> = {};
+        for (const m of r.machines) {
+          map[m.id] = m.name;
+          map[m.id.replace(/^cloud:/, "")] = m.name;
+        }
+        setMachineNames(map);
+      })
+      .catch(() => {});
+  }, [held]);
+  const where = held
+    ? held.holder.machine_id === "desktop" || !held.holder.machine_id
+      ? tt("onmachine.this_mac")
+      : machineNames[held.holder.machine_id] || tt("onmachine.access.another_machine")
+    : "";
   return (
     <div>
       <button
-        className="inline-flex items-center gap-1 text-[12px] text-faint hover:text-ink mb-2"
+        className="inline-flex items-center gap-1 text-meta text-faint hover:text-ink mb-2"
         onClick={onBack}
         aria-label={tt("access.back_to_sources")}
       >
@@ -562,7 +610,7 @@ function ChannelsInline({
       </button>
       <div className={`${SEC_H} mb-1.5`}>{tt("access.subscribed", { count: channels.length })}</div>
       {channels.length === 0 ? (
-        <div className="text-[12px] text-faint py-0.5">
+        <div className="text-meta text-faint py-0.5">
           {tt("access.no_channels", { label })}
         </div>
       ) : (
@@ -570,12 +618,12 @@ function ChannelsInline({
           {channels.map((s) => (
             <div className="flex items-center gap-1.5 py-1" key={s.channel}>
               <Icon name="plug" size={13} className="text-muted shrink-0" />
-              <span className="min-w-0 flex-1 text-[13px] truncate" title={s.channel}>
+              <span className="min-w-0 flex-1 text-ui truncate" title={s.channel}>
                 {s.channel_name ? `#${s.channel_name}` : s.channel}
               </span>
               {s.collision && (
                 <span
-                  className="text-[11px] text-warnInk bg-warnSoft/70 border border-warnInk/15 rounded px-1 shrink-0"
+                  className="text-label text-warnInk bg-warnSoft/70 border border-warnInk/15 rounded px-1 shrink-0"
                   title={tt("access.collision_title")}
                 >
                   ⚠
@@ -594,17 +642,40 @@ function ChannelsInline({
       )}
       <div className={`${SEC_H} mt-3 mb-1.5`}>{tt("access.add_channel")}</div>
       <div className="flex items-center gap-1.5">
-        <ChannelPicker value={draft} onChange={onDraft} recent={recent} onSubmit={onAdd} />
+        <ChannelPicker value={draft} onChange={onDraft} recent={recent} onSubmit={onAdd} machineId={machineId} />
         <button className={BTN_ACCENT} disabled={!draft.trim()} onClick={onAdd}>
           {tt("access.add_btn")}
         </button>
       </div>
       {error && (
-        <p className="text-[11px] text-warnInk mt-1.5 leading-snug" data-testid="channel-add-error">
+        <p className="text-label text-warnInk mt-1.5 leading-snug" data-testid="channel-add-error">
           {error}
         </p>
       )}
-      <p className="text-[11px] text-faint mt-1.5 leading-snug">
+      {held && (
+        <div
+          className="mt-1.5 rounded-md border border-line bg-paper px-2.5 py-2"
+          data-testid="channel-held"
+        >
+          <p className="text-label text-ink leading-snug">
+            <Trans
+              i18nKey={held.movable ? "onmachine.access.held_movable" : "onmachine.access.held_fixed"}
+              values={{ where }}
+              components={{
+                holder: <span className="font-medium">{held.holder.title || held.holder.session_id}</span>,
+              }}
+            />
+          </p>
+          {held.movable && (
+            <div className="mt-1.5 flex gap-1.5">
+              <button className={BTN_ACCENT} onClick={onMove} data-testid="channel-move">
+                {tt("onmachine.access.move_here")}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      <p className="text-label text-faint mt-1.5 leading-snug">
         {tt("access.channels_note")}
       </p>
     </div>

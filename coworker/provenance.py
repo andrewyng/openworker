@@ -16,6 +16,7 @@ confidence.
 from __future__ import annotations
 
 import shlex
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -235,9 +236,20 @@ class SessionFiles:
         write that raised left nothing on disk to run."""
         paths, origin = created_paths(tool_name, arguments, result)
         for path in paths:
+            key = resolve(path, self.root)
+            if self._is_device(key):
+                continue  # A null/device sink does not retain downloaded script bytes.
             # A later write or download over the same path wins — the newer bytes are the
             # ones that would execute.
-            self._files[resolve(path, self.root)] = Origin(step=step, kind=origin)
+            self._files[key] = Origin(step=step, kind=origin)
+
+    @staticmethod
+    def _is_device(path: str) -> bool:
+        try:
+            mode = Path(path).stat().st_mode
+        except (OSError, ValueError):
+            return False  # Unknown paths retain conservative provenance handling.
+        return stat.S_ISCHR(mode) or stat.S_ISBLK(mode)
 
     def match(
         self, tool_name: str, arguments: dict[str, Any], *, step: int
@@ -246,7 +258,10 @@ class SessionFiles:
         one whose contents the agent most recently controlled."""
         best: Optional[Match] = None
         for path in referenced_paths(tool_name, arguments):
-            origin = self._files.get(resolve(path, self.root))
+            key = resolve(path, self.root)
+            if self._is_device(key):
+                continue  # Also ignore device entries recorded by an older runtime.
+            origin = self._files.get(key)
             if origin is None:
                 continue
             candidate = Match(

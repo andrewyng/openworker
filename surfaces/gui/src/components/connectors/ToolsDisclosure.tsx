@@ -16,8 +16,8 @@ export function ToolsDisclosure({ c, onChanged }: { c: Connector; onChanged: () 
     <div className={GRP + " mt-6"}>
       <details>
         <summary className={ROW + " cursor-pointer hover:bg-paper/60 list-none [&::-webkit-details-marker]:hidden"}>
-          <span className="text-[13px] text-muted w-24 shrink-0">{t("connector.tools_label")}</span>
-          <span className="min-w-0 flex-1 text-[13px] text-muted">
+          <span className="text-ui text-muted w-24 shrink-0">{t("connector.tools_label")}</span>
+          <span className="min-w-0 flex-1 text-ui text-muted">
             {t("tools.enabled_count", { checked: enabled, total: c.tools.length })}
           </span>
           <SavedTick show={savedTick} testId={`connector-tools-saved-${c.name}`} />

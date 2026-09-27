@@ -8,6 +8,7 @@ export type IconName =
   | "sidebarRight"
   | "signOut"
   | "chat"
+  | "workList"
   | "diamond"
   | "book"
   | "search"
@@ -18,11 +19,15 @@ export type IconName =
   | "sliders"
   | "gear"
   | "inbox"
+  | "monitor"
+  | "cloud"
   | "code"
   | "wrench"
   | "pencil"
   | "branch"
   | "arrowLeft"
+  | "arrowRight"
+  | "team"
   | "copy"
   | "refresh"
   | "panelClose"
@@ -43,6 +48,7 @@ export type IconName =
   | "mic"
   | "stop"
   | "warning"
+  | "user"
   | "x";
 
 export function Icon({
@@ -110,6 +116,17 @@ export function Icon({
           <path d="M15 4.5v15" />
         </svg>
       );
+    case "team":
+      return <svg {...s}><circle cx="9" cy="7" r="3" /><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 4a3 3 0 0 1 0 6M18 13a5 5 0 0 1 3 5v3" /></svg>;
+    case "arrowRight":
+      return <svg {...s}><path d="M5 12h14M13 6l6 6-6 6" /></svg>;
+    case "user":
+      return (
+        <svg {...s}>
+          <circle cx="12" cy="8" r="3.6" />
+          <path d="M4.8 20.2c.9-3.6 3.7-5.4 7.2-5.4s6.3 1.8 7.2 5.4" />
+        </svg>
+      );
     case "signOut":
       return (
         <svg {...s}>
@@ -129,6 +146,21 @@ export function Icon({
         <svg {...s}>
           <path d="M12 3.2l7 2.8v5.1c0 4.3-2.9 7.4-7 9.7-4.1-2.3-7-5.4-7-9.7V6l7-2.8z" />
           <path d="M9.3 12.1l1.9 1.9 3.5-3.6" />
+        </svg>
+      );
+    case "monitor":
+      // A machine that is a real box (VM, server): screen on a stand.
+      return (
+        <svg {...s}>
+          <rect x="3" y="4" width="18" height="12" rx="1.5" />
+          <path d="M8 20h8M12 16v4" />
+        </svg>
+      );
+    case "cloud":
+      // A managed sandbox (Fly): cloud outline.
+      return (
+        <svg {...s}>
+          <path d="M7 18a4 4 0 0 1-.6-7.95A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9H7z" />
         </svg>
       );
     case "file":
@@ -250,6 +282,8 @@ export function Icon({
           <path d="M5 5.5h14c.8 0 1.5.7 1.5 1.5v7c0 .8-.7 1.5-1.5 1.5H9.5L5.5 19v-3H5c-.8 0-1.5-.7-1.5-1.5V7c0-.8.7-1.5 1.5-1.5z" />
         </svg>
       );
+    case "workList":
+      return <svg {...s}><rect x="3" y="4" width="4" height="4" rx="1" /><rect x="3" y="10" width="4" height="4" rx="1" /><rect x="3" y="16" width="4" height="4" rx="1" /><path d="M11 6h10M11 12h10M11 18h10" /></svg>;
     case "wrench":
       return (
         <svg {...s}>

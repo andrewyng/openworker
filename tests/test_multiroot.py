@@ -153,8 +153,11 @@ def test_outbound_messages_appends_context_to_last_user_message():
     out = eng._outbound_messages()
     # ephemeral: the persisted history is untouched
     assert eng.messages[-1]["content"] == "do it"
-    # only the LAST user message carries the block
-    assert out[-1]["content"] == "do it\n\n<system-context>\nDIRS\n</system-context>"
+    # the block is glued onto the newest user message, framed as automatic context
+    assert len(out) == len(eng.messages)
+    assert out[-1]["role"] == "user"
+    assert out[-1]["content"].startswith("do it\n\n<system-context>\n(automatic per-turn context")
+    assert out[-1]["content"].endswith("\nDIRS\n</system-context>")
     assert out[1]["content"] == "hello"
 
 

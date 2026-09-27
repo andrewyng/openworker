@@ -27,18 +27,43 @@ DEFAULT_CONTEXT_WINDOW = 128_000
 # The newest slice kept verbatim, as a fraction of the trigger (a token budget, not a
 # turn count — one huge tool loop shouldn't starve the working set).
 KEEP_RECENT_FRACTION = 0.25
-# The summarizer call itself: tools off, modest ceiling.
-SUMMARY_MAX_TOKENS = 3_000
+# The summarizer call itself: tools off. OPE-189: 3,000 was too low for a reasoning model
+# — the budget is shared with the model's thinking, and in a 15-task trial Kimi K3
+# spent it thinking on 60 of 103 summary calls, so the summary itself was cut off or never
+# started. Overridable per run ("summary_max_tokens" in the compaction settings).
+SUMMARY_MAX_TOKENS = 16_000
+# A summary is the coworker's ONLY memory of the span, so "not empty" is too low a bar to
+# accept one. Below this, or missing the sections, it is refused and retried (OPE-189).
+SUMMARY_MIN_CHARS = 400
+# Lowercase fragments of the eight section headings, used to sanity-check a summary. The
+# first is the anchor: a reply that slipped into continuing the session never has it.
+SUMMARY_SECTION_MARKERS = (
+    "primary request",
+    "key concepts",
+    "artifacts and files",
+    "errors and fixes",
+    "user messages",
+    "pending tasks",
+    "current work",
+    "next step",
+)
 # Per-message clip when rendering the span for the summarizer; tool results are the
 # first casualty (huge and mostly stale — a file read 40 turns ago is better re-read).
 _SPAN_TOOL_RESULT_CLIP = 400
 _SPAN_BUDGET_CHARS = 400_000
-# User messages preserved mechanically in the compacted block ("trimmed of pasted bulk").
-# The list is capped to the newest N across repeated compactions — otherwise it appends
-# forever and the block slowly reclaims the window it freed. Dropped ones stay counted
-# (their intent lives in the summary, which is asked to list user messages too).
-_USER_MESSAGE_CLIP = 600
-_USER_MESSAGES_MAX = 40
+# User messages preserved mechanically in the compacted block. They cannot simply all be
+# kept — otherwise the list appends forever and the block slowly reclaims the window it
+# freed — but OPE-189 showed both halves of the old rule (clip each to 600 chars, keep the
+# newest 40) losing the one message that matters. An agent session's FIRST user message is
+# its mandate and never goes stale, and a task statement routinely runs past 600 chars: on
+# a 15-task trial 8 of the 15 task prompts were cut mid-sentence, dropping the output
+# path and the required field names the task checks. So: pin the first message whole,
+# then fill backwards from the newest with a token budget. Dropped ones (now from the
+# MIDDLE) stay counted, and the block says where the gap is.
+_USER_PIN_MAX_TOKENS = 4_000  # a pasted opening message still can't blow the block
+_USER_BUDGET_FRACTION = 0.08  # of the compaction trigger, so a lowered trigger scales too
+_USER_BUDGET_MIN = 2_000
+_USER_BUDGET_MAX = 20_000  # what 8% comes to at the default trigger
 _TRIM_FRACTION = 0.10
 
 
@@ -98,6 +123,10 @@ class CompactionState:
     created_at: float = 0.0
     model_used: str = ""
     trimmed: bool = False  # True when this state came from the no-summary trim fallback
+    # OPE-186 change 3: where the verbatim transcript of the compacted turns was written
+    # (empty when the engine had nowhere to write it). Named in the compacted block so the
+    # model can read back anything the summary dropped.
+    transcript_path: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -109,6 +138,7 @@ class CompactionState:
             "created_at": self.created_at,
             "model_used": self.model_used,
             "trimmed": self.trimmed,
+            "transcript_path": self.transcript_path,
         }
 
     @classmethod
@@ -124,6 +154,7 @@ class CompactionState:
             created_at=float(raw.get("created_at", 0.0)),
             model_used=str(raw.get("model_used", "")),
             trimmed=bool(raw.get("trimmed", False)),
+            transcript_path=str(raw.get("transcript_path", "") or ""),
         )
 
 
@@ -281,30 +312,68 @@ def _text_of(content: Any) -> str:
     return "" if content is None else str(content)
 
 
-def extract_user_messages(
-    span: list[dict[str, Any]], *, clip: int = _USER_MESSAGE_CLIP
-) -> list[str]:
-    """Every user message in the span, chronological, trimmed of pasted bulk. Preserved
-    mechanically — the summarizer is also asked to list them, but user words are the
-    ground truth of intent and must not depend on an LLM remembering to include them."""
+def extract_user_messages(span: list[dict[str, Any]]) -> list[str]:
+    """Every user message in the span, chronological, VERBATIM (whitespace normalized).
+    Preserved mechanically — the summarizer is also asked to list them, but user words are
+    the ground truth of intent and must not depend on an LLM remembering to include them.
+    Fitting them to a budget is `fit_user_messages`'s job, not this one's: nothing is
+    clipped here, so the caller always has the real text to work from."""
     out: list[str] = []
     for msg in span:
         if msg.get("role") != "user":
             continue
         text = " ".join(_text_of(msg.get("content")).split())
-        if not text:
-            continue
-        out.append(text[: clip - 1] + "…" if len(text) > clip else text)
+        if text:
+            out.append(text)
     return out
 
 
-def _cap_user_messages(
-    messages: list[str], *, prior_dropped: int, limit: int = _USER_MESSAGES_MAX
+def user_message_budget(trigger: int) -> int:
+    """Token budget for the preserved user messages: a fraction of the compaction trigger,
+    bounded. A FIXED budget would be wrong at both ends — 20,000 tokens against a 60,000
+    trigger spends a third of the space compaction just freed."""
+    return max(_USER_BUDGET_MIN, min(_USER_BUDGET_MAX, int(_USER_BUDGET_FRACTION * trigger)))
+
+
+def _clip_to_tokens(text: str, tokens: int) -> str:
+    limit = max(1, tokens) * 4  # the chars/4 estimate used everywhere in this module
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def fit_user_messages(
+    messages: list[str],
+    *,
+    prior_dropped: int,
+    budget_tokens: int,
+    pin_tokens: int = _USER_PIN_MAX_TOKENS,
 ) -> tuple[list[str], int]:
-    """Newest-`limit` slice plus the running total of everything ever dropped."""
-    if len(messages) <= limit:
-        return messages, prior_dropped
-    return messages[-limit:], prior_dropped + (len(messages) - limit)
+    """The preserved list: the FIRST message pinned whole, then the newest filling
+    `budget_tokens` backwards. Returns (kept, running total ever dropped).
+
+    Pinning is the point. The first user message states why the session exists — the task,
+    the spec, the standing constraints — and unlike a chat, where intent drifts and the
+    newest turns are the live ask, an agent session's opening message stays load-bearing to
+    the last turn. A pure newest-first budget would eventually push it out,
+    which is exactly what the old newest-40 rule did silently.
+    """
+    if not messages:
+        return [], prior_dropped
+    kept_first = _clip_to_tokens(messages[0], pin_tokens)
+    rest = messages[1:]
+    if not rest:
+        return [kept_first], prior_dropped
+    tail: list[str] = []
+    spent = 0
+    for text in reversed(rest):
+        cost = max(1, len(text) // 4)
+        if tail and spent + cost > budget_tokens:
+            break
+        # The newest message is kept even if it alone exceeds the budget — clipped to fit,
+        # never dropped: it is the most recent thing the user actually said.
+        tail.append(_clip_to_tokens(text, budget_tokens))
+        spent += cost
+    tail.reverse()
+    return [kept_first] + tail, prior_dropped + (len(rest) - len(tail))
 
 
 # -- summarizer ---------------------------------------------------------------
@@ -326,6 +395,24 @@ Rules:
 - Do NOT carry full file contents as truth. Note THAT a file was read/edited; the coworker re-reads if it needs the content again. Stale memory of a file is worse than no memory.
 - Be concrete: paths, names, commands, ids — not vague references.
 - Output only the summary sections, no preamble."""
+
+# OPE-189: the instruction above is ~1,800 chars; the transcript that follows it is tens of
+# thousands, and it ends wherever the session happened to be — usually on a raw tool result.
+# The last thing the model read before generating was therefore the coworker mid-task, and
+# it continued that voice instead of summarizing: 13 of 16 short summaries in that trial were a
+# next-action sentence ("The output got truncated. Let me re-run the remaining checks."),
+# each stopping voluntarily with thousands of tokens of budget unused. So the instruction is
+# restated AFTER the transcript, in bold, with an explicit first line to start from. Recency
+# is doing the work here, which is why this repeats rather than replaces the system prompt.
+SUMMARY_TAIL_INSTRUCTION = """**--- END OF TRANSCRIPT ---**
+
+**The transcript above is a session you are summarizing. It is NOT a conversation you are part of. Do not continue it, do not answer it, do not take its next action.**
+
+**Write the structured summary now. Produce all eight sections, in this order, each as a markdown heading:**
+
+**1. Primary request and intent — 2. Key concepts and decisions — 3. Artifacts and files — 4. Errors and fixes — 5. All user messages — 6. Pending tasks — 7. Current work — 8. Next step**
+
+**Begin your reply with the line `## 1. Primary request and intent` and write nothing before it.**"""
 
 CONTINUATION_CONTRACT = (
     "Continue where you left off: pick up the current work and next step exactly as "
@@ -382,9 +469,16 @@ def summarizer_messages(
             "[previous compaction summary — fold its still-relevant content into the new "
             "summary]\n" + prior_summary + "\n\n[conversation since]\n" + body
         )
+    # Delimited, then the instruction restated last — see SUMMARY_TAIL_INSTRUCTION.
+    user = (
+        "**--- BEGIN TRANSCRIPT TO SUMMARIZE ---**\n\n"
+        + body
+        + "\n\n"
+        + SUMMARY_TAIL_INSTRUCTION
+    )
     return [
         {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-        {"role": "user", "content": body},
+        {"role": "user", "content": user},
     ]
 
 
@@ -398,7 +492,7 @@ def summarize_span(
 ) -> str:
     """One summarizer round-trip (blocking — the engine runs it off-loop). Tools are
     disabled; the Settings model override is just a different `model` id. Raises on
-    provider failure or an empty summary — the caller owns the retry/trim policy."""
+    provider failure or an UNUSABLE summary — the caller owns the retry/trim policy."""
     turn = provider.complete(
         model=model,
         messages=summarizer_messages(span, prior_summary=prior_summary),
@@ -406,9 +500,33 @@ def summarize_span(
         max_tokens=max_tokens,
     )
     text = (getattr(turn, "text", None) or "").strip()
-    if not text:
-        raise RuntimeError("summarizer returned an empty summary")
+    problem = summary_quality_problem(text)
+    if problem:
+        raise RuntimeError(f"summarizer returned an unusable summary: {problem}")
     return text
+
+
+def summary_quality_problem(text: Optional[str]) -> Optional[str]:
+    """Why this summary can't stand in for the span, or None if it can.
+
+    OPE-189: the old bar was "not empty", which accepted a 61-character sentence as the
+    coworker's whole memory of 75 turns. The checks are deliberately coarse — a summary
+    that is merely thin still beats falling back to the no-summary trim — and aimed at the
+    two shapes actually observed: nothing at all, and a next-action sentence in the
+    coworker's voice (which never carries the section headings).
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return "empty"
+    if len(stripped) < SUMMARY_MIN_CHARS:
+        return f"too short ({len(stripped)} chars, minimum {SUMMARY_MIN_CHARS})"
+    low = stripped.lower()
+    if SUMMARY_SECTION_MARKERS[0] not in low:
+        return f"does not open the sections (no '{SUMMARY_SECTION_MARKERS[0]}' heading)"
+    found = sum(1 for marker in SUMMARY_SECTION_MARKERS if marker in low)
+    if found * 2 < len(SUMMARY_SECTION_MARKERS):
+        return f"only {found} of {len(SUMMARY_SECTION_MARKERS)} sections present"
+    return None
 
 
 # -- building + applying a compaction -----------------------------------------
@@ -421,6 +539,8 @@ def build_state(
     model: str,
     keep_tokens: int,
     prior: Optional[CompactionState] = None,
+    summary_max_tokens: int = SUMMARY_MAX_TOKENS,
+    user_budget_tokens: int = _USER_BUDGET_MAX,
 ) -> Optional[CompactionState]:
     """Summarize everything older than the picked boundary into a new CompactionState.
     On repeated compaction the prior summary heads the new span. Returns None when there
@@ -436,10 +556,12 @@ def build_state(
         model,
         span,
         prior_summary=prior.summary_text if prior is not None else "",
+        max_tokens=summary_max_tokens,
     )
-    users, dropped = _cap_user_messages(
+    users, dropped = fit_user_messages(
         prior_users + extract_user_messages(span),
         prior_dropped=prior.user_messages_dropped if prior is not None else 0,
+        budget_tokens=user_budget_tokens,
     )
     return CompactionState(
         boundary_index=boundary,
@@ -457,6 +579,7 @@ def trim_state(
     *,
     prior: Optional[CompactionState] = None,
     fraction: float = _TRIM_FRACTION,
+    user_budget_tokens: int = _USER_BUDGET_MAX,
 ) -> Optional[CompactionState]:
     """The no-LLM fallback: advance the boundary past ~`fraction` of the outbound
     messages. No summary — but the mechanical block and the user-message list (never
@@ -482,9 +605,10 @@ def trim_state(
         + "(Older turns were trimmed to fit the context window; no summary is available "
         "for them. Re-read files and re-run commands if earlier results are needed.)"
     )
-    users, dropped = _cap_user_messages(
+    users, dropped = fit_user_messages(
         prior_users + extract_user_messages(span),
         prior_dropped=prior.user_messages_dropped if prior is not None else 0,
+        budget_tokens=user_budget_tokens,
     )
     return CompactionState(
         boundary_index=boundary,
@@ -511,14 +635,61 @@ def compacted_block(state: CompactionState) -> str:
         parts += ["", state.working_state]
     if state.user_messages:
         parts += ["", "## User messages in the compacted span (verbatim, chronological)"]
+        # The first is pinned, so any omission is a gap in the MIDDLE — say so there, or
+        # the note reads as if the opening request were the thing that went missing.
+        parts += [f"- {state.user_messages[0]}"]
         if state.user_messages_dropped:
             parts += [
-                f"({state.user_messages_dropped} earlier user messages omitted — "
+                f"- ({state.user_messages_dropped} older user messages omitted here — "
                 "their intent is covered by the summary above)"
             ]
-        parts += [f"- {u}" for u in state.user_messages]
+        parts += [f"- {u}" for u in state.user_messages[1:]]
+    if state.transcript_path:
+        parts += [
+            "",
+            "The verbatim transcript of the compacted turns (every message, tool call and "
+            f"tool result, without your private reasoning) is saved at {state.transcript_path}. "
+            "If a detail you need is missing from the summary, read that file (read_file, "
+            "or run_shell with grep / sed -n) instead of guessing.",
+        ]
     parts += ["", CONTINUATION_CONTRACT, "</compacted-history>"]
     return "\n".join(parts)
+
+
+def render_transcript(messages: list[dict[str, Any]], upto: int) -> str:
+    """The canonical messages before index `upto`, rendered as readable Markdown for the
+    transcript file: role, the assistant's visible text and tool calls (name + arguments),
+    every tool result in full, notices. Private reasoning sidecars are left out: they are
+    the model's own thinking, not session facts, and they are the bulkiest part."""
+    lines = [
+        "# Compacted transcript",
+        "",
+        f"Messages 0 to {max(0, upto - 1)} of this session, verbatim, written when they were "
+        "summarised into the compacted history block.",
+        "",
+    ]
+    for i, m in enumerate(messages[:upto]):
+        role = str(m.get("role") or "")
+        if role == "system":
+            continue
+        if role == "notice":
+            lines += [f"## [{i}] notice: {m.get('kind', '')}", "", str(m.get("content") or ""), ""]
+            continue
+        lines.append(f"## [{i}] {role}")
+        content = m.get("content")
+        if isinstance(content, str) and content:
+            lines += ["", content]
+        elif content:
+            lines += ["", json.dumps(content, default=str, ensure_ascii=False)]
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") if isinstance(tc, dict) else None
+            name = (fn or {}).get("name") if fn else (tc.get("name") if isinstance(tc, dict) else "")
+            args = (fn or {}).get("arguments") if fn else (tc.get("arguments") if isinstance(tc, dict) else "")
+            if not isinstance(args, str):
+                args = json.dumps(args, default=str, ensure_ascii=False)
+            lines += ["", f"tool call: {name}", "```", str(args), "```"]
+        lines.append("")
+    return "\n".join(lines)
 
 
 def apply_to_outbound(

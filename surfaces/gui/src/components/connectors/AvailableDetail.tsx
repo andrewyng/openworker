@@ -31,8 +31,8 @@ export function AvailableDetail({
       <div className="flex items-center gap-3.5 mb-5">
         <ConnectorBadge connector={c} size={44} title={c.title} />
         <div className="min-w-0 flex-1">
-          <h2 className="text-[20px] font-semibold tracking-tight leading-tight">{c.title}</h2>
-          <div className="text-[13px] text-muted">{c.blurb}</div>
+          <h2 className="text-title font-semibold tracking-tight leading-tight">{c.title}</h2>
+          <div className="text-ui text-muted">{c.blurb}</div>
         </div>
         <button
           className={PILL_ACCENT}
@@ -43,14 +43,14 @@ export function AvailableDetail({
         </button>
       </div>
 
-      {c.about && <p className="text-[13px] text-ink/90 leading-relaxed mb-1 px-0.5">{c.about}</p>}
+      {c.about && <p className="text-ui text-ink/90 leading-relaxed mb-1 px-0.5">{c.about}</p>}
 
       {(c.access?.length ?? 0) > 0 && (
         <>
           <div className={GRP_H}>{tt("available.access")}</div>
           <div className={GRP} data-testid="available-access">
             {c.access!.map((line) => (
-              <div key={line} className={ROW + " !min-h-[36px] !py-2 text-[13px]"}>
+              <div key={line} className={ROW + " !min-h-[36px] !py-2 text-ui"}>
                 {line}
               </div>
             ))}
@@ -66,21 +66,21 @@ export function AvailableDetail({
           <div className={GRP_H}>{tt("available.tools")}</div>
           <div className={GRP}>
             <button
-              className={ROW + " w-full text-left hover:bg-paper/60 text-[13px]"}
+              className={ROW + " w-full text-left hover:bg-paper/60 text-ui"}
               data-testid="available-tools-toggle"
               onClick={() => setShowTools((v) => !v)}
             >
               <span className="min-w-0 flex-1 text-muted">
                 {tt("available.tools_added", { count: tools.length })}
               </span>
-              <span className="text-faint text-[13px] shrink-0">{showTools ? tt("available.hide") : tt("available.view")}</span>
+              <span className="text-faint text-ui shrink-0">{showTools ? tt("available.hide") : tt("available.view")}</span>
             </button>
             {showTools &&
               tools.map((tool) => (
                 <div key={tool.name} className={ROW + " !min-h-[38px]"}>
                   <span className="min-w-0 flex-1">
-                    <span className="text-[13px]">{tool.label}</span>
-                    <span className="block text-[12px] text-muted">{tool.description}</span>
+                    <span className="text-ui">{tool.label}</span>
+                    <span className="block text-meta text-muted">{tool.description}</span>
                   </span>
                   {/* Same chip, same tooltip, as the connected page's tool list. */}
                   <ApprovalChip kind={tool.kind !== "read" ? "asks_first" : "read"} />

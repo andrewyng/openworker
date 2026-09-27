@@ -31,6 +31,8 @@ test("enabling an installed persona surfaces it in picker + sidebar without relo
   await expect(enabled).toBeChecked();
 
   // No reload: the sidebar group and the picker both pick it up via PERSONAS_CHANGED.
+  // (Settings owns the left column while open — leave it to see the session list.)
+  await page.getByTestId("settings-back").click();
   await expect(sidebar.getByText("Acme Notes")).toBeVisible();
   await page.getByText("New session").first().click();
   await page.getByTestId("coworker-chip").click();
@@ -70,6 +72,7 @@ test("disabling a persona with conversations asks first, then archives them", as
   await enabled.click();
   await page.getByTestId("persona-disable-confirm-ops").click();
   await expect(enabled).not.toBeChecked();
+  await page.getByTestId("settings-back").click();
   await expect(sidebar.getByText("Ops", { exact: true })).toHaveCount(0);
 });
 

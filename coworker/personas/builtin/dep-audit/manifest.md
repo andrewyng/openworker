@@ -10,7 +10,7 @@ version: "1"
 tools: [code_files, git, search, shell, todo]
 connectors: [github]
 skills: [dependency-audit, safe-upgrade-pr]
-recommended_models: [anthropic:claude-opus-4-8, openai:gpt-5.6-sol]
+models: [anthropic:claude-opus-4-8, openai:gpt-5.6-sol]
 default_permission_mode: interactive
 description: A dependency auditor for teams without a security team. Runs open-source vulnerability scanners (osv-scanner, npm audit, pip-audit, trivy) across your lockfiles, separates exploitable from theoretical, and ships minimal, test-verified upgrade PRs.
 recommends:

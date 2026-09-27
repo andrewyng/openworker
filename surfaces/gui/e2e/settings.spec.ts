@@ -12,7 +12,7 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   // Full-page: left sub-nav + the General section (no modal backdrop).
   await expect(page.getByRole("heading", { name: "General" })).toBeVisible();
   await expect(page.locator(".modal-backdrop")).toHaveCount(0);
-  for (const label of ["General", "Models", "Voice input"]) {
+  for (const label of ["General", "Models & Keys", "Voice input"]) {
     await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
   }
   // Folded tabs: Files is a General card now; Coworkers ships as its own tab (UX-029).
@@ -22,7 +22,7 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   // The Files card lives inside General.
   await expect(page.getByText("Each conversation gets its own folder")).toBeVisible();
 
-  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByRole("button", { name: "Models & Keys" }).click();
   await expect(page.getByTestId("set-provider-openai")).toBeVisible();
 });
 
@@ -51,7 +51,7 @@ test("Models: provider gallery states; vendor form previews models", async ({ pa
   await page.goto("/");
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByRole("button", { name: "Models & Keys" }).click();
 
   // Card states from the fixtures: openai configured+used, anthropic configured, zai not.
   await expect(page.getByTestId("set-provider-openai")).toContainText("✓ Connected · used 2h ago");
@@ -83,7 +83,7 @@ test("Models: BytePlus and Volcengine Ark stay visually and operationally separa
   await page.goto("/");
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByRole("button", { name: "Models & Keys" }).click();
 
   const byteplusCard = page.getByTestId("set-provider-ark");
   const volcengineCard = page.getByTestId("set-provider-ark-agent-plan-cn");
@@ -124,7 +124,7 @@ test("Models: Remove key reverts a configured provider", async ({ page }) => {
   page.on("dialog", (d) => d.accept());
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByRole("button", { name: "Models & Keys" }).click();
 
   await page.getByTestId("set-provider-anthropic").click();
   await expect(page.getByTestId("set-saved-pill")).toContainText("Tested & saved");

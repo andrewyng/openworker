@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { ApprovalEscalation } from "./ApprovalEscalation";
 import { getI18n, useTranslation } from "react-i18next";
 import type { ApprovalDecision, Item } from "../types";
 import { humanizeApprovalTitle, type HumanLine } from "../humanize";
 import { Icon } from "./Icon";
+import { leadDecisionFromArgs, WorkerDecisionCard } from "./WorkerDecisionCard";
 
 export function shortArgs(args: any): string {
   if (!args || typeof args !== "object") return "";
@@ -420,9 +422,13 @@ export function ApprovalCard({
   runTask,
   compact = false,
   autoApprove = false,
+  onAnswerWorkerCall,
 }: {
   item: ApprovalItem;
   onApprove: (decision: ApprovalDecision) => void;
+  // decide_worker_call only: answer the WORKER'S waiting call directly (the human
+  // overriding the lead). Without it the override only declines the lead's decision.
+  onAnswerWorkerCall?: (callId: string, resolution: "allow" | "deny") => void;
   // Present when this approval was raised inside an automation run — unlocks the
   // task-persistent "Allow every time" (in-app only, §25).
   runTask?: { id: string; title: string } | null;
@@ -433,11 +439,30 @@ export function ApprovalCard({
 }) {
   const { t } = useTranslation();
   const [peek, setPeek] = useState(false);
+  // A lead's decision on a worker's call has its own card: the generic one asked the
+  // human to "Allow" a denial of a command it never showed.
+  if (item.name === "decide_worker_call" && !item.resolved) {
+    const decision = leadDecisionFromArgs(item.args);
+    return (
+      <WorkerDecisionCard
+        decision={decision}
+        workerCall={item.workerCall}
+        escalation={item.escalation}
+        reviewerUnsure={item.reviewerUnsure}
+        compact={compact}
+        onFollow={() => onApprove("once")}
+        onOverride={() => {
+          onAnswerWorkerCall?.(decision.callId, decision.decision === "deny" ? "allow" : "deny");
+          onApprove("deny");
+        }}
+      />
+    );
+  }
   const title = humanizeApprovalTitle(item.name, item.args);
   const scope = scopeNote(item.name, item.args, item.category, item.mcpDestination);
   const grants = item.name === "create_scheduled_task" ? permissionLines(item.args) : [];
   // "requires approval" is the engine's default boilerplate — only surface a real reason.
-  const reason = item.reason && item.reason !== "requires approval" ? item.reason : "";
+  const reason = item.reason && item.reason !== "requires approval" && item.reason !== item.escalation?.reason ? item.reason : "";
   const offerStanding = !!(runTask && item.standingTarget);
   const dock = compact ? " approval-dock" : "";
   // OPE-114 §1: the command text cannot tell you the agent wrote this file a moment ago.
@@ -448,11 +473,7 @@ export function ApprovalCard({
     </div>
   ) : null;
   // Quiet, not a warning: the reviewer hesitating is context, not danger.
-  const reviewerUnsure = item.reviewerUnsure ? (
-    <div className="text-[12px] text-muted mt-1" data-testid="approval-reviewer-unsure">
-      {t("approval.reviewer_unsure", { note: item.reviewerUnsure })}
-    </div>
-  ) : null;
+  const reviewerUnsure = <ApprovalEscalation escalation={item.escalation} reviewerUnsure={item.reviewerUnsure} />;
 
   // §35 compact row: routine workspace writes — one line, preview expands inline from the
   // tool args. Standing/grant flows keep the full card (they carry §25 consent weight).

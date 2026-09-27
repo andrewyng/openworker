@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ..secrets import SecretStore
 
@@ -22,9 +22,73 @@ class ConnectorToolDef:
     # single-argument targets are declarable in v1 (no wildcards, no composite targets), and
     # only write tools should declare one — reads never gate, so a rule would be meaningless.
     target_arg: Optional[str] = None
+    # The composite alternative (spec §10.7 (b), 2026-09-05): a function that derives the
+    # rule target from several arguments — a GitHub thread is `owner` + `repo` + a number,
+    # and the target it yields is the same `github:owner/repo#N` handle the thread grant
+    # pins for `send_message`, so one grant covers replying AND reviewing on that thread.
+    # Returns None when the call does not fully name its target.
+    target_fn: Optional[Callable[[dict[str, Any]], Optional[str]]] = None
+
+
+def _github_thread(number_arg: str) -> Callable[[dict[str, Any]], Optional[str]]:
+    def target(arguments: dict[str, Any]) -> Optional[str]:
+        owner = str(arguments.get("owner") or "").strip()
+        repo = str(arguments.get("repo") or "").strip()
+        number = str(arguments.get(number_arg) or "").strip()
+        if not (owner and repo and number.isdigit()):
+            return None
+        return f"github:{owner}/{repo}#{number}"
+
+    return target
+
+
+def _slack_thread(arguments: dict[str, Any]) -> Optional[str]:
+    """`slack:<workspace>/<channel>[:<thread_ts>]` — the SAME handle the inbound
+    framing and the thread grant use (slack_addr: a bare channel for the manual
+    single-workspace install, team-qualified for managed relays)."""
+    workspace = str(arguments.get("workspace") or "").strip()
+    channel = str(arguments.get("channel") or "").strip()
+    thread = str(arguments.get("thread_ts") or "").strip()
+    if not channel:
+        return None
+    chat = f"{workspace}/{channel}" if workspace and workspace != "default" else channel
+    return f"slack:{chat}" + (f":{thread}" if thread else "")
+
+
+def _telegram_chat(arguments: dict[str, Any]) -> Optional[str]:
+    chat_id = str(arguments.get("chat_id") or "").strip()
+    thread = str(arguments.get("thread_id") or "").strip()
+    if not chat_id:
+        return None
+    return f"telegram:{chat_id}" + (f":{thread}" if thread else "")
 
 
 TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
+    # Chat connectors (spec §11, 2026-09-05): posting is a connector tool like any
+    # other, gated by `connectors:` — no separate "messaging" capability.
+    ConnectorToolDef(
+        "slack",
+        "slack_post_message",
+        "Post message",
+        "write",
+        "Post a message to a channel or thread in a connected workspace.",
+        target_fn=_slack_thread,
+    ),
+    ConnectorToolDef(
+        "slack",
+        "slack_upload_file",
+        "Upload file",
+        "write",
+        "Upload a file from the session's folders into a channel or thread.",
+    ),
+    ConnectorToolDef(
+        "telegram",
+        "telegram_send_message",
+        "Send message",
+        "write",
+        "Send a message to a Telegram chat.",
+        target_fn=_telegram_chat,
+    ),
     ConnectorToolDef(
         "browser",
         # Egress, not a read: the URL is model-chosen, so the request itself can carry
@@ -115,6 +179,7 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "Reply on issue/PR",
         "write",
         "Comment on an issue or pull request.",
+        target_fn=_github_thread("number"),
     ),
     ConnectorToolDef(
         "github",
@@ -122,6 +187,7 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "Review a PR",
         "write",
         "Submit a pull-request review (approve / request changes / comment).",
+        target_fn=_github_thread("pull_number"),
     ),
     ConnectorToolDef(
         "github",
@@ -145,6 +211,22 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "Update a clone",
         "write",
         "Fast-forward an existing clone to the latest commits.",
+    ),
+    ConnectorToolDef(
+        "github",
+        # The runtime pushes; the agent never handles a credential (machines
+        # spec §Managed events — tools are the future sandbox boundary).
+        "github_push",
+        "Push a branch",
+        "write",
+        "Push the clone's branch to GitHub with a short-lived token.",
+    ),
+    ConnectorToolDef(
+        "github",
+        "github_open_pr",
+        "Open a pull request",
+        "write",
+        "Open a PR for a pushed branch.",
     ),
     ConnectorToolDef(
         "email",
@@ -1109,12 +1191,35 @@ for _def in TOOL_DEFS:
 # which tools can EVER carry a standing rule: exec/destructive tools must never appear here.
 TARGET_ARGS: dict[str, str] = {d.name: d.target_arg for d in TOOL_DEFS if d.target_arg}
 TARGET_ARGS["send_message"] = "target"
+# Composite targets (several arguments → one handle); together with TARGET_ARGS this is
+# the whole set of rule-eligible tools.
+TARGET_FNS: dict[str, Callable[[dict[str, Any]], Optional[str]]] = {
+    d.name: d.target_fn for d in TOOL_DEFS if d.target_fn
+}
 
 
 def target_arg_for(tool_name: str) -> Optional[str]:
     """The argument that names this tool's standing-rule target, or None if the tool
-    isn't eligible for standing rules."""
+    isn't eligible for standing rules by a single argument."""
     return TARGET_ARGS.get(tool_name)
+
+
+def rule_eligible(tool_name: str) -> bool:
+    """Whether a standing rule can ever name this tool (single-arg or composite target)."""
+    return tool_name in TARGET_ARGS or tool_name in TARGET_FNS
+
+
+def standing_target_for(tool_name: str, arguments: dict[str, Any]) -> Optional[str]:
+    """The exact target this call names for a standing rule, or None when the tool is
+    not rule-eligible or the call does not name one."""
+    fn = TARGET_FNS.get(tool_name)
+    if fn is not None:
+        return fn(arguments or {})
+    arg = TARGET_ARGS.get(tool_name)
+    if arg is None:
+        return None
+    value = str((arguments or {}).get(arg) or "").strip()
+    return value or None
 
 
 def connector_for_tool(tool_name: str) -> str | None:

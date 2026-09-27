@@ -39,23 +39,68 @@ def build(dialect, *, space: str):
 
     def _safe(func, *args, **kwargs) -> Any:
         try:
-            return func(*args, **kwargs)
+            result = func(*args, **kwargs)
+            if func.__name__ in ("transition", "assign", "claim", "set_status", "comment", "link"):
+                from .tools import mutation_receipt
+                return mutation_receipt(result)
+            return result
         except (BoardError, ValueError) as error:
             return {"error": str(error)}
 
     @mcp.tool()
-    def board_list(state: str = "", assignee: str = "") -> Any:
+    def board_list(state: str = "", assignee: str = "", after_item: int = 0, limit: int = 50) -> Any:
         """List work items on the board, optionally filtered by state
         (open/in_progress/blocked/review/done/canceled) or assignee."""
-        return _safe(
+        result = _safe(
             dialect.list_items, space, state=state or None, assignee=assignee or None
         )
+        if not isinstance(result, list):
+            return result
+        if isinstance(after_item, bool) or not isinstance(after_item, int) or after_item < 0:
+            return {"error": "after_item must be a non-negative integer"}
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            return {"error": "limit must be between 1 and 100"}
+        from .tools import item_snapshot
+        items = [i for i in result if i["id"] > after_item]
+        page = [item_snapshot(i, brief=True) for i in items[:limit]]
+        for i in page:
+            if i.get("proposal_ref"):
+                i["proposal_ref"]["read_tool"] = "board_proposal"
+        return {"items": page, "has_more": len(items) > limit,
+                "next_after_item": page[-1]["id"] if page else after_item}
 
     @mcp.tool()
     def board_show(item: int) -> Any:
-        """One work item in full: description, acceptance criteria, refs, links,
-        and every comment."""
-        return _safe(dialect.get_item, space, item)
+        """Current task details, not historical comments. Use board_comments for
+        incremental handoffs and board_proposal for shared approved intent."""
+        from .tools import item_snapshot
+        result = _safe(dialect.get_item, space, item)
+        snapshot = item_snapshot(result)
+        if snapshot.get("proposal_ref"):
+            snapshot["proposal_ref"]["read_tool"] = "board_proposal"
+        return snapshot
+
+    @mcp.tool()
+    def board_comments(item: int, after_seq: int = 0, limit: int = 20) -> Any:
+        """Complete new comments after a sequence. Follow next_after_seq while
+        has_more. Zero replays; oversized comments use board_comment_text."""
+        result = _safe(dialect.comment_page, space, item, after_seq=after_seq, limit=limit)
+        for entry in result.get("comments", []):
+            if entry.get("read_tool"):
+                entry["read_tool"] = "board_comment_text"
+        return result
+
+    @mcp.tool()
+    def board_comment_text(item: int, seq: int, offset: int = 0, max_chars: int = 12000) -> Any:
+        """Read an exact comment in bounded pages; follow next_offset while has_more."""
+        return _safe(dialect.comment_text, space, item, seq=seq, offset=offset, max_chars=max_chars)
+
+    @mcp.tool()
+    def board_proposal(item: int) -> Any:
+        """Read shared approved proposal intent and external-action declarations;
+        these are not permission grants. Read once or when context is missing."""
+        result = _safe(dialect.get_item, space, item)
+        return result if "error" in result else {"proposal": result.get("proposal"), "authority": "intent_not_access_grants"}
 
     @mcp.tool()
     def board_create(
@@ -94,27 +139,30 @@ def build(dialect, *, space: str):
         )
 
     @mcp.tool()
-    def board_comment(item: int, body: str, refs: list[str] = []) -> Any:
+    def board_comment(item: int, body: str, refs: list[str] = [], needs_attention: bool = False) -> Any:
         """Comment on a work item — durable and attributed; answers that matter
-        belong here. `refs` attach artifact pointers."""
-        return _safe(dialect.comment, space, item, body, refs=list(refs or []))
+        belong here. Routine notes are quiet; needs_attention=True wakes the lead
+        for an explicit question/decision. Review transitions are the handoff.
+        `refs` attach artifact pointers."""
+        return _safe(dialect.comment, space, item, body, refs=list(refs or []), needs_attention=needs_attention)
 
     @mcp.tool()
     def board_attach(item: int, path: str, caption: str = "") -> Any:
         """Attach a screenshot or image (png/jpg/gif/webp, ≤10MB) from a local
         file to a work item — so the lead/reviewer can SEE what you did. Give it
         a caption saying what the image shows. Great with review hand-offs."""
-        from pathlib import Path as _Path
+        from .attachments import read_image_file
 
-        source = _Path(path).expanduser()
-        if not source.is_file():
-            return {"error": f"no such file: {path}"}
+        try:
+            data, name = read_image_file(path)
+        except (BoardError, ValueError, OSError) as error:
+            return {"error": str(error)}
         return _safe(
             dialect.attach,
             space,
             item,
-            source.read_bytes(),
-            source.name,
+            data,
+            name,
             caption=caption,
         )
 
@@ -131,6 +179,14 @@ def build(dialect, *, space: str):
         """Acknowledge feed events up to a sequence number (from board_pending),
         so they are not re-delivered."""
         return _safe(lambda: (dialect.consume(space, upto_seq), {"ok": True})[1])
+
+    if role == "worker":
+
+        @mcp.tool()
+        def board_set_status(item: int, text: str) -> Any:
+            """Set one display-only progress line (at most 80 characters) on an item
+            currently assigned to you. Does not change state or wake the lead."""
+            return _safe(dialect.set_status, space, item, text)
 
     if role in ("lead", "user"):
 

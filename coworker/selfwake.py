@@ -2,7 +2,8 @@
 
 Converts an always-on agent into suspend/resume (event-driven, ~zero idle cost): the session
 sleeps and the runtime re-invokes it when a wake is due. Two triggers here: a **timer**
-(`sleep_until`) and **on-completion** (`wake_on` a backgrounded job). This module
+(`sleep_for` relative, `sleep_until` absolute) and **on-completion** (`wake_on` a
+backgrounded job). This module
 owns the wake records + the due/complete logic; the scheduler tick consumes ``due()`` /
 ``complete_job()`` and resumes the session (shares the automation scheduler — see
 ``PERMISSIONS-AND-INBOX.md``).
@@ -25,6 +26,7 @@ KIND_EVENT = "event"  # wake when a named connector/webhook event fires (Phase 3
 STATE_PENDING = "pending"
 STATE_DUE = "due"
 STATE_FIRED = "fired"
+STATE_CANCELLED = "cancelled"
 
 
 def _now() -> datetime:
@@ -42,6 +44,8 @@ class Wake:
     event_key: Optional[str] = None  # for on-event wakes
     note: str = ""
     created_at: str = field(default_factory=lambda: _now().isoformat())
+    cancellation_reason: str = ""
+    context_delivered: bool = False
 
 
 class WakeStore:
@@ -49,21 +53,44 @@ class WakeStore:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
         self._wakes: dict[str, Wake] = {}
+        self.stopped_sessions: set[str] = set()
         if self.path and self.path.is_file():
-            for raw in json.loads(self.path.read_text(encoding="utf-8")).get(
-                "wakes", []
-            ):
+            saved = json.loads(self.path.read_text(encoding="utf-8"))
+            self.stopped_sessions = set(saved.get("stopped_sessions", []))
+            for raw in saved.get("wakes", []):
                 w = Wake(**raw)
                 self._wakes[w.id] = w
+            # Older versions accumulated timers. Keep only the newest pending
+            # sleep per session while retaining the replaced records for audit.
+            newest = {}
+            migrated = False
+            for w in sorted(self._wakes.values(), key=lambda w: w.created_at):
+                if w.kind != KIND_TIMER or w.state not in (STATE_PENDING, STATE_DUE):
+                    continue
+                old = newest.get(w.session_id)
+                if old:
+                    old.state = STATE_CANCELLED
+                    old.cancellation_reason = "replaced by a newer sleep"
+                    old.context_delivered = True
+                    migrated = True
+                newest[w.session_id] = w
+            if migrated:
+                self._save()
 
     def _save(self) -> None:
         if not self.path:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"wakes": [asdict(w) for w in self._wakes.values()]}, indent=2),
+        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(
+                {"wakes": [asdict(w) for w in self._wakes.values()],
+                 "stopped_sessions": sorted(self.stopped_sessions)},
+                indent=2,
+            ),
             encoding="utf-8",
         )
+        temporary.replace(self.path)
 
     def add_timer(self, session_id: str, fire_at: datetime, *, note: str = "") -> Wake:
         w = Wake(
@@ -74,6 +101,12 @@ class WakeStore:
             note=note,
         )
         with self._lock:
+            for old in self._wakes.values():
+                if (old.session_id == session_id and old.kind == KIND_TIMER
+                        and old.state in (STATE_PENDING, STATE_DUE)):
+                    old.state = STATE_CANCELLED
+                    old.cancellation_reason = "replaced by a newer sleep"
+                    old.context_delivered = True
             self._wakes[w.id] = w
             self._save()
         return w
@@ -100,7 +133,9 @@ class WakeStore:
         """Timer wakes whose fire time has passed, plus completion/event wakes marked due."""
         now = now or _now()
         out = []
-        for w in self._wakes.values():
+        with self._lock:
+            snapshot = list(self._wakes.values())
+        for w in snapshot:
             if w.state != STATE_PENDING and w.state != STATE_DUE:
                 continue
             if (
@@ -139,27 +174,85 @@ class WakeStore:
     def mark_fired(self, wake_id: str) -> None:
         with self._lock:
             w = self._wakes.get(wake_id)
-            if w is not None:
+            if w is not None and w.state in (STATE_PENDING, STATE_DUE):
                 w.state = STATE_FIRED
                 self._save()
 
+    def cancel_sleep(self, session_id: str, reason: str) -> None:
+        """Retain cancelled reminders durably until an incoming turn records them."""
+        with self._lock:
+            changed = False
+            for w in self._wakes.values():
+                if (w.session_id == session_id and w.kind == KIND_TIMER
+                        and w.state in (STATE_PENDING, STATE_DUE)):
+                    w.state = STATE_CANCELLED
+                    w.cancellation_reason = reason
+                    changed = True
+            if changed:
+                self._save()
+
+    def set_stopped(self, session_id: str, stopped: bool) -> None:
+        with self._lock:
+            if stopped:
+                self.stopped_sessions.add(session_id)
+            else:
+                self.stopped_sessions.discard(session_id)
+            self._save()
+
+    def cancelled_context(self, session_id: str) -> list[Wake]:
+        with self._lock:
+            return [
+                w for w in self._wakes.values()
+                if w.session_id == session_id and w.state == STATE_CANCELLED
+                and not w.context_delivered
+            ]
+
+    def acknowledge(self, wake_ids: list[str]) -> None:
+        """Called only after a durable incoming-message receipt exists."""
+        with self._lock:
+            changed = False
+            for wake_id in wake_ids:
+                w = self._wakes.get(wake_id)
+                if w is not None and not w.context_delivered:
+                    if w.state in (STATE_PENDING, STATE_DUE):
+                        w.state = STATE_FIRED
+                    w.context_delivered = True
+                    changed = True
+            if changed:
+                self._save()
+
     def pending(self, session_id: Optional[str] = None) -> list[Wake]:
-        return [
-            w
-            for w in self._wakes.values()
-            if w.state != STATE_FIRED
-            and (session_id is None or w.session_id == session_id)
-        ]
+        with self._lock:
+            return [
+                w
+                for w in self._wakes.values()
+                if w.state in (STATE_PENDING, STATE_DUE)
+                and (session_id is None or w.session_id == session_id)
+            ]
 
 
 def selfwake_tools(store: WakeStore, session_id: str) -> list:
     """Tools an agent calls to schedule its own resumption."""
 
+    def sleep_for(seconds: int, note: str = "") -> dict:
+        """Suspend and wake this session after `seconds` (a relative wait: "check again in
+        5 minutes" is sleep_for(300)). Use for an explicit timed check, not routine
+        team polling: board decisions already wake a lead that finishes its turn.
+        Replaces the previous sleep. Earlier board/user activity cancels
+        it and carries your optional reminder note forward. No clock arithmetic needed."""
+        secs = int(seconds)
+        if secs <= 0:
+            raise ValueError("sleep_for needs a positive number of seconds")
+        w = store.add_timer(session_id, _now() + timedelta(seconds=secs), note=note)
+        return {"ok": True, "wake_id": w.id, "fire_at": w.fire_at}
+
     def sleep_until(when_iso: str, note: str = "") -> dict:
         """Suspend and wake this session at an ISO-8601 timestamp (timezone-aware; bare
-        timestamps are read as UTC). Use it for polling/waiting without burning context
-        while idle — for a relative wait ("check again in 5 minutes"), compute the
-        timestamp from the `Now:` line in your context."""
+        timestamps are read as UTC) — for an absolute time ("at 09:00 tomorrow"). Call
+        `current_time` first if you need today's date or the timezone; for a relative wait
+        use sleep_for instead. Replaces the previous sleep and cancels on earlier
+        board/user activity, carrying the optional reminder note into that activity.
+        This is an idle check-in deadline, not a persistent appointment."""
         when = datetime.fromisoformat(when_iso)
         if when.tzinfo is None:
             when = when.replace(tzinfo=timezone.utc)
@@ -177,4 +270,7 @@ def selfwake_tools(store: WakeStore, session_id: str) -> list:
         w = store.add_event(session_id, event_key, note=note)
         return {"ok": True, "wake_id": w.id, "event_key": event_key}
 
-    return [sleep_until, wake_on, wake_on_event]
+    tools = [sleep_for, sleep_until, wake_on, wake_on_event]
+    for tool in tools:
+        tool.__coworker_yields_turn__ = True
+    return tools

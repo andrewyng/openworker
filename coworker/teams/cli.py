@@ -78,6 +78,10 @@ def _parser() -> argparse.ArgumentParser:
     p = cmd("claim", _cmd_claim, "claim an open, unassigned item for yourself")
     p.add_argument("id", type=int)
 
+    p = cmd("set-status", _cmd_set_status, "set a short progress line on your assigned item (worker only)")
+    p.add_argument("id", type=int)
+    p.add_argument("text")
+
     p = cmd("move", _cmd_move, "transition an item")
     p.add_argument("id", type=int)
     p.add_argument("to", choices=_STATES[1:] + ("open",))
@@ -88,6 +92,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("id", type=int)
     p.add_argument("body")
     p.add_argument("--ref", action="append", default=[], dest="refs")
+    p.add_argument("--needs-attention", action="store_true", help="ask the lead for a decision")
 
     p = cmd("assign", _cmd_assign, "assign an item (lead/user)")
     p.add_argument("id", type=int)
@@ -303,6 +308,12 @@ def _cmd_create(args) -> int:
     return 0
 
 
+def _cmd_set_status(args) -> int:
+    item = _dialect(args).set_status(_space(args), args.id, args.text)
+    print(json.dumps(item) if args.json else item["status"])
+    return 0
+
+
 def _cmd_claim(args) -> int:
     item = _dialect(args).claim(_space(args), args.id)
     print(
@@ -322,7 +333,7 @@ def _cmd_move(args) -> int:
 
 
 def _cmd_comment(args) -> int:
-    _dialect(args).comment(_space(args), args.id, args.body, refs=args.refs)
+    _dialect(args).comment(_space(args), args.id, args.body, refs=args.refs, needs_attention=args.needs_attention)
     print("ok" if not args.json else json.dumps({"ok": True}))
     return 0
 
@@ -338,12 +349,15 @@ def _cmd_assign(args) -> int:
 
 
 def _cmd_attach(args) -> int:
-    source = Path(args.file).expanduser()
-    if not source.is_file():
-        print(f"error: no such file: {source}", file=sys.stderr)
+    from .attachments import read_image_file
+
+    try:
+        data, name = read_image_file(args.file)
+    except (BoardError, ValueError, OSError) as error:
+        print(f"error: {error}", file=sys.stderr)
         return 1
     result = _dialect(args).attach(
-        _space(args), args.id, source.read_bytes(), source.name, caption=args.caption
+        _space(args), args.id, data, name, caption=args.caption
     )
     ref = result.get("ref") or next(
         (r for r in (result.get("payload") or {}).get("refs", [])), ""

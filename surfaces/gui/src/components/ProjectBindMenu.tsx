@@ -83,7 +83,7 @@ export function ProjectBindMenu(props: {
   ) => (
     <button
       key={key}
-      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-left hover:bg-paper"
+      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-ui text-left hover:bg-paper"
       onClick={onClick}
     >
       <span
@@ -102,14 +102,14 @@ export function ProjectBindMenu(props: {
       className="absolute z-50 bottom-full mb-1 left-[190px] w-[248px] rounded-xl border border-line bg-panel shadow-2xl py-1.5"
       data-testid={`project-menu-${kind}`}
     >
-      <div className="px-3 pt-1 pb-1.5 text-[10.5px] font-semibold tracking-wide uppercase text-faint">
+      <div className="px-3 pt-1 pb-1.5 text-[10.5px] font-medium text-faint">
         {title}
       </div>
       {named.length >= FILTER_AT && (
         <div className="mx-2.5 mb-1.5 flex items-center gap-1.5 rounded-lg border border-line px-2 py-1">
           <Icon name="search" size={12} className="text-faint shrink-0" />
           <input
-            className="w-full bg-transparent text-[12.5px] outline-none"
+            className="w-full bg-transparent text-meta outline-none"
             placeholder={t("bindmenu.filter_placeholder")}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -126,10 +126,10 @@ export function ProjectBindMenu(props: {
           menu.derived.kind === "git" ? (
             <span className="inline-flex items-center gap-1.5">
               <Icon name="branch" size={12} className="text-faint shrink-0" />
-              <span className="font-mono text-[12px]">{menu.derived.label}</span>
+              <span className="font-mono text-meta">{menu.derived.label}</span>
             </span>
           ) : (
-            <span className="font-mono text-[12px] text-muted" title={menu.derived.full}>
+            <span className="font-mono text-meta text-muted" title={menu.derived.full}>
               {trimPath(menu.derived.label)}
             </span>
           ),
@@ -147,14 +147,14 @@ export function ProjectBindMenu(props: {
         ),
       )}
       {q && shown.length === 0 && (
-        <div className="px-3 py-1.5 text-[12px] text-faint">{t("bindmenu.no_matches")}</div>
+        <div className="px-3 py-1.5 text-meta text-faint">{t("bindmenu.no_matches")}</div>
       )}
       <div className="my-1 border-t border-line" />
       {naming ? (
         <div className="mx-2.5 my-1 flex items-center gap-1.5">
           <input
             ref={nameInput}
-            className="w-full rounded-lg border border-line bg-transparent px-2 py-1 text-[12.5px] outline-none"
+            className="w-full rounded-lg border border-line bg-transparent px-2 py-1 text-meta outline-none"
             placeholder={
               kind === "memory" ? t("bindmenu.name_placeholder_memory") : t("bindmenu.name_placeholder_board")
             }
@@ -168,7 +168,7 @@ export function ProjectBindMenu(props: {
         </div>
       ) : (
         <button
-          className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[12.5px] text-left text-muted hover:bg-paper"
+          className="w-full flex items-center gap-2.5 px-3 py-1.5 text-meta text-left text-muted hover:bg-paper"
           onClick={() => setNaming(true)}
         >
           <Icon name="pencil" size={13} className="shrink-0" />{" "}
@@ -177,7 +177,7 @@ export function ProjectBindMenu(props: {
       )}
       {kind === "memory" && props.onOpenMemory && (
         <button
-          className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[12.5px] text-left text-muted hover:bg-paper"
+          className="w-full flex items-center gap-2.5 px-3 py-1.5 text-meta text-left text-muted hover:bg-paper"
           onClick={() => {
             props.onClose();
             props.onOpenMemory?.();
@@ -186,7 +186,7 @@ export function ProjectBindMenu(props: {
           <Icon name="sliders" size={13} className="shrink-0" /> {t("bindmenu.view_edit")}
         </button>
       )}
-      {error && <div className="px-3 py-1 text-[11.5px] text-red-500">{error}</div>}
+      {error && <div className="px-3 py-1 text-label text-red-500">{error}</div>}
     </div>
   );
 }

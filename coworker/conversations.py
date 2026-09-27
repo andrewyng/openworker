@@ -112,6 +112,9 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN compaction TEXT",
             "ALTER TABLE sessions ADD COLUMN team TEXT",
             "ALTER TABLE sessions ADD COLUMN bindings TEXT",
+            "ALTER TABLE sessions ADD COLUMN actor TEXT",
+            "ALTER TABLE sessions ADD COLUMN usage TEXT",
+            "ALTER TABLE sessions ADD COLUMN spawn TEXT",
         ):
             try:
                 self._conn.execute(ddl)
@@ -344,13 +347,15 @@ class ConversationStore:
             title = record.title or title_from(record.messages)
             self._conn.execute(
                 """
-                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, team, bindings, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, team, bindings, actor, usage, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace, model = excluded.model, mode = excluded.mode,
                     title = COALESCE(sessions.title, excluded.title), agent = excluded.agent,
                     n_msgs = excluded.n_msgs, messages = NULL, extra_roots = excluded.extra_roots,
                     grants = excluded.grants, compaction = excluded.compaction,
+                    actor = COALESCE(NULLIF(sessions.actor, ''), excluded.actor),
+                    usage = excluded.usage,
                     updated_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE sessions.updated_at END
                 """,
                 (
@@ -366,6 +371,8 @@ class ConversationStore:
                     json.dumps(record.compaction or {}),
                     json.dumps(record.team or {}),
                     json.dumps(record.bindings or {}),
+                    record.actor or "",
+                    json.dumps(record.usage or {}),
                     touch,
                 ),
             )
@@ -412,11 +419,24 @@ class ConversationStore:
             archived=bool(row["archived"]),
             origin=row["origin"],
             origin_label=row["origin_label"],
+            actor=(row["actor"] if "actor" in row.keys() else None) or "",
             team=_load_grants(row["team"] if "team" in row.keys() else None),
             bindings=_load_grants(
                 row["bindings"] if "bindings" in row.keys() else None
             ),
+            usage=_load_grants(row["usage"] if "usage" in row.keys() else None),
+            spawn=_load_grants(row["spawn"] if "spawn" in row.keys() else None),
         )
+
+    def set_spawn(self, session_id: str, spawn: dict) -> None:
+        """Persist what a configuration started this session with (spec §10). Like
+        `team`, the per-turn upsert never names this column."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET spawn = ? WHERE session_id = ?",
+                (json.dumps(spawn or {}), session_id),
+            )
+            self._conn.commit()
 
     def set_team(self, session_id: str, team: dict) -> None:
         """Persist the session's team tie independent of the turn-save path. The
@@ -485,7 +505,10 @@ class ConversationStore:
                 archived=bool(r["archived"]),
                 origin=r["origin"],
                 origin_label=r["origin_label"],
+                actor=(r["actor"] if "actor" in r.keys() else None) or "",
                 team=_load_grants(r["team"] if "team" in r.keys() else None),
+                usage=_load_grants(r["usage"] if "usage" in r.keys() else None),
+                spawn=_load_grants(r["spawn"] if "spawn" in r.keys() else None),
             )
             for r in rows
         ]

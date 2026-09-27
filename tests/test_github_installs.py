@@ -44,7 +44,7 @@ def client(tmp_path, monkeypatch):
 def _install_form(installation_id: str, *, login="octocat", account="acme") -> dict:
     """The broker's loopback POST — deliberately NO token fields (§4)."""
     state = f"github-{installation_id}"
-    cloud._pending_managed_states[state] = cloud._now()
+    cloud._pending_managed_states[state] = {"created": cloud._now(), "machine_id": "", "machine_name": ""}
     return {
         "connector": "github",
         "installation_id": installation_id,
@@ -138,6 +138,29 @@ def test_disconnect_last_installation_never_resurrects_manual_pat(client, monkey
 
 
 # --- allow-list: per-installation scope (the per-workspace pattern) -----------
+
+
+def test_managed_install_pre_adds_the_installer(tmp_path, monkeypatch):
+    """Connecting the App is consent to talk to your own coworker: the installing
+    login is on the allow-list from the first frame (Slack's UX-027 rule)."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    secrets = SecretStore()
+    github_installs.managed_connect_install(secrets, _install_form("101", login="rohit"))
+    assert secrets.get("github:install:101")["allowed_users"] == ["rohit"]
+    settings = load_settings(secrets)["github"]
+
+    class Src:
+        platform = "github"
+        team_id = "101"
+        user_id = "rohit"
+
+    assert is_authorized(settings, Src()) is True
+    # A reinstall by someone else keeps the earlier list and adds the new installer.
+    github_installs.managed_connect_install(secrets, _install_form("101", login="teammate"))
+    assert secrets.get("github:install:101")["allowed_users"] == ["rohit", "teammate"]
+    # No login on the form (older broker) → no phantom entry.
+    github_installs.managed_connect_install(secrets, _install_form("202", login=""))
+    assert "allowed_users" not in secrets.get("github:install:202")
 
 
 def test_github_settings_carry_per_installation_allowlists(tmp_path, monkeypatch):
@@ -585,14 +608,51 @@ def test_clone_pull_roundtrip_and_no_token_at_rest(tmp_path, monkeypatch, _origi
     assert (clone / "next.txt").read_text() == "more"
 
 
+def test_clone_explicit_pr_ref_returns_full_sha(tmp_path, monkeypatch, _origin):
+    from pathlib import Path
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("GITHUB_GIT_URL", f"file://{_origin['base']}")
+    work = _origin["work"]
+    (work / "pr.txt").write_text("PR-only change")
+    _git(["add", "."], cwd=work)
+    _git(["commit", "-m", "PR revision"], cwd=work)
+    _git(["push", "origin", "HEAD:refs/pull/42/head"], cwd=work)
+    _, tools = _clone_tools(SecretStore(), tmp_path)
+    out = tools["github_clone"]("acme", "site", ref="refs/pull/42/head")
+    assert out.get("ok"), out
+    assert len(out["head"]) == 40
+    assert (Path(out["path"]) / "pr.txt").read_text() == "PR-only change"
+    assert out["head"] == _git(["rev-parse", "HEAD"], cwd=work).stdout.strip()
+
+
+def test_clone_rejects_option_like_ref_before_git(tmp_path, monkeypatch):
+    _, tools = _clone_tools(SecretStore(), tmp_path)
+    monkeypatch.setattr("coworker.connectors.integration_tools._run_git",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run git")))
+    for ref in ("--upload-pack=command", "main:refs/heads/main", "main other"):
+        assert "ref must be" in tools["github_clone"]("acme", "site", ref=ref)["error"]
+
+
 def test_clone_refuses_paths_outside_granted_roots(tmp_path, monkeypatch, _origin):
     monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("GITHUB_GIT_URL", f"file://{_origin['base']}")
     secrets = SecretStore()
-    _granted, tools = _clone_tools(secrets, tmp_path)
+    granted, tools = _clone_tools(secrets, tmp_path)
 
     out = tools["github_clone"]("acme", "site", directory=str(tmp_path / "elsewhere"))
     assert "outside the session's writable directories" in out["error"]
+    assert str(granted) in out["error"]  # the roots are named so the agent can correct itself
+    # Strict: a relative name is never resolved against the cwd or a root.
+    for tool, args in (
+        ("github_clone", ("acme", "site")),
+        ("github_pull", ()),
+        ("github_push", ()),
+        ("github_open_pr", ()),
+    ):
+        kw = {"directory": "site"} if tool != "github_open_pr" else {"directory": "site", "title": "t"}
+        out = tools[tool](*args, **kw)
+        assert "must be an absolute path" in out["error"] and str(granted) in out["error"], tool
+    assert not (granted / "site").exists()
     assert not (tmp_path / "elsewhere").exists()
 
     # and with no writable root at all → a clear error, no filesystem writes
@@ -614,3 +674,57 @@ def test_clone_refuses_non_empty_target(tmp_path, monkeypatch, _origin):
     out = tools["github_clone"]("acme", "site")
     assert "not empty" in out["error"]
     assert (granted / "site" / "keep.txt").read_text() == "existing work"
+
+
+def test_push_and_open_pr_tools(tmp_path, monkeypatch, _origin):
+    """The runtime pushes and opens the PR — the agent never handles a
+    credential (machines spec: tools are the future sandbox boundary). Push
+    publishes a feature branch to origin; open_pr posts the API call with the
+    clone's parsed owner/repo and branch."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("GITHUB_GIT_URL", f"file://{_origin['base']}")
+    secrets = SecretStore()
+    github_installs.managed_connect_install(secrets, _install_form("101"))
+    monkeypatch.setattr(
+        cloud, "github_installation_token", lambda s, c, iid, *, force=False: "ghs_live"
+    )
+    granted, tools = _clone_tools(secrets, tmp_path)
+
+    assert tools["github_clone"]("acme", "site").get("ok") is True
+    clone = granted / "site"
+    _git(["checkout", "-b", "feature/scaffold"], cwd=clone)
+    (clone / "src.ts").write_text("export {}\n")
+    _git(["add", "."], cwd=clone)
+    _git(["commit", "-m", "scaffold"], cwd=clone)
+
+    out = tools["github_push"](str(clone))
+    assert out == {"ok": True, "branch": "feature/scaffold", "head": out["head"]}
+    # The branch really landed on the 'GitHub' side.
+    import subprocess
+
+    bare = _origin["base"] / "acme" / "site.git"
+    branches = subprocess.run(
+        ["git", "branch"], cwd=bare, capture_output=True, text=True
+    ).stdout
+    assert "feature/scaffold" in branches
+
+    from coworker.connectors import integration_tools as it
+
+    seen = {}
+
+    def fake_call(_secrets, method, path, *, install="", **kw):
+        seen.update({"method": method, "path": path, "install": install, **kw})
+        # The runtime's HTTP envelope: the created PR sits under `data`.
+        return {"ok": True, "data": {"number": 7, "html_url": "https://github.com/acme/site/pull/7"}}
+
+    monkeypatch.setattr(it, "_github_call", fake_call)
+    pr = tools["github_open_pr"](str(clone), "Add scaffolding", body="initial")
+    assert pr["ok"] is True and pr["number"] == 7
+    assert pr["url"].endswith("/pull/7")
+    assert seen["path"] == "/repos/acme/site/pulls"
+    assert seen["json"] == {
+        "title": "Add scaffolding",
+        "body": "initial",
+        "base": "main",
+        "head": "feature/scaffold",
+    }

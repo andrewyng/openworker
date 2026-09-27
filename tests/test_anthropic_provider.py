@@ -694,3 +694,33 @@ def test_whole_chain_refusal_raises_friendly_error():
     with pytest.raises(RuntimeError) as err:
         provider.complete(model="claude-fable-5", messages=[{"role": "user", "content": "x"}])
     assert "safety filter" in str(err.value) and "cyber" in str(err.value)
+
+
+# -- long non-streaming requests ------------------------------------------------------
+
+
+def test_complete_with_default_cap_carries_an_explicit_timeout():
+    """The SDK refuses a non-streaming call whose max_tokens implies >10 min of output
+    unless a timeout is given. The 32k default is above that line, so complete() must
+    set one — otherwise every reviewer/summary/title call fails (live 2026-09-16)."""
+    from coworker.providers.anthropic_provider import (
+        LONG_REQUEST_TIMEOUT,
+        NONSTREAMING_TOKEN_CEILING,
+    )
+
+    assert DEFAULT_MAX_TOKENS > NONSTREAMING_TOKEN_CEILING
+    fake = _FakeClient(response=_text_response("ok"))
+    AnthropicProvider(client=fake).complete(
+        model="claude-sonnet-4-6", messages=[{"role": "user", "content": "x"}]
+    )
+    assert fake.kwargs["timeout"] == LONG_REQUEST_TIMEOUT
+
+
+def test_complete_with_a_small_cap_leaves_the_sdk_timeout_alone():
+    fake = _FakeClient(response=_text_response("ok"))
+    AnthropicProvider(client=fake).complete(
+        model="claude-sonnet-4-6",
+        messages=[{"role": "user", "content": "x"}],
+        max_tokens=400,
+    )
+    assert "timeout" not in fake.kwargs
