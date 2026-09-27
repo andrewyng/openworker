@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .base import (
     AssistantTurn,
@@ -312,6 +312,8 @@ class OpenAIResponsesProvider(ProviderClient):
         secrets: Any = None,
         base_url: Optional[str] = None,
         reasoning_summary: bool = True,
+        default_headers: Optional[dict[str, str]] = None,
+        extra_headers: Optional[Callable[[], dict[str, str]]] = None,
     ):
         # Same deferred-client contract as OpenAIProvider: built lazily so an engine can be
         # assembled before any key exists; key resolves at call time (explicit → env →
@@ -321,6 +323,8 @@ class OpenAIResponsesProvider(ProviderClient):
         self._api_key = api_key
         self._secrets = secrets
         self._base_url = (base_url or "").strip().rstrip("/") or None
+        self._default_headers = default_headers or None
+        self._extra_headers = extra_headers
         if not isinstance(reasoning_summary, bool):
             raise TypeError("reasoning_summary must be a bool")
         self._reasoning_summary = reasoning_summary
@@ -337,11 +341,22 @@ class OpenAIResponsesProvider(ProviderClient):
                     "No model API key configured. Set OPENAI_API_KEY in the environment, "
                     "or add your key in Manage → Settings."
                 )
-            kwargs = {"api_key": key}
+            kwargs: dict[str, Any] = {"api_key": key}
             if self._base_url:
                 kwargs["base_url"] = self._base_url
+            if self._default_headers:
+                kwargs["default_headers"] = dict(self._default_headers)
             self._client = OpenAI(**kwargs)
         return self._client
+
+    def _with_extra_headers(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        if self._extra_headers is None:
+            return kwargs
+        extra = self._extra_headers() or {}
+        if not extra:
+            return kwargs
+        merged = {**(kwargs.get("extra_headers") or {}), **extra}
+        return {**kwargs, "extra_headers": merged}
 
     def _request_kwargs(
         self,
@@ -391,8 +406,10 @@ class OpenAIResponsesProvider(ProviderClient):
         tools: Optional[list[dict[str, Any]]] = None,
         **settings: Any,
     ) -> AssistantTurn:
-        kwargs = self._request_kwargs(
-            model=model, messages=messages, tools=tools, settings=settings
+        kwargs = self._with_extra_headers(
+            self._request_kwargs(
+                model=model, messages=messages, tools=tools, settings=settings
+            )
         )
         response = self._create(self._ensure_client(), kwargs)
         return _parse_response(response)
@@ -408,8 +425,10 @@ class OpenAIResponsesProvider(ProviderClient):
         tools: Optional[list[dict[str, Any]]] = None,
         **settings: Any,
     ):
-        kwargs = self._request_kwargs(
-            model=model, messages=messages, tools=tools, settings=settings
+        kwargs = self._with_extra_headers(
+            self._request_kwargs(
+                model=model, messages=messages, tools=tools, settings=settings
+            )
         )
         kwargs["stream"] = True
         events = self._create(self._ensure_client(), kwargs)

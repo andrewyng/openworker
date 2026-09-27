@@ -1,6 +1,7 @@
 // Provider logo registry (UX-DECISIONS §39): official brand marks for the onboarding
 // provider gallery. Most are vendored from the MIT-licensed lobe-icons set; BytePlus is
-// its official website mark, used with permission. All stay bundled like connector assets
+// its official website mark, used with permission. OpenCode's mark is a local geometric
+// icon. All stay bundled like connector assets
 // (no CDN at runtime). Keys are /v1/providers names; unknown names get no mark (the gallery
 // falls back to a neutral monogram). PROVIDER_ORDER is the gallery order — recognition
 // first, long tail behind the scroll fold.
@@ -24,6 +25,7 @@ import qwen from "./logos/qwen.svg";
 import minimax from "./logos/minimax.svg";
 import xai from "./logos/xai.svg";
 import meta from "./logos/meta.svg";
+import opencode from "./logos/opencode.svg";
 
 export const PROVIDER_LOGOS: Record<string, string> = {
   anthropic,
@@ -39,6 +41,8 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   bedrock,
   vertex,
   openrouter,
+  "opencode-zen": opencode,
+  "opencode-go": opencode,
   fireworks,
   together,
   zai,
@@ -61,6 +65,8 @@ export const PROVIDER_ORDER = [
   "bedrock",
   "vertex",
   "openrouter",
+  "opencode-zen",
+  "opencode-go",
   "fireworks",
   "together",
   "zai",

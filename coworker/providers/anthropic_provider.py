@@ -24,7 +24,7 @@ import logging
 import json
 import os
 import re
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .effort import EffortPlan, anthropic_effort, mentions_effort
 from .base import (
@@ -463,6 +463,10 @@ class AnthropicProvider(ProviderClient):
         api_key: Optional[str] = None,
         secrets: Any = None,
         thinking_budget: Optional[int] = None,
+        base_url: Optional[str] = None,
+        default_headers: Optional[dict[str, str]] = None,
+        extra_headers: Optional[Callable[[], dict[str, str]]] = None,
+        claude_options: bool = True,
     ):
         # Diagnostic only (see _cache_diagnostics_on): the id of the previous response, so
         # the next request can ask why the cache prefix was not reused.
@@ -474,6 +478,13 @@ class AnthropicProvider(ProviderClient):
         self._client = client
         self._api_key = api_key
         self._secrets = secrets
+        self._base_url = (base_url or "").strip().rstrip("/") or None
+        self._default_headers = default_headers or None
+        self._extra_headers = extra_headers
+        # False for non-Claude models on an Anthropic-shaped wire (OpenCode Qwen and
+        # MiniMax): thinking budgets, effort, and beta headers are Claude-only and
+        # those endpoints reject them.
+        self._claude_options = claude_options
         self.default_model = default_model
         self.thinking_budget = thinking_budget or 0
         # Models whose endpoint rejected `output_config.effort` this run (OPE-176): the
@@ -491,8 +502,22 @@ class AnthropicProvider(ProviderClient):
                     "No Anthropic API key configured. Set ANTHROPIC_API_KEY in the environment, "
                     "or add your key in Manage → Configure Models."
                 )
-            self._client = Anthropic(api_key=key)
+            kwargs: dict[str, Any] = {"api_key": key}
+            if self._base_url:
+                kwargs["base_url"] = self._base_url
+            if self._default_headers:
+                kwargs["default_headers"] = dict(self._default_headers)
+            self._client = Anthropic(**kwargs)
         return self._client
+
+    def _with_extra_headers(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        if self._extra_headers is None:
+            return kwargs
+        extra = self._extra_headers() or {}
+        if not extra:
+            return kwargs
+        merged = {**(kwargs.get("extra_headers") or {}), **extra}
+        return {**kwargs, "extra_headers": merged}
 
     def _request_kwargs(
         self,
@@ -508,7 +533,11 @@ class AnthropicProvider(ProviderClient):
             stop = settings["stop"]
             settings["stop_sequences"] = [stop] if isinstance(stop, str) else list(stop)
         filtered = {k: v for k, v in settings.items() if k in _SETTINGS_WHITELIST}
-        if self.thinking_budget > 0 and "thinking" not in filtered:
+        if (
+            self._claude_options
+            and self.thinking_budget > 0
+            and "thinking" not in filtered
+        ):
             if _uses_budget_thinking(model):
                 filtered["thinking"] = {
                     "type": "enabled",
@@ -518,7 +547,7 @@ class AnthropicProvider(ProviderClient):
                 # 4.6+/Claude 5 family: adaptive only (budget_tokens 400s on 4.7+);
                 # display opt-in or the trace text arrives empty.
                 filtered["thinking"] = {"type": "adaptive", "display": "summarized"}
-        if effort is not None and effort.params:
+        if self._claude_options and effort is not None and effort.params:
             # OPE-176: a configured level becomes `output_config.effort` (adaptive models)
             # or the thinking budget (budget-mode models); the floor below still applies.
             filtered.update(effort.params)
@@ -568,6 +597,7 @@ class AnthropicProvider(ProviderClient):
         )
         if int(kwargs.get("max_tokens") or 0) > NONSTREAMING_TOKEN_CEILING:
             kwargs.setdefault("timeout", LONG_REQUEST_TIMEOUT)
+        kwargs = self._with_extra_headers(kwargs)
         client = self._ensure_client()
         # Stream-and-accumulate, not a plain create: the SDK REFUSES non-streaming
         # requests whose max_tokens could exceed ~10 minutes (ValueError before any
@@ -577,7 +607,7 @@ class AnthropicProvider(ProviderClient):
         # so verdicts fell back to asking a human). get_final_message() returns the
         # same Message shape create() would.
         def _final(kw: dict[str, Any]) -> Any:
-            if _needs_refusal_fallback(model):
+            if self._claude_options and _needs_refusal_fallback(model):
                 with client.beta.messages.stream(
                     **kw,
                     betas=[_FALLBACK_BETA],
@@ -641,6 +671,8 @@ class AnthropicProvider(ProviderClient):
     # -- reasoning effort (OPE-176) ---------------------------------------------------
 
     def _effort_plan(self, model: str, settings: dict[str, Any]) -> Optional[EffortPlan]:
+        if not self._claude_options:
+            return None
         level = settings.get("reasoning_effort")
         if not level:
             return None
@@ -682,13 +714,14 @@ class AnthropicProvider(ProviderClient):
         kwargs = self._request_kwargs(
             model=model, messages=messages, tools=tools, settings=settings, effort=plan
         )
+        kwargs = self._with_extra_headers(kwargs)
         kwargs["stream"] = True
         client = self._ensure_client()
         diagnosing = _cache_diagnostics_on()
         outbound_hashes = _outbound_fingerprints(kwargs) if diagnosing else None
 
         def _open(kw: dict[str, Any]) -> Any:
-            if _needs_refusal_fallback(model):
+            if self._claude_options and _needs_refusal_fallback(model):
                 extra: dict[str, Any] = {}
                 betas = [_FALLBACK_BETA]
                 if diagnosing:
@@ -702,7 +735,7 @@ class AnthropicProvider(ProviderClient):
                     fallbacks=[{"model": _FALLBACK_MODEL}],
                     **extra,
                 )
-            if diagnosing:
+            if self._claude_options and diagnosing:
                 return client.beta.messages.create(
                     **kw,
                     betas=[_CACHE_DIAGNOSTICS_BETA],
