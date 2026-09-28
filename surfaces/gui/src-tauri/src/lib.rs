@@ -465,19 +465,22 @@ fn voice_input_compatibility() -> (bool, String, Option<String>) {
 
 #[cfg(target_os = "windows")]
 fn voice_input_compatibility() -> (bool, String, Option<String>) {
-    let version = Command::new("cmd")
-        .args(["/C", "ver"])
-        .output()
-        .ok()
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .unwrap_or_else(|| "Windows (unknown version)".to_owned());
-    let build = version
-        .split(|character: char| !character.is_ascii_digit() && character != '.')
-        .find(|part| part.matches('.').count() >= 2)
-        .and_then(|part| part.split('.').nth(2))
-        .and_then(|part| part.parse::<u32>().ok())
-        .unwrap_or(0);
-    let x64 = std::env::consts::ARCH == "x86_64";
+    // In-process only: `get_dictation_status` is sync, and spawning `cmd /C ver` freezes
+    // the Windows webview for seconds (e.g. when leaving Settings remounts the composer).
+    windows_voice_input_compatibility(
+        windows_version::OsVersion::current(),
+        std::env::consts::ARCH,
+    )
+}
+
+/// Pure Windows gate so tests can inject version/arch without spawning a process.
+#[cfg(target_os = "windows")]
+fn windows_voice_input_compatibility(
+    version: windows_version::OsVersion,
+    architecture: &str,
+) -> (bool, String, Option<String>) {
+    let x64 = architecture == "x86_64";
+    let build = version.build;
     let supported = x64 && build >= 19_045;
     let reason = if !x64 {
         Some("Voice Input currently requires a 64-bit x64 Windows PC.".to_owned())
@@ -486,7 +489,55 @@ fn voice_input_compatibility() -> (bool, String, Option<String>) {
     } else {
         None
     };
-    (supported, format!("{version} · x64"), reason)
+    let arch_label = if x64 { "x64" } else { architecture };
+    (
+        supported,
+        format!(
+            "Windows {}.{}.{} · {arch_label}",
+            version.major, version.minor, version.build
+        ),
+        reason,
+    )
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod voice_input_compatibility_tests {
+    use super::windows_voice_input_compatibility;
+    use windows_version::OsVersion;
+
+    #[test]
+    fn compatibility_matrix() {
+        let cases = [
+            (
+                OsVersion::new(10, 0, 0, 19_045),
+                "x86_64",
+                true,
+                "Windows 10.0.19045 · x64",
+                None,
+            ),
+            (
+                OsVersion::new(10, 0, 0, 19_044),
+                "x86_64",
+                false,
+                "Windows 10.0.19044 · x64",
+                Some("Voice Input requires Windows 10 22H2 or Windows 11."),
+            ),
+            (
+                OsVersion::new(10, 0, 0, 22_000),
+                "aarch64",
+                false,
+                "Windows 10.0.22000 · aarch64",
+                Some("Voice Input currently requires a 64-bit x64 Windows PC."),
+            ),
+        ];
+        for (version, arch, want_supported, want_summary, want_reason) in cases {
+            let (supported, summary, reason) =
+                windows_voice_input_compatibility(version, arch);
+            assert_eq!(supported, want_supported, "{want_summary}");
+            assert_eq!(summary, want_summary);
+            assert_eq!(reason.as_deref(), want_reason);
+        }
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
