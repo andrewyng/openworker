@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import stat
+import subprocess
+import sys
 
 from coworker.config import load_config
 
@@ -77,7 +81,16 @@ def test_workspace_trust_is_canonical_and_user_owned(tmp_path):
     assert canonical == str(real.resolve())
     assert store.is_trusted(real)
     assert store.list() == [str(real.resolve())]
-    assert (store.path.stat().st_mode & 0o777) == 0o600
+    if sys.platform == "win32":
+        out = subprocess.run(
+            ["icacls", str(store.path)], capture_output=True, text=True
+        ).stdout
+        user = os.environ.get("USERNAME", "")
+        assert user and user in out
+        assert "NT AUTHORITY\\SYSTEM" not in out
+        assert "BUILTIN\\Administrators" not in out
+    else:
+        assert stat.S_IMODE(os.stat(store.path).st_mode) == 0o600
 
     store.set_trusted(real, False)
     assert not store.is_trusted(alias)
