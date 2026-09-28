@@ -709,6 +709,25 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         available=True,
     ),
     ConnectorDescriptor(
+        name="tinyfish",
+        title="TinyFish",
+        icon="🐟",
+        blurb="Search the web, fetch pages, run web agents, and drive remote browsers.",
+        auth="oauth",
+        two_way=False,
+        # TinyFish brand orange (the site accent on tinyfish.ai); confirm vs brand guide.
+        brand_color="#ff6700",
+        logo="tinyfish",
+        aliases=("web search", "fetch", "scrape", "browser", "web agent", "automation"),
+        mcp_url="https://agent.tinyfish.ai/mcp",
+        fields=[],
+        instructions=[
+            "One click connects via TinyFish sign-in in your browser.",
+            "Sign-in is fully local — tokens stay on this Mac.",
+        ],
+        available=True,
+    ),
+    ConnectorDescriptor(
         name="confluence",
         title="Confluence",
         icon="◫",
