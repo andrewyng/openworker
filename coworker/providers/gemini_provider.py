@@ -23,7 +23,7 @@ import base64
 import json
 import re
 from dataclasses import dataclass, field as dataclass_field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .base import (
     AssistantTurn,
@@ -406,6 +406,10 @@ class GeminiProvider(ProviderClient):
         default_model: str = "gemini-2.5-flash",
         api_key: Optional[str] = None,
         secrets: Any = None,
+        base_url: Optional[str] = None,
+        api_version: Optional[str] = None,
+        default_headers: Optional[dict[str, str]] = None,
+        extra_headers: Optional[Callable[[], dict[str, str]]] = None,
     ):
         # Mirrors AnthropicProvider: the SDK client is built lazily so engines can be assembled
         # before any key exists; the key resolves at call time (explicit → env → SecretStore).
@@ -413,6 +417,10 @@ class GeminiProvider(ProviderClient):
         self._client = client
         self._api_key = api_key
         self._secrets = secrets
+        self._base_url = (base_url or "").strip().rstrip("/") or None
+        self._api_version = (api_version or "").strip() or None
+        self._default_headers = default_headers or None
+        self._extra_headers = extra_headers
         self.default_model = default_model
 
     def _ensure_client(self) -> Any:
@@ -426,7 +434,17 @@ class GeminiProvider(ProviderClient):
                     "No Gemini API key configured. Set GEMINI_API_KEY in the environment, "
                     "or add your key in Manage → Configure Models."
                 )
-            self._client = genai.Client(api_key=key)
+            kwargs: dict[str, Any] = {"api_key": key}
+            http_options: dict[str, Any] = {}
+            if self._base_url:
+                http_options["base_url"] = self._base_url
+            if self._api_version:
+                http_options["api_version"] = self._api_version
+            if self._default_headers:
+                http_options["headers"] = dict(self._default_headers)
+            if http_options:
+                kwargs["http_options"] = http_options
+            self._client = genai.Client(**kwargs)
         return self._client
 
     def _request_kwargs(
@@ -457,6 +475,10 @@ class GeminiProvider(ProviderClient):
             converted = convert_tools(tools)
             if converted:
                 config["tools"] = converted
+        if self._extra_headers is not None:
+            extra = self._extra_headers() or {}
+            if extra:
+                config["http_options"] = {"headers": dict(extra)}
         return {"model": model, "contents": contents, "config": config}
 
     def complete(

@@ -438,6 +438,7 @@ def build_engine(
                 provider=provider,
                 model=model,
                 model_settings=model_settings,
+                session_id=session_id,
             )
         )
     # Scheduling: opted-in surfaces with a workspace can set up scheduled tasks (origin = this
@@ -699,6 +700,7 @@ def build_engine(
         ),
         model_settings=model_settings,
         messages=messages,
+        session_id=session_id,
         audit_sink=audit_sink,
         context_provider=context_provider,
         directory_requester=directory_requester,

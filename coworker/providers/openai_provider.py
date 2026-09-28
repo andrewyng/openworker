@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .effort import EffortPlan, mentions_effort, openai_compat_effort
 from .base import (
@@ -223,6 +223,8 @@ class OpenAIProvider(ProviderClient):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         secrets: Any = None,
+        default_headers: Optional[dict[str, str]] = None,
+        extra_headers: Optional[Callable[[], dict[str, str]]] = None,
     ):
         # The SDK client is built lazily on first use, NOT at construction. This lets an engine
         # be assembled before any key exists — the desktop app lets you enter the key in Settings
@@ -237,7 +239,19 @@ class OpenAIProvider(ProviderClient):
         self._api_key = api_key
         self._base_url = base_url
         self._secrets = secrets
+        self._default_headers = default_headers or None
+        self._extra_headers = extra_headers
         self.default_model = default_model
+
+    def _with_extra_headers(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Merge a per-request header callback (OpenCode's session id) into the SDK call."""
+        if self._extra_headers is None:
+            return kwargs
+        extra = self._extra_headers() or {}
+        if not extra:
+            return kwargs
+        merged = {**(kwargs.get("extra_headers") or {}), **extra}
+        return {**kwargs, "extra_headers": merged}
 
     def _ensure_client(self) -> Any:
         if self._client is None:
@@ -253,6 +267,8 @@ class OpenAIProvider(ProviderClient):
             kwargs: dict[str, Any] = {"api_key": key}
             if self._base_url:
                 kwargs["base_url"] = self._base_url
+            if self._default_headers:
+                kwargs["default_headers"] = dict(self._default_headers)
             self._client = OpenAI(**kwargs)
         return self._client
 
@@ -276,6 +292,7 @@ class OpenAIProvider(ProviderClient):
         if plan is not None and plan.params:
             kwargs.update(plan.params)
         _pin_reasoning_effort(kwargs)
+        kwargs = self._with_extra_headers(kwargs)
 
         client = self._ensure_client()
         # Up to three param-fix retries: effort, the max_tokens rename, and the
@@ -357,6 +374,7 @@ class OpenAIProvider(ProviderClient):
         if plan is not None and plan.params:
             kwargs.update(plan.params)
         _pin_reasoning_effort(kwargs)
+        kwargs = self._with_extra_headers(kwargs)
         client = self._ensure_client()
 
         text_parts: list[str] = []

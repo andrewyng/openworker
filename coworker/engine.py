@@ -29,6 +29,7 @@ from . import session_facts
 from . import toolchain as _toolchain
 from . import toolresult
 from .events import Event, EventType
+from .providers.opencode_provider import bind_opencode_session, new_session_id
 
 # §8.4 retry guard: the reviewer pauses for the rest of the turn after this many denials
 # IN A ROW (2→5 + streak semantics, owner ruling 2026-08-24 — a cumulative 2 silently
@@ -163,8 +164,12 @@ class TurnEngine:
         # (10,000 bytes), 0 = off. See coworker/toolresult.py.
         tool_result_max_bytes: Optional[int] = None,
         tool_result_spill_dir: Optional[Path] = None,
+        # Stable id for OpenCode's x-opencode-session header. The manager passes the
+        # conversation id; a caller that has none still gets one id for this engine's life.
+        session_id: Optional[str] = None,
     ) -> None:
         self.provider = provider
+        self.opencode_session_id = (session_id or "").strip() or new_session_id()
         self.registry = registry
         self.permissions = permissions
         self.model = model
@@ -418,8 +423,11 @@ class TurnEngine:
         self.permissions.clear_run_allowances()
         yield Event(EventType.TURN_START, data)
         try:
-            async for event in self._loop():
-                yield event
+            # Reviewer and compaction call the provider via to_thread, which copies
+            # this context. The model stream also re-binds inside its worker thread.
+            with bind_opencode_session(self.opencode_session_id):
+                async for event in self._loop():
+                    yield event
         finally:
             # The run boundary IS the grant's expiry — normal finish, Stop, and
             # generator teardown (disconnect) all land here.
@@ -987,14 +995,16 @@ class TurnEngine:
 
         def produce():
             try:
-                for chunk in provider.stream(
-                    model=model, messages=messages, tools=tools, **settings
-                ):
-                    # User pressed Stop: drop the stream between chunks (reading the
-                    # asyncio.Event's flag from a thread is safe; we only read).
-                    if self._cancel.is_set():
-                        break
-                    loop.call_soon_threadsafe(queue.put_nowait, ("chunk", chunk))
+                # run_in_executor does not copy context vars, so bind again here.
+                with bind_opencode_session(self.opencode_session_id):
+                    for chunk in provider.stream(
+                        model=model, messages=messages, tools=tools, **settings
+                    ):
+                        # User pressed Stop: drop the stream between chunks (reading the
+                        # asyncio.Event's flag from a thread is safe; we only read).
+                        if self._cancel.is_set():
+                            break
+                        loop.call_soon_threadsafe(queue.put_nowait, ("chunk", chunk))
             except Exception as exc:  # surfaced to the awaiting consumer
                 loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
             finally:

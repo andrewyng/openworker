@@ -12,7 +12,9 @@ Chat Completions path), `anthropic` (native Messages API via
 `AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `bedrock`
 (models in the user's own AWS account — Claude natively, everything else via Converse),
 `vertex` (the user's own GCP project — Gemini and Claude natively, open-weight via the
-MaaS endpoint), and `ollama` (local, OpenAI-compatible `/v1`).
+MaaS endpoint), `opencode-zen` and `opencode-go` (OpenCode's two hosted catalogs, each
+model pinned to the wire that catalog serves), and `ollama` (local, OpenAI-compatible
+`/v1`).
 """
 
 from __future__ import annotations
@@ -192,6 +194,24 @@ def _build_vertex(profile: dict[str, Any], secrets: Any) -> ProviderClient:
         service_account_json=get("service_account_json"),
         api_key=get("vertex_api_key"),
     )
+
+
+def _build_opencode(product: str, title: str, env_key: str):
+    """Zen and Go keep separate keys. A stored OpenAI key is never sent to opencode.ai."""
+
+    def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+        from .opencode_provider import OpenCodeGateway
+
+        api_key = ((profile or {}).get("api_key") or "").strip() or (
+            os.environ.get(env_key, "").strip()
+        )
+        if not api_key:
+            raise RuntimeError(
+                f"No {title} API key configured — add it in Settings ▸ Models."
+            )
+        return OpenCodeGateway(product=product, api_key=api_key)
+
+    return build
 
 
 def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -668,6 +688,49 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="z-ai/glm-5.2",
         env_key="OPENROUTER_API_KEY",
     ),
+    # Zen and Go are separate products: different hosts, catalogs, and billing.
+    # One shared key would let a Zen model ride the Go subscription (or the reverse).
+    ProviderDescriptor(
+        name="opencode-zen",
+        title="OpenCode Zen",
+        needs_key=True,
+        fields=[
+            ProviderField(
+                "api_key",
+                "OpenCode Zen API key",
+                secret=True,
+                placeholder="oc-…",
+                help="From opencode.ai/auth after you add billing. Go uses its own key.",
+            ),
+        ],
+        build=_build_opencode(
+            "opencode-zen", "OpenCode Zen", "OPENCODE_ZEN_API_KEY"
+        ),
+        recommended_model="gpt-5.6-sol",
+        env_key="OPENCODE_ZEN_API_KEY",
+        blurb="Pay-as-you-go credits for curated models at opencode.ai/zen. "
+        "Privacy varies by model — check opencode.ai/docs/zen before sending confidential work.",
+    ),
+    ProviderDescriptor(
+        name="opencode-go",
+        title="OpenCode Go",
+        needs_key=True,
+        fields=[
+            ProviderField(
+                "api_key",
+                "OpenCode Go API key",
+                secret=True,
+                placeholder="oc-…",
+                help="From OpenCode Zen after you subscribe to Go. Zen credits use a separate key.",
+            ),
+        ],
+        build=_build_opencode("opencode-go", "OpenCode Go", "OPENCODE_GO_API_KEY"),
+        recommended_model="kimi-k2.7-code",
+        env_key="OPENCODE_GO_API_KEY",
+        blurb="The $10/month OpenCode Go subscription. Requests identify OpenWorker and "
+        "send a per-conversation session id, which Go requires. Privacy varies by model — "
+        "check opencode.ai/docs/go before sending confidential work.",
+    ),
     ProviderDescriptor(
         name="ollama",
         title="Ollama (local models)",
@@ -972,6 +1035,17 @@ def verify_provider_key(
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
+        elif name in ("opencode-zen", "opencode-go"):
+            from .opencode_provider import USER_AGENT, openai_base_url
+
+            resp = httpx.get(
+                openai_base_url(name) + "/models",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "User-Agent": USER_AGENT,
+                },
+                timeout=timeout,
+            )
         elif name in ("ark", "ark-agent-plan-cn"):
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""

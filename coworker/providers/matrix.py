@@ -319,6 +319,50 @@ MATRIX: dict[str, ModelEntry] = {
     "vertex:openweight/qwen/qwen3-coder-480b-a35b-instruct-maas": ModelEntry(
         "Qwen3 Coder · Vertex AI", _AGENTIC, 256_000
     ),
+    # OpenCode Zen / Go. Windows are the same model's direct-vendor row in this file
+    # (OpenCode does not publish context lengths). PDFs stay off: the gateway mixes
+    # wires, and the local fallback is the safe path. Training-opt-in and deprecated
+    # models are intentionally absent.
+    "opencode-zen:gpt-5.6-sol": ModelEntry(
+        "GPT-5.6 Sol · OpenCode Zen",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        400_000,
+    ),
+    "opencode-zen:claude-fable-5": ModelEntry(
+        "Claude Fable 5 · OpenCode Zen",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_000_000,
+    ),
+    "opencode-zen:gemini-3.1-pro": ModelEntry(
+        "Gemini 3.1 Pro · OpenCode Zen",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_048_576,
+    ),
+    "opencode-zen:grok-4.5": ModelEntry(
+        "Grok 4.5 · OpenCode Zen", _AGENTIC, 256_000
+    ),
+    "opencode-zen:kimi-k3": ModelEntry(
+        "Kimi K3 · OpenCode Zen",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_048_576,
+    ),
+    "opencode-go:kimi-k2.7-code": ModelEntry(
+        "Kimi K2.7 Code · OpenCode Go", _AGENTIC, 262_144
+    ),
+    "opencode-go:glm-5.2": ModelEntry("GLM-5.2 · OpenCode Go", _AGENTIC, 1_000_000),
+    "opencode-go:qwen3.7-plus": ModelEntry("Qwen3.7 Plus · OpenCode Go", _AGENTIC),
+    "opencode-go:deepseek-v4-flash": ModelEntry(
+        "DeepSeek V4 Flash · OpenCode Go", _AGENTIC, 128_000
+    ),
+    "opencode-go:minimax-m2.7": ModelEntry("MiniMax M2.7 · OpenCode Go", _AGENTIC),
 }
 
 
