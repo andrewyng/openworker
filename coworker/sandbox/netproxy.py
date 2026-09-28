@@ -13,11 +13,17 @@ from __future__ import annotations
 
 import select
 import socket
+import sys
 import threading
 from collections import deque
 from typing import Optional, Sequence
 
 from . import network_profiles
+
+# On Windows the proxy listens inside a FIXED range, because the closed sandbox account's
+# loopback filters (windows_wfp.py) are written once at setup and name this range: every
+# other local port is closed to that account. Elsewhere the kernel gives any free port.
+WINDOWS_PORTS = range(47800, 47900)
 
 _IDLE_SECONDS = 300.0
 _CONNECT_SECONDS = 15.0
@@ -36,9 +42,7 @@ class AllowListProxy:
             if host and port.isdigit():
                 self._extra.add((host.lower().rstrip("."), int(port)))
         self.denied: deque[str] = deque(maxlen=50)  # recent refusals, newest last
-        self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._server.bind(("127.0.0.1", 0))  # this machine only
+        self._server = _listen()
         self._server.listen(64)
         self.port: int = self._server.getsockname()[1]
         self._closed = False
@@ -146,6 +150,24 @@ class AllowListProxy:
                 if not data:
                     return
                 (b if src is a else a).sendall(data)
+
+
+def _listen() -> socket.socket:
+    """A socket bound on loopback: any free port, or on Windows the first free port of
+    WINDOWS_PORTS (no SO_REUSEADDR there: on Windows it would let two proxies share one)."""
+    if sys.platform != "win32":
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", 0))  # this machine only
+        return server
+    for port in WINDOWS_PORTS:
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            server.bind(("127.0.0.1", port))
+            return server
+        except OSError:
+            server.close()
+    raise OSError(f"no free port for the sandbox proxy in {WINDOWS_PORTS.start}-{WINDOWS_PORTS.stop - 1}")
 
 
 _lock = threading.Lock()

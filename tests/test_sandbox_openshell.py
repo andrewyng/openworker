@@ -8,7 +8,10 @@ messages. The second half needs a machine with OpenShell running and is skipped 
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -47,6 +50,8 @@ def test_network_profiles():
     assert {"github.com", "pypi.org", "registry.npmjs.org"} <= hosts(strict)
     assert "api.tavily.com" not in hosts(strict) and "api.tavily.com" in hosts(standard)
     assert all(entry["binaries"] for entry in strict.values())  # OpenShell requires the field
+    opened = policy.render(ROOTS, profile="open")["network_policies"]
+    assert [e["host"] for e in opened["open"]["endpoints"]] == ["*"]  # any host; unproved against a gateway
     with pytest.raises(ValueError):
         policy.render(ROOTS, profile="wide-open")
 
@@ -78,24 +83,85 @@ def test_missing_openshell_is_refused_with_a_message_a_person_can_act_on(monkeyp
     assert "not installed" in str(err.value) and "sandbox setup" in str(err.value)
 
 
+def _fake_cli(answers):
+    """`subprocess.run` answering by the first argument after the program: `--version`,
+    `status`, `gateway` (info), and `image` (docker image inspect)."""
+
+    def run(argv, **kwargs):
+        assert kwargs.get("stdin") == subprocess.DEVNULL  # an open stdin hangs the CLI
+        out, code = answers[argv[1]]
+        return subprocess.CompletedProcess(argv, code, out, "")
+
+    return run
+
+
+_OK_VERSION = (f"openshell {openshell.PINNED_VERSION}\n", 0)
+_CONNECTED = ("Status: Connected", 0)
+_DOCKER_GATEWAY = ('{"compute_drivers": [{"name": "docker"}], "status": "healthy"}', 0)
+
+
 def test_another_version_or_a_stopped_gateway_is_refused(monkeypatch):
-    def fake(answers):
-        def run(argv, **kwargs):
-            assert kwargs.get("stdin") == subprocess.DEVNULL  # an open stdin hangs the CLI
-            out, code = answers[argv[1]]
-            return subprocess.CompletedProcess(argv, code, out, "")
-
-        return run
-
     monkeypatch.setattr(openshell.shutil, "which", lambda name: "/usr/bin/openshell")
-    monkeypatch.setattr(openshell.subprocess, "run", fake({"--version": ("openshell 9.9.9\n", 0)}))
+    monkeypatch.setattr(openshell.subprocess, "run", _fake_cli({"--version": ("openshell 9.9.9\n", 0)}))
     with pytest.raises(openshell.OpenShellUnavailable, match="tested with"):
         openshell.preflight()
-    ok_version = (f"openshell {openshell.PINNED_VERSION}\n", 0)
-    monkeypatch.setattr(openshell.subprocess, "run", fake({"--version": ok_version, "status": ("Status: Disconnected", 1)}))
+    monkeypatch.setattr(openshell.subprocess, "run", _fake_cli({"--version": _OK_VERSION, "status": ("Status: Disconnected", 1)}))
     with pytest.raises(openshell.OpenShellUnavailable, match="not running"):
         openshell.preflight()
-    monkeypatch.setattr(openshell.subprocess, "run", fake({"--version": ok_version, "status": ("Status: Connected", 0)}))
+    present = {"--version": _OK_VERSION, "status": _CONNECTED, "gateway": _DOCKER_GATEWAY, "image": ("[{...}]", 0)}
+    monkeypatch.setattr(openshell.subprocess, "run", _fake_cli(present))
+    assert openshell.preflight() == {"version": openshell.PINNED_VERSION}
+
+
+def test_a_missing_base_image_is_refused_before_a_create_can_hang_on_it(monkeypatch):
+    # OPE-205: the first `sandbox create` pulls about 5 GB; on a slow link that outlives the
+    # create's timeout and the session hangs for ten minutes with no word about why. So the
+    # image is checked up front, with a message that names the download.
+    monkeypatch.setattr(openshell, "_gateway_is_remote", lambda: False)
+    monkeypatch.setattr(openshell.shutil, "which", lambda name: f"/usr/bin/{name}")
+    missing = {"--version": _OK_VERSION, "status": _CONNECTED, "gateway": _DOCKER_GATEWAY, "image": ("Error: No such image", 1)}
+    monkeypatch.setattr(openshell.subprocess, "run", _fake_cli(missing))
+    with pytest.raises(openshell.OpenShellImageMissing) as err:
+        openshell.preflight()
+    text = str(err.value)
+    assert openshell.is_image_problem(text) and "sandbox setup" in text and f"docker pull {openshell.DEFAULT_IMAGE}" in text
+    assert isinstance(err.value, openshell.OpenShellUnavailable)  # callers that refuse sessions need no new branch
+    assert not openshell.is_image_problem("The OpenShell gateway is not running") and not openshell.is_image_problem(None)
+    # The check is keyed on the gateway's driver, not the OS: with another driver (a Mac's
+    # MicroVM, say) Docker cannot be asked, and the preflight passes as before.
+    vm_gateway = ('{"compute_drivers": [{"name": "vm"}]}', 0)
+    monkeypatch.setattr(openshell.subprocess, "run", _fake_cli({"--version": _OK_VERSION, "status": _CONNECTED, "gateway": vm_gateway}))
+    assert openshell.image_present() is None
+    assert openshell.preflight() == {"version": openshell.PINNED_VERSION}
+    # No `docker` command on PATH: also "cannot tell", never a false refusal.
+    monkeypatch.setattr(openshell.shutil, "which", lambda name: "/usr/bin/openshell" if name == "openshell" else None)
+    monkeypatch.setattr(openshell.subprocess, "run", _fake_cli({"--version": _OK_VERSION, "status": _CONNECTED, "gateway": _DOCKER_GATEWAY}))
+    assert openshell.image_present() is None
+    # The environment's image is the one asked for.
+    seen: list[str] = []
+    monkeypatch.setattr(openshell.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(openshell.subprocess, "run", lambda argv, **kw: seen.append(argv[-1]) or _fake_cli({"gateway": _DOCKER_GATEWAY, "image": ("", 0)})(argv, **kw))
+    monkeypatch.setenv("OPENWORKER_SANDBOX_IMAGE", "registry.example.com/team/agent:2")
+    assert openshell.image_present() is True and seen[-1] == "registry.example.com/team/agent:2"
+
+
+def test_the_image_check_follows_the_driver_and_stays_out_of_remote_gateways(monkeypatch):
+    # Podman keeps its own image store, so it is asked with its own command; the same
+    # image serves both, and both hang the first session the same way when it is absent.
+    monkeypatch.setattr(openshell, "_gateway_is_remote", lambda: False)
+    monkeypatch.setattr(openshell.shutil, "which", lambda name: f"/usr/bin/{name}")
+    podman = ('{"compute_drivers": [{"name": "podman"}]}', 0)
+    seen: list[list[str]] = []
+    monkeypatch.setattr(openshell.subprocess, "run", lambda argv, **kw: seen.append(argv) or _fake_cli({"gateway": podman, "image": ("", 1)})(argv, **kw))
+    assert openshell.image_tool() == "podman"
+    assert openshell.image_present() is False and seen[-1][:3] == ["podman", "image", "inspect"]
+    monkeypatch.setattr(openshell.subprocess, "run", _fake_cli({"--version": _OK_VERSION, "status": _CONNECTED, "gateway": podman, "image": ("", 1)}))
+    with pytest.raises(openshell.OpenShellImageMissing, match="podman pull"):
+        openshell.preflight()
+    # A remote gateway keeps its images on another machine: a local store says nothing
+    # about it, so the check answers "cannot tell" and never refuses.
+    monkeypatch.setattr(openshell, "_gateway_is_remote", lambda: True)
+    assert openshell.image_tool() is None and openshell.image_present() is None
     assert openshell.preflight() == {"version": openshell.PINNED_VERSION}
 
 
@@ -115,13 +181,87 @@ def test_registry_counts_caps_and_forgets(tmp_path, monkeypatch):
     assert [r["name"] for r in reg.list()] == ["ow-b"]
 
 
+def test_reap_leaves_a_sandbox_that_a_living_server_is_still_creating(tmp_path, monkeypatch):
+    # Engine builds run concurrently (OPE-206). A sandbox that exists at the gateway but was
+    # not yet connected used to look like an orphan to another build's reap() and got
+    # deleted mid-provisioning ("The operation was cancelled: stream closed"). The name is
+    # now reserved in the registry, state "creating", before the sandbox is created.
+    from coworker.sandbox import registry as registry_mod
+
+    reg = registry_mod.SandboxRegistry(tmp_path / "registry.db")
+    reg.record("ow-building", provider="openshell", session_id="s1", state="creating")  # this server, alive
+    monkeypatch.setattr(registry_mod, "_openshell_present", lambda: True)
+    monkeypatch.setattr(openshell, "list_our_sandboxes", lambda: [{"name": "ow-building"}, {"name": "ow-orphan"}])
+    deleted: list[str] = []
+    monkeypatch.setattr(openshell, "_cli", lambda *args, **kw: deleted.append(args[2]))
+    assert reg.reap() == ["ow-orphan"]
+    assert deleted == ["ow-orphan"]  # the one being built by a live server is left alone
+    assert reg.find("s1")["state"] == "creating"
+
+
+def test_a_workspace_reserves_its_name_before_creating_the_sandbox(tmp_path):
+    from coworker.sandbox import registry as registry_mod
+    from coworker.sandbox.workspace import RunnerWorkspace
+
+    reg = registry_mod.SandboxRegistry(tmp_path / "registry.db")
+    seen: dict = {}
+
+    class Provider:
+        roots, profile = [{"path": str(tmp_path), "writable": True}], "strict"
+
+        def describe(self):
+            return {"provider": "openshell", "enforcement": "full", "sandbox": "ow-reserved"}
+
+        def create(self):
+            seen["row_at_create"] = reg.find("s9")  # what reap() would see while we provision
+            raise RuntimeError("create failed on purpose")
+
+        def destroy(self):
+            seen["destroyed"] = True
+
+    with pytest.raises(RuntimeError, match="on purpose"):
+        RunnerWorkspace(Provider(), cwd=tmp_path, registry=reg, session_id="s9", agent="lead")
+    assert seen["row_at_create"]["name"] == "ow-reserved" and seen["row_at_create"]["state"] == "creating"
+    assert seen["destroyed"] and reg.find("s9") is None  # a failed create leaves no reservation behind
+
+
+def test_the_private_folder_is_visible_to_the_gateway_and_to_no_sandbox(tmp_path, monkeypatch):
+    # OPE-208: copied credentials used to go under /tmp, which the installer's gateway
+    # (PrivateTmp=true) cannot see, so a session with a shared credential failed to create.
+    # The folder is now under the state dir, in a sibling of `sandbox/`: `sandbox/` itself
+    # is mounted read-only into every sandbox, so a copy there would leak across sessions.
+    from coworker.sandbox import bundle
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(bundle, "build_runner_zipapp", lambda: tmp_path / "sandbox" / "runner-x.pyz")
+    monkeypatch.setattr(openshell, "build_runner_zipapp", lambda: tmp_path / "sandbox" / "runner-x.pyz")
+    provider = openshell.OpenShellProvider(roots=ROOTS)
+    private = Path(provider._tmp)
+    assert private.parent == tmp_path / openshell.RUNTIME_DIR_NAME
+    assert not str(private).startswith(str(tmp_path / "sandbox") + os.sep)  # not inside the mounted folder
+    # Not in the system temp dir itself (the old place). The state dir under test may well
+    # live under /tmp (pytest's default basetemp on CI), so compare parents, not prefixes.
+    assert private.parent != Path(tempfile.gettempdir()).resolve() and private.parent.name == openshell.RUNTIME_DIR_NAME
+    assert private.name.startswith(f"ow-openshell-{os.getpid()}-")
+    if os.name != "nt":
+        assert (private.parent.stat().st_mode & 0o777) == 0o700
+    # A dead server's folders are swept; a live one's are kept.
+    stale = private.parent / "ow-openshell-424242-abc"
+    stale.mkdir()
+    assert openshell.reap_runtime_dirs(lambda pid: pid == os.getpid()) == [stale.name]
+    assert private.exists() and not stale.exists()
+    provider.destroy = lambda: shutil.rmtree(private, ignore_errors=True)  # no gateway here
+    provider.destroy()
+    assert not private.exists()
+
+
 def test_registry_reaps_rows_of_a_server_that_is_gone(tmp_path, monkeypatch):
     from coworker.sandbox import registry as registry_mod
 
     reg = registry_mod.SandboxRegistry(tmp_path / "registry.db")
     reg.record("owr-local-1", provider="runner-local", session_id="s1")
     reg.record("owr-local-2", provider="runner-local", session_id="s2")
-    gone = subprocess.Popen(["true"])
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
     gone.wait()
     with reg._connect() as db:
         db.execute("UPDATE sandboxes SET server_pid = ? WHERE name = ?", (gone.pid, "owr-local-1"))

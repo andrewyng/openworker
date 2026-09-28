@@ -127,6 +127,10 @@ class Config:
     # Which hosts a sandbox may reach: a profile name from coworker/sandbox/network_profiles.py
     # ("strict" when unset). Machine-level, like the provider.
     sandbox_network_profile: Optional[str] = None
+    # Developer tool folders under the home folder a sandbox may read (design doc, Windows
+    # 3d.4): `[[sandbox_toolchains]]` tables with name, path, enabled, editing or adding to
+    # the shipped list in coworker/sandbox/toolchains.py by name. Machine-level.
+    sandbox_toolchains: list[dict[str, Any]] = field(default_factory=list)
 
 
 _FIELDS = {
@@ -139,6 +143,7 @@ _FIELDS = {
     "sandbox_provider",
     "sandbox_credentials",
     "sandbox_network_profile",
+    "sandbox_toolchains",
     "compaction_cap_tokens",
     "compaction_summary_max_tokens",
     "allowed_commands",
@@ -165,6 +170,7 @@ _GLOBAL_ONLY_FIELDS = {
     "sandbox_provider",
     "sandbox_credentials",
     "sandbox_network_profile",
+    "sandbox_toolchains",
     "allowed_commands",
     "auto_allow",
     "allowed_domains",

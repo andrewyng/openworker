@@ -21,6 +21,8 @@ import os
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from .. import toolchains
+
 # Programs, libraries and settings. No entry here is under a home folder.
 _SYSTEM_READ = [
     "/usr",
@@ -39,24 +41,9 @@ _SYSTEM_READ = [
 # Folders that must be walkable for path lookups to work, without listing what is in them.
 _LITERAL_READ = ["/", "/private", "/private/tmp", "/private/var", "/private/var/folders", "/Users", "/Volumes"]
 
-# Developer toolchains under the home folder: readable, never writable.
-TOOLCHAINS = [
-    ".nvm",
-    ".volta",
-    ".bun",
-    ".deno",
-    ".pyenv",
-    ".rbenv",
-    ".asdf",
-    ".sdkman",
-    ".cargo",
-    ".rustup",
-    ".local/bin",
-    ".local/share/uv",
-    ".local/share/mise",
-    ".local/pipx",
-    "go",
-]
+# Developer toolchains under the home folder: readable, never writable. The list lives in
+# toolchains.py (with the Windows one) and the user edits it in Settings ▸ Sandbox.
+TOOLCHAINS = [e["path"][2:] for e in toolchains.defaults("darwin")]
 # The user's git settings. Files, not folders of secrets: credentials live in the keychain.
 GIT_SETTINGS = [".gitconfig", ".gitignore", ".gitignore_global", ".config/git"]
 
@@ -99,10 +86,12 @@ def _literals(paths: Sequence[str]) -> str:
     return " ".join(f"(literal {_quote(p)})" for p in paths)
 
 
-def home_read_only(home: Optional[str] = None) -> list[str]:
-    """The toolchain folders and git settings that exist under this home folder."""
+def home_read_only(home: Optional[str] = None, tool_dirs: Optional[Sequence[str]] = None) -> list[str]:
+    """The toolchain folders (the machine's list, or the shipped one) and git settings that
+    exist under this home folder."""
     base = Path(real(home or "~"))
-    return [real(base / name) for name in (*TOOLCHAINS, *GIT_SETTINGS) if (base / name).exists()]
+    tools = [real(p) for p in tool_dirs] if tool_dirs is not None else [real(base / name) for name in TOOLCHAINS if (base / name).exists()]
+    return tools + [real(base / name) for name in GIT_SETTINGS if (base / name).exists()]
 
 
 def render(
@@ -112,13 +101,16 @@ def render(
     read_only: Sequence[str] = (),
     proxy_port: Optional[int] = None,
     home: Optional[str] = None,
+    open_network: bool = False,
+    tool_dirs: Optional[Sequence[str]] = None,
 ) -> str:
     """`roots`: [{"path": absolute path, "writable": bool}]. `runtime_dir`: this sandbox's
     own folder (socket and temporary files). `read_only`: more paths to read, e.g. the
-    runner file and the Python that runs it."""
+    runner file and the Python that runs it. `open_network`: the `open` profile, any host
+    and any local port, no proxy; the files stay confined."""
     writable = [real(r["path"]) for r in roots if r.get("writable")]
     readable = [real(r["path"]) for r in roots if not r.get("writable")]
-    readable += [real(p) for p in read_only] + home_read_only(home)
+    readable += [real(p) for p in read_only] + home_read_only(home, tool_dirs)
     runtime = real(runtime_dir)
     lines = [
         "(version 1)",
@@ -148,7 +140,9 @@ def render(
         f"(allow network-bind network-inbound network-outbound (local unix-socket (subpath {_quote(runtime)})))",
         f"(allow network-bind network-inbound network-outbound (remote unix-socket (subpath {_quote(runtime)})))",
     ]
-    if proxy_port:
+    if open_network:
+        lines += ["; the network: open (the 'open' profile); the files above are still the wall", "(allow network*)"]
+    elif proxy_port:
         lines += [
             "; the network: only the allow-list proxy on this machine",
             f'(allow network-outbound (remote tcp "localhost:{int(proxy_port)}"))',

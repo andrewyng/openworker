@@ -24,6 +24,10 @@ from coworker.sandbox.selection import select
 
 
 # -- the profile ----------------------------------------------------------------------
+posix_paths = pytest.mark.skipif(sys.platform == "win32", reason="the profile is written for macOS paths")
+
+
+@posix_paths
 def test_profile_lists_the_folders_and_nothing_else_under_home(tmp_path):
     home = tmp_path / "home"
     (home / ".nvm").mkdir(parents=True)
@@ -48,6 +52,7 @@ def test_profile_lists_the_folders_and_nothing_else_under_home(tmp_path):
     assert "remote tcp" not in text  # no proxy port given: no network at all
 
 
+@posix_paths
 def test_profile_allows_only_the_proxy_port_and_quotes_paths(tmp_path):
     odd = tmp_path / 'has "quotes" and spaces'
     odd.mkdir()
@@ -150,6 +155,27 @@ def test_every_profile_has_hosts_and_an_unknown_one_is_refused():
     assert set(network_profiles.hosts("strict")) < set(network_profiles.hosts("standard"))
     with pytest.raises(ValueError):
         netproxy.AllowListProxy("wide-open")
+
+
+def test_the_open_profile_has_no_list_and_is_the_default_on_windows_only(tmp_path):
+    assert network_profiles.hosts("open") == [] and network_profiles.is_open("open")
+    assert network_profiles.default_profile("win32") == "open"
+    assert network_profiles.default_profile("darwin") == "strict" and network_profiles.default_profile("linux") == "strict"
+    # Seatbelt: the files stay confined, the network clause opens
+    text = seatbelt_profile.render([{"path": str(tmp_path), "writable": True}], runtime_dir=str(tmp_path), open_network=True, home=str(tmp_path))
+    assert "(allow network*)" in text and "localhost:" not in text and "(deny default)" in text
+
+
+@posix_paths
+def test_profile_reads_the_machines_toolchain_list_when_given(tmp_path):
+    home = tmp_path / "home"
+    (home / "tools").mkdir(parents=True)
+    (home / ".nvm").mkdir()
+    project = tmp_path / "project"
+    project.mkdir()
+    text = seatbelt_profile.render([{"path": str(project), "writable": True}], runtime_dir=str(tmp_path / "rt"), home=str(home), tool_dirs=[str(home / "tools")])
+    assert seatbelt_profile.real(str(home / "tools")) in text
+    assert seatbelt_profile.real(str(home / ".nvm")) not in text  # the list given replaces the shipped one
 
 
 # -- selection ------------------------------------------------------------------------

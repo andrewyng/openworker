@@ -16,10 +16,10 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from .workspace import DIRECT, OPENSHELL, PROVIDER_ENV, RUNNER_LOCAL, SEATBELT
+from .workspace import DIRECT, OPENSHELL, PROVIDER_ENV, RUNNER_LOCAL, SEATBELT, WINDOWS
 
 HEADLESS_ENV = "OPENWORKER_HEADLESS"  # set by `openworker up` / `join` for their process
-KNOWN = (DIRECT, SEATBELT, OPENSHELL, RUNNER_LOCAL)
+KNOWN = (DIRECT, SEATBELT, WINDOWS, OPENSHELL, RUNNER_LOCAL)
 _PROBE_SECONDS = 30.0
 
 _probe_lock = threading.Lock()
@@ -79,6 +79,15 @@ def select(configured: Optional[str] = None, *, headless: Optional[bool] = None)
             except seatbelt.SeatbeltUnavailable as exc:
                 raise seatbelt.SeatbeltUnavailable(
                     f"This machine is set to run agents in the macOS sandbox (Seatbelt), and it cannot be used right now, so no session will start. {exc}"
+                ) from None
+        if chosen == WINDOWS:
+            from .providers import windows
+
+            try:
+                windows.preflight()
+            except windows.WindowsUnavailable as exc:
+                raise windows.WindowsUnavailable(
+                    f"This machine is set to run agents in the Windows sandbox, and it cannot be used right now, so no session will start. {exc}"
                 ) from None
         return Selection(chosen, explicit=True)
     if headless if headless is not None else is_headless():

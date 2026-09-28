@@ -33,14 +33,31 @@ port = 8765
 
 # --- Sandbox (machine-level; a project's config cannot change it) ---------------------
 # Where a session's commands and file tools run: "direct" (in the OpenWorker process,
-# the default) or "openshell" (one NVIDIA OpenShell container per agent).
-# See docs/openshell.md.
+# the default), "openshell" (one NVIDIA OpenShell container per agent) or "seatbelt"
+# (the sandbox built into macOS). See docs/openshell.md and docs/macos-sandbox.md.
 # sandbox_provider = "openshell"
-# Network allow list inside a sandbox: "strict" (code hosts and package registries) or
-# "standard" (plus the search APIs).
+# Network allow list inside a sandbox: "strict" (code hosts and package registries),
+# "standard" (plus the search APIs) or "open" (any host; the files are still confined).
+# The default is "strict", or "open" on Windows.
 # sandbox_network_profile = "strict"
 # Credentials an agent may be given, copied into the sandbox for the session and deleted
-# with it. All off unless enabled here or in Settings ▸ Sandbox.
+# with it. All off unless enabled here or in Settings ▸ Sandbox. An entry is a single
+# file or a whole folder (the path decides), labelled "credential" or "configuration".
 # [[sandbox_credentials]]
 # name = "ssh"
 # enabled = true
+# [[sandbox_credentials]]
+# name = "aws-keys"
+# path = "~/.aws/credentials"
+# label = "credential"
+# hosts = ["*.amazonaws.com:443"]
+# enabled = true
+# Developer tool folders under your home folder a sandbox may read (never write). The
+# shipped list per platform is in Settings ▸ Sandbox; an entry here switches one off or
+# adds one by name.
+# [[sandbox_toolchains]]
+# name = "nvm"
+# enabled = false
+# [[sandbox_toolchains]]
+# name = "mytools"
+# path = "~/tools"

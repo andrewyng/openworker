@@ -24,7 +24,9 @@ DIRECT = "direct"
 RUNNER_LOCAL = "runner-local"
 OPENSHELL = "openshell"
 SEATBELT = "seatbelt"
+WINDOWS = "windows"
 
+REGRANT_NOTICE = "The session's folders changed; the sandbox now covers the current list. Shells and variables were kept."
 RESTART_NOTICE = (
     "The sandbox was restarted because the session's folders changed. The shell started again: "
     "variables and background tasks from before are gone, files are untouched."
@@ -83,17 +85,21 @@ class RunnerWorkspace(Workspace):
         if registry is not None:
             registry.reap()  # sandboxes left behind by a server that is gone
             registry.check_room()
+            # Reserve the name before the sandbox exists: engine builds run concurrently
+            # (OPE-206), and another build's reap() would otherwise delete this one while
+            # it is still provisioning, because it is not yet in the registry.
+            self._record(state="creating")
         try:
             provider.create()
         except Exception:
             provider.destroy()  # a half-made sandbox may already hold copied credentials
+            if registry is not None and self._registered:
+                registry.close(self._registered)
             raise
         try:
             self.client = RunnerClient(provider.open_runner)
             self.hello = self.client.connect()
-            verify = getattr(provider, "verify", None)
-            if verify is not None:
-                verify(self.client)  # e.g. every folder is really reachable inside
+            self._after_connect()
         except Exception:
             provider.destroy()
             raise
@@ -102,9 +108,9 @@ class RunnerWorkspace(Workspace):
         )
         self._record()
 
-    def _record(self) -> None:
+    def _record(self, state: str = "ready") -> None:
         """Enter this sandbox in the registry; after a restart that replaced it, under its
-        new name."""
+        new name. `state="creating"` reserves the name before the sandbox exists."""
         if self.registry is None:
             return
         info = self.provider.describe()
@@ -120,6 +126,7 @@ class RunnerWorkspace(Workspace):
             roots=getattr(self.provider, "roots", None),
             profile=getattr(self.provider, "profile", ""),
             enforcement=info.get("enforcement", ""),
+            state=state,
         )
 
     def sync_roots(self) -> Optional[str]:
@@ -131,14 +138,32 @@ class RunnerWorkspace(Workspace):
         wanted = [{"path": str(r.path), "writable": bool(r.writable)} for r in self._live_roots]
         if not wanted or _same_roots(wanted, getattr(self.provider, "roots", [])):
             return None
-        self.client.detach()
-        regrant(wanted)
-        self.client.connect()  # a new runner: the client notes the restart
+        restarts = getattr(self.provider, "restarts_on_regrant", True)
+        if restarts:
+            self.client.detach()
+            # Reserve the replacement's name before it exists, for the same reason as at
+            # start: a concurrent build's reap() must not take it for an orphan.
+            regrant(wanted, before_create=lambda: self._record(state="creating"))
+            self.client.connect()  # a new runner: the client notes the restart
+            self._after_connect()
+        else:
+            regrant(wanted)  # the same sandbox, re-granted in place (Windows: entries on folders)
+            verify = getattr(self.provider, "verify", None)
+            if verify is not None:
+                verify(self.client)
+        self._record()
+        return RESTART_NOTICE if restarts else REGRANT_NOTICE
+
+    def _after_connect(self) -> None:
+        """What a provider does once it can talk to its runner: prove the wall is up, then
+        put in what it could not put in before the runner existed (copies that must be
+        owned by the sandbox's own account)."""
         verify = getattr(self.provider, "verify", None)
         if verify is not None:
-            verify(self.client)
-        self._record()
-        return RESTART_NOTICE
+            verify(self.client)  # e.g. every folder is really reachable inside
+        provision = getattr(self.provider, "provision", None)
+        if provision is not None:
+            provision(self.client)
 
     @property
     def executor(self) -> Executor:
@@ -148,7 +173,9 @@ class RunnerWorkspace(Workspace):
         """What the agent is told about this sandbox each turn (ruling 21)."""
         from .credentials import context_lines
 
-        return context_lines(getattr(self.provider, "copied", None))
+        text = context_lines(getattr(self.provider, "copied", None))
+        notes = getattr(self.provider, "notes", None) or []
+        return "\n".join(part for part in [text, *notes] if part)
 
     def describe(self) -> dict[str, Any]:
         return {**self.provider.describe(), "runner": {k: self.hello.get(k) for k in ("runner_version", "os", "machine", "instance_id")}}
@@ -157,6 +184,13 @@ class RunnerWorkspace(Workspace):
         try:
             self._executor.close()
         finally:
+            try:
+                # Ask the daemon to leave by itself first: it ends its shells and removes
+                # what only it can (its folder, copies it was handed). The provider's
+                # destroy() is the hard stop behind it.
+                self.client.call("runner.shutdown", timeout=5)
+            except Exception:
+                pass
             self.client.close()
             self.provider.destroy()
             if self.registry is not None and self._registered:
@@ -183,10 +217,13 @@ def open_workspace(
     agent: str = "",
     credentials: Optional[list] = None,
     network_profile: Optional[str] = None,
+    toolchains: Optional[list] = None,
 ) -> Workspace:
     """The session's workspace for the configured provider. `credentials`: the machine's
     `sandbox_credentials` setting; the enabled entries are copied into the sandbox
     (design doc, section 11b). Ignored in `direct` mode, where nothing is hidden anyway. `direct` unless told otherwise.
+    `toolchains`: the machine's `sandbox_toolchains` setting; the switched-on folders that
+    exist are readable inside (Seatbelt, Windows full mode).
     `roots`: the session's RootDir list (primary first); without it the workspace folder is
     the only, writable, root. `session_id` and `agent` say who the sandbox is for; they go
     into the registry and onto the sandbox as a label."""
@@ -202,15 +239,18 @@ def open_workspace(
     from .credentials import granted
 
     grants = granted(credentials)
-    from .network_profiles import DEFAULT_PROFILE, check
+    from .network_profiles import check, default_profile
 
-    profile = check((network_profile or "").strip().lower() or DEFAULT_PROFILE)
+    profile = check((network_profile or "").strip().lower() or default_profile())
+    from . import toolchains as toolchain_list
+
+    tool_dirs = toolchain_list.granted(toolchains)
     if name == SEATBELT:
         from .providers.seatbelt import SeatbeltProvider
         from .registry import SandboxRegistry
 
         return RunnerWorkspace(
-            SeatbeltProvider(roots=listed, cwd=str(cwd), credentials=grants, profile=profile),
+            SeatbeltProvider(roots=listed, cwd=str(cwd), credentials=grants, profile=profile, tool_dirs=tool_dirs),
             cwd=cwd,
             registry=SandboxRegistry(),
             session_id=session_id,
@@ -230,4 +270,16 @@ def open_workspace(
             agent=agent,
             live_roots=roots,
         )
-    raise ValueError(f"unknown sandbox provider: {name!r} (known: {DIRECT}, {SEATBELT}, {OPENSHELL}, {RUNNER_LOCAL})")
+    if name == WINDOWS:
+        from .providers.windows import WindowsProvider
+        from .registry import SandboxRegistry
+
+        return RunnerWorkspace(
+            WindowsProvider(roots=listed, cwd=str(cwd), credentials=grants, profile=profile, tool_dirs=tool_dirs),
+            cwd=cwd,
+            registry=SandboxRegistry(),
+            session_id=session_id,
+            agent=agent,
+            live_roots=roots,
+        )
+    raise ValueError(f"unknown sandbox provider: {name!r} (known: {DIRECT}, {SEATBELT}, {WINDOWS}, {OPENSHELL}, {RUNNER_LOCAL})")

@@ -304,6 +304,11 @@ class SessionManager:
         if self.default_workspace:
             self.session_store.touch_workspace(self.default_workspace)
         self._engines: dict[str, TurnEngine] = {}
+        # One build at a time per session. `get_engine` now runs off the event loop for a
+        # socket connect (OPE-206), so two connects to the same session could otherwise
+        # each build an engine, and with OpenShell each build is a container.
+        self._engine_build_locks: dict[str, threading.Lock] = {}
+        self._engine_build_locks_guard = threading.Lock()
         # Sandboxes left behind by a server that died: removed once, in the background, at
         # start (design doc, OPE-200 "sandbox lifetime"). Cheap when there are none.
         threading.Thread(target=self._reap_sandboxes, name="sandbox-reap", daemon=True).start()
@@ -693,7 +698,56 @@ class SessionManager:
             return record.workspace or None
         return self.resolve_workspace(workspace)
 
-    def get_engine(
+    def _wanted_sandbox_provider(self) -> str:
+        """The provider a NEW engine would be built with right now, or "" for direct.
+        Reads the config only, no preflight: it is asked on the event loop."""
+        from ..sandbox.selection import is_headless
+        from ..sandbox.workspace import DIRECT, OPENSHELL, PROVIDER_ENV
+
+        chosen = (os.environ.get(PROVIDER_ENV) or load_config().sandbox_provider or "").strip().lower()
+        if chosen:
+            return "" if chosen == DIRECT else chosen
+        return OPENSHELL if is_headless() else ""
+
+    def pending_sandbox_build(self, session_id: str) -> str:
+        """The sandbox provider a NEW engine for this session would be built with, or ""
+        when the engine exists already or commands would run directly (OPE-206)."""
+        if session_id in self._engines:
+            return ""
+        return self._wanted_sandbox_provider()
+
+    def apply_sandbox_setting(self) -> list[str]:
+        """Settings ▸ Sandbox changed the provider: every live engine built under another
+        provider is dropped, so its next connection rebuilds it under the new rule (and
+        is refused if that rule cannot be met). A running turn keeps its engine and is
+        rebuilt when it ends. Returns the affected session ids. Without this, a session
+        opened before the switch kept running with no wall while the page said sessions
+        were refused (seen 2026-09-28 on WSL)."""
+        wanted = self._wanted_sandbox_provider()
+        affected: list[str] = []
+        for session_id, engine in list(self._engines.items()):
+            workspace = getattr(engine, "sandbox_workspace", None)
+            describe = getattr(workspace, "describe", None)
+            built = str((describe() if callable(describe) else {}).get("provider") or "direct")
+            if built == (wanted or "direct"):
+                continue
+            self._refresh_session_tools(session_id)
+            affected.append(session_id)
+        return affected
+
+    def _engine_build_lock(self, session_id: str) -> threading.Lock:
+        with self._engine_build_locks_guard:
+            return self._engine_build_locks.setdefault(session_id, threading.Lock())
+
+    def get_engine(self, session_id: str, **kwargs: Any) -> Optional[TurnEngine]:
+        """The session's engine, built on first use. A build is serialized per session
+        (see `_engine_build_locks`); an engine that exists is returned without waiting."""
+        if session_id in self._engines:
+            return self._build_or_get_engine(session_id, **kwargs)
+        with self._engine_build_lock(session_id):
+            return self._build_or_get_engine(session_id, **kwargs)
+
+    def _build_or_get_engine(
         self,
         session_id: str,
         *,

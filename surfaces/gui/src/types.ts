@@ -27,7 +27,12 @@ export type EventType =
   | "compacting"
   | "compacted"
   | "continuation"
-  | "turn_done";
+  | "turn_done"
+  // OPE-206: a socket connect that has to build a sandbox first says so on the socket
+  // itself, so the session view can show "Preparing sandbox…" instead of the app
+  // falling back to its startup screen while the backend was busy.
+  | "sandbox_preparing"
+  | "sandbox_ready";
 
 export interface WsEvent {
   type: EventType;

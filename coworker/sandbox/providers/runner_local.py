@@ -10,14 +10,12 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
-import tempfile
-import time
 from pathlib import Path
 from typing import Any, Optional
 
 from ..bundle import build_runner_zipapp
-from ..launch import runner_command
+from ..launch import runner_command, runner_dir, serve_arguments, spawn_kwargs, wait_for_runner
+from ..runner import winpipe
 from ..transport import PipeTransport, Transport
 
 
@@ -28,10 +26,7 @@ class RunnerLocalProvider:
         self.cwd = str(Path(cwd).expanduser().resolve())
         self._runner = Path(runner_path) if runner_path is not None else build_runner_zipapp()
         self._relay_silence = relay_silence_seconds
-        # A Unix socket path is limited to about 100 bytes, and temp folders on macOS are
-        # long, so the socket gets a short folder of its own.
-        self._dir = tempfile.mkdtemp(prefix="owr-", dir="/tmp" if os.path.isdir("/tmp") else None)
-        self.socket_path = os.path.join(self._dir, "r.sock")
+        self._dir, self.socket_path = runner_dir()
         self._daemon: Optional[subprocess.Popen] = None
 
     def describe(self) -> dict[str, Any]:
@@ -39,26 +34,20 @@ class RunnerLocalProvider:
 
     def create(self) -> None:
         self._daemon = subprocess.Popen(
-            [*runner_command(self._runner), "serve", "--socket", self.socket_path, "--cwd", self.cwd, "--exit-with-parent"],
+            [*runner_command(self._runner), "serve", *serve_arguments(self.socket_path, self._dir), "--cwd", self.cwd, "--exit-with-parent"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            start_new_session=True,
+            **spawn_kwargs(),
         )
-        deadline = time.monotonic() + 15
-        while not os.path.exists(self.socket_path):
-            if self._daemon.poll() is not None:
-                raise RuntimeError(f"the tool runner exited at once (code {self._daemon.returncode})")
-            if time.monotonic() > deadline:
-                raise RuntimeError("the tool runner did not come up in 15 seconds")
-            time.sleep(0.02)
+        wait_for_runner(self.socket_path, self._daemon)
 
     def open_runner(self) -> Transport:
         argv = [*runner_command(self._runner), "attach", "--socket", self.socket_path]
         if self._relay_silence is not None:
             argv += ["--silence-seconds", str(self._relay_silence)]
         return PipeTransport(
-            subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+            subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0, **spawn_kwargs())
         )
 
     def restart_daemon(self) -> None:
@@ -73,10 +62,11 @@ class RunnerLocalProvider:
                 self._daemon.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self._daemon.kill()
-        try:
-            os.unlink(self.socket_path)
-        except OSError:
-            pass
+        if not winpipe.is_pipe(self.socket_path):
+            try:
+                os.unlink(self.socket_path)
+            except OSError:
+                pass
 
     def destroy(self) -> None:
         self._stop_daemon()

@@ -29,10 +29,11 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 import yaml
 
+from ...secrets import state_dir
 from ..bundle import build_runner_zipapp
 from ..transport import Transport
 from .. import credentials as creds
@@ -51,6 +52,27 @@ _CLI_TIMEOUT = 120
 class OpenShellUnavailable(RuntimeError):
     """OpenShell is not installed, not running, or not the version we test against. The
     message says what to do; callers show it as it is."""
+
+
+class OpenShellImageMissing(OpenShellUnavailable):
+    """OpenShell works, but the base image is not on this machine yet. The first `sandbox
+    create` would pull it (about 5 GB) and, on a slow link, outlive our timeout: the session
+    would hang for ten minutes and then fail with no word about why (OPE-205). So the image
+    is checked up front, and the message says how to get it."""
+
+
+IMAGE_MISSING_PREFIX = "The sandbox base image is not downloaded yet"
+
+
+def is_image_problem(problem: Optional[str]) -> bool:
+    """Whether a preflight message is the missing-image one (the only problem that
+    `setup` can fix by downloading, and that Settings shows as "needs download")."""
+    return bool(problem) and str(problem).startswith(IMAGE_MISSING_PREFIX)
+
+
+def sandbox_image() -> str:
+    """The image a sandbox is created from: the pinned one, unless the environment says."""
+    return os.environ.get("OPENWORKER_SANDBOX_IMAGE") or DEFAULT_IMAGE
 
 
 def _cli(*args: str, timeout: float = _CLI_TIMEOUT, check: bool = True) -> subprocess.CompletedProcess:
@@ -75,7 +97,100 @@ def preflight() -> dict[str, Any]:
     status = _cli("status", timeout=30, check=False)
     if status.returncode != 0 or "Connected" not in status.stdout:
         raise OpenShellUnavailable("The OpenShell gateway is not running or cannot be reached (`openshell status`). On a headless machine, check `systemctl --user status openshell-gateway` and `loginctl enable-linger`.")
+    if image_present() is False:
+        raise OpenShellImageMissing(
+            f"{IMAGE_MISSING_PREFIX} (about 5 GB, one time). Run `openworker machine sandbox setup`, "
+            f"or `{image_tool() or 'docker'} pull {sandbox_image()}`, then start the session again."
+        )
     return {"version": version}
+
+
+def active_driver() -> str:
+    """The gateway's compute driver ("docker", "podman", "kubernetes", "vm"), or "" when it
+    cannot be told. Read from `openshell gateway info -o json`."""
+    done = _cli("gateway", "info", "-o", "json", timeout=30, check=False)
+    if done.returncode != 0:
+        return ""
+    try:
+        drivers = json.loads(done.stdout).get("compute_drivers") or []
+        return str(drivers[0].get("name") or "") if drivers else ""
+    except (ValueError, AttributeError, IndexError, TypeError):
+        return ""
+
+
+# The command that holds a driver's images, for the drivers whose store is on this machine.
+_IMAGE_TOOLS = {"docker": "docker", "podman": "podman"}
+
+
+def image_tool() -> Optional[str]:
+    """The `docker`/`podman` command to ask about (and pull) images, or None when the
+    question cannot be answered here: the gateway is remote, its driver keeps images
+    elsewhere (Kubernetes, the MicroVM driver on a Mac), or the command is not on PATH."""
+    if _gateway_is_remote():
+        return None
+    name = _IMAGE_TOOLS.get(active_driver())
+    return name if name and shutil.which(name) else None
+
+
+def _gateway_is_remote() -> bool:
+    try:
+        home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "openshell"
+        name = (home / "active_gateway").read_text(encoding="utf-8").strip()
+        meta = json.loads((home / "gateways" / name / "metadata.json").read_text(encoding="utf-8"))
+        return bool(meta.get("is_remote"))
+    except (OSError, ValueError):
+        return False
+
+
+def image_present(image: Optional[str] = None) -> Optional[bool]:
+    """Whether the base image is on this machine: True or False when the gateway's driver
+    keeps images here and can be asked (`docker`/`podman image inspect`), None when it
+    cannot be told. The check is keyed on the driver, not the operating system: the same
+    image serves Linux, WSL and macOS (amd64 and arm64), and only the driver knows where
+    images live. None never refuses anything: the first create then pulls as before."""
+    tool = image_tool()
+    if tool is None:
+        return None
+    done = subprocess.run(
+        [tool, "image", "inspect", image or sandbox_image()],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
+    )
+    return done.returncode == 0
+
+
+RUNTIME_DIR_NAME = "sandbox-runtime"  # a sibling of `sandbox/`, which is mounted into sandboxes
+
+
+def runtime_dir() -> Path:
+    """Where a session's private folder lives: on the real filesystem (the gateway can see
+    it), owner-only, and mounted into no sandbox as a whole."""
+    path = state_dir() / RUNTIME_DIR_NAME
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+    return path
+
+
+def reap_runtime_dirs(alive: Callable[[int], bool]) -> list[str]:
+    """Remove the private folders of servers that are gone (`ow-openshell-<pid>-...`).
+    Their sandboxes are removed by the registry's reap; this is the matching sweep for the
+    copied credentials, which the OS would have cleared from /tmp and no longer does."""
+    removed: list[str] = []
+    try:
+        entries = list(runtime_dir().iterdir())
+    except OSError:
+        return removed
+    for entry in entries:
+        parts = entry.name.split("-")
+        if len(parts) < 4 or parts[0] != "ow" or parts[1] != "openshell" or not parts[2].isdigit():
+            continue
+        if alive(int(parts[2])):
+            continue
+        shutil.rmtree(entry, ignore_errors=True)
+        removed.append(entry.name)
+    return removed
 
 
 def _gateway() -> tuple[str, Path]:
@@ -107,13 +222,20 @@ class OpenShellProvider:
         self.roots = [{"path": str(Path(r["path"]).expanduser().resolve()), "writable": bool(r.get("writable"))} for r in roots]
         self.cwd = str(Path(cwd).expanduser().resolve()) if cwd else self.roots[0]["path"]
         self.profile = profile
-        self.image = image or os.environ.get("OPENWORKER_SANDBOX_IMAGE") or DEFAULT_IMAGE
+        self.image = image or sandbox_image()
         # A label value may hold letters, digits, '-', '_' and '.', and at most 63 characters.
         self.label = "".join(c if c.isalnum() or c in "-_." else "-" for c in label)[:63].strip("-_.")
         self.sandbox_name = f"ow-{uuid.uuid4().hex[:12]}"
         self.sandbox_id: Optional[str] = None
         self._runner = build_runner_zipapp()
-        self._tmp = tempfile.mkdtemp(prefix="ow-openshell-")
+        # The session's private folder (copied credentials, the policy file). NOT under
+        # /tmp: the gateway installed by NVIDIA's installer is a systemd service with
+        # PrivateTmp=true, so a bind-mount source under /tmp does not exist for it and the
+        # sandbox fails to create (OPE-208). NOT under the state dir's `sandbox/` either:
+        # that whole folder is mounted read-only into every sandbox for the runner, and
+        # copied keys must never be readable from another session's sandbox. The server's
+        # pid is in the name so the registry's reap can remove folders of a dead server.
+        self._tmp = tempfile.mkdtemp(prefix=f"ow-openshell-{os.getpid()}-", dir=runtime_dir())
         self.grants = list(credentials)
         self.copied: Optional[creds.CopiedCredentials] = None
 
@@ -121,7 +243,7 @@ class OpenShellProvider:
         return {
             "provider": self.name,
             "enforcement": "full",
-            "reason": f"OpenShell {PINNED_VERSION}: Landlock and seccomp on every process, network profile '{self.profile}', no keys inside",
+            "reason": f"OpenShell {PINNED_VERSION}: Landlock and seccomp on every process, network {'open (any host)' if self.profile == 'open' else 'profile ' + repr(self.profile)}, no keys inside",
             "sandbox": self.sandbox_name,
             "image": self.image,
             "credentials": self.copied.describe() if self.copied is not None else [],
@@ -163,6 +285,7 @@ class OpenShellProvider:
         try:
             _cli(*args, "--", *command, timeout=600)  # the first create pulls the image
         except RuntimeError as exc:
+            log.warning("sandbox create failed for %s: %s", self.sandbox_name, exc)
             if "bind" in str(exc).lower() and "enable" in str(exc).lower():
                 raise OpenShellUnavailable("The OpenShell gateway does not allow bind mounts, so it cannot give a sandbox your folders. Set `enable_bind_mounts = true` under `[openshell.drivers.docker]` in the gateway config (`openworker machine sandbox setup` does this).") from exc
             raise
@@ -205,16 +328,21 @@ class OpenShellProvider:
             if "entries" not in info:
                 raise RuntimeError(f"the folder {root['path']} is not reachable inside the sandbox")
 
-    def regrant(self, roots: Sequence[dict[str, Any]]) -> None:
+    def regrant(self, roots: Sequence[dict[str, Any]], *, before_create: Optional[Callable[[], None]] = None) -> None:
         """The session's folders changed. Mounts and the file policy are fixed when a sandbox
-        is created, so this one is deleted and a new one is created with the new folders."""
+        is created, so this one is deleted and a new one is created with the new folders.
+        `before_create` runs once the new name is chosen and before the sandbox exists: the
+        workspace reserves the name in the registry there (see RunnerWorkspace)."""
         self._delete()
         self.roots = [{"path": str(Path(r["path"]).expanduser().resolve()), "writable": bool(r.get("writable"))} for r in roots]
         self.sandbox_name = f"ow-{uuid.uuid4().hex[:12]}"
         self.sandbox_id = None
+        if before_create is not None:
+            before_create()
         self.create()
 
     def _delete(self) -> None:
+        log.info("deleting sandbox %s", self.sandbox_name)
         try:
             _cli("sandbox", "delete", self.sandbox_name, timeout=90, check=False)
         except (subprocess.TimeoutExpired, OpenShellUnavailable):

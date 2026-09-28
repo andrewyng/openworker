@@ -15,7 +15,17 @@ import sys
 import threading
 import time
 
+from . import winpipe
 from .protocol import RELAY_SILENCE_SECONDS
+
+
+def _connect(socket_path: str):
+    """The daemon's end: a Unix socket, or on Windows a named pipe (same three calls)."""
+    if winpipe.is_pipe(socket_path):
+        return winpipe.connect(socket_path)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(socket_path)
+    return sock
 
 
 def run(socket_path: str, silence_seconds: float = RELAY_SILENCE_SECONDS) -> int:
@@ -23,10 +33,14 @@ def run(socket_path: str, silence_seconds: float = RELAY_SILENCE_SECONDS) -> int
     # descriptor 1 at stderr, so a stray print can never land inside a frame.
     out_fd = os.dup(1)
     os.dup2(2, 1)
+    if sys.platform == "win32":
+        import msvcrt
 
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        msvcrt.setmode(0, os.O_BINARY)  # frames are bytes; no newline translation
+        msvcrt.setmode(out_fd, os.O_BINARY)
+
     try:
-        sock.connect(socket_path)
+        sock = _connect(socket_path)
     except OSError as exc:
         print(f"attach: cannot reach the runner at {socket_path}: {exc}", file=sys.stderr)
         return 2

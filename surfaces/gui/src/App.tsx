@@ -248,6 +248,12 @@ export function App() {
   const [surfaces, setSurfaces] = useState<SurfaceVisibility>({ cowork: true, chat: false, code: false });
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
+  // OPE-206: the provider name while this session's sandbox is being built (the socket
+  // is open, `ready` has not come yet); null otherwise. Drives the waiting row.
+  const [preparingSandbox, setPreparingSandbox] = useState<string | null>(null);
+  // The server refused to build this session (its sandbox cannot be used) and closed the
+  // socket for good: no reconnect strip, the error notice in the transcript says why.
+  const [sessionRefused, setSessionRefused] = useState(false);
   const [running, setRunning] = useState(false);
   // Transient "Compacting context…" indicator (OPE-27): set by the `compacting` event,
   // cleared by whatever the engine emits next — the summarizer call is otherwise a
@@ -864,7 +870,17 @@ export function App() {
       // silent no-op / failure prompt) — the transient must never outlive it.
       if (ev.type !== "compacting") setCompacting(false);
       switch (ev.type) {
+        case "sandbox_preparing":
+          setPreparingSandbox(d.provider || "sandbox");
+          break;
+        case "sandbox_ready":
+          // No transcript item here: one would make a fresh session non-idle and hide its
+          // intro screen. Which wall the session runs behind belongs in the header (OPE-207).
+          setPreparingSandbox(null);
+          break;
         case "ready":
+          setPreparingSandbox(null);
+          setSessionRefused(false);
           setConnected(true);
           if (d.model) setModel(d.model);
           if (d.mode) setMode(d.mode);
@@ -1091,6 +1107,7 @@ export function App() {
           setItems((p) => [...p, { kind: "notice", tone: "warn", text: t("app.notice.interrupted") }]);
           break;
         case "error":
+          setPreparingSandbox(null); // a refused or failed sandbox build arrives here
           flushPartialStream();
           setItems((p) => [
             ...p,
@@ -1161,8 +1178,13 @@ export function App() {
           sessionRef.current?.userMessage(p.text, p.attachments, p.model, p.skill);
         }
       },
-      onClose: () => setConnected(false),
+      onClose: () => {
+        setConnected(false);
+        setPreparingSandbox(null);
+      },
+      onRefused: () => setSessionRefused(true),
     }, machine);
+    setSessionRefused(false); // a fresh socket: the previous refusal, if any, is history
     sessionRef.current = session;
     return () => session.close();
     // NOTE: `workspace` is intentionally NOT a dependency. Every real workspace change
@@ -1784,7 +1806,9 @@ export function App() {
 
   // `running` too: a mid-turn reconnect may land before any item is rebuilt — a live
   // session must show the transcript (waiting row, Stop), never the intro hero.
-  const idle = items.length === 0 && !streaming && !running;
+  // Not idle while this session's sandbox is being built: the waiting row lives in the
+  // transcript branch, and a brand-new session has no items yet (OPE-206).
+  const idle = items.length === 0 && !streaming && !running && !preparingSandbox;
   const pendingApproval = [...items].reverse().find((i) => i.kind === "approval" && !i.resolved);
   const pendingDirReq = [...items].reverse().find((i) => i.kind === "dirreq" && !i.resolved);
   const pendingToolReq = [...items].reverse().find((i) => i.kind === "toolreq" && !i.resolved);
@@ -2024,6 +2048,11 @@ export function App() {
           key={settingsTab}
           initialTab={settingsTab}
           onBack={() => setSurface("session")}
+          onSandboxProviderChanged={(ids) => {
+            // The session on screen was built under the old sandbox rule: reconnect, so
+            // the server rebuilds it under the new one (or refuses it with the reason).
+            if (ids.includes(sessionId)) setConnectNonce((n) => n + 1);
+          }}
           onOpenPersona={(id, machineId) => openPersona(id, "settings", machineId)}
           onAskWorker={(machineId) => {
             // Memory's remote CTA: the conversation IS the edit surface — a
@@ -2252,6 +2281,13 @@ export function App() {
                       <ThinkingBlock text={reasoningStream} live />
                     </div>
                   )}
+                  {/* OPE-206: the sandbox for this session is being built (a container, its
+                      runner, its mounts). Not a turn, so `running` is false; the row says so. */}
+                  {/* Not gated on `connected`: switching sessions keeps the previous socket's
+                      connected=true until this one's `ready`, which also clears the flag. */}
+                  {preparingSandbox && (
+                    <WaitingForAgent label={t("app.preparing_sandbox", { provider: preparingSandbox })} />
+                  )}
                   {/* Compaction runs between provider turns (nothing streams during it), so
                       the transient takes over the waiting slot with a specific label. */}
                   {running && compacting && <WaitingForAgent label={t("app.compacting_context")} />}
@@ -2325,7 +2361,7 @@ export function App() {
                 }}
               />
             )}
-            {!connected && !booting && !currentRowOffline && !(isCloudMode() && !machine) && (
+            {!connected && !booting && !sessionRefused && !currentRowOffline && !(isCloudMode() && !machine) && (
               <div className="reconnecting-strip" data-testid="session-reconnecting" role="status">
                 {machine ? t("misc.app.machine_reconnecting") : t("misc.app.reconnecting")}
                 <span className="reconnecting-sub">

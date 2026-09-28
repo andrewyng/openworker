@@ -31,9 +31,9 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterator, Optional, Sequence
 
-from . import fsops, protocol as P, toolcalls
+from . import fsops, protocol as P, toolcalls, winpipe
 from .executor import LocalExecutor
 
 RUNNER_VERSION = "0.1.0"
@@ -41,27 +41,19 @@ _RESULT_LOG_MAX = 5000
 _REQUEST_MEMORY_MAX = 5000
 
 
-class _Conn:
-    """One attached client (through a relay). Writes are serialized."""
+class _SocketStream:
+    """A connected Unix socket, in the shape `_Conn` needs (winpipe.PipeStream is the other)."""
 
     def __init__(self, sock: socket.socket) -> None:
         self.sock = sock
-        self._lock = threading.Lock()
-        self.alive = True
 
-    def send(self, frame: bytes) -> bool:
-        if not self.alive:
-            return False
-        try:
-            with self._lock:
-                self.sock.sendall(frame)
-            return True
-        except OSError:
-            self.alive = False
-            return False
+    def sendall(self, data: bytes) -> None:
+        self.sock.sendall(data)
+
+    def lines(self) -> Iterator[bytes]:
+        return iter(self.sock.makefile("rb"))
 
     def close(self) -> None:
-        self.alive = False
         try:
             self.sock.shutdown(socket.SHUT_RDWR)
         except OSError:
@@ -72,6 +64,30 @@ class _Conn:
             pass
 
 
+class _Conn:
+    """One attached client (through a relay). Writes are serialized."""
+
+    def __init__(self, stream: Any) -> None:
+        self.stream = stream
+        self._lock = threading.Lock()
+        self.alive = True
+
+    def send(self, frame: bytes) -> bool:
+        if not self.alive:
+            return False
+        try:
+            with self._lock:
+                self.stream.sendall(frame)
+            return True
+        except OSError:
+            self.alive = False
+            return False
+
+    def close(self) -> None:
+        self.alive = False
+        self.stream.close()
+
+
 class _Shell:
     def __init__(self, name: str, executor: LocalExecutor) -> None:
         self.name = name
@@ -80,8 +96,23 @@ class _Shell:
 
 
 class Daemon:
-    def __init__(self, socket_path: str, default_cwd: Optional[str] = None, exit_with_parent: bool = False) -> None:
+    def __init__(
+        self,
+        socket_path: str,
+        default_cwd: Optional[str] = None,
+        exit_with_parent: bool = False,
+        *,
+        runtime_dir: Optional[str] = None,
+        allow_sids: Sequence[str] = (),
+    ) -> None:
+        """`socket_path` is a Unix socket file, or on Windows a `\\\\.\\pipe\\` name.
+        `runtime_dir` is this runner's own folder (temporary files, the log), removed at
+        shutdown; for a socket it defaults to the socket's folder. `allow_sids` (Windows)
+        are the accounts that may connect to the pipe."""
         self.socket_path = socket_path
+        self.is_pipe = winpipe.is_pipe(socket_path)
+        self.runtime_dir = runtime_dir if runtime_dir is not None else (None if self.is_pipe else os.path.dirname(socket_path))
+        self.allow_sids = list(allow_sids)
         # Outside a sandbox nothing else ends this process when its server goes away.
         self._parent = os.getppid() if exit_with_parent else None
         self.default_cwd = str(Path(default_cwd or os.getcwd()).expanduser().resolve())
@@ -94,6 +125,7 @@ class Daemon:
         self._gap = False  # a result fell off the log before it was acknowledged
         self._requests: "collections.OrderedDict[str, Optional[bytes]]" = collections.OrderedDict()
         self._conn: Optional[_Conn] = None
+        self._cleanup: list[str] = []
         self._stop = threading.Event()
 
     # -- outgoing ---------------------------------------------------------------------
@@ -168,8 +200,32 @@ class Daemon:
             "python": platform.python_version(),
             "shell": "powershell.exe" if sys.platform == "win32" else "/bin/bash",
             "cwd": self.default_cwd,
+            "home": os.path.expanduser("~"),
             "shells": sorted(self._shells),
         }
+
+    def _env_set(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Variables for the shells started from now on (a provider that could not pass an
+        environment at start, or learned a path only after connecting). `OPENWORKER_PATH_PREPEND`
+        goes first on PATH, as at start."""
+        variables = params.get("vars")
+        if not isinstance(variables, dict):
+            raise ValueError("'vars' must be an object")
+        for name, value in variables.items():
+            if name == "OPENWORKER_PATH_PREPEND":
+                os.environ["PATH"] = str(value) + os.pathsep + os.environ.get("PATH", "")
+            else:
+                os.environ[str(name)] = str(value)
+        return {"set": sorted(str(k) for k in variables)}
+
+    def _cleanup_at_exit(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Paths this daemon removes when it shuts down (copies it was given that live where
+        the server cannot delete them)."""
+        paths = params.get("paths")
+        if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+            raise ValueError("'paths' must be a list of strings")
+        self._cleanup.extend(paths)
+        return {"paths": list(self._cleanup)}
 
     def _resume(self, params: dict[str, Any]) -> dict[str, Any]:
         last = int(params.get("last_seq") or 0)
@@ -240,6 +296,10 @@ class Daemon:
     def _dispatch(self, req_id: str, method: str, params: dict[str, Any]) -> dict[str, Any]:
         if method == "runner.hello":
             return self._hello(params)
+        if method == "env.set":
+            return self._env_set(params)
+        if method == "runner.cleanup_at_exit":
+            return self._cleanup_at_exit(params)
         if method == "session.resume":
             return self._resume(params)
         if method == "shell.open":
@@ -307,6 +367,15 @@ class Daemon:
                     return fsops.search(path, str(params.get("pattern") or ""), **_pick(params, "max_matches", "ignore_case"))
             except fsops.FsError as exc:
                 raise P.RunnerError(P.FS_ERROR, str(exc)) from exc
+        if method == "net.probe":
+            # Can this sandbox open a TCP connection to host:port? A provider proves its
+            # network wall with it before the session starts (the Windows loopback filters).
+            host, port = str(params.get("host") or "127.0.0.1"), int(params.get("port") or 0)
+            try:
+                socket.create_connection((host, port), timeout=float(params.get("timeout") or 5)).close()
+            except OSError as exc:
+                return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            return {"ok": True}
         if method == "runner.shutdown":
             self._stop.set()
             return {"stopping": True}
@@ -332,9 +401,8 @@ class Daemon:
             old, self._conn = self._conn, conn
         if old is not None:
             old.close()  # the newest connection wins
-        reader = conn.sock.makefile("rb")
         try:
-            for line in reader:
+            for line in conn.stream.lines():
                 frame = P.decode(line)
                 if frame is None:
                     continue
@@ -378,11 +446,22 @@ class Daemon:
             for task_id in list(shell.executor._bg_tasks):
                 shell.executor.background_kill(task_id)
             shell.executor.close()
-        try:
-            os.unlink(self.socket_path)
-        except OSError:
-            pass
-        folder = os.path.dirname(self.socket_path)
+        for path in self._cleanup:
+            try:
+                if os.path.isdir(path) and not os.path.islink(path):
+                    shutil.rmtree(path, ignore_errors=True)
+                elif os.path.lexists(path):
+                    os.remove(path)
+            except OSError:
+                pass
+        if not self.is_pipe:
+            try:
+                os.unlink(self.socket_path)
+            except OSError:
+                pass
+        folder = self.runtime_dir
+        if not folder:
+            return
         try:
             if os.path.basename(folder).startswith("owr-"):
                 # A folder a provider made for this one runner (socket, temporary files, log).
@@ -393,8 +472,21 @@ class Daemon:
         except OSError:
             pass
 
-    def serve_forever(self) -> None:
+    def _parent_is_gone(self) -> bool:
+        if self._parent is None:
+            return False
+        if sys.platform == "win32":
+            return winpipe.process_is_gone(self._parent)
+        return os.getppid() != self._parent
+
+    def _listen(self) -> Callable[[float], Optional[Any]]:
+        """Start listening; the result takes a timeout and gives the next client's stream,
+        or None when nobody came in time. Closing is `self._close_listener`."""
         path = self.socket_path
+        if self.is_pipe:
+            listener = winpipe.Listener(path, self.allow_sids)
+            self._close_listener = listener.close
+            return listener.accept
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         try:
             os.unlink(path)
@@ -407,21 +499,34 @@ class Daemon:
         finally:
             os.umask(old_mask)
         server.listen(16)
-        server.settimeout(0.5)
-        print(f"openworker tool runner {RUNNER_VERSION} ready on {path} (instance {self.instance_id})", file=sys.stderr, flush=True)
+        self._close_listener = server.close
+
+        def accept(timeout: float) -> Optional[_SocketStream]:
+            server.settimeout(timeout)
+            try:
+                sock, _ = server.accept()
+            except socket.timeout:
+                return None
+            return _SocketStream(sock)
+
+        return accept
+
+    def serve_forever(self) -> None:
+        accept = self._listen()
+        print(f"openworker tool runner {RUNNER_VERSION} ready on {self.socket_path} (instance {self.instance_id})", file=sys.stderr, flush=True)
         try:
             while not self._stop.is_set():
                 try:
-                    sock, _ = server.accept()
-                except socket.timeout:
-                    if self._parent is not None and os.getppid() != self._parent:
-                        break  # the server that started us is gone
-                    continue
+                    stream = accept(0.5)
                 except OSError:
                     break
-                threading.Thread(target=self._serve_conn, args=(_Conn(sock),), daemon=True).start()
+                if stream is None:
+                    if self._parent_is_gone():
+                        break  # the server that started us is gone
+                    continue
+                threading.Thread(target=self._serve_conn, args=(_Conn(stream),), daemon=True).start()
         finally:
-            server.close()
+            self._close_listener()
             self._shutdown()
 
 

@@ -2,13 +2,16 @@
 
 These run the real thing end to end: the runner packed into its single file, a daemon
 process, an attach relay per pipe, and the client. No sandbox technology is involved
-(`runner-local`), so what is tested here is the protocol and its delivery rules.
+(`runner-local`), so what is tested here is the protocol and its delivery rules. The
+daemon listens on a Unix socket, or on Windows a named pipe; the shell is bash there and
+PowerShell here, so the commands come in two spellings.
 """
 
 from __future__ import annotations
 
 import ast
 import base64
+import shutil
 import sys
 import threading
 import time
@@ -17,16 +20,33 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the tool runner needs Unix sockets")
-
-from coworker.sandbox.bundle import build_runner_zipapp  # noqa: E402
-from coworker.sandbox.client import RunnerClient  # noqa: E402
-from coworker.sandbox.executor import RunnerExecutor  # noqa: E402
-from coworker.sandbox.providers.runner_local import RunnerLocalProvider  # noqa: E402
-from coworker.sandbox.runner import protocol as P  # noqa: E402
-from coworker.sandbox.workspace import DirectWorkspace, RunnerWorkspace, open_workspace  # noqa: E402
+from coworker.sandbox.bundle import build_runner_zipapp
+from coworker.sandbox.client import RunnerClient
+from coworker.sandbox.executor import RunnerExecutor
+from coworker.sandbox.providers.runner_local import RunnerLocalProvider
+from coworker.sandbox.runner import protocol as P
+from coworker.sandbox.workspace import DirectWorkspace, RunnerWorkspace, open_workspace
 
 RUNNER_DIR = Path(__file__).resolve().parents[1] / "coworker" / "sandbox" / "runner"
+_WIN = sys.platform == "win32"
+posix_only = pytest.mark.skipif(_WIN, reason="bash syntax")
+
+
+def _sleep(seconds: float) -> str:
+    # `Start-Sleep 0.4` would sleep 0 s: its `-Seconds` is an integer in PowerShell 5.
+    return f"Start-Sleep -Milliseconds {int(seconds * 1000)}" if _WIN else f"sleep {seconds}"
+
+
+def _cd_and_set(folder: str, name: str, value: str) -> str:
+    return f"cd {folder}; $env:{name}='{value}'" if _WIN else f"cd {folder} && export {name}={value}"
+
+
+def _echo_var_and_leaf(name: str) -> str:
+    """Prints the variable and the current folder's last component."""
+    return f'echo "$env:{name} $(Split-Path -Leaf (Get-Location))"' if _WIN else f"echo ${name} $(basename $PWD)"
+
+
+LEAF = "Split-Path -Leaf (Get-Location)" if _WIN else "basename $PWD"
 
 
 @pytest.fixture
@@ -86,6 +106,7 @@ def test_lines_that_are_not_frames_are_dropped():
     assert P.decode(b"\xff\xfe\n") is None
 
 
+@posix_only
 def test_multi_line_output_and_shell_syntax_survive_the_pipe(runner, tmp_path):
     _, client = runner
     ex = RunnerExecutor(client, cwd=str(tmp_path))
@@ -119,8 +140,9 @@ def test_results_look_the_same_as_the_in_process_executor(runner, tmp_path):
     _, client = runner
     direct = DirectWorkspace(cwd=tmp_path)
     try:
-        ours = RunnerExecutor(client, cwd=str(tmp_path)).run("echo hi; false")
-        theirs = direct.executor.run("echo hi; false")
+        command = "echo hi; cmd /c exit 1" if _WIN else "echo hi; false"
+        ours = RunnerExecutor(client, cwd=str(tmp_path)).run(command)
+        theirs = direct.executor.run(command)
     finally:
         direct.close()
     assert ours == theirs
@@ -132,17 +154,17 @@ def test_each_shell_keeps_its_own_folder_and_variables(runner, tmp_path):
     (tmp_path / "b").mkdir()
     one = RunnerExecutor(client, cwd=str(tmp_path), shell="agent-1")
     two = RunnerExecutor(client, cwd=str(tmp_path), shell="agent-2")
-    one.run("cd a && export WHO=one")
-    two.run("cd b && export WHO=two")
-    assert one.run("echo $WHO $(basename $PWD)")["output"].split() == ["one", "a"]
-    assert two.run("echo $WHO $(basename $PWD)")["output"].split() == ["two", "b"]
+    one.run(_cd_and_set("a", "WHO", "one"))
+    two.run(_cd_and_set("b", "WHO", "two"))
+    assert one.run(_echo_var_and_leaf("WHO"))["output"].split() == ["one", "a"]
+    assert two.run(_echo_var_and_leaf("WHO"))["output"].split() == ["two", "b"]
 
 
 def test_a_slow_shell_does_not_block_another(runner, tmp_path):
     _, client = runner
     slow = RunnerExecutor(client, cwd=str(tmp_path), shell="slow")
     fast = RunnerExecutor(client, cwd=str(tmp_path), shell="fast")
-    worker = threading.Thread(target=lambda: slow.run("sleep 2"))
+    worker = threading.Thread(target=lambda: slow.run(_sleep(2)))
     worker.start()
     time.sleep(0.3)
     started = time.monotonic()
@@ -154,7 +176,7 @@ def test_a_slow_shell_does_not_block_another(runner, tmp_path):
 def test_one_shell_runs_one_command_at_a_time(runner, tmp_path):
     _, client = runner
     ex = RunnerExecutor(client, cwd=str(tmp_path))
-    worker = threading.Thread(target=lambda: ex.run("sleep 1.5"))
+    worker = threading.Thread(target=lambda: ex.run(_sleep(1.5)))
     worker.start()
     time.sleep(0.3)
     second = ex.run("echo too-soon")
@@ -168,7 +190,8 @@ def test_live_output_is_a_view_and_the_result_is_the_record(runner, tmp_path):
     ex = RunnerExecutor(client, cwd=str(tmp_path), on_output=seen.append)
     fast = ex.run("echo instant")
     assert fast["output"].startswith("instant") and seen == []  # too quick for a live frame
-    slow = ex.run("for i in 1 2 3; do echo tick $i; sleep 0.4; done")
+    ticks = f'foreach ($i in 1..3) {{ "tick $i"; {_sleep(0.4)} }}' if _WIN else "for i in 1 2 3; do echo tick $i; sleep 0.4; done"
+    slow = ex.run(ticks)
     assert "tick 1" in "".join(seen)  # the view arrived while it ran
     assert all(f"tick {i}" in slow["output"] for i in (1, 2, 3))  # the record is complete
 
@@ -184,10 +207,10 @@ def test_user_stop_ends_the_command_and_the_session_carries_on(runner, tmp_path)
     ex.run("cd work")
     threading.Timer(0.5, ex.interrupt_now).start()
     started = time.monotonic()
-    stopped = ex.run("sleep 20", timeout=30)
+    stopped = ex.run(_sleep(20), timeout=30)
     assert time.monotonic() - started < 10
     assert stopped["error"] == "interrupted by user"
-    assert ex.run("basename $PWD")["output"].strip() == "work"
+    assert ex.run(LEAF)["output"].strip() == "work"
 
 
 # -- delivery after a break -------------------------------------------------------------
@@ -195,24 +218,26 @@ def test_user_stop_ends_the_command_and_the_session_carries_on(runner, tmp_path)
 
 def test_a_cut_stream_resumes_and_no_result_is_lost(runner, tmp_path):
     provider, client = runner
+    (tmp_path / "away").mkdir()
     ex = RunnerExecutor(client, cwd=str(tmp_path))
-    ex.run("cd /tmp && export KEEP=yes")
+    ex.run(_cd_and_set("away", "KEEP", "yes"))
     instance = client.instance_id
     box: dict = {}
-    worker = threading.Thread(target=lambda: box.update(ex.run("sleep 1.5; echo finished-while-away")))
+    worker = threading.Thread(target=lambda: box.update(ex.run(f"{_sleep(1.5)}; echo finished-while-away")))
     worker.start()
     time.sleep(0.4)
     client._transport.proc.kill()  # the stream is cut while the command runs
     worker.join(timeout=20)
     assert "finished-while-away" in box.get("output", "")  # delivered after the resume
     assert client.instance_id == instance and client.restarts == 0  # same daemon
-    assert ex.run("echo $KEEP $PWD")["output"].split() == ["yes", "/tmp"]  # same shell
+    assert ex.run(_echo_var_and_leaf("KEEP"))["output"].split() == ["yes", "away"]  # same shell
 
 
 def test_the_same_request_id_runs_once(runner, tmp_path):
     _, client = runner
     target = tmp_path / "count.txt"
-    frame = P.encode(P.request("r-fixed", "shell.run", {"shell": "main", "command": f"echo x >> {target}", "cwd": str(tmp_path)}))
+    append = f"Add-Content -Path '{target}' -Value x" if _WIN else f"echo x >> {target}"
+    frame = P.encode(P.request("r-fixed", "shell.run", {"shell": "main", "command": append, "cwd": str(tmp_path)}))
     for _ in range(3):
         client._send(client._transport, frame)
     deadline = time.monotonic() + 10
@@ -226,16 +251,16 @@ def test_a_restarted_sandbox_fails_the_running_command_and_reopens_in_the_last_f
     provider, client = runner
     (tmp_path / "work").mkdir()
     ex = RunnerExecutor(client, cwd=str(tmp_path))
-    ex.run("cd work && export GONE=soon")
+    ex.run(_cd_and_set("work", "GONE", "soon"))
     box: dict = {}
-    worker = threading.Thread(target=lambda: box.update(ex.run("sleep 30", timeout=60)))
+    worker = threading.Thread(target=lambda: box.update(ex.run(_sleep(30), timeout=60)))
     worker.start()
     time.sleep(0.4)
     provider.restart_daemon()  # a new runner instance, as after a sandbox restart
     worker.join(timeout=30)
     assert "outcome of this command is unknown" in box["error"]  # never re-sent by the client
     assert client.restarts == 1
-    after = ex.run("echo [$GONE] $(basename $PWD)")
+    after = ex.run(f'echo "[$env:GONE] $({LEAF})"' if _WIN else "echo [$GONE] $(basename $PWD)")
     assert after["output"].split() == ["[]", "work"]  # variables lost, folder kept
 
 
@@ -264,7 +289,7 @@ def test_a_relay_left_behind_goes_away_by_itself(tmp_path):
 def test_files_are_read_in_pages_and_written_with_a_precondition(runner, tmp_path):
     _, client = runner
     big = tmp_path / "out.log"
-    big.write_text("".join(f"line {i}\n" for i in range(1, 1001)))
+    big.write_bytes("".join(f"line {i}\n" for i in range(1, 1001)).encode())  # the same bytes on Windows
     page = client.call("fs.read", {"path": str(big), "offset_line": 10, "limit_lines": 3}, timeout=10)
     assert page["text"] == "line 10\nline 11\nline 12\n"
     assert (page["start_line"], page["end_line"], page["total_lines"], page["eof"]) == (10, 12, 1000, False)
@@ -286,17 +311,52 @@ def test_files_are_read_in_pages_and_written_with_a_precondition(runner, tmp_pat
 def test_a_relative_path_resolves_against_the_shells_folder(runner, tmp_path):
     _, client = runner
     (tmp_path / "sub").mkdir()
-    RunnerExecutor(client, cwd=str(tmp_path), shell="agent-1").run("cd sub && echo hello > here.txt")
+    write = "cd sub; Set-Content -Path here.txt -Value hello" if _WIN else "cd sub && echo hello > here.txt"
+    RunnerExecutor(client, cwd=str(tmp_path), shell="agent-1").run(write)
     got = client.call("fs.read", {"path": "here.txt", "shell": "agent-1"}, timeout=10)
-    assert got["text"] == "hello\n"
+    assert got["text"].splitlines() == ["hello"]
     listing = client.call("fs.list", {"path": ".", "shell": "agent-1"}, timeout=10)
     assert [e["name"] for e in listing["entries"]] == ["here.txt"]
 
 
 def test_proc_run_takes_an_argument_list_without_a_shell(runner, tmp_path):
     _, client = runner
-    done = client.call("proc.run", {"argv": ["printf", "%s|", "a b", "$HOME"], "cwd": str(tmp_path)}, timeout=10)
-    assert done["exit_code"] == 0 and done["stdout"] == "a b|$HOME|"  # no shell: nothing expanded
+    argv = [sys.executable, "-c", "import sys; print('|'.join(sys.argv[1:]))", "a b", "$HOME"]
+    done = client.call("proc.run", {"argv": argv, "cwd": str(tmp_path)}, timeout=30)
+    assert done["exit_code"] == 0 and done["stdout"].strip() == "a b|$HOME"  # no shell: nothing expanded
+
+
+@pytest.mark.skipif(not _WIN, reason="the named pipe's security descriptor is Windows only")
+def test_the_pipe_admits_only_the_listed_accounts(tmp_path):
+    """On Windows the daemon may run as another account; its pipe must admit exactly the
+    accounts it was given (the server's user). A pipe that lists only the Anonymous
+    account refuses us, one that lists our own account does not."""
+    import subprocess
+
+    from coworker.sandbox import launch, winsec
+    from coworker.sandbox.runner import winpipe
+
+    zipapp = build_runner_zipapp(tmp_path / "dist")
+    for sid, expect_refused in ((winsec.current_user_sid(), False), ("S-1-5-7", True)):
+        folder, address = launch.runner_dir()
+        daemon = subprocess.Popen(
+            [*launch.runner_command(zipapp), "serve", "--socket", address, "--dir", folder, "--allow-sid", sid, "--cwd", str(tmp_path)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **launch.spawn_kwargs(),
+        )  # fmt: skip
+        try:
+            launch.wait_for_runner(address, daemon)
+            try:
+                stream = winpipe.connect(address)
+            except PermissionError:
+                refused = True
+            else:
+                refused = False
+                stream.close()
+            assert refused is expect_refused, f"pipe for {sid}: refused={refused}"
+        finally:
+            daemon.kill()
+            daemon.wait(timeout=10)
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 # -- choosing a workspace ---------------------------------------------------------------

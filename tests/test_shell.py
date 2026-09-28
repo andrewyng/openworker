@@ -24,6 +24,7 @@ ECHO_ENV = "echo $env:GREETING" if _WIN else "echo $GREETING"
 EXIT_OK = "cmd /c exit 0" if _WIN else "true"
 EXIT_FAIL = "cmd /c exit 1" if _WIN else "false"
 SLEEP_5 = "Start-Sleep -Seconds 5" if _WIN else "sleep 5"
+PWD = "(Get-Location).Path" if _WIN else "pwd"  # PowerShell's `pwd` is a table that cuts long paths
 PRINT_1000 = (
     'foreach ($i in 1..1000) { "line$i" }'
     if _WIN
@@ -32,9 +33,9 @@ PRINT_1000 = (
 
 
 # Every behaviour below is checked twice: on the in-process executor (direct mode) and on
-# the same contract served by a tool runner in another process (the sandbox path). The two
-# must not drift apart. The runner needs Unix sockets, so it is skipped on Windows.
-_EXECUTORS = ["direct"] if _WIN else ["direct", "runner"]
+# the same contract served by a tool runner in another process (the sandbox path, over a
+# Unix socket or a Windows named pipe). The two must not drift apart.
+_EXECUTORS = ["direct", "runner"]
 if sys.platform == "darwin":
     _EXECUTORS.append("seatbelt")  # the same runner, inside the macOS sandbox
 
@@ -76,7 +77,7 @@ def _runner_zipapp(tmp_path):
 def test_cwd_persists_across_calls(executor, tmp_path):
     (tmp_path / "sub").mkdir()
     executor.run("cd sub")
-    result = executor.run("pwd")
+    result = executor.run(PWD)
     assert result["exit_code"] == 0
     assert "sub" in result["output"]
     assert executor.cwd.endswith("sub")

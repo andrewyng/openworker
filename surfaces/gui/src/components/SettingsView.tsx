@@ -19,10 +19,8 @@ import {
   type CloudStatus,
   type Machine,
   type MeInfo,
-  getSandboxSettings,
   getSettings,
   getTrustedWorkspaces,
-  setSandboxSettings,
   setAutoApprove,
   setAutoApproveShadow,
   setCompactionSettings,
@@ -35,8 +33,6 @@ import {
   type CompactionSettings,
   type ModelSettings,
   type PdfSettings,
-  type SandboxCredentialEntry,
-  type SandboxSettings,
   type WorkspaceCommandTrust,
 } from "../api";
 import {
@@ -74,6 +70,7 @@ import { MachineModelsPanel } from "./MachineModelsPanel";
 import { MachinesSection } from "./MachinesSection";
 import { RemoteConnectorsPanel } from "./RemoteConnectorsPanel";
 import { MemorySection } from "./MemorySection";
+import { SandboxSection } from "./SandboxSection";
 import { PersonasTab } from "./PersonasTab";
 import { SkillsTab } from "./SkillsTab";
 import { showPersonas } from "../flags";
@@ -170,8 +167,12 @@ export function SettingsView({
   onCreateSkill,
   onAskWorker,
   onBack,
+  onSandboxProviderChanged,
 }: {
   initialTab?: SetTab;
+  // Sandbox: the provider changed and the server dropped these sessions' engines; the
+  // app reconnects the one on screen so it is rebuilt (or refused) under the new rule.
+  onSandboxProviderChanged?: (sessionIds: string[]) => void;
   // "Back to app" on the rail — returns to the conversation surface.
   onBack?: () => void;
   onOpenPersona?: (id: string, machineId?: string | null) => void;
@@ -394,7 +395,7 @@ export function SettingsView({
               onAskWorker={(machineId) => onAskWorker?.(machineId)}
             />
           ) : tab === "sandbox" ? (
-            <SandboxSection key={scopeId || "local"} machine={scoped} />
+            <SandboxSection key={scopeId || "local"} machine={scoped} onProviderChanged={onSandboxProviderChanged} />
           ) : tab === "machines" ? (
             <MachinesSection />
           ) : tab === "slack" || tab === "github" ? (
@@ -720,215 +721,6 @@ function PersonasSection({
 // in, and the way out (moved here from the Machines page's inline bar). On
 // desktop and self-hosted browsers it is the optional OpenWorker Cloud
 // sign-in — the same one the sidebar's account menu offers, given a full page.
-// Settings ▸ Sandbox (UX-051 A, design doc rulings 17, 29, 32): machine-level provider,
-// network allow list, and the credential files an agent may be given. Reads and writes the
-// machine's config.toml through /v1/settings/sandbox; nothing here is per project.
-function SandboxSection({ machine }: { machine?: Machine | null }) {
-  const { t } = useTranslation();
-  const mid = machine?.id ?? null;
-  const [cfg, setCfg] = useState<SandboxSettings | null>(null);
-  const [error, setError] = useState<string>("");
-  const [editing, setEditing] = useState<string | null>(null); // credential name being edited, "" = new
-
-  useEffect(() => {
-    getSandboxSettings(mid).then(setCfg).catch(() => setCfg(null));
-  }, [mid]);
-
-  const save = async (patch: Parameters<typeof setSandboxSettings>[0]) => {
-    const res = await setSandboxSettings(patch, mid);
-    if (!res.ok) {
-      setError(res.error || "could not save");
-      return;
-    }
-    setError("");
-    setCfg(res as SandboxSettings);
-  };
-
-  if (!cfg) return null;
-  const providerNames: Record<string, [string, string]> = {
-    direct: [t("settingsx.sandbox.provider_direct"), t("settingsx.sandbox.provider_direct_desc")],
-    seatbelt: [t("settingsx.sandbox.provider_seatbelt"), t("settingsx.sandbox.provider_seatbelt_desc")],
-    openshell: [t("settingsx.sandbox.provider_openshell"), t("settingsx.sandbox.provider_openshell_desc")],
-  };
-  const chosen = cfg.provider || cfg.effective_provider || "direct";
-  const shipped = (name: string, key: "title" | "does", fallback?: string) => {
-    const k = `settingsx.sandbox.${key}_${name}`;
-    const v = t(k);
-    return v === k ? fallback || "" : v;
-  };
-  const updateCredentials = (rows: SandboxCredentialEntry[]) => save({ credentials: rows });
-
-  return (
-    <section data-testid="sandbox-section">
-      <PanelHead
-        title={t("settingsx.sandbox.title")}
-        sub={machine ? t("settingsx.sandbox.sub_machine", { name: machine.name }) : t("settingsx.sandbox.sub")}
-      />
-      {error ? <div className="mb-3 text-meta text-danger">{error}</div> : null}
-
-      <div className={FIELD_LABEL + " mb-2"}>{t("settingsx.sandbox.run_in")}</div>
-      <div className={CARD + " mb-1 divide-y divide-line"} role="radiogroup" aria-label={t("settingsx.sandbox.run_in")}>
-        {cfg.providers
-          .filter((p) => p.name !== "seatbelt" || cfg.platform === "darwin")
-          .map((p) => {
-            const [label, desc] = providerNames[p.name] ?? [p.name, ""];
-            const active = chosen === p.name;
-            return (
-              <label key={p.name} className="flex items-start gap-3 px-4 py-3 cursor-pointer">
-                <input
-                  type="radio"
-                  name="sandbox-provider"
-                  className="mt-1"
-                  checked={active}
-                  disabled={!p.usable && !active}
-                  onChange={() => save({ provider: p.name === "direct" && !cfg.provider ? "" : p.name })}
-                  data-testid={`sandbox-provider-${p.name}`}
-                />
-                <span className="flex-1 min-w-0">
-                  <span className="block text-ui text-ink">{label}</span>
-                  <span className="block text-meta text-muted">{desc}</span>
-                </span>
-                <span className={"text-meta shrink-0 " + (p.usable ? (active ? "text-success" : "text-muted") : "text-muted")} title={p.why || undefined}>
-                  {p.name === "direct" && !cfg.provider
-                    ? t("settingsx.sandbox.status_default")
-                    : p.usable
-                      ? t("settingsx.sandbox.status_ready")
-                      : t("settingsx.sandbox.status_unavailable")}
-                </span>
-              </label>
-            );
-          })}
-      </div>
-      {cfg.refused ? <div className="mb-4 text-meta text-danger">{t("settingsx.sandbox.refused", { why: cfg.refused })}</div> : <div className="mb-4" />}
-
-      <div className={FIELD_LABEL + " mb-2"}>{t("settingsx.sandbox.network")}</div>
-      <div className={CARD + " divide-y divide-line"} role="radiogroup" aria-label={t("settingsx.sandbox.network")}>
-        {cfg.network_profiles.map((np) => (
-          <label key={np.name} className="flex items-start gap-3 px-4 py-3 cursor-pointer">
-            <input
-              type="radio"
-              name="sandbox-network"
-              className="mt-1"
-              checked={cfg.network_profile === np.name}
-              onChange={() => save({ network_profile: np.name })}
-              data-testid={`sandbox-network-${np.name}`}
-            />
-            <span className="flex-1 min-w-0">
-              <span className="block text-ui text-ink">{t(`settingsx.sandbox.profile_${np.name}`)}</span>
-              <span className="block text-meta text-muted">{t(`settingsx.sandbox.profile_${np.name}_desc`)}</span>
-            </span>
-          </label>
-        ))}
-      </div>
-      <div className={FIELD_HELP + " mb-4"}>{t("settingsx.sandbox.network_help")}</div>
-
-      <div className="flex items-center mb-2">
-        <div className={FIELD_LABEL}>{t("settingsx.sandbox.credentials")}</div>
-        <button className="ml-auto text-ui text-accent" onClick={() => setEditing("")} data-testid="sandbox-credential-add">
-          {t("settingsx.sandbox.add")}
-        </button>
-      </div>
-      <div className={CARD + " divide-y divide-line"}>
-        {cfg.credentials.map((c) => (
-          <div key={c.name} className="flex items-start gap-3 px-4 py-3" data-testid={`sandbox-credential-${c.name}`}>
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={c.enabled}
-              onChange={(e) => updateCredentials(cfg.credentials.map((x) => (x.name === c.name ? { ...x, enabled: e.target.checked } : x)))}
-              aria-label={c.title || shipped(c.name, "title", c.name)}
-            />
-            <span className="flex-1 min-w-0">
-              <span className="block text-ui text-ink">
-                {c.title || shipped(c.name, "title", c.name)}{" "}
-                <code className="text-meta text-muted font-mono">{c.path}</code>
-              </span>
-              <span className="block text-meta text-muted">
-                {c.does ? c.does : shipped(c.name, "does")}{" "}
-                {c.hosts && c.hosts.length ? <span className="text-faint">{t("settingsx.sandbox.also_allows", { hosts: c.hosts.join(", ") })}</span> : null}
-              </span>
-            </span>
-            <span className="text-meta text-muted shrink-0 whitespace-nowrap">
-              <button className="hover:text-ink" onClick={() => setEditing(c.name)}>{t("settingsx.sandbox.edit")}</button>
-              <span className="mx-1.5 text-faint">·</span>
-              <button className="hover:text-ink" onClick={() => updateCredentials(cfg.credentials.filter((x) => x.name !== c.name))}>
-                {t("settingsx.sandbox.remove")}
-              </button>
-            </span>
-          </div>
-        ))}
-      </div>
-      <div className={FIELD_HELP}>{t("settingsx.sandbox.credentials_help")}</div>
-      {cfg.platform === "darwin" ? <div className={FIELD_HELP}>{t("settingsx.sandbox.keychain_note")}</div> : null}
-      <div className={FIELD_HELP + " mt-3"}>{t("settingsx.sandbox.saved_in", { path: cfg.config_path })}</div>
-
-      {editing !== null ? (
-        <CredentialEditor
-          entry={editing ? cfg.credentials.find((c) => c.name === editing) ?? null : null}
-          onCancel={() => setEditing(null)}
-          onSave={(row) => {
-            const rows = editing ? cfg.credentials.map((x) => (x.name === editing ? row : x)) : [...cfg.credentials, row];
-            setEditing(null);
-            updateCredentials(rows);
-          }}
-        />
-      ) : null}
-    </section>
-  );
-}
-
-function CredentialEditor({
-  entry,
-  onCancel,
-  onSave,
-}: {
-  entry: SandboxCredentialEntry | null;
-  onCancel: () => void;
-  onSave: (row: SandboxCredentialEntry) => void;
-}) {
-  const { t } = useTranslation();
-  const [title, setTitle] = useState(entry?.title ?? "");
-  const [name, setName] = useState(entry?.name ?? "");
-  const [path, setPath] = useState(entry?.path ?? "~/");
-  const [hosts, setHosts] = useState((entry?.hosts ?? []).join("\n"));
-  const [does, setDoes] = useState(entry?.does ?? "");
-  const slug = entry?.name || name || title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  const valid = Boolean(slug) && (path.startsWith("~/") || path.startsWith("/"));
-  return (
-    <div className={CARD + " p-4 mt-3"} data-testid="sandbox-credential-editor">
-      <div className="grid grid-cols-[150px_1fr] gap-x-3 gap-y-2 items-center">
-        <label className="text-ui text-muted">{t("settingsx.sandbox.field_title")}</label>
-        <input className={INPUT} value={title} onChange={(e) => { setTitle(e.target.value); if (!entry) setName(""); }} />
-        <label className="text-ui text-muted">{t("settingsx.sandbox.field_path")}</label>
-        <input className={INPUT + " font-mono"} value={path} onChange={(e) => setPath(e.target.value)} />
-        <label className="text-ui text-muted self-start pt-2">{t("settingsx.sandbox.field_hosts")}</label>
-        <textarea className={INPUT + " font-mono"} rows={3} value={hosts} onChange={(e) => setHosts(e.target.value)} />
-        <label className="text-ui text-muted">{t("settingsx.sandbox.field_does")}</label>
-        <input className={INPUT} value={does} onChange={(e) => setDoes(e.target.value)} />
-      </div>
-      <div className="flex justify-end gap-2 mt-3">
-        <button className={BTN_BORDERED} onClick={onCancel}>{t("settingsx.sandbox.cancel")}</button>
-        <button
-          className={BTN_ACCENT}
-          disabled={!valid}
-          onClick={() =>
-            onSave({
-              name: slug,
-              title: title || undefined,
-              path,
-              hosts: hosts.split(/\s+/).map((h) => h.trim()).filter(Boolean),
-              does: does || undefined,
-              enabled: entry?.enabled ?? true,
-            })
-          }
-        >
-          {t("settingsx.sandbox.done")}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function AccountSection() {
   const { t } = useTranslation();
   return (

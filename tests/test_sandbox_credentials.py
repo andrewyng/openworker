@@ -28,6 +28,7 @@ def _home(tmp_path) -> Path:
     (home / ".config" / "gh").mkdir(parents=True)
     (home / ".config" / "gh" / "hosts.yml").write_text("github.com:\n  oauth_token: gho_x\n")
     (home / ".aws").mkdir()
+    (home / ".aws" / "config").write_text("[default]\nregion = us-east-1\n")
     (home / ".aws" / "credentials").write_text("[default]\naws_access_key_id = AKIA\n")
     (home / ".kube").mkdir()
     (home / ".kube" / "config").write_text("clusters:\n- cluster:\n    server: https://k8s.example.com:6443\n")
@@ -56,7 +57,30 @@ def test_a_user_entry_edits_or_adds_by_name(tmp_path):
     got = {g.name: g for g in creds.granted(configured, home=str(home))}
     assert set(got) == {"ssh", "npm"}
     assert got["ssh"].relative == ".ssh" and got["ssh"].hosts == ["github.com:22", "gitlab.com:22"]
-    assert got["npm"].hosts == ["registry.npmjs.org:443"]
+    assert got["ssh"].kind == "folder" and got["ssh"].label == "credential"
+    assert got["npm"].hosts == ["registry.npmjs.org:443"] and got["npm"].kind == "file"
+
+
+def test_an_entry_is_a_file_or_a_folder_with_a_label(tmp_path):
+    """11d ruling 6: the path decides file or folder; the shipped AWS entry is the profiles
+    file (configuration), so the keys stay out unless added; the kubeconfig is one file."""
+    home = _home(tmp_path)
+    got = {g.name: g for g in creds.granted([{"name": n, "enabled": True} for n in ("aws", "kube")], home=str(home))}
+    assert got["aws"].kind == "file" and got["aws"].relative == os.path.join(".aws", "config") and got["aws"].label == "configuration"
+    assert got["kube"].kind == "file" and got["kube"].hosts == ["k8s.example.com:6443"]
+    assert creds.kind_of("~/.aws", home=str(home)) == "folder" and creds.kind_of("~/.aws/config", home=str(home)) == "file"
+    assert creds.kind_of("~/.nothing", home=str(home)) == ""
+    # a user's own entry for the keys file, and the folder form of AWS still work
+    (home / ".npmrc").write_text("token\n")
+    rows = [{"name": "aws-credentials", "enabled": True, "path": "~/.aws/credentials", "label": "credential"}, {"name": "aws", "enabled": True, "path": "~/.aws"}]
+    got = {g.name: g for g in creds.granted(rows, home=str(home))}
+    assert got["aws"].kind == "folder" and got["aws-credentials"].kind == "file" and got["aws-credentials"].label == "credential"
+    run = tmp_path / "run2"
+    run.mkdir()
+    copied = creds.copy_in(list(got.values()), str(run), home=str(home))
+    sb = Path(copied.home)
+    assert copied.env["AWS_SHARED_CREDENTIALS_FILE"] == str(sb / ".aws" / "credentials") and copied.env["AWS_CONFIG_FILE"] == str(sb / ".aws" / "config")
+    assert [e["label"] for e in creds.entries([{"name": "x", "label": "bogus"}]) if e["name"] == "x"] == ["credential"]
 
 
 def test_kube_hosts_come_from_the_kubeconfig(tmp_path):
@@ -86,25 +110,31 @@ def test_copy_in_makes_a_private_home_and_the_tools_environment(tmp_path):
     sb = Path(copied.home)
     assert sb == run / "home"
     assert (sb / ".ssh" / "id_ed25519").read_text() == "PRIVATE KEY\n"
-    assert stat.S_IMODE((sb / ".ssh" / "id_ed25519").stat().st_mode) == 0o600
-    assert stat.S_IMODE((sb / ".ssh").stat().st_mode) == 0o700
+    if sys.platform != "win32":  # Windows has no mode bits; the copy's ACL is the Windows provider's job
+        assert stat.S_IMODE((sb / ".ssh" / "id_ed25519").stat().st_mode) == 0o600
+        assert stat.S_IMODE((sb / ".ssh").stat().st_mode) == 0o700
     assert (sb / ".gitconfig").exists()  # git's settings always come along
     assert not (sb / "Documents").exists()  # nothing that was not granted
     config = (sb / ".ssh" / "config").read_text()
     assert config.startswith("# Added by OpenWorker") and "ProxyCommand /usr/bin/nc -X connect -x 127.0.0.1:4545 %h %p" in config
-    assert f"IdentityFile {sb / '.ssh' / 'id_ed25519'}" in config and "IdentityAgent none" in config
+    key_path = str(sb / ".ssh" / "id_ed25519").replace("\\", "/") if sys.platform == "win32" else str(sb / ".ssh" / "id_ed25519")
+    assert f"IdentityFile {key_path}" in config and "IdentityAgent none" in config
+    ssh_exe = r'"C:\Windows\System32\OpenSSH\ssh.exe"' if sys.platform == "win32" else "/usr/bin/ssh"
     assert config.endswith("Host work\n  HostName git.example.com\n")  # the user's own config still there, after ours
-    assert copied.env["GIT_SSH_COMMAND"] == f'/usr/bin/ssh -F "{sb / ".ssh" / "config"}"'
-    assert (sb / "bin" / "ssh").read_text().startswith("#!/bin/sh") and copied.env["OPENWORKER_PATH_PREPEND"] == str(sb / "bin")
+    assert copied.env["GIT_SSH_COMMAND"] == f'{ssh_exe} -F "{sb / ".ssh" / "config"}"'
+    wrapper = (sb / "bin" / "ssh.cmd") if sys.platform == "win32" else (sb / "bin" / "ssh")
+    assert wrapper.read_text().startswith("@" if sys.platform == "win32" else "#!/bin/sh")
+    assert copied.env["OPENWORKER_PATH_PREPEND"] == str(sb / "bin")
     assert copied.env["HOME"] == str(sb)
     assert copied.env["GH_CONFIG_DIR"] == str(sb / ".config" / "gh")
-    assert copied.env["AWS_SHARED_CREDENTIALS_FILE"] == str(sb / ".aws" / "credentials")
+    assert copied.env["AWS_CONFIG_FILE"] == str(sb / ".aws" / "config") and "AWS_SHARED_CREDENTIALS_FILE" not in copied.env
+    assert not (sb / ".aws" / "credentials").exists()  # the profiles file only; the keys stay out
     assert copied.env["KUBECONFIG"] == str(sb / ".kube" / "config")
     assert copied.hosts == ["*.amazonaws.com:443", "api.github.com:443", "github.com:22", "github.com:443", "gitlab.com:22", "k8s.example.com:6443"]
     # the real files were not touched
     assert (home / ".ssh" / "config").read_text() == "Host work\n  HostName git.example.com\n"
     text = creds.context_lines(copied)
-    assert "SSH keys (.ssh): you can push and pull over SSH" in text and "deleted when the session ends" in text
+    assert "SSH keys (.ssh, folder): you can push and pull over SSH" in text and "deleted when the session ends" in text
 
 
 def test_no_grants_means_no_lines_for_the_agent(tmp_path):
@@ -207,6 +237,7 @@ def test_ssh_and_gh_copies_work_inside_seatbelt_and_ssh_goes_through_the_proxy(t
     assert not Path(provider.copied.home).exists()  # the copies died with the sandbox
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the Seatbelt provider keeps its folder under /tmp")
 def test_a_failed_creation_leaves_no_copied_credential_behind(tmp_path, monkeypatch):
     from coworker.sandbox.providers import seatbelt
 

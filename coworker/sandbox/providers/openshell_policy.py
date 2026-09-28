@@ -47,6 +47,10 @@ PROFILES: dict[str, dict[str, dict[str, Any]]] = {
     profile: {_POLICY_KEYS[name]: _hosts(name, hosts) for name, hosts in groups.items()}
     for profile, groups in network_profiles.PROFILES.items()
 }
+# The `open` profile: any host, any port. NOT yet proved against a running gateway (the
+# Linux VM was stopped when it was written, 2026-09-25); if OpenShell refuses the wildcard
+# the sandbox fails to start, which is the safe way round.
+PROFILES[network_profiles.OPEN] = {"open": {"name": "open", "endpoints": [{"host": "*", "port": 0}], "binaries": [dict(b) for b in _ANY_BINARY]}}
 DEFAULT_PROFILE = network_profiles.DEFAULT_PROFILE
 
 

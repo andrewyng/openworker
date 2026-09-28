@@ -648,6 +648,8 @@ def cli(
     sandbox_sub.add_parser("status", help="what OpenShell sandboxes need here, and what is missing")
     p_sandbox_setup = sandbox_sub.add_parser("setup", help="set this machine up (shows each change and asks first)")
     p_sandbox_setup.add_argument("--yes", action="store_true", help="make the changes without asking")
+    p_sandbox_remove = sandbox_sub.add_parser("remove", help="undo what `setup` did on this machine (Windows)")
+    p_sandbox_remove.add_argument("--yes", action="store_true", help="remove without asking")
 
     args = parser.parse_args(argv)
     state = state_dir()
@@ -672,7 +674,11 @@ def cli(
     if args.command == "sandbox":
         from ..sandbox import setup_cmd
 
-        return setup_cmd.setup(yes=args.yes) if args.sandbox_command == "setup" else setup_cmd.status()
+        if args.sandbox_command == "setup":
+            return setup_cmd.setup(yes=args.yes)
+        if args.sandbox_command == "remove":
+            return setup_cmd.remove(yes=args.yes)
+        return setup_cmd.status()
     return 2
 
 

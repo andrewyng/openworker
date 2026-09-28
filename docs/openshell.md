@@ -69,16 +69,39 @@ openworker machine sandbox setup
 ```
 
 `status` lists what is missing. `setup` shows each change before it makes it and asks
-first: it runs NVIDIA's installer for the pinned OpenShell release, allows bind mounts in
-the gateway's configuration (that is how your folders reach a sandbox), keeps the gateway
-running after you log out, and sets the machine to use OpenShell. It never runs `sudo` for
-you; when a step needs an administrator, it prints the command.
+first: it keeps the gateway running after you log out (`linger`, which needs `sudo` and
+comes first, because NVIDIA's installer starts the gateway through your user's systemd
+manager, and on WSL or a headless box that manager only runs once linger is on), runs
+NVIDIA's installer for the pinned OpenShell release, allows bind mounts in the gateway's
+configuration (that is how your folders reach a sandbox), sets the machine to use
+OpenShell, and downloads the base image sandboxes are built from.
+
+The base image is about 5 GB and is downloaded once. Until it is on the machine, Settings ▸
+Sandbox shows OpenShell as **needs download** and a session is refused with the same
+message, rather than hanging on the download. `setup` and the page's **Set up sandbox**
+download it with Docker's own progress; the command is also `docker pull` of the image
+named in the refusal.
+
+Settings ▸ Sandbox does the same from the app: one switch, **Run agents in a sandbox**,
+and under it the provider, a readiness checklist (the rows `status` prints, each with a
+Guide link and, where the app cannot do it, the one command to run), and a **Set up
+sandbox** button that walks the list and does each step itself. The two steps that need
+an administrator on Linux (the OpenShell install and linger) go through `sudo` when your
+user may use it without a password, or through the system's own password prompt on a
+Linux desktop; the app never sees or stores the password. On a Mac, Homebrew installs
+OpenShell as you, so nothing needs an administrator. Where there is no prompt to use
+(WSL), both steps are folded into ONE command shown with Copy, and **Check again**
+continues once you have run it. The install and the image download show their progress
+and can be cancelled. The network allow list and the shared credentials appear only while
+the switch is on: they apply behind a wall and nowhere else. On Windows the switch is off
+and disabled; run OpenWorker on a Linux machine (a WSL Ubuntu counts) added under
+Settings ▸ Machines.
 
 The setting is per machine, in Settings ▸ Sandbox or in `config.toml`:
 
 ```toml
 sandbox_provider = "openshell"      # or "direct": commands run in the OpenWorker process
-sandbox_network_profile = "strict"  # or "standard"
+sandbox_network_profile = "strict"  # or "standard", or "open" (any host; files still confined)
 ```
 
 A project's own config cannot change it. When a machine is set to OpenShell and OpenShell
@@ -108,6 +131,7 @@ Two profiles:
 - **strict** (default): GitHub, GitLab, and the package registries — PyPI, npm, crates.io,
   the Go proxy.
 - **standard**: strict plus the search APIs (Brave, Tavily, DuckDuckGo).
+- **open**: any host, no allow list. The files are still the wall.
 
 OpenShell enforces the list in the container. Credentials shared on purpose (next
 section) add the hosts their tools need.
@@ -129,7 +153,9 @@ You can add your own entries (a name, a path under your home folder, the hosts i
 
 An enabled entry is **copied** into a private home that is mounted into the sandbox when
 it starts, owner-only, and deleted with the sandbox; the real files are never opened for
-writing. For `ssh`, the copy is wired so that `ssh` and `git` inside use the copied keys
+writing. The copy lives under `~/.config/coworker/sandbox-runtime/`, never under `/tmp`:
+the gateway NVIDIA's installer sets up runs with a private `/tmp` and could not mount a
+folder there. For `ssh`, the copy is wired so that `ssh` and `git` inside use the copied keys
 and known hosts, with no agent. Connectors always run in OpenWorker itself, outside every
 sandbox, with their own tokens.
 
@@ -154,7 +180,11 @@ enabled = true
 
 - **"Sessions on this machine are refused"** — the machine is set to OpenShell and it
   cannot be used right now. Run `openworker machine sandbox status` for the reason; the
-  usual ones are the gateway not running, or bind mounts not allowed.
+  usual ones are the gateway not running, bind mounts not allowed, or the base image not
+  downloaded yet.
+- **"The sandbox base image is not downloaded yet"** — the one-time 5 GB download has
+  not happened. Run `openworker machine sandbox setup` and accept the download, or run the
+  `docker pull` command from the message; then start the session again.
 - **A host is refused** — it is not on the profile; switch to `standard` if it is a search
   API, or share the credential entry whose hosts include it.
 - **`git push` says permission denied inside the sandbox** — no credential is shared.

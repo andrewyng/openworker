@@ -48,6 +48,9 @@ def _origin_allowed(origin: str | None) -> bool:
 # process can reach it), so bound frames, messages, and per-connection request rate before
 # building model content or starting a turn.
 _WS_MAX_FRAME_BYTES = 16 * 1024 * 1024
+# Close code for a session socket whose engine could not be built (a refused sandbox, a
+# failed build). Private-use range; the client treats it as final and does not reconnect.
+WS_CLOSE_SESSION_REFUSED = 4403
 _WS_RATE_LIMIT_COUNT = 30
 _WS_RATE_LIMIT_WINDOW_SECONDS = 10.0
 _MAX_MESSAGE_TEXT_CHARS = 200_000
@@ -2400,7 +2403,54 @@ def create_app(manager: SessionManager) -> FastAPI:
     def settings_set_sandbox(body: dict) -> dict[str, Any]:
         from ..sandbox import settings as sandbox_settings
 
-        return sandbox_settings.update(body or {})
+        result = sandbox_settings.update(body or {})
+        if result.get("ok") and "provider" in (body or {}):
+            # Live sessions built under the old rule are rebuilt on their next connection;
+            # the app reconnects the one on screen (see App.tsx, onSandboxProviderChanged).
+            result["rebuilt_sessions"] = manager.apply_sandbox_setting()
+        return result
+
+    @app.get("/v1/settings/sandbox/readiness")
+    async def settings_sandbox_readiness() -> dict[str, Any]:
+        # OPE-207: the checklist behind "Set up sandbox". A few CLI calls, so off the loop.
+        from ..sandbox import settings as sandbox_settings
+
+        return await asyncio.to_thread(sandbox_settings.readiness)
+
+    @app.get("/v1/settings/sandbox/setup")
+    def settings_sandbox_setup_state() -> dict[str, Any]:
+        from ..sandbox import setup_job
+
+        return setup_job.job().state()
+
+    @app.post("/v1/settings/sandbox/setup")
+    def settings_sandbox_setup_start() -> dict[str, Any]:
+        # Runs on its own thread: fixes what the app may fix (never as root), hands the
+        # rest over as commands, downloads the image with progress. GET polls the state.
+        from ..sandbox import setup_job
+
+        return setup_job.job().start()
+
+    @app.post("/v1/settings/sandbox/setup/cancel")
+    def settings_sandbox_setup_cancel() -> dict[str, Any]:
+        from ..sandbox import setup_job
+
+        return setup_job.job().cancel()
+
+    @app.post("/v1/settings/sandbox/windows/setup")
+    def settings_sandbox_windows_setup() -> dict[str, Any]:
+        # UX-053: the Windows setup dialog. Runs the elevated setup (Windows shows its own
+        # prompt), proves the wall in a throwaway sandbox, then makes it the choice. Blocks
+        # until Windows answers, unlike the OpenShell setup job above.
+        from ..sandbox import settings as sandbox_settings
+
+        return sandbox_settings.run_windows_setup()
+
+    @app.post("/v1/settings/sandbox/windows/remove")
+    def settings_sandbox_windows_remove() -> dict[str, Any]:
+        from ..sandbox import settings as sandbox_settings
+
+        return sandbox_settings.run_windows_remove()
 
     @app.post("/v1/settings/compaction")
     def settings_set_compaction(body: dict) -> dict[str, Any]:
@@ -2812,20 +2862,48 @@ def create_app(manager: SessionManager) -> FastAPI:
         mcp_tools = await manager.prepare_mcp_tools(
             session_id, workspace=workspace, agent=agent
         )
-        engine = manager.get_engine(
-            session_id,
-            workspace=workspace,
-            agent=agent,
-            approver=approver,
-            extra_tools=mcp_tools,
-            directory_requester=directory_requester,
-            plan_approver=plan_approver,
-            question_asker=question_asker,
-            tool_requester=tool_requester,
-            team_approver=team_approver,
-            items_approver=items_approver,
-            connector_requester=connector_requester,
-        )
+        # Building the engine can mean building a sandbox: with OpenShell, a container is
+        # created, its runner started and its mounts verified, which takes seconds (and on
+        # first use, minutes). Done on the event loop that wait froze the whole server, so
+        # the GUI saw its health checks fail and showed the app-wide "Starting OpenWorker…"
+        # screen instead of this session (OPE-206). So: say what is happening on THIS
+        # socket, build on a worker thread, and report the outcome here too.
+        sandbox_provider = manager.pending_sandbox_build(session_id)
+        if sandbox_provider:
+            await ws.send_json({"type": "sandbox_preparing", "data": {"provider": sandbox_provider}})
+        try:
+            engine = await asyncio.to_thread(
+                manager.get_engine,
+                session_id,
+                workspace=workspace,
+                agent=agent,
+                approver=approver,
+                extra_tools=mcp_tools,
+                directory_requester=directory_requester,
+                plan_approver=plan_approver,
+                question_asker=question_asker,
+                tool_requester=tool_requester,
+                team_approver=team_approver,
+                items_approver=items_approver,
+                connector_requester=connector_requester,
+            )
+        except Exception as exc:
+            # A refused sandbox (OpenShell not usable, its image not downloaded, the
+            # per-machine cap) or a failed build: the reason goes to the session's own
+            # view, and the socket closes cleanly instead of dying in the ASGI stack. The
+            # close code tells the client this is final: reconnecting would only repeat
+            # the refusal every few seconds (the client retries any other close).
+            await ws.send_json({"type": "error", "data": {"error": str(exc)}})
+            await ws.close(code=WS_CLOSE_SESSION_REFUSED, reason="session refused")
+            return
+        if sandbox_provider and engine is not None:
+            info = getattr(getattr(engine, "sandbox_workspace", None), "describe", dict)()
+            await ws.send_json(
+                {
+                    "type": "sandbox_ready",
+                    "data": {key: info.get(key) for key in ("provider", "enforcement", "reason", "sandbox") if info.get(key) is not None},
+                }
+            )
         if engine is None:
             await ws.send_json(
                 {

@@ -138,3 +138,77 @@ def test_setup_asks_before_each_change_and_makes_none_when_refused(tmp_path, mon
     assert "enable_bind_mounts = true" in "\n".join(said)  # the change was shown first
     assert not (tmp_path / "xdg" / "openshell" / "gateway.toml").exists()
     assert config.load_config().sandbox_provider is None
+
+
+def _all_but_the_image(setup_cmd):
+    return [
+        ("Docker is installed and this user can use it", True, ""),
+        (f"OpenShell {setup_cmd.PINNED_VERSION} is installed", True, ""),
+        ("the gateway allows bind mounts (your folders reach a sandbox this way)", True, ""),
+        ("the gateway keeps running after you log out (linger)", True, ""),
+        ("the gateway is running", True, ""),
+        ("the `grpcio` package is installed", True, ""),
+        ("this machine is set to use OpenShell", True, ""),
+        (setup_cmd.IMAGE_ROW, False, "docker pull ghcr.io/example/base@sha256:abc"),
+    ]
+
+
+def test_setup_offers_the_base_image_download_and_runs_nothing_when_refused(tmp_path, monkeypatch):
+    # OPE-205: the download is the one slow step, so it is a row of its own, offered last,
+    # shown with its size and command, and run with no time limit only after a yes.
+    from coworker.sandbox import setup_cmd
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(setup_cmd.sys, "platform", "linux")
+    monkeypatch.setattr(setup_cmd, "checks", lambda: _all_but_the_image(setup_cmd))
+    monkeypatch.setattr(setup_cmd.openshell, "sandbox_image", lambda: "ghcr.io/example/base@sha256:abc")
+    monkeypatch.setattr(setup_cmd.openshell, "image_tool", lambda: "docker")
+    ran: list[list[str]] = []
+    monkeypatch.setattr(setup_cmd.subprocess, "run", lambda argv, **kw: ran.append(argv) or type("Done", (), {"returncode": 0})())
+    asked: list[str] = []
+    said: list[str] = []
+    assert setup_cmd.setup(ask=lambda q: asked.append(q) or False, print_fn=said.append) == 1
+    assert asked == ["Download it now? (10 to 20 minutes on a slow connection)"]
+    assert "5 GB" in "\n".join(said) and "docker pull ghcr.io/example/base@sha256:abc" in "\n".join(said)
+    assert ran == []  # refused: nothing ran
+    # Accepted: the pull runs as a plain command (Docker's own progress, no capture, no timeout).
+    monkeypatch.setattr(setup_cmd, "status", lambda print_fn=print: 0)
+    assert setup_cmd.setup(yes=True, print_fn=said.append) == 0
+    assert ran == [["docker", "pull", "ghcr.io/example/base@sha256:abc"]]
+
+
+def test_setup_on_a_mac_still_offers_the_download(tmp_path, monkeypatch):
+    # The rest of `setup` is Linux-only, but the image is the same on a Mac with Docker
+    # Desktop, and the first session hangs on it there just the same.
+    from coworker.sandbox import setup_cmd
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(setup_cmd.sys, "platform", "darwin")
+    monkeypatch.setattr(setup_cmd, "checks", lambda: _all_but_the_image(setup_cmd))
+    monkeypatch.setattr(setup_cmd.openshell, "image_tool", lambda: "docker")
+    ran: list[list[str]] = []
+    monkeypatch.setattr(setup_cmd.subprocess, "run", lambda argv, **kw: ran.append(argv) or type("Done", (), {"returncode": 0})())
+    said: list[str] = []
+    assert setup_cmd.setup(yes=True, print_fn=said.append) == 2  # still "this configures a Linux machine"
+    assert ran and ran[0][:2] == ["docker", "pull"]
+    assert "configures a Linux machine" in "\n".join(said)
+
+
+def test_status_shows_a_missing_image_as_its_own_row_not_as_a_gateway_problem(tmp_path, monkeypatch):
+    from coworker.sandbox import setup_cmd
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(setup_cmd.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(setup_cmd, "_run", lambda argv, timeout=600: type("Done", (), {"returncode": 0, "stdout": f"openshell {setup_cmd.PINNED_VERSION}\n"})())
+    monkeypatch.setattr(setup_cmd.sys, "platform", "darwin")  # no linger row to fake
+    monkeypatch.setattr(setup_cmd, "openshell_problem", lambda fresh=False: f"{setup_cmd.openshell.IMAGE_MISSING_PREFIX} (about 5 GB, one time). Run `docker pull x`.")
+    monkeypatch.setattr(setup_cmd.openshell, "image_present", lambda image=None: False)
+    monkeypatch.setattr(setup_cmd.openshell, "sandbox_image", lambda: "x")
+    monkeypatch.setattr(setup_cmd.openshell, "image_tool", lambda: "podman")  # the hint names the driver's own tool
+    rows = {what: (ok, detail) for what, ok, detail in setup_cmd.checks()}
+    assert rows["the gateway is running"] == (True, "")  # the gateway is fine; only the image is missing
+    assert rows[setup_cmd.IMAGE_ROW] == (False, "podman pull x")
+    # Another driver: Docker cannot be asked, so no row rather than a wrong one.
+    monkeypatch.setattr(setup_cmd, "openshell_problem", lambda fresh=False: None)
+    monkeypatch.setattr(setup_cmd.openshell, "image_present", lambda image=None: None)
+    assert setup_cmd.IMAGE_ROW not in {what for what, _, _ in setup_cmd.checks()}

@@ -12,7 +12,9 @@ gone (a crash, a kill) so they do not pile up.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import sys
 import sqlite3
 import threading
 import time
@@ -20,6 +22,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..secrets import state_dir
+
+log = logging.getLogger(__name__)
 
 LOCAL_MACHINE = "local"
 MAX_ENV = "OPENWORKER_SANDBOX_MAX"
@@ -48,6 +52,11 @@ class SandboxLimitReached(RuntimeError):
 
 
 def _alive(pid: int) -> bool:
+    if sys.platform == "win32":
+        # `os.kill(pid, 0)` is TerminateProcess on Windows, not a probe.
+        from .runner import winpipe
+
+        return not winpipe.process_is_gone(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -90,12 +99,16 @@ class SandboxRegistry:
         profile: str = "",
         enforcement: str = "",
         machine_id: str = LOCAL_MACHINE,
+        state: str = "ready",
     ) -> None:
+        """`state`: "creating" reserves the name BEFORE the sandbox exists, so that another
+        engine build's `reap()` (they run concurrently since OPE-206) does not take the
+        half-built sandbox for an orphan and delete it; "ready" once it is connected."""
         now = time.time()
         with self._lock, self._connect() as db:
             db.execute(
                 "INSERT OR REPLACE INTO sandboxes VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (name, provider, machine_id, session_id, agent, json.dumps(roots or []), profile, enforcement, "ready", os.getpid(), now, now),
+                (name, provider, machine_id, session_id, agent, json.dumps(roots or []), profile, enforcement, state, os.getpid(), now, now),
             )
 
     def touch(self, name: str) -> None:
@@ -133,7 +146,6 @@ class SandboxRegistry:
         removed: list[str] = []
         rows = self.list(LOCAL_MACHINE)
         dead = [r for r in rows if not _alive(int(r["server_pid"]))]
-        owned = {r["name"] for r in rows if r not in dead}
         openshell_names: set[str] = set()
         if any(r["provider"] == "openshell" for r in dead) or _openshell_present():
             from .providers import openshell
@@ -143,12 +155,28 @@ class SandboxRegistry:
             except Exception:
                 listed = []
             openshell_names = {str(s.get("name") or s.get("metadata", {}).get("name") or "") for s in listed} - {""}
+            # Ownership is read AFTER the gateway's list, never before: another build may
+            # reserve its name and create its sandbox while `sandbox list` runs, and rows
+            # read earlier would not show it, so it would be taken for an orphan here.
+            rows = self.list(LOCAL_MACHINE)
+            dead = [r for r in rows if not _alive(int(r["server_pid"]))]
+            owned = {r["name"] for r in rows if r not in dead}
             for name in sorted(openshell_names - owned):
+                # Say so: a deletion here is a sandbox nobody claims. If a live server is in
+                # fact building it, the log line is how that shows up.
+                log.info("reap: deleting OpenShell sandbox %s (not owned by a live server; owned=%s, pid=%d)", name, sorted(owned), os.getpid())
                 try:
                     openshell._cli("sandbox", "delete", name, timeout=90, check=False)
                     removed.append(name)
                 except Exception:
                     pass
+        if _openshell_present():
+            from .providers import openshell
+
+            try:
+                openshell.reap_runtime_dirs(_alive)  # copied credentials of dead servers
+            except Exception:
+                pass
         for row in dead:
             self.close(row["name"])
             if row["name"] not in removed and row["provider"] != "openshell":
