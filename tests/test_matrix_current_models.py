@@ -50,6 +50,9 @@ REPO = Path(__file__).resolve().parents[1]
         ("zai:glm-5.2", 1_000_000),
         ("openrouter:z-ai/glm-5.2", 1_048_576),
         ("fireworks:accounts/fireworks/models/glm-5p2", 1_040_000),
+        # router.requesty.ai/v1/models `context_window`, read 2026-09-28.
+        ("requesty:zai/glm-5.2", 1_000_000),
+        ("requesty:anthropic/claude-sonnet-5", 1_000_000),
     ],
 )
 def test_current_models_have_verified_windows(model, window):
