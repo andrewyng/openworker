@@ -2684,6 +2684,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "uuid",
+ "windows-version",
 ]
 
 [[package]]
