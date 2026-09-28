@@ -10,6 +10,7 @@
     "core:window:allow-set-focus",
     "core:window:allow-unminimize",
     "dialog:default",
-    "autostart:default"
+    "autostart:default",
+    "opener:allow-default-urls"
   ]
 }
