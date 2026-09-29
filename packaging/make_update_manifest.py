@@ -12,6 +12,7 @@ uploads):
     OpenWorker-macos-arm64.app.tar.gz(.sig)   -> platforms["darwin-aarch64"]
     OpenWorker-macos-x64.app.tar.gz(.sig)     -> platforms["darwin-x86_64"]
     OpenWorker-windows-setup.exe(.sig)        -> platforms["windows-x86_64"]
+    OpenWorker-linux-amd64.deb(.sig)          -> platforms["linux-x86_64"]
 
 URLs point at the TAG-pinned GitHub download path (releases/download/<tag>/<asset>),
 never at `latest/` — a manifest must reference exactly the artifacts it shipped with,
@@ -37,6 +38,7 @@ ARTIFACTS = {
     "OpenWorker-macos-arm64.app.tar.gz": "darwin-aarch64",
     "OpenWorker-macos-x64.app.tar.gz": "darwin-x86_64",
     "OpenWorker-windows-setup.exe": "windows-x86_64",
+    "OpenWorker-linux-amd64.deb": "linux-x86_64",
 }
 
 

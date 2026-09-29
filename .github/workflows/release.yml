@@ -52,9 +52,26 @@ jobs:
             slug: macos-x64
           - os: windows-latest
             slug: windows
+          # Linux: built on ubuntu-22.04 (glibc 2.35) so the .deb/AppImage run on 22.04+ and
+          # most derivatives. webkit2gtk-4.1 + the STT sidecar's ALSA/whisper.cpp needs are
+          # installed in the dedicated deps step below.
+          - os: ubuntu-22.04
+            slug: linux
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies (Tauri + STT sidecar)
+        # Tauri 2 webkit GUI + the ocw-stt crate (cpal→ALSA, whisper.cpp→C++). RPM targets
+        # would need rpmbuild; we ship deb + AppImage by default (see build_linux.sh).
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config file curl \
+            libwebkit2gtk-4.1-dev libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf libasound2-dev \
+            libclang-dev
 
       - uses: actions/setup-node@v4
         with:
@@ -122,6 +139,15 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: ./packaging/build_windows.ps1
 
+      - name: Build .deb + AppImage (Linux)
+        if: runner.os == 'Linux'
+        env:
+          # Updater signing key (minisign, same secret as the other targets). Absent on
+          # fork/scratch runs → build_linux.sh skips updater artifacts with a warning.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash packaging/build_linux.sh
+
       - name: Stage artifacts (versioned + stable names)
         run: |
           mkdir -p out
@@ -135,7 +161,7 @@ jobs:
             # secret is configured). The .sig signs CONTENT, so the stable rename is safe.
             SIG=$(ls "$BUNDLE"/nsis/*.exe.sig 2>/dev/null | head -1 || true)
             [ -n "$SIG" ] && cp "$SIG" out/OpenWorker-windows-setup.exe.sig
-          else
+          elif [ "$RUNNER_OS" = "macOS" ]; then
             cp "$BUNDLE"/dmg/*.dmg out/
             cp "$BUNDLE"/dmg/*.dmg out/OpenWorker-${{ matrix.slug }}.dmg
             # macOS updater artifact: the signed .app tarball the installed app swaps in.
@@ -143,6 +169,30 @@ jobs:
               cp "$BUNDLE"/macos/OpenWorker.app.tar.gz out/OpenWorker-${{ matrix.slug }}.app.tar.gz
               cp "$BUNDLE"/macos/OpenWorker.app.tar.gz.sig out/OpenWorker-${{ matrix.slug }}.app.tar.gz.sig
             fi
+          else
+            # Linux: deb + AppImage (AppImage is optional — build_linux.sh emits it when
+            # linuxdeploy fetches cleanly; the deb always ships). Stable names keep the
+            # website's releases/latest/download links working as the version advances.
+            cp "$BUNDLE"/deb/*.deb out/
+            cp "$BUNDLE"/deb/*.deb out/OpenWorker-linux-amd64.deb
+            if ls "$BUNDLE"/appimage/*.AppImage >/dev/null 2>&1; then
+              cp "$BUNDLE"/appimage/*.AppImage out/
+              cp "$BUNDLE"/appimage/*.AppImage out/OpenWorker-linux-amd64.AppImage
+            fi
+            # Updater signature for the .deb (present only when the updater key secret is set).
+            SIG=$(ls "$BUNDLE"/deb/*.deb.sig 2>/dev/null | head -1 || true)
+            [ -n "$SIG" ] && cp "$SIG" out/OpenWorker-linux-amd64.deb.sig
+            # Regression guard: the deb MUST ship the sidecar at usr/lib/OpenWorker/sidecar/ —
+            # that is the resource_dir() path server_bin() resolves on Linux (src-tauri/src/lib.rs).
+            # A green build without this entry is a non-functional app (the macOS/Windows "next to
+            # the exe" resolution does NOT hold on a deb, where the binary is /usr/bin and
+            # resources live under /usr/lib). Fail loudly rather than ship a broken bundle.
+            # Dump to a file then grep it: `dpkg-deb -c | grep` breaks the pipe under pipefail
+            # (grep exits on first match → dpkg-deb gets SIGPIPE → 141), which would false-fail CI.
+            DEB=$(ls "$BUNDLE"/deb/*.deb | head -1)
+            dpkg-deb -c "$DEB" > /tmp/openworker-deb-contents.txt
+            grep -q 'usr/lib/OpenWorker/sidecar/openworker-server' /tmp/openworker-deb-contents.txt \
+              || { echo "::error::deb is missing the sidecar at usr/lib/OpenWorker/sidecar/ — the app would not start"; exit 1; }
           fi
           ls -la out
 
