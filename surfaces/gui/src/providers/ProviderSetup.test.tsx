@@ -120,3 +120,15 @@ describe("Ark provider presentation", () => {
     );
   });
 });
+
+describe("aimlapi.com provider presentation", () => {
+  it("carries its own brand mark rather than the fallback monogram", () => {
+    const { container } = render(<ProviderMark name="aimlapi" title="aimlapi.com" />);
+    expect(container.querySelector("img")).toBeTruthy();
+  });
+
+  it("links to its own API key console", () => {
+    expect(KEY_HELP.aimlapi.url).toBe("https://aimlapi.com/app/keys");
+    expect(KEY_HELP.aimlapi.label).toBe("aimlapi.com");
+  });
+});

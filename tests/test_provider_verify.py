@@ -161,3 +161,48 @@ def test_verify_unexpected_status(monkeypatch):
     res = verify_provider_key("anthropic", api_key="sk-ant-x")
     assert res["ok"] is False
     assert "500" in res["error"]
+
+
+def test_verify_aimlapi_probes_chat_not_the_public_models_list(monkeypatch):
+    """aimlapi.com's /models answers 200 to a bogus key, an empty key and no key at all
+    (verified 2026-09-03), so the generic list-models probe would green-light a typo.
+    Test must exercise the credential — one max_tokens=1 chat completion does."""
+    cap: dict = {}
+    _patch_post(monkeypatch, status=200, capture=cap)
+
+    assert verify_provider_key("aimlapi", api_key="aiml-key") == {"ok": True}
+    assert cap["url"] == "https://api.aimlapi.com/v1/chat/completions"
+    assert cap["headers"]["Authorization"] == "Bearer aiml-key"
+    assert cap["json"] == {
+        "model": "zhipu/glm-5.2",
+        "messages": [{"role": "user", "content": "Reply with OK."}],
+        "max_tokens": 1,
+    }
+
+
+def test_verify_aimlapi_probe_carries_attribution(monkeypatch):
+    cap: dict = {}
+    _patch_post(monkeypatch, status=200, capture=cap)
+    verify_provider_key("aimlapi", api_key="aiml-key")
+    assert cap["headers"]["X-AIMLAPI-Partner-ID"].startswith("part_")
+    assert cap["headers"]["X-AIMLAPI-Source"] == "agent/openworker"
+
+
+def test_verify_aimlapi_override_endpoint_drops_attribution(monkeypatch):
+    """Same origin scoping as the live client: a user-supplied endpoint is somebody
+    else's server until proven otherwise."""
+    cap: dict = {}
+    _patch_post(monkeypatch, status=200, capture=cap)
+    verify_provider_key(
+        "aimlapi", api_key="aiml-key", base_url="https://gateway.example/v1/"
+    )
+    assert cap["url"] == "https://gateway.example/v1/chat/completions"
+    assert "X-AIMLAPI-Partner-ID" not in cap["headers"]
+
+
+def test_verify_aimlapi_bad_key_is_invalid(monkeypatch):
+    _patch_post(monkeypatch, status=401)
+    assert verify_provider_key("aimlapi", api_key="nope") == {
+        "ok": False,
+        "error": "Invalid API key.",
+    }

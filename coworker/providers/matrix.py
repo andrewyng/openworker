@@ -16,7 +16,7 @@ where the vendor spec wasn't re-checked stay ``None`` — the meter simply hides
 showing a made-up denominator. Values entered 2026-07-28 from vendor docs; verify alongside
 the id refresh.
 
-Resellers: Together + Fireworks + OpenRouter. TODO: add Groq entries here AND its
+Resellers: Together + Fireworks + OpenRouter + aimlapi.com. TODO: add Groq entries here AND its
 descriptor in ``registry.py`` once the current provider surface is tested — deliberately
 deferred to bound how much needs verifying at once.
 """
@@ -36,6 +36,12 @@ _AGENTIC = ModelCapabilities(
 # no inline file part — checked 2026-07-17), so those fall back via pdf_support.py.
 _AGENTIC_VISION = ModelCapabilities(
     tools=True, vision=True, pdf=True, parallel_tool_calls=True, streaming=True
+)
+# A reseller row whose image input is verified live but whose PDF part is not: images go
+# on the wire as usual, PDFs still take the pdf_support.py fallback. Kept separate from
+# _AGENTIC_VISION so no reseller silently claims native PDF ingestion it hasn't shown.
+_AGENTIC_VISION_NO_PDF = ModelCapabilities(
+    tools=True, vision=True, parallel_tool_calls=True, streaming=True
 )
 
 
@@ -271,6 +277,28 @@ MATRIX: dict[str, ModelEntry] = {
     # the real model; keep it until OpenRouter retires it.
     "openrouter:stealth/ox-alpha": ModelEntry(
         "Ox Alpha · via OpenRouter", _AGENTIC, 1_048_576
+    ),
+    # aimlapi.com uses its OWN id namespace — do NOT reuse the OpenRouter slugs above,
+    # they are not aliases there. Every id below was checked against
+    # `GET /v1/models?include=all` on 2026-09-03 (present as an id, `type ==
+    # "openai/chat-completions"`) AND round-tripped with a live completion whose echoed
+    # `model` came back as the same model, because an id there can also be an alias of a
+    # DIFFERENT model. Context windows are that catalog's `info.contextLength` — note it
+    # is nested, there is no top-level `context_length`. Prefer the dotted Anthropic
+    # spelling: the dashed `claude-sonnet-4-6` is a separate, streaming-only entry.
+    # Four rows on purpose — same budget the other three resellers get, and the matrix
+    # size cap in tests is a ceiling to prune under, not one to raise for a newcomer.
+    "aimlapi:openai/gpt-5.6-sol": ModelEntry(
+        "GPT-5.6 Sol · via aimlapi.com", _AGENTIC_VISION_NO_PDF, 1_050_000
+    ),
+    "aimlapi:anthropic/claude-sonnet-4.6": ModelEntry(
+        "Claude Sonnet 4.6 · via aimlapi.com", _AGENTIC_VISION_NO_PDF, 200_000
+    ),
+    "aimlapi:zhipu/glm-5.2": ModelEntry(
+        "GLM-5.2 · via aimlapi.com", _AGENTIC, 1_000_000
+    ),
+    "aimlapi:deepseek/deepseek-v4-pro": ModelEntry(
+        "DeepSeek V4 Pro · via aimlapi.com", _AGENTIC, 1_000_000
     ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
