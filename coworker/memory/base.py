@@ -67,6 +67,16 @@ class MemoryStore(ABC):
     @abstractmethod
     def delete_all(self, *, scope: Optional[Scope] = None) -> int: ...
 
+    @abstractmethod
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        scope: Optional[Scope] = None,
+        workspace: Optional[str] = None,
+    ) -> list[MemoryItem]: ...
+
 
 # MEMORY-SPEC §7: below this rendered size, every memory is injected in full; above it,
 # the block flips to index mode (newest few in full, one-line summaries for the rest,
