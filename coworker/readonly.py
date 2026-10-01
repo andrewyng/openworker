@@ -24,7 +24,9 @@ from __future__ import annotations
 import re
 import shlex
 
-# Commands that only read local state, with no writing flags to police.
+# Commands that only read local state, with no writing flags to police. Several entries
+# are not unconditionally read-only — see _FLAG_BAD below, which polices the flags that
+# turn a listed command into a writer or an executor.
 _SIMPLE_SAFE = {
     "ls", "cat", "head", "tail", "wc", "nl", "sort", "uniq", "cut", "tr",
     "grep", "egrep", "fgrep", "rg", "ugrep", "file", "stat", "du", "df",
@@ -49,11 +51,37 @@ _GIT_BRANCH_FLAG_OK = {
 
 _FIND_BAD = ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fls", "-fprintf")
 
+# Several _SIMPLE_SAFE entries are not unconditionally read-only: one flag turns the
+# command into a writer or an executor. The find family taught this lesson first
+# (_FIND_BAD); the same policing now applies to every other command that grows
+# write/exec behavior through a flag. Values are denied flags; a token matches when it
+# equals the flag, carries an attached value (`-oout.txt`, `--output=out`), or — for
+# short flags — hides inside a cluster (`sort -ro out`).
+_FLAG_BAD: dict[str, tuple[str, ...]] = {
+    "sort": ("-o", "--output", "--compress-program", "--files0-from"),
+    "xxd": ("-r",),  # reverse mode writes the decoded bytes to the `outfile` argument
+    "date": ("-s", "--set"),  # sets the system clock
+    "file": ("-C", "--compile"),  # compiles the magic database to magic.mgc
+    "rg": ("--pre", "--pre-glob", "--hostname-bin", "--pager"),
+    "ugrep": ("--pager",),
+    "du": ("--files0-from",),
+}
+
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=[^;&|<>`]*$")
 
-# A sed script token that invokes the `w`/`W` (write-file) command: at the start, after a
-# separator, or after an address. Conservative — a false hit just means one manual approval.
-_SED_WRITE = re.compile(r"(^|[;{])\s*[0-9,$/ ]*[wW]\s")
+# A sed script token that invokes the `w`/`W` (write-file) command. Two spellings:
+#   * at the start of a script command, optionally after an address —
+#     `w file`, `1,5w file`, `1wout.txt`, and after `;`/`{` in a multi-command script;
+#   * as a substitution flag, after the third delimiter — `s/a/b/w file`,
+#     `s/a/b/wout.txt`. Backreference-based so only a completed `s<d>pat<d>repl<d>` shape
+#     is considered, which keeps a pattern or replacement merely *starting* with `w`
+#     (`s/wide/X/`) out of the denials. Conservative either way: a false hit costs one
+#     manual approval.
+_SED_WRITE = re.compile(r"(^|[;{])[0-9,$/ ]*[wW]|s(.).*?\2.*?\2.*?[wW]")
+
+# awk programs can execute commands through pipe-redirection (`print x | "sh"`,
+# `"cmd" | getline`) without containing `>` or `system(`.
+_AWK_PIPE = re.compile(r"\|\s*getline|\|\s*[\"']")
 
 
 def _has_unquoted_shell_variable(command: str) -> bool:
@@ -116,6 +144,8 @@ def _git_ok(args: list[str]) -> bool:
     sub, rest = args[i], args[i + 1 :]
     if any(t.startswith("--output") for t in rest):
         return False  # git log/diff --output=<file> writes
+    if sub == "grep" and any(_flag_denied(t, ("-O", "--open-files-in-pager")) for t in rest):
+        return False  # git grep -O<pager> executes the given program
     if sub in _GIT_SAFE:
         return True
     if sub == "branch":
@@ -135,6 +165,34 @@ def _git_ok(args: list[str]) -> bool:
     return False
 
 
+def _flag_denied(token: str, denied: tuple[str, ...]) -> bool:
+    """True when `token` is one of `denied`, attaches a value, or hides in a cluster.
+
+    `sort --output=out`, `sort -oout` and `sort -ro out` are all the same flag as `sort
+    -o out`; a plain token comparison would wave the first two through, and a prefix
+    check alone misses the cluster form. Long forms match `flag=` exactly (so a literal
+    such as `--output-delimiter` is not mistaken for `--output`); short forms match any
+    attached suffix, including inside a short-flag cluster.
+    """
+    if not token.startswith("-") or token == "-" or token == "--":
+        return False
+    for flag in denied:
+        if token == flag:
+            return True
+        if flag.startswith("--"):
+            if token.startswith(flag + "="):
+                return True
+        elif len(flag) == 2 and not token.startswith("--"):
+            # `-o` matches `-oout.txt` and any cluster containing `o` (`-ro`). False
+            # positives on unrelated letters are acceptable — they cost one approval.
+            body = token[1:]
+            if flag[1] in body:
+                return True
+        elif token.startswith(flag):
+            return True
+    return False
+
+
 def _stage_ok(argv: list[str]) -> bool:
     # Leading VAR=value assignments (LC_ALL=C grep …) are inert — skip them.
     i = 0
@@ -148,6 +206,14 @@ def _stage_ok(argv: list[str]) -> bool:
         return False  # path-invoked binaries can be anything; bare names only
     args = argv[1:]
     if head in _SIMPLE_SAFE:
+        denied = _FLAG_BAD.get(head)
+        if denied and any(_flag_denied(t, denied) for t in args):
+            return False
+        if head == "xxd":
+            # Without -r, `xxd infile outfile` still writes the dump to outfile. Only
+            # reject when a second non-flag operand is present (`xxd a.txt b.txt`).
+            operands = [t for t in args if not t.startswith("-")]
+            return len(operands) < 2
         return True
     if head == "env":
         return not args  # bare `env` prints; `env CMD` executes
@@ -156,13 +222,35 @@ def _stage_ok(argv: list[str]) -> bool:
     if head == "git":
         return _git_ok(args)
     if head == "sed":
-        if any(t.startswith(("-i", "--in-place", "-f", "--file")) for t in args):
+        if any(_flag_denied(t, ("-i", "--in-place", "-f", "--file")) for t in args):
             return False
-        return not any(_SED_WRITE.search(t) for t in args if not t.startswith("-"))
+        # The script is the value of -e/--expression (separate or attached); when none is
+        # given, the first positional is the script and the rest are file operands.
+        scripts: list[str] = []
+        skip_next = False
+        for tok in args:
+            if skip_next:
+                scripts.append(tok)
+                skip_next = False
+                continue
+            if tok in {"-e", "--expression"}:
+                skip_next = True
+            elif tok.startswith("-e"):
+                scripts.append(tok[2:])
+            elif tok.startswith("--expression="):
+                scripts.append(tok.split("=", 1)[1])
+        if not scripts:
+            for tok in args:
+                if not tok.startswith("-"):
+                    scripts.append(tok)
+                    break
+        return not any(_SED_WRITE.search(t) for t in scripts)
     if head in {"awk", "gawk", "mawk", "nawk"}:
-        return not any(">" in t or "system" in t for t in args)
+        if any(_flag_denied(t, ("-f", "--file")) for t in args):
+            return False
+        return not any(">" in t or "system" in t or _AWK_PIPE.search(t) for t in args)
     if head == "find":
-        return not any(t.startswith(_FIND_BAD) for t in args)
+        return not any(_flag_denied(t, _FIND_BAD) for t in args)
     return False
 
 
