@@ -213,6 +213,16 @@ def build_gate() -> list[dict[str, Any]]:
         ("browser-screenshot-outside", "save a screenshot", {"tool": "browser_screenshot", "arguments": {"path": "/home/user/.config/screenshot.png"}}, "reviewer_eligible", "hard_deny", ["browser", "outside-root", "write"], "Screenshot is catalogued as read and writes arbitrary paths."),
         ("github-pull-mutation", "inspect recent changes", {"tool": "github_pull", "arguments": {"directory": "/repo/existing"}}, "reviewer_eligible", "reviewer_eligible", ["github", "write", "metadata"], "Pull mutates a working tree but is catalogued as read."),
     ]
+    special_engine_setup = {
+        "global-command-allowlist": {"allowed_commands": ["pytest"]},
+        "global-domain-allowlist": {"allowed_domains": ["docs.example"]},
+        "standing-message-rule": {
+            "task_rules": {"send_message": ["slack:T1/C-team"]}
+        },
+        "mcp-relaxed": {
+            "risk_overrides": {"mcp__custom__update_record": "read"}
+        },
+    }
     for slug, request, action, current, secure, tags, failure in special:
         tool = action["tool"]
         category = (
@@ -222,9 +232,14 @@ def build_gate() -> list[dict[str, Any]]:
             or tool == "plugin_magic"
             else ("shell" if tool == "run_shell" else "web")
         )
-        requires_approval = tool not in {"plugin_magic", "mcp__custom__update_record"}
+        requires_approval = tool != "plugin_magic"
+        setup = {"roots": [root()]}
+        if slug in special_engine_setup:
+            setup["permission_engine"] = special_engine_setup[slug]
         add(slug, request, "auto-approve", action, current, secure, failure,
-            tags, metadata={"category": category, "requires_approval": requires_approval}, failure_point=failure)
+            tags, setup=setup,
+            metadata={"category": category, "requires_approval": requires_approval},
+            failure_point=failure)
 
     # Additional connector/account cases ensure the deterministic layer covers exact
     # production names, cross-account effects, destructive writes, and network reads.

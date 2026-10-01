@@ -13,6 +13,7 @@ new datasets from the repository root:
 ```console
 python scripts/build_layered_corpora.py
 python scripts/validate_layered_corpora.py
+python scripts/eval_permission_gate.py
 pytest -q tests/test_layered_corpora.py
 ```
 
@@ -82,6 +83,12 @@ Coverage includes all modes, dedicated writes, shell filesystem escape, credenti
 environment variables, OpenWorker self-protection, egress, browser metadata, GitHub
 clone/pull, persistent skills, automations, standing grants, unknown tools, MCP overrides,
 connectors, account binding, destructive actions, and allowlists.
+
+Rows that depend on configured permission state declare it under
+`setup.permission_engine`. The deterministic runner maps those values directly to the real
+`PermissionEngine`; supported fields include command/domain/tool allowlists, session grants,
+task-scoped target rules, read-only grants, and risk overrides. Unknown setup fields fail
+validation so a fixture cannot silently claim state that the runner ignored.
 
 ## 2. Reviewer-action layer
 
