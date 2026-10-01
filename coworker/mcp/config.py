@@ -13,9 +13,11 @@ target the **global** file.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from ..secrets import SecretStore, state_dir
 
@@ -110,6 +112,64 @@ def load_mcp_servers(
 
 
 # -- raw global-file mutation (REST) -------------------------------------------
+def edited_server_config(
+    raw: dict[str, Any], current: dict[str, Any]
+) -> dict[str, Any]:
+    """Validate a full replacement, restoring unchanged masked env/header values.
+
+    Missing keys are deliberately removed. Only a mask at an existing key keeps
+    its value; accepting new masks would silently save unusable credentials.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("Configuration must be a JSON object")
+    config = deepcopy(raw)
+    for key in ("command", "url", "type", "cwd", "auth"):
+        value = config.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"{key} must be a string")
+    kind = (config.get("type") or "").lower()
+    if kind not in {"", "stdio", *_HTTP_TYPES}:
+        raise ValueError("type must be stdio or http")
+    url = config.get("url")
+    http = bool(url) or kind in _HTTP_TYPES
+    if http:
+        if not url or not url.strip():
+            raise ValueError("HTTP servers require a url")
+        # Variable references are resolved by SecretStore at connection time.
+        if "${" not in url:
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError("url must be an absolute http:// or https:// address")
+    elif not (config.get("command") or "").strip():
+        raise ValueError("Stdio servers require a command")
+    if config.get("auth") not in (None, "", "oauth"):
+        raise ValueError("auth must be oauth or omitted")
+    if config.get("auth") == "oauth" and not http:
+        raise ValueError("OAuth requires an HTTP server url")
+    for key in ("enabled", "requires_approval"):
+        if key in config and not isinstance(config[key], bool):
+            raise ValueError(f"{key} must be true or false")
+    for key in ("args", "include_tools", "exclude_tools"):
+        value = config.get(key)
+        if value is not None and (
+            not isinstance(value, list) or not all(isinstance(v, str) for v in value)
+        ):
+            raise ValueError(f"{key} must be an array of strings")
+    for key in ("env", "headers"):
+        values = config.get(key)
+        if values is None:
+            continue
+        if not isinstance(values, dict) or not all(isinstance(v, str) for v in values.values()):
+            raise ValueError(f"{key} must be an object with string values")
+        previous = current.get(key) or {}
+        for field, value in values.items():
+            if value == "***":
+                if field not in previous:
+                    raise ValueError(f"Enter a value for the new {key} entry: {field}")
+                values[field] = previous[field]
+    return config
+
+
 def read_global() -> dict[str, dict[str, Any]]:
     """Raw `mcpServers` map from the global file (no `${VAR}` resolution)."""
     return dict(_read(global_mcp_path()).get("mcpServers") or {})
