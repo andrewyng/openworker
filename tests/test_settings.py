@@ -8,6 +8,7 @@ and the REST round-trip. No network, no model calls.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from coworker.providers import resolve_api_key
 from coworker.secrets import SecretStore
@@ -174,3 +175,68 @@ def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):
 
     monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
     assert "ollama:llama3.3" in manager.get_settings()["models"]
+
+
+def test_ollama_discovery_supports_openai_compatible_server(tmp_path, monkeypatch):
+    """A local server using OpenAI's `/v1/models` shape is visible in Settings."""
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    manager.secrets.put(
+        "provider:ollama", {"base_url": "http://desktop:8000/v1"}
+    )
+
+    calls: list[tuple[str, float]] = []
+
+    def fake_get(url, *, timeout):
+        calls.append((url, timeout))
+        if url.endswith("/api/tags"):
+            return SimpleNamespace(status_code=404, json=lambda: {})
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "object": "list",
+                "data": [{"id": "qwen2.5-coder"}, {"id": "llama-3.1"}],
+            },
+        )
+
+    monkeypatch.setattr("httpx.get", fake_get)
+
+    assert manager._ollama_alive() is True
+    assert manager._ollama_models() == [
+        "ollama:qwen2.5-coder",
+        "ollama:llama-3.1",
+    ]
+    assert manager._suggested_models("ollama") == ["qwen2.5-coder", "llama-3.1"]
+    # The catalog is shared by liveness, model discovery, and suggestions.
+    assert [url for url, _ in calls] == [
+        "http://desktop:8000/api/tags",
+        "http://desktop:8000/v1/models",
+    ]
+
+
+def test_ollama_discovery_keeps_native_catalog_support(tmp_path, monkeypatch):
+    """Native Ollama `/api/tags` remains the preferred discovery path."""
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    manager.secrets.put(
+        "provider:ollama", {"base_url": "http://localhost:11434"}
+    )
+
+    calls: list[str] = []
+
+    def fake_get(url, *, timeout):
+        calls.append(url)
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"models": [{"name": "llama3.3:latest"}]},
+        )
+
+    monkeypatch.setattr("httpx.get", fake_get)
+
+    assert manager._ollama_models() == ["ollama:llama3.3:latest"]
+    assert manager._ollama_alive() is True
+    assert calls == ["http://localhost:11434/api/tags"]
