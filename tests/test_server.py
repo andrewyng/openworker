@@ -23,6 +23,10 @@ class ScriptedProvider(ProviderClient):
         self._turns = list(turns)
 
     def complete(self, *, model, messages, tools=None, **settings):
+        # Session auto-titling calls the same provider from a background thread, racing
+        # the turn for the next scripted reply; answer it here so the script stays the turn's.
+        if messages and messages[0].get("content") == SessionManager._AUTOTITLE_PROMPT:
+            return _text("Session title")
         return self._turns.pop(0)
 
     def capabilities(self, model):
@@ -970,10 +974,7 @@ def test_ws_first_message_binds_then_midsession_switch_persists_notice(tmp_path)
     reconnects — found 2026-07-04). Mid-session rebinds are ALLOWED (roadmap item 3,
     2026-07-22, supersedes the 07-04 lock): the switch lands as a persisted model_switch
     notice and a model_changed broadcast, and the next turn runs on the new model."""
-    # 4 turns: 3 user turns + the autotitle's fire-and-forget complete() after turn 1.
-    client = _client(
-        tmp_path, [_text("ok"), _text("Session title"), _text("ok again"), _text("still ok")]
-    )
+    client = _client(tmp_path, [_text("ok"), _text("ok again"), _text("still ok")])
     with client.websocket_connect("/ws/session/model-per-msg") as ws:
         ready = ws.receive_json()
         assert ready["type"] == "ready"

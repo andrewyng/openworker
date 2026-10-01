@@ -4175,11 +4175,16 @@ class SessionManager:
         # the curated list so it shows up in the composer right after configuring the provider.
         rec = d.recommended_model
         added: Optional[str] = None
-        if rec and rec in self._suggested_models(name):
+        suggested = self._suggested_models(name)
+        if rec and rec in suggested:
             # OpenAI models stay bare (the router's default); others carry their prefix.
             added = rec if name == "openai" else f"{name}:{rec}"
+        elif name == "ollama" and suggested:
+            # Ollama offers whatever the user pulled — the recommended model may not be one.
+            added = f"ollama:{suggested[0]}"
+        if added:
             self.add_model(added)
-        if added and not self._provider_configured(self._model_provider(self.model)):
+        if added and not self.model_selectable(self.model):
             self.set_default_model(added)
             return added
         return None
@@ -4360,11 +4365,10 @@ class SessionManager:
 
     def _ollama_models(self) -> list[str]:
         """Live list of models pulled into the configured Ollama server (via its native
-        `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama isn't
-        configured or unreachable — best-effort, never raises."""
-        profile = self.secrets.get("provider:ollama")
-        if not profile:
-            return []
+        `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama is
+        unreachable — best-effort, never raises. No stored profile → the default localhost
+        endpoint, same as `_ollama_alive` (keyless Ollama needs no saved form)."""
+        profile = self.secrets.get("provider:ollama") or {}
         base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
         if base.endswith("/v1"):
             base = base[: -len("/v1")]
@@ -4612,6 +4616,9 @@ class SessionManager:
         # Ollama is keyless, so "configured" is meaningless there — its models show only
         # while a local Ollama answers (cached liveness probe).
         selectable = [m for m in self._curated_models() if self.model_selectable(m)]
+        # Pulled Ollama models are offered live while Ollama answers — no need to add each one.
+        if self._ollama_alive():
+            selectable = list(dict.fromkeys([*selectable, *self._ollama_models()]))
         if self.model not in selectable:
             selectable.insert(0, self.model)
         from ..providers.matrix import model_context_windows, model_labels
@@ -4632,9 +4639,10 @@ class SessionManager:
             "model_context_windows": model_context_windows(),
             "has_key": env_key or stored,
             # Provider-agnostic "can this default model actually run?" — true when the default
-            # model's provider is configured (any provider, not just OpenAI). Drives the GUI's
+            # model's provider is configured (any provider, not just OpenAI), or for an
+            # `ollama:*` default, when a local Ollama answers. Drives the GUI's
             # "No model connected" composer chip and the onboarding Skip warning.
-            "model_ready": self._provider_configured(self._model_provider(self.model)),
+            "model_ready": self.model_selectable(self.model),
             "source": "env" if env_key else ("store" if stored else None),
             "onboarded": bool(self._prefs.get("onboarded")),
             "experimental_connectors": experimental_enabled(self.secrets),

@@ -172,5 +172,66 @@ def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):
     monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: False)
     assert "ollama:llama3.3" not in manager.get_settings()["models"]
 
+    monkeypatch.setattr(SessionManager, "_ollama_models", lambda self: [])
     monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
     assert "ollama:llama3.3" in manager.get_settings()["models"]
+
+
+def _ollama_manager(tmp_path, monkeypatch, pulled=("qwen2.5:7b-instruct",)):
+    """A fresh manager (no keys, no saved Ollama profile) whose local Ollama answers
+    `/api/tags` with `pulled` — none of them the recommended model."""
+    import httpx
+
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+
+    class _Tags:
+        status_code = 200
+
+        def json(self):
+            return {"models": [{"name": n} for n in pulled]}
+
+    monkeypatch.setattr(httpx, "get", lambda url, timeout=None: _Tags())
+    return SessionManager(data_dir=tmp_path / "data")
+
+
+def test_ollama_models_without_saved_profile(tmp_path, monkeypatch):
+    """Keyless Ollama needs no saved form: pulled models list from the localhost default."""
+    manager = _ollama_manager(tmp_path, monkeypatch)
+    assert manager.secrets.get("provider:ollama") is None
+    assert manager._ollama_models() == ["ollama:qwen2.5:7b-instruct"]
+
+
+def test_pulled_ollama_models_reach_the_picker(tmp_path, monkeypatch):
+    manager = _ollama_manager(tmp_path, monkeypatch)
+    assert "ollama:qwen2.5:7b-instruct" in manager.get_settings()["models"]
+
+
+def test_ollama_default_ready_tracks_liveness(tmp_path, monkeypatch):
+    from coworker.server.manager import SessionManager
+
+    manager = _ollama_manager(tmp_path, monkeypatch)
+    manager.set_default_model("ollama:qwen2.5:7b-instruct")
+    assert manager.get_settings()["model_ready"] is True
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: False)
+    assert manager.get_settings()["model_ready"] is False
+
+
+def test_ollama_adopts_first_pulled_model(tmp_path, monkeypatch):
+    """Saving Ollama with only a non-recommended model pulled still yields a runnable default."""
+    manager = _ollama_manager(tmp_path, monkeypatch)
+    assert manager.get_settings()["model_ready"] is False
+    assert manager.adopt_provider_default("ollama") == "ollama:qwen2.5:7b-instruct"
+    settings = manager.get_settings()
+    assert settings["model"] == "ollama:qwen2.5:7b-instruct"
+    assert settings["model_ready"] is True
+
+
+def test_ollama_adoption_never_steals_a_working_default(tmp_path, monkeypatch):
+    manager = _ollama_manager(tmp_path, monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-123")
+    before = manager.get_settings()["model"]
+    assert manager.adopt_provider_default("ollama") is None
+    assert manager.get_settings()["model"] == before
