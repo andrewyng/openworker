@@ -718,6 +718,9 @@ _OVERFLOW_MARKERS = (
     "maximum context length",
     "context window",
     "prompt is too long",
+    # Ollama, when context shift is disabled: "the prompt is longer than the context
+    # length currently available to the model".
+    "longer than the context length",
     "input is too long",
     "too many tokens",
     "input length and `max_tokens` exceed",

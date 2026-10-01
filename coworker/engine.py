@@ -856,6 +856,12 @@ class TurnEngine:
             from .providers.matrix import model_context_windows
 
             cfg["context_window"] = model_context_windows().get(self.model)
+            if not cfg["context_window"]:
+                # Ollama's window is the num_ctx we send (providers/ollama_context.py),
+                # not the 128k guess — compact before that window context-shifts.
+                from .providers.ollama_context import context_window_for
+
+                cfg["context_window"] = context_window_for(self.model)
             if not cfg["context_window"] and not self._warned_context_fallback:
                 # OPE-170: an unlisted model compacts on the 128k guess, which for a
                 # 1M-window model means compacting at a tenth of the window and
