@@ -120,3 +120,9 @@ describe("Ark provider presentation", () => {
     );
   });
 });
+
+describe("Requesty provider presentation", () => {
+  it("links to the Requesty API key page", () => {
+    expect(KEY_HELP.requesty.url).toBe("https://app.requesty.ai/api-keys");
+  });
+});

@@ -498,6 +498,8 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         "fireworks:accounts/fireworks/models/kimi-k2p6",
         "openrouter:z-ai/glm-5.2",
         "openrouter:meta-llama/llama-4-maverick",
+        "requesty:zai/glm-5.2",
+        "requesty:anthropic/claude-sonnet-5",
     ):
         caps = capabilities_for(mid)
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
@@ -531,7 +533,7 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
     from coworker.providers.matrix import models_for_provider
     from coworker.providers.registry import get_descriptor
 
-    for name in ("together", "fireworks", "openrouter"):
+    for name in ("together", "fireworks", "openrouter", "requesty"):
         d = get_descriptor(name)
         assert d is not None and d.needs_key
         curated = models_for_provider(name)
@@ -539,6 +541,28 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
         # full ids in the matrix must round-trip: prefix + bare == matrix key
         base = next(f for f in d.fields if f.key == "base_url")
         assert base.default.startswith("https://")
+
+
+def test_requesty_builder_uses_its_own_key_and_endpoint(monkeypatch):
+    """Requesty resolves REQUESTY_API_KEY (never the OpenAI key) and defaults to its global
+    endpoint; the EU endpoint is a profile override."""
+    import pytest
+
+    from coworker.providers.registry import build_provider_client
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
+    monkeypatch.delenv("REQUESTY_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="Requesty"):
+        build_provider_client("requesty", {}, None)
+
+    monkeypatch.setenv("REQUESTY_API_KEY", "rq-key")
+    p = build_provider_client("requesty", {}, None)
+    assert isinstance(p, OpenAIProvider)
+    assert (p._api_key, p._base_url) == ("rq-key", "https://router.requesty.ai/v1")
+
+    eu = "https://router.eu.requesty.ai/v1"
+    p2 = build_provider_client("requesty", {"base_url": eu}, None)
+    assert p2._base_url == eu
 
 
 def test_foreign_sidecars_stripped_from_outbound_messages():

@@ -16,7 +16,7 @@ where the vendor spec wasn't re-checked stay ``None`` — the meter simply hides
 showing a made-up denominator. Values entered 2026-07-28 from vendor docs; verify alongside
 the id refresh.
 
-Resellers: Together + Fireworks + OpenRouter. TODO: add Groq entries here AND its
+Resellers: Together + Fireworks + OpenRouter + Requesty. TODO: add Groq entries here AND its
 descriptor in ``registry.py`` once the current provider surface is tested — deliberately
 deferred to bound how much needs verifying at once.
 """
@@ -271,6 +271,18 @@ MATRIX: dict[str, ModelEntry] = {
     # the real model; keep it until OpenRouter retires it.
     "openrouter:stealth/ox-alpha": ModelEntry(
         "Ox Alpha · via OpenRouter", _AGENTIC, 1_048_576
+    ),
+    # Requesty slugs are `<vendor>/<model>` (router.requesty.ai/v1/models, read
+    # 2026-09-28: both report a 1,000,000 context_window and tool calling).
+    "requesty:zai/glm-5.2": ModelEntry(
+        "GLM-5.2 · via Requesty", _AGENTIC, 1_000_000
+    ),
+    "requesty:anthropic/claude-sonnet-5": ModelEntry(
+        "Claude Sonnet 5 · via Requesty",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_000_000,
     ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →

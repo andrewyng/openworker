@@ -103,6 +103,29 @@ def test_verify_ollama_uses_v1_models_no_key(monkeypatch):
     assert "headers" not in cap  # keyless
 
 
+def test_verify_requesty_lists_models_on_its_own_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("requesty", api_key="rq-x") == {"ok": True}
+    assert cap["url"] == "https://router.requesty.ai/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer rq-x"
+
+    # The EU endpoint (editable base_url) is probed instead when set.
+    verify_provider_key(
+        "requesty", api_key="rq-x", base_url="https://router.eu.requesty.ai/v1"
+    )
+    assert cap["url"] == "https://router.eu.requesty.ai/v1/models"
+
+
+def test_verify_requesty_rejected_key_is_invalid(monkeypatch):
+    # Requesty answers a bad key on /v1/models with 403.
+    _patch_get(monkeypatch, status=403)
+    assert verify_provider_key("requesty", api_key="rq-bad") == {
+        "ok": False,
+        "error": "Invalid API key.",
+    }
+
+
 @pytest.mark.parametrize(
     "name,base_url,model",
     [
