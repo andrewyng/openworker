@@ -508,3 +508,79 @@ def test_ordinary_text_answer_still_completes(tmp_path):
     events = _collect(engine, "how does qwen format tool calls?")
     assert EventType.ERROR not in _types(events)
     assert next(ev for ev in events if ev.type == EventType.TURN_END).data["status"] == "completed"
+
+
+# -- audit correlation -------------------------------------------------------------
+
+
+def test_every_audit_row_carries_the_tool_call_id(tmp_path):
+    """#670: an external audit sink can only join a `started` to its `finished` if each
+    row names the call it belongs to. The ID is stamped at the shared `_audit` boundary,
+    so this covers the lifecycle stages that never pass it themselves."""
+    (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
+    rows: list[dict] = []
+    provider = ScriptedProvider(
+        [_tool_turn("read_file", {"path": "a.txt"}, call_id="call_a"), _text_turn("done")]
+    )
+    registry = ToolRegistry()
+    registry.register_all(ai.toolkits.files(root=str(tmp_path), allow_write=True))
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+        audit_sink=rows.append,
+    )
+    _collect(engine, "read a.txt")
+
+    tool_rows = [r for r in rows if r.get("stage") in {"proposed", "started", "finished"}]
+    assert tool_rows, rows
+    assert {r["call_id"] for r in tool_rows} == {"call_a"}
+    # The `started`/`finished` pair for this call is unambiguous even when the same
+    # tool and arguments run twice: each row names which invocation it is.
+    assert [r["stage"] for r in tool_rows] == ["proposed", "started", "finished"]
+
+
+def test_repeated_identical_calls_stay_distinguishable(tmp_path):
+    """The regression that motivated #670: the same tool with the same arguments invoked
+    twice in one turn produces audit rows a sink can tell apart only by call_id."""
+    (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
+    rows: list[dict] = []
+    provider = ScriptedProvider(
+        [
+            _tool_turn("read_file", {"path": "a.txt"}, call_id="call_1"),
+            _tool_turn("read_file", {"path": "a.txt"}, call_id="call_2"),
+            _text_turn("done"),
+        ]
+    )
+    registry = ToolRegistry()
+    registry.register_all(ai.toolkits.files(root=str(tmp_path), allow_write=True))
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+        audit_sink=rows.append,
+    )
+    _collect(engine, "read a.txt twice")
+
+    finished = [r for r in rows if r.get("stage") == "finished"]
+    assert len(finished) == 2
+    assert all(r["status"] == "ok" for r in finished), finished
+    assert [r["call_id"] for r in finished] == ["call_1", "call_2"]
+
+
+def test_audit_call_id_is_overridable_by_a_call_site(tmp_path):
+    """`**event` still wins: a call site that means something else by `call_id` is not
+    clobbered by the default stamp."""
+    engine, _ = _engine(tmp_path, [_text_turn("hi")])
+    seen: list[dict] = []
+    engine.audit_sink = seen.append
+    engine._audit(ToolCall(id="real_call", name="read_file", arguments={}), stage="proposed")
+    assert seen[0]["call_id"] == "real_call"
+    engine._audit(
+        ToolCall(id="real_call", name="read_file", arguments={}),
+        stage="custom",
+        call_id="other_id",
+    )
+    assert seen[1]["call_id"] == "other_id"

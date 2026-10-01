@@ -2022,6 +2022,12 @@ class TurnEngine:
             **self.audit_context,
             "tool": tool_call.name,
             "arguments": tool_call.arguments,
+            # Every row carries the tool call's own ID so an external sink can join a
+            # `started` to its matching `finished` when the same tool+arguments runs more
+            # than once in a turn. Stamped here, at the one common boundary, so a new call
+            # site can't forget it. `**event` spreads last: a call site that means
+            # something else by `call_id` still wins.
+            "call_id": tool_call.id,
             **event,
         }
         try:
