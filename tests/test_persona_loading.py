@@ -146,3 +146,76 @@ def test_adding_a_connector_grows_capabilities_and_forces_reconsent(tmp_path):
     summaries = reg.install_from_dir(_persona_dir(tmp_path, text=widened))
     assert summaries[0]["replaces"]["capabilities_grew"] is True
     assert reg.is_enabled("acme-ops") is False  # re-consent required
+
+
+# -- persona repo URL vetting (#521) -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ext::sh -c 'touch /tmp/pwned'",  # remote helper: runs a command
+        "fd::/dev/null",
+        "--upload-pack=touch /tmp/pwned",  # git reads a leading dash as an option
+        "-u./payload",
+        "file:///etc",  # local path, not a repo the user meant to name
+        "https://example.com/a repo.git",  # whitespace splits into extra argv
+    ],
+)
+def test_refused_persona_repo_urls(url):
+    from coworker.personas.loading import validate_git_url
+
+    with pytest.raises(ValueError):
+        validate_git_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/acme/persona.git",
+        "ssh://git@example.com/acme/persona.git",
+        "git://example.com/acme/persona.git",
+        "git@example.com:acme/persona.git",
+    ],
+)
+def test_accepted_persona_repo_urls(url):
+    from coworker.personas.loading import validate_git_url
+
+    assert validate_git_url(url) == url
+
+
+def test_install_from_git_refuses_helper_url_before_cloning(tmp_path):
+    """The address is vetted ahead of the clone, so an injected clone can't be reached
+    either — `ext::` executes before any manifest or consent screen exists."""
+    reg = PersonaRegistry(state_path=tmp_path / "personas.json")
+    called: list[str] = []
+
+    def fake_clone(url, dest):  # pragma: no cover - must never run
+        called.append(url)
+
+    with pytest.raises(ValueError):
+        reg.install_from_git(
+            "ext::sh -c 'touch /tmp/pwned'",
+            cache_base=tmp_path / "cache",
+            clone=fake_clone,
+        )
+    assert called == []
+    assert "acme-ops" not in reg.ids()
+
+
+def test_git_clone_argv_ends_option_parsing_and_disables_ext(tmp_path, monkeypatch):
+    from coworker.personas import loading
+
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        return None
+
+    monkeypatch.setattr(loading.subprocess, "run", fake_run)
+    loading.git_clone("https://example.com/acme/persona.git", tmp_path / "dest")
+    argv = seen["argv"]
+    assert "--" in argv and argv.index("--") < argv.index(
+        "https://example.com/acme/persona.git"
+    )
+    assert "protocol.ext.allow=never" in argv
