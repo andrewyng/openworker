@@ -161,3 +161,45 @@ def test_verify_unexpected_status(monkeypatch):
     res = verify_provider_key("anthropic", api_key="sk-ant-x")
     assert res["ok"] is False
     assert "500" in res["error"]
+
+
+# -- verify_provider_key: transport failures carry their cause (#505) ------------
+def test_verify_transport_failure_includes_cause_and_hint(monkeypatch):
+    import httpx
+
+    _patch_get(
+        monkeypatch,
+        raise_exc=httpx.ConnectError(
+            "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+            "unable to get local issuer certificate (_ssl.c:1000)"
+        ),
+    )
+    result = verify_provider_key("openai", api_key="sk-x")
+    assert result["ok"] is False
+    assert "CERTIFICATE_VERIFY_FAILED" in result["error"]
+    assert "CA bundle" in result["error"]
+
+
+def test_verify_dns_failure_names_dns(monkeypatch):
+    import httpx
+
+    _patch_get(monkeypatch, raise_exc=httpx.ConnectError("[Errno -3] nodename nor servname provided"))
+    error = verify_provider_key("openai", api_key="sk-x")["error"]
+    assert "DNS" in error
+    assert "[Errno -3]" in error
+
+
+def test_verify_timeout_says_timed_out(monkeypatch):
+    import httpx
+
+    _patch_get(monkeypatch, raise_exc=httpx.ConnectTimeout("The request timed out."))
+    error = verify_provider_key("openai", api_key="sk-x")["error"]
+    assert "timed out" in error
+
+
+def test_verify_silent_exception_falls_back_to_class_name_only(monkeypatch):
+    class Weird(Exception):
+        pass
+
+    _patch_get(monkeypatch, raise_exc=Weird())
+    assert verify_provider_key("openai", api_key="sk-x") == {"ok": False, "error": "Couldn't reach OpenAI (Weird)."}
