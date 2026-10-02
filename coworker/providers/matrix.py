@@ -266,6 +266,26 @@ MATRIX: dict[str, ModelEntry] = {
     "openrouter:meta-llama/llama-4-maverick": ModelEntry(
         "Llama 4 Maverick · via OpenRouter", _AGENTIC, 1_000_000
     ),
+    # NVIDIA Nemotron via OpenRouter (openrouter.ai/api/v1/models/<id>/endpoints, read
+    # 2026-10-01). Paid endpoints only; the `:free` variants are left out on purpose (they
+    # log and may train on inputs, and are capped at 1,000 requests/day). Text-only.
+    # Ultra is sized for BaseTen, the host a pinned run uses (202,800); DeepInfra lists
+    # 262,144 and Venice 256,000, but the matrix holds the pinned host's window so
+    # compaction triggers inside the real one (OPE-215).
+    "openrouter:nvidia/nemotron-3-ultra-550b-a55b": ModelEntry(
+        "Nemotron 3 Ultra · via OpenRouter", _AGENTIC, 202_800
+    ),
+    "openrouter:nvidia/nemotron-3.5-lightning": ModelEntry(
+        "Nemotron 3.5 Lightning · via OpenRouter", _AGENTIC, 262_144
+    ),
+    # GLM 5.3 via OpenRouter (openrouter.ai/api/v1/models/z-ai/glm-5.3/endpoints, read
+    # 2026-10-01: 39 endpoints, all tool-capable). Sized for Z.AI, the host a pinned run
+    # uses (1,048,576 ctx, fp8, 131,072 max output). Without this row the model would fall
+    # back to DEFAULT_CONTEXT_WINDOW (128,000) and compact at 102,400, far inside what the
+    # endpoint actually serves (OPE-215).
+    "openrouter:z-ai/glm-5.3": ModelEntry(
+        "GLM 5.3 · via OpenRouter", _AGENTIC, 1_048_576
+    ),
     # Stealth/cloaked alpha (catalog-checked 2026-08-24: 1,048,576 ctx, tool calling).
     # These are temporary lab previews — expect the slug to vanish when the lab ships
     # the real model; keep it until OpenRouter retires it.

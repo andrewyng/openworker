@@ -50,6 +50,12 @@ REPO = Path(__file__).resolve().parents[1]
         ("zai:glm-5.2", 1_000_000),
         ("openrouter:z-ai/glm-5.2", 1_048_576),
         ("fireworks:accounts/fireworks/models/glm-5p2", 1_040_000),
+        # openrouter.ai models API, read 2026-10-01 (OPE-215). Ultra: the endpoint's own
+        # context_length (202,800), not the model-level 262,144 the catalog shows.
+        ("openrouter:nvidia/nemotron-3-ultra-550b-a55b", 202_800),
+        ("openrouter:nvidia/nemotron-3.5-lightning", 262_144),
+        # openrouter.ai endpoints API, read 2026-10-01 (OPE-215): the Z.AI host's window.
+        ("openrouter:z-ai/glm-5.3", 1_048_576),
     ],
 )
 def test_current_models_have_verified_windows(model, window):
