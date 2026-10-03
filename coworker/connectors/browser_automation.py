@@ -6,7 +6,10 @@ tools return a clear setup error instead of breaking engine construction.
 
 from __future__ import annotations
 
+import importlib
+import os
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -17,7 +20,30 @@ from typing import Any, Callable, Optional
 
 import aisuite as ai
 
+from ..secrets import state_dir
 from ..web.guard import check_url
+
+SETUP_SCRIPT_URL = (
+    "https://raw.githubusercontent.com/andrewyng/openworker/main/"
+    "packaging/setup-browser-macos.sh"
+)
+
+
+def _use_browser_runtime() -> None:
+    """Make the Playwright that packaging/setup-browser-macos.sh installed importable.
+
+    The packaged app's Python only sees what is frozen into it, and Playwright is not.
+    The script puts it under the state folder instead; appended, so a bundled module
+    always wins over a copy there."""
+    runtime = state_dir() / "browser-runtime"
+    site = runtime / "site"
+    if not site.is_dir():
+        return
+    if str(site) not in sys.path:
+        sys.path.append(str(site))
+        importlib.invalidate_caches()
+    if (runtime / "browsers").is_dir():
+        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(runtime / "browsers"))
 
 
 def _meta(
@@ -106,13 +132,19 @@ class _BrowserController:
             self._touch(open=True, status="error", last_error=str(exc))
 
     def _setup_error(self, exc: Exception) -> dict[str, str]:
-        return {
-            "error": (
-                "Interactive browser automation requires Playwright. Install it with "
-                "`pip install playwright` and `python -m playwright install chromium`."
-            ),
-            "details": str(exc),
-        }
+        if getattr(sys, "frozen", False) and sys.platform == "darwin":
+            hint = f"run `curl -fsSL {SETUP_SCRIPT_URL} | bash` in Terminal"
+        else:
+            hint = (
+                "install it with `pip install playwright` and "
+                "`python -m playwright install chromium`"
+            )
+        if isinstance(exc, ImportError):
+            error = f"Interactive browser automation requires Playwright: {hint}."
+        else:
+            # Playwright is there but the browser did not start (e.g. Chromium removed).
+            error = f"The browser could not start. If this keeps happening, {hint}."
+        return {"error": error, "details": str(exc)}
 
     def page(self):
         with self._lock:
@@ -121,6 +153,7 @@ class _BrowserController:
             if self._page is not None:
                 return self._page, None
             try:
+                _use_browser_runtime()
                 from playwright.sync_api import sync_playwright
 
                 self._playwright = sync_playwright().start()
