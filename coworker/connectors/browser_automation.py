@@ -32,9 +32,9 @@ SETUP_SCRIPT_URL = (
 def _use_browser_runtime() -> None:
     """Make the Playwright that packaging/setup-browser-macos.sh installed importable.
 
-    The packaged app's Python only sees what is frozen into it, and Playwright is not
-    (size). The script puts it under the state folder instead; appended, so a bundled
-    module always wins over a copy there."""
+    The packaged app's Python only sees what is frozen into it, and Playwright is not.
+    The script puts it under the state folder instead; appended, so a bundled module
+    always wins over a copy there."""
     runtime = state_dir() / "browser-runtime"
     site = runtime / "site"
     if not site.is_dir():
@@ -139,10 +139,12 @@ class _BrowserController:
                 "install it with `pip install playwright` and "
                 "`python -m playwright install chromium`"
             )
-        return {
-            "error": f"Interactive browser automation requires Playwright: {hint}.",
-            "details": str(exc),
-        }
+        if isinstance(exc, ImportError):
+            error = f"Interactive browser automation requires Playwright: {hint}."
+        else:
+            # Playwright is there but the browser did not start (e.g. Chromium removed).
+            error = f"The browser could not start. If this keeps happening, {hint}."
+        return {"error": error, "details": str(exc)}
 
     def page(self):
         with self._lock:

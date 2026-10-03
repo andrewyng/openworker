@@ -73,7 +73,7 @@ Unattended runs never self-approve: their asks park in an inbox until a human an
 - **Use your everyday tools** - 25+ integrations including GitHub, Slack, Jira, Notion, Linear, HubSpot, Outlook, monday.com, Gmail, and Google Calendar, plus your **terminal and local files**. Any tool reachable over [MCP](https://modelcontextprotocol.io/) plugs in too, with per-tool control.
 - **Run on a schedule** - automations for recurring work: a morning brief, a weekly report, a standing watch over a channel. Runs land in the app with full transcripts.
 - **Run commands in a sandbox** - turn on [NVIDIA OpenShell](docs/openshell.md) for a machine and every agent's shell and file tools run in their own Linux container, with the session's folders and an allow-listed network and nothing else; on a Mac, the [built-in sandbox](docs/macos-sandbox.md) does the same with nothing to install, and on Windows a [hidden local account](docs/windows-sandbox.md) does.
-- **Browse the web** - agents drive their own browser, separate from yours, to read pages and fill in forms, with actions subject to approval. On macOS this needs a one-time setup (it downloads Playwright and Chromium, about 700 MB, into OpenWorker's settings folder; nothing changes inside the app):
+- **Browse the web** - agents drive their own browser, separate from yours, to read pages and fill in forms, with actions subject to approval. On macOS this needs macOS 14 or later and a one-time setup (it downloads Playwright and Chromium, about 700 MB, into OpenWorker's settings folder; nothing changes inside the app):
 
   ```bash
   curl -fsSL https://raw.githubusercontent.com/andrewyng/openworker/main/packaging/setup-browser-macos.sh | bash

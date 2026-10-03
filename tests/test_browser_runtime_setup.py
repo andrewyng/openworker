@@ -54,3 +54,12 @@ def test_source_install_error_keeps_pip_hint(monkeypatch):
     monkeypatch.delattr(sys, "frozen", raising=False)
     err = ba._BrowserController._setup_error(None, ModuleNotFoundError("playwright"))
     assert "pip install playwright" in err["error"]
+
+
+def test_launch_failure_is_not_reported_as_missing_playwright(monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    err = ba._BrowserController._setup_error(None, RuntimeError("Executable doesn't exist"))
+    assert "requires Playwright" not in err["error"]
+    assert "could not start" in err["error"]
+    assert err["details"] == "Executable doesn't exist"
