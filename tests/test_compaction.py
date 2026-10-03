@@ -13,6 +13,7 @@ from coworker.compaction import (
     apply_to_outbound,
     build_state,
     compacted_block,
+    drop_orphan_tool_messages,
     estimate_tokens,
     extract_user_messages,
     extract_working_state,
@@ -361,6 +362,58 @@ def test_apply_to_outbound_noop_on_stale_or_missing_state():
     assert apply_to_outbound(msgs, None) is msgs
     stale = CompactionState(boundary_index=999, summary_text="s", working_state="")
     assert apply_to_outbound(msgs, stale) is msgs
+
+
+def test_apply_to_outbound_does_not_lead_with_orphan_tool():
+    """A tail that starts on a tool row (parent assistant already summarized) must
+    not be sent as-is — OpenAI 400: role 'tool' without a preceding tool_calls."""
+    msgs = [{"role": "system", "content": "s"}, user("go")]
+    pair = tool_turn("run_shell", {"command": "ls"}, {"exit_code": 0})
+    msgs += pair
+    msgs.append(user("continue"))
+    msgs.append(assistant("done"))
+    # Boundary sits on the tool result — parent assistant is in the compacted span.
+    tool_idx = next(i for i, m in enumerate(msgs) if m.get("role") == "tool")
+    state = CompactionState(
+        boundary_index=tool_idx, summary_text="earlier work", working_state=""
+    )
+    out = apply_to_outbound(msgs, state)
+    roles = [m["role"] for m in out]
+    assert "tool" not in roles or roles[roles.index("tool") - 1] == "assistant"
+    assert out[0]["role"] == "system"
+    assert out[1]["role"] == "user"
+    assert "<compacted-history>" in out[1]["content"]
+
+
+def test_apply_to_outbound_rewinds_to_parent_assistant():
+    """If the owning assistant is still in history, keep the pair instead of dropping it."""
+    msgs = [user("go")]
+    pair = tool_turn("read_file", {"path": "a.txt"}, {"text": "hi"})
+    msgs += pair
+    msgs.append(assistant("ok"))
+    tool_idx = next(i for i, m in enumerate(msgs) if m.get("role") == "tool")
+    state = CompactionState(
+        boundary_index=tool_idx, summary_text="s", working_state=""
+    )
+    out = apply_to_outbound(msgs, state)
+    # Compacted block + assistant(tool_calls) + tool result + final assistant
+    assert out[1]["role"] == "assistant" and out[1].get("tool_calls")
+    assert out[2]["role"] == "tool"
+    assert out[2]["tool_call_id"] == out[1]["tool_calls"][0]["id"]
+
+
+def test_drop_orphan_tool_messages_after_notice_strip():
+    """Notice stripping can expose a tool whose parent lived before the compacted block."""
+    msgs = [
+        {"role": "user", "content": "<compacted-history>…"},
+        {"role": "notice", "kind": "compacted", "text": "compacted"},
+        tool("orphan", {"exit_code": 0}),
+        user("next"),
+        assistant("ok"),
+    ]
+    stripped = [m for m in msgs if m.get("role") != "notice"]
+    cleaned = drop_orphan_tool_messages(stripped)
+    assert [m["role"] for m in cleaned] == ["user", "user", "assistant"]
 
 
 def test_is_context_overflow():
