@@ -163,6 +163,9 @@ interface Props {
   collapsed?: boolean;
   onCollapse?: () => void;
   onPeekLeave?: () => void;
+  // Opens the app-level SearchModal. Kept out of this tree so the collapsed sidebar's
+  // `transform` cannot become the containing block for `position: fixed` (#282).
+  onOpenSearch?: () => void;
 }
 
 // Compact age for project session rows: "now" / "5m" / "6h" / "3d" / "2w" / "4mo" / "2y".
@@ -1403,17 +1406,6 @@ export function Sidebar(props: Props) {
         </div>
       </div>
 
-      {searchModalOpen && (
-        <SearchModal
-          sessions={props.sessions}
-          personas={personas ?? undefined}
-          onSelect={(id, ws, ag) => {
-            setSearchModalOpen(false);
-            props.onSelectSession(id, ws, ag);
-          }}
-          onClose={() => setSearchModalOpen(false)}
-        />
-      )}
     </div>
   );
 }
