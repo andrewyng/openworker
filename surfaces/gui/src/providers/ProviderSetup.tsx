@@ -145,7 +145,14 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     setFields(next);
     setDirty(!!draft && Object.values(draft).some(Boolean));
     setVerify({ state: "idle" });
-    setShowEndpoint(false);
+    // Collapsed by default, but a stored CUSTOM endpoint opens the row: a configured
+    // gateway is the one thing about a provider a collapsed disclosure would actively
+    // misrepresent. Compared against the field's default, not just emptiness — the compat
+    // vendors (Z AI, DeepSeek, Ark, …) prefill their own official endpoint, and those
+    // stay quiet because nothing has been customised.
+    const endpoint = p?.fields?.find((f) => f.key === "base_url");
+    const storedEndpoint = p?.values?.base_url || "";
+    setShowEndpoint(!!storedEndpoint && storedEndpoint !== (endpoint?.default || ""));
   };
 
   const backToGallery = () => {
