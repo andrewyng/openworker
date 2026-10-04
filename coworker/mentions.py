@@ -16,9 +16,11 @@ clears its records (same contract as subscriptions).
 from __future__ import annotations
 
 import json
+import os
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Optional
 
 
@@ -40,6 +42,8 @@ class MentionSessionStore:
         if self.path and self.path.is_file():
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    data = {}
                 self._threads = [
                     MentionThread(**raw) for raw in data.get("threads", [])
                 ]
@@ -50,10 +54,14 @@ class MentionSessionStore:
         if not self.path:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"threads": [asdict(t) for t in self._threads]}, indent=2),
-            encoding="utf-8",
-        )
+        content = json.dumps({"threads": [asdict(t) for t in self._threads]}, indent=2)
+        tmp = NamedTemporaryFile(mode="w", dir=self.path.parent, delete=False, encoding="utf-8")
+        try:
+            tmp.write(content)
+            tmp.close()
+            os.replace(tmp.name, self.path)
+        finally:
+            Path(tmp.name).unlink(missing_ok=True)
 
     # -- mutations --------------------------------------------------------------
     def set(self, thread_target: str, session_id: str, channel: str) -> MentionThread:
