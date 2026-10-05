@@ -29,6 +29,7 @@ export const KEY_HELP: Record<string, { url: string; label: string; labelKey?: s
   ark: { url: "https://console.byteplus.com/ark/region:ark+ap-southeast-1/apiKey", label: "console.byteplus.com" },
   "ark-agent-plan-cn": { url: "https://console.volcengine.com/ark/region:cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=agentPlan", label: "console.volcengine.com" },
   openrouter: { url: "https://openrouter.ai/keys", label: "openrouter.ai" },
+  requesty: { url: "https://app.requesty.ai/api-keys", label: "app.requesty.ai" },
   bedrock: { url: "https://console.aws.amazon.com/bedrock/home#/api-keys", label: "the AWS Bedrock console", labelKey: "misc.provider.bedrock_console" },
   fireworks: { url: "https://fireworks.ai/account/api-keys", label: "fireworks.ai" },
   together: { url: "https://api.together.xyz/settings/api-keys", label: "together.xyz" },

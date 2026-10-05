@@ -668,6 +668,14 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="z-ai/glm-5.2",
         env_key="OPENROUTER_API_KEY",
     ),
+    _compat(
+        "requesty",
+        "Requesty",
+        base_url="https://router.requesty.ai/v1",
+        recommended_model="zai/glm-5.2",
+        env_key="REQUESTY_API_KEY",
+        endpoint_help="Prefilled with Requesty's global endpoint. EU: https://router.eu.requesty.ai/v1",
+    ),
     ProviderDescriptor(
         name="ollama",
         title="Ollama (local models)",

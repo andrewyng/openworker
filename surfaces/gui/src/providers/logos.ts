@@ -61,6 +61,7 @@ export const PROVIDER_ORDER = [
   "bedrock",
   "vertex",
   "openrouter",
+  "requesty",
   "fireworks",
   "together",
   "zai",
