@@ -1,5 +1,5 @@
-"""Tests for provider key detection + the live (read-only) Test/verify path. SDK-free: the
-single httpx.get is monkeypatched so no network is touched."""
+"""Tests for provider key detection + the live Test/verify path. SDK-free: httpx is
+monkeypatched so no network is touched."""
 
 from __future__ import annotations
 
@@ -41,6 +41,30 @@ def _patch_get(monkeypatch, status=200, capture=None, raise_exc=None):
     monkeypatch.setattr("httpx.get", fake_get)
 
 
+def _patch_openai_compat(
+    monkeypatch,
+    *,
+    models_status=200,
+    completions_status=200,
+    model_id="demo",
+    capture=None,
+):
+    def fake_get(url, **kwargs):
+        if capture is not None:
+            capture["models_url"] = url
+            capture["headers"] = kwargs.get("headers")
+        body = {"data": [{"id": model_id}]} if model_id else {"data": []}
+        return SimpleNamespace(status_code=models_status, json=lambda: body)
+
+    def fake_post(url, **kwargs):
+        if capture is not None:
+            capture["completions_url"] = url
+        return SimpleNamespace(status_code=completions_status)
+
+    monkeypatch.setattr("httpx.get", fake_get)
+    monkeypatch.setattr("httpx.post", fake_post)
+
+
 def _patch_post(monkeypatch, status=200, capture=None, raise_exc=None):
     def fake_post(url, **kwargs):
         if capture is not None:
@@ -55,28 +79,37 @@ def _patch_post(monkeypatch, status=200, capture=None, raise_exc=None):
 
 def test_verify_openai_ok(monkeypatch):
     cap: dict = {}
-    _patch_get(monkeypatch, status=200, capture=cap)
+    _patch_openai_compat(monkeypatch, capture=cap)
     assert verify_provider_key("openai", api_key="sk-x") == {"ok": True}
-    assert cap["url"] == "https://api.openai.com/v1/models"
+    assert cap["models_url"] == "https://api.openai.com/v1/models"
     assert cap["headers"]["Authorization"] == "Bearer sk-x"
+    assert cap["completions_url"] == "https://api.openai.com/v1/chat/completions"
 
 
 def test_verify_openai_custom_endpoint(monkeypatch):
     cap: dict = {}
-    _patch_get(monkeypatch, status=200, capture=cap)
+    _patch_openai_compat(monkeypatch, capture=cap)
     verify_provider_key(
         "openai", api_key="sk-x", base_url="https://gw.example/openai/v1/"
     )
-    # trailing slash trimmed, /models appended to the custom endpoint
-    assert cap["url"] == "https://gw.example/openai/v1/models"
+    assert cap["models_url"] == "https://gw.example/openai/v1/models"
+    assert cap["completions_url"] == "https://gw.example/openai/v1/chat/completions"
 
 
 def test_verify_bad_key_is_invalid(monkeypatch):
-    _patch_get(monkeypatch, status=401)
+    _patch_openai_compat(monkeypatch, models_status=401)
     assert verify_provider_key("openai", api_key="sk-bad") == {
         "ok": False,
         "error": "Invalid API key.",
     }
+
+
+def test_verify_rejects_endpoint_when_completions_404(monkeypatch):
+    _patch_openai_compat(monkeypatch, completions_status=404)
+    res = verify_provider_key(
+        "qwen", api_key="placeholder", base_url="http://127.0.0.1:1234"
+    )
+    assert not res["ok"] and "/v1" in res["error"]
 
 
 def test_verify_anthropic_headers(monkeypatch):
