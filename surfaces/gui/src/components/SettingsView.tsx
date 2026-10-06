@@ -481,13 +481,10 @@ function GrantsSection({ machine }: { machine?: string | null }) {
 
   const handleRevoke = async (grant: ActiveGrant) => {
     setRevoking(grant.id);
+    setError(null);
     try {
-      await revokeGrant({
-        grant_id: grant.id,
-        kind: grant.kind,
-        target: grant.name,
-        source_id: grant.source_id,
-      }, machine);
+      const result = await revokeGrant({ grant_id: grant.id }, machine);
+      if (!result.ok) throw new Error(result.error || "Failed to revoke grant");
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to revoke grant");
