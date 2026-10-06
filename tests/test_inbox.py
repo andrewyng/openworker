@@ -276,3 +276,18 @@ assert asyncio.run(s.wait(i.id)) == 'expired'
 assert s.get(i.id).resolution == 'expired'
 """], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=5)
     assert result.returncode == 0, result.stderr
+
+
+def test_expiry_supersedes_linked_worker_approval(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    store = InboxStore(tmp_path / "inbox.json")
+    past = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+    source = store.add_approval("worker", "Worker call", expires_at=past)
+    dependent = store.add_approval(
+        "lead", "Allow worker call?", data={"worker_prompt_id": source.id}
+    )
+    store.check_expirations()
+    assert source.resolution == "expired"
+    assert dependent.state == STATE_RESOLVED
+    assert dependent.resolution == "superseded"

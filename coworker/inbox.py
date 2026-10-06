@@ -418,13 +418,21 @@ class InboxStore:
         now = datetime.now(timezone.utc)
         for item in self._items.values():
             if item.state == STATE_PENDING and is_expired(item, now=now):
-                item.state = STATE_RESOLVED
-                item.resolution = "expired"
-                item.resolved_at = now.isoformat()
+                self._resolve_locked(item, "expired", "system:expiry")
                 expired.append(item)
-                ev = self._waiters.get(item.id)
-                if ev is not None:
-                    ev.set()
+        resolved_ids = {item.id for item in expired}
+        for dependent in self._items.values():
+            source_id = dependent.data.get("worker_prompt_id")
+            if dependent.state == STATE_PENDING and source_id in resolved_ids:
+                self._supersede_locked(dependent, self._items[source_id])
+                expired.append(dependent)
+                resolved_ids.add(dependent.id)
+        for item in expired:
+            ev = self._waiters.get(item.id)
+            if ev is not None:
+                loop = self._waiter_loops.get(item.id)
+                if loop is not None and not loop.is_closed():
+                    loop.call_soon_threadsafe(ev.set)
         if expired:
             self._save()
         return expired
