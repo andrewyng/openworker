@@ -134,22 +134,15 @@ export const clearPendingUpdate = () => invokeStrict<void>("clear_pending_update
  * Windows hands off to the installer). */
 export const installUpdate = () => invokeStrict<void>("install_update");
 
-/** Open a URL in the user's browser: the Tauri opener plugin in the desktop app (wired in
- * src-tauri, `opener:default`), `window.open` in a browser. */
+/** Open browser links through the scoped desktop plugin or the browser. */
 export function openExternal(url: string): void {
-  const opener = (globalThis as any).__TAURI__?.opener;
-  if (opener?.openUrl) {
-    opener.openUrl(url).catch(() => {
-      invoke<void>("open_url", { url }).catch(() => {
-        window.open(url, "_blank", "noopener,noreferrer");
-      });
-    });
-    return;
-  }
   if (isTauri()) {
-    invoke<void>("open_url", { url }).catch(() => {
-      window.open(url, "_blank", "noopener,noreferrer");
-    });
+    const opener = (globalThis as any).__TAURI__?.opener;
+    // Both routes enforce the plugin's URL scope. A denied URL must stay denied.
+    const opened = opener?.openUrl
+      ? opener.openUrl(url)
+      : invokeStrict<void>("plugin:opener|open_url", { url });
+    void opened.catch(() => {});
     return;
   }
   window.open(url, "_blank", "noopener,noreferrer");
