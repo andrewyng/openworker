@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from coworker.providers import (
     AssistantTurn,
     ModelCapabilities,
@@ -625,3 +627,100 @@ def test_over_limit_max_tokens_is_dropped_and_retried():
     calls = client.chat.completions.calls
     assert turn.text == "ok" and len(calls) == 2
     assert "max_tokens" not in calls[1]
+
+
+def test_deepinfra_never_leaks_the_openai_key(monkeypatch):
+    import pytest
+    from coworker.providers.registry import build_provider_client
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
+    monkeypatch.delenv("DEEPINFRA_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="DeepInfra"):
+        build_provider_client("deepinfra", {}, None)
+
+
+def test_deepinfra_discovery_uses_public_catalog_and_leaves_choice_to_user(monkeypatch):
+    import httpx
+    from types import SimpleNamespace
+    from coworker.server.manager import SessionManager
+    from coworker.providers.matrix import models_for_provider
+    from coworker.providers.registry import get_descriptor
+
+    catalog = [
+        {
+            "model_name": "new-org/New-Model",
+            "type": "text-generation",
+            "tags": ["tools", "reasoning"],
+            "max_tokens": 131072,
+        },
+        {"model_name": "text/Plain", "type": "text-generation"},
+        {"model_name": "new-org/New-Model", "type": "text-generation"},
+        {"model_name": "old/Retired", "type": "text-generation", "deprecated": 1},
+        {"model_name": "image/Generator", "type": "text-to-image"},
+        {"model_name": None, "type": "text-generation"},
+        None,
+    ]
+    captured = []
+
+    def get(url, **kwargs):
+        captured.append((url, kwargs))
+        return httpx.Response(200, json=catalog, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx, "get", get)
+    result = SessionManager.local_model_facts(SimpleNamespace(), "deepinfra")
+    assert [r["model"] for r in result["models"]] == [
+        "deepinfra:new-org/New-Model",
+        "deepinfra:text/Plain",
+    ]
+    assert result["models"][0]["context_max"] == 131072
+    assert result["models"][0]["tools"] is True
+    assert result["models"][0]["vision"] is None
+    assert captured == [("https://api.deepinfra.com/models/list", {"timeout": 10.0})]
+    assert get_descriptor("deepinfra").recommended_model is None
+    assert models_for_provider("deepinfra") == []
+    caps = capabilities_for("deepinfra:new-org/New-Model")
+    assert not caps.parallel_tool_calls and not caps.vision and not caps.pdf
+    from unittest.mock import Mock
+
+    owner = SimpleNamespace(
+        _refresh_provider=Mock(),
+        _suggested_models=Mock(return_value=[]),
+        add_model=Mock(),
+        set_default_model=Mock(),
+        model="existing:model",
+    )
+    assert SessionManager.adopt_provider_default(owner, "deepinfra") is None
+    owner.add_model.assert_not_called()
+    owner.set_default_model.assert_not_called()
+
+
+@pytest.mark.parametrize("catalog", [{"data": []}, None, "invalid"])
+def test_deepinfra_discovery_reports_invalid_catalog(monkeypatch, catalog):
+    import httpx
+    from types import SimpleNamespace
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        lambda url, **kwargs: httpx.Response(
+            200, json=catalog, request=httpx.Request("GET", url)
+        ),
+    )
+    result = SessionManager.local_model_facts(SimpleNamespace(), "deepinfra")
+    assert result["models"] == []
+    assert "Retry" in result["error"]
+
+
+def test_deepinfra_discovery_reports_timeout(monkeypatch):
+    import httpx
+    from types import SimpleNamespace
+    from coworker.server.manager import SessionManager
+
+    def timeout(*args, **kwargs):
+        raise httpx.TimeoutException("catalog unavailable")
+
+    monkeypatch.setattr(httpx, "get", timeout)
+    result = SessionManager.local_model_facts(SimpleNamespace(), "deepinfra")
+    assert result["models"] == []
+    assert "Retry" in result["error"]

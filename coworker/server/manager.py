@@ -4442,6 +4442,40 @@ class SessionManager:
         vLLM report the model they serve."""
         from ..providers import local_server, ollama_facts
 
+        if name == "deepinfra":
+            import httpx
+
+            try:
+                # Public catalog: no account key or chat request is sent.
+                response = httpx.get("https://api.deepinfra.com/models/list", timeout=10.0)
+                response.raise_for_status()
+                catalog = response.json()
+                if not isinstance(catalog, list):
+                    raise ValueError("unexpected catalog shape")
+            except (httpx.HTTPError, ValueError):
+                return {"provider": name, "models": [], "error": "DeepInfra models could not be loaded. Retry, or enter a model name."}
+            rows = []
+            seen = set()
+            for item in catalog:
+                if not isinstance(item, dict) or item.get("type") != "text-generation" or item.get("deprecated"):
+                    continue
+                model = item.get("model_name")
+                if not isinstance(model, str) or not model.strip() or model in seen:
+                    continue
+                seen.add(model)
+                tags = item.get("tags")
+                tags = tags if isinstance(tags, list) else []
+                context = item.get("max_tokens")
+                context = context if isinstance(context, int) and not isinstance(context, bool) and context > 0 else None
+                rows.append({
+                    "model": f"deepinfra:{model}", "name": model, "size_bytes": None,
+                    "tools": True if "tools" in tags else None, "thinking": True if "reasoning" in tags else None,
+                    "vision": None, "remote": True, "parameter_size": None,
+                    "quantization": item.get("quantization") if isinstance(item.get("quantization"), str) else None, "context_max": context,
+                    "context": None, "context_from": "server", "fit": "cloud",
+                    "recommendation": None,
+                })
+            return {"provider": name, "models": rows}
         if name == "ollama":
             profile = self.secrets.get("provider:ollama") or {}
             rows = ollama_facts.model_facts(profile.get("base_url"), fresh=True)
