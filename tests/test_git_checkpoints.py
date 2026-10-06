@@ -413,3 +413,39 @@ def test_readonly_checkpoint_workspace_is_never_mutated(tmp_path):
     assert path.read_text() == "after"
     assert [c["turn"] for c in list_checkpoints(tmp_path, "s", roots=readonly)] == [1]
     assert list_checkpoints(tmp_path, "s", roots=[]) == []
+
+
+@pytest.mark.parametrize("snapshot_has_nested_file", [False, True])
+def test_restore_refuses_symlinked_parent_before_mutation(tmp_path, snapshot_has_nested_file):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _init_git_repo(repo)
+    nested = repo / "nested"
+    nested.mkdir()
+    victim = nested / "victim.txt"
+    victim.write_text("snapshot")
+    (repo / "safe.txt").write_text("snapshot")
+    if not snapshot_has_nested_file:
+        victim.unlink()
+    assert create_checkpoint(repo, "s", 1)
+    victim.write_text("current")
+    (repo / "safe.txt").write_text("current")
+    subprocess.run(["git", "add", "nested/victim.txt", "safe.txt"], cwd=repo, env=_git_env(), check=True)
+    index_before = (repo / ".git" / "index").read_bytes()
+    # The ignored symlink is absent from --others, but its cached child remains.
+    (repo / ".git" / "info" / "exclude").write_text("nested\n")
+    victim.unlink()
+    nested.rmdir()
+    (outside / "victim.txt").write_text("outside")
+    nested.symlink_to(outside, target_is_directory=True)
+
+    result = restore_checkpoint(repo, "s", 1, roots=[{"path": str(repo), "writable": True}])
+
+    assert not result["ok"]
+    assert "symlink" in result["error"]
+    assert (outside / "victim.txt").read_text() == "outside"
+    assert (repo / "safe.txt").read_text() == "current"
+    assert nested.is_symlink()
+    assert (repo / ".git" / "index").read_bytes() == index_before

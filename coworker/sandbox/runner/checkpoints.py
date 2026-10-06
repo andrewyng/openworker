@@ -214,6 +214,14 @@ def restore_checkpoint(
         cp_files = {os.fsdecode(f) for f in _run_git(root, "ls-tree", "-rz", "--name-only", tree).split(b"\0") if f}
         current = {os.fsdecode(f) for f in _run_git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard").split(b"\0") if f}
         removed = sorted(current - cp_files)
+        # Cached paths can survive an ignored directory being replaced by a
+        # symlink. Refuse before any mutation rather than following its target.
+        for name in cp_files | set(removed):
+            parent = root
+            for component in Path(name).parts[:-1]:
+                parent /= component
+                if parent.is_symlink():
+                    return {"ok": False, "error": "checkpoint restore refuses a symlinked parent directory"}
         # Worktree-only restore never stages a formerly untracked/unstaged file.
         if cp_files:
             _run_git(root, "restore", f"--source={tree}", "--worktree", "--", ".")
@@ -235,5 +243,4 @@ def restore_checkpoint(
                 "message": f"Restored workspace and staging state before turn {turn_index}."}
     except (OSError, subprocess.SubprocessError) as exc:
         return {"ok": False, "error": f"checkpoint not found or restore failed: {exc}"}
-
 
