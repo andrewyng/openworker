@@ -1,4 +1,4 @@
-"""`ocw` — the board and journal from any shell, for any harness.
+"""The board and journal from any shell, for any harness (`python -m coworker.teams.cli`).
 
 The board is an open surface (OPE-100): the same role-scoped verbs the in-app
 agents get, usable by an external agent CLI, a script, or a human. Point it at a
@@ -12,9 +12,9 @@ Backing resolution, in order:
    whenever a server is up: two processes must never write one board file.
 4. Direct SQLite on the default state dir (nothing else is running).
 
-`ocw board mcp` serves the same surface as an MCP server on stdio — the way to
+`board mcp` serves the same surface as an MCP server on stdio — the way to
 hand a board to an external coding agent: point the agent's MCP config at
-`ocw board mcp --url … --token … --space …` and ask it to claim a work item.
+`python -m coworker.teams.cli board mcp --url … --token … --space …` and ask it to claim a work item.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="ocw", description="OpenWorker team board + journal CLI."
+        prog="python -m coworker.teams.cli", description="OpenWorker team board + journal CLI."
     )
     sub = parser.add_subparsers(dest="group")
 

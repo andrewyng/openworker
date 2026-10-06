@@ -59,7 +59,19 @@ crosses into the sandbox, and everything that comes back is treated as data.
 
 - A Linux machine, or a Mac with Docker Desktop.
 - Docker or Podman.
-- OpenShell 0.0.116, the release OpenWorker is tested against.
+- OpenShell 0.1.2, the release OpenWorker is tested against.
+- On a Mac: host networking turned on in Docker Desktop (**Settings ▸ Resources ▸
+  Network ▸ Enable host networking**, then Apply & restart). OpenShell's sandboxes reach
+  its gateway that way; with it off, no sandbox starts. The status check tells you when it
+  is off.
+
+### Coming from OpenShell 0.0.x
+
+OpenShell 0.1 cannot be installed over 0.0.x, and the two cannot talk to each other.
+Remove the old one first, following NVIDIA's
+[upgrade guide](https://docs.nvidia.com/openshell/latest/upgrade/0-1-0): delete its
+sandboxes, uninstall it, then run the setup below. The gateway settings file from 0.0.x is
+not valid for 0.1; delete `~/.config/openshell/gateway.toml` so setup can write a new one.
 
 ## Set it up
 
@@ -119,15 +131,37 @@ the agent is told.
 
 ## The network allow list
 
-Two choices, shared with the other sandboxes:
+With OpenShell there is one choice:
 
 - **Only the sites you allow** (`allowlist`, the default): nothing until you tick sites
   under **Choose sites…**. The list offers code hosting (GitHub, GitLab), the package
   registries (PyPI, npm, crates.io, the Go proxy) and the search APIs (Brave, Tavily,
   DuckDuckGo), each with a tick box, and you can add any site of your own.
-- **Allow everything** (`open`): any site, no allow list. The files are still the wall.
+
+**Allow everything** is not available with OpenShell. Its policy has to name each site, so
+a session set to it does not start and says so.
 
 A credential entry (below) also lets through the sites its tool needs.
+
+The coworker's **web search** and **web fetch** tools run in the OpenWorker app, not in the
+sandbox, and follow the same list. A site that is not on it asks you first; the card offers
+once, this session, or **Always allow**, which adds the site to the list. With full access
+(no approvals) the fetch is refused instead. "This session" and "Always allow" also open the
+site for the session's commands, at once: the running sandbox takes the new entry without a
+restart. "Once" is that one web call only. Connectors and MCP servers are not covered by the
+list; each has its own approval.
+
+When a command needs a site that is not on the list, it fails inside the sandbox. The
+coworker can then ask you for the site: a card names it, gives the coworker's reason, and
+says whether the sandbox has in fact blocked it. You choose **Allow for this session**,
+**Always allow**, or **Deny**; the site opens for the running session without a restart.
+The coworker is told which sites the sandbox blocked while a command ran, so it asks for the
+right one. With full access (no approvals) the coworker cannot ask;
+add the site in Settings ▸ Sandbox yourself.
+
+The session's **Access** section lists its sites. Those you allowed for this session only
+are marked **Session only**; you can take one back there, or allow another for the session.
+Sites from Settings are changed in Settings ▸ Sandbox. A session site ends with the session.
 
 OpenShell enforces the list in the container.
 

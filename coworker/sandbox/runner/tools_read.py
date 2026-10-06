@@ -1,7 +1,10 @@
-"""The logic of the `read_file` tool. Standard library only (it also runs inside a sandbox).
+"""The logic of the `read_file` and `list_files` tools. Standard library only (it also runs
+inside a sandbox).
 
-Returns `cat -n`-style numbered lines, windows big files instead of failing, and tells the
-agent how to continue reading. Read-only, scoped to the session's folders.
+`read_file` returns `cat -n`-style numbered lines, windows big files instead of failing, and
+tells the agent how to continue reading. `list_files` lists folders as well as files (folders
+end with '/'), so a workspace whose top level holds nothing but a subfolder never lists as
+empty (OPE-203). Both read-only, scoped to the session's folders.
 """
 
 from __future__ import annotations
@@ -11,6 +14,71 @@ from typing import Any, Optional, Sequence
 
 _DEFAULT_MAX_LINES = 2000
 _MAX_LINE_CHARS = 500
+_DEFAULT_MAX_RESULTS = 100
+_MAX_RESULTS_CAP = 2000
+# The same skip-list the aisuite file toolkit uses (copied: this module must stay
+# standard-library only), so every listing hides the same folders.
+_IGNORED_DIRS = (
+    ".git", ".venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    "node_modules", "dist", "build",
+)
+
+
+def _home_for(target: Path, root: Path, extra_roots: Sequence[Path]) -> Optional[Path]:
+    for r in (root, *extra_roots):
+        try:
+            target.relative_to(r)
+            return r
+        except ValueError:
+            continue
+    return None
+
+
+def list_files(
+    workspace: str,
+    path: str = ".",
+    pattern: str = "*",
+    recursive: bool = True,
+    max_results: int = _DEFAULT_MAX_RESULTS,
+    roots: Optional[Sequence[str]] = None,
+) -> Any:
+    """Files and folders under `path`, folders marked with a trailing '/', sorted. Paths
+    inside the workspace come back relative to it; paths inside another of the session's
+    `roots` come back absolute."""
+    root = Path(workspace).resolve()
+    extra_roots = [Path(str(r)).resolve() for r in (roots or [])]
+    n = (
+        max_results
+        if isinstance(max_results, int) and max_results > 0
+        else _DEFAULT_MAX_RESULTS
+    )
+    n = min(n, _MAX_RESULTS_CAP)
+    p = Path(str(path or ".")).expanduser()
+    base = p.resolve() if p.is_absolute() else (root / p).resolve()
+    home = _home_for(base, root, extra_roots)
+    if home is None:
+        return {"error": "path escapes the session's directories"}
+    if not base.is_dir():
+        return {"error": f"not a directory: {path}"}
+
+    results: list[str] = []
+    try:
+        iterator = base.rglob(pattern or "*") if recursive else base.glob(pattern or "*")
+        for item in iterator:
+            if any(part in _IGNORED_DIRS for part in item.relative_to(home).parts):
+                continue
+            shown = item.relative_to(root).as_posix() if home == root else str(item)
+            if item.is_dir():
+                results.append(shown + "/")
+            elif item.is_file():
+                results.append(shown)
+            else:
+                continue
+            if len(results) >= n:
+                break
+    except OSError as exc:
+        return {"error": f"list failed: {exc}"}
+    return sorted(results)
 
 
 def read_file(

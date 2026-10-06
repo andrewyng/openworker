@@ -115,6 +115,10 @@ if [ -n "$(find "$GUI/src-tauri/binaries/sidecar" -type d -name "*.framework" | 
   exit 1
 fi
 chmod +x "$GUI/src-tauri/binaries/sidecar/openworker-server"
+# Start it once, against an empty state folder: a sidecar that cannot load its libraries
+# must fail the build here, not on the user's Mac (the 0.3.0 and 0.3.1 Intel apps shipped
+# with a sidecar that could not; `--help` alone did not reach the broken import).
+COWORKER_STATE_DIR="$(mktemp -d)" "$GUI/src-tauri/binaries/sidecar/openworker-server" --check
 
 # Sign the sidecar's Mach-O files BEFORE tauri build: `tauri build` signs the .app (sealing
 # resources into its signature) but does NOT sign nested binaries inside resources — unsigned
@@ -224,15 +228,24 @@ OSA
   local i; for i in $(seq 1 15); do [ -f "$mnt/.DS_Store" ] && break; sleep 1; done
   [ -f "$mnt/.DS_Store" ] || { hdiutil detach "$dev" -force >/dev/null 2>&1 || true; return 1; }
   sync; sync
-  hdiutil detach "$dev" -force >/dev/null
-  hdiutil convert "$rw" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null
+  # Finder lets go of the volume a moment after it is done writing; on the GitHub Intel
+  # runner that moment came after our detach ("couldn't eject - Resource busy", then
+  # "convert failed - Resource temporarily unavailable"). Ask again for up to a minute.
+  for i in $(seq 1 20); do
+    hdiutil detach "$dev" >/dev/null 2>&1 && break
+    sleep 3
+    [ "$i" -lt 20 ] || hdiutil detach "$dev" -force >/dev/null 2>&1 || return 1
+  done
+  hdiutil convert "$rw" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null || return 1
   rm -f "$rw"
+  [ -f "$DMG" ]
 }
 
 if ! style_dmg; then
   echo "    (Finder styling unavailable — writing a plain .dmg)"
   hdiutil create -volname "$APP" -srcfolder "$STAGING" -ov -format UDZO "$DMG" >/dev/null
 fi
+[ -f "$DMG" ] || { echo "ERROR: no .dmg was written" >&2; exit 1; }
 rm -rf "$STAGING"
 
 if [ "${OCW_SKIP_NOTARIZE:-}" = "1" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then

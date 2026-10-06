@@ -10,6 +10,8 @@
 // to expand it and scroll it into view.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SessionSites } from "./SessionSites";
+import type { SessionSandbox } from "./SandboxChip";
 import { Trans, useTranslation } from "react-i18next";
 import {
   CLOUD_CHANGED,
@@ -61,6 +63,9 @@ export function AccessSection({
   scratchPrimary,
   openKey = 0,
   onOpenIntegrations,
+  sandbox = null,
+  onSandbox,
+  onOpenSandboxSettings,
 }: {
   sessionId: string;
   personaId?: string;
@@ -72,6 +77,10 @@ export function AccessSection({
   // Bumped by deep links ("Configure ›", onboarding's Start-working) → expand + scroll here.
   openKey?: number;
   onOpenIntegrations?: () => void;
+  // OPE-219: the session's sandbox, for the Sites group (the header chip shows the same data).
+  sandbox?: SessionSandbox | null;
+  onSandbox?: (next: SessionSandbox) => void;
+  onOpenSandboxSettings?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [conns, setConns] = useState<SessionConnections | null>(null);
@@ -489,6 +498,8 @@ export function AccessSection({
                 )}
                 {rootsError && <div className="roots-err">{rootsError}</div>}
               </div>
+              {/* The sites this session's commands and web tools reach (sandboxed sessions only). */}
+              <SessionSites sessionId={sessionId} sandbox={sandbox} onSandbox={onSandbox} onOpenSettings={onOpenSandboxSettings} />
             </div>
           )}
         </div>

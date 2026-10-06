@@ -216,7 +216,14 @@ class CoworkerApp(App):
             self._write(
                 "commands: /mode plan|interactive|auto · /model <id> · /clear · /quit"
             )
-        elif name == "/mode" and arg in {"plan", "interactive", "auto", "bypass-approvals", "auto-approve"}:
+        elif name == "/mode" and arg in {
+            "plan",
+            "interactive",
+            "auto",
+            "bypass-approvals",
+            "dangerously-bypass-approvals",
+            "auto-approve",
+        }:
             self.mode = Mode(arg)
             if self.engine:
                 self.engine.permissions.mode = self.mode

@@ -27,19 +27,15 @@ A few things are true by design, before any setup:
 
 ## 1. Install on the machine
 
-On the remote machine:
+On the remote machine (Linux or a Mac):
 
 ```bash
-sudo apt update && sudo apt install -y git curl python3-venv python3-pip
-python3 -m venv ~/ow-venv
-~/ow-venv/bin/pip install "git+https://github.com/andrewyng/openworker.git"
+curl -fsSL https://openworker.com/install.sh | sh
 ```
 
-Optional but recommended, so `openworker` is on your PATH:
-
-```bash
-echo 'export PATH=$HOME/ow-venv/bin:$PATH' >> ~/.bashrc && source ~/.bashrc
-```
+This downloads the `openworker` program for the machine into `~/.local/share/openworker`
+and links it into `~/.local/bin`. No Python is needed. The script tells you if
+`~/.local/bin` is not on your PATH yet.
 
 Check it:
 

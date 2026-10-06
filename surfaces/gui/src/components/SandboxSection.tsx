@@ -485,7 +485,8 @@ export function SandboxSection({ machine, onProviderChanged }: { machine?: Machi
         <>
           <div className={FIELD_LABEL + " mb-2"}>{t("settingsx.sandbox.network")}</div>
           <div className={CARD + " mb-5 divide-y divide-line"} role="radiogroup" aria-label={t("settingsx.sandbox.network")}>
-            {(["allowlist", "open"] as const).map((name) => (
+            {/* The server lists the choices: with OpenShell there is no "Allow everything". */}
+            {(["allowlist", "open"] as const).filter((name) => cfg.network_profiles.some((p) => p.name === name)).map((name) => (
               <label key={name} className="flex items-start gap-3 px-4 py-2.5 cursor-pointer">
                 <input
                   type="radio"
@@ -1047,10 +1048,11 @@ function OpenShellDialog({
   const good = (r?: Row) => Boolean(r) && (r!.state ? r!.state === "ok" || r!.state === "fixed" : r!.ok);
   const docker = byKey("docker");
   const kernel = byKey("docker_landlock"); // a Mac: does Docker Desktop's Linux kernel have Landlock
+  const hostNet = byKey("docker_host_network"); // a Mac: is Docker Desktop's host networking on
   const openshell = byKey("openshell");
-  const rest = rows.filter((r) => r.key !== "docker" && r.key !== "docker_landlock" && r.key !== "openshell");
+  const rest = rows.filter((r) => r.key !== "docker" && r.key !== "docker_landlock" && r.key !== "docker_host_network" && r.key !== "openshell");
   const blocked = rest.find((r) => r.state === "needs_you" || r.state === "failed");
-  const dockerOk = good(docker) && (!kernel || good(kernel));
+  const dockerOk = good(docker) && (!kernel || good(kernel)) && (!hostNet || good(hostNet));
   const checksOk = dockerOk && good(openshell);
   const allOk = rows.length > 0 && rows.every((r) => good(r));
   const done = job?.status === "done" || (!job && ready && allOk);
@@ -1119,6 +1121,15 @@ function OpenShellDialog({
                   {link(kernel.docs || "https://docs.docker.com/desktop/setup/install/mac-install/", t("settingsx.sandbox.get_docker_mac"), "sandbox-setup-docs-landlock")}
                 </span>
                 <span className="block">{t("settingsx.sandbox.os_docker_update_why")}</span>
+              </span>
+            ) : docker && good(docker) && hostNet && !good(hostNet) ? (
+              <span className="block text-meta text-muted mt-0.5" data-testid="sandbox-setup-hostnet">
+                <span className="block">
+                  {t("settingsx.sandbox.os_docker_hostnet")}{" "}
+                  {link(hostNet.docs || "https://docs.docker.com/engine/network/drivers/host/#docker-desktop", t("settingsx.sandbox.docker_hostnet_link"), "sandbox-setup-docs-hostnet")}
+                </span>
+                <span className="block">{t("settingsx.sandbox.os_docker_hostnet_where")}</span>
+                <span className="block">{t("settingsx.sandbox.os_docker_hostnet_why")}</span>
               </span>
             ) : docker && !good(docker) ? (
               <span className="block text-meta text-muted mt-0.5">

@@ -516,6 +516,84 @@ describe("ApprovalCard — §1.9 egress cards", () => {
     expect(screen.getByText(/leaves this computer → bbc\.com/)).toBeTruthy();
   });
 
+  it("a site off the sandbox's allowed sites says so and offers to add it (OPE-219)", () => {
+    const onApprove = vi.fn();
+    const walled = fetchApproval({
+      args: { url: "https://weather.com/today" },
+      reason: "weather.com is not on your allowed sites",
+      escalation: { kind: "human_required", reason: "weather.com is not on your allowed sites" },
+      siteWall: "weather.com",
+    });
+    render(<ApprovalCard item={walled} onApprove={onApprove} />);
+    // Its own plain line, not the generic "requires a human decision" banner.
+    expect(screen.getByTestId("approval-site-wall").textContent).toBe("weather.com is not on your allowed sites.");
+    expect(screen.queryByTestId("approval-escalation")).toBeNull();
+    // Once, this session, and the durable choice that writes the machine's list.
+    expect(screen.getByText("Allow weather.com for this session")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("approval-always-site"));
+    expect(onApprove).toHaveBeenCalledWith("always_site");
+    expect(screen.getByTestId("approval-always-site").textContent).toBe("Always allow weather.com");
+  });
+
+  it("a network request shows the agent's reason and what the sandbox saw, and is never once (OPE-219)", () => {
+    const onApprove = vi.fn();
+    const ask = fetchApproval({
+      name: "request_network_access",
+      args: { hosts: ["api.acme.dev", "db.acme.dev:5432"], reason: "The deploy script pushes the build." },
+      reason: "asks to let this session's commands reach api.acme.dev, db.acme.dev:5432",
+      networkRequest: {
+        reason: "The deploy script pushes the build.",
+        evidence: true,
+        hosts: [
+          { host: "api.acme.dev:443", blockedSecondsAgo: 240 },
+          { host: "db.acme.dev:5432", blockedSecondsAgo: null },
+        ],
+      },
+    });
+    render(<ApprovalCard item={ask} onApprove={onApprove} />);
+    expect(screen.getByText("api.acme.dev and db.acme.dev:5432")).toBeTruthy(); // the headline names the sites
+    expect(screen.getByTestId("approval-network-request").textContent).toContain("The deploy script pushes the build.");
+    const hosts = screen.getAllByTestId("approval-network-host").map((n) => n.textContent);
+    expect(hosts).toEqual([
+      "api.acme.dev The sandbox blocked this site 4 minutes ago.",
+      "db.acme.dev:5432 No command has tried this site yet.",
+    ]);
+    // This session, always, or no: a command's network access cannot be "once".
+    expect(screen.queryByText("Allow once")).toBeNull();
+    expect(screen.getByTestId("approval-network-always").textContent).toBe("Always allow these sites");
+    fireEvent.click(screen.getByTestId("approval-network-session"));
+    expect(onApprove).toHaveBeenCalledWith("always_domain");
+    fireEvent.click(screen.getByTestId("approval-network-always"));
+    expect(onApprove).toHaveBeenCalledWith("always_site");
+  });
+
+  it("a network request for one site just blocked names it on the always button", () => {
+    const ask = fetchApproval({
+      name: "request_network_access",
+      args: { hosts: ["registry.npmjs.org"], reason: "npm install needs the registry." },
+      networkRequest: { reason: "npm install needs the registry.", evidence: true, hosts: [{ host: "registry.npmjs.org:443", blockedSecondsAgo: 20 }] },
+    });
+    const { rerender } = render(<ApprovalCard item={ask} onApprove={vi.fn()} autoApprove />);
+    expect(screen.getByTestId("approval-network-host").textContent).toBe("registry.npmjs.org The sandbox blocked this site a moment ago.");
+    // A sandbox that cannot say what it blocked: the site alone, no claim either way.
+    rerender(
+      <ApprovalCard
+        item={{ ...ask, networkRequest: { reason: "x", evidence: false, hosts: [{ host: "registry.npmjs.org:443", blockedSecondsAgo: null }] } }}
+        onApprove={vi.fn()}
+        autoApprove
+      />,
+    );
+    expect(screen.getByTestId("approval-network-host").textContent?.trim()).toBe("registry.npmjs.org");
+    // Standing policy the person sets: offered in Auto-approve too.
+    expect(screen.getByTestId("approval-network-always").textContent).toBe("Always allow registry.npmjs.org");
+  });
+
+  it("an ordinary fetch card has no allowed-sites line or button", () => {
+    render(<ApprovalCard item={fetchApproval()} onApprove={vi.fn()} />);
+    expect(screen.queryByTestId("approval-site-wall")).toBeNull();
+    expect(screen.queryByTestId("approval-always-site")).toBeNull();
+  });
+
   it("web_fetch with an unparseable url falls back to once/deny only", () => {
     render(<ApprovalCard item={fetchApproval({ args: { url: "not a url" } })} onApprove={vi.fn()} />);
     expect(screen.queryByText(/for this session/)).toBeNull();

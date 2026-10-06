@@ -12,7 +12,7 @@ def test_no_arguments_prints_help_that_lists_every_public_command(capsys):
     ow_cli.main([])
     out = capsys.readouterr().out
     assert "usage: openworker <command>" in out
-    for verb in ("join <link>", "up", "machine", "status", "keys", "logs", "service", "leave", "version"):
+    for verb in ("join <link>", "up", "run  ", "machine", "status", "keys", "logs", "service", "leave", "version"):
         assert verb in out
     # Unlisted until tested as a product surface.
     for hidden in ("tui", "sessions", "inbox", "doctor"):
@@ -233,3 +233,20 @@ def test_install_script_refuses_an_unsupported_os(tmp_path):
     env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "HOME": str(tmp_path)}
     done = subprocess.run(["sh", str(INSTALL_SH)], env=env, capture_output=True, text=True)
     assert done.returncode == 1 and "Linux and macOS" in done.stderr
+
+
+def test_install_script_downloads_the_program_on_a_mac(tmp_path):
+    """A Mac gets the program, like Linux, not the Python package (which needs PyPI)."""
+    fake = tmp_path / "uname"
+    fake.write_text('#!/bin/sh\ncase "$1" in -m) echo arm64 ;; *) echo Darwin ;; esac\n')
+    fake.chmod(0o755)
+    # A curl that records the first address asked for and fails, so nothing is installed.
+    curl = tmp_path / "curl"
+    curl.write_text('#!/bin/sh\nfor a in "$@"; do case "$a" in http*) echo "$a" > "$ASKED" ;; esac; done\nexit 22\n')
+    curl.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "HOME": str(tmp_path), "ASKED": str(tmp_path / "asked")}
+    done = subprocess.run(["sh", str(INSTALL_SH)], env=env, capture_output=True, text=True)
+    assert done.returncode == 1 and "could not download" in done.stderr
+    asked = (tmp_path / "asked").read_text().strip()
+    assert asked.endswith("/releases/latest/download/openworker-macos-arm64.tar.gz")
+    assert "uv" not in done.stdout and "pipx" not in done.stdout

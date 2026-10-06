@@ -1,0 +1,34 @@
+# OpenShell provider profile: OpenWorker calling OpenAI models.
+#
+#   openshell profile import -f packaging/openshell/providers/openworker-openai.yaml
+#   OPENAI_API_KEY=... openshell provider create --name openworker-openai \
+#       --type openworker-openai --from-existing
+#
+# Client binary:     OpenWorker's own Python, as installed in
+#                    ghcr.io/andrewyng/openworker (packaging/openshell/Dockerfile).
+#                    Commands OpenWorker starts count as OpenWorker too.
+# Credential scope:  OPENAI_API_KEY, sent as a bearer token to api.openai.com and
+#                    nowhere else. Inside the sandbox the variable holds a placeholder.
+# Endpoint access:   api.openai.com, read-write, L7 enforced.
+
+id: openworker-openai
+display_name: OpenWorker (OpenAI)
+description: OpenWorker CLI with OpenAI models
+category: agent
+inference_capable: true
+credentials:
+  - name: api_key
+    description: OpenAI API key
+    env_vars: [OPENAI_API_KEY]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+discovery:
+  credentials: [api_key]
+endpoints:
+  - host: api.openai.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries: [/usr/local/lib/openworker/venv/bin/python]

@@ -155,7 +155,7 @@ def create_cloud_app(data_dir: str | Path) -> FastAPI:
 
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(
-        prog="openworker-acceptor",
+        prog="python -m coworker.remote.service",
         description="Acceptor-only cloud service: machines join it; the SPA runs against it in cloud mode.",
     )
     parser.add_argument("--data-dir", default="~/.config/openworker-cloud")

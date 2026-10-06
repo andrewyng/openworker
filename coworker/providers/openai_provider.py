@@ -220,6 +220,7 @@ class OpenAIProvider(ProviderClient):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         secrets: Any = None,
+        http_client: Any = None,
     ):
         # The SDK client is built lazily on first use, NOT at construction. This lets an engine
         # be assembled before any key exists — the desktop app lets you enter the key in Settings
@@ -230,10 +231,14 @@ class OpenAIProvider(ProviderClient):
         # `base_url` points the same OpenAI SDK at any OpenAI-compatible endpoint — used by the
         # provider router for Ollama (`http://localhost:11434/v1`, with a placeholder key) and,
         # later, other OpenAI-shaped backends. When None, behavior is identical to stock OpenAI.
+        #
+        # `http_client` is an optional httpx.Client handed to the SDK. Ollama uses it to carry
+        # a transport that rewrites chat calls onto the native API (see ollama_context.py).
         self._client = client
         self._api_key = api_key
         self._base_url = base_url
         self._secrets = secrets
+        self._http_client = http_client
         self.default_model = default_model
 
     def _ensure_client(self) -> Any:
@@ -250,6 +255,8 @@ class OpenAIProvider(ProviderClient):
             kwargs: dict[str, Any] = {"api_key": key}
             if self._base_url:
                 kwargs["base_url"] = self._base_url
+            if self._http_client is not None:
+                kwargs["http_client"] = self._http_client
             self._client = OpenAI(**kwargs)
         return self._client
 
@@ -507,6 +514,23 @@ _LEAKED_TOOL_SYNTAX = (
     "<invoke ",
 )
 _FENCED = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
+
+
+# A finished answer with one stray tool tag at its very end and nothing after it. Seen
+# live on qwen3-coder:30b (Ollama 0.35.1): a complete, correct answer ended in `<tool_call>`
+# and was thrown away as a failed call, and the retry gave a weaker second answer.
+_DANGLING_TOOL_TAG = re.compile(r"\s*</?tool_call>\s*$", re.IGNORECASE)
+
+
+def strip_dangling_tool_tag(text: Optional[str]) -> tuple[Optional[str], bool]:
+    """(text without a trailing empty tool tag, whether one was removed). Only the tag
+    at the end goes; a tag with anything after it is a call that did not parse."""
+    if not text:
+        return text, False
+    stripped = _DANGLING_TOOL_TAG.sub("", text, count=1)
+    if stripped == text or not stripped.strip():
+        return text, False
+    return stripped.rstrip(), True
 
 
 def looks_like_unparsed_tool_call(

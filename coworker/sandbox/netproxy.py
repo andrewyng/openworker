@@ -15,6 +15,7 @@ import select
 import socket
 import sys
 import threading
+import time
 from collections import deque
 from typing import Optional, Sequence
 
@@ -37,16 +38,36 @@ class AllowListProxy:
         self.profile = network_profiles.check(profile)
         self._hosts = {h.lower() for h in network_profiles.hosts(profile)}
         self._extra: set[tuple[str, int]] = set()
-        for item in extra_hosts:
-            host, _, port = str(item).rpartition(":")
-            if host and port.isdigit():
-                self._extra.add((host.lower().rstrip("."), int(port)))
+        self.add_hosts(extra_hosts)
         self.denied: deque[str] = deque(maxlen=50)  # recent refusals, newest last
+        # (time, "host:port") of each refused connection, newest last: what the agent is told
+        # with a command's result, and the evidence on the network-access card (OPE-219).
+        self.blocked: deque[tuple[float, str]] = deque(maxlen=200)
         self._server = _listen()
         self._server.listen(64)
         self.port: int = self._server.getsockname()[1]
         self._closed = False
         threading.Thread(target=self._accept, name=f"sandbox-proxy-{profile}", daemon=True).start()
+
+    def add_hosts(self, hosts: Sequence[str]) -> None:
+        """Let more "host:port" entries out, from now on: the person allowed a site for this
+        session or for good (OPE-219). The list only grows while a sandbox runs."""
+        for item in hosts:
+            host, _, port = str(item).rpartition(":")
+            if host and port.isdigit():
+                self._extra.add((host.lower().rstrip("."), int(port)))
+
+    def remove_hosts(self, hosts: Sequence[str]) -> None:
+        """Stop letting these "host:port" entries out (the person took a site back from the
+        session). Connections already open are not cut."""
+        for item in hosts:
+            host, _, port = str(item).rpartition(":")
+            if host and port.isdigit():
+                self._extra.discard((host.lower().rstrip("."), int(port)))
+
+    def blocked_since(self, since: float) -> list[tuple[float, str]]:
+        """The connections refused at or after `since`, oldest first."""
+        return [item for item in list(self.blocked) if item[0] >= since]
 
     @property
     def url(self) -> str:
@@ -132,6 +153,9 @@ class AllowListProxy:
     def _refuse(self, client: socket.socket, status: int, why: str, target: str = "") -> None:
         if status == 403 and target:
             self.denied.append(target)
+            entry = _blocked_entry(target)
+            if entry:
+                self.blocked.append((time.time(), entry))
         body = f"Blocked by the OpenWorker sandbox: {why}.\n".encode()
         reason = {400: "Bad Request", 403: "Forbidden", 502: "Bad Gateway"}[status]
         head = f"HTTP/1.1 {status} {reason}\r\nContent-Type: text/plain\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n"
@@ -150,6 +174,22 @@ class AllowListProxy:
                 if not data:
                     return
                 (b if src is a else a).sendall(data)
+
+
+def _blocked_entry(target: str) -> str:
+    """A refused target as "host:port", or "" when it is not a host name. The target is
+    whatever a sandboxed program asked for, and it is shown to the agent and the person, so
+    only a real host name passes (never free text)."""
+    text = target.strip()
+    if "://" in text:  # a plain-HTTP request names a URL
+        scheme, rest = text.split("://", 1)
+        rest = rest.split("/", 1)[0]
+        text = rest if ":" in rest else f"{rest}:{80 if scheme.lower() == 'http' else 443}"
+    try:
+        entry = network_profiles.clean_host(text)
+    except ValueError:
+        return ""
+    return "" if entry.startswith("*.") else entry
 
 
 def _listen() -> socket.socket:

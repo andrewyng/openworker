@@ -171,3 +171,15 @@ def test_engine_default_cap_is_ten_thousand_and_zero_disables(tmp_path):
     assert e1._tool_result_max_bytes == toolresult.DEFAULT_TOOL_RESULT_MAX_BYTES == 10_000
     e2 = TurnEngine(provider=_Scripted([]), registry=registry, permissions=permissions, model="m", tool_result_max_bytes=0)
     assert e2._tool_result_max_bytes == 0
+
+
+def test_multibyte_cut_fits_at_any_spill_path_length(tmp_path):
+    """The marker names the spill file, so the path length decides how far the cut must
+    shrink; with multi-byte text one shrink by the overshoot can land a byte over."""
+    text = "é☃𝄞" * 20_000
+    for n in range(1, 120):
+        spill = tmp_path / ("d" * n)
+        out = _bounded(text, spill=spill)
+        assert len(out.encode()) <= 10_000, n
+        result = {"command": "x", "exit_code": 0, "output": text, "truncated": False}
+        assert _size(_bounded(result, spill=spill)) <= 10_000, n

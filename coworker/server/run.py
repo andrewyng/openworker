@@ -163,22 +163,58 @@ def main(argv=None) -> None:
     maybe_run_runner(list(sys.argv[1:] if argv is None else argv))  # `sandbox-runner ...`
     _ensure_ca_bundle()
     cfg = load_config()  # global config supplies defaults
-    parser = argparse.ArgumentParser(prog="openworker-server")
+    # The desktop app's bundled sidecar is a program named openworker-server (packaging/
+    # cli_entry.py); from a checkout the server is run as a module.
+    prog = "openworker-server" if os.path.basename(sys.argv[0]).startswith("openworker-server") else "python -m coworker.server.run"
+    parser = argparse.ArgumentParser(prog=prog)
     parser.add_argument("--cwd", default=None, help="optional seed/default workspace")
     parser.add_argument("--model", default=cfg.model)
     parser.add_argument(
         "--mode",
         default=cfg.mode,
-        choices=["discuss", "plan", "interactive", "auto", "bypass-approvals", "auto-approve"],
+        choices=[
+            "discuss",
+            "plan",
+            "interactive",
+            "auto",
+            "bypass-approvals",
+            "dangerously-bypass-approvals",
+            "auto-approve",
+        ],
+    )
+    parser.add_argument(
+        "--allow-dangerous-mode",
+        action="store_true",
+        help=(
+            "let sessions run in dangerously-bypass-approvals (all approvals granted, "
+            "safety checks off); only on a disposable machine or container"
+        ),
     )
     parser.add_argument("--host", default=cfg.host)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="build the application and exit without serving (packaging checks)",
+    )
     parser.add_argument("--port", type=int, default=cfg.port)
     args = parser.parse_args(argv)
+    if args.allow_dangerous_mode:
+        os.environ["COWORKER_ALLOW_DANGEROUS_MODE"] = "1"
+    elif args.mode == "dangerously-bypass-approvals":
+        parser.error("--mode dangerously-bypass-approvals requires --allow-dangerous-mode")
 
     # Publish the ACTUAL bound port so loopback URLs (the managed-OAuth callback)
     # target this process, not config.port. The desktop shell runs the sidecar on
     # port 8765, or a free port when that is taken (a hand-run server), so the
     # managed-connect redirect must follow the real port, not the 8765 default.
+    if args.check:
+        # Every import and the application wiring, nothing bound, nothing written: a
+        # frozen build that cannot load its libraries fails here (the 0.3.0 and 0.3.1
+        # Intel apps shipped with a sidecar that could not).
+        build_app(args.cwd, args.model, args.mode)
+        print("ok")
+        return
+
     os.environ["COWORKER_PORT"] = str(args.port)
     generated_token_path = _ensure_api_token(args.port)
     try:

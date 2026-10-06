@@ -167,6 +167,17 @@ from ..inbox import VIS_INBOX, VIS_INLINE, args_preview
 from ..permissions import Mode
 from ..providers import AssistantTurn
 from .. import toolchain
+
+
+def _session_sandbox(engine: Any) -> dict[str, Any]:
+    """The session's sandbox, for its header chip. Never raises: a header must not break
+    a session."""
+    try:
+        from ..sandbox.settings import session_sandbox
+
+        return session_sandbox(engine)
+    except Exception:  # noqa: BLE001
+        return {"state": "off"}
 from ..teams.model import AuthorityError as TeamsAuthorityError
 from ..teams.model import BoardError as TeamsBoardError
 from ..teams.model import BoardNotFoundError as TeamsBoardNotFoundError
@@ -174,6 +185,22 @@ from .manager import SessionManager, _approval_body
 
 
 def create_app(manager: SessionManager) -> FastAPI:
+    from ..providers.openrouter_auth import OpenRouterAuth
+
+    def openrouter_changed() -> None:
+        manager._refresh_provider("openrouter")
+        if manager._provider_configured("openrouter"):
+            from ..providers.registry import get_descriptor
+
+            model = get_descriptor("openrouter").recommended_model
+            if model:
+                qualified = f"openrouter:{model}"
+                manager.add_model(qualified)
+                if not manager._provider_configured(manager._model_provider(manager.model)):
+                    manager.set_default_model(qualified)
+
+    openrouter_auth = OpenRouterAuth(manager.secrets, openrouter_changed)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         try:
@@ -187,6 +214,7 @@ def create_app(manager: SessionManager) -> FastAPI:
 
             traceback.print_exc()
         yield
+        openrouter_auth.cancel()
         await manager.aclose()  # stop gateway + close MCP connections on shutdown
 
     app = FastAPI(title="coworker", version="0.0.0", lifespan=lifespan)
@@ -222,6 +250,10 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.middleware("http")
     async def require_sidecar_token(request: Request, call_next):
+        if request.url.path.startswith("/v1/providers/openrouter/") and not _origin_allowed(
+            request.headers.get("origin")
+        ):
+            return JSONResponse({"error": "origin not allowed"}, status_code=403)
         # Preflights carry the requested header name, not its value. CORS checks the
         # Origin; the actual state-changing request still must authenticate.
         if (
@@ -429,7 +461,10 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.get("/v1/sessions/{session_id}/unattended")
     def get_unattended(session_id: str) -> dict[str, Any]:
-        return {"unattended": manager.unattended.is_unattended(session_id)}
+        return {
+            "unattended": manager.unattended.is_unattended(session_id),
+            "attendance": manager.unattended.attendance(session_id),
+        }
 
     @app.get("/v1/sessions/{session_id}/reviewer-stats")
     def get_reviewer_stats(session_id: str) -> dict[str, Any]:
@@ -440,8 +475,18 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/sessions/{session_id}/unattended")
     def set_unattended(session_id: str, body: dict) -> dict[str, Any]:
         # The GUI gates the on-transition behind a one-tap confirm; the manager records the
-        # transition either way, so the change is answerable from the audit store.
-        return manager.set_unattended(session_id, bool(body.get("unattended")))
+        # transition either way, so the change is answerable from the audit store. Newer
+        # clients send `attendance` ("attended" / "inbox" / "auto"); older ones the boolean.
+        value = body["attendance"] if "attendance" in body else bool(body.get("unattended"))
+        return manager.set_unattended(session_id, value)
+
+    @app.get("/v1/sessions/{session_id}/model-settings")
+    def session_model_settings(session_id: str) -> dict[str, Any]:
+        return manager.session_model_settings(session_id)
+
+    @app.post("/v1/sessions/{session_id}/model-settings")
+    def set_session_model_settings(session_id: str, body: dict) -> dict[str, Any]:
+        return manager.set_session_model_settings(session_id, body or {})
 
     @app.get("/v1/sessions/{session_id}/skills")
     def session_skills(session_id: str, workspace: str = "") -> dict[str, Any]:
@@ -789,6 +834,19 @@ def create_app(manager: SessionManager) -> FastAPI:
     def session_remove_root(session_id: str, path: str) -> dict[str, Any]:
         return manager.remove_root(session_id, path)
 
+    # OPE-219: the session's allowed sites, for its header chip and Access section.
+    @app.get("/v1/sessions/{session_id}/sites")
+    def session_sites(session_id: str) -> dict[str, Any]:
+        return {"sandbox": manager.session_sites(session_id)}
+
+    @app.post("/v1/sessions/{session_id}/sites")
+    def session_allow_site(session_id: str, body: dict) -> dict[str, Any]:
+        return manager.allow_session_site(session_id, str((body or {}).get("host", "")))
+
+    @app.delete("/v1/sessions/{session_id}/sites")
+    def session_remove_site(session_id: str, host: str) -> dict[str, Any]:
+        return manager.remove_session_site(session_id, host)
+
     @app.get("/v1/sessions/{session_id}/artifacts")
     def session_artifacts(session_id: str) -> dict[str, Any]:
         return {"artifacts": manager.list_artifacts(session_id)}
@@ -880,7 +938,7 @@ def create_app(manager: SessionManager) -> FastAPI:
         if actor is None:
             return JSONResponse(
                 {"error": "board token required (Authorization: Bearer …) — mint"
-                          " one with `ocw board token` on the serving machine"},
+                          " one with `python -m coworker.teams.cli board token` on the serving machine"},
                 status_code=401,
             )
         try:
@@ -2279,15 +2337,29 @@ def create_app(manager: SessionManager) -> FastAPI:
         return manager.get_providers()
 
     @app.post("/v1/providers")
-    def providers_set(body: dict) -> dict[str, Any]:
+    async def providers_set(body: dict) -> dict[str, Any]:
         name = (body or {}).get("name", "")
         if not name:
             return {"ok": False, "error": "name required"}
-        return manager.set_provider(name, (body or {}).get("fields"))
+        if name == "openrouter":
+            openrouter_auth.cancel()
+            return manager.set_provider(name, (body or {}).get("fields"))
+        return await asyncio.to_thread(manager.set_provider, name, (body or {}).get("fields"))
 
     @app.delete("/v1/providers/{name}")
-    def providers_remove(name: str) -> dict[str, Any]:
-        return manager.remove_provider(name)
+    async def providers_remove(name: str) -> dict[str, Any]:
+        if name == "openrouter":
+            openrouter_auth.cancel()
+            return manager.remove_provider(name)
+        return await asyncio.to_thread(manager.remove_provider, name)
+
+    @app.get("/v1/providers/{name}/models")
+    def providers_local_models(name: str) -> dict[str, Any]:
+        return manager.local_model_facts(name)
+
+    @app.get("/v1/system")
+    def system_get() -> dict[str, Any]:
+        return manager.system_facts()
 
     @app.post("/v1/providers/verify")
     async def providers_verify(body: dict) -> dict[str, Any]:
@@ -2306,6 +2378,26 @@ def create_app(manager: SessionManager) -> FastAPI:
         manager.begin_codex_signin()
         asyncio.create_task(manager.codex_signin())
         return {"ok": True, "started": True}
+
+    @app.get("/v1/providers/openrouter/status")
+    async def openrouter_status():
+        return openrouter_auth.status()
+
+    @app.post("/v1/providers/openrouter/signin")
+    async def openrouter_signin(body: dict):
+        return await openrouter_auth.start(manual=body.get("manual") is True)
+
+    @app.post("/v1/providers/openrouter/complete")
+    async def openrouter_complete(body: dict):
+        return await openrouter_auth.complete(body.get("code"), body.get("attempt_id"))
+
+    @app.post("/v1/providers/openrouter/cancel")
+    async def openrouter_cancel():
+        return openrouter_auth.cancel()
+
+    @app.post("/v1/providers/openrouter/disconnect")
+    async def openrouter_disconnect():
+        return openrouter_auth.disconnect()
 
     @app.get("/v1/providers/openai-codex/status")
     def codex_status() -> dict[str, Any]:
@@ -2335,6 +2427,20 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/settings/models/remove")
     def settings_models_remove(body: dict) -> dict[str, Any]:
         return manager.remove_model((body or {}).get("model", ""))
+
+    # Per-model settings (model_config.py). Model ids carry colons and slashes, so the
+    # id travels in the body or the query, never the path.
+    @app.get("/v1/settings/model-config")
+    def settings_model_config_get(model: str = "") -> dict[str, Any]:
+        return manager.get_model_config(model)
+
+    @app.post("/v1/settings/model-config")
+    def settings_model_config_set(body: dict) -> dict[str, Any]:
+        return manager.set_model_config((body or {}).get("model", ""), (body or {}).get("values") or {})
+
+    @app.post("/v1/settings/model-config/remove")
+    def settings_model_config_remove(body: dict) -> dict[str, Any]:
+        return manager.remove_model_config((body or {}).get("model", ""))
 
     @app.post("/v1/settings/onboarded")
     def settings_set_onboarded(body: dict) -> dict[str, Any]:
@@ -2922,6 +3028,9 @@ def create_app(manager: SessionManager) -> FastAPI:
         # configuration, or a worker under an auto-approve lead) is reviewed even when
         # nobody attends it.
         engine.is_attended = lambda: _visibility() == VIS_INLINE or manager.reviewer_opted(session_id)
+        # Attendance "auto" (coworker/unattended.py): the engine answers by rule instead of
+        # routing to the Inbox. Read live, so the toggle applies mid-session.
+        engine.attendance = lambda: manager.unattended.attendance(session_id)
         await ws.send_json(
             {
                 "type": "ready",
@@ -2934,6 +3043,8 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "agent": getattr(engine, "agent_name", "code"),
                     "model": engine.model,
                     "mode": engine.permissions.mode.value,
+                    # OPE-218: the header chip says which walls this session runs behind.
+                    "sandbox": _session_sandbox(engine),
                     "workspace": (
                         str(getattr(engine, "executor").cwd)
                         if getattr(engine, "executor", None)
@@ -3135,6 +3246,16 @@ def create_app(manager: SessionManager) -> FastAPI:
                     except (TypeError, ValueError):
                         pass
                     else:
+                        if (
+                            new_mode is Mode.DANGEROUSLY_BYPASS_APPROVALS
+                            and not manager.allow_dangerous_mode
+                        ):
+                            await reject_input(
+                                "dangerously-bypass-approvals is not available here: "
+                                "start the server with --allow-dangerous-mode, and only "
+                                "on a disposable machine or container."
+                            )
+                            continue
                         previous = engine.permissions.mode
                         engine.permissions.mode = new_mode
                         if previous is not new_mode:

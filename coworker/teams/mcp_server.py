@@ -1,7 +1,7 @@
 """`team-board` — the board and journal as an MCP server on stdio.
 
 The way an external coding agent joins a team: its MCP config runs
-`ocw board mcp --url … --token … --space …` (or `--db …` headless), it sees the
+`python -m coworker.teams.cli board mcp --url … --token … --space …` (or `--db …` headless), it sees the
 role-scoped board tools, and the user asks it to claim an item and work. Identity
 and authority never live here: the dialect is already bound to one actor (token or
 local flags), and every write is judged by the store/server — this file is a thin

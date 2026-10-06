@@ -18,9 +18,11 @@ What a sandbox gets:
 from __future__ import annotations
 
 import json
+from collections import deque
 import logging
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -43,7 +45,7 @@ from . import openshell_wire as wire
 
 log = logging.getLogger(__name__)
 
-PINNED_VERSION = "0.0.116"  # ruling 24: one pinned release until NVIDIA ships GA
+PINNED_VERSION = "0.1.2"  # one pinned release (ruling 24). 0.0.x and 0.1.x cannot talk to each other
 DEFAULT_IMAGE = "ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e"
 LABEL = "openworker"
 _SOCKET = f"{policy.RUNTIME_DIR}/owr/r.sock"
@@ -103,7 +105,25 @@ def preflight() -> dict[str, Any]:
             f"{IMAGE_MISSING_PREFIX} (about 5 GB, one time). Run `openworker machine sandbox setup`, "
             f"or `{image_tool() or 'docker'} pull {sandbox_image()}`, then start the session again."
         )
+    problem = host_network_problem()
+    if problem:
+        raise OpenShellUnavailable(problem)
     return {"version": version}
+
+
+def _host_network_problem() -> Optional[str]:
+    """On a Mac: what to do when Docker Desktop's host networking is off, else None.
+    OpenShell 0.1 cannot start a sandbox without it, and says only "failed to connect"."""
+    if sys.platform != "darwin":
+        return None
+    from ..setup_cmd import DOCKER_HOST_NETWORK_FIX, docker_host_network
+
+    return f"{DOCKER_HOST_NETWORK_FIX}." if docker_host_network() is False else None
+
+
+# What `preflight` calls. A name of its own so tests can stand in for it: the real one
+# starts a container.
+host_network_problem = _host_network_problem
 
 
 def active_driver() -> str:
@@ -203,6 +223,69 @@ def _gateway() -> tuple[str, Path]:
     return endpoint, home / "gateways" / name / "mtls"
 
 
+# A refusal in the sandbox's log, as OpenShell 0.0.116 writes it:
+#   [1791068681.547] [sandbox] [OCSF ] [ocsf] NET:OPEN [MED] DENIED /usr/bin/curl(85) -> www.iana.org:443 [policy:- …]
+_DENIED_LINE = re.compile(r"^\[(\d+(?:\.\d+)?)\].*\bDENIED\b\s+\S+?\(\d+\)\s+->\s+(\S+:\d+)")
+
+
+class DenialLog:
+    """What a sandbox refused, read from its own log (`openshell logs <name> --tail`).
+
+    The log is followed by one long-lived reader, so asking costs nothing per command. A
+    line arrives up to about half a second after the refusal (OpenShell sends its log in
+    batches), which is `OpenShellProvider.blocked_lag`. The reader starts with the log's
+    recent history, so refusals from before it started are there too."""
+
+    def __init__(self, sandbox_name: str) -> None:
+        self.entries: deque[tuple[float, str]] = deque(maxlen=200)
+        self._seen: set[tuple[float, str]] = set()
+        self._process: Optional[subprocess.Popen] = None
+        exe = shutil.which("openshell")
+        if exe is None:
+            return
+        try:
+            self._process = subprocess.Popen(
+                [exe, "logs", sandbox_name, "--tail", "--source", "sandbox"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env={**os.environ, "NO_COLOR": "1"},
+            )  # fmt: skip
+        except OSError:
+            return
+        threading.Thread(target=self._read, name=f"openshell-denials-{sandbox_name}", daemon=True).start()
+
+    @property
+    def alive(self) -> bool:
+        return self._process is not None and self._process.poll() is None
+
+    def _read(self) -> None:
+        try:
+            for line in self._process.stdout:  # type: ignore[union-attr]
+                self.take(line)
+        except (OSError, ValueError):
+            pass
+
+    def take(self, line: str) -> None:
+        found = _DENIED_LINE.search(line)
+        if not found:
+            return
+        from ..netproxy import _blocked_entry
+
+        entry = _blocked_entry(found.group(2))  # a host name or nothing: it is shown to the agent and the person
+        item = (float(found.group(1)), entry)
+        if entry and item not in self._seen:
+            self._seen.add(item)
+            self.entries.append(item)
+
+    def since(self, since: float) -> list[tuple[float, str]]:
+        return [item for item in list(self.entries) if item[0] >= since]
+
+    def stop(self) -> None:
+        if self._process is not None:
+            try:
+                self._process.kill()
+            except OSError:
+                pass
+
+
 class OpenShellProvider:
     name = "openshell"
 
@@ -229,6 +312,8 @@ class OpenShellProvider:
         self.cwd = str(Path(cwd).expanduser().resolve()) if cwd else self.roots[0]["path"]
         self.profile = policy.network_profiles.check(profile)
         self.extra_hosts = list(extra_hosts)
+        self._identity: tuple = (None, None, None)  # uid, gid, home; set when the sandbox is made
+        self._denials: Optional[DenialLog] = None  # follows the sandbox's log once it is made
         self.image = image or sandbox_image()
         # A label value may hold letters, digits, '-', '_' and '.', and at most 63 characters.
         self.label = "".join(c if c.isalnum() or c in "-_." else "-" for c in label)[:63].strip("-_.")
@@ -277,9 +362,8 @@ class OpenShellProvider:
         # git's settings, and HOME stays the runtime folder.
         self.copied = creds.copy_in(self.grants, self._tmp) if self.grants else None
         home = self.copied.home if self.copied is not None else None
-        extra_hosts = sorted({*self.extra_hosts, *(self.copied.hosts if self.copied is not None else [])})
-        policy_file = Path(self._tmp) / "policy.yaml"
-        policy_file.write_text(yaml.safe_dump(policy.render(self.roots, profile=self.profile, uid=uid, gid=gid, home=home, extra_hosts=extra_hosts), sort_keys=False), encoding="utf-8")
+        self._identity = (uid, gid, home)
+        policy_file = self._write_policy()
         driver_config = json.dumps(policy.mounts(self.roots, str(self._runner.parent), home))
         command = [policy.PYTHON, "-S", f"{policy.RUNNER_MOUNT}/{self._runner.name}", "serve", "--socket", _SOCKET, "--cwd", self.cwd]
         env = {"HOME": policy.RUNTIME_DIR, **(self.copied.env if self.copied is not None else {})}
@@ -304,8 +388,16 @@ class OpenShellProvider:
 
                 if docker_landlock() is False:
                     raise OpenShellUnavailable(f"{DOCKER_LANDLOCK_FIX}. Then start the session again.") from exc
+            if "failed to connect to OpenShell server" in str(exc) and sys.platform == "darwin":
+                # The sandbox's helper could not reach the gateway: on a Mac that is Docker
+                # Desktop's host networking being off, which can be asked.
+                from ..setup_cmd import DOCKER_HOST_NETWORK_FIX, docker_host_network
+
+                if docker_host_network() is False:
+                    raise OpenShellUnavailable(f"{DOCKER_HOST_NETWORK_FIX}. Then start the session again.") from exc
             raise
         self._wait_ready()
+        self._denials = DenialLog(self.sandbox_name)  # what it refuses, for the agent and the card
         # Spike finding K: the first exec after a sandbox turns Ready hangs until it times
         # out, and the next one works. Spend that on a throwaway call.
         try:
@@ -334,7 +426,7 @@ class OpenShellProvider:
         if not self.sandbox_id:
             raise RuntimeError("the sandbox has not been created")
         command = [policy.PYTHON, "-S", f"{policy.RUNNER_MOUNT}/{self._runner.name}", "attach", "--socket", _SOCKET]
-        return GrpcExecTransport(self.sandbox_id, command)
+        return GrpcExecTransport(self.sandbox_name, command)
 
     def verify(self, client: Any) -> None:
         """After connecting: every folder must really be reachable inside (spike finding F:
@@ -343,6 +435,54 @@ class OpenShellProvider:
             info = client.call("fs.list", {"path": root["path"], "limit": 1}, timeout=30)
             if "entries" not in info:
                 raise RuntimeError(f"the folder {root['path']} is not reachable inside the sandbox")
+
+    def _write_policy(self) -> Path:
+        """The whole policy as it stands: folders, identity, the network list with the
+        machine's additions and the hosts the copied credentials need."""
+        uid, gid, home = self._identity
+        extra_hosts = sorted({*self.extra_hosts, *(self.copied.hosts if self.copied is not None else [])})
+        policy_file = Path(self._tmp) / "policy.yaml"
+        policy_file.write_text(yaml.safe_dump(policy.render(self.roots, profile=self.profile, uid=uid, gid=gid, home=home, extra_hosts=extra_hosts), sort_keys=False), encoding="utf-8")
+        return policy_file
+
+    def add_hosts(self, hosts: Sequence[str]) -> None:
+        """Let the running sandbox reach more "host:port" entries (OPE-219: the person allowed
+        a site for this session or for good). OpenShell hot-reloads the network section of a
+        policy, so the whole policy is rendered again and set on the sandbox; the static
+        sections are the same, `--wait` returns once the sandbox has loaded it."""
+        new = [str(h) for h in hosts if str(h) not in self.extra_hosts]
+        if not new:
+            return
+        self.extra_hosts.extend(new)
+        if not getattr(self, "_create_tried", False):
+            return  # not made yet: the next create renders the list as it stands
+        _cli("policy", "set", self.sandbox_name, "--policy", str(self._write_policy()), "--wait", timeout=120)
+
+    def remove_hosts(self, hosts: Sequence[str]) -> None:
+        """Take "host:port" entries back from the running sandbox: the policy is rendered
+        without them and set again. OpenShell closes connections opened under the old rules."""
+        gone = [str(h) for h in hosts if str(h) in self.extra_hosts]
+        if not gone:
+            return
+        self.extra_hosts = [h for h in self.extra_hosts if h not in gone]
+        if not getattr(self, "_create_tried", False):
+            return
+        _cli("policy", "set", self.sandbox_name, "--policy", str(self._write_policy()), "--wait", timeout=120)
+
+    # A refusal reaches the log reader up to about this long after it happened.
+    blocked_lag = 0.6
+
+    @property
+    def reports_blocked(self) -> bool:
+        """Whether the sandbox's log is being followed. When it is not (the reader died with
+        the gateway), nothing may be read into an empty answer."""
+        return self._denials is not None and self._denials.alive
+
+    def blocked_since(self, since: float) -> list[tuple[float, str]]:
+        """(time, "host:port") of the connections the sandbox refused since then, from its
+        own log, read from outside (the in-sandbox `policy.local/v1/denials` is switched off
+        unless agent policy proposals are on, which we do not use)."""
+        return self._denials.since(since) if self._denials is not None else []
 
     def regrant(self, roots: Sequence[dict[str, Any]], *, before_create: Optional[Callable[[], None]] = None) -> None:
         """The session's folders changed. Mounts and the file policy are fixed when a sandbox
@@ -359,6 +499,9 @@ class OpenShellProvider:
 
     def _delete(self) -> None:
         log.info("deleting sandbox %s", self.sandbox_name)
+        if self._denials is not None:
+            self._denials.stop()
+            self._denials = None
         try:
             _cli("sandbox", "delete", self.sandbox_name, timeout=90, check=False)
         except (subprocess.TimeoutExpired, OpenShellUnavailable):
@@ -387,7 +530,7 @@ def list_our_sandboxes(registry: str) -> list[dict[str, Any]]:
 class GrpcExecTransport:
     """The runner's pipe: OpenShell's `ExecSandboxInteractive` stream, no terminal."""
 
-    def __init__(self, sandbox_id: str, command: list[str]) -> None:
+    def __init__(self, sandbox: str, command: list[str]) -> None:
         try:
             import grpc
         except ImportError as exc:  # an optional extra, needed for this provider only
@@ -406,7 +549,9 @@ class GrpcExecTransport:
         self._buffer = b""
         self._closed = False
         call = self._channel.stream_stream(wire.METHOD, request_serializer=lambda b: b, response_deserializer=lambda b: b)
-        self._call = call(self._requests(wire.encode_start(sandbox_id, command)))
+        # The same workspace the CLI calls above used (its `--workspace`, from the environment).
+        workspace = os.environ.get("OPENSHELL_WORKSPACE", "").strip() or wire.DEFAULT_WORKSPACE
+        self._call = call(self._requests(wire.encode_start(sandbox, command, workspace)))
         threading.Thread(target=self._pump, daemon=True).start()
 
     def _requests(self, start: bytes):

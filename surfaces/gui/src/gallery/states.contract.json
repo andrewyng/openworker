@@ -8935,6 +8935,86 @@
           "reason": "Check the invoice object's PDF field",
           "category": "network"
         },
+        "site-off-the-allowed-sites": {
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://weather.com/weather/today/l/San+Francisco+CA"
+          },
+          "reason": "weather.com is not on your allowed sites",
+          "escalation": {
+            "kind": "human_required",
+            "reason": "weather.com is not on your allowed sites"
+          },
+          "site_wall": "weather.com"
+        },
+        "search-provider-off-the-allowed-sites": {
+          "name": "web_search",
+          "arguments": {
+            "query": "weather in San Francisco today"
+          },
+          "reason": "api.search.brave.com is not on your allowed sites",
+          "escalation": {
+            "kind": "human_required",
+            "reason": "api.search.brave.com is not on your allowed sites"
+          },
+          "search_provider": "brave",
+          "site_wall": "api.search.brave.com"
+        },
+        "network-access-for-a-blocked-site": {
+          "name": "request_network_access",
+          "arguments": {
+            "hosts": [
+              "registry.npmjs.org"
+            ],
+            "reason": "npm install needs the package registry to download dependencies."
+          },
+          "reason": "asks to let this session's commands reach registry.npmjs.org",
+          "escalation": {
+            "kind": "human_required",
+            "reason": "asks to let this session's commands reach registry.npmjs.org"
+          },
+          "category": "sandbox",
+          "network_request": {
+            "evidence": true,
+            "reason": "npm install needs the package registry to download dependencies.",
+            "hosts": [
+              {
+                "host": "registry.npmjs.org:443",
+                "blocked_seconds_ago": 20
+              }
+            ]
+          }
+        },
+        "network-access-before-any-attempt": {
+          "name": "request_network_access",
+          "arguments": {
+            "hosts": [
+              "api.acme.dev",
+              "db.acme.dev:5432"
+            ],
+            "reason": "The deploy script pushes the build to the Acme API and runs a migration on the database."
+          },
+          "reason": "asks to let this session's commands reach api.acme.dev, db.acme.dev:5432",
+          "escalation": {
+            "kind": "human_required",
+            "reason": "asks to let this session's commands reach api.acme.dev, db.acme.dev:5432"
+          },
+          "category": "sandbox",
+          "network_request": {
+            "evidence": true,
+            "reason": "The deploy script pushes the build to the Acme API and runs a migration on the database.",
+            "hosts": [
+              {
+                "host": "api.acme.dev:443",
+                "blocked_seconds_ago": 240
+              },
+              {
+                "host": "db.acme.dev:5432",
+                "blocked_seconds_ago": null
+              }
+            ]
+          }
+        },
         "connector-action": {
           "name": "github_create_pull_request",
           "arguments": {
@@ -9176,6 +9256,121 @@
               "url": "https://docs.stripe.com/api/invoices/object"
             },
             "escalation": null,
+            "provenance": ""
+          }
+        },
+        "site-off-the-allowed-sites": {
+          "id": "gallery-item",
+          "session_id": "gallery-session",
+          "kind": "approval",
+          "title": "Run `web_fetch`?",
+          "body": "weather.com is not on your allowed sites",
+          "state": "pending",
+          "resolution": null,
+          "inbox": "default",
+          "created_at": "2026-09-17T09:30:00Z",
+          "resolved_at": null,
+          "visibility": "inbox",
+          "session_title": "Mention #3 · Invoice PDF download",
+          "session_agent": "swe-lead",
+          "session_exists": true,
+          "data": {
+            "tool": "web_fetch",
+            "arguments": {
+              "url": "https://weather.com/weather/today/l/San+Francisco+CA"
+            },
+            "escalation": {
+              "kind": "human_required",
+              "reason": "weather.com is not on your allowed sites"
+            },
+            "provenance": ""
+          }
+        },
+        "search-provider-off-the-allowed-sites": {
+          "id": "gallery-item",
+          "session_id": "gallery-session",
+          "kind": "approval",
+          "title": "Run `web_search`?",
+          "body": "api.search.brave.com is not on your allowed sites",
+          "state": "pending",
+          "resolution": null,
+          "inbox": "default",
+          "created_at": "2026-09-17T09:30:00Z",
+          "resolved_at": null,
+          "visibility": "inbox",
+          "session_title": "Mention #3 · Invoice PDF download",
+          "session_agent": "swe-lead",
+          "session_exists": true,
+          "data": {
+            "tool": "web_search",
+            "arguments": {
+              "query": "weather in San Francisco today"
+            },
+            "escalation": {
+              "kind": "human_required",
+              "reason": "api.search.brave.com is not on your allowed sites"
+            },
+            "provenance": ""
+          }
+        },
+        "network-access-for-a-blocked-site": {
+          "id": "gallery-item",
+          "session_id": "gallery-session",
+          "kind": "approval",
+          "title": "Run `request_network_access`?",
+          "body": "asks to let this session's commands reach registry.npmjs.org",
+          "state": "pending",
+          "resolution": null,
+          "inbox": "default",
+          "created_at": "2026-09-17T09:30:00Z",
+          "resolved_at": null,
+          "visibility": "inbox",
+          "session_title": "Mention #3 · Invoice PDF download",
+          "session_agent": "swe-lead",
+          "session_exists": true,
+          "data": {
+            "tool": "request_network_access",
+            "arguments": {
+              "hosts": [
+                "registry.npmjs.org"
+              ],
+              "reason": "npm install needs the package registry to download dependencies."
+            },
+            "escalation": {
+              "kind": "human_required",
+              "reason": "asks to let this session's commands reach registry.npmjs.org"
+            },
+            "provenance": ""
+          }
+        },
+        "network-access-before-any-attempt": {
+          "id": "gallery-item",
+          "session_id": "gallery-session",
+          "kind": "approval",
+          "title": "Run `request_network_access`?",
+          "body": "asks to let this session's commands reach api.acme.dev, db.acme.dev:5432",
+          "state": "pending",
+          "resolution": null,
+          "inbox": "default",
+          "created_at": "2026-09-17T09:30:00Z",
+          "resolved_at": null,
+          "visibility": "inbox",
+          "session_title": "Mention #3 · Invoice PDF download",
+          "session_agent": "swe-lead",
+          "session_exists": true,
+          "data": {
+            "tool": "request_network_access",
+            "arguments": {
+              "hosts": [
+                "api.acme.dev",
+                "db.acme.dev:5432"
+              ],
+              "reason": "The deploy script pushes the build to the Acme API and runs a migration on the database."
+            },
+            "escalation": {
+              "kind": "human_required",
+              "reason": "asks to let this session's commands reach api.acme.dev, db.acme.dev:5432"
+            },
             "provenance": ""
           }
         },

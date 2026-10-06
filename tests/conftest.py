@@ -27,6 +27,17 @@ def _isolated_state_dir(tmp_path, monkeypatch):
     monkeypatch.delenv("COWORKER_API_TOKEN", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_docker_host_network_probe(monkeypatch):
+    """OpenShell's preflight asks, on a Mac, whether Docker Desktop's host networking is on,
+    by starting a container. No unit test may do that; the check has its own tests."""
+    from coworker.sandbox import setup_cmd
+    from coworker.sandbox.providers import openshell
+
+    monkeypatch.setattr(openshell, "host_network_problem", lambda: None)
+    monkeypatch.setattr(setup_cmd, "_host_network_ok_at", 0.0)
+
+
 @pytest_asyncio.fixture
 async def fake_slack(monkeypatch):
     """A running FakeSlack control object; `SLACK_API_URL` is set to it for the test's duration."""
@@ -37,3 +48,14 @@ async def fake_slack(monkeypatch):
         yield fake
     finally:
         await fake.stop()
+
+
+@pytest.fixture(autouse=True)
+def _no_cached_ollama_facts():
+    """Model facts are cached per Ollama server for a minute (providers/ollama_facts.py);
+    a test must never see another test's fake server."""
+    from coworker.providers import ollama_facts
+
+    ollama_facts.forget_all()
+    yield
+    ollama_facts.forget_all()

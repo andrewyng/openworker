@@ -51,6 +51,20 @@ def provider_name(
     return profile.get("provider") or _config_provider() or default
 
 
+# Where each provider's queries go. The sandbox's allowed-sites wall checks this host for
+# `web_search`, which has no url argument (OPE-219).
+PROVIDER_HOSTS = {
+    "duckduckgo": "duckduckgo.com",
+    "tavily": "api.tavily.com",
+    "brave": "api.search.brave.com",
+}
+
+
+def provider_host(secrets: Optional[SecretStore] = None) -> str:
+    """The host the configured search provider talks to; `''` for an unknown provider."""
+    return PROVIDER_HOSTS.get(provider_name(secrets), "")
+
+
 def resolve_provider(
     secrets: Optional[SecretStore] = None, *, default: str = "duckduckgo"
 ) -> WebSearchProvider:

@@ -19,7 +19,7 @@ import {
   getSettings,
   getPersonas,
   getInbox,
-  getUnattended,
+  getAttendance,
   PERSONAS_CHANGED,
   resolveInboxItem,
   routeInboxItemLike,
@@ -37,6 +37,7 @@ import {
   renameSession,
   runAutomation,
   setSessionFlags,
+  setAttendance,
   setUnattended,
   Session,
   type InboxItem,
@@ -48,6 +49,7 @@ import {
   type SurfaceVisibility,
   type WorkspaceCommandTrust,
   type TeamMemberDecision,
+  type Attendance,
   API_UNAUTHORIZED,
 } from "./api";
 import type {
@@ -81,6 +83,7 @@ import { SearchModal } from "./components/SearchModal";
 import { SessionIntro } from "./components/SessionIntro";
 import { FolderGate } from "./components/FolderGate";
 import { SessionSetupRow } from "./components/SessionSetupRow";
+import { SandboxChip, type SessionSandbox } from "./components/SandboxChip";
 import { SendFolderDialog } from "./components/SendFolderDialog";
 import { Onboarding } from "./components/Onboarding";
 import { UpdateBanner } from "./components/UpdateBanner";
@@ -236,6 +239,8 @@ export function App() {
   const [model, setModel] = useState("gpt-5.6-sol");
   const [models, setModels] = useState<string[]>([]);
   const [modelLabels, setModelLabels] = useState<Record<string, string>>({});
+  // Per-model settings the user saved (UX-055): the picker shows context and thinking.
+  const [modelConfig, setModelConfig] = useState<Record<string, import("./api").ModelConfigRecord>>({});
   // {full model id → context window in tokens} from the curated matrix (verified only);
   // drives the composer usage chip's context-fill meter.
   const [modelContextWindows, setModelContextWindows] = useState<Record<string, number>>({});
@@ -251,6 +256,8 @@ export function App() {
   // OPE-206: the provider name while this session's sandbox is being built (the socket
   // is open, `ready` has not come yet); null otherwise. Drives the waiting row.
   const [preparingSandbox, setPreparingSandbox] = useState<string | null>(null);
+  // OPE-218: which walls this session runs behind, for the header chip. From `ready`.
+  const [sandboxInfo, setSandboxInfo] = useState<SessionSandbox | null>(null);
   // The server refused to build this session (its sandbox cannot be used) and closed the
   // socket for good: no reconnect strip, the error notice in the transcript says why.
   const [sessionRefused, setSessionRefused] = useState(false);
@@ -537,17 +544,31 @@ export function App() {
   // so we suppress the inline live cards (the Inbox / answer-in-context path shows them instead).
   // A ref too, because the WS event handler closes over stale state.
   const [unattended, setUnattendedState] = useState(false);
+  // The three-way attendance value behind the boolean: "inbox" and "auto" are both
+  // unattended; only "auto" makes the engine answer on the user's behalf.
+  const [attendance, setAttendanceState] = useState<Attendance>("attended");
   const unattendedRef = useRef(false);
-  const markUnattended = useCallback((on: boolean) => {
-    unattendedRef.current = on;
-    setUnattendedState(on);
+  const markAttendance = useCallback((value: Attendance) => {
+    unattendedRef.current = value !== "attended";
+    setUnattendedState(value !== "attended");
+    setAttendanceState(value);
   }, []);
+  const markUnattended = useCallback(
+    (on: boolean) => markAttendance(on ? "inbox" : "attended"),
+    [markAttendance],
+  );
   // The Mode menu's "Send approvals to Inbox" toggle (§22 — the old InboxControl, folded in).
   const toggleUnattended = async (on: boolean) => {
     await setUnattended(sessionId, on);
     markUnattended(on);
     // First Unattended enable = Inbox machinery engaged → the account row's chip unlocks (§26).
     if (on) announceInboxUnlock();
+  };
+  // The Mode menu's "Answer for me while I'm away" toggle: attendance "auto".
+  const toggleAutoAnswer = async (on: boolean) => {
+    const value: Attendance = on ? "auto" : "attended";
+    await setAttendance(sessionId, value);
+    markAttendance(value);
   };
   const resolveSessionInbox = async (id: string, resolution: string) => {
     await resolveInboxItem(id, resolution);
@@ -767,6 +788,7 @@ export function App() {
       .then((s) => {
         setModels(s.models || []);
         setModelLabels(s.model_labels || {});
+        setModelConfig(s.model_config || {});
         setModelContextWindows(s.model_context_windows || {});
         setContextBar(s.context_bar === true);
         setModelReady(s.model_ready);
@@ -880,6 +902,7 @@ export function App() {
           break;
         case "ready":
           setPreparingSandbox(null);
+          setSandboxInfo(d.sandbox || null);
           setSessionRefused(false);
           setConnected(true);
           if (d.model) setModel(d.model);
@@ -999,6 +1022,8 @@ export function App() {
           setItems((p) => [...p, questionItemFromPayload(d)]);
           break;
         case "tool_finished":
+          // A card on this tool may have allowed a site: the header chip follows (OPE-219).
+          if (d.sandbox) setSandboxInfo(d.sandbox);
           if (d.tool_call_id) {
             const calls = finishedGateCalls.current.get(gateScope) || new Set<string>();
             calls.add(d.tool_call_id);
@@ -1327,14 +1352,14 @@ export function App() {
         setSessionInbox(pendingInbox(inbox));
         setItems(items => reconcileResolvedGates(items, inbox));
       }).catch(() => {});
-      getUnattended(sessionId).then(value => {
-        if (!canceled && current === request) markUnattended(value);
+      getAttendance(sessionId).then(value => {
+        if (!canceled && current === request) markAttendance(value);
       }).catch(() => {});
     };
     load();
     const t = setInterval(load, 4000);
     return () => { canceled = true; clearInterval(t); };
-  }, [surface, sessionId, browserRefreshKey, markUnattended, pendingInbox, gateScope]);
+  }, [surface, sessionId, browserRefreshKey, markAttendance, pendingInbox, gateScope]);
 
   const send = (text: string, attachments?: Attachment[], skill?: string) => {
     // UX-029: folder enforcement AT SEND. A code-family session with no folder has no
@@ -2183,6 +2208,11 @@ export function App() {
                 <span className="topbar-artifacts-count">{artifactCount}</span>
               </button>
             )}
+            {/* OPE-218: which walls this session runs behind. No chip when the machine has
+                no sandbox; amber only for a session opened before the sandbox was switched on. */}
+            {surface === "session" && (
+              <SandboxChip info={sandboxInfo} onOpenSettings={() => openSettings("sandbox")} />
+            )}
             {/* §32: the panel toggle is the ONE session-panel entry, for every non-chat persona
                 (the rail now carries Access, so code-family gets it too). */}
             {agent !== "chat" && (
@@ -2407,6 +2437,12 @@ export function App() {
               unavailableModels={unavailableModels}
               wantedModels={personaModels}
               modelLabels={machine ? machineSettings?.model_labels || {} : modelLabels}
+              modelConfig={machine ? machineSettings?.model_config || {} : modelConfig}
+              // "Pick or configure a model…" opens Models & Keys with the dialog up.
+              onPickModel={() => {
+                try { sessionStorage.setItem("ow:pick-model", "1"); } catch { /* private window */ }
+                openSettings("models");
+              }}
               running={running}
               gateOpen={!unattended && (!!pendingTeam || !!pendingItemsReq)}
               // An offline machine's cached transcript is read-only: the send
@@ -2435,6 +2471,8 @@ export function App() {
               workspace={workspace || ""}
               unattended={unattended}
               onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}
+              attendance={attendance}
+              onAutoAnswerChange={agent !== "chat" ? toggleAutoAnswer : undefined}
               prefill={composerPrefill}
               resetKey={sessionId}
               usage={usage}
@@ -2549,6 +2587,9 @@ export function App() {
             scratchPrimary={tempWorkspace || !isProjectScoped(personaOf(agent))}
             openAccessKey={accessKey}
             onOpenIntegrations={() => openSettings("connectors")}
+            sandbox={sandboxInfo}
+            onSandbox={setSandboxInfo}
+            onOpenSandboxSettings={() => openSettings("sandbox")}
             board={board}
             onExpandBoard={() => openTeamView()}
             onOpenBoardItem={openTeamView}

@@ -3,7 +3,7 @@ import { getI18n, useTranslation } from "react-i18next";
 import type { Attachment, SessionUsage } from "../types";
 import { isPdfFile, readFile } from "../attach";
 import { ProjectBindMenu } from "./ProjectBindMenu";
-import { getSettings, inspectPdf, sessionSkills, type SessionSkillRow } from "../api";
+import { getSessionModelSettings, getSettings, inspectPdf, sessionSkills, setSessionModelSettings, type SessionSkillRow } from "../api";
 import { formatTokens, totalTokens } from "../usage";
 import { Dropdown, type Option } from "./Dropdown";
 import { Icon } from "./Icon";
@@ -45,17 +45,24 @@ const PERMISSION_OPTIONS: ModeOption[] = [
     gated: true,
   },
   {
-    value: "auto",
+    // The wire value is the server's real name; "auto" (the legacy spelling saved by
+    // older sessions and configs) is folded onto it by `canonicalMode`.
+    value: "bypass-approvals",
     label: "composer.mode.auto",
     description: "composer.mode.auto_desc",
     caution: true,
   },
 ];
 
+/** The server's name for a mode value: the legacy "auto" reads as "bypass-approvals". */
+export function canonicalMode(value: string): string {
+  return value === "auto" ? "bypass-approvals" : value;
+}
+
 /** The picker's label for a mode value ("auto-approve" -> "Auto-approve"). Exported so the
  * transcript's mode markers read the same names the user just chose from. */
 export function modeLabel(value: string): string {
-  const option = PERMISSION_OPTIONS.find((o) => o.value === value);
+  const option = PERMISSION_OPTIONS.find((o) => o.value === canonicalMode(value));
   return option ? getI18n().t(option.label) : value;
 }
 
@@ -91,6 +98,10 @@ interface Props {
   // names what would work instead of a bare warning.
   wantedModels?: string[];
   modelLabels?: Record<string, string>; // curated display names (raw id when absent)
+  // UX-055: saved per-model settings (context size, thinking) for the picker's notes,
+  // and the way into Models & Keys' Pick a model dialog.
+  modelConfig?: Record<string, { context_size?: number; thinking?: boolean }>;
+  onPickModel?: () => void;
   // The model is FIXED once the session has history (§17): the picker renders ONLY on a fresh
   // session; after the first turn the fact lives in the topbar subtitle (§22) — no
   // interactive-then-disabled control.
@@ -122,6 +133,10 @@ interface Props {
   // when" is one mental model. Absent handler = no toggle (e.g. Chat).
   unattended?: boolean;
   onUnattendedChange?: (on: boolean) => void;
+  // Attendance "auto" (the third position): the engine answers questions and requests
+  // by fixed rule while nobody is there. Absent handler = no toggle.
+  attendance?: "attended" | "inbox" | "auto";
+  onAutoAnswerChange?: (on: boolean) => void;
   // The pending-approval card rendered above the input (plan / work-items / team / tool /
   // folder requests). Attended sessions only — Unattended parks the prompt in the Inbox.
   approvalSlot?: ReactNode;
@@ -497,15 +512,29 @@ export function Composer(props: Props) {
   };
 
   const modelsLoaded = !!(props.models && props.models.length);
+  // UX-055: the picker groups models by where they run and notes each one's saved
+  // context and thinking; the label drops the provider when it sits on the row's note.
+  const localPrefixes = ["ollama:", "llamacpp:", "vllm:"];
+  const isLocalModel = (m: string) => localPrefixes.some((p) => m.startsWith(p));
   const modelOptions: Option[] = Array.from(
     new Set([props.model, ...(props.models || [])]),
-  ).map((m) => ({
-    value: m,
-    label: props.modelLabels?.[m] || shortModel(m),
-    ...(props.unavailableModels?.includes(m)
-      ? { description: t("onmachine.composer.model_unavailable") }
-      : {}),
-  }));
+  ).sort((a, b) => Number(isLocalModel(b)) - Number(isLocalModel(a))).map((m) => {
+    const full = props.modelLabels?.[m] || shortModel(m);
+    const [name, provider] = full.split(" · ");
+    const cfg = props.modelConfig?.[m];
+    const notes = isLocalModel(m)
+      ? [cfg?.context_size ? `${Math.round(cfg.context_size / 1024)}K` : "", cfg?.thinking ? t("composer.model.thinking") : ""]
+      : [provider || (m.includes(":") ? m.split(":")[0] : "")];
+    return {
+      value: m,
+      label: name,
+      group: t(isLocalModel(m) ? "composer.model.group_local" : "composer.model.group_cloud"),
+      meta: notes.filter(Boolean).join(" · "),
+      ...(props.unavailableModels?.includes(m)
+        ? { description: t("onmachine.composer.model_unavailable") }
+        : {}),
+    };
+  });
 
   const iconBtn =
     "w-7 h-7 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper shrink-0";
@@ -750,6 +779,8 @@ export function Composer(props: Props) {
               onModeChange={props.onModeChange}
               unattended={props.unattended}
               onUnattendedChange={props.onUnattendedChange}
+              attendance={props.attendance}
+              onAutoAnswerChange={props.onAutoAnswerChange}
             />
           ) : null}
 
@@ -784,6 +815,16 @@ export function Composer(props: Props) {
               align="right"
               displayLabel={modelName}
               tooltip={modelTip}
+              searchFrom={6}
+              searchPlaceholder={t("composer.model.search")}
+              testId="model-picker"
+              footer={
+                props.onPickModel ? (
+                  <button onClick={props.onPickModel} data-testid="model-picker-pick">
+                    + {t("composer.model.pick_or_configure")}
+                  </button>
+                ) : null
+              }
               leading={
                 props.contextBar === true && hasUsage ? (
                   <ContextRing pct={ctxPct} label={ctxLine} testId="usage-chip" />
@@ -800,6 +841,10 @@ export function Composer(props: Props) {
               <span className="pill-label">{t("composer.model.loading")}</span>
             </button>
           ))}
+
+          {!props.compact && modelsLoaded && props.sessionId && (
+            <SessionModelSettings sessionId={props.sessionId} model={props.model} local={isLocalModel(props.model)} onPickModel={props.onPickModel} />
+          )}
 
           {/* mic — immediately before send (owner call, DMG #28 walkthrough) */}
           {!props.compact && isTauri() && (
@@ -905,14 +950,23 @@ function ModeMenu({
   onModeChange,
   unattended,
   onUnattendedChange,
+  attendance,
+  onAutoAnswerChange,
   reviewerPaused,
 }: {
   mode: string;
   onModeChange: (mode: string) => void;
   unattended?: boolean;
   onUnattendedChange?: (on: boolean) => void;
+  attendance?: "attended" | "inbox" | "auto";
+  onAutoAnswerChange?: (on: boolean) => void;
   reviewerPaused?: boolean;
 }) {
+  // A session saved under the legacy "auto" spelling is the same mode as the picker's
+  // "bypass-approvals" entry: compare on the canonical value so its tick shows.
+  const canonical = canonicalMode(mode);
+  const inboxOn = attendance ? attendance === "inbox" : !!unattended;
+  const autoOn = attendance === "auto";
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   // The Auto-Approve entry is gated on the server flag. Fetch once on first open; a session
@@ -926,9 +980,9 @@ function ModeMenu({
       .catch(() => {});
   }, [open]);
   const options = PERMISSION_OPTIONS.filter(
-    (o) => !o.gated || autoApproveEnabled || o.value === mode,
+    (o) => !o.gated || autoApproveEnabled || o.value === canonical,
   );
-  const current = PERMISSION_OPTIONS.find((o) => o.value === mode);
+  const current = PERMISSION_OPTIONS.find((o) => o.value === canonical);
   return (
     <div className="relative">
       {/* Borderless, and it names the CHOSEN mode (owner ask 2026-07-11, competitor composer
@@ -972,14 +1026,14 @@ function ModeMenu({
                 <span
                   className={
                     "flex items-center text-ui " +
-                    (o.value === mode ? "font-medium text-accent" : "text-ink")
+                    (o.value === canonical ? "font-medium text-accent" : "text-ink")
                   }
                 >
                   {o.caution && (
                     <Icon name="warning" size={13} className="mr-1.5 shrink-0 text-warnInk" />
                   )}
                   {t(o.label)}
-                  {o.value === mode && <span className="ml-1.5">✓</span>}
+                  {o.value === canonical && <span className="ml-1.5">✓</span>}
                 </span>
                 <span className="text-label text-faint leading-snug">{t(o.description ?? "")}</span>
               </button>
@@ -995,12 +1049,27 @@ function ModeMenu({
                     </span>
                   </span>
                   <Toggle
-                    checked={!!unattended}
+                    checked={inboxOn}
                     onChange={onUnattendedChange}
                     title={t("composer.send_approvals_to_inbox")}
                   />
                 </div>
               </>
+            )}
+            {onAutoAnswerChange && (
+              <div className="flex items-center gap-2 px-2.5 py-1.5" data-testid="auto-answer-row">
+                <span className="flex-1 min-w-0">
+                  <span className="block text-ui text-ink">{t("composer.answer_for_me")}</span>
+                  <span className="block text-label text-faint leading-snug">
+                    {t("composer.answer_for_me_help")}
+                  </span>
+                </span>
+                <Toggle
+                  checked={autoOn}
+                  onChange={onAutoAnswerChange}
+                  title={t("composer.answer_for_me")}
+                />
+              </div>
             )}
           </div>
         </>
@@ -1036,6 +1105,85 @@ function AttachChip({ a, onRemove }: { a: Attachment; onRemove: () => void }) {
       <button className="attach-x" onClick={onRemove} title={t("common.remove")}>
         ✕
       </button>
+    </div>
+  );
+}
+
+
+// UX-055: the ⚙ beside the model pill. This session's thinking switch (a local model)
+// or effort level (a cloud model), over the model's own setting; other sessions keep
+// theirs. The link at the bottom opens the model's defaults in Models & Keys.
+function SessionModelSettings({
+  sessionId,
+  model,
+  local,
+  onPickModel,
+}: {
+  sessionId: string;
+  model: string;
+  local: boolean;
+  onPickModel?: () => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<{ thinking: boolean | null; reasoning_effort: string | null } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    getSessionModelSettings(sessionId).then(setState).catch(() => setState({ thinking: null, reasoning_effort: null }));
+  }, [open, sessionId, model]);
+  const apply = (values: { thinking?: boolean | null; reasoning_effort?: string | null }) =>
+    setSessionModelSettings(sessionId, values).then((r) => {
+      if (r.ok) setState({ thinking: r.thinking ?? null, reasoning_effort: r.reasoning_effort ?? null });
+    });
+  const seg = (on: boolean, label: string, onClick: () => void) => (
+    <button className={"px-2.5 py-0.5 text-meta " + (on ? "bg-accent text-panel" : "text-muted hover:text-ink")} onClick={onClick}>
+      {label}
+    </button>
+  );
+  return (
+    <div className="relative shrink-0">
+      <button
+        className={"w-7 h-7 grid place-items-center rounded-md hover:bg-paper " + (open ? "text-accent" : "text-faint hover:text-ink")}
+        title={t("composer.model.session_settings")}
+        aria-label={t("composer.model.session_settings")}
+        onClick={() => setOpen((v) => !v)}
+        data-testid="session-model-settings"
+      >
+        ⚙
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute z-40 bottom-full mb-1 right-0 w-[300px] rounded-xl border border-line bg-panel shadow-2xl p-3" data-testid="session-model-settings-menu">
+            <div className="text-label text-faint font-semibold tracking-wide uppercase mb-2">{t("composer.model.this_session")}</div>
+            {state && local && (
+              <div className="flex items-center text-ui">
+                {t("composer.model.thinking_label")}
+                <span className="ml-auto flex rounded-md border border-lineStrong overflow-hidden">
+                  {seg(state.thinking === false, t("composer.model.off"), () => apply({ thinking: false }))}
+                  {seg(state.thinking === true, t("composer.model.on"), () => apply({ thinking: true }))}
+                  {seg(state.thinking === null, t("composer.model.models_setting"), () => apply({ thinking: null }))}
+                </span>
+              </div>
+            )}
+            {state && !local && (
+              <div className="flex items-center text-ui">
+                {t("composer.model.effort_label")}
+                <span className="ml-auto flex rounded-md border border-lineStrong overflow-hidden">
+                  {(["low", "medium", "high"] as const).map((lvl) => seg(state.reasoning_effort === lvl, t(`composer.model.effort_${lvl}`), () => apply({ reasoning_effort: lvl })))}
+                  {seg(state.reasoning_effort === null, t("composer.model.models_setting"), () => apply({ reasoning_effort: null }))}
+                </span>
+              </div>
+            )}
+            <p className="text-meta text-faint mt-2">{t("composer.model.session_only_note")}</p>
+            {onPickModel && (
+              <button className="mt-2 text-meta text-accent" onClick={() => { setOpen(false); onPickModel(); }}>
+                {t("composer.model.change_defaults")}
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

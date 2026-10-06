@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "about": "Recommended settings per model, from the model makers' own cards and guides. Read by coworker/providers/recommended.py; matched on the model name without its provider prefix. Edit in git. See docs/model-settings.md.",
+  "models": [
+    {
+      "match": ["nemotron-3.5-lightning*", "nvidia/NVIDIA-Nemotron-3.5-Lightning*", "*nemotron-3.5-lightning*"],
+      "name": "NVIDIA Nemotron 3.5 Lightning",
+      "context_max": 1048576,
+      "context_for_agents": 65536,
+      "max_output_tokens": 16000,
+      "thinking": {"available": true, "default": true},
+      "sampling": {"temperature": 1.0, "top_p": 0.95},
+      "notes": "One sampling setting for everything, tool calls included. NVIDIA's DGX Spark playbooks say 32K context minimum and 64K or more for agents.",
+      "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+    },
+    {
+      "match": ["nemotron-3-nano:30b*", "nemotron-3-nano", "nemotron-3-nano:latest", "nvidia/NVIDIA-Nemotron-3-Nano-30B*", "*nemotron-3-nano-30b*"],
+      "name": "NVIDIA Nemotron 3 Nano 30B",
+      "context_max": 1048576,
+      "context_for_agents": 65536,
+      "max_output_tokens": 10000,
+      "thinking": {"available": true, "default": true},
+      "sampling": {"temperature": 0.6, "top_p": 0.95},
+      "notes": "NVIDIA gives 1.0 / 1.0 for reasoning and 0.6 / 0.95 for tool calling; OpenWorker's work is tool calling.",
+      "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+    },
+    {
+      "match": ["nemotron-3-nano:4b*", "nvidia/NVIDIA-Nemotron-3-Nano-4B*", "*nemotron-3-nano-4b*"],
+      "name": "NVIDIA Nemotron 3 Nano 4B",
+      "context_max": 262144,
+      "context_for_agents": 32768,
+      "max_output_tokens": 8192,
+      "thinking": {"available": true, "default": true},
+      "sampling": {"temperature": 0.6, "top_p": 0.95},
+      "notes": "NVIDIA gives 1.0 / 0.95 for reasoning and 0.6 / 0.95 for tool calling.",
+      "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
+    },
+    {
+      "match": ["nemotron-3-super*", "nvidia/NVIDIA-Nemotron-3-Super*", "*nemotron-3-super*"],
+      "name": "NVIDIA Nemotron 3 Super",
+      "context_max": 1048576,
+      "context_for_agents": 65536,
+      "max_output_tokens": 32000,
+      "thinking": {"available": true, "default": true},
+      "sampling": {"temperature": 1.0, "top_p": 0.95},
+      "notes": "One setting across reasoning, tool calling and chat.",
+      "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
+    },
+    {
+      "match": ["nemotron-3-ultra*", "nvidia/NVIDIA-Nemotron-3-Ultra*", "*nemotron-3-ultra*"],
+      "name": "NVIDIA Nemotron 3 Ultra",
+      "context_max": 1048576,
+      "context_for_agents": 65536,
+      "max_output_tokens": 32000,
+      "thinking": {"available": true, "default": true},
+      "sampling": {"temperature": 1.0, "top_p": 0.95},
+      "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4"
+    },
+    {
+      "match": ["qwen3-coder*", "Qwen/Qwen3-Coder*", "*qwen3-coder*"],
+      "name": "Qwen3 Coder",
+      "context_max": 262144,
+      "context_for_agents": 65536,
+      "max_output_tokens": 16384,
+      "thinking": {"available": false, "default": false},
+      "sampling": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "repeat_penalty": 1.05},
+      "notes": "The model card's suggested sampling for agent and coding use.",
+      "source": "https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct"
+    }
+  ]
+}

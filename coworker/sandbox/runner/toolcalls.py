@@ -29,7 +29,6 @@ _MAX_SEARCH_BYTES = 1_000_000
 _GIT_MAX_OUTPUT_CHARS = 20000
 
 FILE_TOOLKIT_TOOLS = (
-    "list_files",
     "read_file_lines",
     "search_files",
     "write_file",
@@ -38,7 +37,7 @@ FILE_TOOLKIT_TOOLS = (
     "replace_in_file",
 )
 GIT_TOOLKIT_TOOLS = {"git_status": "status", "git_diff": "diff"}
-OWN_TOOLS = ("read_file", "grep", "git_log")
+OWN_TOOLS = ("read_file", "list_files", "grep", "git_log")
 TOOLS = (*FILE_TOOLKIT_TOOLS, *GIT_TOOLKIT_TOOLS, *OWN_TOOLS)
 
 
@@ -63,6 +62,9 @@ def call(
         if name == "read_file":
             extra = [str(r["path"]) for r in (roots or [])]
             return tools_read.read_file(workspace, roots=extra, **args)
+        if name == "list_files":
+            extra = [str(r["path"]) for r in (roots or [])]
+            return tools_read.list_files(workspace, roots=extra, **args)
         if name == "grep":
             return tools_grep.grep(workspace, **args)
         if name == "git_log":

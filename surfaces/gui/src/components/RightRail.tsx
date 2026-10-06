@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { SessionSandbox } from "./SandboxChip";
 import { useTranslation } from "react-i18next";
 // Emits the asset URL only; the worker itself loads lazily with the pdfjs chunk.
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -69,6 +70,10 @@ interface Props {
   scratchPrimary?: boolean;
   openAccessKey?: number;
   onOpenIntegrations?: () => void;
+  // OPE-219: the session's sandbox, for the Access section's Sites group.
+  sandbox?: SessionSandbox | null;
+  onSandbox?: (next: SessionSandbox) => void;
+  onOpenSandboxSettings?: () => void;
   // Agent teams (OPE-96): App owns board data (the plan gate needs it too);
   // the rail renders the summary section and the expand affordance.
   board?: Board | null;
@@ -110,6 +115,9 @@ export function RightRail({
   scratchPrimary,
   openAccessKey = 0,
   onOpenIntegrations,
+  sandbox = null,
+  onSandbox,
+  onOpenSandboxSettings,
   board,
   onExpandBoard,
   onOpenBoardItem,
@@ -426,6 +434,9 @@ export function RightRail({
               scratchPrimary={scratchPrimary}
               openKey={openAccessKey}
               onOpenIntegrations={onOpenIntegrations}
+              sandbox={sandbox}
+              onSandbox={onSandbox}
+              onOpenSandboxSettings={onOpenSandboxSettings}
             />
           </div>
         </>

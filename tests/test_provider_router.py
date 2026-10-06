@@ -293,6 +293,22 @@ def test_salvage_truncated_xml_prefers_a_complete_call_and_filters_unknown_names
     assert _salvage_tool_calls_from_text("<function=rm_rf>\n<parameter=p>/", _TODO_TOOLS) == []
 
 
+def test_a_stray_tool_tag_at_the_end_of_a_finished_answer_is_dropped():
+    from coworker.providers.openai_provider import strip_dangling_tool_tag
+
+    # Seen live on qwen3-coder:30b: a complete answer, then `<tool_call>` and nothing.
+    assert strip_dangling_tool_tag("10 squared is 100<tool_call>") == ("10 squared is 100", True)
+    assert strip_dangling_tool_tag("Done.\n\n</tool_call>\n") == ("Done.", True)
+    # A tag with anything after it is a call that did not parse: left alone.
+    leaked = 'Sure.<tool_call>{"name": "todo_write"'
+    assert strip_dangling_tool_tag(leaked) == (leaked, False)
+    assert looks_like_unparsed_tool_call(leaked, _TODO_TOOLS) is True
+    # Nothing to drop, or nothing left: unchanged.
+    assert strip_dangling_tool_tag("Plain answer.") == ("Plain answer.", False)
+    assert strip_dangling_tool_tag("<tool_call>") == ("<tool_call>", False)
+    assert strip_dangling_tool_tag(None) == (None, False)
+
+
 def test_looks_like_unparsed_tool_call_ignores_code_and_needs_tools():
     """Distinguishes a leaked call from a model *explaining* tool syntax — the latter is a real
     answer and must not be turned into an error."""
@@ -378,6 +394,8 @@ def test_manager_curated_models(tmp_path, monkeypatch):
     # test_settings.py::test_ollama_models_gated_on_liveness). Unpinned, the ollama
     # assertions below pass only where Ollama happens to run — green on a dev box, red in CI.
     monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
+    # Same for the live `/api/tags` list get_settings merges in while Ollama answers.
+    monkeypatch.setattr(SessionManager, "_ollama_models", lambda self: [])
 
     mgr = SessionManager(data_dir=tmp_path)
     # no provider keys → nothing but the always-selectable default
@@ -436,6 +454,9 @@ def test_set_provider_skips_recommended_when_not_pulled(tmp_path, monkeypatch):
 
     mgr = SessionManager(data_dir=tmp_path)
     monkeypatch.setattr(mgr, "_suggested_models", lambda name: [])  # nothing pulled
+    # The picker also lists what a live Ollama has pulled; on a developer's machine that
+    # is a real list, so stand it in too or the test depends on the machine.
+    monkeypatch.setattr(mgr, "_ollama_models", lambda: [])
     mgr.set_provider("ollama", {"base_url": "http://localhost:11434"})
     assert "ollama:qwen3-coder:30b" not in mgr.get_settings()["models"]
 

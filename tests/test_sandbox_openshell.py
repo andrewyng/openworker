@@ -49,8 +49,9 @@ def test_network_profiles():
     ticked = policy.render(ROOTS, profile="allowlist", extra_hosts=["github.com:443", "registry.acme.dev:443"])["network_policies"]
     assert {"host": "registry.acme.dev", "port": 443} in ticked["credentials"]["endpoints"]
     assert all(entry["binaries"] for entry in ticked.values())  # OpenShell requires the field
-    opened = policy.render(ROOTS, profile="open")["network_policies"]
-    assert [e["host"] for e in opened["open"]["endpoints"]] == ["*"]  # any host; unproved against a gateway
+    # "Allow everything" has no OpenShell policy: 0.1 refuses any-host wildcards. Said plainly.
+    with pytest.raises(ValueError, match="cannot allow every site"):
+        policy.render(ROOTS, profile="open")
     with pytest.raises(ValueError):
         policy.render(ROOTS, profile="wide-open")
 
@@ -63,8 +64,15 @@ def test_folders_are_mounted_at_the_same_absolute_path():
 
 
 def test_stream_messages_match_the_protobuf_wire_format():
-    # ExecSandboxInput{start: ExecSandboxRequest{sandbox_id:"abc", command:["bash","-c"]}}
-    assert wire.encode_start("abc", ["bash", "-c"]).hex() == "0a0f0a0361626312046261736812022d63"
+    # ExecSandboxInput{start: ExecSandboxRequest{sandbox:"abc", command:["bash","-c"],
+    #   no_login_shell: true, workspace_scope: {workspace: "default"}}}  (OpenShell 0.1.2)
+    start = wire.encode_start("abc", ["bash", "-c"])
+    assert start.hex() == "0a1c" + "0a03616263" + "120462617368" + "12022d63" + "5001" + "62090a0764656661756c74"
+    (number, _kind, request), = list(wire._fields(start))
+    fields = [(n, v) for n, _k, v in wire._fields(request)]
+    assert number == 1 and fields[0] == (1, b"abc") and (10, 1) in fields
+    assert [(n, v) for n, _k, v in wire._fields(dict(fields)[12])] == [(1, b"default")]
+    assert b"team-a" in wire.encode_start("abc", ["true"], "team-a")
     assert wire.encode_stdin(b"hi\n").hex() == "1203" + b"hi\n".hex()
     assert wire.decode_event(bytes.fromhex("0a070a0568656c6c6f")) == ("stdout", b"hello", None)
     assert wire.decode_event(bytes.fromhex("12050a03657272")) == ("stderr", b"err", None)
@@ -255,6 +263,32 @@ def test_a_sandbox_is_created_with_its_registry_label(tmp_path, monkeypatch):
     from coworker.sandbox.registry import SandboxRegistry, registry_id
 
     assert openshell.OpenShellProvider(roots=[{"path": str(project), "writable": True}]).registry == registry_id() == SandboxRegistry().id
+
+
+def test_adding_a_site_sets_the_policy_on_the_running_sandbox(tmp_path, monkeypatch):
+    """OPE-219: the network section of an OpenShell policy reloads on a running sandbox, so
+    a site the person allows is rendered into the whole policy and set with `--wait`."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(openshell, "build_runner_zipapp", lambda: tmp_path / "sandbox" / "runner" / "runner-x.pyz")
+    project = tmp_path / "project"
+    project.mkdir()
+    seen: list = []
+    monkeypatch.setattr(openshell, "_cli", lambda *args, **kw: seen.append(args))
+    provider = openshell.OpenShellProvider(roots=[{"path": str(project), "writable": True}], extra_hosts=["github.com:443"], registry="abc123")
+    # Not made yet: the list grows and nothing is asked of the gateway.
+    provider.add_hosts(["pypi.org:443"])
+    assert provider.extra_hosts == ["github.com:443", "pypi.org:443"] and seen == []
+    provider._create_tried = True
+    provider._identity = (1000, 1000, None)
+    provider.add_hosts(["weather.com:443", "github.com:443"])
+    (call,) = seen
+    assert call[:3] == ("policy", "set", provider.sandbox_name) and call[-1] == "--wait"
+    written = yaml.safe_load(Path(call[call.index("--policy") + 1]).read_text())
+    hosts = {e["host"] for rule in written["network_policies"].values() for e in rule["endpoints"]}
+    assert {"github.com", "pypi.org", "weather.com"} <= hosts
+    assert written["process"] == {"run_as_user": "1000", "run_as_group": "1000"}  # the static sections are unchanged
+    provider.add_hosts(["weather.com:443"])  # already there: no second call
+    assert len(seen) == 1
 
 
 def test_a_workspace_reserves_its_name_before_creating_the_sandbox(tmp_path):
@@ -529,6 +563,19 @@ def test_a_mac_whose_docker_kernel_lacks_landlock_is_told_to_update_docker_deskt
     with pytest.raises(RuntimeError, match="ContainerExited"):
         provider._create()
 
+    # OpenShell 0.1 on a Mac: the sandbox could not reach the gateway because Docker
+    # Desktop's host networking is off.
+    def unreachable(*args, **kwargs):
+        raise RuntimeError("`openshell sandbox create --name` failed: Startup configuration fetch failed after 5 attempts: failed to connect to OpenShell server")
+
+    monkeypatch.setattr(os_mod, "_cli", unreachable)
+    monkeypatch.setattr(setup_cmd, "docker_host_network", lambda: False)
+    with pytest.raises(os_mod.OpenShellUnavailable, match="Enable host networking"):
+        provider._create()
+    monkeypatch.setattr(setup_cmd, "docker_host_network", lambda: True)
+    with pytest.raises(RuntimeError, match="failed to connect to OpenShell server"):
+        provider._create()
+
 
 def test_only_the_runner_is_mounted_into_a_sandbox(tmp_path, monkeypatch):
     # The registry (every session's ids, coworkers and folders) sat beside the runner in
@@ -545,3 +592,27 @@ def test_only_the_runner_is_mounted_into_a_sandbox(tmp_path, monkeypatch):
     assert not str(registry.path).startswith(str(runner.parent) + os.sep)
     sources = [m["source"] for m in policy.mounts(ROOTS, str(runner.parent))["docker"]["mounts"]]
     assert str(runner.parent) in sources and str(tmp_path / "sandbox") not in sources
+
+
+def test_on_a_mac_a_session_is_refused_early_when_docker_desktops_host_networking_is_off(monkeypatch):
+    from coworker.sandbox import setup_cmd
+
+    monkeypatch.setattr(openshell.sys, "platform", "darwin")
+    monkeypatch.setattr(setup_cmd, "docker_host_network", lambda: False)
+    assert "Enable host networking" in openshell._host_network_problem()
+    monkeypatch.setattr(setup_cmd, "docker_host_network", lambda: True)
+    assert openshell._host_network_problem() is None
+    monkeypatch.setattr(setup_cmd, "docker_host_network", lambda: None)  # cannot tell: not a refusal
+    assert openshell._host_network_problem() is None
+    monkeypatch.setattr(openshell.sys, "platform", "linux")
+    monkeypatch.setattr(setup_cmd, "docker_host_network", lambda: False)
+    assert openshell._host_network_problem() is None  # Docker Engine on Linux always has it
+
+    # preflight refuses with it, after the version, gateway and image checks pass.
+    monkeypatch.setattr(openshell.shutil, "which", lambda name: "/usr/bin/openshell")
+    present = {"--version": _OK_VERSION, "status": _CONNECTED, "gateway": _DOCKER_GATEWAY, "image": ("[{...}]", 0)}
+    monkeypatch.setattr(openshell.subprocess, "run", _fake_cli(present))
+    monkeypatch.setattr(openshell, "host_network_problem", lambda: "Turn on host networking in Docker Desktop.")
+    with pytest.raises(openshell.OpenShellUnavailable, match="host networking"):
+        openshell.preflight()
+

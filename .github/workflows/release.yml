@@ -1,5 +1,6 @@
 # Desktop release builds — macOS (.dmg, arm64 + Intel) and Windows (.msi + NSIS .exe) — and
-# the Linux `openworker` program (.tar.gz, x86_64 + aarch64; packaging/build_linux.sh).
+# the `openworker` command-line program for Linux (.tar.gz, x86_64 + aarch64;
+# packaging/build_linux.sh) and for macOS (.tar.gz, arm64 + x86_64; packaging/build_macos_cli.sh).
 #
 # CI calls the SAME scripts developers run locally (packaging/build_dmg.sh and
 # build_windows.ps1); this file only provisions the toolchain (Node, Rust, a Python venv at
@@ -85,6 +86,14 @@ jobs:
           # openshell: grpcio, without which the macOS sidecar cannot use OpenShell
           # sandboxes (build_dmg.sh refuses to build without it). Not used on Windows.
           if [ "$RUNNER_OS" = "Windows" ]; then EXTRAS=bedrock; else EXTRAS=bedrock,openshell; fi
+          # Intel Mac: cryptography ships no wheel for it any more, so pip builds it from
+          # source against Homebrew's OpenSSL, linked dynamically. PyInstaller then bundles
+          # that libssl AND Python's own older one under the same name, the old one wins,
+          # and the program dies on import ("Symbol not found: _SSL_get0_group_name"; the
+          # 0.3.0 and 0.3.1 Intel apps shipped this way). Link OpenSSL in statically.
+          if [ "$RUNNER_OS" = "macOS" ] && [ "$(uname -m)" = "x86_64" ]; then
+            export OPENSSL_STATIC=1 OPENSSL_DIR="$(brew --prefix openssl@3)"
+          fi
           "$VPY" -m pip install -e ".[$EXTRAS]" pyinstaller typer tzdata
           "$VPY" -c "import aisuite, coworker"  # fail fast if either import breaks
 
@@ -117,6 +126,9 @@ jobs:
           fi
           unset APPLE_API_KEY_CONTENT
           bash packaging/build_dmg.sh
+          # The command-line program for the Mac, from the same venv and identity: signed
+          # and notarized when the secrets are present.
+          bash packaging/build_macos_cli.sh
 
       - name: Build .msi + NSIS .exe (Windows)
         if: runner.os == 'Windows'
@@ -147,6 +159,11 @@ jobs:
               cp "$BUNDLE"/macos/OpenWorker.app.tar.gz out/OpenWorker-${{ matrix.slug }}.app.tar.gz
               cp "$BUNDLE"/macos/OpenWorker.app.tar.gz.sig out/OpenWorker-${{ matrix.slug }}.app.tar.gz.sig
             fi
+            # The command-line program, named by uname -m (arm64, x86_64) as install.sh asks.
+            ARCH=$(uname -m)
+            cp packaging/dist/openworker-*-macos-"$ARCH".tar.gz* out/
+            cp packaging/dist/openworker-*-macos-"$ARCH".tar.gz out/openworker-macos-"$ARCH".tar.gz
+            (cd out && shasum -a 256 openworker-macos-"$ARCH".tar.gz > openworker-macos-"$ARCH".tar.gz.sha256)
           fi
           ls -la out
 

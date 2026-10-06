@@ -20,8 +20,12 @@ import {
   type ProviderInfo,
 } from "../api";
 import { CloudSignInInline, CloudStatusPending } from "./connectors/CloudSignIn";
+import { Icon } from "./Icon";
 import { ModelChecklist } from "./ModelChecklist";
-import { ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
+import { LocalModelsTable, YourSystem } from "./models/LocalModels";
+import { PickModelDialog } from "./models/PickModelDialog";
+import { ProviderGroups } from "./models/ProviderGroups";
+import { ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
 import { WalletChips } from "./WalletChips";
 
 // "2h ago"-style label for the providers' Last-used line (null when never used).
@@ -61,22 +65,45 @@ function initials(name: string): string {
 export function ModelsTab() {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<ModelSettings | null>(null);
+  // The Pick a model dialog (UX-055): "" closed, "+" picking, else the model to configure.
+  const [dialog, setDialog] = useState<string>("");
   const refreshSettings = () => getSettings().then(setSettings).catch(() => setSettings(null));
   const ps = useProviderSetup({ onSaved: refreshSettings });
   useEffect(() => {
     refreshSettings();
+    // The composer's "Pick or configure a model…" lands here with the dialog up.
+    try {
+      if (sessionStorage.getItem("ow:pick-model") === "1") {
+        sessionStorage.removeItem("ow:pick-model");
+        setDialog("+");
+      }
+    } catch { /* private window */ }
   }, []);
 
   if (!settings) return <div className="text-ui text-muted">{t("manage.loading")}</div>;
 
   const info = ps.info;
   const knownNames = ps.providers.map((p) => p.name);
+  const dialogEl = dialog ? (
+    <PickModelDialog
+      providers={ps.providers}
+      settings={settings}
+      keylessOk={ps.keylessOk}
+      configure={dialog === "+" ? null : dialog}
+      onClose={() => setDialog("")}
+      onChanged={() => {
+        refreshSettings();
+        ps.refreshProviders();
+      }}
+    />
+  ) : null;
 
   if (ps.sel === null) {
     return (
       <div>
-        <ProviderCards ps={ps} tp="set" gridClass="grid grid-cols-2 xl:grid-cols-3 gap-2.5" lastUsed />
-        <ComposerPickerCard settings={settings} providers={ps.providers} onChanged={refreshSettings} />
+        <ProviderGroups ps={ps} tp="set" models={settings.models} />
+        <ComposerPickerCard settings={settings} providers={ps.providers} onChanged={refreshSettings} onPick={() => setDialog("+")} onConfigure={(m) => setDialog(m)} />
+        {dialogEl}
       </div>
     );
   }
@@ -112,7 +139,20 @@ export function ModelsTab() {
           have nothing in the wallet — no row. */}
       {ps.credentialed && ps.sel && <WalletChips profiles={[`provider:${ps.sel}`]} />}
 
-      {info?.configured ? (
+      {info?.kind === "local" ? (
+        // A local provider: the machine, then what the server holds (UX-055).
+        <>
+          <YourSystem />
+          <LocalModelsTable
+            provider={ps.sel}
+            curated={settings.models}
+            defaultModel={settings.model}
+            onChanged={refreshSettings}
+            onConfigure={(m) => setDialog(m)}
+          />
+          {dialogEl}
+        </>
+      ) : info?.configured ? (
         <div className="mt-6">
           <div className={SEC_H + " mb-1.5"}>{t("manage.models")}</div>
           <p className="text-meta text-muted mb-2.5 leading-relaxed">
@@ -165,12 +205,17 @@ function ComposerPickerCard({
   settings,
   providers,
   onChanged,
+  onPick,
+  onConfigure,
 }: {
   settings: ModelSettings;
   providers: ProviderInfo[];
   onChanged: () => void;
+  onPick: () => void;
+  onConfigure: (model: string) => void;
 }) {
   const { t } = useTranslation();
+  const [query, setQuery] = useState("");
   const names = providers.map((p) => p.name);
   const provOf = (id: string) => {
     const i = id.indexOf(":");
@@ -180,41 +225,83 @@ function ComposerPickerCard({
     const p = providers.find((x) => x.name === provOf(id));
     return (p?.title || provOf(id)).split(" (")[0];
   };
+  // "ollama:qwen3-coder:30b" reads as "qwen3-coder:30b"; the provider sits beside it.
+  const shortId = (id: string) => (id.startsWith(provOf(id) + ":") ? id.slice(provOf(id).length + 1) : id);
+  // The card says the provider on its second line, so a label that ends in it
+  // ("GPT-5.6 Sol · OpenAI") loses that tail on the first.
+  const title = (id: string) => {
+    const label = settings.model_labels?.[id] || shortId(id);
+    const tail = ` · ${tag(id)}`;
+    return label.endsWith(tail) ? label.slice(0, -tail.length) : label;
+  };
+  const detail = (id: string) => {
+    const cfg = settings.model_config?.[id];
+    const bits = [tag(id)];
+    if (cfg?.context_size) bits.push(`${Math.round(cfg.context_size / 1024)}K`);
+    if (cfg?.thinking) bits.push(t("manage.thinking_tag"));
+    return bits.join(" · ");
+  };
+  const q = query.trim().toLowerCase();
+  const shown = settings.models.filter((id) => !q || id.toLowerCase().includes(q) || (settings.model_labels?.[id] || "").toLowerCase().includes(q));
   return (
-    <div className="mt-6" data-testid="composer-picker">
-      <div className={SEC_H + " mb-1.5"}>{t("manage.composer_picker_title")}</div>
-      <p className="text-meta text-muted mb-2.5 leading-relaxed">
-        {t("manage.composer_picker_help")}
-      </p>
-      <div className="mlist">
-        {settings.models.map((id) => {
+    <div className="mt-10" data-testid="composer-picker">
+      <div className="flex items-center mb-2">
+        <div className={SEC_H + " uppercase tracking-wide"}>{t("manage.composer_picker_title")}</div>
+        <label className="ml-auto flex items-center gap-1.5 rounded-lg border border-line bg-panel px-2.5 py-1 w-[220px] text-meta">
+          <Icon name="search" size={12} className="text-faint shrink-0" />
+          <input className="flex-1 bg-transparent outline-none" placeholder={t("manage.picker_search")} value={query} onChange={(e) => setQuery(e.target.value)} data-testid="picker-search" />
+        </label>
+        <button
+          className="ml-2 grid place-items-center w-[30px] h-[30px] rounded-lg border border-line bg-panel text-muted hover:text-ink hover:border-lineStrong transition-colors"
+          title={t("manage.pick_model_btn")}
+          onClick={onPick}
+          data-testid="pick-model-btn"
+        >
+          <Icon name="plus" size={14} />
+        </button>
+      </div>
+      {/* Each model is a card like the provider cards above: name, then provider and any
+          saved settings; ✕ and "Make default" show on hover. No table, no dividers. */}
+      <div className={"grid grid-cols-2 xl:grid-cols-3 gap-3" + (shown.length > 9 ? " max-h-[262px] overflow-y-auto pr-1 -mr-1" : "")}>
+        {shown.map((id) => {
           const isDefault = id === settings.model;
           return (
-            <div className="mlist-row" key={id}>
-              <label className="mlist-main">
-                <input
-                  type="checkbox"
-                  checked
-                  disabled={isDefault}
-                  title={isDefault ? t("models.default_locked") : t("manage.remove_from_picker")}
-                  onChange={() => removeModel(id).then((r) => r.ok && onChanged())}
-                />
-                <span className="mlist-name" title={id}>
-                  {settings.model_labels?.[id] || id}
+            <div
+              className="mlist-row group relative flex items-center gap-3 rounded-xl border border-line bg-panel/50 px-5 py-4 min-h-[70px] text-ui hover:border-lineStrong transition-colors"
+              key={id}
+              data-testid={`picker-row-${id}`}
+            >
+              <span className="min-w-0 flex-1">
+                <button className="block w-full truncate text-left leading-tight hover:underline underline-offset-2" title={t("manage.configure_model")} onClick={() => onConfigure(id)}>
+                  {title(id)}
+                </button>
+                <span className="flex items-center gap-2 mt-1 text-meta text-faint">
+                  <span className="truncate">{detail(id)}</span>
+                  {isDefault ? (
+                    <span className="mlist-default">{t("models.default_badge")}</span>
+                  ) : (
+                    <button className="mlist-make" onClick={() => setDefaultModel(id).then(() => onChanged())}>
+                      {t("models.make_default")}
+                    </button>
+                  )}
                 </span>
-              </label>
-              <span className="text-label text-faint mr-2 shrink-0">{tag(id)}</span>
-              {isDefault ? (
-                <span className="mlist-default">{t("models.default_badge")}</span>
-              ) : (
-                <button className="mlist-make" onClick={() => setDefaultModel(id).then(() => onChanged())}>
-                  {t("models.make_default")}
+              </span>
+              {!isDefault && (
+                <button
+                  className="text-faint hover:text-ink opacity-0 group-hover:opacity-100 transition-opacity"
+                  title={t("manage.remove_from_picker")}
+                  onClick={() => removeModel(id).then((r) => r.ok && onChanged())}
+                  data-testid={`picker-remove-${id}`}
+                >
+                  ✕
                 </button>
               )}
             </div>
           );
         })}
+        {shown.length === 0 && <div className="px-1 py-2 text-meta text-faint">—</div>}
       </div>
+      <p className="text-meta text-muted mt-3 leading-relaxed">{t("manage.composer_picker_help_v3")}</p>
     </div>
   );
 }

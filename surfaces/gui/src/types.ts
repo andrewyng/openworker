@@ -51,6 +51,7 @@ export type ApprovalDecision =
   | "always_tool"
   | "always_command"
   | "always_domain"
+  | "always_site"
   | "always_task"
   // OPE-136 §4: durable per-MCP-tool trust — writes a rule to the user-local
   // override store; survives sessions; revocable on the server's detail page.
@@ -177,6 +178,12 @@ export type Item =
       // web_search only (§1.9): the LIVE configured provider name, resolved server-side
       // when the card was raised — the grant description names the actual destination.
       searchProvider?: string;
+      // OPE-219: the host the sandbox's allowed-sites wall stopped. The card says so and
+      // offers "Always allow <host>", which adds it to Settings ▸ Sandbox ▸ allowed sites.
+      siteWall?: string;
+      // OPE-219: the agent asked for sites its commands cannot reach (request_network_access).
+      // `evidence` is false where the sandbox cannot say what it blocked: the card then shows the sites only.
+      networkRequest?: { reason: string; evidence: boolean; hosts: { host: string; blockedSecondsAgo: number | null }[] };
       // OPE-114 §1: set when the action would run a file the agent itself created or
       // downloaded this session ("setup.py was created by the agent 3 steps ago"). The
       // one fact that cannot be read off the command text. Engine-authored, fixed

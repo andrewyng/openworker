@@ -668,6 +668,13 @@ button.btn.danger { color: var(--accent); }
 .dd-label { font-size: var(--fs-ui); color: var(--ink); display: flex; justify-content: space-between; align-items: center; }
 .dd-item .chk { color: var(--accent); }
 .dd-desc { font-size: var(--fs-meta); color: var(--faint); margin-top: 1px; }
+.dd-meta { font-size: var(--fs-meta); color: var(--faint); }
+.dd-group { font-size: var(--fs-label); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); padding: 8px 10px 4px; }
+.dd-rows { max-height: 320px; overflow: auto; }
+.dd-search { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; margin: 2px 0 6px; font-size: var(--fs-ui); background: var(--panel); color: var(--ink); outline: none; }
+.dd-footer { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
+.dd-footer button { width: 100%; text-align: left; padding: 7px 10px; border-radius: 8px; font-size: var(--fs-ui); color: var(--accent); background: transparent; border: 0; cursor: pointer; }
+.dd-footer button:hover { background: var(--paper); }
 .send { width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--accent); color: #fff; cursor: pointer; font-size: 16px; }
 .send:disabled { opacity: 0.4; cursor: default; }
 .statusline { max-width: 760px; margin: 6px auto 0; font-size: var(--fs-meta); color: var(--faint); display: flex; gap: 12px; }

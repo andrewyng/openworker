@@ -351,7 +351,7 @@ class RemoteDialect:
     def _unwrap(response: Any) -> Any:
         if response.status_code == 401:
             raise BoardError("board token was not accepted (401) — mint one with"
-                             " `ocw board token` on the serving machine")
+                             " `python -m coworker.teams.cli board token` on the serving machine")
         try:
             data = response.json()
         except ValueError:

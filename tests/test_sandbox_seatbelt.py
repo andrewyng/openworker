@@ -174,6 +174,20 @@ def test_a_machines_own_hosts_are_cleaned_and_join_the_list():
         proxy.close()
 
 
+def test_a_running_proxy_takes_more_hosts():
+    """The person allowed a site while the session runs (OPE-219): its proxy lets the host
+    out from then on, and only that proxy, since every session has its own."""
+    proxy, other = netproxy.AllowListProxy("allowlist"), netproxy.AllowListProxy("allowlist")
+    try:
+        assert not proxy.allows("weather.com", 443)
+        proxy.add_hosts(["weather.com:443", "not a host"])
+        assert proxy.allows("weather.com", 443) and not proxy.allows("weather.com", 80)
+        assert not other.allows("weather.com", 443)
+    finally:
+        proxy.close()
+        other.close()
+
+
 def test_the_open_profile_has_no_list_and_is_the_default_on_windows_only(tmp_path):
     assert network_profiles.hosts("open") == [] and network_profiles.is_open("open")
     assert network_profiles.default_profile("win32") == "open"

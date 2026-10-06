@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional, Sequence
 
 from .runner.executor import Executor
 
@@ -97,8 +98,14 @@ class RunnerWorkspace(Workspace):
         self.hello: dict[str, Any] = {}
         self.client = RunnerClient(lambda: provider.open_runner())  # looked up when it connects
         self._executor = RunnerExecutor(
-            self.client, cwd=str(Path(cwd).expanduser().resolve()), shell=shell, before_call=self.sync_roots
+            self.client, cwd=str(Path(cwd).expanduser().resolve()), shell=shell, before_call=self.sync_roots, after_call=self.network_note
         )
+        # Whether the agent can ask the person for a site (`request_network_access`): set by
+        # the session's builder; false where nobody can answer (full access, no such tool).
+        self.can_ask_network: Callable[[], bool] = lambda: False
+        # Refusals up to here have been told to the agent. One that reaches us after its
+        # command's result (OpenShell's log lags) is told with the next result, not lost.
+        self._blocked_told = time.time()
         if start:
             self.ensure_started()
         else:
@@ -209,10 +216,85 @@ class RunnerWorkspace(Workspace):
 
         text = context_lines(getattr(self.provider, "copied", None))
         notes = getattr(self.provider, "notes", None) or []
-        return "\n".join(part for part in [text, *notes] if part)
+        return "\n".join(part for part in [text, *notes, self._network_context()] if part)
+
+    def remove_hosts(self, hosts: Sequence[str]) -> None:
+        """The person took a site back from this session: the sandbox stops letting it out."""
+        with self._start_lock:
+            self.provider.remove_hosts(hosts)
+
+    def _asking(self) -> bool:
+        try:
+            return bool(self.can_ask_network())
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _network_context(self) -> str:
+        """The allowed sites, told to the agent each turn from the live list (OPE-219): which
+        sites its commands reach, and what to do about one that is blocked. Says nothing
+        when the sandbox lets every site out."""
+        if getattr(self.provider, "profile", "") != "allowlist":
+            return ""
+        sites = ", ".join(_site_name(h) for h in getattr(self.provider, "extra_hosts", None) or []) or "none yet"
+        ask = (
+            "If the task needs a blocked site, call request_network_access with the host and a one-line reason, then run the command again once it is allowed. Ask only for sites the task needs."
+            if self._asking()
+            else "The allowed sites cannot be changed from this session. If the task needs a blocked site, tell the user; they can add it in Settings > Sandbox > Choose sites."
+        )
+        return (
+            f"Commands in this session run in a sandbox. They reach only these sites: {sites}. "
+            "A command that tries another site fails, and its result may name the sites the sandbox blocked. "
+            f"{ask} Do not retry a blocked command unchanged, and do not look for another route to a blocked site."
+        )
+
+    @property
+    def reports_blocked(self) -> bool:
+        """Whether this sandbox can say what it blocked. Where it cannot, nothing may be read
+        into an empty answer."""
+        return bool(getattr(self.provider, "reports_blocked", False))
+
+    def blocked_since(self, since: float) -> list[tuple[float, str]]:
+        """(time, "host:port") of the connections this session's sandbox refused since then."""
+        ask = getattr(self.provider, "blocked_since", None)
+        return list(ask(since)) if ask is not None else []
+
+    def network_note(self, started: float, result: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+        """What joins a command's result when the sandbox blocked something: the sites, and
+        a note that says plainly what is and is not known. The attempts are tied to the time
+        the command ran, not to the command.
+
+        Where the sandbox reports late (`blocked_lag`), a failed command waits that long
+        for its refusal, and leaves as soon as one arrives; a command that succeeded does
+        not wait. A refusal that still arrives after its result is told with the next one."""
+        new = self._blocked_untold()
+        lag = float(getattr(self.provider, "blocked_lag", 0.0) or 0.0)
+        failed = result is not None and (result.get("exit_code") != 0 or bool(result.get("timed_out")) or bool(result.get("error")))
+        if not new and lag and failed and self.reports_blocked:
+            deadline = time.time() + lag
+            while not new and time.time() < deadline:
+                time.sleep(0.05)
+                new = self._blocked_untold()
+        if not new:
+            return None
+        self._blocked_told = max(when for when, _ in new)
+        counts: dict[str, int] = {}
+        for _, entry in new:
+            counts[entry] = counts.get(entry, 0) + 1
+        late = any(when < started - 0.5 for when, _ in new)
+        return {"blocked_sites": list(counts), "network_note": network_note_text(counts, can_ask=self._asking(), late=late)}
+
+    def _blocked_untold(self) -> list[tuple[float, str]]:
+        return [item for item in self.blocked_since(self._blocked_told) if item[0] > self._blocked_told]
 
     def describe(self) -> dict[str, Any]:
         return {**self.provider.describe(), "runner": {k: self.hello.get(k) for k in ("runner_version", "os", "machine", "instance_id")}}
+
+    def add_hosts(self, hosts: Sequence[str]) -> None:
+        """The person allowed a site (OPE-219): the sandbox's network list grows at once, for
+        commands as well as the web tools. Under the start lock, so a sandbox being made
+        takes the list as it stands afterwards."""
+        with self._start_lock:
+            self.provider.add_hosts(hosts)
 
     def close(self) -> None:
         if not self.started:
@@ -236,6 +318,35 @@ class RunnerWorkspace(Workspace):
             self.provider.destroy()
             if self.registry is not None and self._registered:
                 self.registry.close(self._registered)
+
+
+_NOTE_SITES = 10  # more than this many blocked sites in one command are counted, not listed
+
+
+def _site_name(entry: str) -> str:
+    """"github.com:443" reads as "github.com": the port only matters when it is not the web's."""
+    return entry[:-4] if entry.endswith(":443") else entry
+
+
+def network_note_text(counts: dict[str, int], *, can_ask: bool, late: bool = False) -> str:
+    """The note itself (owner wording 2026-10-03: open about what the sandbox saw, and
+    about not knowing whether it is what broke the command). `late`: some of the refusals
+    happened before this command started and were only now reported."""
+    lines = [f"  - {entry}" + (f" ({n} attempts)" if n > 1 else "") for entry, n in list(counts.items())[:_NOTE_SITES]]
+    if len(counts) > _NOTE_SITES:
+        lines.append(f"  - and {len(counts) - _NOTE_SITES} more")
+    ask = (
+        "If you think a blocked site caused the failure, ask the user to allow it with request_network_access(hosts, reason), then run the command again. Ask only for sites the task needs."
+        if can_ask
+        else "The allowed sites cannot be changed from this session. If a blocked site is needed, tell the user; they can add it in Settings > Sandbox > Choose sites."
+    )
+    return (
+        "Note: this command ran in a sandbox, and the sandbox's network rules may have affected it.\n"
+        + ("Since your previous command, the sandbox blocked connections to:\n" if late else "While it ran, the sandbox blocked connections to:\n")
+        + "\n".join(lines)
+        + "\n"
+        "These attempts may have come from this command or from something else running in this session. " + ask
+    )
 
 
 def _same_roots(a: list, b: list) -> bool:

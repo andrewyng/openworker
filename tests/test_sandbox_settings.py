@@ -258,3 +258,25 @@ def test_changing_the_provider_rebuilds_live_engines_built_under_the_old_rule(tm
     mgr._engines["d"] = Engine(Direct())
     res = client.post("/v1/settings/sandbox", json={"network_profile": "open"}).json()
     assert res["ok"] and "rebuilt_sessions" not in res and "d" in mgr._engines
+
+
+def test_with_openshell_there_is_no_allow_everything(config_file, monkeypatch):
+    """OpenShell's policy has to name each site, so its only network choice is the allow list."""
+    from coworker.sandbox import network_profiles, selection
+
+    monkeypatch.setattr(selection, "openshell_problem", lambda fresh=False: "")
+    # Another sandbox, set to "Allow everything": both choices are offered.
+    assert settings.update({"provider": "direct", "network_profile": "open"})["ok"]
+    assert [n["name"] for n in settings.snapshot()["network_profiles"]] == ["allowlist", "open"]
+
+    # Choosing OpenShell moves the machine to the allow list and offers nothing else.
+    out = settings.update({"provider": "openshell"})
+    assert out["network_profile"] == network_profiles.ALLOWLIST
+    assert [n["name"] for n in out["network_profiles"]] == ["allowlist"]
+    assert 'sandbox_network_profile = "allowlist"' in config_file.read_text()
+
+    # Asking for it afterwards is refused, in plain words, and nothing changes.
+    refused = settings.update({"network_profile": "open"})
+    assert refused["ok"] is False and "cannot allow every site" in refused["error"]
+    assert 'sandbox_network_profile = "allowlist"' in config_file.read_text()
+

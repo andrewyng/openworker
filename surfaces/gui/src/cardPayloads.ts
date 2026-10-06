@@ -29,6 +29,17 @@ export function approvalItemFromPayload(d: any): ApprovalItem {
     category: d.category,
     standingTarget: d.standing_target || undefined,
     searchProvider: d.search_provider || undefined,
+    siteWall: d.site_wall || undefined,
+    networkRequest: d.network_request
+      ? {
+          reason: String(d.network_request.reason || ""),
+          evidence: d.network_request.evidence !== false,
+          hosts: (d.network_request.hosts || []).map((h: any) => ({
+            host: String(h.host || ""),
+            blockedSecondsAgo: typeof h.blocked_seconds_ago === "number" ? h.blocked_seconds_ago : null,
+          })),
+        }
+      : undefined,
     provenance: d.provenance || undefined,
     reviewerUnsure: d.reviewer_unsure || undefined,
     escalation: d.escalation || undefined,

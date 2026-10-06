@@ -5,11 +5,11 @@
 #
 # Installs the `openworker` command for the current user (no sudo). Re-run it to upgrade.
 #
-# On Linux (x86_64, aarch64; glibc 2.31 or newer) it downloads the `openworker` program from
-# the GitHub release, checks its SHA-256, unpacks it into ~/.local/share/openworker and links
-# it into ~/.local/bin. No Python is needed.
+# On Linux (x86_64, aarch64; glibc 2.31 or newer) and on macOS (Apple Silicon, Intel) it
+# downloads the `openworker` program from the GitHub release, checks its SHA-256, unpacks it
+# into ~/.local/share/openworker and links it into ~/.local/bin. No Python is needed.
 #
-# Elsewhere (macOS, other Linux) it installs the Python package: with `uv` when present,
+# Elsewhere (other Linux) it installs the Python package: with `uv` when present,
 # `pipx` when that is what the machine has, and otherwise it installs `uv` first (uv brings
 # its own Python, so the system's Python version does not matter).
 #
@@ -66,8 +66,12 @@ main() {
     say "  3. To keep it running in the background:  openworker machine service install"
 }
 
-# The program is built for Linux with glibc 2.31 or newer, on x86_64 and aarch64.
+# The program is built for macOS on Apple Silicon and Intel, and for Linux with glibc 2.31
+# or newer on x86_64 and aarch64.
 program_runs_here() {
+    if [ "$(uname -s)" = "Darwin" ]; then
+        case "$(uname -m)" in arm64 | x86_64) return 0 ;; *) return 1 ;; esac
+    fi
     [ "$(uname -s)" = "Linux" ] || return 1
     case "$(uname -m)" in x86_64 | aarch64) ;; *) return 1 ;; esac
     glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')"
@@ -80,6 +84,7 @@ program_runs_here() {
 
 install_program() {
     arch="$(uname -m)"
+    case "$(uname -s)" in Darwin) os="macos" ;; *) os="linux" ;; esac
     command -v curl >/dev/null 2>&1 || fail "curl is needed to download OpenWorker. Install curl, then run this again."
     command -v tar >/dev/null 2>&1 || fail "tar is needed to unpack OpenWorker."
     if command -v sha256sum >/dev/null 2>&1; then
@@ -91,10 +96,10 @@ install_program() {
     fi
 
     if [ -n "${OPENWORKER_VERSION:-}" ]; then
-        file="openworker-${OPENWORKER_VERSION}-linux-${arch}.tar.gz"
+        file="openworker-${OPENWORKER_VERSION}-${os}-${arch}.tar.gz"
         base="${OPENWORKER_DOWNLOAD_URL:-$repo/releases/download/v${OPENWORKER_VERSION}}"
     else
-        file="openworker-linux-${arch}.tar.gz"  # the stable name of the latest release
+        file="openworker-${os}-${arch}.tar.gz"  # the stable name of the latest release
         base="${OPENWORKER_DOWNLOAD_URL:-$repo/releases/latest/download}"
     fi
 
@@ -136,6 +141,11 @@ install_program() {
         units="$(systemctl --user list-units --all --plain --no-legend 'openworker-*.service' 2>/dev/null | awk '{print $1}')"
         for unit in $units; do
             say "Restart the running machine to use it:  systemctl --user restart $unit"
+        done
+    elif command -v launchctl >/dev/null 2>&1; then
+        labels="$(launchctl list 2>/dev/null | awk '$3 ~ /^com\.openworker\.machine\./ {print $3}')"
+        for label in $labels; do
+            say "Restart the running machine to use it:  launchctl kickstart -k gui/$(id -u)/$label"
         done
     fi
 }

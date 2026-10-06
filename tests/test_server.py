@@ -23,6 +23,10 @@ class ScriptedProvider(ProviderClient):
         self._turns = list(turns)
 
     def complete(self, *, model, messages, tools=None, **settings):
+        # Session auto-titling calls the same provider from a background thread, racing
+        # the turn for the next scripted reply; answer it here so the script stays the turn's.
+        if messages and messages[0].get("content") == SessionManager._AUTOTITLE_PROMPT:
+            return _text("Session title")
         return self._turns.pop(0)
 
     def capabilities(self, model):
@@ -501,6 +505,26 @@ def test_server_sets_explicit_websocket_frame_limit(tmp_path, monkeypatch):
     assert seen["ws_max_size"] == server_run._WS_MAX_FRAME_BYTES
 
 
+def test_check_flag_builds_the_app_and_serves_nothing(tmp_path, monkeypatch, capsys):
+    """The packaging check: every import and the wiring, no port, no token file. Added
+    after the Intel apps shipped with a sidecar that died on its first import."""
+    import sys
+
+    from coworker.server import run as server_run
+
+    built = []
+    monkeypatch.setattr(server_run, "_ensure_ca_bundle", lambda: None)
+    monkeypatch.setattr(server_run, "build_app", lambda *args: built.append(args) or object())
+    monkeypatch.setattr(server_run, "_ensure_api_token", lambda port: pytest.fail("a check must not write a token"))
+    monkeypatch.delitem(sys.modules, "uvicorn", raising=False)
+    monkeypatch.setattr(server_run, "_exit_when_orphaned", lambda: pytest.fail("a check must not serve"))
+
+    server_run.main(["--cwd", str(tmp_path), "--check"])
+
+    assert len(built) == 1 and built[0][0] == str(tmp_path)
+    assert capsys.readouterr().out.strip() == "ok"
+
+
 def test_standalone_server_token_file_is_user_only(tmp_path, monkeypatch):
     import os
 
@@ -970,10 +994,7 @@ def test_ws_first_message_binds_then_midsession_switch_persists_notice(tmp_path)
     reconnects — found 2026-07-04). Mid-session rebinds are ALLOWED (roadmap item 3,
     2026-07-22, supersedes the 07-04 lock): the switch lands as a persisted model_switch
     notice and a model_changed broadcast, and the next turn runs on the new model."""
-    # 4 turns: 3 user turns + the autotitle's fire-and-forget complete() after turn 1.
-    client = _client(
-        tmp_path, [_text("ok"), _text("Session title"), _text("ok again"), _text("still ok")]
-    )
+    client = _client(tmp_path, [_text("ok"), _text("ok again"), _text("still ok")])
     with client.websocket_connect("/ws/session/model-per-msg") as ws:
         ready = ws.receive_json()
         assert ready["type"] == "ready"

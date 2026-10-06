@@ -157,7 +157,8 @@ class WindowsProvider:
 
         hosts = sorted({*self.extra_hosts, *(h for g in self.grants for h in g.hosts)})
         if self.network and not self.open_network:
-            self._proxy = netproxy.AllowListProxy(self.profile, extra_hosts=hosts) if hosts else netproxy.shared(self.profile)
+            # Each session has its own proxy: its allow list can grow while it runs (add_hosts).
+            self._proxy = netproxy.AllowListProxy(self.profile, extra_hosts=hosts)
         for entry in self._wanted_entries():
             self._grant(*entry)
         self._desktop = winsec.Desktop(self.session_sid)
@@ -319,6 +320,29 @@ class WindowsProvider:
 
     # -- changes ------------------------------------------------------------------------
     restarts_on_regrant = False
+
+    def add_hosts(self, hosts: Sequence[str]) -> None:
+        """Let the running sandbox reach more "host:port" entries (OPE-219): the session's
+        own proxy takes them at once; a sandbox not made yet gets them at creation."""
+        new = [str(h) for h in hosts if str(h) not in self.extra_hosts]
+        self.extra_hosts.extend(new)
+        if new and self._proxy is not None:
+            self._proxy.add_hosts(new)
+
+    def remove_hosts(self, hosts: Sequence[str]) -> None:
+        """Take "host:port" entries back from the running sandbox. Hosts a shared login
+        needs stay: they came with the credential, not from the list."""
+        keep = {h for g in self.grants for h in g.hosts}
+        gone = [str(h) for h in hosts if str(h) in self.extra_hosts]
+        self.extra_hosts = [h for h in self.extra_hosts if h not in gone]
+        if self._proxy is not None:
+            self._proxy.remove_hosts([h for h in gone if h not in keep])
+
+    reports_blocked = True  # its proxy records what it refuses
+
+    def blocked_since(self, since: float) -> list[tuple[float, str]]:
+        """(time, "host:port") of the connections the sandbox refused since then."""
+        return self._proxy.blocked_since(since) if self._proxy is not None else []
 
     def regrant(self, roots: Sequence[dict[str, Any]]) -> None:
         """The session's folders changed. The confinement is per sandbox, not per folder,

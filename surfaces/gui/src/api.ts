@@ -648,6 +648,28 @@ export async function removeRoot(
   return res.json();
 }
 
+// -- the session's allowed sites (OPE-219) -------------------------------------
+// The answer carries the session's sandbox as the header chip shows it.
+type SitesAnswer = { ok: boolean; error?: string; sandbox?: any };
+
+export async function allowSessionSite(sessionId: string, host: string): Promise<SitesAnswer> {
+  const res = await fetch(`${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/sites`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ host }),
+  });
+  return res.json();
+}
+
+export async function removeSessionSite(sessionId: string, host: string): Promise<SitesAnswer> {
+  const q = new URLSearchParams({ host });
+  const res = await fetch(
+    `${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/sites?${q.toString()}`,
+    { method: "DELETE" },
+  );
+  return res.json();
+}
+
 // -- MCP servers --------------------------------------------------------------
 export interface McpServer {
   name: string;
@@ -1178,6 +1200,8 @@ export interface ModelSettings {
   auto_approve_shadow?: boolean;
   // Curated-matrix display names ({full id → "GLM-5.2 · via Together"}); custom models absent.
   model_labels?: Record<string, string>;
+  // Per-model settings the user saved (model_config.json), keyed by model id.
+  model_config?: Record<string, ModelConfigRecord>;
   // {full id → context window in tokens}, verified matrix entries only — drives the
   // composer's context-fill meter (absent id → the meter hides). Optional for older backends.
   model_context_windows?: Record<string, number>;
@@ -2043,11 +2067,41 @@ export async function unsubscribeChannel(
   return res.json();
 }
 
+// Who answers when the agent asks (server: coworker/unattended.py). "attended" = inline,
+// "inbox" = parked in the Inbox until someone returns, "auto" = the engine answers by
+// fixed rule and refuses anything only a person could approve.
+export type Attendance = "attended" | "inbox" | "auto";
+
 export async function getUnattended(sessionId: string): Promise<boolean> {
   const res = await fetch(
     `${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/unattended`,
   );
   return (await res.json()).unattended;
+}
+
+export async function getAttendance(sessionId: string): Promise<Attendance> {
+  const res = await fetch(
+    `${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/unattended`,
+  );
+  const body = await res.json();
+  const value = body.attendance;
+  if (value === "inbox" || value === "auto") return value;
+  return body.unattended ? "inbox" : "attended";
+}
+
+export async function setAttendance(
+  sessionId: string,
+  attendance: Attendance,
+): Promise<{ ok: boolean; unattended: boolean; attendance: Attendance }> {
+  const res = await fetch(
+    `${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/unattended`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ attendance }),
+    },
+  );
+  return res.json();
 }
 
 export async function setUnattended(
@@ -2354,6 +2408,7 @@ export interface ProviderField {
 }
 
 export interface ProviderInfo {
+  api_key_configured?: boolean;
   name: string;
   title: string;
   needs_key: boolean;
@@ -2367,6 +2422,11 @@ export interface ProviderInfo {
   last_used_at?: number | null; // epoch secs the provider last served a completion
   // OAuth providers (auth === "oauth"): browser sign-in instead of a key form.
   auth?: string | null;
+  // How Models & Keys groups it: a server on the user's own hardware, a plan signed
+  // into, or an API key. Absent on an older backend → treated as an API key.
+  kind?: "local" | "subscription" | "api_key";
+  // Local servers only: whether the server answers right now (cached probe).
+  alive?: boolean;
   signed_in?: boolean;
   account?: string | null; // signed-in account label (email or id)
   authorizing?: boolean;
@@ -2374,6 +2434,26 @@ export interface ProviderInfo {
 }
 
 // -- ChatGPT-subscription provider sign-in (OAuth; tokens never reach the GUI) ------
+export interface OpenRouterAuthStatus {
+  connected: boolean;
+  active: boolean;
+  authorizing: boolean;
+  attempt_id: string | null;
+  authorize_url: string | null;
+  error: string | null;
+}
+
+export async function openRouterAuth(
+  action: "status" | "signin" | "complete" | "cancel" | "disconnect",
+  body: Record<string, unknown> = {},
+): Promise<OpenRouterAuthStatus> {
+  const response = await fetch(`${httpBase()}/v1/providers/openrouter/${action}`, action === "status" ? undefined : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error("OpenRouter authentication request failed");
+  return response.json();
+}
+
 export interface CodexAuthStatus {
   signed_in: boolean;
   account?: string | null;
@@ -2394,6 +2474,136 @@ export async function codexAuthStatus(): Promise<CodexAuthStatus> {
 
 export async function codexSignout(): Promise<{ ok: boolean }> {
   const res = await fetch(`${httpBase()}/v1/providers/openai-codex/signout`, { method: "POST" });
+  return res.json();
+}
+
+// -- per-model settings, the machine, and what local servers hold ----------------------
+
+export interface ModelConfigRecord {
+  context_size?: number;
+  max_output_tokens?: number;
+  thinking?: boolean;
+  reasoning_effort?: string;
+  temperature?: number;
+  top_p?: number;
+  compaction_threshold_pct?: number;
+  default?: boolean;
+}
+
+export interface ModelSettingValue {
+  value: number | boolean | string;
+  from: "user" | "recommended";
+}
+
+export interface ModelRecommendation {
+  name: string;
+  context_max: number | null;
+  context_for_agents: number | null;
+  max_output_tokens: number | null;
+  thinking: { available: boolean; default: boolean };
+  sampling: Record<string, number>;
+  notes: string;
+  source: string;
+}
+
+/** One model's settings in force, each with where it came from. */
+export interface ModelConfigView {
+  model: string;
+  context_size?: ModelSettingValue;
+  max_output_tokens?: ModelSettingValue;
+  thinking?: ModelSettingValue;
+  reasoning_effort?: ModelSettingValue;
+  temperature?: ModelSettingValue;
+  top_p?: ModelSettingValue;
+  compaction_threshold_pct?: ModelSettingValue;
+  default: ModelSettingValue;
+  recommendation?: ModelRecommendation;
+}
+
+export async function getModelConfig(model: string): Promise<ModelConfigView> {
+  const res = await fetch(`${httpBase()}/v1/settings/model-config?model=${encodeURIComponent(model)}`);
+  return res.json();
+}
+
+export async function setModelConfig(
+  model: string,
+  values: Partial<Record<keyof ModelConfigRecord, number | boolean | string | null>>,
+): Promise<ModelConfigView & { ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/model-config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, values }),
+  });
+  return res.json();
+}
+
+export async function removeModelConfig(model: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`${httpBase()}/v1/settings/model-config/remove`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model }),
+  });
+  return res.json();
+}
+
+/** This session's thinking switch and effort level (UX-055, the ⚙ beside the model). */
+export async function getSessionModelSettings(sessionId: string): Promise<{ thinking: boolean | null; reasoning_effort: string | null }> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/model-settings`);
+  return res.json();
+}
+
+export async function setSessionModelSettings(
+  sessionId: string,
+  values: { thinking?: boolean | null; reasoning_effort?: string | null },
+): Promise<{ ok: boolean; error?: string; thinking?: boolean | null; reasoning_effort?: string | null }> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/model-settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(values),
+  });
+  return res.json();
+}
+
+/** This machine, for the "Your system" section. */
+export interface SystemFacts {
+  processor: string;
+  graphics: string;
+  kind: "apple_silicon" | "nvidia" | "dgx_spark" | "jetson" | "cpu";
+  memory_bytes: number | null;
+  gpu_memory_bytes: number | null;
+  storage_free_bytes: number | null;
+  storage_total_bytes: number | null;
+  model_memory_bytes: number | null;
+  runs_well_up_to_bytes: number | null;
+}
+
+export async function getSystemFacts(): Promise<SystemFacts> {
+  const res = await fetch(`${httpBase()}/v1/system`);
+  return res.json();
+}
+
+/** One model a local server holds, as the settings table shows it. */
+export interface LocalModelRow {
+  model: string; // full id, e.g. ollama:qwen3-coder:30b
+  name: string;
+  size_bytes: number | null;
+  tools: boolean | null; // null: the server did not say
+  thinking: boolean | null;
+  vision: boolean | null;
+  remote: boolean;
+  parameter_size: string | null;
+  quantization: string | null;
+  context_max: number | null;
+  context: number | null;
+  context_from: "user" | "machine" | "server";
+  fit: "runs_well" | "tight" | "too_large" | "cloud" | "unknown";
+  recommendation: string | null;
+}
+
+export async function getLocalModels(
+  provider: string,
+): Promise<{ provider: string; models: LocalModelRow[]; alive?: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/providers/${encodeURIComponent(provider)}/models`);
   return res.json();
 }
 

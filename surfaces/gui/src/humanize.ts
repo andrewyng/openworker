@@ -153,6 +153,13 @@ export function humanizeApprovalTitle(name: string, args: any): HumanLine {
     }
     case "web_search":
       return { pre: "Search the web" };
+    // OPE-219: the agent asks for sites its sandboxed commands cannot reach.
+    case "request_network_access": {
+      const raw = Array.isArray(a.hosts) ? a.hosts : a.hosts ? [a.hosts] : [];
+      const hosts = raw.map((h: unknown) => String(h).replace(/:443$/, "")).filter(Boolean);
+      if (!hosts.length) return { pre: "Let commands reach a site" };
+      return { pre: "Let commands reach ", obj: hosts.length > 2 ? `${hosts[0]} and ${hosts.length - 1} more` : hosts.join(" and ") };
+    }
     default:
       return { pre: `Use ${name}` };
   }

@@ -10,7 +10,9 @@ a Keychain / age-encrypted backend can swap in later without touching them.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -138,13 +140,111 @@ def write_private_text(path: str | Path, content: str) -> Path:
     return _atomic_private_write(Path(path).expanduser(), content)
 
 
+class _StoreLock:
+    """One lock per secrets file, across threads AND processes.
+
+    Several OpenWorker processes can share a state folder: the app's server, and each
+    `openworker run`. A change to the file is read, modify, write of the WHOLE file, so
+    without this two processes can each write and one change is lost. A sign-in renewal
+    is worse: two processes renewing the same sign-in at once can leave it cancelled at a
+    vendor that hands out a new refresh token each time.
+
+    Inside the process it is a re-entrant lock shared by every SecretStore on the same
+    file. Across processes it is an advisory lock on `<file>.lock` (flock; byte-range
+    locking on Windows), taken with a deadline: if another process holds it for too long,
+    this one goes ahead without it rather than stall a turn on a stuck peer."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path.with_name(path.name + ".lock")
+        self._thread = threading.RLock()
+        self._depth = 0
+        self._fh: Any = None
+
+    def acquire(self, timeout: float) -> None:
+        self._thread.acquire()
+        if self._depth == 0:
+            self._fh = self._lock_file(timeout)
+        self._depth += 1
+
+    def release(self) -> None:
+        self._depth -= 1
+        if self._depth == 0 and self._fh is not None:
+            fh, self._fh = self._fh, None
+            try:
+                if _IS_WINDOWS:
+                    import msvcrt
+
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except (OSError, ImportError):
+                pass
+            fh.close()
+        self._thread.release()
+
+    def _lock_file(self, timeout: float) -> Any:
+        from .statelock import _try_lock
+
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            # Made private from the first moment, like every file beside the secrets. It
+            # is empty and stays: it is the lock, not a temporary file.
+            fh = os.fdopen(os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600), "r+")
+        except OSError:
+            return None  # a read-only folder: nothing could be written there anyway
+        try:
+            _restrict_to_user(self.path, is_dir=False)
+        except OSError:
+            pass
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            if _try_lock(fh):
+                return fh
+            if time.monotonic() >= deadline:
+                logging.getLogger(__name__).warning(
+                    "the stored sign-ins stayed locked by another process for %.0fs; going ahead without the lock",
+                    timeout,
+                )
+                fh.close()
+                return None
+            time.sleep(0.05)
+
+
+_STORE_LOCKS: dict[str, _StoreLock] = {}
+_STORE_LOCKS_GUARD = threading.Lock()
+
+
+def _store_lock(path: Path) -> _StoreLock:
+    key = os.path.realpath(str(path))
+    with _STORE_LOCKS_GUARD:
+        lock = _STORE_LOCKS.get(key)
+        if lock is None:
+            lock = _STORE_LOCKS[key] = _StoreLock(Path(key))
+        return lock
+
+
 class SecretStore:
     """File-backed secret store. Reads resolve `${VAR}` refs; status never leaks values."""
 
     def __init__(self, path: Optional[str | Path] = None) -> None:
         self.path = Path(path).expanduser() if path else state_dir() / "secrets.json"
         self._dotenv_path = self.path.parent / ".env"
-        self._lock = threading.Lock()
+        self._lock = _store_lock(self.path)
+
+    @contextlib.contextmanager
+    def exclusive(self, timeout: float = 30.0):
+        """Hold the store for a read-then-write that no other thread or process may
+        interleave with. A sign-in renewal takes it, reads the profile AGAIN inside, and
+        renews only if nobody else just did: the first process renews, the others read
+        its result. Re-entrant: `put` and `delete` inside it are fine."""
+        self._lock.acquire(timeout)
+        try:
+            yield self
+        finally:
+            self._lock.release()
 
     # -- reads ------------------------------------------------------------------
     def get(self, profile: str) -> Optional[dict[str, Any]]:
@@ -193,13 +293,13 @@ class SecretStore:
 
     # -- writes -----------------------------------------------------------------
     def put(self, profile: str, data: dict[str, Any]) -> None:
-        with self._lock:
+        with self.exclusive():
             store = self._read()
             store[profile] = data
             self._write(store)
 
     def delete(self, profile: str) -> bool:
-        with self._lock:
+        with self.exclusive():
             store = self._read()
             if profile not in store:
                 return False

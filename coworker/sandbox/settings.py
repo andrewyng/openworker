@@ -79,7 +79,9 @@ def snapshot(cfg: Optional[app_config.Config] = None) -> dict[str, Any]:
         "providers": providers,
         "windows_setup": _windows_setup_info(),
         "network_profile": _profile_for_display(cfg.sandbox_network_profile),
-        "network_profiles": [{"name": name} for name in network_profiles.PROFILES],
+        # The choices the page offers. OpenShell cannot allow every site (its policy has
+        # to name each one), so with OpenShell there is only the allow list.
+        "network_profiles": [{"name": name} for name in network_profiles.PROFILES if _offered(name, cfg.sandbox_provider or effective)],
         "network_sites": [{"group": group, "hosts": [f"{h}:443" for h in hosts]} for group, hosts in network_profiles.SITES.items()],
         "network_hosts": network_profiles.clean_hosts(cfg.sandbox_network_hosts),
         "credentials": _for_display(credentials.listed(cfg.sandbox_credentials)),
@@ -87,6 +89,16 @@ def snapshot(cfg: Optional[app_config.Config] = None) -> dict[str, Any]:
         "toolchains": toolchains.for_display(cfg.sandbox_toolchains),
         "config_path": str(app_config.global_config_path()),
     }
+
+
+def _offered(profile: str, provider: str) -> bool:
+    return not (provider == OPENSHELL and network_profiles.is_open(profile))
+
+
+OPENSHELL_NEEDS_SITES = (
+    "OpenShell cannot allow every site: its policy has to name each site. "
+    'Choose "Only the sites you allow" and tick the sites the work needs.'
+)
 
 
 def _profile_for_display(configured: Optional[str]) -> str:
@@ -211,12 +223,19 @@ def update(body: dict[str, Any]) -> dict[str, Any]:
 
         if provider == OPENSHELL:
             openshell_problem(fresh=True)
+            # "Allow everything" does not exist with OpenShell: a machine that had it moves
+            # to the allow list, or its sessions would not start.
+            stored = (app_config.load_config().sandbox_network_profile or "").strip().lower()
+            if stored and network_profiles.is_open(_profile_for_display(stored)) and "network_profile" not in body:
+                app_config.set_global_value("sandbox_network_profile", network_profiles.ALLOWLIST)
     if "network_profile" in body:
         profile = str(body.get("network_profile") or "").strip().lower()
         try:
             profile = network_profiles.check(profile)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
+        if not _offered(profile, app_config.load_config().sandbox_provider or ""):
+            return {"ok": False, "error": OPENSHELL_NEEDS_SITES}
         app_config.set_global_value("sandbox_network_profile", profile)
     if "network_hosts" in body:
         items = body.get("network_hosts")
@@ -305,3 +324,60 @@ def _unset(key: str) -> None:
     lines = target.read_text(encoding="utf-8").splitlines()
     kept = [line for line in lines if not re.match(rf"\s*{re.escape(key)}\s*=", line)]
     target.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+
+def add_site(host: str) -> list[str]:
+    """Add one site to the machine's allowed sites (the "Always allow <site>" choice on the
+    allowed-sites card, OPE-219) and return the new list. A site already on it changes
+    nothing. Raises ValueError for a host the list cannot hold."""
+    from .network_profiles import clean_host
+
+    entry = clean_host(host)
+    current = list(app_config.load_config().sandbox_network_hosts or [])
+    if entry not in current:
+        current.append(entry)
+        app_config.set_global_list("sandbox_network_hosts", current)
+    return current
+
+
+def session_sandbox(engine: Any) -> dict[str, Any]:
+    """What a session's header says about its sandbox (OPE-218): the walls THIS session
+    runs behind, which were fixed when it started, not the machine's current setting.
+
+    - `sandboxed`: its commands and file tools run in a sandbox. Carries the provider, the
+      network setting, the allowed sites (for "Only the sites you allow"), the folders and
+      the shared logins.
+    - `not_sandboxed`: the machine is set to use a sandbox, and this session has none (it
+      was opened before the switch). The one state worth a warning.
+    - `off`: no sandbox on this machine and none here. Nothing was promised.
+    """
+    from .workspace import DIRECT, provider_name
+
+    workspace = getattr(engine, "sandbox_workspace", None)
+    provider = getattr(workspace, "provider", None)
+    if provider is not None:
+        profile = str(getattr(provider, "profile", "") or "")
+        sites = getattr(getattr(engine, "permissions", None), "sandbox_sites", None)
+        if sites is None:
+            sites = list(getattr(provider, "extra_hosts", None) or [])
+        return {
+            "state": "sandboxed",
+            "provider": str(getattr(provider, "name", "") or ""),
+            "network": profile,
+            "sites": [str(x) for x in sites] if profile == "allowlist" else [],
+            # Allowed by the person for this session only (a card, or the session's list).
+            "session_sites": [str(x) for x in (getattr(getattr(engine, "permissions", None), "session_sites", None) or [])] if profile == "allowlist" else [],
+            "folders": [
+                {"path": str(r.get("path", "")), "writable": bool(r.get("writable"))}
+                for r in (getattr(provider, "roots", None) or [])
+            ],
+            "logins": [str(getattr(g, "title", "") or getattr(g, "name", "")) for g in (getattr(provider, "grants", None) or [])],
+            "started": bool(getattr(workspace, "started", False)),
+        }
+    try:
+        configured = provider_name(app_config.load_config().sandbox_provider)
+    except Exception:  # noqa: BLE001 - a broken config must not break the header
+        configured = DIRECT
+    if configured != DIRECT:
+        return {"state": "not_sandboxed", "provider": configured}
+    return {"state": "off"}

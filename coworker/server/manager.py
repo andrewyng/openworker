@@ -22,6 +22,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+from .. import model_config as _model_config
 from ..agent import build_engine
 from ..agents import get_agent
 from ..connections import (
@@ -130,6 +131,10 @@ def _grants_of(engine) -> dict[str, Any]:
     return out
 
 
+# Tools whose approval can change the session's allowed sites (the chip refreshes after one).
+_SITE_TOOLS = {"request_network_access", "web_fetch", "web_search", "browser_open_url"}
+
+
 def _grant_offered(outcome, request) -> bool:
     """Whether a persistent grant is legitimately offered for this tool — the server-side
     mirror of what the approval card actually renders (`ApprovalCard.tsx`).
@@ -145,6 +150,7 @@ def _grant_offered(outcome, request) -> bool:
     - ALWAYS_DOMAIN only means anything for a tool carrying a url.
     """
     from ..engine import ApprovalOutcome
+    from ..permissions import NETWORK_ACCESS_TOOL
     from ..risk import RiskClass, classify
 
     name = getattr(request, "tool_name", "")
@@ -152,10 +158,18 @@ def _grant_offered(outcome, request) -> bool:
     args = getattr(request, "arguments", None) or {}
     risk = classify(name, metadata)
 
+    if name == NETWORK_ACCESS_TOOL:
+        # OPE-219: the network-access card offers this session (sent as the domain grant)
+        # and "Always allow"; nothing tool-wide, so each new site gets its own card.
+        return outcome in (ApprovalOutcome.ALWAYS_DOMAIN, ApprovalOutcome.ALWAYS_SITE)
     if outcome is ApprovalOutcome.ALWAYS_COMMAND:
         return risk is RiskClass.EXEC
     if outcome is ApprovalOutcome.ALWAYS_DOMAIN:
         return risk is RiskClass.EGRESS and bool(args.get("url"))
+    if outcome is ApprovalOutcome.ALWAYS_SITE:
+        # OPE-219: only the allowed-sites card offers it, and only egress tools raise it.
+        # (The engine applies it only when the wall named a site for this call.)
+        return risk is RiskClass.EGRESS
     if outcome is ApprovalOutcome.ALWAYS_TRUST:
         # OPE-136 §4: durable per-tool trust is the MCP family's sanctioned lever —
         # the coarsest grant knowledge allows there, and offered nowhere else
@@ -307,6 +321,13 @@ class SessionManager:
         self.model = model
         self.mode = mode
         self.provider = provider
+        # The dangerous mode is never offered by the desktop app: a session may run in it
+        # only when this server was started with it enabled (`openworker-server
+        # --allow-dangerous-mode`, or the environment switch the CLI's one-shot `run`
+        # sets). Stored sessions in that mode fall back to plain bypass otherwise.
+        self.allow_dangerous_mode = (
+            os.environ.get("COWORKER_ALLOW_DANGEROUS_MODE", "").strip() == "1"
+        )
 
         if data_dir is not None:
             base = Path(data_dir).expanduser()
@@ -809,6 +830,7 @@ class SessionManager:
         if record:
             ws = record.workspace or None
             model, mode, messages = record.model, Mode(record.mode), record.messages
+            mode = self.permitted_mode(mode)
         else:
             ws = self.resolve_workspace(workspace)
             # A coworker with a `models:` list starts on the first entry this machine
@@ -872,6 +894,9 @@ class SessionManager:
             model=model,
             mode=mode,
             provider=self.provider,
+            # The model's saved settings (or its maker's recommendation): longest reply,
+            # sampling, thinking. Read at build time.
+            model_settings=_model_config.model_settings_for(model),
             # Memory off (§4.3) = stop LEARNING, not amnesia: saved facts still inject
             # and stay usable, only the write tools go. Read at build time; running
             # sessions finish under the mode they started with.
@@ -1134,6 +1159,14 @@ class SessionManager:
                     }
                 )
         return granted
+
+    def permitted_mode(self, mode: Mode) -> Mode:
+        """The mode a session may actually run in on this server: the dangerous mode
+        needs the start-up switch; without it the session runs as plain bypass (the same
+        checks minus the cleared floors) rather than failing to open."""
+        if mode is Mode.DANGEROUSLY_BYPASS_APPROVALS and not self.allow_dangerous_mode:
+            return Mode.BYPASS_APPROVALS
+        return mode
 
     @staticmethod
     def _mode_value(raw: str) -> Optional[Mode]:
@@ -4032,6 +4065,14 @@ class SessionManager:
                     d.name
                 ),
             }
+            if d.name == "openrouter":
+                row["api_key_configured"] = bool(
+                    profile.get("api_key") or os.environ.get("OPENROUTER_API_KEY")
+                )
+            if d.kind == "local":
+                # A keyless server is "connected" when it answers (cached probes), not
+                # when a form was saved; the page groups connected providers first.
+                row["alive"] = self._ollama_alive() if d.name == "ollama" else self._local_server_alive(d.name)
             if d.auth == "oauth":
                 # Sign-in state instead of key state; the token values themselves
                 # never leave the SecretStore.
@@ -4118,6 +4159,8 @@ class SessionManager:
         topped up with the compat-vendor extras the matrix doesn't vouch for."""
         if name == "ollama":
             return [m.split(":", 1)[-1] for m in self._ollama_models()]
+        if name in ("llamacpp", "vllm"):
+            return [m.split(":", 1)[-1] for m in self._local_server_models(name)]
         from ..providers.matrix import models_for_provider
 
         return list(
@@ -4146,7 +4189,10 @@ class SessionManager:
                 profile[f.key] = val
             elif not f.required:
                 profile.pop(f.key, None)
-        missing = [f.label for f in d.fields if f.required and not profile.get(f.key)]
+        missing = [
+            f.label for f in d.fields if f.required and not profile.get(f.key)
+            and not (name == "openrouter" and f.key == "api_key" and os.environ.get("OPENROUTER_API_KEY"))
+        ]
         if missing:
             return {"ok": False, "error": "missing: " + ", ".join(missing)}
         # A (re)pasted key stamps its save date — Settings shows "key added <date>" so stale
@@ -4155,6 +4201,8 @@ class SessionManager:
             from datetime import date
 
             profile["key_set_at"] = date.today().isoformat()
+        if name == "openrouter" and "api_key" in fields:
+            profile["auth_method"] = "api_key"
         self.secrets.put(f"provider:{name}", profile)
         self.adopt_provider_default(name)
         return {"ok": True, "provider": name, "recommended_model": d.recommended_model}
@@ -4175,11 +4223,17 @@ class SessionManager:
         # the curated list so it shows up in the composer right after configuring the provider.
         rec = d.recommended_model
         added: Optional[str] = None
-        if rec and rec in self._suggested_models(name):
+        suggested = self._suggested_models(name)
+        if rec and rec in suggested:
             # OpenAI models stay bare (the router's default); others carry their prefix.
             added = rec if name == "openai" else f"{name}:{rec}"
+        elif name in ("ollama", "llamacpp", "vllm") and suggested:
+            # A local server offers whatever the user loaded — the recommended model may
+            # not be one.
+            added = f"{name}:{suggested[0]}"
+        if added:
             self.add_model(added)
-        if added and not self._provider_configured(self._model_provider(self.model)):
+        if added and not self.model_selectable(self.model):
             self.set_default_model(added)
             return added
         return None
@@ -4191,7 +4245,14 @@ class SessionManager:
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
-        self.secrets.delete(f"provider:{name}")
+        if name == "openrouter":
+            profile = self.secrets.get("provider:openrouter") or {}
+            self.secrets.put("provider:openrouter", {
+                key: value for key, value in profile.items()
+                if key in {"auth_method", "account_connected"}
+            })
+        else:
+            self.secrets.delete(f"provider:{name}")
         self._refresh_provider(name)
         return {"ok": True, "provider": name}
 
@@ -4360,23 +4421,72 @@ class SessionManager:
 
     def _ollama_models(self) -> list[str]:
         """Live list of models pulled into the configured Ollama server (via its native
-        `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama isn't
-        configured or unreachable — best-effort, never raises."""
-        profile = self.secrets.get("provider:ollama")
-        if not profile:
-            return []
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
-        try:
-            import httpx
+        `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama is
+        unreachable — best-effort, never raises. No stored profile → the default localhost
+        endpoint, same as `_ollama_alive` (keyless Ollama needs no saved form)."""
+        from ..providers import ollama_facts
 
-            data = httpx.get(base + "/api/tags", timeout=2.0).json()
-            return [
-                f"ollama:{m['name']}" for m in data.get("models", []) if m.get("name")
-            ]
-        except Exception:
-            return []
+        profile = self.secrets.get("provider:ollama") or {}
+        # Only models that can use tools: a coworker cannot work with the others, so
+        # they stay off the picker (the settings page still lists them, greyed). A
+        # server that does not say (an older Ollama) keeps every model in.
+        return [
+            row["model"]
+            for row in ollama_facts.model_facts(profile.get("base_url"))
+            if row.get("tools") is not False
+        ]
+
+    def local_model_facts(self, name: str) -> dict[str, Any]:
+        """The models a local provider has, with size, tool support, thinking, context
+        and how each sits on this machine. Ollama lists what it pulled; llama.cpp and
+        vLLM report the model they serve."""
+        from ..providers import local_server, ollama_facts
+
+        if name == "ollama":
+            profile = self.secrets.get("provider:ollama") or {}
+            rows = ollama_facts.model_facts(profile.get("base_url"), fresh=True)
+            return {"provider": name, "models": rows, "alive": self._ollama_alive()}
+        if name in local_server.LOCAL_SERVERS:
+            profile = self.secrets.get(f"provider:{name}") or {}
+            rows = local_server.model_facts(name, profile.get("base_url"), profile.get("api_key"), fresh=True)
+            return {"provider": name, "models": rows, "alive": self._local_server_alive(name)}
+        return {"provider": name, "models": [], "error": "no local model list for this provider"}
+
+    def _local_server_alive(self, name: str) -> bool:
+        """Best-effort liveness of a llama.cpp or vLLM server, cached 30 s like Ollama's."""
+        import time
+
+        from ..providers import local_server
+
+        now = time.monotonic()
+        cache = getattr(self, "_local_alive_cache", None) or {}
+        hit = cache.get(name)
+        if hit and now - hit[0] < 30:
+            return hit[1]
+        profile = self.secrets.get(f"provider:{name}") or {}
+        alive = local_server.alive(name, profile.get("base_url"), profile.get("api_key"))
+        cache[name] = (now, alive)
+        self._local_alive_cache = cache
+        return alive
+
+    def _local_server_models(self, name: str) -> list[str]:
+        """The model ids a llama.cpp or vLLM server serves, as `<name>:<id>`; empty when
+        it does not answer or was started without tool calling."""
+        from ..providers import local_server
+
+        profile = self.secrets.get(f"provider:{name}") or {}
+        return [
+            row["model"]
+            for row in local_server.model_facts(name, profile.get("base_url"), profile.get("api_key"))
+            if row.get("tools") is not False
+        ]
+
+    def system_facts(self) -> dict[str, Any]:
+        """This machine, for the "Your system" section: processor, graphics, memory,
+        storage, and the largest model file that runs well here."""
+        from ..providers import local_machine
+
+        return local_machine.system_facts()
 
     def model_selectable(self, model: str) -> bool:
         """Can this machine run `model` right now? Its provider has a key — or, for the
@@ -4384,6 +4494,8 @@ class SessionManager:
         provider = self._model_provider(model)
         if provider == "ollama":
             return self._ollama_alive()
+        if provider in ("llamacpp", "vllm"):
+            return self._local_server_alive(provider)
         return self._provider_configured(provider)
 
     def persona_models(self, persona_id: str) -> list[str]:
@@ -4612,6 +4724,12 @@ class SessionManager:
         # Ollama is keyless, so "configured" is meaningless there — its models show only
         # while a local Ollama answers (cached liveness probe).
         selectable = [m for m in self._curated_models() if self.model_selectable(m)]
+        # Pulled Ollama models are offered live while Ollama answers — no need to add each one.
+        if self._ollama_alive():
+            selectable = list(dict.fromkeys([*selectable, *self._ollama_models()]))
+        for local in ("llamacpp", "vllm"):
+            if self.secrets.get(f"provider:{local}") and self._local_server_alive(local):
+                selectable = list(dict.fromkeys([*selectable, *self._local_server_models(local)]))
         if self.model not in selectable:
             selectable.insert(0, self.model)
         from ..providers.matrix import model_context_windows, model_labels
@@ -4632,9 +4750,10 @@ class SessionManager:
             "model_context_windows": model_context_windows(),
             "has_key": env_key or stored,
             # Provider-agnostic "can this default model actually run?" — true when the default
-            # model's provider is configured (any provider, not just OpenAI). Drives the GUI's
+            # model's provider is configured (any provider, not just OpenAI), or for an
+            # `ollama:*` default, when a local Ollama answers. Drives the GUI's
             # "No model connected" composer chip and the onboarding Skip warning.
-            "model_ready": self._provider_configured(self._model_provider(self.model)),
+            "model_ready": self.model_selectable(self.model),
             "source": "env" if env_key else ("store" if stored else None),
             "onboarded": bool(self._prefs.get("onboarded")),
             "experimental_connectors": experimental_enabled(self.secrets),
@@ -4653,6 +4772,8 @@ class SessionManager:
             "secrets_path": str(self.secrets.path),
             **self.pdf_settings(),
             **self.compaction_settings_payload(),
+            # Per-model settings the user saved (model_config.py), keyed by model id.
+            "model_config": _model_config.load(),
         }
 
     def _surfaces(self) -> dict[str, bool]:
@@ -4900,7 +5021,37 @@ class SessionManager:
         self.model = model
         self._prefs["default_model"] = model
         self._save_prefs()
+        _model_config.set(model, {"default": True})
         return {"ok": True, **self.get_settings()}
+
+    # -- per-model settings (model_config.py) ---------------------------------------
+
+    def get_model_config(self, model: str = "") -> dict[str, Any]:
+        """One model's settings in force, with where each came from; or every saved
+        record when no model is named."""
+        if model:
+            return {"model": model, **_model_config.effective(model)}
+        return {"models": _model_config.load()}
+
+    def set_model_config(self, model: str, values: dict[str, Any]) -> dict[str, Any]:
+        """Save settings for one model. `default: true` also makes it the model new
+        sessions start with, like the Make default button."""
+        model = (model or "").strip()
+        if not model:
+            return {"ok": False, "error": "empty model"}
+        record, error = _model_config.set(model, values or {})
+        if error:
+            return {"ok": False, "error": error}
+        if record.get("default") and self.model != model:
+            self.model = model
+            self._prefs["default_model"] = model
+            self._save_prefs()
+        self.provider.invalidate() if hasattr(self.provider, "invalidate") else None
+        return {"ok": True, "model": model, **_model_config.effective(model)}
+
+    def remove_model_config(self, model: str) -> dict[str, Any]:
+        _model_config.remove((model or "").strip())
+        return {"ok": True}
 
     def set_onboarded(self, value: bool = True) -> dict[str, Any]:
         """Record that first-run setup is complete (so it isn't shown again)."""
@@ -5617,6 +5768,15 @@ class SessionManager:
             message = {**message, "data": {**data, **self.team_card_extras(session_id, data.get("members") or [])}}
         if message.get("type") == "mode_notice" and engine:
             message = {**message, "data": {**data, "mode": engine.permissions.mode.value}}
+        if message.get("type") == "tool_finished" and engine and data.get("name") in _SITE_TOOLS:
+            # OPE-218/219: a card on one of these may have allowed a site; the header chip
+            # shows the session's list as it stands now.
+            from ..sandbox.settings import session_sandbox
+
+            try:
+                message = {**message, "data": {**data, "sandbox": session_sandbox(engine)}}
+            except Exception:  # noqa: BLE001 - the chip must not break a tool result
+                pass
         if message.get("type") == "permission_required" and data.get("name") == "decide_worker_call":
             worker_call = self.worker_call_for(data.get("arguments") or {}, lead_session=session_id)
             if worker_call:
@@ -5942,6 +6102,7 @@ class SessionManager:
             ApprovalOutcome.ALWAYS_TOOL,
             ApprovalOutcome.ALWAYS_COMMAND,
             ApprovalOutcome.ALWAYS_DOMAIN,
+            ApprovalOutcome.ALWAYS_SITE,
             # ALWAYS_TRUST was unlisted (a raw resolve could mint an inert-but-real
             # trust rule for a non-MCP tool — evaluate ignores those, but the store
             # shouldn't carry them); THIS_RUN validates like every grant.
@@ -5970,11 +6131,21 @@ class SessionManager:
             "auto-approve": 3,
             "auto": 4,
             "bypass-approvals": 4,
+            "dangerously-bypass-approvals": 5,
         }
+        # Attendance: attended < inbox (prompts leave the screen) < auto (the engine
+        # answers). The legacy boolean maps onto the first two.
+        attendance_order = {"attended": 0, "inbox": 1, "auto": 2}
+
+        def _attendance_rank(value: Any) -> int:
+            from ..unattended import normalize_attendance
+
+            return attendance_order.get(normalize_attendance(value), 0)
+
         raised = (
             order.get(str(after), 0) > order.get(str(before), 0)
             if kind == "mode"
-            else bool(after) and not bool(before)
+            else _attendance_rank(after) > _attendance_rank(before)
         )
         try:
             self.audit_store.append(
@@ -5990,16 +6161,75 @@ class SessionManager:
         except Exception:
             pass
 
-    def set_unattended(self, session_id: str, on: bool) -> dict[str, Any]:
-        """Flip the attended/unattended toggle, with an audit row. Note this changes only
-        WHERE the human is reached, never the autonomy ceiling (that's the mode) — but it is
-        still worth recording, since an unattended session routes prompts away from the
-        screen the user is looking at."""
-        before = self.unattended.is_unattended(session_id)
-        self.unattended.set(session_id, on)
-        if before != on:
-            self.audit_autonomy_change(session_id, "unattended", before, on)
-        return {"ok": True, "session_id": session_id, "unattended": on}
+    def set_session_model_settings(self, session_id: str, values: dict[str, Any]) -> dict[str, Any]:
+        """This session's thinking switch or effort level (UX-055: the ⚙ beside the model
+        in the composer). Overrides the model's saved setting for this session only;
+        None puts the model's setting back. Other sessions are untouched."""
+        engine = self._engines.get(session_id)
+        if engine is None:
+            return {"ok": False, "error": "session not running"}
+        settings = dict(engine.model_settings)
+        if "reasoning_effort" in values:
+            effort = values["reasoning_effort"]
+            if effort is None:
+                settings.pop("reasoning_effort", None)
+            elif isinstance(effort, str) and effort.strip():
+                settings["reasoning_effort"] = effort.strip()
+            else:
+                return {"ok": False, "error": "reasoning_effort must be text"}
+        if "thinking" in values:
+            think = values["thinking"]
+            extra = dict(settings.get("extra_body") or {})
+            if think is None:
+                extra.pop("think", None)
+            elif isinstance(think, bool):
+                extra["think"] = think
+            else:
+                return {"ok": False, "error": "thinking must be true or false"}
+            if extra:
+                settings["extra_body"] = extra
+            else:
+                settings.pop("extra_body", None)
+        if "thinking" in values or "reasoning_effort" in values:
+            session_model = _model_config.model_settings_for(engine.model)
+            # Nothing overridden any more → back to the model's own settings.
+            if "reasoning_effort" not in settings and not (settings.get("extra_body") or {}).get("think") in (True, False):
+                for key in ("reasoning_effort",):
+                    if key in session_model:
+                        settings[key] = session_model[key]
+                if "extra_body" in session_model and "extra_body" not in settings:
+                    settings["extra_body"] = session_model["extra_body"]
+        engine.model_settings = settings
+        return {"ok": True, "session_id": session_id, **self.session_model_settings(session_id)}
+
+    def session_model_settings(self, session_id: str) -> dict[str, Any]:
+        """What this session sends for thinking and effort right now."""
+        engine = self._engines.get(session_id)
+        if engine is None:
+            return {"thinking": None, "reasoning_effort": None}
+        settings = engine.model_settings or {}
+        think = (settings.get("extra_body") or {}).get("think")
+        return {
+            "thinking": think if isinstance(think, bool) else None,
+            "reasoning_effort": settings.get("reasoning_effort"),
+        }
+
+    def set_unattended(self, session_id: str, value: Any) -> dict[str, Any]:
+        """Set the session's attendance (attended / inbox / auto, or the legacy boolean),
+        with an audit row. Note this changes only WHO ANSWERS when the agent asks, never
+        the autonomy ceiling (that's the mode) — but it is still worth recording, since an
+        unattended session routes prompts away from the screen the user is looking at, and
+        `auto` answers them by rule."""
+        before = self.unattended.attendance(session_id)
+        after = self.unattended.set(session_id, value)
+        if before != after:
+            self.audit_autonomy_change(session_id, "unattended", before, after)
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "unattended": after != "attended",
+            "attendance": after,
+        }
 
     def _audit_grant_refused(self, session_id: str, request, resolution: str) -> None:
         try:
@@ -6062,11 +6292,13 @@ class SessionManager:
     def _build_task_engine(self, task, *, session_id: str) -> TurnEngine:
         ag = get_agent(task.agent)
         Path(task.workspace).mkdir(parents=True, exist_ok=True)
+        task_model = self.resolve_persona_model(task.agent, task.model)
         engine = build_engine(
             agent=ag,
             workspace=task.workspace,
-            model=self.resolve_persona_model(task.agent, task.model),
+            model=task_model,
             mode=Mode.INTERACTIVE,
+            model_settings=_model_config.model_settings_for(task_model),
             approver=self._scheduled_approver(task, session_id),
             provider=self.provider,
             memory_store=self.memory_store,
@@ -7443,6 +7675,76 @@ class SessionManager:
         self.session_store.touch_workspace(str(resolved))
         self._promotion_rebuild.add(session_id)
         return {"ok": True, "path": str(resolved), "roots": self.get_roots(session_id)}
+
+    # -- the session's allowed sites (OPE-219): the person's own list for one session ------
+    def session_sites(self, session_id: str) -> dict[str, Any]:
+        """The session's sandbox as its header chip and Access section show it: the sites
+        from Settings, and those allowed for this session only."""
+        from ..sandbox.settings import session_sandbox
+
+        engine = self._engines.get(session_id)
+        if engine is None:
+            return {"state": "off"}
+        try:
+            return session_sandbox(engine)
+        except Exception:  # noqa: BLE001 - a list must not break the pane
+            return {"state": "off"}
+
+    def _session_site_engine(self, session_id: str, host: str):
+        """(engine, "host:port") for a change to the session's own sites, or an error text.
+        Exact host names only, as on the agent's card: wildcards stay in Settings."""
+        from ..permissions import network_request_hosts
+
+        engine = self._engines.get(session_id)
+        if engine is None or getattr(engine.permissions, "sandbox_sites", None) is None:
+            return None, "", "This session has no allowed-sites list."
+        good, bad = network_request_hosts({"hosts": [host]})
+        if bad or len(good) != 1:
+            return None, "", "Give an exact host name, such as registry.npmjs.org (add a port only when it is not 443)."
+        return engine, good[0], ""
+
+    def allow_session_site(self, session_id: str, host: str) -> dict[str, Any]:
+        """The person allows a site for this session, from the Access section. Commands and
+        web tools reach it at once; nothing is stored, and it ends with the session."""
+        engine, entry, error = self._session_site_engine(session_id, host)
+        if engine is None:
+            return {"ok": False, "error": error}
+        permissions = engine.permissions
+        if permissions._entry_allowed(entry):
+            return {"ok": True, "sandbox": self.session_sites(session_id)}
+        permissions.allow_network_hosts([entry], always=False)
+        failed = permissions.site_open_errors.get(entry)
+        if failed:
+            # The sandbox did not take it: do not leave a site listed that commands lack.
+            permissions.site_open_errors.pop(entry, None)
+            if entry in permissions.session_sites:
+                permissions.session_sites.remove(entry)
+            permissions.session_allow_domains.discard(entry.rsplit(":", 1)[0])
+            return {"ok": False, "error": f"The sandbox could not take {entry}: {failed}", "sandbox": self.session_sites(session_id)}
+        self._audit_session_site(session_id, "allowed", entry)
+        return {"ok": True, "sandbox": self.session_sites(session_id)}
+
+    def remove_session_site(self, session_id: str, host: str) -> dict[str, Any]:
+        """The person takes back a site allowed for this session. Sites from Settings are
+        not removed here."""
+        engine, entry, error = self._session_site_engine(session_id, host)
+        if engine is None:
+            return {"ok": False, "error": error}
+        try:
+            removed = engine.permissions.remove_session_site(entry)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"The sandbox could not drop {entry}: {exc}", "sandbox": self.session_sites(session_id)}
+        if not removed:
+            return {"ok": False, "error": f"{entry} is not a site allowed for this session. Sites from Settings are changed in Settings > Sandbox.", "sandbox": self.session_sites(session_id)}
+        self._audit_session_site(session_id, "removed", entry)
+        return {"ok": True, "sandbox": self.session_sites(session_id)}
+
+    def _audit_session_site(self, session_id: str, what: str, entry: str) -> None:
+        try:
+            # Allowing a site widens what the session reaches ("raised"); taking it back narrows it.
+            self.audit_autonomy_change(session_id, "session_site", *(("", entry) if what == "allowed" else (entry, "")))
+        except Exception:  # noqa: BLE001 - the audit line must not fail the change
+            pass
 
     def add_root(
         self, session_id: str, path: str, writable: bool = False

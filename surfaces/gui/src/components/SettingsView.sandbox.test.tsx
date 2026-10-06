@@ -190,6 +190,35 @@ describe("Settings ▸ Sandbox", () => {
     expect(screen.getByTestId("sandbox-setup-check")).toBeTruthy();
   });
 
+  it("OpenShell on a Mac with Docker Desktop's host networking off: where to turn it on, then check again", async () => {
+    snapshot = { ...base, platform: "darwin", providers: [{ name: "direct", usable: true, why: "" }, { name: "seatbelt", usable: true, why: "" }, { name: "openshell", usable: false, why: "", state: "unavailable" }] };
+    readinessNow = {
+      ...readiness,
+      steps: [
+        { ...readiness.steps[0], ok: true },
+        { key: "docker_host_network", what: "Docker Desktop's host networking is on", ok: false, hint: "Turn on host networking in Docker Desktop", fixable: false, command: "", docs: "https://docs.docker.com/engine/network/drivers/host/#docker-desktop" },
+        { ...readiness.steps[1], ok: true },
+        { ...readiness.steps[2], ok: true },
+        readiness.steps[3],
+      ],
+    };
+    render(<SettingsView initialTab="sandbox" />);
+    await screen.findByTestId("sandbox-section");
+    fireEvent.click(masterSwitch());
+    fireEvent.click(screen.getByTestId("sandbox-setup-openshell"));
+    await screen.findByTestId("sandbox-setup-hostnet");
+    const dialog = screen.getByTestId("sandbox-openshell-dialog");
+    expect(dialog.querySelectorAll("li").length).toBe(3); // still three rows: it folds into Docker's
+    expect(screen.getByTestId("sandbox-setup-row-docker").getAttribute("data-state")).toBe("bad");
+    const lines = screen.getByTestId("sandbox-setup-hostnet").children;
+    expect(lines[0].textContent).toBe("Turn on host networking in Docker Desktop, then check again. Docker's guide");
+    expect(lines[1].textContent).toBe("Settings ▸ Resources ▸ Network ▸ Enable host networking, then Apply & restart.");
+    expect(lines[2].textContent).toBe("OpenShell's sandboxes reach its gateway that way.");
+    expect((screen.getByTestId("sandbox-setup-docs-hostnet") as HTMLAnchorElement).href).toBe("https://docs.docker.com/engine/network/drivers/host/#docker-desktop");
+    expect(screen.queryByTestId("sandbox-setup-start")).toBeNull(); // Check again, not Set up
+    expect(screen.getByTestId("sandbox-setup-check")).toBeTruthy();
+  });
+
   it("OpenShell: both checks pass, Set up runs; the rows stay and the third shows the download", async () => {
     snapshot = { ...base, platform: "darwin", providers: [{ name: "direct", usable: true, why: "" }, { name: "seatbelt", usable: true, why: "" }, { name: "openshell", usable: false, why: "", state: "needs_download" }] };
     readinessNow = { ...readiness, steps: [{ ...readiness.steps[0], ok: true }, { ...readiness.steps[1], ok: true }, { ...readiness.steps[2], ok: true }, readiness.steps[3]] };
@@ -260,6 +289,26 @@ describe("Settings ▸ Sandbox", () => {
     expect(screen.getByTestId("sandbox-setup-openshell")).toBeTruthy();
     expect(screen.queryByTestId("sandbox-card-tools")).toBeNull(); // OpenShell mounts no home folder: no tools panel
     expect(screen.getByTestId("sandbox-card-files")).toBeTruthy();
+  });
+
+  it("OpenShell chosen: only the allow list is offered, no Allow everything", async () => {
+    snapshot = {
+      ...base,
+      platform: "linux",
+      provider: "openshell",
+      effective_provider: "openshell",
+      providers: [
+        { name: "direct", usable: true, why: "", state: "ready" },
+        { name: "openshell", usable: true, why: "", state: "ready" },
+      ],
+      network_profiles: [{ name: "allowlist" }], // what the server sends with OpenShell
+    };
+    render(<SettingsView initialTab="sandbox" />);
+    await screen.findByTestId("sandbox-section");
+    expect(document.querySelectorAll('input[name="sandbox-network"]').length).toBe(1);
+    expect((screen.getByTestId("sandbox-network-allowlist") as HTMLInputElement).checked).toBe(true);
+    expect(screen.queryByTestId("sandbox-network-open")).toBeNull();
+    expect(screen.queryByText("Allow everything")).toBeNull();
   });
 
   it("a chosen type shows two network choices and two closed panels; off writes direct", async () => {

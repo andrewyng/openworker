@@ -9,6 +9,7 @@ same to the model in both modes.
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any, Callable, Optional
 
 from .client import RunnerClient
@@ -30,11 +31,15 @@ class RunnerExecutor(Executor):
         default_timeout: float = _DEFAULT_TIMEOUT,
         on_output: Optional[Callable[[str], None]] = None,
         before_call: Optional[Callable[[], Optional[str]]] = None,
+        after_call: Optional[Callable[[float, dict[str, Any]], Optional[dict[str, Any]]]] = None,
     ) -> None:
         self._client = client
         # Called before every command. The workspace uses it to restart the sandbox when the
         # session's folders changed; what it returns is told to the agent with the result.
         self._before_call = before_call
+        # Called after every command with the time it started and its result; the fields it
+        # returns join the result (the workspace reports what the sandbox's network rules blocked).
+        self._after_call = after_call
         self.shell = shell
         self.cwd = str(cwd)  # the last folder the runner reported; a reopened shell starts here
         self.default_timeout = default_timeout
@@ -54,6 +59,7 @@ class RunnerExecutor(Executor):
     def run(self, command: str, timeout: Optional[float] = None) -> dict[str, Any]:
         timeout = timeout or self.default_timeout
         notice = self._before_call() if self._before_call is not None else None
+        started = time.time()
 
         def live(method: str, params: dict[str, Any]) -> None:
             if method == "shell.output" and self._on_output is not None:
@@ -73,6 +79,11 @@ class RunnerExecutor(Executor):
         answer = {key: result[key] for key in _RESULT_KEYS if key in result}
         if notice:
             answer["sandbox_notice"] = notice
+        if self._after_call is not None:
+            try:
+                answer.update(self._after_call(started, answer) or {})
+            except Exception:  # noqa: BLE001 - a note must never cost the command's result
+                pass
         return answer
 
     def run_background(self, command: str) -> dict[str, Any]:

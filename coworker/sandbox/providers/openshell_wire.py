@@ -3,11 +3,14 @@
 Only this one streaming call goes over gRPC (the CLI cannot stream input without a
 terminal; spike finding B). Its messages are tiny, so they are encoded and decoded here
 with the protobuf wire format directly, which keeps generated code and the protobuf
-runtime out of OpenWorker. Field numbers are those of OpenShell 0.0.116 (`proto/
-openshell.proto`); the provider refuses any other version.
+runtime out of OpenWorker. Field numbers are those of OpenShell 0.1.2 (`proto/
+openshell.proto`); the provider refuses any other version. Since 0.1.0 the request names
+the sandbox (it carried an internal id before) and must say which workspace it is in.
 
     message ExecSandboxInput  { oneof payload { ExecSandboxRequest start = 1; bytes stdin = 2; } }
-    message ExecSandboxRequest { string sandbox_id = 1; repeated string command = 2; ... bool tty = 7; }
+    message ExecSandboxRequest { string sandbox = 1; repeated string command = 2; ... bool tty = 7;
+                                 bool no_login_shell = 10; WorkspaceSelector workspace_scope = 12; }
+    message WorkspaceSelector  { oneof selection { string workspace = 1; ... } }
     message ExecSandboxEvent  { oneof payload { Stdout stdout = 1; Stderr stderr = 2; Exit exit = 3; } }
     message ExecSandboxStdout { bytes data = 1; }   (Stderr alike)
     message ExecSandboxExit   { int32 exit_code = 1; }
@@ -37,11 +40,20 @@ def _field(number: int, payload: bytes) -> bytes:
     return _varint((number << 3) | _LEN) + _varint(len(payload)) + payload
 
 
-def encode_start(sandbox_id: str, command: list[str]) -> bytes:
-    request = _field(1, sandbox_id.encode("utf-8"))
+DEFAULT_WORKSPACE = "default"
+
+
+def encode_start(sandbox: str, command: list[str], workspace: str = DEFAULT_WORKSPACE) -> bytes:
+    """`sandbox`: the sandbox's name. `workspace`: the OpenShell workspace it is in; an
+    omitted one no longer means the default, so it is always sent."""
+    request = _field(1, sandbox.encode("utf-8"))
     for part in command:
         request += _field(2, part.encode("utf-8"))
     # tty (field 7) is left at its default, false: no terminal on the stream.
+    # no_login_shell (field 10) = true: the command is run as given. The default wraps it
+    # in a login shell, whose startup files could print into the runner's stream.
+    request += _varint((10 << 3) | _VARINT) + _varint(1)
+    request += _field(12, _field(1, (workspace or DEFAULT_WORKSPACE).encode("utf-8")))
     return _field(1, request)
 
 

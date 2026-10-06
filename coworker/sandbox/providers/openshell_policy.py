@@ -47,10 +47,15 @@ PROFILES: dict[str, dict[str, dict[str, Any]]] = {
     profile: {_POLICY_KEYS[name]: _hosts(name, hosts) for name, hosts in groups.items()}
     for profile, groups in network_profiles.PROFILES.items()
 }
-# The `open` profile: any host, any port. NOT yet proved against a running gateway (the
-# Linux VM was stopped when it was written, 2026-09-25); if OpenShell refuses the wildcard
-# the sandbox fails to start, which is the safe way round.
-PROFILES[network_profiles.OPEN] = {"open": {"name": "open", "endpoints": [{"host": "*", "port": 0}], "binaries": [dict(b) for b in _ANY_BINARY]}}
+# The `open` profile ("Allow everything") cannot be written as an OpenShell policy.
+# OpenShell 0.1 refuses every form of "any host" as unsafe content (`*`, `**` and `*.*`
+# were all tried against a 0.1.2 gateway, 2026-10-04): each site has to be named. So this
+# provider says so in plain words instead of letting `sandbox create` fail with OpenShell's.
+OPEN_UNSUPPORTED = (
+    "OpenShell cannot allow every site: its policy has to name each site. "
+    'In Settings > Sandbox choose "Only the sites you allow" and tick the sites the work needs.'
+)
+PROFILES.pop(network_profiles.OPEN, None)
 DEFAULT_PROFILE = network_profiles.DEFAULT_PROFILE
 
 
@@ -67,6 +72,8 @@ def render(
     sandbox's private home folder with the copied credentials (section 11b), read-write.
     `extra_hosts`: "host:port" entries the grants need; `*.example.com` is a wildcard."""
     profile = network_profiles.check(profile)
+    if network_profiles.is_open(profile):
+        raise ValueError(OPEN_UNSUPPORTED)
     read_write = [RUNTIME_DIR, "/dev/null", "/dev/pts", *([home] if home else []), *[str(r["path"]) for r in roots if r.get("writable")]]
     read_only = [*_SYSTEM_READ_ONLY, *_IMAGE_TOOLS_READ_ONLY, RUNNER_MOUNT, *[str(r["path"]) for r in roots if not r.get("writable")]]
     policy: dict[str, Any] = {
