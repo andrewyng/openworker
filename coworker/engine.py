@@ -389,7 +389,7 @@ class TurnEngine:
         target = turn
         if target is None or target <= 0:
             ckpts = list_checkpoints(
-                self.permissions.workspace_root, session_id=self.session_id
+                self.permissions.workspace_root, session_id=self.session_id, sandbox=getattr(self, "sandbox_workspace", None), roots=self.permissions.roots
             )
             if not ckpts:
                 return {
@@ -398,7 +398,7 @@ class TurnEngine:
                 }
             target = ckpts[-1]["turn"]
         return restore_checkpoint(
-            self.permissions.workspace_root, self.session_id, target
+            self.permissions.workspace_root, self.session_id, target, sandbox=getattr(self, "sandbox_workspace", None), roots=self.permissions.roots
         )
 
     # -- main loop --------------------------------------------------------------
@@ -441,12 +441,6 @@ class TurnEngine:
                 # Once per engine: the name is the warning, and the transcript keeps it.
                 self._append_notice("dangerous_mode", _attendance.DANGEROUS_MODE_WARNING)
             self._dangerous_warned = True
-        if self.turn_index == 0:
-            from .tools.git import list_checkpoints
-            previous = list_checkpoints(self.permissions.workspace_root, self.session_id)
-            self.turn_index = max((c["turn"] for c in previous), default=0)
-        self.turn_index += 1
-        self._turn_checkpoint_created = False
         if self.session_facts is not None:
             self.session_facts.begin_turn()
         # §8.4 retry guard resets per user turn: two reviewer denials in one turn route
@@ -470,6 +464,12 @@ class TurnEngine:
                 yield event
                 if event.type is EventType.ERROR:
                     return
+            if self.turn_index == 0:
+                from .tools.git import list_checkpoints
+                previous = list_checkpoints(self.permissions.workspace_root, self.session_id, sandbox=getattr(self, "sandbox_workspace", None), roots=self.permissions.roots)
+                self.turn_index = max((c["turn"] for c in previous), default=0)
+            self.turn_index += 1
+            self._turn_checkpoint_created = False
             async for event in self._loop():
                 yield event
         finally:
@@ -1204,6 +1204,7 @@ class TurnEngine:
                         self.permissions.workspace_root,
                         self.session_id,
                         self.turn_index,
+                        sandbox=getattr(self, "sandbox_workspace", None), roots=self.permissions.roots,
                     ) is not None
                 except Exception:
                     pass

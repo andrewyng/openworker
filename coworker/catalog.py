@@ -155,7 +155,7 @@ def _files(context: AgentContext) -> list:
 def _git(context: AgentContext) -> list:
     ws = str(context.workspace)
     sid = getattr(context, "session_id", None) or ""
-    return _placed(context, [*ai.toolkits.git(root=ws), *git_tools(ws, session_id=sid)])
+    return _placed(context, [*ai.toolkits.git(root=ws), *git_tools(ws, session_id=sid, sandbox=context.sandbox, roots=context.roots)])
 
 
 def _search(context: AgentContext) -> list:

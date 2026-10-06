@@ -9,11 +9,10 @@ from coworker.engine import TurnEngine
 from coworker.permissions import Mode, PermissionEngine
 from coworker.providers import AssistantTurn, ProviderClient, ToolCall
 from coworker.tools import ToolRegistry
+from coworker.sandbox.runner.checkpoints import _git_env, is_git_repo
 from coworker.tools.git import (
-    _git_env,
     create_checkpoint,
     git_tools,
-    is_git_repo,
     list_checkpoints,
     restore_checkpoint,
 )
@@ -306,7 +305,7 @@ def test_restore_preserves_special_names_and_staged_state(tmp_path):
 
 
 def test_restore_enumeration_failure_changes_nothing(tmp_path, monkeypatch):
-    import coworker.tools.git as mod
+    import coworker.sandbox.runner.checkpoints as mod
     _init_git_repo(tmp_path)
     f = tmp_path / "file.txt"
     f.write_text("before")
@@ -338,3 +337,79 @@ def test_checkpoint_skips_repository_subfolder(tmp_path):
     sub = tmp_path / "sub"
     sub.mkdir()
     assert create_checkpoint(sub, "s", 1) is None
+
+def test_checkpoint_operations_use_sandbox_runner(tmp_path):
+    from types import SimpleNamespace
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params, *, timeout):
+            self.calls.append((method, params))
+            values = {
+                "create_checkpoint": "refs/openworker/checkpoints/s/1",
+                "list_checkpoints": [{"turn": 1}],
+                "restore_checkpoint": {"ok": True, "turn": 1},
+            }
+            return {"value": values[params["name"]]}
+
+    client = Client()
+    sandbox = SimpleNamespace(client=client)
+    # No local repository exists: these must execute on the runner side.
+    assert create_checkpoint(tmp_path, "s", 1, sandbox=sandbox)
+    assert list_checkpoints(tmp_path, "s", sandbox=sandbox) == [{"turn": 1}]
+    revert = next(t for t in git_tools(str(tmp_path), "s", sandbox=sandbox) if t.__name__ == "revert_turn")
+    assert revert()["ok"]
+    assert [p["name"] for _, p in client.calls] == [
+        "create_checkpoint", "list_checkpoints", "list_checkpoints", "restore_checkpoint",
+    ]
+    assert all(method == "tool.call" and p["workspace"] == str(tmp_path) for method, p in client.calls)
+
+
+def test_checkpoint_dispatch_roundtrip(tmp_path):
+    from coworker.sandbox.runner.toolcalls import call
+
+    _init_git_repo(tmp_path)
+    path = tmp_path / "notes.txt"
+    path.write_text("before")
+    assert call("create_checkpoint", {"session_id": "s", "turn_index": 1}, workspace=str(tmp_path))
+    path.write_text("after")
+    assert call("restore_checkpoint", {"session_id": "s", "turn_index": 1}, workspace=str(tmp_path))["ok"]
+    assert path.read_text() == "before"
+
+def test_checkpoint_syncs_live_roots_before_runner_call(tmp_path):
+    from types import SimpleNamespace
+
+    events = []
+    class Client:
+        def call(self, method, params, *, timeout):
+            events.append("call")
+            assert events == ["sync", "call"]
+            assert params["roots"] == [{"path": str(tmp_path), "writable": False}]
+            return {"value": {"ok": False, "error": "checkpoint workspace is not writable"}}
+
+    roots = [{"path": str(tmp_path), "writable": True}]
+    def sync():
+        events.append("sync")
+        roots[0]["writable"] = False
+    sandbox = SimpleNamespace(client=Client(), sync_roots=sync)
+    result = restore_checkpoint(tmp_path, "s", 1, sandbox=sandbox, roots=roots)
+    assert not result["ok"]
+
+
+def test_readonly_checkpoint_workspace_is_never_mutated(tmp_path):
+    from coworker.sandbox.runner.toolcalls import call
+
+    _init_git_repo(tmp_path)
+    path = tmp_path / "notes.txt"
+    path.write_text("before")
+    assert create_checkpoint(tmp_path, "s", 1)
+    path.write_text("after")
+    readonly = [{"path": str(tmp_path), "writable": False}]
+    assert create_checkpoint(tmp_path, "s", 2, roots=readonly) is None
+    assert not restore_checkpoint(tmp_path, "s", 1, roots=readonly)["ok"]
+    assert not call("restore_checkpoint", {"session_id": "s", "turn_index": 1}, workspace=str(tmp_path), roots=readonly)["ok"]
+    assert path.read_text() == "after"
+    assert [c["turn"] for c in list_checkpoints(tmp_path, "s", roots=readonly)] == [1]
+    assert list_checkpoints(tmp_path, "s", roots=[]) == []
