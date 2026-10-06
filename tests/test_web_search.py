@@ -1,7 +1,7 @@
 """Tests for web search — provider abstraction, the tool, and config resolution.
 
 No network: a FakeProvider is injected; third-party key handling and the REST config path
-are exercised without hitting DuckDuckGo/Tavily/Brave.
+are exercised without hitting DuckDuckGo/Tavily/Brave/SERPdive.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from coworker.web import (
 from coworker.web.providers import (
     BraveProvider,
     DuckDuckGoProvider,
+    SerpdiveProvider,
     TavilyProvider,
     WebSearchProvider,
 )
@@ -77,8 +78,55 @@ def test_build_provider_default_is_keyless_duckduckgo():
 def test_build_provider_third_party_requires_key():
     with pytest.raises(ValueError):
         build_provider("tavily")  # no key
+    with pytest.raises(ValueError):
+        build_provider("serpdive")  # no key
     assert isinstance(build_provider("tavily", "tvly-x"), TavilyProvider)
     assert isinstance(build_provider("brave", "brv-x"), BraveProvider)
+    assert isinstance(build_provider("serpdive", "sd_live_x"), SerpdiveProvider)
+    assert "serpdive" in provider_names()
+
+
+def test_serpdive_defaults_to_the_free_tier_and_maps_content(monkeypatch):
+    """The two things about this provider that are not visible from the abstraction:
+    which model is billed, and what `snippet` actually holds."""
+    import httpx
+
+    sent = {}
+
+    class _Resp:
+        @staticmethod
+        def json():
+            return {
+                "query": "q",
+                "model": "krill",
+                "results": [
+                    {
+                        "url": "https://example.com/a",
+                        "title": None,  # the API sends null when a page has no title
+                        "content": "the extracted text of the page, not a SERP description",
+                    }
+                ],
+            }
+
+    def fake_post(url, **kwargs):
+        sent.update(url=url, **kwargs)
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.delenv("SERPDIVE_MODEL", raising=False)
+
+    results = build_provider("serpdive", "sd_live_x").search("q", max_results=3)
+
+    assert sent["url"] == "https://api.serpdive.com/v1/search"
+    assert sent["headers"]["Authorization"] == "Bearer sd_live_x"
+    assert sent["json"]["model"] == "krill"  # free tier unless asked otherwise
+    assert sent["json"]["max_results"] == 3
+    assert results[0].title == ""  # null title never reaches the agent
+    assert results[0].snippet.startswith("the extracted text")
+
+    monkeypatch.setenv("SERPDIVE_MODEL", "mako")
+    build_provider("serpdive", "sd_live_x").search("q")
+    assert sent["json"]["model"] == "mako"
 
 
 def test_tool_surfaces_missing_key_error(tmp_path):
