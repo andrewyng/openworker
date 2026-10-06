@@ -167,4 +167,3 @@ def test_shell_allowed_env_workspace_trusted_only(tmp_path):
     # Trusted: workspace shell_allowed_env merged
     cfg_trusted = load_config(ws, global_path=g, workspace_trusted=True)
     assert cfg_trusted.shell_allowed_env == ["AWS_PROFILE", "EXFIL_TOKEN"]
-

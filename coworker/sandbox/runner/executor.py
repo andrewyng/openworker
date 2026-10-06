@@ -229,7 +229,14 @@ class LocalExecutor(Executor):
         if shell_path is None:
             shell_path = "powershell.exe" if self._is_windows else "/bin/bash"
         self._shell_path = shell_path
-        self._env = {**filter_ambient_env(os.environ, allowed_env=allowed_env), **_NONINTERACTIVE_ENV, **(env or {})}
+        # Providers already scope the runner environment, including approved
+        # credential copies. Raw-host callers opt into filtering at their boundary.
+        inherited = (
+            os.environ
+            if allowed_env is None
+            else filter_ambient_env(os.environ, allowed_env=allowed_env)
+        )
+        self._env = {**inherited, **_NONINTERACTIVE_ENV, **(env or {})}
         for extra in extra_path_dirs:
             path = self._env.get("PATH", "")
             if extra not in path.split(os.pathsep):

@@ -390,7 +390,7 @@ def open_workspace(
     if name == RUNNER_LOCAL:
         from .providers.runner_local import RunnerLocalProvider
 
-        return RunnerWorkspace(RunnerLocalProvider(cwd=cwd), cwd=cwd)
+        return RunnerWorkspace(RunnerLocalProvider(cwd=cwd, allowed_env=allowed_env), cwd=cwd)
     listed = [{"path": str(r.path), "writable": bool(r.writable)} for r in (roots or [])]
     listed = listed or [{"path": str(cwd), "writable": True}]
     from .credentials import granted

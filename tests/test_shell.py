@@ -333,3 +333,60 @@ def test_explicit_env_argument_takes_precedence(tmp_path, monkeypatch):
     finally:
         ex.close()
 
+
+def test_scoped_runner_preserves_provider_grants(tmp_path, monkeypatch):
+    from coworker.sandbox.runner.executor import LocalExecutor as RunnerExecutor
+
+    # Real providers already remove host credentials and supply only approved copies.
+    grants = {
+        "AWS_CONFIG_FILE": "/synthetic/granted/config",
+        "AWS_SHARED_CREDENTIALS_FILE": "/synthetic/granted/credentials",
+        "CUSTOM_TOKEN": "synthetic-approved-grant",
+    }
+    for name, value in grants.items():
+        monkeypatch.setenv(name, value)
+    ex = RunnerExecutor(cwd=tmp_path)
+    try:
+        for name, expected in grants.items():
+            if ex._env.get(name) != expected:
+                pytest.fail(f"provider-granted {name} was removed from the scoped runner")
+    finally:
+        ex.close()
+
+
+@pytest.mark.parametrize("allowed_env", [None, ["AWS_PROFILE"]])
+def test_runner_local_scrubs_raw_host_env_and_preserves_configured_exception(tmp_path, monkeypatch, allowed_env):
+    from coworker.sandbox.bundle import build_runner_zipapp
+    from coworker.sandbox.providers import runner_local
+    from coworker.sandbox.workspace import open_workspace
+
+    bundle = build_runner_zipapp(tmp_path / "bundle")
+    monkeypatch.setattr(runner_local, "build_runner_zipapp", lambda: bundle)
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-host-secret")
+    monkeypatch.setenv("AWS_PROFILE", "synthetic-approved-profile")
+    options = {"allowed_env": allowed_env} if allowed_env is not None else {}
+    workspace = open_workspace(cwd=tmp_path, provider="runner-local", **options)
+    try:
+        command = "echo $env:OPENAI_API_KEY; echo $env:AWS_PROFILE" if _WIN else 'echo "$OPENAI_API_KEY"; echo "$AWS_PROFILE"'
+        output = workspace.executor.run(command)["output"]
+        if "synthetic-host-secret" in output:
+            pytest.fail("the local developer runner inherited an ambient credential")
+        if allowed_env and "synthetic-approved-profile" not in output:
+            pytest.fail("the configured environment exception did not reach the local runner")
+        if not allowed_env and "synthetic-approved-profile" in output:
+            pytest.fail("the local developer runner inherited an unapproved ambient profile")
+    finally:
+        workspace.close()
+
+
+def test_direct_workspace_preserves_only_configured_env_exception(tmp_path, monkeypatch):
+    from coworker.sandbox.workspace import open_workspace
+
+    monkeypatch.setenv("AWS_PROFILE", "synthetic-profile")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "synthetic-secret")
+    workspace = open_workspace(cwd=tmp_path, provider="direct", allowed_env=["AWS_PROFILE"])
+    try:
+        assert workspace.executor._env["AWS_PROFILE"] == "synthetic-profile"
+        assert "AWS_SECRET_ACCESS_KEY" not in workspace.executor._env
+    finally:
+        workspace.close()
