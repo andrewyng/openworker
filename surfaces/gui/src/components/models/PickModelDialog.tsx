@@ -73,6 +73,7 @@ export function PickModelDialog({
   const [rows, setRows] = useState<LocalModelRow[] | null>(null);
   const [view, setView] = useState<ModelConfigView | null>(null);
   const [draft, setDraft] = useState<Draft>({});
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -85,8 +86,20 @@ export function PickModelDialog({
   useEffect(() => {
     if (!provider || (step !== 2 && !(step === 3 && providerKind(provider) === "local" && rows === null))) return;
     setRows(null);
-    if (providerKind(provider) === "local") {
-      getLocalModels(provider.name).then((r) => setRows((r.models || []).filter((m) => m.tools !== false))).catch(() => setRows([]));
+    setError("");
+    if (providerKind(provider) === "local" || provider.name === "deepinfra") {
+      let active = true;
+      getLocalModels(provider.name).then((r) => {
+        if (!active) return;
+        setRows(provider.name === "deepinfra" ? r.models || [] : (r.models || []).filter((m) => m.tools !== false));
+        if (r.error) setError(r.error);
+      }).catch(() => {
+        if (active) {
+          setRows([]);
+          setError("Models could not be loaded. Retry, or enter a model name.");
+        }
+      });
+      return () => { active = false; };
     } else {
       setRows(provider.suggested_models.map((bare) => ({
         model: fullModelId(provider, bare), name: bare, size_bytes: null, tools: true, thinking: null, vision: null, remote: true,
@@ -94,7 +107,7 @@ export function PickModelDialog({
       })));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, step]);
+  }, [provider, step, catalogAttempt]);
 
   // Step 3: the settings in force for the chosen model.
   useEffect(() => {
@@ -277,7 +290,7 @@ export function PickModelDialog({
                       <button
                         key={r.model}
                         className="w-full flex items-center gap-2 px-3 py-2 text-ui text-left border-t border-line hover:bg-chrome"
-                        onClick={() => { setModel(r.model); setStep(3); }}
+                        onClick={() => { setError(""); setModel(r.model); setStep(3); }}
                         data-testid={`pick-model-${r.name}`}
                       >
                         <span className="truncate">{settings.model_labels?.[r.model] || r.name}</span>
@@ -289,7 +302,7 @@ export function PickModelDialog({
                     {rows === null && <div className="px-3 py-3 text-meta text-faint">{t("manage.loading")}</div>}
                   </div>
                   {typed.trim() && provider && !isLocal && (
-                    <button className="mt-2 text-meta text-accent" onClick={() => { setModel(fullModelId(provider, typed.trim())); setStep(3); }} data-testid="pick-model-typed">
+                    <button className="mt-2 text-meta text-accent" onClick={() => { setError(""); setModel(fullModelId(provider, typed.trim())); setStep(3); }} data-testid="pick-model-typed">
                       {t("pick.use_typed", { name: typed.trim() })}
                     </button>
                   )}
@@ -355,6 +368,9 @@ export function PickModelDialog({
         </div>
 
         {error && <p className="text-meta text-danger mt-3">{error}</p>}
+        {error && step === 2 && provider?.name === "deepinfra" && (
+          <button className="text-meta text-accent mt-2" onClick={() => setCatalogAttempt((n) => n + 1)} data-testid="pick-model-retry">Retry</button>
+        )}
         <div className="flex items-center gap-2 mt-4 pt-3.5 border-t border-line">
           {step === 3 && !configuring && <button className="text-meta text-accent" onClick={reset}>{t("pick.reset")}</button>}
           {configuring && (

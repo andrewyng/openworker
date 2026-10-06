@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from coworker.providers import (
     AssistantTurn,
     ModelCapabilities,
@@ -498,15 +500,9 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         "fireworks:accounts/fireworks/models/kimi-k2p6",
         "openrouter:z-ai/glm-5.2",
         "openrouter:meta-llama/llama-4-maverick",
-        "deepinfra:deepseek-ai/DeepSeek-V4-Flash",
-        "deepinfra:zai-org/GLM-5.3-Flash",
     ):
         caps = capabilities_for(mid)
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
-
-    assert capabilities_for("deepinfra:zai-org/GLM-5.3-Flash").vision is True
-    assert capabilities_for("deepinfra:deepseek-ai/DeepSeek-V4-Flash").vision is False
-    assert capabilities_for("deepinfra:moonshotai/Kimi-K2.7-Code").vision is True
 
 
 def test_matrix_labels_and_custom_model_fallback():
@@ -515,14 +511,18 @@ def test_matrix_labels_and_custom_model_fallback():
     labels = model_labels()
     assert labels["together:zai-org/GLM-5.2"] == "GLM-5.2 · via Together"
     assert labels["zai:glm-5.2"] == "GLM-5.2 · Z AI"
-    assert (
-        labels["deepinfra:deepseek-ai/DeepSeek-V4-Flash"]
-        == "DeepSeek V4 Flash · via DeepInfra"
-    )
     # Deliberately small: agent-capable current models only (owner call, 2026-07-04).
-    # Main plus the five DeepInfra rows contains 78 entries. The bounded cap
-    # rises from 75 to 80 to preserve the existing providers and capabilities.
-    assert len(MATRIX) < 80
+    # 60→65 (2026-08-24): the stealth ox-alpha preview slug tipped it; reclaim slack by
+    # pruning retired entries before raising this again.
+    # 65→70 (2026-09-16): three Claude 4.5/4.6 rows added for comparability with
+    # published evaluations of those models. The
+    # pruning owed above is NOT done here — deciding which entries are retired is an owner
+    # call, and dropping a row silently downgrades that model to the conservative fallback
+    # capabilities. Prune before raising this a third time.
+    # 70→75 (2026-10-01, OPE-215): three OpenRouter rows (Nemotron 3 Ultra, Nemotron 3.5
+    # Lightning, GLM 5.3). The pruning owed above is still not done; it remains the owner's
+    # call and should come before this is raised again.
+    assert len(MATRIX) < 75
     assert all(e.caps.tools for e in MATRIX.values())
     # A custom (unlisted) reseller model falls back to the conservative default — usable,
     # but at the user's own risk (no parallel tool calls assumed).
@@ -536,7 +536,7 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
     from coworker.providers.matrix import models_for_provider
     from coworker.providers.registry import get_descriptor
 
-    for name in ("together", "fireworks", "openrouter", "deepinfra"):
+    for name in ("together", "fireworks", "openrouter"):
         d = get_descriptor(name)
         assert d is not None and d.needs_key
         curated = models_for_provider(name)
@@ -544,16 +544,6 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
         # full ids in the matrix must round-trip: prefix + bare == matrix key
         base = next(f for f in d.fields if f.key == "base_url")
         assert base.default.startswith("https://")
-
-
-def test_deepinfra_never_leaks_the_openai_key(monkeypatch):
-    import pytest
-    from coworker.providers.registry import build_provider_client
-
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
-    monkeypatch.delenv("DEEPINFRA_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="DeepInfra"):
-        build_provider_client("deepinfra", {}, None)
 
 
 def test_foreign_sidecars_stripped_from_outbound_messages():
@@ -637,3 +627,100 @@ def test_over_limit_max_tokens_is_dropped_and_retried():
     calls = client.chat.completions.calls
     assert turn.text == "ok" and len(calls) == 2
     assert "max_tokens" not in calls[1]
+
+
+def test_deepinfra_never_leaks_the_openai_key(monkeypatch):
+    import pytest
+    from coworker.providers.registry import build_provider_client
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
+    monkeypatch.delenv("DEEPINFRA_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="DeepInfra"):
+        build_provider_client("deepinfra", {}, None)
+
+
+def test_deepinfra_discovery_uses_public_catalog_and_leaves_choice_to_user(monkeypatch):
+    import httpx
+    from types import SimpleNamespace
+    from coworker.server.manager import SessionManager
+    from coworker.providers.matrix import models_for_provider
+    from coworker.providers.registry import get_descriptor
+
+    catalog = [
+        {
+            "model_name": "new-org/New-Model",
+            "type": "text-generation",
+            "tags": ["tools", "reasoning"],
+            "max_tokens": 131072,
+        },
+        {"model_name": "text/Plain", "type": "text-generation"},
+        {"model_name": "new-org/New-Model", "type": "text-generation"},
+        {"model_name": "old/Retired", "type": "text-generation", "deprecated": 1},
+        {"model_name": "image/Generator", "type": "text-to-image"},
+        {"model_name": None, "type": "text-generation"},
+        None,
+    ]
+    captured = []
+
+    def get(url, **kwargs):
+        captured.append((url, kwargs))
+        return httpx.Response(200, json=catalog, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx, "get", get)
+    result = SessionManager.local_model_facts(SimpleNamespace(), "deepinfra")
+    assert [r["model"] for r in result["models"]] == [
+        "deepinfra:new-org/New-Model",
+        "deepinfra:text/Plain",
+    ]
+    assert result["models"][0]["context_max"] == 131072
+    assert result["models"][0]["tools"] is True
+    assert result["models"][0]["vision"] is None
+    assert captured == [("https://api.deepinfra.com/models/list", {"timeout": 10.0})]
+    assert get_descriptor("deepinfra").recommended_model is None
+    assert models_for_provider("deepinfra") == []
+    caps = capabilities_for("deepinfra:new-org/New-Model")
+    assert not caps.parallel_tool_calls and not caps.vision and not caps.pdf
+    from unittest.mock import Mock
+
+    owner = SimpleNamespace(
+        _refresh_provider=Mock(),
+        _suggested_models=Mock(return_value=[]),
+        add_model=Mock(),
+        set_default_model=Mock(),
+        model="existing:model",
+    )
+    assert SessionManager.adopt_provider_default(owner, "deepinfra") is None
+    owner.add_model.assert_not_called()
+    owner.set_default_model.assert_not_called()
+
+
+@pytest.mark.parametrize("catalog", [{"data": []}, None, "invalid"])
+def test_deepinfra_discovery_reports_invalid_catalog(monkeypatch, catalog):
+    import httpx
+    from types import SimpleNamespace
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        lambda url, **kwargs: httpx.Response(
+            200, json=catalog, request=httpx.Request("GET", url)
+        ),
+    )
+    result = SessionManager.local_model_facts(SimpleNamespace(), "deepinfra")
+    assert result["models"] == []
+    assert "Retry" in result["error"]
+
+
+def test_deepinfra_discovery_reports_timeout(monkeypatch):
+    import httpx
+    from types import SimpleNamespace
+    from coworker.server.manager import SessionManager
+
+    def timeout(*args, **kwargs):
+        raise httpx.TimeoutException("catalog unavailable")
+
+    monkeypatch.setattr(httpx, "get", timeout)
+    result = SessionManager.local_model_facts(SimpleNamespace(), "deepinfra")
+    assert result["models"] == []
+    assert "Retry" in result["error"]
