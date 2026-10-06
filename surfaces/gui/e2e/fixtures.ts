@@ -2065,6 +2065,17 @@ export async function mockApi(page: import("@playwright/test").Page) {
       }
       return json({ ok: !!task });
     }
+    if (/\/v1\/automations\/[^/]+\/stop$/.test(p) && m === "POST") {
+      const id = p.split("/").slice(-2)[0];
+      const task = automations.find((t) => t.id === id);
+      const running = automationRuns.filter((r) => r.task_id === id && r.status === "running");
+      for (const run of running) {
+        run.status = "cancelled";
+        run.finished_at = Math.floor(Date.now() / 1000);
+      }
+      if (task && running.length) task.last_status = "cancelled";
+      return json({ ok: !!task, stopped: running.length > 0 });
+    }
     if (/\/v1\/automations\/[^/]+\/run$/.test(p) && m === "POST") {
       const id = p.split("/").slice(-2)[0];
       const task = automations.find((t) => t.id === id);
@@ -2133,6 +2144,8 @@ export async function mockApi(page: import("@playwright/test").Page) {
         instructions: body.instructions,
         schedule: body.cron || body.fire_at,
         always_allowed: grants,
+        last_run: null,
+        last_status: null,
         run_count: 0,
       };
       automations.push(task);
