@@ -43,6 +43,16 @@ Pick a coworker, point it at real work, get a finished deliverable:
 
 Specialist coworkers arrive with the tools, working style, and check-ins for one job already set up. Security coworkers ship first.
 
+## Community localization
+
+- **Chinese community build:** [zhanglunet/openworker-zh-localized](https://github.com/zhanglunet/openworker-zh-localized)
+- **Chinese guide site:** [oaosf.cn](https://oaosf.cn)
+- **Source analysis and architecture notes:** [docs/zh-localization.md](docs/zh-localization.md)
+
+This community-maintained build localizes the desktop UI and companion materials
+for Chinese-speaking users while preserving OpenWorker's local-first runtime
+model.
+
 ## How it works
 
 1. Tell OpenWorker the outcome you want - "prepare a customer brief," "untangle my calendar," "draft a report," "check where the release stands across Jira and GitHub."
