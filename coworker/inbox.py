@@ -597,8 +597,9 @@ class InboxStore:
         when the session is reopened. Returns the items that changed."""
         changed: list[InboxItem] = []
         with self._lock:
-            for item in self.pending(session_id):
-                if item.visibility == VIS_INLINE:
+            self._check_expirations_locked()
+            for item in self._items.values():
+                if item.session_id == session_id and item.state == STATE_PENDING and item.visibility == VIS_INLINE:
                     item.visibility = VIS_INBOX
                     changed.append(item)
             if changed:

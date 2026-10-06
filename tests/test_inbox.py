@@ -291,3 +291,16 @@ def test_expiry_supersedes_linked_worker_approval(tmp_path):
     assert source.resolution == "expired"
     assert dependent.state == STATE_RESOLVED
     assert dependent.resolution == "superseded"
+
+
+def test_promote_to_inbox_does_not_reenter_query_lock(tmp_path):
+    from threading import Thread
+    from coworker.inbox import VIS_INLINE, VIS_INBOX
+
+    store = InboxStore(tmp_path / "inbox.json")
+    item = store.add_approval("s1", "Allow?", visibility=VIS_INLINE)
+    thread = Thread(target=store.promote_to_inbox, args=("s1",), daemon=True)
+    thread.start()
+    thread.join(timeout=1)
+    assert not thread.is_alive(), "promotion deadlocked while querying pending items"
+    assert item.visibility == VIS_INBOX
