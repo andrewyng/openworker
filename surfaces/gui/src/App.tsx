@@ -912,13 +912,10 @@ export function App() {
           setPreparingSandbox(null);
           break;
         case "ready":
-        setPreparingSandbox(null);
-        setQueueReadySession(null);
-        rejectQueued(sessionId, t("composer.queue_disconnected"));
-      },
-      onRefused: () => setSessionRefused(true),
-    }, machine);
-    setSessionRefused(false); // a fresh socket: the previous refusal, if any, is history
+          setPreparingSandbox(null);
+          setSandboxInfo(d.sandbox || null);
+          setSessionRefused(false);
+          setQueueReadySession(sessionId);
           setConnected(true);
           if (d.model) setModel(d.model);
           if (d.mode) setMode(d.mode);
