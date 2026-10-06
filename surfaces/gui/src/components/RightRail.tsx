@@ -561,6 +561,8 @@ function ArtifactViewer({
   const { t } = useTranslation();
   const [reloadKey, setReloadKey] = useState(0);
   const [replaying, setReplaying] = useState(false);
+  const [replayError, setReplayError] = useState<string | null>(null);
+  useEffect(() => setReplayError(null), [artifact.path, sessionId]);
   // UX-038: the ambiguous icon cluster collapsed into ONE labeled ⋯ menu; the
   // breadcrumb parent is the back action and ✕ closes. Copy CONTENTS is the
   // primary copy — the path copy (a 2026-07-12 tester fix) lives under it, labeled.
@@ -579,22 +581,21 @@ function ArtifactViewer({
   const isApp = content?.kind === "sheet" || content?.kind === "pdf" || content?.kind === "office";
   // Text-bearing kinds can copy their contents; images/PDFs/sheets have nothing textual to copy.
   const copyableText = typeof content?.content === "string" && !content?.error;
-  const isPlan =
-    artifact.name === "plan.md" ||
-    artifact.path.startsWith("plans/") ||
-    artifact.path.endsWith("/plan.md");
+  const planId = /^plans\/([^/]+)\.md$/.exec(artifact.path)?.[1];
+  const isPlan = artifact.path === "plan.md" || !!planId;
   const crumbRoot = artifact.origin === "files" ? t("rail.crumb_files") : t("rail.artifacts_title");
 
   const handleReplay = async () => {
     if (replaying) return;
+    setReplayError(null);
     setReplaying(true);
     try {
-      const res = await replayPlan(sessionId);
+      const res = await replayPlan(sessionId, planId);
       if (onOpenSession && res.session_id) {
         onOpenSession(res.session_id, res.workspace, res.agent);
       }
     } catch (err) {
-      console.error("Failed to replay plan:", err);
+      setReplayError(err instanceof Error ? err.message : "Failed to replay plan");
     } finally {
       setReplaying(false);
     }
@@ -715,6 +716,7 @@ function ArtifactViewer({
           </button>
         </div>
       </div>
+      {replayError && <div className="rail-error" role="alert">{replayError}</div>}
       <div className="artifact-preview">
         {!content ? (
           <div className="rail-muted">{t("rail.loading")}</div>

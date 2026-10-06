@@ -622,7 +622,7 @@ export interface PlanArtifact {
 }
 
 export async function getSessionPlan(sessionId: string): Promise<PlanArtifact | null> {
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/plan`);
+  const res = await fetch(`${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/plan`);
   if (!res.ok) return null;
   return res.json();
 }
@@ -632,7 +632,7 @@ export async function replayPlan(
   planId?: string,
   workspace?: string,
 ): Promise<{ session_id: string; plan_id: string; workspace: string; agent: string; plan: PlanArtifact }> {
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/plan/replay`, {
+  const res = await fetch(`${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/plan/replay`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ plan_id: planId, workspace }),
@@ -641,7 +641,9 @@ export async function replayPlan(
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `Failed to replay plan: ${res.statusText}`);
   }
-  return res.json();
+  const replay = await res.json();
+  registerSessionMachine(replay.session_id, machineOfSession(sessionId));
+  return replay;
 }
 
 export async function listPlans(): Promise<PlanArtifact[]> {
