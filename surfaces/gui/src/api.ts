@@ -286,7 +286,7 @@ export interface ActiveGrant {
 }
 
 export async function getActiveGrants(machineId?: string | null): Promise<ActiveGrant[]> {
-  const res = await fetch(`${machineApi(machineId)}/grants`);
+  const res = await fetch(`${engineBase(machineId)}/v1/grants`);
   return (await res.json()).grants ?? [];
 }
 
@@ -296,7 +296,7 @@ export async function revokeGrant(params: {
   target?: string;
   source_id?: string | null;
 }, machineId?: string | null): Promise<{ ok: boolean; error?: string; revoked?: boolean }> {
-  const res = await fetch(`${machineApi(machineId)}/grants/revoke`, {
+  const res = await fetch(`${engineBase(machineId)}/v1/grants/revoke`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),

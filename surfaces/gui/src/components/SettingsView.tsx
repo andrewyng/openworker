@@ -445,7 +445,7 @@ export function SettingsView({
               )}
             </section>
           ) : tab === "grants" ? (
-            <GrantsSection key={scopeId || "local"} machine={scoped} />
+            <GrantsSection key={scopeId || "local"} machine={scoped?.id} />
           ) : (
             <PersonasSection
               key={scopeId || "local"}
