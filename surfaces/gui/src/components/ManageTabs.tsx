@@ -57,6 +57,33 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+// "Remove key…" under a provider's form. Only for a key the app itself stores: a key
+// that comes from the provider's environment variable (key_source "env") cannot be
+// removed here, so the button is left out and the env note below the form says why (#742).
+export function ProviderKeyFooter({
+  info,
+  credentialed,
+  onRemove,
+}: {
+  info: ProviderInfo | null | undefined;
+  credentialed: boolean;
+  onRemove: () => void;
+}) {
+  const { t } = useTranslation();
+  if (!credentialed || info?.key_source === "env") return null;
+  return (
+    <button
+      className="text-ui text-danger/80 hover:text-danger hover:underline underline-offset-2"
+      data-testid="set-remove-key"
+      onClick={() => {
+        if (window.confirm(t("manage.remove_key_confirm", { title: info?.title || "" }))) onRemove();
+      }}
+    >
+      {t("manage.remove_key")}
+    </button>
+  );
+}
+
 // -- Configure Models tab (UX-021: the shared provider gallery + key form) ----
 // Settings ▸ Models reuses onboarding §39's ProviderCards/ProviderForm so the two
 // surfaces can't drift. Settings-only extras: per-card "used Nh ago", a "Remove
@@ -113,24 +140,12 @@ export function ModelsTab() {
       <ProviderForm
         ps={ps}
         tp="set"
-        footer={
-          ps.credentialed ? (
-            <button
-              className="text-ui text-danger/80 hover:text-danger hover:underline underline-offset-2"
-              data-testid="set-remove-key"
-              onClick={() => {
-                if (window.confirm(t("manage.remove_key_confirm", { title: info?.title || "" }))) ps.removeKey();
-              }}
-            >
-              {t("manage.remove_key")}
-            </button>
-          ) : null
-        }
+        footer={<ProviderKeyFooter info={info} credentialed={ps.credentialed} onRemove={ps.removeKey} />}
       />
 
-      {ps.sel === "openai" && settings.source === "env" && (
-        <p className="text-meta text-muted mt-3 leading-relaxed">
-          {t("manage.openai_env_help")}
+      {info?.env_key && (
+        <p className="text-meta text-muted mt-3 leading-relaxed" data-testid="set-env-key-note">
+          {t(info.key_source === "env" ? "manage.env_key_help" : "manage.env_key_fallback_help", { var: info.env_key })}
         </p>
       )}
 

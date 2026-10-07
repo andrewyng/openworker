@@ -4052,10 +4052,17 @@ class SessionManager:
                 for f in d.fields
                 if not f.secret and profile.get(f.key)
             }
+            env_var = d.env_key if (d.env_key and os.environ.get(d.env_key)) else None
             row = {
                 **d.to_dict(),
                 "configured": configured,
                 "values": values,
+                # Where the key comes from: a key saved in Settings ("store"), the
+                # provider's environment variable ("env"), or nowhere. A stored key wins
+                # over the variable, as resolve_api_key does. The Settings card uses this
+                # to hide "Remove key" for a key it cannot remove (#742).
+                "key_source": "store" if profile.get("api_key") else ("env" if env_var else None),
+                "env_key": env_var,
                 "suggested_models": self._suggested_models(d.name),
                 # Key hygiene for the Settings pane: when the key was saved (date, stamped
                 # by set_provider) and when the provider last served a completion (epoch,
@@ -4236,9 +4243,29 @@ class SessionManager:
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
+        env_var = d.env_key if (d.env_key and os.environ.get(d.env_key)) else None
+        stored = bool((self.secrets.get(f"provider:{name}") or {}).get("api_key"))
+        if env_var and not stored:
+            # Nothing of ours to remove: the key is the environment variable, which only
+            # the user can unset. Say so instead of reporting a removal that changes
+            # nothing (#742).
+            return {
+                "ok": False,
+                "provider": name,
+                "env_key": env_var,
+                "error": (
+                    f"The {d.title} key comes from {env_var} in the server's environment. "
+                    "Unset it and restart the server to remove it."
+                ),
+            }
         self.secrets.delete(f"provider:{name}")
         self._refresh_provider(name)
-        return {"ok": True, "provider": name}
+        out: dict[str, Any] = {"ok": True, "provider": name}
+        if env_var:
+            # The stored key is gone but the variable still configures the provider.
+            out["env_key"] = env_var
+            out["configured"] = True
+        return out
 
     # -- ChatGPT-subscription provider (OAuth, no key) ---------------------------
     def begin_codex_signin(self) -> None:
