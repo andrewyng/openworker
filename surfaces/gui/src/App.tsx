@@ -119,6 +119,7 @@ import { TeamRequestCard } from "./components/TeamRequestCard";
 import { WorkItemsCard } from "./components/WorkItemsCard";
 import { TeamChatView } from "./components/TeamChatView";
 import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
+import { shouldStartWindowDrag } from "./windowDrag";
 
 const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
@@ -1884,7 +1885,7 @@ export function App() {
     overlay && (macosMajor() >= 26 || new URLSearchParams(window.location.search).get("overlay") === "26");
   const overlayClass = overlay ? " tauri-overlay" + (lightsHigh ? " macos-26" : "") : "";
   const beginWindowDrag = (event: PointerEvent) => {
-    if (!desktop || event.button !== 0) return;
+    if (!desktop || !shouldStartWindowDrag(event)) return;
     startWindowDrag();
   };
 
