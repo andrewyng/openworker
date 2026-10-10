@@ -56,6 +56,7 @@ import type {
   ApprovalDecision,
   Attachment,
   Item,
+  QueuedMessage,
   SessionInfo,
   SessionUsage,
   TodoItem,
@@ -346,6 +347,16 @@ export function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [machine]);
+  // Follow-up messages queued while a task is running (#608)
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  const pendingQueuedRef = useRef(new Map<string, QueuedMessage>());
+  const [queueReadySession, setQueueReadySession] = useState<string | null>(null);
+  const rejectQueued = (sid: string, error: string) => {
+    const pending = pendingQueuedRef.current.get(sid);
+    if (!pending) return;
+    pendingQueuedRef.current.delete(sid);
+    setQueuedMessages((items) => items.map((m) => m.id === pending.id ? { ...m, error } : m));
+  };
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
   // to, driving the banner + "Back to runs". Best-effort — a run session without context still
   // shows a generic banner (detected by its __run__ id).
@@ -904,6 +915,7 @@ export function App() {
           setPreparingSandbox(null);
           setSandboxInfo(d.sandbox || null);
           setSessionRefused(false);
+          setQueueReadySession(sessionId);
           setConnected(true);
           if (d.model) setModel(d.model);
           if (d.mode) setMode(d.mode);
@@ -916,7 +928,15 @@ export function App() {
           // without this the Stop button and waiting row vanish (owner catch 2026-08-24).
           if (typeof d.running === "boolean") setRunning(d.running);
           break;
-        case "turn_start":
+        case "turn_start": {
+          const pending = pendingQueuedRef.current.get(sessionId);
+          if (pending && d.request_id === pending.id) {
+            const shown = pending.skill ? `/${pending.skill}${pending.text ? ` ${pending.text}` : ""}` : pending.text;
+            setItems((items) => [...items, { kind: "user", text: shown, attachments: pending.attachments, ts: Date.now() / 1000 }]);
+            pendingQueuedRef.current.delete(sessionId);
+            setQueuedMessages((items) => items.filter((m) => m.id !== pending.id));
+          }
+        }
           setRunning(true);
           setReviewerPaused(false); // a fresh user message resets the denial streak
           setStreaming("");
@@ -1140,6 +1160,9 @@ export function App() {
           ]);
           break;
         case "input_rejected":
+          if (d.request_id === pendingQueuedRef.current.get(sessionId)?.id) {
+            rejectQueued(sessionId, d.error || t("app.notice.input_rejected"));
+          }
           setItems((p) => [
             ...p,
             { kind: "notice", tone: "warn", text: d.error || t("app.notice.input_rejected") },
@@ -1206,12 +1229,18 @@ export function App() {
       onClose: () => {
         setConnected(false);
         setPreparingSandbox(null);
+        setQueueReadySession(null);
+        rejectQueued(sessionId, t("composer.queue_disconnected"));
       },
       onRefused: () => setSessionRefused(true),
     }, machine);
     setSessionRefused(false); // a fresh socket: the previous refusal, if any, is history
     sessionRef.current = session;
-    return () => session.close();
+    return () => {
+      setQueueReadySession(null);
+      rejectQueued(sessionId, t("composer.queue_disconnected"));
+      session.close();
+    };
     // NOTE: `workspace` is intentionally NOT a dependency. Every real workspace change
     // (pick folder, select/switch session, new session) is paired with a `sessionId`
     // change, so the socket still reconnects when it should. The one workspace-only change
@@ -1403,6 +1432,34 @@ export function App() {
     sessionRef.current?.userMessage(text, attachments, model, skill);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
   };
+
+  const handleQueue = (text: string, attachments?: Attachment[], skill?: string) => {
+    if (!text.trim() && (!attachments || attachments.length === 0) && !skill) return;
+    const newQueued: QueuedMessage = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      sessionId,
+      text,
+      attachments,
+      skill,
+      createdAt: Date.now(),
+    };
+    setQueuedMessages((prev) => [...prev, newQueued]);
+  };
+
+  const handleRemoveQueued = (id: string) => {
+    setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
+  };
+
+  useEffect(() => {
+    if (running || !connected || queueReadySession !== sessionId || pendingQueuedRef.current.has(sessionId)) return;
+    const next = queuedMessages.find((m) => m.sessionId === sessionId);
+    if (!next || next.error) return;
+    // Keep the item until turn_start acknowledges it. A rejection leaves an
+    // removable record and must not claim that an agent turn is running.
+    pendingQueuedRef.current.set(sessionId, next);
+    sessionRef.current?.userMessage(next.text, next.attachments, model, next.skill, next.id);
+  }, [running, connected, queueReadySession, sessionId, queuedMessages]);
+
   // Resolving a LIVE prompt also resolves its parked Inbox mirror server-side, but the polled
   // `sessionInbox` copy stays "pending" for up to a poll cycle — long enough for the docked
   // answer-in-context card to flash the SAME request again right after the user answered it
@@ -2484,6 +2541,9 @@ export function App() {
               onAutoAnswerChange={agent !== "chat" ? toggleAutoAnswer : undefined}
               prefill={composerPrefill}
               resetKey={sessionId}
+              queuedItems={queuedMessages.filter((m) => m.sessionId === sessionId)}
+              onQueue={handleQueue}
+              onRemoveQueued={handleRemoveQueued}
               usage={usage}
               contextWindow={modelContextWindows[model]}
               contextBar={contextBar}
