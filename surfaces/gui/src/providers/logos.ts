@@ -64,6 +64,7 @@ export const PROVIDER_ORDER = [
   "ark",
   "ark-agent-plan-cn",
   "meta",
+  "atlascloud",
   "ollama",
   "llamacpp",
   "vllm",
