@@ -150,11 +150,13 @@ class RiskOverrideStore:
             self._trust.append(pattern)
             self.save()
 
-    def revoke_trust(self, pattern: str) -> None:
+    def revoke_trust(self, pattern: str) -> bool:
         before = len(self._trust)
         self._trust = [p for p in self._trust if p != pattern]
         if len(self._trust) != before:
             self.save()
+            return True
+        return False
 
     def trust_patterns(self) -> list[str]:
         return list(self._trust)

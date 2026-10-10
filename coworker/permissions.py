@@ -868,6 +868,32 @@ class PermissionEngine:
         if self._on_site_list(host):
             return True
         return any(host == d or host.endswith("." + d) for d in self.session_allow_domains)
+    def revoke_tool_for_session(self, tool_name: str) -> bool:
+        if tool_name in self.session_allow_tools:
+            self.session_allow_tools.remove(tool_name)
+            return True
+        return False
+
+    def revoke_command_for_session(self, command: str) -> bool:
+        if command in self.session_allow_commands:
+            self.session_allow_commands.remove(command)
+            return True
+        return False
+
+    def revoke_readonly_for_session(self) -> bool:
+        if self.session_readonly:
+            self.session_readonly = False
+            return True
+        return False
+
+    def revoke_domain_for_session(self, url_or_domain: str) -> bool:
+        host = _host_of(url_or_domain)
+        if host.startswith("www."):
+            host = host[4:]
+        if host in self.session_allow_domains:
+            self.session_allow_domains.remove(host)
+            return True
+        return False
 
     # -- helpers ----------------------------------------------------------------
     def _candidate(self, path: str) -> Path:

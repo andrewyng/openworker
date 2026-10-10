@@ -44,13 +44,17 @@ class WorkspaceTrustStore:
     def list(self) -> list[str]:
         return sorted(self._load())
 
-    def set_trusted(self, workspace: str | Path, trusted: bool) -> str:
+    def revoke_trust(self, workspace: str | Path) -> bool:
+        """Revoke trust for a workspace root. Returns True if the path was trusted and removed."""
         canonical = self.canonical(workspace)
         values = self._load()
-        if trusted:
-            values.add(canonical)
-        else:
-            values.discard(canonical)
+        if canonical not in values:
+            return False
+        values.discard(canonical)
+        self._write(values)
+        return True
+
+    def _write(self, values: set[str]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
         tmp.write_text(
@@ -59,4 +63,13 @@ class WorkspaceTrustStore:
         )
         os.chmod(tmp, 0o600)
         tmp.replace(self.path)
+
+    def set_trusted(self, workspace: str | Path, trusted: bool) -> str:
+        canonical = self.canonical(workspace)
+        values = self._load()
+        if trusted:
+            values.add(canonical)
+        else:
+            values.discard(canonical)
+        self._write(values)
         return canonical
