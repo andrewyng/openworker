@@ -157,10 +157,20 @@ class MCPManager:
                             self._secrets,
                             interactive=interactive,
                         )
-                    read, write, *_ = await stack.enter_async_context(
-                        streamablehttp_client(
-                            server.url, headers=server.headers or None, auth=auth
+                    http_kwargs: dict[str, Any] = {
+                        "headers": server.headers or None,
+                        "auth": auth,
+                    }
+                    if auth is not None:
+                        # Request hook sees every hop, including redirects the SDK
+                        # follows without re-entering Auth (issue #527).
+                        from .ssrf import mcp_httpx_client_factory
+
+                        http_kwargs["httpx_client_factory"] = mcp_httpx_client_factory(
+                            server.url
                         )
+                    read, write, *_ = await stack.enter_async_context(
+                        streamablehttp_client(server.url, **http_kwargs)
                     )
                 else:
                     if not server.command:
