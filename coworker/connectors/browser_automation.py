@@ -20,6 +20,39 @@ import aisuite as ai
 from ..web.guard import check_url
 
 
+def _guard_route(route: Any) -> None:
+    """Playwright route handler: vet every NAVIGATION at request time against the same
+    address guard web_fetch uses, and abort the ones it refuses.
+
+    ``check_url`` in ``browser_open_url`` only sees the model-supplied URL. The browser then
+    follows redirects and runs page JavaScript, and a later navigation (a 30x hop, a
+    meta-refresh, ``location = …``) to ``127.0.0.1`` / ``169.254.169.254`` is never re-vetted
+    before ``browser_read_page`` / ``browser_screenshot`` lift its content into the agent —
+    the gap ``redirect_refusal`` (OPE-124) can only patch after the fact for the single
+    ``goto``. Gating navigation requests here closes it at the source and narrows the
+    DNS-rebinding window (the handler sees the concrete request that is about to go out).
+
+    Subresource fetches (images, scripts, XHR) are not gated: they can't pull internal
+    content back into the agent's context, and resolving DNS for every one would be dozens of
+    lookups per page. A resolver-pinning proxy is the larger design that would also cover
+    those; this closes the read-back path.
+    """
+    request = route.request
+    try:
+        is_navigation = request.is_navigation_request()
+    except Exception:
+        is_navigation = True  # unknown shape → treat as a navigation and fail closed
+    if is_navigation:
+        try:
+            blocked = check_url(request.url)
+        except Exception:
+            blocked = "address guard error"  # a guard failure must fail closed
+        if blocked:
+            route.abort("blockedbyclient")
+            return
+    route.continue_()
+
+
 def _meta(
     name: str, *, approval: bool = False, capabilities: Optional[list[str]] = None
 ):
@@ -128,6 +161,9 @@ class _BrowserController:
                 self._context = self._browser.new_context(
                     viewport={"width": 1280, "height": 900}
                 )
+                # Vet every navigation (redirect / JS / meta-refresh), not just the URL the
+                # model passed to browser_open_url, before its request goes out.
+                self._context.route("**/*", _guard_route)
                 self._page = self._context.new_page()
                 self._touch(
                     open=True, status="open", last_action="open browser", last_error=""
