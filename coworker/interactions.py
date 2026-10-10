@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .inbox import KIND_APPROVAL, KIND_QUESTION
-from .tools.ask import option_label
+from .tools.ask import SKIP_SENTINEL, option_label
 
 
 @dataclass
@@ -56,8 +56,15 @@ def buttons_for(item) -> list[Button]:
     if item.kind == KIND_QUESTION and getattr(item, "options", None):
         # One button per option; the resolution IS the chosen option's label (what the agent
         # gets). Rich {label, description, …} options button as their label.
+        #
+        # Skip trails the options (OPE-153) so the channel has the same way out the card has:
+        # without it, a reader whose answer isn't on the list can only pick a wrong option or
+        # leave the agent suspended. It grants nobody new authority — anyone who can click an
+        # option here could already decide the question — it only adds declining to what they
+        # can already do. Grouped questions stay button-less on purpose: they fall back to the
+        # "(Open the app to respond.)" text, and the app is where their per-question skip lives.
         return [
             Button(option_label(opt), encode(item.id, option_label(opt)))
             for opt in item.options
-        ]
+        ] + [Button("Skip", encode(item.id, SKIP_SENTINEL))]
     return []
