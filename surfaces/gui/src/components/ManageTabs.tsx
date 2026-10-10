@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getI18n, useTranslation } from "react-i18next";
 import {
+  addTelegramApprovalOwner,
   allowUser,
   connectConnector,
   connectManaged,
@@ -9,6 +10,7 @@ import {
   getSettings,
   getSubscriptions,
   removeModel,
+  removeTelegramApprovalOwner,
   resolveUnauthorized,
   unsubscribeChannel,
   setDefaultModel,
@@ -533,6 +535,95 @@ export function AllowlistBlock({
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Who may APPROVE from this Telegram bot — a stricter list than "allowed to message"
+// (OPE-217 / #712). Empty means: the one person in a bound private chat may approve;
+// a bound group needs owners chosen here before anyone can.
+export function TelegramApprovalOwnersBlock({ c, onChanged }: { c: Connector; onChanged: () => void }) {
+  const { t } = useTranslation();
+  const [err, setErr] = useState<string | null>(null);
+  const [pick, setPick] = useState("");
+  const owners = c.approval_owner_ids ?? [];
+  const names = { ...(c.allowed_user_names ?? {}), ...(c.approval_owner_names ?? {}) };
+  const candidates = c.allowed_users.filter((u) => !owners.includes(u));
+  const label = (u: string) => names[u] || u;
+  const add = async (userId: string) => {
+    const result = await addTelegramApprovalOwner(userId, names[userId] || undefined);
+    if (!result.ok) {
+      setErr(result.error || t("manage.owners_update_failed"));
+      return;
+    }
+    setErr(null);
+    setPick("");
+    onChanged();
+  };
+  const remove = async (userId: string) => {
+    const result = await removeTelegramApprovalOwner(userId);
+    if (!result.ok) {
+      setErr(result.error || t("manage.owners_update_failed"));
+      return;
+    }
+    setErr(null);
+    onChanged();
+  };
+  return (
+    <div className="border-t border-line px-3.5 py-3" data-testid="telegram-approval-owners">
+      <div className={SEC_H + " mb-1"}>{t("manage.approval_owners")}</div>
+      <div className="text-meta text-faint mb-2">{t("manage.approval_owners_help")}</div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {owners.length === 0 && (
+          <span className="text-meta text-faint">{t("manage.approval_owners_empty")}</span>
+        )}
+        {owners.map((u) => (
+          <span
+            key={u}
+            className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-full bg-paper border border-line text-meta"
+            title={t("manage.id_title", { id: u })}
+            data-testid={`telegram-approval-owner-${u}`}
+          >
+            <span className="w-4 h-4 rounded-full bg-accentSoft text-accent grid place-items-center text-[9px] font-bold">
+              {initials(label(u))}
+            </span>
+            {label(u)}
+            <button
+              className="w-4 h-4 grid place-items-center text-faint hover:text-danger"
+              title={t("common.remove")}
+              onClick={() => remove(u)}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        {candidates.length > 0 && (
+          <span className="inline-flex items-center gap-1">
+            <select
+              className="text-meta bg-paper border border-line rounded-md px-1.5 py-0.5"
+              value={pick}
+              onChange={(e) => setPick(e.target.value)}
+              data-testid="telegram-approval-owner-pick"
+            >
+              <option value="">{t("manage.approval_owners_pick")}</option>
+              {candidates.map((u) => (
+                <option key={u} value={u}>
+                  {label(u)}
+                </option>
+              ))}
+            </select>
+            <button
+              className="text-meta px-2 py-0.5 rounded-md bg-accent text-white disabled:opacity-50"
+              disabled={!pick}
+              onClick={() => pick && add(pick)}
+              data-testid="telegram-approval-owner-add"
+            >
+              {t("manage.add_btn")}
+            </button>
+          </span>
+        )}
+        {err && <span className="basis-full text-meta text-warnInk">{err}</span>}
       </div>
     </div>
   );

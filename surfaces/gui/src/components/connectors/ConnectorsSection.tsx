@@ -13,7 +13,7 @@ import {
 } from "../../api";
 import { McpServerDetail } from "./CustomMcp";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
-import { AllowlistBlock, ConnectorTools, ListeningSessionsBlock, UnauthorizedBlock } from "../ManageTabs";
+import { AllowlistBlock, ConnectorTools, ListeningSessionsBlock, TelegramApprovalOwnersBlock, UnauthorizedBlock } from "../ManageTabs";
 import { AccountsDetail } from "./AccountsDetail";
 import { AvailableDetail } from "./AvailableDetail";
 import { CalendarDetail } from "./CalendarDetail";
@@ -200,6 +200,7 @@ function GenericDetail({
       {c.two_way && (
         <div className={GRP + " mt-4"}>
           <AllowlistBlock c={c} onChanged={onChanged} />
+          {c.name === "telegram" && <TelegramApprovalOwnersBlock c={c} onChanged={onChanged} />}
           <UnauthorizedBlock c={c} onChanged={onChanged} />
           {/* Channel subscriptions are a chat-platform concept — GitHub is two_way via the
               relay (inbound mentions) but has no channels. */}

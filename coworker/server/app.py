@@ -2293,6 +2293,20 @@ def create_app(manager: SessionManager) -> FastAPI:
             str(body.get("user_id", "")), add=False
         )
 
+    @app.post("/v1/connectors/telegram/approval-owners/add")
+    def telegram_approval_owner_add(body: dict) -> dict[str, Any]:
+        return manager.set_telegram_approval_owner(
+            str(body.get("user_id", "")),
+            add=True,
+            display_name=str(body.get("name", "")),
+        )
+
+    @app.post("/v1/connectors/telegram/approval-owners/remove")
+    def telegram_approval_owner_remove(body: dict) -> dict[str, Any]:
+        return manager.set_telegram_approval_owner(
+            str(body.get("user_id", "")), add=False
+        )
+
     # -- audit / browser observability ------------------------------------------
     @app.get("/v1/audit")
     def audit_list(

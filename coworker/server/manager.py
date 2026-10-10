@@ -5148,6 +5148,80 @@ class SessionManager:
             if str(user_id).strip()
         }
 
+    # -- Telegram approval owners (OPE-217 / #712) -------------------------------
+    # Telegram has no OAuth installer, so like manual Slack Socket Mode the humans who may
+    # resolve consequential prompts are listed explicitly on the connector profile.
+    def telegram_approval_owner_ids(self) -> set[str]:
+        profile = self.secrets.get("telegram:default") or {}
+        return {
+            str(user_id).strip()
+            for user_id in (profile.get("approval_owner_ids") or [])
+            if str(user_id).strip()
+        }
+
+    def set_telegram_approval_owner(
+        self, user_id: str, *, add: bool, display_name: str = ""
+    ) -> dict[str, Any]:
+        """Edit the Telegram approval owners. Owner status implies inbound permission."""
+        user_id = str(user_id).strip()
+        if not user_id:
+            return {"ok": False, "error": "user_id required"}
+        profile = self.secrets.get("telegram:default")
+        if not profile:
+            return {"ok": False, "error": "Telegram is not connected."}
+        owners = self.telegram_approval_owner_ids()
+        if add:
+            owners.add(user_id)
+        else:
+            owners.discard(user_id)
+        profile["approval_owner_ids"] = sorted(owners)
+        if add:
+            allowed = set(profile.get("allowed_users") or [])
+            allowed.add(user_id)
+            profile["allowed_users"] = sorted(allowed)
+        self.secrets.put("telegram:default", profile)
+        if display_name:
+            self._note_person("telegram", user_id, display_name)
+        if self.gateway is not None and "telegram" in self.gateway.settings:
+            self.gateway.settings["telegram"].allowed_users = set(
+                profile.get("allowed_users") or []
+            )
+        return {
+            "ok": True,
+            "approval_owner_ids": sorted(owners),
+            "allowed_users": list(profile.get("allowed_users") or []),
+        }
+
+    def _telegram_actor_owns_item(
+        self, item, *, actor_id: str, chat_id: str
+    ) -> bool:
+        """Authorize a Telegram resolution of a protected item.
+
+        Two conditions, mirroring the Slack rule (owner + bound channel):
+
+        - the reply must arrive in the chat the item's inbox is bound to — a reply from any
+          other chat is refused whoever sent it (an in-app-only inbox is not remotely
+          resolvable at all);
+        - the sender must be an approval owner. With owners configured that is the list.
+          With none configured, a binding to a private chat means exactly one allowed
+          human lives there (a Telegram DM's chat id IS the user's id), so that person is
+          the owner — single-user bots need no setup. A group binding (negative chat id)
+          with no owners configured refuses: a whole group never gains approval rights by
+          accident.
+        """
+        binding = self.inbox_routing.binding_for(item.inbox)
+        if binding.channel != "telegram" or not binding.target:
+            return False
+        bound_chat = str(binding.target).strip()
+        if str(chat_id or "").strip() != bound_chat or not actor_id:
+            return False
+        owners = self.telegram_approval_owner_ids()
+        if owners:
+            return actor_id in owners
+        if bound_chat.startswith("-"):
+            return False  # group/supergroup: owners must be chosen explicitly
+        return actor_id == bound_chat
+
     def set_slack_approval_owner(
         self, user_id: str, *, add: bool, display_name: str = ""
     ) -> dict[str, Any]:
@@ -5251,8 +5325,9 @@ class SessionManager:
         - cross-transport is refused: an item bound to one channel can only be resolved from
           that same channel (an in-app-only item is not remotely resolvable at all);
         - Slack defers to the existing owner + bound-channel check;
-        - no other transport (e.g. Telegram) has an approval-owner model, so it cannot
-          resolve protected items remotely — they stay pending for in-app resolution.
+        - Telegram checks the bound chat and its own approval-owner list (OPE-217);
+        - any other transport has no approval-owner model, so it cannot resolve protected
+          items remotely — they stay pending for in-app resolution.
         """
         binding = self.inbox_routing.binding_for(item.inbox)
         if binding.channel and binding.channel != platform:
@@ -5261,7 +5336,33 @@ class SessionManager:
             return self._slack_actor_owns_item(
                 item, actor_id=actor_id, chat_id=chat_id, team_id=team_id
             )
+        if platform == "telegram":
+            return self._telegram_actor_owns_item(
+                item, actor_id=actor_id, chat_id=chat_id
+            )
         return False
+
+    def _notify_refused_reply(self, platform: str, chat_id: str, thread_id=None) -> None:
+        """Tell a human their tagged reply was refused by the owner check. Best-effort and
+        off the caller's path: the resolver runs synchronously inside the gateway's loop, so
+        the send is scheduled as a task; with no running loop (tests, CLI) it is skipped."""
+        if self.gateway is None or not platform or not chat_id:
+            return
+        from ..connectors.base import format_target
+        from ..connectors.gateway import APPROVAL_OWNER_REQUIRED
+
+        target = format_target(platform, str(chat_id), thread_id)
+
+        async def _send() -> None:
+            try:
+                await self.gateway.deliver(target, APPROVAL_OWNER_REQUIRED)
+            except Exception:
+                logger.debug("refusal reply to %s failed", target, exc_info=True)
+
+        try:
+            asyncio.get_running_loop().create_task(_send())
+        except RuntimeError:
+            pass
 
     def set_inbox_binding(
         self, name: str, *, channel: Optional[str], target: str
@@ -6438,8 +6539,22 @@ class SessionManager:
                 chat_id=getattr(event, "chat_id", "") or "",
                 team_id=getattr(event, "team_id", None),
             ):
+                platform = str(getattr(event, "platform", "") or "")
                 if self.gateway is not None:
+                    # Slack answers with an ephemeral; everywhere else the gateway's
+                    # reject path is a no-op, so send the same sentence as a plain reply.
                     await self.gateway.reject_interaction(event)
+                    if platform != "slack":
+                        from ..connectors.base import format_target
+                        from ..connectors.gateway import APPROVAL_OWNER_REQUIRED
+
+                        try:
+                            await self.gateway.deliver(
+                                format_target(platform, str(getattr(event, "chat_id", "") or "")),
+                                APPROVAL_OWNER_REQUIRED,
+                            )
+                        except Exception:
+                            logger.debug("refusal reply failed", exc_info=True)
                 return
         already = item is not None and item.state != "pending"
         resolved = await self.resolve_inbox(item_id, resolution)
@@ -6480,6 +6595,11 @@ class SessionManager:
                     chat_id=getattr(event.source, "chat_id", "") or "",
                     team_id=getattr(event.source, "team_id", None),
                 ):
+                    self._notify_refused_reply(
+                        str(getattr(event.source, "platform", "") or ""),
+                        getattr(event.source, "chat_id", "") or "",
+                        getattr(event.source, "thread_id", None),
+                    )
                     return False
             return self.inbox.resolve(item_id, resolution)
 
