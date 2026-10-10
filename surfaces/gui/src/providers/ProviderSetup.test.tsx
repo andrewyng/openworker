@@ -120,3 +120,52 @@ describe("Ark provider presentation", () => {
     );
   });
 });
+
+// The custom-endpoint row is descriptor-driven, not per-provider: any keyed provider that
+// declares a base_url field gets it. Anthropic (Messages-API gateways) stands in here.
+const ANTHROPIC: ProviderInfo = {
+  name: "anthropic",
+  title: "Claude (Anthropic)",
+  needs_key: true,
+  configured: false,
+  values: {},
+  suggested_models: [],
+  recommended_model: null,
+  fields: [
+    { key: "api_key", label: "Anthropic API key", secret: true, required: true, help: "", placeholder: "sk-ant-…" },
+    {
+      key: "base_url",
+      label: "Custom endpoint (optional)",
+      secret: false,
+      required: false,
+      help: "For LiteLLM or any Anthropic-compatible gateway.",
+      placeholder: "https://…/anthropic",
+    },
+  ],
+};
+
+function makeAnthropicPs(over: Partial<ProviderSetupState> = {}): ProviderSetupState {
+  return {
+    ...makePs({}),
+    providers: [ANTHROPIC],
+    ordered: [ANTHROPIC],
+    sel: "anthropic",
+    info: ANTHROPIC,
+    ...over,
+  };
+}
+
+describe("ProviderForm custom endpoint", () => {
+  it("offers the disclosure and keeps the field hidden until it opens", () => {
+    render(<ProviderForm ps={makeAnthropicPs()} tp="t" />);
+    expect(screen.getByTestId("t-endpoint-link")).toBeTruthy();
+    expect(screen.queryByTestId("t-field-base_url")).toBeNull();
+  });
+
+  it("renders the endpoint input once expanded", () => {
+    render(<ProviderForm ps={makeAnthropicPs({ showEndpoint: true })} tp="t" />);
+    const input = screen.getByTestId("t-field-base_url") as HTMLInputElement;
+    expect(input.placeholder).toBe("https://…/anthropic");
+    expect(screen.queryByTestId("t-endpoint-link")).toBeNull();
+  });
+});
