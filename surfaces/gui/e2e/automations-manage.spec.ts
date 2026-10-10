@@ -18,9 +18,11 @@ test("lists a scheduled task with its schedule and run count", async ({ page }) 
   await expect(card).toContainText("last running");
 });
 
-test("Run now triggers a manual run and opens its live session", async ({ page }) => {
+test("Force Stop ends a running task before Run now starts a manual run", async ({ page }) => {
   await openAutomations(page);
   await page.locator(".sched-card", { hasText: "Daily AI News" }).click();
+  await page.getByRole("button", { name: "Force Stop", exact: true }).first().click();
+  await expect(page.getByRole("button", { name: "Force Stop", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: /Run now/ }).click();
   // The manual run opens as a session with the automation-context banner.
   const banner = page.getByTestId("run-banner");
