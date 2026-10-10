@@ -462,7 +462,9 @@
     "personas_desc": "Coworkers are agents specialized for a particular role or task. They come equipped with the tools and skills to be successful in that role. Enabling a coworker lets you pick it when starting a conversation.",
     "composer_section": "Composer",
     "context_bar_title": "Show the context ring on the model pill",
-    "context_bar_desc": "A small ring showing how full the model’s context window is. The pill’s tooltip states the figures either way."
+    "context_bar_desc": "A small ring showing how full the model’s context window is. The pill’s tooltip states the figures either way.",
+    "hide_reasoning_title": "Hide thinking while I work",
+    "hide_reasoning_desc": "Collapse the fast-scrolling reasoning trace to a quiet “Thinking…” line while a turn runs. The full reasoning still appears after the turn finishes."
   },
   "cloud": {
     "check_browser": "Check your browser…",
@@ -521,7 +523,8 @@
       "talk_anytime": "Talk to it anytime.",
       "ask_status": "Ask for a status",
       "status_prompt": "Quick status check, please — what's moving, what's blocked, and does anything need me?"
-    }
+    },
+    "thinking_hidden": "Thinking…"
   },
   "run_banner": {
     "scheduled_run": "Scheduled run",
