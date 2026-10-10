@@ -10,6 +10,7 @@ explicit OpenAI schema built straight from the MCP `inputSchema` for fidelity.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from typing import Any, Awaitable, Callable
 
@@ -27,7 +28,9 @@ def tool_name(server: str, tool: str) -> str:
     """`mcp__<server>__<tool>`, sanitized to OpenAI's `[A-Za-z0-9_-]{1,64}` rule."""
     base = f"mcp__{_NAME_OK.sub('_', server)}__{_NAME_OK.sub('_', tool)}"
     if len(base) > _MAX_NAME:
-        base = base[:_MAX_NAME]
+        # Keep tools with a common long prefix distinct, independent of discovery order.
+        suffix = hashlib.sha256(base.encode()).hexdigest()[:12]
+        base = f"{base[:_MAX_NAME - len(suffix) - 1]}_{suffix}"
     return base
 
 
@@ -87,6 +90,11 @@ def build_callables(
             requires_approval=server.requires_approval,
         )
         _invoke.__coworker_schema__ = _openai_schema(name, mcp_tool)
+        full_name = f"mcp__{_NAME_OK.sub('_', server.name)}__{_NAME_OK.sub('_', remote)}"
+        if full_name != name:
+            # Skills may mention the full name. Resolve it to this same spec without
+            # exposing an over-limit or duplicate schema to the model.
+            _invoke.__coworker_aliases__ = (full_name,)
         # OPE-136 finding 4: where this call actually goes, for the approval card's
         # scope chip. From the server DEF (user-authored config), never from anything
         # the server itself claims. http → the remote host; stdio → a local process.
