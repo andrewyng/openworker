@@ -11,10 +11,12 @@
 #                      (review, then publish by hand).
 #   - manual run     → builds and uploads workflow artifacts only (no release).
 #
-# Each installer is uploaded twice: once with its versioned name (archive) and once with a
-# stable name (OpenWorker-macos-arm64.dmg, …) so the website can link to
+# Each installer is uploaded ONCE, under a stable name (OpenWorker-macos-arm64.dmg, …) so
+# links to
 #   github.com/<repo>/releases/latest/download/<stable-name>
-# and never need updating.
+# never need updating. Upstream also attaches a versioned copy of every installer; this
+# fork drops it — the bytes are identical and it doubled the release page to ~200 MB of
+# duplicates. The tag itself already records which version an asset came from.
 #
 # macOS signing + notarization: Tauri's bundler handles both during `tauri build` when the
 # APPLE_* env vars are present (import cert → sign app + sidecar with hardened runtime →
@@ -25,8 +27,10 @@
 #   APPLE_API_KEY_CONTENT        base64 App Store Connect API .p8 (notarytool)
 #   APPLE_API_KEY                the API key id
 #   APPLE_API_ISSUER             the API issuer id
-# When the secrets are absent (forks, scratch runs) the build degrades to unsigned —
-# installable via `xattr -cr`. Windows remains unsigned (Authenticode is a later step).
+# When the secrets are absent (forks, scratch runs) the macOS build uses an Ad-hoc
+# signature: it is still untrusted, but avoids the misleading "app is damaged" dialog.
+# Users can approve it once in Privacy & Security. Windows remains unsigned (Authenticode
+# is a later step).
 
 name: Release
 
@@ -138,21 +142,26 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: ./packaging/build_windows.ps1
 
-      - name: Stage artifacts (versioned + stable names)
+      - name: Stage artifacts (stable names)
         run: |
           mkdir -p out
           BUNDLE=surfaces/gui/src-tauri/target/release/bundle
           if [ "$RUNNER_OS" = "Windows" ]; then
-            cp "$BUNDLE"/nsis/*.exe out/
             cp "$BUNDLE"/nsis/*.exe out/OpenWorker-windows-setup.exe
-            cp "$BUNDLE"/msi/*.msi out/
-            cp "$BUNDLE"/msi/*.msi out/OpenWorker-windows.msi
+            # MSI is optional: WiX rejects non-numeric prerelease ids (e.g. 0.2.1-zh.3).
+            if ls "$BUNDLE"/msi/*.msi >/dev/null 2>&1; then
+              cp "$BUNDLE"/msi/*.msi out/OpenWorker-windows.msi
+            fi
             # Updater signature for the NSIS installer (present only when the updater key
             # secret is configured). The .sig signs CONTENT, so the stable rename is safe.
             SIG=$(ls "$BUNDLE"/nsis/*.exe.sig 2>/dev/null | head -1 || true)
             [ -n "$SIG" ] && cp "$SIG" out/OpenWorker-windows-setup.exe.sig
           else
-            cp "$BUNDLE"/dmg/*.dmg out/
+            if ! ls "$BUNDLE"/dmg/*.dmg >/dev/null 2>&1; then
+              echo "::error::no .dmg under $BUNDLE/dmg"
+              ls -la "$BUNDLE" "$BUNDLE/dmg" "$BUNDLE/macos" || true
+              exit 1
+            fi
             cp "$BUNDLE"/dmg/*.dmg out/OpenWorker-${{ matrix.slug }}.dmg
             # macOS updater artifact: the signed .app tarball the installed app swaps in.
             if [ -f "$BUNDLE"/macos/OpenWorker.app.tar.gz ]; then
@@ -221,29 +230,41 @@ jobs:
           merge-multiple: true
 
       - name: Compose the auto-update manifest (latest.json)
-        # Shipped apps poll releases/latest/download/latest.json (via the branded
-        # download.openworker.com redirect) — publishing this release IS pushing the
-        # update. The tag must match tauri.conf.json's version or installed apps would
-        # see a permanent phantom update; fail loudly on drift. Runs only when signed
-        # updater artifacts exist (i.e. the TAURI_SIGNING_PRIVATE_KEY secret is set).
+        # Shipped apps poll this fork's releases/latest/download/latest.json.
+        # The tag must match tauri.conf.json's version (allowing -zh.N) or installed
+        # apps would see a permanent phantom update. Runs only when signed updater
+        # artifacts exist (TAURI_SIGNING_PRIVATE_KEY secret is set).
         run: |
           TAG="${GITHUB_REF_NAME}"
           CONF_VERSION=$(python3 -c "import json; print(json.load(open('surfaces/gui/src-tauri/tauri.conf.json'))['version'])")
-          if [ "${TAG#v}" != "$CONF_VERSION" ]; then
-            echo "::error::tag $TAG != tauri.conf.json version $CONF_VERSION — bump the config before tagging"
+          TAG_VERSION="${TAG#v}"
+          # Exact match: fork tags are v0.2.1-zh.3 matching conf version 0.2.1-zh.3
+          if [ "$TAG_VERSION" != "$CONF_VERSION" ]; then
+            echo "::error::tag $TAG must equal tauri.conf.json version $CONF_VERSION"
             exit 1
           fi
           if ls dist/*.sig >/dev/null 2>&1; then
             python3 packaging/make_update_manifest.py \
               --version "${TAG#v}" --tag "$TAG" --repo "$GITHUB_REPOSITORY" \
               --dist dist --out dist/latest.json \
-              --notes "OpenWorker ${TAG#v}"
+              --notes "OpenWorker 简体中文 ${TAG#v}"
           else
             echo "::warning::no updater signatures in dist/ — release ships WITHOUT auto-update manifest"
+            echo "::warning::add repo secret TAURI_SIGNING_PRIVATE_KEY (see docs/FORK-MAINTENANCE.md)"
           fi
 
       - uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          # Published (not draft/prerelease) so /releases/latest/download/latest.json
+          # resolves for this fork's auto-updater endpoint.
+          draft: false
+          prerelease: false
+          make_latest: true
           files: dist/*
           generate_release_notes: true
+          body: |
+            OpenWorker 社区简体中文构建 `${{ github.ref_name }}`。
+
+            - 自动更新通道：本仓库 Releases（非官方英文版）
+            - 设置 → 常规 → 界面语言 可切换 English / 简体中文
+            - 若从未配置过 `TAURI_SIGNING_PRIVATE_KEY`，本包不含自动更新签名，请见 docs/FORK-MAINTENANCE.md

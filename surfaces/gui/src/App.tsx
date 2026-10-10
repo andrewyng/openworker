@@ -1953,7 +1953,8 @@ export function App() {
           <span /><span /><span />
         </div>
       )}
-      {/* Desktop-only auto-update prompt (15s after boot, then every 30 min; inert in browser). */}
+      {/* Desktop-only auto-update prompt (15s after boot, then every 30 min; inert in browser).
+          Points at this fork's Releases, not upstream English builds. */}
       <UpdateBanner />
       {/* UX-026: automation-start toast — quiet panel, neutral dot/drain, accent only
           on the action (rev 2); auto-dismisses with the 5s drain bar. */}
