@@ -254,3 +254,139 @@ def test_background_unknown_task_errors(executor):
     assert (
         "unknown task" in reg.execute("shell_task_kill", {"task_id": "bg-99"})["error"]
     )
+
+
+def test_is_sensitive_env():
+    from coworker.tools.shell import is_sensitive_env
+
+    assert is_sensitive_env("AWS_SECRET_ACCESS_KEY") is True
+    assert is_sensitive_env("AWS_ACCESS_KEY_ID") is True
+    assert is_sensitive_env("AWS_PROFILE") is True
+    assert is_sensitive_env("AZURE_CLIENT_SECRET") is True
+    assert is_sensitive_env("OPENAI_API_KEY") is True
+    assert is_sensitive_env("GITHUB_TOKEN") is True
+    assert is_sensitive_env("MY_SECRET_TOKEN") is True
+    assert is_sensitive_env("DATABASE_PASSWORD") is True
+    assert is_sensitive_env("ADMIN_PASSWD") is True
+    assert is_sensitive_env("GCP_CREDENTIALS") is True
+    assert is_sensitive_env("SERVICE_KEY") is True
+    assert is_sensitive_env("PROXY_AUTH") is True
+
+    assert is_sensitive_env("PATH") is False
+    assert is_sensitive_env("HOME") is False
+    assert is_sensitive_env("USER") is False
+    assert is_sensitive_env("TERM") is False
+    assert is_sensitive_env("SHELL") is False
+    assert is_sensitive_env("LANG") is False
+    assert is_sensitive_env("TMPDIR") is False
+    assert is_sensitive_env("VIRTUAL_ENV") is False
+    assert is_sensitive_env("PYTHONPATH") is False
+
+
+def test_ambient_sensitive_env_scrubbed(tmp_path, monkeypatch):
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "super-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-live-12345")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_token999")
+    monkeypatch.setenv("DATABASE_PASSWORD", "dbpass")
+    monkeypatch.setenv("SAFE_APP_VAR", "visible")
+
+    ex = LocalExecutor(cwd=tmp_path, default_timeout=5)
+    try:
+        assert "AWS_SECRET_ACCESS_KEY" not in ex._env
+        assert "OPENAI_API_KEY" not in ex._env
+        assert "GITHUB_TOKEN" not in ex._env
+        assert "DATABASE_PASSWORD" not in ex._env
+        assert ex._env.get("SAFE_APP_VAR") == "visible"
+
+        # Verify child shell process cannot see the scrubbed variable
+        echo_cmd = "echo $OPENAI_API_KEY" if not _WIN else "echo $env:OPENAI_API_KEY"
+        res = ex.run(echo_cmd)
+        assert "sk-live-12345" not in res["output"]
+    finally:
+        ex.close()
+
+
+def test_allowed_env_exempts_sensitive_variables(tmp_path, monkeypatch):
+    monkeypatch.setenv("AWS_PROFILE", "staging")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "top-secret")
+
+    ex = LocalExecutor(
+        cwd=tmp_path, allowed_env=["AWS_PROFILE"], default_timeout=5
+    )
+    try:
+        assert ex._env.get("AWS_PROFILE") == "staging"
+        assert "AWS_SECRET_ACCESS_KEY" not in ex._env
+    finally:
+        ex.close()
+
+
+def test_explicit_env_argument_takes_precedence(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "ambient-secret")
+
+    ex = LocalExecutor(
+        cwd=tmp_path,
+        env={"OPENAI_API_KEY": "explicit-provided"},
+        default_timeout=5,
+    )
+    try:
+        assert ex._env.get("OPENAI_API_KEY") == "explicit-provided"
+    finally:
+        ex.close()
+
+
+def test_scoped_runner_preserves_provider_grants(tmp_path, monkeypatch):
+    from coworker.sandbox.runner.executor import LocalExecutor as RunnerExecutor
+
+    # Real providers already remove host credentials and supply only approved copies.
+    grants = {
+        "AWS_CONFIG_FILE": "/synthetic/granted/config",
+        "AWS_SHARED_CREDENTIALS_FILE": "/synthetic/granted/credentials",
+        "CUSTOM_TOKEN": "synthetic-approved-grant",
+    }
+    for name, value in grants.items():
+        monkeypatch.setenv(name, value)
+    ex = RunnerExecutor(cwd=tmp_path)
+    try:
+        for name, expected in grants.items():
+            if ex._env.get(name) != expected:
+                pytest.fail(f"provider-granted {name} was removed from the scoped runner")
+    finally:
+        ex.close()
+
+
+@pytest.mark.parametrize("allowed_env", [None, ["AWS_PROFILE"]])
+def test_runner_local_scrubs_raw_host_env_and_preserves_configured_exception(tmp_path, monkeypatch, allowed_env):
+    from coworker.sandbox.bundle import build_runner_zipapp
+    from coworker.sandbox.providers import runner_local
+    from coworker.sandbox.workspace import open_workspace
+
+    bundle = build_runner_zipapp(tmp_path / "bundle")
+    monkeypatch.setattr(runner_local, "build_runner_zipapp", lambda: bundle)
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-host-secret")
+    monkeypatch.setenv("AWS_PROFILE", "synthetic-approved-profile")
+    options = {"allowed_env": allowed_env} if allowed_env is not None else {}
+    workspace = open_workspace(cwd=tmp_path, provider="runner-local", **options)
+    try:
+        command = "echo $env:OPENAI_API_KEY; echo $env:AWS_PROFILE" if _WIN else 'echo "$OPENAI_API_KEY"; echo "$AWS_PROFILE"'
+        output = workspace.executor.run(command)["output"]
+        if "synthetic-host-secret" in output:
+            pytest.fail("the local developer runner inherited an ambient credential")
+        if allowed_env and "synthetic-approved-profile" not in output:
+            pytest.fail("the configured environment exception did not reach the local runner")
+        if not allowed_env and "synthetic-approved-profile" in output:
+            pytest.fail("the local developer runner inherited an unapproved ambient profile")
+    finally:
+        workspace.close()
+
+
+def test_direct_workspace_preserves_only_configured_env_exception(tmp_path, monkeypatch):
+    from coworker.sandbox.workspace import open_workspace
+
+    monkeypatch.setenv("AWS_PROFILE", "synthetic-profile")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "synthetic-secret")
+    workspace = open_workspace(cwd=tmp_path, provider="direct", allowed_env=["AWS_PROFILE"])
+    try:
+        assert workspace.executor._env["AWS_PROFILE"] == "synthetic-profile"
+        assert "AWS_SECRET_ACCESS_KEY" not in workspace.executor._env
+    finally:
+        workspace.close()

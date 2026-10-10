@@ -31,6 +31,8 @@ from ..sandbox.runner.executor import (  # noqa: F401  (re-exported: the executo
     _DEFAULT_TIMEOUT,
     _MAX_TIMEOUT,
     Executor,
+    filter_ambient_env,
+    is_sensitive_env,
     LocalExecutor as _StdlibLocalExecutor,
 )
 
@@ -47,6 +49,8 @@ class LocalExecutor(_StdlibLocalExecutor):
         from .. import toolchain
 
         extra = [*kwargs.pop("extra_path_dirs", ()), str(toolchain.bin_dir())]
+        if kwargs.get("allowed_env") is None:
+            kwargs["allowed_env"] = []  # direct mode inherits the raw host environment
         super().__init__(cwd=cwd, extra_path_dirs=extra, **kwargs)
 
 

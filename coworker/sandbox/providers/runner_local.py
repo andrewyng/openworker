@@ -16,16 +16,21 @@ from typing import Any, Optional
 from ..bundle import build_runner_zipapp
 from ..launch import runner_command, runner_dir, serve_arguments, spawn_kwargs, wait_for_runner
 from ..runner import winpipe
+from ..runner.executor import filter_ambient_env
 from ..transport import PipeTransport, Transport
 
 
 class RunnerLocalProvider:
     name = "runner-local"
 
-    def __init__(self, *, cwd: str | Path, runner_path: Optional[Path] = None, relay_silence_seconds: Optional[float] = None) -> None:
+    def __init__(
+        self, *, cwd: str | Path, runner_path: Optional[Path] = None,
+        relay_silence_seconds: Optional[float] = None, allowed_env: Optional[list[str]] = None,
+    ) -> None:
         self.cwd = str(Path(cwd).expanduser().resolve())
         self._runner = Path(runner_path) if runner_path is not None else build_runner_zipapp()
         self._relay_silence = relay_silence_seconds
+        self._allowed_env = list(allowed_env or [])
         self._dir, self.socket_path = runner_dir()
         self._daemon: Optional[subprocess.Popen] = None
 
@@ -38,6 +43,7 @@ class RunnerLocalProvider:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=filter_ambient_env(os.environ, allowed_env=self._allowed_env),
             **spawn_kwargs(),
         )
         wait_for_runner(self.socket_path, self._daemon)
@@ -47,7 +53,12 @@ class RunnerLocalProvider:
         if self._relay_silence is not None:
             argv += ["--silence-seconds", str(self._relay_silence)]
         return PipeTransport(
-            subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0, **spawn_kwargs())
+            subprocess.Popen(
+                argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, bufsize=0,
+                env=filter_ambient_env(os.environ, allowed_env=self._allowed_env),
+                **spawn_kwargs(),
+            )
         )
 
     def restart_daemon(self) -> None:

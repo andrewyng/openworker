@@ -134,6 +134,10 @@ class Config:
     # 3d.4): `[[sandbox_toolchains]]` tables with name, path, enabled, editing or adding to
     # the shipped list in coworker/sandbox/toolchains.py by name. Machine-level.
     sandbox_toolchains: list[dict[str, Any]] = field(default_factory=list)
+    # Environment variable names explicitly allowed through to run_shell child processes
+    # (exempt from ambient credential scrubbing). Configured via [shell] allowed_env
+    # or shell_allowed_env in config.toml.
+    shell_allowed_env: list[str] = field(default_factory=list)
 
 
 _FIELDS = {
@@ -155,6 +159,7 @@ _FIELDS = {
     "allowed_domains",
     "auto_approve",
     "auto_approve_shadow",
+    "shell_allowed_env",
     "host",
     "port",
     "web_search_provider",
@@ -167,9 +172,9 @@ _FIELDS = {
 }
 
 # These fields change what consequential actions can run without a prompt, so the normal
-# workspace override pass never applies them. `allowed_commands` is added separately only
-# for a canonically trusted workspace; `auto_allow` and `allowed_domains` remain user-global
-# only (a repo must not be able to widen the agent's command or network reach).
+# workspace override pass never applies them. `allowed_commands` and `shell_allowed_env`
+# are added separately only for a canonically trusted workspace; `auto_allow` and
+# `allowed_domains` remain user-global only (a repo must not be able to widen reach).
 _GLOBAL_ONLY_FIELDS = {
     "sandbox_provider",
     "sandbox_credentials",
@@ -181,6 +186,7 @@ _GLOBAL_ONLY_FIELDS = {
     "allowed_domains",
     "auto_approve",
     "auto_approve_shadow",
+    "shell_allowed_env",
 }
 _WORKSPACE_FIELDS = _FIELDS - _GLOBAL_ONLY_FIELDS
 
@@ -275,6 +281,18 @@ def _read(path: Path) -> dict[str, Any]:
         return {}
 
 
+def _extract_shell_allowed_env(data: dict[str, Any]) -> list[str]:
+    shell_sec = data.get("shell")
+    if isinstance(shell_sec, dict):
+        val = shell_sec.get("allowed_env")
+        if isinstance(val, list):
+            return list(dict.fromkeys(str(v).strip() for v in val if isinstance(v, str) and str(v).strip()))
+    val = data.get("shell_allowed_env")
+    if isinstance(val, list):
+        return list(dict.fromkeys(str(v).strip() for v in val if isinstance(v, str) and str(v).strip()))
+    return []
+
+
 def workspace_allowed_commands(workspace: str | Path) -> list[str]:
     """Command prefixes requested by repository config; advisory until workspace trust."""
     path = Path(workspace).expanduser() / ".coworker" / "config.toml"
@@ -338,13 +356,17 @@ def load_config(
 
     g = Path(global_path) if global_path is not None else global_config_path()
     if g.is_file():
-        for key, value in _read(g).items():
+        g_data = _read(g)
+        for key, value in g_data.items():
             if key in _FIELDS:
                 setattr(cfg, key, value)
+        if shell_env := _extract_shell_allowed_env(g_data):
+            cfg.shell_allowed_env = shell_env
     if workspace:
         w = Path(workspace).expanduser() / ".coworker" / "config.toml"
         if w.is_file():
-            for key, value in _read(w).items():
+            w_data = _read(w)
+            for key, value in w_data.items():
                 if key in _WORKSPACE_FIELDS:
                     setattr(cfg, key, value)
             if workspace_trusted:
@@ -353,6 +375,10 @@ def load_config(
                         [*cfg.allowed_commands, *workspace_allowed_commands(workspace)]
                     )
                 )
+                if w_shell_env := _extract_shell_allowed_env(w_data):
+                    cfg.shell_allowed_env = list(
+                        dict.fromkeys([*cfg.shell_allowed_env, *w_shell_env])
+                    )
     cfg.max_output_tokens = _positive_int(cfg.max_output_tokens, "config.toml")
     raw = (os.environ.get(MAX_OUTPUT_TOKENS_ENV) or "").strip()
     if raw:
