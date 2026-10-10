@@ -197,6 +197,42 @@ _PATH_VALUE_FLAGS = {"-f", "--file", "--exclude-from", "--include-from"}
 # worth scoping. Dropping them keeps the target list honest without a per-flag table.
 _NUMERIC = re.compile(r"^[0-9]+([,:.-][0-9]+)*[a-zA-Z]?$")
 
+# find(1)'s global options precede the starting points, so unlike the predicates they
+# must not end the path list. -H/-L/-P select symlink handling; -E/-X/-d/-s/-x are BSD
+# spellings; -O carries its level attached. -D takes a value (GNU debug options) and
+# -f takes the starting point itself.
+_FIND_GLOBAL_NO_VALUE = frozenset({"-H", "-L", "-P", "-E", "-X", "-d", "-s", "-x"})
+
+
+def _find_targets(args: list[str]) -> list[str]:
+    """Starting points of `find`, with its global options skipped.
+
+    `find -L /etc -name shadow` reads /etc exactly like `find /etc -name shadow`, but
+    treating every leading `-` token as the start of the predicates returned no targets
+    for the prefixed form — so the session grant's root check passed vacuously.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok in _FIND_GLOBAL_NO_VALUE or (tok.startswith("-O") and tok != "-O"):
+            i += 1
+            continue
+        if tok == "-D" and i + 1 < len(args):
+            i += 2  # debugopts, never a path
+            continue
+        if tok == "-f" and i + 1 < len(args):
+            out.append(args[i + 1])  # BSD: -f names the starting point
+            i += 2
+            continue
+        break
+    # Starting points end at the first predicate (any other `-` token). With none, find
+    # defaults to `.`, which is inside every session root.
+    while i < len(args) and not args[i].startswith("-"):
+        out.append(args[i])
+        i += 1
+    return out
+
 
 def _stage_targets(argv: list[str]) -> list[str]:
     """File operands of one accepted pipeline stage."""
@@ -222,6 +258,9 @@ def _stage_targets(argv: list[str]) -> list[str]:
                 break
         return out
 
+    if head == "find":
+        return _find_targets(args)
+
     out = []
     skip_next = False
     seen_operand = False
@@ -239,8 +278,6 @@ def _stage_targets(argv: list[str]) -> list[str]:
         if tok.startswith("-"):
             if tok in _PATH_VALUE_FLAGS:
                 skip_next = True
-            elif head == "find":
-                break  # find's predicates start here; paths precede them
             continue
         if head in _PATTERN_FIRST and not seen_operand:
             seen_operand = True  # the pattern/script/filter, not a file
