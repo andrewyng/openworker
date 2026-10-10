@@ -2418,6 +2418,11 @@ export interface ProviderInfo {
   recommended_model: string | null; // pre-filled default for this provider (e.g. qwen3-coder:30b)
   blurb?: string; // one-line note under the title ("Uses X's OpenAI-compatible API…")
   key_set_at?: string | null; // ISO date the key was last (re)saved — absent for env-only config
+  // Where the key comes from: saved in Settings, the provider's environment variable, or
+  // nowhere. "env" keys cannot be removed from the app, so the card hides "Remove key" and
+  // names the variable instead (#742). Absent on an older backend → treated as "store".
+  key_source?: "store" | "env" | null;
+  env_key?: string | null; // the variable's name, when it is set
   last_used_at?: number | null; // epoch secs the provider last served a completion
   // OAuth providers (auth === "oauth"): browser sign-in instead of a key form.
   auth?: string | null;
