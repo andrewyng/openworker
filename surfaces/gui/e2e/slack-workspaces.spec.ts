@@ -10,6 +10,7 @@ async function openSlackPage(page) {
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Connectors", exact: true }).click();
   await page.getByTestId("connector-slack").click();
+  await page.getByTestId("manage-local-slack").click();
 }
 
 test("lists every connected workspace as its own group", async ({ page }) => {
@@ -42,6 +43,7 @@ test("Add workspace opens the modal; signed out shows the sign-in hint, signed i
   await page.getByTestId("account-sign-in").click();
   await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
   await page.getByTestId("connector-slack").click();
+  await page.getByTestId("manage-local-slack").click();
   await page.getByTestId("add-workspace-btn").click();
   await page.getByTestId("modal-add-to-slack").click();
   // the mock completes the browser install instantly; the page's poll shows it

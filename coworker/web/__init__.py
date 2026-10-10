@@ -12,7 +12,7 @@ from .providers import (
     provider_names,
 )
 from .fetch import make_web_fetch_tool
-from .tool import make_web_search_tool, provider_name, resolve_provider
+from .tool import make_web_search_tool, provider_host, provider_name, resolve_provider
 
 __all__ = [
     "SearchResult",
@@ -25,5 +25,6 @@ __all__ = [
     "make_web_search_tool",
     "make_web_fetch_tool",
     "provider_name",
+    "provider_host",
     "resolve_provider",
 ]

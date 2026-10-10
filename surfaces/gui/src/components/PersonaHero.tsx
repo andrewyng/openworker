@@ -4,6 +4,8 @@
 // same everywhere but no two look alike. Rendered as an image, so it deliberately
 // keeps its own colors in dark mode (like a photo would).
 
+import { useTranslation } from "react-i18next";
+
 function hueOf(slug: string): number {
   let h = 0;
   for (let i = 0; i < slug.length; i++) h = (h * 31 + slug.charCodeAt(i)) % 3600;
@@ -19,6 +21,7 @@ export function PersonaHero({
   height?: number;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const h = hueOf(slug);
   const bg = `hsl(${h} 42% 91%)`;
   const deep = `hsl(${h} 45% 42%)`;
@@ -31,7 +34,7 @@ export function PersonaHero({
       viewBox="0 0 400 120"
       preserveAspectRatio="xMidYMid slice"
       role="img"
-      aria-label={`${slug} artwork`}
+      aria-label={t("persona.hero_art", { slug })}
     >
       <rect width="400" height="120" rx="12" fill={bg} />
       {/* orbit rings around a central agent spark, with satellite nodes */}

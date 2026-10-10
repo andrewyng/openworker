@@ -77,6 +77,53 @@ def test_inbound_freetext_answer_to_question(tmp_path):
     assert res is True and store.get(q.id).resolution == "us-east-1"
 
 
+def test_freetext_answer_containing_decision_substrings_stays_freetext(tmp_path):
+    """Decision intent comes from the LEADING word only — a free-text answer that merely
+    contains "no"/"yes" as a substring or mid-sentence word must not flip to deny/allow."""
+    store = InboxStore(tmp_path / "inbox.json")
+    for answer in (
+        "I have no preference — use us-east-1",
+        "yesterday's numbers look fine",
+        "the northern region",
+    ):
+        q = store.add_question("s1", "Which region?")
+        assert resolve_from_reply(f"{answer} [ow:{q.id}]", store.resolve) is True
+        assert store.get(q.id).resolution == answer
+
+
+def test_negated_approval_reply_does_not_allow(tmp_path):
+    """"I cannot approve this yet" used to resolve as ALLOW (substring match, allow words
+    checked first). It must fall through to free text, which the approver maps to deny."""
+    store = InboxStore(tmp_path / "inbox.json")
+    item = store.add_approval("s1", "Deploy?", inbox="ops")
+    assert resolve_from_reply(f"I cannot approve this yet [ow:{item.id}]", store.resolve)
+    assert store.get(item.id).resolution == "I cannot approve this yet"
+
+
+def test_leading_decision_word_and_emoji_still_resolve(tmp_path):
+    store = InboxStore(tmp_path / "inbox.json")
+    for reply, expected in (
+        ("Yes, go ahead", "allow"),
+        ("No.", "deny"),
+        ("👍", "allow"),
+        ("❌ too risky", "deny"),
+        ("allow", "allow"),
+        ("reject", "deny"),
+    ):
+        item = store.add_approval("s1", "Deploy?", inbox="ops")
+        assert resolve_from_reply(f"{reply} [ow:{item.id}]", store.resolve) is True
+        assert store.get(item.id).resolution == expected
+
+
+def test_decision_word_after_token_still_resolves(tmp_path):
+    """The [ow:…] token may lead the reply (e.g. a quoted redelivery) — intent is parsed
+    from the text with the token stripped, wherever it sits."""
+    store = InboxStore(tmp_path / "inbox.json")
+    item = store.add_approval("s1", "Deploy?", inbox="ops")
+    assert resolve_from_reply(f"[ow:{item.id}] approve", store.resolve) is True
+    assert store.get(item.id).resolution == "allow"
+
+
 def test_reply_without_token_is_ignored(tmp_path):
     store = InboxStore(tmp_path / "inbox.json")
     assert resolve_from_reply("random chatter", store.resolve) is None

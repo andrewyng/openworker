@@ -223,6 +223,18 @@ async def test_relay_ignores_own_bot_echo():
     assert events == []
 
 
+async def test_wait_dispatched_timeout_preserves_exception_chain():
+    """A timed-out wait must chain the original asyncio.TimeoutError, not swallow it."""
+    adapter = _adapter([], close_after=False)  # no frames ever arrive
+    await adapter.connect()
+    try:
+        with pytest.raises(TimeoutError) as excinfo:
+            await adapter.wait_dispatched(1, timeout=0.05)
+        assert isinstance(excinfo.value.__cause__, asyncio.TimeoutError)
+    finally:
+        await adapter.disconnect()
+
+
 # --- reconnect --------------------------------------------------------------
 
 
@@ -422,3 +434,38 @@ def test_make_adapter_loads_per_team_tokens():
         relay_url="wss://relay/ws",
     )
     assert adapter._bot_token("T9") == "xoxb-9"
+
+
+async def test_relay_carries_the_broker_target_session():
+    frame = {**_event_frame("T1", "C1", "U_ALICE"), "target_session_id": "sess-42"}
+    adapter = _adapter([frame, _event_frame("T1", "C1", "U_ALICE", ts="2.0")])
+    events: list[MessageEvent] = []
+
+    async def handler(e):
+        events.append(e)
+
+    adapter.set_message_handler(handler)
+    assert await adapter.connect() is True
+    try:
+        await adapter.wait_dispatched(2)
+    finally:
+        await adapter.disconnect()
+    assert events[0].target_session_id == "sess-42"
+    assert events[1].target_session_id is None
+
+
+async def test_relay_carries_the_routed_coworker():
+    frame = {**_event_frame("T1", "C1", "U_ALICE"), "mention_persona": "triage-lead"}
+    adapter = _adapter([frame])
+    events: list[MessageEvent] = []
+
+    async def handler(e):
+        events.append(e)
+
+    adapter.set_message_handler(handler)
+    assert await adapter.connect() is True
+    try:
+        await adapter.wait_dispatched(1)
+    finally:
+        await adapter.disconnect()
+    assert events[0].mention_persona == "triage-lead"

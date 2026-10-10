@@ -32,6 +32,8 @@ class ParkedMessage:
     chat_type: str = "channel"  # "channel" | "group" | "dm"
     thread_id: Optional[str] = None
     team_id: Optional[str] = None  # workspace id (managed relay); None for socket mode
+    # A direct @-mention of the bot (drives the §31 mention router on re-delivery).
+    mentions_me: bool = False
     ts: float = field(default_factory=time.time)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 

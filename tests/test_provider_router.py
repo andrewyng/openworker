@@ -15,7 +15,10 @@ from coworker.providers import (
     capabilities_for,
 )
 from coworker.providers.registry import _normalize_ollama_url, build_provider_client
-from coworker.providers.openai_provider import _salvage_tool_calls_from_text
+from coworker.providers.openai_provider import (
+    _salvage_tool_calls_from_text,
+    looks_like_unparsed_tool_call,
+)
 
 
 # -- base_url passthrough -------------------------------------------------------
@@ -219,6 +222,21 @@ _TODO_TOOLS = [
 ]
 
 
+_GREP_TOOL = [
+    {
+        "type": "function",
+        "function": {
+            "name": "grep",
+            "parameters": {
+                "type": "object",
+                "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}},
+                "required": ["pattern"],
+            },
+        },
+    }
+]
+
+
 def test_salvage_mixed_prose_and_object():
     # The model wrote prose THEN a bare-JSON tool call in one message.
     text = 'It seems the workspace is empty. {"name": "list_files", "arguments": {"recursive": true}}'
@@ -252,6 +270,55 @@ def test_salvage_filters_unknown_tool_name():
     # A {name,arguments} object whose name isn't an offered tool must NOT be salvaged.
     text = '{"name": "rm_rf", "arguments": {"path": "/"}}'
     assert _salvage_tool_calls_from_text(text, _TODO_TOOLS) == []
+
+
+def test_salvage_truncated_xml_call_keeps_only_complete_parameters():
+    """A local model that runs out of tokens mid-call leaves `<function=…>` unclosed. Take the
+    name and every parameter that DID close; NEVER the half-written trailing one — a truncated
+    path or file body reaching a tool is worse than no call at all."""
+    text = "<tool_call>\n<function=grep>\n<parameter=pattern>TODO</parameter>\n<parameter=path>sr"
+    calls = _salvage_tool_calls_from_text(text, _TODO_TOOLS + _GREP_TOOL)
+    assert len(calls) == 1 and calls[0].name == "grep"
+    assert calls[0].arguments == {"pattern": "TODO"}  # the partial `path` is gone
+
+
+def test_salvage_truncated_xml_prefers_a_complete_call_and_filters_unknown_names():
+    complete_then_cut = (
+        "<tool_call><function=list_files><parameter=recursive>true</parameter>"
+        "</function></tool_call>\n<tool_call>\n<function=grep>"
+    )
+    calls = _salvage_tool_calls_from_text(complete_then_cut, _TODO_TOOLS + _GREP_TOOL)
+    assert [c.name for c in calls] == ["list_files"]  # the finished one wins
+    # An unfinished call naming something we never offered stays text (no false positives).
+    assert _salvage_tool_calls_from_text("<function=rm_rf>\n<parameter=p>/", _TODO_TOOLS) == []
+
+
+def test_a_stray_tool_tag_at_the_end_of_a_finished_answer_is_dropped():
+    from coworker.providers.openai_provider import strip_dangling_tool_tag
+
+    # Seen live on qwen3-coder:30b: a complete answer, then `<tool_call>` and nothing.
+    assert strip_dangling_tool_tag("10 squared is 100<tool_call>") == ("10 squared is 100", True)
+    assert strip_dangling_tool_tag("Done.\n\n</tool_call>\n") == ("Done.", True)
+    # A tag with anything after it is a call that did not parse: left alone.
+    leaked = 'Sure.<tool_call>{"name": "todo_write"'
+    assert strip_dangling_tool_tag(leaked) == (leaked, False)
+    assert looks_like_unparsed_tool_call(leaked, _TODO_TOOLS) is True
+    # Nothing to drop, or nothing left: unchanged.
+    assert strip_dangling_tool_tag("Plain answer.") == ("Plain answer.", False)
+    assert strip_dangling_tool_tag("<tool_call>") == ("<tool_call>", False)
+    assert strip_dangling_tool_tag(None) == (None, False)
+
+
+def test_looks_like_unparsed_tool_call_ignores_code_and_needs_tools():
+    """Distinguishes a leaked call from a model *explaining* tool syntax — the latter is a real
+    answer and must not be turned into an error."""
+    leaked = "Let me read the files.\n</parameter>\n</function>\n</tool_call>"
+    assert looks_like_unparsed_tool_call(leaked, _TODO_TOOLS) is True
+    assert looks_like_unparsed_tool_call("A CLI that greets people.", _TODO_TOOLS) is False
+    fenced = "Qwen writes calls like:\n```\n<tool_call><function=x>\n```\nThat's the shape."
+    assert looks_like_unparsed_tool_call(fenced, _TODO_TOOLS) is False
+    assert looks_like_unparsed_tool_call("The `<tool_call>` wrapper.", _TODO_TOOLS) is False
+    assert looks_like_unparsed_tool_call(leaked, None) is False  # no tools offered → not a call
 
 
 def test_salvage_nested_braces_in_tag():
@@ -327,6 +394,8 @@ def test_manager_curated_models(tmp_path, monkeypatch):
     # test_settings.py::test_ollama_models_gated_on_liveness). Unpinned, the ollama
     # assertions below pass only where Ollama happens to run — green on a dev box, red in CI.
     monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
+    # Same for the live `/api/tags` list get_settings merges in while Ollama answers.
+    monkeypatch.setattr(SessionManager, "_ollama_models", lambda self: [])
 
     mgr = SessionManager(data_dir=tmp_path)
     # no provider keys → nothing but the always-selectable default
@@ -385,6 +454,9 @@ def test_set_provider_skips_recommended_when_not_pulled(tmp_path, monkeypatch):
 
     mgr = SessionManager(data_dir=tmp_path)
     monkeypatch.setattr(mgr, "_suggested_models", lambda name: [])  # nothing pulled
+    # The picker also lists what a live Ollama has pulled; on a developer's machine that
+    # is a real list, so stand it in too or the test depends on the machine.
+    monkeypatch.setattr(mgr, "_ollama_models", lambda: [])
     mgr.set_provider("ollama", {"base_url": "http://localhost:11434"})
     assert "ollama:qwen3-coder:30b" not in mgr.get_settings()["models"]
 

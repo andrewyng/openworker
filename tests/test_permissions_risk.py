@@ -108,6 +108,20 @@ def test_exec_uses_command_allowlist(tmp_path):
     assert not asked.allowed and asked.needs_user
 
 
+def test_allowlisted_find_refuses_output_writing_flags(tmp_path):
+    # `find`'s fprint family writes to an arbitrary path. A bare `find` allowlist entry
+    # must not auto-run it, exactly as it already refuses -exec/-delete/-fprintf.
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=["find"])
+    assert eng.evaluate("run_shell", {"command": "find . -name '*.py'"}, None).allowed
+    for command in (
+        "find . -fprint /tmp/exfil.txt",
+        "find . -fprint0 /tmp/exfil.txt",
+        "find . -fls /tmp/exfil.txt",
+    ):
+        d = eng.evaluate("run_shell", {"command": command}, None)
+        assert not d.allowed and d.needs_user, command
+
+
 @pytest.mark.parametrize(
     "command",
     [

@@ -87,5 +87,24 @@ def build_callables(
             requires_approval=server.requires_approval,
         )
         _invoke.__coworker_schema__ = _openai_schema(name, mcp_tool)
+        # OPE-136 finding 4: where this call actually goes, for the approval card's
+        # scope chip. From the server DEF (user-authored config), never from anything
+        # the server itself claims. http → the remote host; stdio → a local process.
+        _invoke.__coworker_mcp_destination__ = {
+            "transport": server.transport,
+            "host": _server_host(server),
+        }
         callables.append(_invoke)
     return callables
+
+
+def _server_host(server: MCPServerDef) -> str:
+    """The hostname an HTTP server's calls reach (lowercased), "" for stdio/unparseable."""
+    if not server.url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+
+        return (urlparse(server.url).hostname or "").lower()
+    except ValueError:  # pragma: no cover - urlparse rarely raises, but fail to ""
+        return ""

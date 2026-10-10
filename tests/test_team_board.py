@@ -3,6 +3,7 @@
 import pytest
 
 from coworker.teams import Actor, AuthorityError, BoardError, Role, TeamStore
+from coworker.teams.dialect import LocalDialect
 from coworker.teams.tools import board_tools
 
 USER = Actor(id="user", role=Role.USER)
@@ -67,6 +68,23 @@ def test_child_inherits_parent_case(store):
     assert {"kind": "parent", "item": parent["id"]} in child["links"]
 
 
+def test_worker_cannot_expand_its_slice_through_a_hidden_parent(store):
+    hidden = assigned_item(store, assignee="worker-2")
+    before = store.event_count(SPACE)
+
+    with pytest.raises(BoardError):
+        store.create_item(
+            SPACE,
+            WORKER,
+            title="Bridge into another worker's task",
+            criteria="must not be created",
+            parent=hidden,
+        )
+
+    assert store.event_count(SPACE) == before
+    assert store.list_items(SPACE, WORKER) == []
+
+
 # ------------------------------------------------------------------- transitions
 
 def test_full_happy_path(store):
@@ -127,7 +145,7 @@ def test_rework_loop(store):
     store.transition(SPACE, WORKER, item_id, "in_progress")
     store.transition(SPACE, WORKER, item_id, "review")
     store.transition(SPACE, LEAD, item_id, "in_progress", comment="criteria 2 unmet")
-    item = store.get_item(SPACE, item_id)
+    item = store.get_item(SPACE, item_id, actor=LEAD)
     assert item["state"] == "in_progress"
     assert item["comments"][-1]["body"] == "criteria 2 unmet"
 
@@ -161,9 +179,9 @@ def test_blocked_by_shows_on_the_other_side(store):
     a = store.create_item(SPACE, LEAD, title="A", criteria="c")
     b = store.create_item(SPACE, LEAD, title="B", criteria="c")
     store.link(SPACE, LEAD, a["id"], "blocks", b["id"])
-    assert {"kind": "blocked_by", "item": a["id"]} in store.get_item(SPACE, b["id"])[
-        "links"
-    ]
+    assert {"kind": "blocked_by", "item": a["id"]} in store.get_item(
+        SPACE, b["id"], actor=LEAD
+    )["links"]
 
 
 def test_artifact_refs_accumulate_on_the_item(store):
@@ -174,10 +192,10 @@ def test_artifact_refs_accumulate_on_the_item(store):
         SPACE, WORKER, item_id, "review",
         comment="done", refs=["branch:fix/acl", "report:posture.html"],
     )
-    item = store.get_item(SPACE, item_id)
+    item = store.get_item(SPACE, item_id, actor=WORKER)
     assert item["refs"] == ["branch:fix/acl", "report:posture.html"]  # deduped, ordered
     store.rebuild(SPACE)
-    assert store.get_item(SPACE, item_id)["refs"] == item["refs"]
+    assert store.get_item(SPACE, item_id, actor=WORKER)["refs"] == item["refs"]
 
 
 # ------------------------------------------------------------- worker visibility
@@ -194,6 +212,36 @@ def test_worker_sees_only_its_slice(store):
     assert len(store.list_items(SPACE, USER)) == 3
 
 
+def test_worker_item_detail_matches_list_visibility(store):
+    mine = assigned_item(store, assignee="worker-1")
+    theirs = assigned_item(store, assignee="worker-2")
+    claimable = store.create_item(SPACE, LEAD, title="Available", criteria="c")
+    linked = store.create_item(SPACE, LEAD, title="Dependency", criteria="c")
+    store.link(SPACE, LEAD, linked["id"], "blocks", mine)
+    worker = LocalDialect(store, journal=None, actor=WORKER)
+
+    assert worker.get_item(SPACE, mine)["id"] == mine
+    assert worker.get_item(SPACE, linked["id"])["id"] == linked["id"]
+    assert worker.get_item(SPACE, claimable["id"])["id"] == claimable["id"]
+    assert store.get_item(SPACE, mine, actor=WORKER)["id"] == mine
+
+    with pytest.raises(BoardError):
+        worker.get_item(SPACE, theirs)
+    with pytest.raises(BoardError):
+        store.get_item(SPACE, theirs, actor=WORKER)
+
+    store.claim(SPACE, OTHER, claimable["id"])
+    with pytest.raises(BoardError):
+        worker.get_item(SPACE, claimable["id"])
+
+    held = store.create_item(SPACE, LEAD, title="Held", criteria="c")
+    store.set_policy(SPACE, LEAD, claims="lead-only")
+    with pytest.raises(BoardError):
+        worker.get_item(SPACE, held["id"])
+
+    assert worker.get_item(SPACE, mine)["id"] == mine
+
+
 def test_worker_comments_only_on_its_slice(store):
     theirs = assigned_item(store, assignee="worker-2")
     with pytest.raises(AuthorityError, match="assigned"):
@@ -207,8 +255,9 @@ def test_tool_sets_are_role_filtered(store):
     worker_names = {
         tool.__name__ for tool in board_tools(store, space=SPACE, actor=WORKER)
     }
-    assert lead_names == {"create_item", "list_items", "transition", "comment", "assign", "link"}
-    assert worker_names == {"create_item", "list_items", "transition", "comment", "claim"}
+    readers = {"get_item_comments", "get_item_comment", "get_proposal"}
+    assert lead_names == {"create_item", "list_items", "get_item", "transition", "comment", "assign", "link"} | readers
+    assert worker_names == {"create_item", "list_items", "get_item", "transition", "comment", "claim", "set_status"} | readers
 
 
 def test_tools_return_errors_instead_of_raising(store):

@@ -25,7 +25,7 @@ def capabilities_for(model: str) -> ModelCapabilities:
     # Ollama (local) models vary widely and many fake/mishandle parallel tool calls — assume
     # tools work (we only point at tool-capable models) but stay conservative otherwise.
     # Vision is detected from common model naming conventions (-vl, vision, llava, etc.).
-    if provider == "ollama":
+    if provider in ("ollama", "llamacpp", "vllm"):
         _vision_patterns = ("-vl", "vision", "llava", "bakllava", "cogvlm", "minicpm-v")
         has_vision = any(p in name for p in _vision_patterns)
         return ModelCapabilities(

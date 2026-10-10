@@ -1,0 +1,97 @@
+# The OpenWorker CLI image (packaging/openshell/Dockerfile), published to GitHub's container
+# registry as ghcr.io/<owner>/<repo>, for Intel and ARM. See docs/openshell-inside.md.
+#
+# Triggers:
+#   - a release is published → tags `<version>` and `latest`. A draft release publishes
+#                              nothing; desktop-only releases (`app-v*`) are skipped.
+#   - manual run             → tags `edge`, the CLI as it is on the chosen branch. Tick
+#                              "also tag as latest" to move `latest` to it as well.
+#
+# The image is checked on this runner before anything is pushed. The ARM half is built
+# under emulation, which is slow but needs no second runner.
+
+name: Image
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      latest:
+        description: Also tag as latest
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Name and tags
+        id: name
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ALSO_LATEST: ${{ inputs.latest }}
+        run: |
+          image="ghcr.io/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          if [ -n "$RELEASE_TAG" ]; then
+            tags="$image:${RELEASE_TAG#v},$image:latest"
+          elif [ "$ALSO_LATEST" = "true" ]; then
+            tags="$image:edge,$image:latest"
+          else
+            tags="$image:edge"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build for this runner
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/openshell/Dockerfile
+          load: true
+          tags: openworker:check
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Check the image
+        run: |
+          docker run --rm openworker:check sh -c '
+            set -e
+            openworker --version
+            openworker run --help > /dev/null
+            test "$(id -u)" = 1000
+            for tool in ip git curl node npm python rg fd jq gh uv make cc; do
+              command -v "$tool" > /dev/null || { echo "missing: $tool"; exit 1; }
+            done
+          '
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build for Intel and ARM, and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/openshell/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.name.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=The OpenWorker CLI with common developer tools
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

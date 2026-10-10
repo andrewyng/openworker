@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for the bundled `openworker-server` (desktop sidecar).
+"""PyInstaller spec for the bundled `openworker-server` (desktop sidecar), and for the Linux
+`openworker` program (OPENWORKER_BUNDLE=cli, see build_linux.sh): the same code, with the
+whole command line (`join`, `up`, `machine`, ...) as its entry point instead of the server.
 
 One-DIR bundle (exe + `_internal/` support folder) shipped via Tauri's `resources` slot.
 It used to be a onefile binary in the externalBin slot, but onefile self-extracts its whole
@@ -20,10 +22,11 @@ spawns this sidecar with the Windows CREATE_NO_WINDOW flag (see src-tauri/src/li
 hides the window while keeping stdio intact.
 """
 
+import glob
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules, copy_metadata
 
 # SPECPATH is injected by PyInstaller and points at this file's directory
 # (<repo>/packaging). Derive everything else from it — no hardcoded paths.
@@ -31,6 +34,13 @@ PACKAGING = SPECPATH
 ROOT = os.path.dirname(PACKAGING)
 
 IS_WINDOWS = sys.platform == "win32"
+
+# "server" (default): the desktop sidecar. "cli": the Linux `openworker` program.
+BUNDLE = os.environ.get("OPENWORKER_BUNDLE", "server")
+ENTRY, NAME = {
+    "server": ("server_entry.py", "openworker-server"),
+    "cli": ("cli_entry.py", "openworker"),
+}[BUNDLE]
 
 # Experimental (use-at-your-own-risk) connectors are excluded from official builds: the code
 # is stripped, not just disabled. Self-builders opt in with COWORKER_EXPERIMENTAL=1; the
@@ -51,6 +61,22 @@ for pkg in ("coworker", "aisuite", "mcp", "ddgs", "croniter", "docstring_parser"
 # PyInstaller needs its own instruction.) Keep this even if the persona set changes — it
 # collects whatever non-.py files the package carries.
 datas += collect_data_files("coworker")
+# The distribution's metadata, so `openworker version` and the machine handshake report the
+# real version instead of 0.0.0 (importlib.metadata finds nothing in a bundle without it).
+datas += copy_metadata("openworker")
+
+# The tool runner is packed into a zipapp FROM SOURCE at run time (coworker/sandbox/bundle.py)
+# and mounted into sandboxes, so its .py files, and aisuite's two toolkit modules it carries,
+# must ship as data next to their compiled modules. Nothing else needs sources.
+# They go under a folder of their own (`*_src`): PyInstaller drops a data file whose path
+# is also a collected module's, so shipping them beside the compiled modules loses them.
+# Listed by path from ROOT, not through collect_data_files: that resolves `coworker` through
+# the environment's import path, which in a development checkout can be another worktree.
+datas += [
+    (path, "coworker/sandbox/runner_src")
+    for path in sorted(glob.glob(os.path.join(ROOT, "coworker", "sandbox", "runner", "*.py")))
+]
+datas += [(src, "aisuite/toolkits_src") for src, _ in collect_data_files("aisuite.toolkits", include_py_files=True)]
 
 if not INCLUDE_EXPERIMENTAL:
     hiddenimports = [
@@ -96,7 +122,7 @@ for pkg in ("slack_bolt", "telegram"):  # [messaging] extra — optional
         pass
 
 a = Analysis(
-    [os.path.join(PACKAGING, "server_entry.py")],
+    [os.path.join(PACKAGING, ENTRY)],
     pathex=[ROOT],
     binaries=binaries,
     datas=datas,
@@ -113,7 +139,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="openworker-server",
+    name=NAME,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -131,5 +157,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="openworker-server",
+    name=NAME,
 )

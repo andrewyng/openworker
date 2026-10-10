@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { type CloudStatus, type Connector, type McpServer, type SlackStatus } from "../../api";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
+import { ApprovalsRouting } from "../RemoteConnectorsPanel";
 import { AddConnectionModal } from "./AddConnectionModal";
-import { AddMcpModal, CustomMcpGroup } from "./CustomMcp";
+import { AddMcpModal, CustomMcpGroup, McpPresetRows, mcpPresetOffers } from "./CustomMcp";
 import { CHIP_OK, CHIP_OFF, CHIP_WARN, GRP, GRP_H, FOOT, PILL_QUIET, ROW } from "./ui";
 
 // The Connectors LIST (UX-DECISIONS §21): connected first in their own inset group —
@@ -28,6 +30,7 @@ export function ConnectorsList({
   onOpen: (name: string) => void;
   onChanged: () => void;
 }) {
+  const { t } = useTranslation();
   const [filter, setFilter] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
@@ -49,37 +52,49 @@ export function ConnectorsList({
           onClick={() => setAddingMcp(true)}
           data-testid="add-custom-server"
         >
-          + Add custom MCP server
+          {t("connector.add_custom_mcp")}
         </button>
         <input
-          placeholder="Search"
+          placeholder={t("connector.search")}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="w-44 px-3.5 py-1.5 rounded-full border border-line bg-panel text-[13px] outline-none focus:border-accent"
+          className="w-44 px-3.5 py-1.5 rounded-full border border-line bg-panel text-ui outline-none focus:border-accent"
         />
       </div>
+
+      {/* No legend, no tooltips (owner call 2026-08-30): with only Ready and
+          Connect the vocabulary is self-explanatory — the earlier legend existed
+          to explain a Live/Ready split that has been deleted. */}
 
       {/* No cloud strip here anymore (§26): the sidebar's account row is the permanent
           sign-in home, and the connect modals keep their inline sign-in panes. */}
       {connected.length > 0 && (
         <>
-          <div className={GRP_H + " !mt-0"}>Connected · {connected.length}</div>
+          <div className={GRP_H + " !mt-0"}>{t("connector.connected_count", { count: connected.length })}</div>
           <div className={GRP}>
             {connected.map((c) => (
-              <button
+              // A div, not a button: the Slack row hosts the per-machine approvals
+              // control (UX-049), and a select cannot live inside a button.
+              <div
                 key={c.name}
+                role="button"
+                tabIndex={0}
                 data-testid={`connector-${c.name}`}
-                className={ROW + " w-full text-left hover:bg-paper/60"}
+                className={ROW + " w-full text-left hover:bg-paper/60 cursor-pointer"}
                 onClick={() => onOpen(c.name)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") onOpen(c.name);
+                }}
               >
                 <ConnectorBadge connector={c} size={34} title={c.title} />
                 <span className="min-w-0 flex-1">
-                  <span className="font-medium text-[13px]">{c.title}</span>
-                  <span className="block text-[12px] text-muted">{statusLine(c)}</span>
+                  <span className="font-medium text-ui">{c.title}</span>
+                  <span className="block text-meta text-muted">{statusLine(c, t)}</span>
                 </span>
-                {healthChip(c, slack)}
-                <span className="text-faint text-[14px] shrink-0">›</span>
-              </button>
+                {c.name === "slack" && <ApprovalsRouting />}
+                {healthChip(c, slack, t)}
+                <span className="text-faint text-body shrink-0">›</span>
+              </div>
             ))}
           </div>
         </>
@@ -91,7 +106,9 @@ export function ConnectorsList({
         onChanged={onChanged}
       />
 
-      <div className={GRP_H}>Available</div>
+      {/* The FULL offer count, not the folded slice — the header is the only
+          honest total visible before "show all" (owner rule: headers count rows). */}
+      <div className={GRP_H}>{t("connector.available", { count: available.length })}</div>
       <div className={GRP}>
         {shown.map((c) => (
           /* The row navigates to the pre-connect detail page (§38); the pill
@@ -104,8 +121,8 @@ export function ConnectorsList({
           >
             <ConnectorBadge connector={c} size={34} title={c.title} />
             <span className="min-w-0 flex-1">
-              <span className="font-medium text-[13px]">{c.title}</span>
-              <span className="block text-[12px] text-muted truncate">{c.blurb}</span>
+              <span className="font-medium text-ui">{c.title}</span>
+              <span className="block text-meta text-muted truncate">{c.blurb}</span>
             </span>
             <span
               className={PILL_QUIET + " cursor-pointer"}
@@ -115,19 +132,26 @@ export function ConnectorsList({
                 setConnecting(c.name);
               }}
             >
-              Connect
+              {t("connector.connect")}
             </span>
           </button>
         ))}
-        {shown.length === 0 && (
-          <div className={ROW + " text-[13px] text-muted"}>Nothing matches.</div>
+        {/* Curated MCP quick-add OFFERS live here among the available connectors —
+            never inside Custom · MCP, where a row means "a server you own". */}
+        <McpPresetRows
+          presets={mcpPresetOffers(mcpServers, filter)}
+          onOpen={(name) => onOpen("mcp:" + name)}
+          onChanged={onChanged}
+        />
+        {shown.length === 0 && mcpPresetOffers(mcpServers, filter).length === 0 && (
+          <div className={ROW + " text-ui text-muted"}>{t("connector.nothing_matches")}</div>
         )}
       </div>
       {!showAll && !q && available.length > AVAILABLE_FOLD && (
         <div className={FOOT}>
-          {available.length - AVAILABLE_FOLD} more ·{" "}
+          {t("connector.more_count", { count: available.length - AVAILABLE_FOLD })}{" "}
           <button className="text-muted hover:text-ink" onClick={() => setShowAll(true)}>
-            show all
+            {t("connector.show_all")}
           </button>
         </div>
       )}
@@ -140,36 +164,46 @@ export function ConnectorsList({
           onChanged={onChanged}
         />
       )}
-      {addingMcp && <AddMcpModal onClose={() => setAddingMcp(false)} onChanged={onChanged} />}
+      {addingMcp && (
+        <AddMcpModal
+          onClose={() => setAddingMcp(false)}
+          onChanged={onChanged}
+          onAdded={(name) => onOpen("mcp:" + name)}
+        />
+      )}
     </div>
   );
 }
 
-function statusLine(c: Connector): string {
+function statusLine(c: Connector, t: (k: string, opts?: Record<string, unknown>) => string): string {
   if (c.name === "slack" && c.mode === "relay") {
     const n = c.workspaces?.length ?? 0;
-    return `${n} workspace${n === 1 ? "" : "s"} · relay`;
+    return t("connector.slack_status", { count: n });
   }
-  if ((c.accounts?.length ?? 0) > 1) return `${c.accounts!.length} accounts`;
-  if ((c.portals?.length ?? 0) > 1) return `${c.portals!.length} portals`;
-  if (c.auth === "none") return "Built in";
-  return c.account || "Connected";
+  if ((c.accounts?.length ?? 0) > 1) return t("connector.account_count", { count: c.accounts!.length });
+  if ((c.portals?.length ?? 0) > 1) return t("connector.portal_count", { count: c.portals!.length });
+  if (c.auth === "none") return t("connector.built_in");
+  return c.account || t("connector.connected");
 }
 
-function healthChip(c: Connector, slack: SlackStatus | null) {
+function healthChip(c: Connector, slack: SlackStatus | null, t: (k: string, opts?: Record<string, unknown>) => string) {
   // Slack relay gets a LIVE chip from /v1/connectors/slack/status — problems
   // surface in the list, never one click deep. Named honestly per layer; we
   // never claim "Slack↔cloud down" (the desktop can't see that leg).
   if (c.name === "slack" && c.mode === "relay" && slack) {
-    if (!slack.signed_in) return <span className={CHIP_WARN}>● Sign-in needed</span>;
-    if (slack.relay.state === "offline") return <span className={CHIP_OFF}>● Offline</span>;
+    if (!slack.signed_in) return <span className={CHIP_WARN}>{"● " + t("connector.sign_in_needed")}</span>;
+    if (slack.relay.state === "offline") return <span className={CHIP_OFF}>{"● " + t("connector.offline")}</span>;
     if (slack.relay.state === "reconnecting")
-      return <span className={CHIP_WARN}>● Reconnecting</span>;
-    if (Object.values(slack.teams).some((t) => !t.token_ok))
-      return <span className={CHIP_WARN}>⚠ Token</span>;
-    return <span className={CHIP_OK}>● Live</span>;
+      return <span className={CHIP_WARN}>{"● " + t("connector.reconnecting")}</span>;
+    if (Object.values(slack.teams).some((tm) => !tm.token_ok))
+      return <span className={CHIP_WARN}>{"⚠ " + t("connector.token")}</span>;
+    return <span className={CHIP_OK}>{"● " + t("connector.ready")}</span>;
   }
-  if (c.two_way && c.connected) return <span className={CHIP_OK}>● Live</span>;
-  return <span className={CHIP_OK}>● Ready</span>;
+  // ONE healthy word (owner call 2026-08-30): Live-vs-Ready distinguished the
+  // plumbing (standing socket vs on-demand), not anything the user would DO
+  // differently — and MCP's "Live" wasn't heartbeat-monitored anyway. The
+  // runtime difference shows where it matters: the problem chips above
+  // (Reconnecting / Offline / Needs sign-in / Error) are per-transport honest.
+  return <span className={CHIP_OK}>{"● " + t("connector.ready")}</span>;
 }
 

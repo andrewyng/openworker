@@ -46,7 +46,7 @@ Settings → Actions → General → Workflow permissions → **Read and write p
 | 场景 | `tauri.conf.json` / tag |
 |---|---|
 | 上游 `0.2.1` 的第 3 个中文构建 | `0.2.1-zh.3` / `v0.2.1-zh.3` |
-| 上游升到 `0.2.2` 的首个中文构建 | `0.2.2-zh.1` / `v0.2.2-zh.1` |
+| 上游升到 `0.3.4` 的首个中文构建 | `0.3.4-zh.1` / `v0.3.4-zh.1` |
 
 应用内版本必须与 tag 去掉 `v` 后完全一致，自动更新才会对得上。
 
@@ -90,7 +90,9 @@ CREATE_TAG=1 packaging/sync_upstream.sh v0.2.2
 ## 从旧版手动包迁到自动更新
 
 此前 `v0.2.1-zh.2` 应用内版本仍是 `0.2.1`，且 updater 指向官方或已关闭。  
-**请手动安装一次 `v0.2.1-zh.4`（或更新）**；之后即可走本 Fork 自动更新。
+**请手动安装一次 `v0.2.1-zh.4`（或更新）**；之后即可走本 Fork 自动更新。当前发布是 `v0.3.4-zh.1`。
+
+自上游 0.3 起，界面文案用官方 `surfaces/gui/src/locales/zh.json`（react-i18next），不再维护 Fork 自己的 `i18n.tsx`。跟版时界面冲突应采用上游，只把 updater endpoint / pubkey 钉回本仓库。
 
 ## 相关文件
 

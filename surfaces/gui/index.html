@@ -11,6 +11,9 @@
         var t = localStorage.getItem("openwork-theme");
         var dark = t === "dark" || (t !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
         document.documentElement.dataset.theme = dark ? "dark" : "light";
+        // Text size (src/textSize.ts, key "openwork-text-size"): small | large; absent = default.
+        var ts = localStorage.getItem("openwork-text-size");
+        if (ts === "small" || ts === "large") document.documentElement.dataset.textSize = ts;
       } catch (e) {}
     </script>
   </head>

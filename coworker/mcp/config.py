@@ -133,7 +133,10 @@ def patch_global_server(name: str, changes: dict[str, Any]) -> bool:
     servers = read_global()
     if name not in servers:
         return False
-    servers[name] = {**servers[name], **changes}
+    merged = {**servers[name], **changes}
+    # A None value DELETES the key (there is no other way to remove one through a
+    # merge patch) — used by the OPE-136 trust migration to drop `requires_approval`.
+    servers[name] = {k: v for k, v in merged.items() if v is not None}
     _write_global(servers)
     return True
 

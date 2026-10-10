@@ -127,3 +127,55 @@ def test_approval_body_includes_tool_args():
 
     req2 = PermissionRequest("rm", {"path": "/x"}, None, "destructive")
     assert _approval_body(req2).startswith("destructive")  # reason leads when present
+
+
+def test_approval_body_strips_boilerplate_reason():
+    """OPE-136 found-in-testing: the live card filters the engine's default
+    "requires approval" boilerplate — the parked/mirrored body must not bake it in."""
+    from coworker.engine import PermissionRequest
+    from coworker.server.manager import _approval_body
+
+    req = PermissionRequest("write_file", {"path": "g.txt"}, None, "requires approval")
+    body = _approval_body(req)
+    assert "requires approval" not in body
+    assert "g.txt" in body  # the args preview still carries the evidence
+
+
+def test_approval_prompt_data_carries_mcp_evidence():
+    """§35 parity: the parked item's data holds the same category, destination, and
+    (non-boilerplate) reason the live card's event carries — so a reopened session
+    renders the identical scope chip and evidence, never the vague fallback."""
+    from types import SimpleNamespace
+
+    from coworker.engine import PermissionRequest
+    from coworker.server.manager import SessionManager
+
+    fake_mgr = SimpleNamespace(
+        task_store=SimpleNamespace(task_for_run_session=lambda _s: None)
+    )
+    req = PermissionRequest(
+        "mcp__my_jira__searchJiraIssuesUsingJql",
+        {"cloudId": "0bbb", "jql": "ORDER BY created DESC"},
+        SimpleNamespace(category="mcp"),
+        "requires approval",
+        mcp_destination={"transport": "http", "host": "mcp.atlassian.com"},
+    )
+    data = SessionManager.approval_prompt_data(fake_mgr, "s1", req)
+    assert data["category"] == "mcp"
+    assert data["mcp_destination"] == {"transport": "http", "host": "mcp.atlassian.com"}
+    assert "reason" not in data  # boilerplate never travels
+
+    real = PermissionRequest(
+        "mcp__my_jira__editJiraIssue",
+        {"issueIdOrKey": "OPE-1"},
+        SimpleNamespace(category="mcp"),
+        "the reviewer wasn't sure this edit was asked for",
+        mcp_destination={"transport": "http", "host": "mcp.atlassian.com"},
+    )
+    real_data = SessionManager.approval_prompt_data(fake_mgr, "s1", real)
+    assert real_data["reason"] == "the reviewer wasn't sure this edit was asked for"
+
+    # Non-MCP requests stay lean: no category/destination keys invented for them.
+    plain = PermissionRequest("write_file", {"path": "g.txt"}, None, "requires approval")
+    plain_data = SessionManager.approval_prompt_data(fake_mgr, "s1", plain)
+    assert "mcp_destination" not in plain_data and "category" not in plain_data

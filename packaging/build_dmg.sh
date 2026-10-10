@@ -12,14 +12,14 @@
 #   - A Python venv at .venv (repo root) with this package installed editable, plus the
 #     build-only deps:
 #       python3 -m venv .venv
-#       .venv/bin/pip install -e '.[bedrock]' pyinstaller tzdata typer
+#       .venv/bin/pip install -e '.[bedrock,openshell]' pyinstaller tzdata typer
 #     `typer` is needed only at BUILD time: PyInstaller walks the `mcp` package and
 #     `mcp.cli` calls sys.exit() at import if typer is absent, which aborts the freeze.
 #     (aisuite installs like any other dependency — git-pinned in pyproject.toml.)
 #
 # SIGNING: set APPLE_SIGNING_IDENTITY to a "Developer ID Application: … (TEAMID)" identity and
-# `tauri build` signs the .app + the bundled sidecar with it. Left unset → the final app gets an
-# Ad-hoc signature (still untrusted, but it avoids the misleading "app is damaged" dialog).
+# `tauri build` signs the .app + the bundled sidecar with it. Left unset → UNSIGNED (first launch
+# needs right-click → Open).
 #
 # NOTARIZATION (step 5, runs only when the identity is set): signs the .dmg CONTAINER, submits
 # to Apple's notary service, staples the ticket, and verifies with spctl. Signing alone is NOT
@@ -29,15 +29,14 @@
 # `.ocw-notary.env` one directory ABOVE the repo (shared by every clone/worktree on a machine,
 # never committed). Vars missing → the DMG is still produced, with a loud warning.
 #
-# LOCAL ITERATION: leave APPLE_SIGNING_IDENTITY unset for an Ad-hoc-signed dev build, or set
-# OCW_SKIP_NOTARIZE=1 to use a real identity but skip the slow notary round-trip. Neither is
-# fully trusted for public distribution.
+# LOCAL ITERATION: leave APPLE_SIGNING_IDENTITY unset for a fully unsigned dev build, or set
+# OCW_SKIP_NOTARIZE=1 to sign but skip the slow notary round-trip. Neither is distributable.
 #
 # Experimental (use-at-your-own-risk) connectors are EXCLUDED from this build by default —
 # the spec strips coworker.connectors.experimental. Self-builders can opt in with:
 #   COWORKER_EXPERIMENTAL=1 ./build_dmg.sh
 # VENV PREREQS (a fresh worktree's venv, discovered the hard way 2026-08-21):
-#   .venv/bin/pip install -e ".[dev,messaging,browser,bedrock]" pyinstaller typer
+#   .venv/bin/pip install -e ".[dev,messaging,browser,bedrock,openshell]" pyinstaller typer
 # (`typer` because PyInstaller's submodule collection imports mcp.cli, which
 # sys.exit(1)s without it.)
 set -euo pipefail
@@ -72,6 +71,13 @@ if [ -n "${APPLE_CERTIFICATE:-}" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   # Allow codesign to use the key headlessly (no UI prompt exists on a runner).
   security set-key-partition-list -S "apple-tool:,apple:" -s -k "$KC_PASS" "$KC" >/dev/null
   security list-keychains -d user -s "$KC" login.keychain-db
+fi
+
+# OpenShell sandboxes talk to the gateway over gRPC; a sidecar without grpcio can never use
+# them (a DMG shipped that way on 2026-09-28).
+if ! "$PLATFORM/.venv/bin/python" -c "import grpc" 2>/dev/null; then
+  echo "ERROR: grpcio is missing from .venv; install the openshell extra (see VENV PREREQS above)" >&2
+  exit 1
 fi
 
 echo "==> [1/5] PyInstaller: bundling openworker-server ($TRIPLE)"
@@ -109,6 +115,10 @@ if [ -n "$(find "$GUI/src-tauri/binaries/sidecar" -type d -name "*.framework" | 
   exit 1
 fi
 chmod +x "$GUI/src-tauri/binaries/sidecar/openworker-server"
+# Start it once, against an empty state folder: a sidecar that cannot load its libraries
+# must fail the build here, not on the user's Mac (the 0.3.0 and 0.3.1 Intel apps shipped
+# with a sidecar that could not; `--help` alone did not reach the broken import).
+COWORKER_STATE_DIR="$(mktemp -d)" "$GUI/src-tauri/binaries/sidecar/openworker-server" --check
 
 # Sign the sidecar's Mach-O files BEFORE tauri build: `tauri build` signs the .app (sealing
 # resources into its signature) but does NOT sign nested binaries inside resources — unsigned
@@ -152,24 +162,6 @@ fi
 # ${arr[@]+…} guard: plain "${arr[@]}" on an EMPTY array is an "unbound variable"
 # under set -u on macOS's stock bash 3.2 — hit by keyless (fresh-clone) builds.
 ( cd "$GUI" && npm run tauri build -- --bundles app ${UPDATER_OVERLAY[@]+"${UPDATER_OVERLAY[@]}"} )
-
-# Forks do not have an Apple Developer ID certificate. Tauri can leave the app with an
-# invalid/mixed signature in that case, which Gatekeeper reports as "damaged". Apply a
-# consistent Ad-hoc signature after every resource has been copied into the final bundle.
-# This is not notarization and does not make the app trusted; it only gives end users the
-# standard one-time Privacy & Security -> Open Anyway flow. When a real identity is set,
-# Tauri's Developer ID signing remains untouched.
-if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
-  echo "==> signing app bundle with an Ad-hoc identity (no Apple certificate configured)"
-  BUNDLE="$GUI/src-tauri/target/release/bundle"
-  APP_PATH="$BUNDLE/macos/$APP.app"
-  while IFS= read -r -d '' f; do
-    file -b "$f" | grep -q "Mach-O" || continue
-    codesign --force --sign - "$f"
-  done < <(find "$APP_PATH" -type f -print0)
-  codesign --force --deep --sign - "$APP_PATH"
-  codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-fi
 
 echo "==> [4/5] hdiutil: wrapping into .dmg"
 BUNDLE="$GUI/src-tauri/target/release/bundle"
@@ -236,29 +228,25 @@ OSA
   local i; for i in $(seq 1 15); do [ -f "$mnt/.DS_Store" ] && break; sleep 1; done
   [ -f "$mnt/.DS_Store" ] || { hdiutil detach "$dev" -force >/dev/null 2>&1 || true; return 1; }
   sync; sync
-  # CI runners sometimes keep Finder's hold on the RW image; retry eject before convert.
-  local d; for d in 1 2 3 4 5; do
-    hdiutil detach "$dev" -force >/dev/null 2>&1 && break
-    sleep 2
+  # Finder lets go of the volume a moment after it is done writing; on the GitHub Intel
+  # runner that moment came after our detach ("couldn't eject - Resource busy", then
+  # "convert failed - Resource temporarily unavailable"). Ask again for up to a minute.
+  for i in $(seq 1 20); do
+    hdiutil detach "$dev" >/dev/null 2>&1 && break
+    sleep 3
+    [ "$i" -lt 20 ] || hdiutil detach "$dev" -force >/dev/null 2>&1 || return 1
   done
-  hdiutil convert "$rw" -format UDZO -imagekey zlib-level=9 -o "$DMG" || {
-    rm -f "$rw"
-    return 1
-  }
+  hdiutil convert "$rw" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null || return 1
   rm -f "$rw"
+  [ -f "$DMG" ]
 }
 
 if ! style_dmg; then
   echo "    (Finder styling unavailable — writing a plain .dmg)"
-  hdiutil create -volname "$APP" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
+  hdiutil create -volname "$APP" -srcfolder "$STAGING" -ov -format UDZO "$DMG" >/dev/null
 fi
+[ -f "$DMG" ] || { echo "ERROR: no .dmg was written" >&2; exit 1; }
 rm -rf "$STAGING"
-
-if [ ! -f "$DMG" ]; then
-  echo "error: DMG was not created at $DMG" >&2
-  ls -la "$(dirname "$DMG")" >&2 || true
-  exit 1
-fi
 
 if [ "${OCW_SKIP_NOTARIZE:-}" = "1" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   # Local-iteration escape hatch: sign (seconds) but skip the notary round-trip
@@ -299,7 +287,7 @@ elif [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
     echo "    (env, \$OCW_NOTARY_ENV, or $NOTARY_ENV)."
   fi
 else
-  echo "    (Ad-hoc-signed DMG — users must approve it once in Privacy & Security)"
+  echo "    (unsigned dev build — set APPLE_SIGNING_IDENTITY for a distributable DMG)"
 fi
 
 echo ""

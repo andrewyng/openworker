@@ -1,0 +1,161 @@
+"""The logic of the `grep` tool. Standard library only (it also runs inside a sandbox).
+
+ripgrep when available, a Python walk otherwise. ripgrep respects `.gitignore`, so it skips
+`node_modules`/`target`/`dist` automatically; the fallback skips a hardcoded set of heavy
+dirs. Read-only, workspace-scoped. Returns file:line:text.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import os
+import re
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any, Optional
+
+# Per-OS application data directories. These are not build noise: on macOS 14+ merely
+# *descending* into ~/Library/Application Support (other apps' containers) trips the App
+# Data TCC protection and macOS shows "would like to access data from other apps" — an
+# alarming prompt the user never asked for, reachable whenever the workspace is a home
+# directory. Never traversed; a workspace under one of these is still searched normally,
+# because the guard matches directory NAMES encountered during a walk.
+OS_DATA_DIRS = {
+    "Library",  # macOS
+    "AppData",  # Windows
+    "Application Data",  # Windows (legacy junction)
+}
+
+_IGNORE_DIRS = {
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".next",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".idea",
+} | OS_DATA_DIRS
+
+
+def grep(
+    workspace: str,
+    pattern: str,
+    path: str = ".",
+    glob: Optional[str] = None,
+    max_results: int = 100,
+) -> dict[str, Any]:
+    root = Path(workspace).resolve()
+    n = max_results if isinstance(max_results, int) and max_results > 0 else 100
+    n = min(n, 1000)
+    base = (root / (path or ".")).resolve()
+    try:
+        base.relative_to(root)  # keep searches inside the workspace
+    except ValueError:
+        return {"error": "path escapes the workspace"}
+
+    rg = shutil.which("rg")
+    if rg:
+        cmd = [
+            rg,
+            "--line-number",
+            "--no-heading",
+            "--color=never",
+            # Always print the filename (even for a single-file target) and
+            # NUL-separate it from `line:text`, so parsing never has to guess
+            # where the path ends — a Windows drive-letter colon (C:\ws\a.py),
+            # or a colon inside the matched text, would otherwise be taken as a
+            # field separator (issue #17). Without --with-filename a single-file
+            # search emits no path and no NUL, and the parser would drop it.
+            "--with-filename",
+            "--null",
+            "--max-count",
+            str(n),
+            "-e",
+            pattern,
+        ]
+        if glob:
+            cmd += ["--glob", glob]
+        # Do not rely solely on a workspace's .gitignore: the Python fallback
+        # always omits these generated/dependency directories too. Exclusions come
+        # last because ripgrep resolves conflicting globs with the later one winning.
+        for ignored in sorted(_IGNORE_DIRS):
+            cmd += ["--glob", f"!**/{ignored}/**"]
+        cmd.append(str(base))
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        except Exception as exc:
+            return {"error": f"grep failed: {exc}"}
+        if out.returncode not in (0, 1):  # 1 = no matches
+            return {"error": (out.stderr or "ripgrep error").strip()[:300]}
+        return {"engine": "ripgrep", **_parse_rg(out.stdout, root, n)}
+
+    return {"engine": "python", **_py_grep(root, base, pattern, glob, n)}
+
+
+def _rel(path: str, root: Path) -> str:
+    try:
+        return str(Path(path).resolve().relative_to(root))
+    except (ValueError, OSError):
+        return path
+
+
+def _parse_rg(stdout: str, root: Path, n: int) -> dict[str, Any]:
+    # `rg --null` emits each match as `<path>\0<line>:<text>`. Splitting the path off
+    # on the NUL byte first means the colon inside a Windows drive letter (C:\...) is
+    # never confused with the line/text separators — the old `split(":", 2)` parsed
+    # `C:\ws\a.py:12:def f()` as file="C", line="\ws\a.py", text="12:def f()".
+    matches: list[dict[str, Any]] = []
+    for line in stdout.splitlines():
+        path, sep, rest = line.partition("\0")
+        if not sep:
+            continue
+        ln, _, txt = rest.partition(":")
+        matches.append(
+            {
+                "file": _rel(path, root),
+                "line": int(ln) if ln.isdigit() else 0,
+                "text": txt[:300],
+            }
+        )
+        if len(matches) >= n:
+            break
+    return {"count": len(matches), "matches": matches}
+
+
+def _py_grep(
+    root: Path, base: Path, pattern: str, glob: Optional[str], n: int
+) -> dict[str, Any]:
+    try:
+        rx = re.compile(pattern)
+    except re.error as exc:
+        return {"error": f"invalid regex: {exc}", "count": 0, "matches": []}
+    matches: list[dict[str, Any]] = []
+    for dirpath, dirs, files in os.walk(base):
+        dirs[:] = [d for d in dirs if d not in _IGNORE_DIRS]
+        for fn in files:
+            if glob and not fnmatch.fnmatch(fn, glob):
+                continue
+            fp = Path(dirpath) / fn
+            try:
+                with open(fp, "r", encoding="utf-8", errors="ignore") as fh:
+                    for i, line in enumerate(fh, 1):
+                        if rx.search(line):
+                            matches.append(
+                                {
+                                    "file": _rel(str(fp), root),
+                                    "line": i,
+                                    "text": line.rstrip()[:300],
+                                }
+                            )
+                            if len(matches) >= n:
+                                return {"count": len(matches), "matches": matches}
+            except OSError:
+                continue
+    return {"count": len(matches), "matches": matches}

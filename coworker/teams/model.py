@@ -85,6 +85,10 @@ class BoardError(Exception):
     """A verb call the board refuses — illegal transition, missing item, bad input."""
 
 
+class BoardNotFoundError(BoardError):
+    """A requested board object is missing or is not visible to the actor."""
+
+
 class AuthorityError(BoardError):
     """The actor's role does not permit this verb on this item."""
 

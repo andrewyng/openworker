@@ -13,7 +13,7 @@ import shlex
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional, Sequence
 from urllib.parse import urlsplit
 
 # Constructs whose *contents* we cannot evaluate, so a command carrying one is never
@@ -39,8 +39,11 @@ _INTERPRETERS = {
     "sh", "bash", "zsh", "dash", "ksh", "fish", "powershell", "pwsh", "cmd",
     "python", "python3", "node", "deno", "bun", "ruby", "perl", "php",
 }
-# Flags that turn a search/list tool into an execution or deletion tool.
-_DANGEROUS_FLAGS = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprintf"}
+# Flags that turn a search/list tool into an execution, deletion, or file-writing tool.
+# The fprint family writes find's output to an arbitrary path; omitting it let a bare
+# `find` allowlist entry auto-run `find . -fprint /tmp/exfil.txt`. readonly.py's
+# `_FIND_BAD` is the complete copy of this set, so keep the two in step.
+_DANGEROUS_FLAGS = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprintf", "-fprint", "-fprint0", "-fls"}
 
 
 def _split_commands(command: str) -> list[str]:
@@ -88,6 +91,37 @@ PERSISTENT_AUTHORITY_TOOLS = {
     "update_scheduled_task",
     "delete_scheduled_task",
 }
+
+
+# The agent's way to ask for a site its commands cannot reach (OPE-219). It changes what the
+# sandbox lets out, so only a person answers it, and full access cannot grant it.
+NETWORK_ACCESS_TOOL = "request_network_access"
+NETWORK_ACCESS_MAX_HOSTS = 5
+
+
+def network_request_hosts(arguments: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """The hosts a `request_network_access` call names, as ("host:port" entries, rejected
+    inputs). Exact host names only: no wildcards, no addresses, nothing that is not a name,
+    since the entry is shown to a person and opened on the sandbox as written."""
+    from .sandbox.network_profiles import clean_host
+
+    raw = (arguments or {}).get("hosts")
+    items = [raw] if isinstance(raw, str) else list(raw or []) if isinstance(raw, (list, tuple)) else []
+    good: list[str] = []
+    bad: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        try:
+            entry = clean_host(text)
+        except ValueError:
+            bad.append(text[:80])
+            continue
+        name = entry.rsplit(":", 1)[0]
+        if name.startswith("*.") or name.replace(".", "").isdigit():
+            bad.append(text[:80])
+        elif entry not in good:
+            good.append(entry)
+    return good, bad
 
 
 def protected_paths() -> list[Path]:
@@ -206,6 +240,7 @@ MODE_LABELS = {
     "interactive": "Ask for approval",
     "auto": "Bypass approvals",
     "bypass-approvals": "Bypass approvals",
+    "dangerously-bypass-approvals": "Dangerously bypass approvals",
     "auto-approve": "Auto-approve",
 }
 
@@ -221,6 +256,16 @@ class Mode(str, Enum):
     # NOT "bypass-ALL-approvals": Phase 1's floors (settings files, out-of-root writes,
     # `.git/hooks`) still hold in this mode, so "all" would be a false promise.
     BYPASS_APPROVALS = "bypass-approvals"  # full access (minus the hard floors)
+    # Everything BYPASS_APPROVALS keeps is granted too: the three floors that otherwise
+    # reach a person (running a file the agent downloaded, writing outside the session's
+    # folders, files that run later such as git hooks / CI configs, and authority that
+    # outlives the session) are cleared by the mode and each clearance is recorded. The
+    # name follows the convention other harnesses use for the same switch, because the
+    # name is the warning: only for a disposable machine or container. Never offered in
+    # the desktop picker; the server accepts it only when started with the flag. The
+    # self-protection floor (OpenWorker's own settings files) is a refusal, not an
+    # approval, and stays.
+    DANGEROUSLY_BYPASS_APPROVALS = "dangerously-bypass-approvals"
     # Interactive, but an LLM reviewer judges each would-be approval card first: clear
     # allows run without a prompt, everything else still reaches the human. The reviewer
     # can only turn "ask" into "allow", never "blocked" into "allow" (spec §1.2). With no
@@ -239,6 +284,17 @@ class Mode(str, Enum):
 # Modes whose enforcement is read-only. DISCUSS and PLAN share the same gate; they differ
 # only in intent — PLAN additionally drives the agent toward a propose_plan approval.
 READ_ONLY_MODES = frozenset({Mode.DISCUSS, Mode.PLAN})
+# Modes that grant every ordinary approval without a card. Only the second also clears
+# the floors below.
+BYPASS_MODES = frozenset({Mode.BYPASS_APPROVALS, Mode.DANGEROUSLY_BYPASS_APPROVALS})
+
+# Reason prefix on every decision the dangerous mode granted in place of a person. The
+# engine audits these individually ("recorded, never invisible") and the tool card says so.
+CLEARED_BY_MODE = "cleared by mode"
+
+
+def _cleared(floor: str) -> "Decision":
+    return Decision(True, f"{CLEARED_BY_MODE}: {floor}")
 
 
 @dataclass
@@ -251,10 +307,17 @@ class Decision:
     # sees them — protected in-project files that execute later (git hooks, CI configs:
     # "never WITHOUT a human — no auto-approve path may clear them") and writes whose path
     # could not be located for scoping (an allow would bypass root scoping unverified).
+    # The one exception is DANGEROUSLY_BYPASS_APPROVALS, which never produces these asks:
+    # it grants them up front (see `_cleared`) and the engine records each grant.
     human_only: bool = False
     # Set when a task-scoped standing rule allowed the call ("tool → target") so the
     # engine can audit the exact rule and the tool card can say so (§25).
     rule: str = ""
+    # The host the sandbox's allowed-sites wall stopped (OPE-219). The card then says why
+    # it is asking and offers to add the site to the list.
+    site: str = ""
+    # The "host:port" entries a `request_network_access` call still needs a person for.
+    network_hosts: tuple[str, ...] = ()
 
 
 def standing_rule_candidate(
@@ -267,15 +330,11 @@ def standing_rule_candidate(
     (UX-DECISIONS §25): external-risk only (never exec/write-local — shell asks forever),
     the tool must declare a target argument, and the call must actually name a target.
     Returns None otherwise — ineligible calls keep parking approvals as today."""
-    from .connectors.tool_defs import target_arg_for
+    from .connectors.tool_defs import standing_target_for
 
     if classify(tool_name, metadata, overrides) is not RiskClass.EXTERNAL:
         return None
-    arg = target_arg_for(tool_name)
-    if arg is None:
-        return None
-    value = str((arguments or {}).get(arg) or "").strip()
-    return value or None
+    return standing_target_for(tool_name, arguments or {})
 
 
 @dataclass
@@ -286,11 +345,40 @@ class PermissionEngine:
     auto_allow_tools: set[str] = field(default_factory=set)
     session_allow_tools: set[str] = field(default_factory=set)
     session_allow_commands: set[str] = field(default_factory=set)
+    # OPE-136 run grants ("Allow for this request"): tool names covered for the
+    # REMAINDER OF THE CURRENT RUN only. In-memory by design — the engine clears the
+    # set when the run finishes or is interrupted, and a process restart ending the
+    # run makes the empty set correct, not a loss. Minted only for EXTERNAL-risk
+    # tools (server-validated in manager._grant_offered); unlike the session grant
+    # this one exists FOR connectors and MCP — the loop/retry/pagination shapes.
+    run_allow_tools: set[str] = field(default_factory=set)
     # Egress domains that auto-run without a prompt: `allowed_domains` from user config, plus
     # `session_allow_domains` minted by "Always allow this domain". Matched by exact host or
     # subdomain suffix (see `_domain_allowed`).
     allowed_domains: list[str] = field(default_factory=list)
     session_allow_domains: set[str] = field(default_factory=set)
+    # The sandbox's allowed sites, as a wall for the web tools too (OPE-219). None: no wall
+    # (the session is not sandboxed, or its network setting is "Allow everything"). A list,
+    # possibly empty: the session runs with "Only the sites you allow", so `web_fetch`,
+    # `web_search` and `browser_open_url` may reach only these hosts ("host[:port]",
+    # "*.example.com"), the same list its commands are held to. These tools run in the
+    # OpenWorker process, outside the sandbox; before this the list did not apply to them
+    # and Bypass reached any site (reported on 0.3.0, 2026-10-02).
+    sandbox_sites: Optional[list[str]] = None
+    # Where `web_search` goes: the configured provider's host (it has no url argument).
+    search_host: Optional[Callable[[], str]] = None
+    # Persists a site the user chose to always allow (adds it to the machine's list) and
+    # returns that list, so this session's copy carries the same entries.
+    grant_site: Optional[Callable[[str], Optional[list[str]]]] = None
+    # Opens a site on the session's running sandbox, so commands reach it too (OPE-219).
+    open_site: Optional[Callable[[str], None]] = None
+    # Takes a site back from the session's running sandbox.
+    close_site: Optional[Callable[[str], None]] = None
+    # "host:port" entries a person allowed for this session only (either card, or the
+    # session's own list in the app). The machine's list is `sandbox_sites`.
+    session_sites: list[str] = field(default_factory=list)
+    # A site the person allowed that the running sandbox could not take: entry -> why.
+    site_open_errors: dict[str, str] = field(default_factory=dict)
     # Session-wide read-only grant (owner ask 2026-08-11): auto-allow shell commands the
     # conservative classifier (coworker/readonly.py) accepts. User-elected per session.
     session_readonly: bool = False
@@ -298,8 +386,21 @@ class PermissionEngine:
     # ScheduledTask's target-shaped entries. Kept by reference and re-read every check, so a
     # rule minted mid-run ("Allow every time") applies to the run's next call too.
     task_rules: dict[str, set[str]] = field(default_factory=dict)
+    # Thread grants (spec §11.4): the origin threads this session may answer without
+    # asking. Each entry expands into task_rules for the platform's reply tools (the
+    # manager's `_grant_thread_rules`); persisted with the session's grants and
+    # re-applied on rebuild, so a subscribed session tagged in a thread keeps its
+    # grant across restarts (mention-spawned sessions also re-derive from the thread map).
+    thread_grants: set[str] = field(default_factory=set)
     # User-local risk override resolver (Phase 2). None → use the base classification.
     risk_overrides: Optional[RiskOverrides] = None
+    # OPE-136 durable trust: tool name → has the user minted a standing "don't ask" rule?
+    # (RiskOverrideStore.trusted). Waives only the card, only outside AUTO_APPROVE —
+    # never the class, the mode gates, or the audit trail. None → no trust rules.
+    trust_overrides: Optional[Callable[[str], bool]] = None
+    # The write half (RiskOverrideStore.set_trust) — how ApprovalOutcome.ALWAYS_TRUST
+    # lands on disk. Kept as an injected callable so this module never imports the store.
+    grant_trust: Optional[Callable[[str], None]] = None
     # Shared, possibly-mutable list of roots (RootDir-like / dicts). When omitted, the single
     # `workspace_root` is the sole writable root (back-compat). Kept by reference and re-read on
     # every check, so runtime add/remove of folders takes effect without rebuilding the engine.
@@ -332,7 +433,17 @@ class PermissionEngine:
         is_write = risk is RiskClass.WRITE_LOCAL
         is_shell = risk is RiskClass.EXEC
         is_egress = risk is RiskClass.EGRESS
-        consequential = is_consequential(risk)
+        # Persistent-authority tools are consequential BY NAME: their risk class can
+        # read as READ (no base-table/catalog entry), but granting standing authority is
+        # a side effect — read-only modes must DENY them, not offer a grant card. The
+        # OPE-117 comment below always promised "read-only modes still hard-deny above
+        # this"; the OPE-136 gate-order pin caught that the class-based check alone
+        # didn't deliver it (save_skill in Discuss reached the human-only card).
+        consequential = (
+            is_consequential(risk)
+            or tool_name in PERSISTENT_AUTHORITY_TOOLS
+            or tool_name == NETWORK_ACCESS_TOOL
+        )
 
         # SELF-PROTECTION FLOOR — runs before mode, allowlists and every auto-approve path,
         # because the escalation it blocks happens in the DEFAULT mode. No verdict below can
@@ -353,6 +464,12 @@ class PermissionEngine:
                 False, f"{self.mode.value} mode is read-only", needs_user=False
             )
 
+        # The dangerous mode clears every floor below that would otherwise reach a person.
+        # Each clearance keeps its own reason so the record says which floor was crossed.
+        # (The self-protection refusal above and the read-only modes are not approvals and
+        # are untouched.)
+        dangerous = self.mode is Mode.DANGEROUSLY_BYPASS_APPROVALS
+
         # Path scoping for writes (all modes): every path the write touches must land in a
         # writable root. A write whose path can't be located is not scoped-able, so it fails
         # closed to approval rather than slipping through auto/custom unscoped.
@@ -360,6 +477,8 @@ class PermissionEngine:
         if is_write:
             paths, located = write_paths(tool_name, arguments)
             if not located:
+                if dangerous:
+                    return _cleared("write path could not be scoped")
                 return Decision(
                     False,
                     "cannot determine the write path to scope",
@@ -368,6 +487,11 @@ class PermissionEngine:
                 )
             for path in paths:
                 if not self._under_writable_root(path):
+                    if dangerous:
+                        # The permission floor is cleared; the file tools still resolve
+                        # paths against the session's roots by construction, so this
+                        # mostly matters for tools that write wherever they are pointed.
+                        return _cleared(f"write outside the session's directories: {path}")
                     return Decision(
                         False, f"path is not in a writable directory: {path}"
                     )
@@ -376,11 +500,18 @@ class PermissionEngine:
                 if _is_protected_in_project(self._candidate(path)):
                     needs_human_for_protected = True
 
+        # Asking for a site (OPE-219): a change to the allowed-sites wall. Only a person
+        # answers it; full access cannot, like every other change to a wall.
+        if tool_name == NETWORK_ACCESS_TOOL:
+            return self._evaluate_network_request(arguments)
+
         # Authority outliving the session reaches a person, over the reviewer and over
         # every allowlist below (OPE-117). Placed ahead of the non-consequential return on
         # purpose: these tools are consequential today, but a metadata slip must not be
         # able to switch the floor off. Read-only modes still hard-deny above this.
         if tool_name in PERSISTENT_AUTHORITY_TOOLS:
+            if dangerous:
+                return _cleared("authority that outlives the session")
             return Decision(
                 False,
                 "this outlives the session — approval required",
@@ -395,6 +526,8 @@ class PermissionEngine:
         # A protected in-project target (git hooks, CI config) skips every auto-approve path
         # below — including auto mode and the session/config allowlists — and asks.
         if needs_human_for_protected:
+            if dangerous:
+                return _cleared("file that runs automatically later")
             return Decision(
                 False,
                 "this file runs automatically later — approval required",
@@ -402,8 +535,29 @@ class PermissionEngine:
                 human_only=True,  # deferred-execution files: a human sees every one (§ floor)
             )
 
+        # THE ALLOWED-SITES WALL (OPE-219). Like the folder wall, no mode removes it: in
+        # Bypass a site that is not on the list is refused outright, with no card (owner
+        # ruling 2026-10-02); in the asking modes it reaches a person, never the reviewer,
+        # who may not widen the user's list. A site on the list runs without a card.
+        walled_site = ""
+        on_site_wall = False
+        if is_egress and self.sandbox_sites is not None:
+            host = self.egress_host(tool_name, arguments)
+            if host and self._site_allowed(host):
+                on_site_wall = True
+            else:
+                walled_site = host or "this site"
+                if self.mode is Mode.BYPASS_APPROVALS:
+                    return Decision(
+                        False,
+                        f"{walled_site} is not on this machine's allowed sites, so the sandbox "
+                        "setting blocks it. The user can add it in Settings > Sandbox > Choose sites.",
+                        needs_user=False,
+                        site=walled_site,
+                    )
+
         # Full access.
-        if self.mode is Mode.BYPASS_APPROVALS:
+        if self.mode in BYPASS_MODES:
             return Decision(True, "full access")
 
         # interactive / custom / auto-approve: allowlists.
@@ -440,6 +594,16 @@ class PermissionEngine:
                     self._under_root(t) for t in read_targets(command)
                 ):
                     return Decision(True, "read-only command (session grant)")
+        if on_site_wall:
+            return Decision(True, "site on the allowed sites")
+        if walled_site:
+            return Decision(
+                False,
+                f"{walled_site} is not on your allowed sites",
+                needs_user=True,
+                human_only=True,
+                site=walled_site,
+            )
         if is_egress:
             url = str(arguments.get("url", ""))
             if self._domain_allowed(url, include_session=honor_session_grants):
@@ -450,6 +614,30 @@ class PermissionEngine:
             and not is_connector
         ):
             return Decision(True, "tool allowed for session")
+        # Run grant (OPE-136 "Allow for this request"): same checkpoint, shorter life —
+        # and no connector exclusion, because EXTERNAL is exactly who it exists for.
+        # §1.5 still applies: an in-flow click never skips the Auto-Approve judge.
+        if honor_session_grants and tool_name in self.run_allow_tools:
+            return Decision(True, "tool allowed for this request")
+
+        # OPE-136: MCP trust waives only the card, in the one mode where the card is the
+        # deciding voice. Two sources, one branch: a per-tool trust RULE the user minted
+        # from the card ("Always allow this tool" → risk_overrides.json), or the legacy
+        # server-level `requires_approval: false` (which no longer reclassifies — the MCP
+        # floor in risk.classify keeps these tools EXTERNAL). Everything above still
+        # applied: read-only modes denied before this line, the persistent-authority and
+        # protected-file floors returned before it, and Bypass already returned.
+        # Deliberately NOT honored in AUTO_APPROVE: v1 keeps §1.5 conservative — the
+        # reviewer judges trusted MCP calls (falling through to needs_user routes
+        # there); only hand-authored config allowlists skip the judge.
+        if (
+            getattr(metadata, "category", "") == "mcp"
+            and self.mode is not Mode.AUTO_APPROVE
+        ):
+            if self.trust_overrides is not None and self.trust_overrides(tool_name):
+                return Decision(True, "trusted MCP tool (user trust rule)")
+            if not bool(getattr(metadata, "requires_approval", True)):
+                return Decision(True, "trusted MCP tool (server marked don't-ask)")
 
         # Task-scoped standing rules (§25): tool + exact target, owned by the automation.
         # Deliberately NOT subject to the connector exclusion above — the exact-target
@@ -475,6 +663,24 @@ class PermissionEngine:
     def allow_tool_for_session(self, tool_name: str) -> None:
         self.session_allow_tools.add(tool_name)
 
+    def allow_tool_for_run(self, tool_name: str) -> None:
+        self.run_allow_tools.add(tool_name)
+
+    def clear_run_allowances(self) -> None:
+        """The run boundary IS the grant's expiry: the engine calls this when a run
+        finishes or is interrupted, so "Allow for this request" never outlives the
+        answer the user was watching."""
+        self.run_allow_tools.clear()
+
+    def grant_trust_for_tool(self, tool_name: str) -> None:
+        """OPE-136 durable trust: persist a per-tool "don't ask" rule (survives sessions).
+        Falls back to the session grant when no store is wired (ephemeral engines in
+        tests) — the card's promise degrades to session scope rather than to nothing."""
+        if self.grant_trust is not None:
+            self.grant_trust(tool_name)
+        else:
+            self.session_allow_tools.add(tool_name)
+
     def allow_command_for_session(self, command: str) -> None:
         if command:
             self.session_allow_commands.add(command)
@@ -494,6 +700,174 @@ class PermissionEngine:
             host = host[4:]
         if host:
             self.session_allow_domains.add(host)
+
+    def allow_site_always(self, url_or_domain: str) -> None:
+        """"Always allow <site>" on the allowed-sites card: the site joins the machine's
+        list (Settings > Sandbox), for commands and web tools alike. Without a store wired
+        (ephemeral engines in tests) it degrades to this session."""
+        host = _host_of(url_or_domain)
+        if not host:
+            return
+        if self.sandbox_sites is not None and not self._on_site_list(host):
+            self.sandbox_sites.append(host)
+        if self.grant_site is not None:
+            stored = self.grant_site(host)
+            if stored is not None and self.sandbox_sites is not None:
+                self.sandbox_sites[:] = [str(x) for x in stored]
+        else:
+            self.session_allow_domains.add(host)
+        self._open(host)
+
+    def allow_site_for_session(self, url_or_domain: str) -> None:
+        """"Allow for this session" on the allowed-sites card: the web tools and, through the
+        running sandbox, the commands of this session reach the site; nothing is stored."""
+        host = _host_of(url_or_domain)
+        if not host:
+            return
+        self.allow_domain_for_session(host)
+        self._note_session_site(host)
+        self._open(host)
+
+    def allow_network_hosts(self, entries: Sequence[str], *, always: bool) -> None:
+        """A person allowed these "host:port" entries (the network-access card, or the
+        session's list in the app): for this session, or for good when `always` and a store
+        is wired. Commands reach them through the running sandbox; the web tools too."""
+        for entry in entries:
+            host = str(entry).rsplit(":", 1)[0]
+            if always and self.grant_site is not None:
+                stored = self.grant_site(str(entry))
+                if stored is not None and self.sandbox_sites is not None:
+                    self.sandbox_sites[:] = [str(x) for x in stored]
+            else:
+                self.session_allow_domains.add(host)
+                self._note_session_site(str(entry))
+            self._open(str(entry))
+
+    def remove_session_site(self, entry: str) -> bool:
+        """The person took back a site they had allowed for this session. Sites on the
+        machine's list are not touched here; those are changed in Settings. Raises when the
+        running sandbox could not drop it, and then nothing is changed."""
+        if entry not in self.session_sites:
+            return False
+        if self.close_site is not None:
+            self.close_site(entry)
+        self.session_sites.remove(entry)
+        self.site_open_errors.pop(entry, None)
+        host = entry.rsplit(":", 1)[0]
+        if not any(other.rsplit(":", 1)[0] == host for other in self.session_sites):
+            self.session_allow_domains.discard(host)
+            self.session_allow_domains.discard(host[4:] if host.startswith("www.") else host)
+        return True
+
+    def _note_session_site(self, host_or_entry: str) -> None:
+        from .sandbox.network_profiles import clean_host
+
+        try:
+            entry = clean_host(host_or_entry)
+        except ValueError:
+            return
+        if entry not in self.session_sites and not self._entry_allowed(entry):
+            self.session_sites.append(entry)
+
+    def _open(self, host_or_entry: str) -> None:
+        """Tell the running sandbox. A failure does not undo the person's choice for the
+        web tools; it is kept so the agent and the app can say the commands lack the site."""
+        if self.open_site is None:
+            return
+        try:
+            self.open_site(host_or_entry)
+            self.site_open_errors.pop(host_or_entry, None)
+        except Exception as exc:  # noqa: BLE001
+            self.site_open_errors[host_or_entry] = str(exc) or type(exc).__name__
+
+    def _entry_allowed(self, entry: str) -> bool:
+        """Whether a "host:port" entry is already open to this session's commands: on the
+        machine's list (same port; `*.example.com` covers subdomains) or allowed for the
+        session."""
+        from .sandbox.network_profiles import clean_host
+
+        if entry in self.session_sites:
+            return True
+        host, _, port = entry.rpartition(":")
+        for item in self.sandbox_sites or []:
+            try:
+                name, _, item_port = clean_host(str(item)).rpartition(":")
+            except ValueError:
+                continue
+            if item_port != port:
+                continue
+            if name.startswith("*."):
+                if host.endswith(name[1:]) and host != name[2:]:
+                    return True
+            elif host == name:
+                return True
+        return False
+
+    def _evaluate_network_request(self, arguments: dict[str, Any]) -> Decision:
+        if self.sandbox_sites is None:
+            return Decision(False, "this session has no allowed-sites list to change", needs_user=False)
+        wanted, bad = network_request_hosts(arguments)
+        if bad or not wanted or len(wanted) > NETWORK_ACCESS_MAX_HOSTS:
+            return Decision(
+                False,
+                f"give `hosts` as one to {NETWORK_ACCESS_MAX_HOSTS} exact host names, such as registry.npmjs.org "
+                "or db.example.com:5432 (no wildcards, no IP addresses)" + (f"; not accepted: {', '.join(bad)}" if bad else ""),
+                needs_user=False,
+            )
+        pending = [entry for entry in wanted if not self._entry_allowed(entry)]
+        if not pending:
+            return Decision(True, "already on the allowed sites")
+        if self.mode is Mode.BYPASS_APPROVALS:
+            return Decision(
+                False,
+                "The allowed sites cannot be changed from this session. Tell the user; they can add the site in Settings > Sandbox > Choose sites.",
+                needs_user=False,
+            )
+        return Decision(
+            False,
+            "asks to let this session's commands reach " + ", ".join(e[:-4] if e.endswith(":443") else e for e in pending),
+            needs_user=True,
+            human_only=True,
+            network_hosts=tuple(pending),
+        )
+
+    def egress_host(self, tool_name: str, arguments: dict[str, Any]) -> str:
+        """Where an egress tool is going: its url's host, or for `web_search` (a fixed
+        destination, no url) the configured search provider's host."""
+        url = str((arguments or {}).get("url", "") or "")
+        if url:
+            return _host_of(url)
+        if self.search_host is not None:
+            try:
+                return _host_of(self.search_host() or "")
+            except Exception:  # noqa: BLE001 - an unknown provider reads as "not allowed"
+                return ""
+        return ""
+
+    def _on_site_list(self, host: str) -> bool:
+        """Whether `host` is on the sandbox's list. The web tools speak HTTP(S) only, so
+        the entry's port is not compared; `*.example.com` covers subdomains, as in the
+        sandbox's own proxy (netproxy.allows)."""
+        for entry in self.sandbox_sites or []:
+            name = str(entry).strip().lower()
+            if not name:
+                continue
+            if "://" in name:
+                name = _host_of(name)
+            name = name.rsplit(":", 1)[0] if ":" in name and not name.endswith("]") else name
+            if name.startswith("*."):
+                if host.endswith(name[1:]) and host != name[2:]:
+                    return True
+            elif host == name:
+                return True
+        return False
+
+    def _site_allowed(self, host: str) -> bool:
+        """On the machine's list, or granted by the user for this session. A session grant
+        counts in every mode here: a person gave it, on a card only a person can answer."""
+        if self._on_site_list(host):
+            return True
+        return any(host == d or host.endswith("." + d) for d in self.session_allow_domains)
 
     # -- helpers ----------------------------------------------------------------
     def _candidate(self, path: str) -> Path:

@@ -1,40 +1,25 @@
-# OpenWorker
+<h1 align="center">OpenWorker</h1>
 
-**[openworker.com](https://openworker.com)** · [Download](#download) · [Issues](https://github.com/andrewyng/openworker/issues)
+<p align="center"><strong><a href="https://openworker.com">openworker.com</a></strong> · <a href="#download">Download</a> · <a href="https://github.com/andrewyng/openworker/issues">Issues</a></p>
 
-<a href="https://trendshift.io/repositories/91434?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-91434" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/91434/daily?language=Python" alt="andrewyng%2Fopenworker | Trendshift" width="250" height="55"/></a>
+<p align="center"><a href="https://trendshift.io/repositories/91434?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-91434" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/91434/daily" alt="andrewyng%2Fopenworker | Trendshift" width="250" height="55"/></a></p>
 
 > **Beta** - OpenWorker is in open beta: fully usable, updates itself, and we're actively polishing rough edges. [Issues](https://github.com/andrewyng/openworker/issues) welcome.
 
-## 社区简体中文汉化版
+## 社区简体中文构建
 
-这是基于上游 OpenWorker 的社区 Fork，提供 English / 简体中文界面切换。它不是官方中文版，汉化工作正在持续完善中。
+这是 [andrewyng/openworker](https://github.com/andrewyng/openworker) 的社区 Fork。自 0.3 起上游已自带简体中文（系统语言为中文时自动使用，也可在设置里切换）。本仓库跟随上游发版，并把桌面版的**自动更新**指到本 Fork 的 Releases，而不是官方英文频道。
 
 - Fork：<https://github.com/cr-yijieshusheng/openworker>
-- 汉化分支：`i18n-simplified-chinese`
-- 上游合并申请：<https://github.com/andrewyng/openworker/pull/542>
-- 最新版本：<https://github.com/cr-yijieshusheng/openworker/releases/tag/v0.2.1-zh.4>
-- 维护说明（自动跟版 / 自动更新）：[docs/FORK-MAINTENANCE.md](docs/FORK-MAINTENANCE.md)
+- 分支：`i18n-simplified-chinese`
+- 当前版本：<https://github.com/cr-yijieshusheng/openworker/releases/tag/v0.3.4-zh.1>（上游 `v0.3.4`）
+- 维护说明：[docs/FORK-MAINTENANCE.md](docs/FORK-MAINTENANCE.md)
 
-当前已覆盖常用会话、设置、模型供应商、导航、模型选择和部分连接器文案。少量高级功能、连接器详情和开发者文案仍可能显示英文；遇到问题请在 Fork 仓库提交 Issue，并注明系统、版本和复现步骤。
+请从本 Fork 的 [Releases](https://github.com/cr-yijieshusheng/openworker/releases) 下载，不要用下方官方 `download.openworker.com` 链接。已经装过 `v0.2.1-zh.4` 的，启动后会提示更新到本版；更早的手动包需要先手动安装一次。
 
-![OpenWorker 简体中文会话界面](docs/assets/openworker-zh-session.png)
+**AI that gets your everyday tasks done.** OpenWorker is an open-source AI coworker that lives on your desktop and delivers **finished work**, not just chat: your code reviewed for vulnerabilities with fixes ready to go, a polished document, a Slack reply with the numbers, a triaged inbox. It ships **specialist Security coworkers** first — attackers already use AI, and defenders deserve the same leverage, governed.
 
-![OpenWorker 简体中文设置界面](docs/assets/openworker-zh-settings.png)
-
-![OpenWorker 简体中文模型供应商设置](docs/assets/openworker-zh-provider.png)
-
-### 使用汉化版
-
-1. 在 Fork 的 [Releases](https://github.com/cr-yijieshusheng/openworker/releases) 下载安装包（不要用下方官方 `download.openworker.com` 链接），或切换到 `i18n-simplified-chinese` 从源码运行。
-2. 启动后打开 `设置 → 常规 → 界面语言`，选择 `简体中文`。
-3. 在 `设置 → 模型` 中配置自己的模型供应商和 API Key。Key 只保存在本机，不要在 Issue、截图或 README 中公开。
-
-自 `v0.2.1-zh.4` 起，桌面版会检查**本 Fork** 的 Releases 并提示更新（需发布时配置了签名密钥，见 [FORK-MAINTENANCE.md](docs/FORK-MAINTENANCE.md)）。上游新版本由 GitHub Actions **Sync upstream** 自动合并汉化分支并打 `v*-zh.N` 包；若你仍在用更早的手动包，请先手动装一次新版。
-
-**AI that gets your everyday tasks done.** OpenWorker is an open-source AI coworker that lives on your desktop and delivers **finished work**, not just chat: a polished document, a Slack reply with the numbers, an updated calendar, a triaged inbox.
-
-It runs on your machine and doesn't lock you into any model: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider, or run fully local with Ollama. Your data leaves your machine only through the model and integrations *you* choose.
+It runs on your machine and doesn't lock you into any model: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider, or run fully local with Ollama. Your data leaves your machine only through the model and integrations *you* choose. Every action an agent takes is governed and logged — see [Governed by design](#governed-by-design) — and its commands can run inside an [NVIDIA OpenShell](docs/openshell.md) sandbox.
 
 [![How OpenWorker works](docs/assets/how-it-works.png)](https://openworker.com)
 
@@ -47,6 +32,26 @@ It runs on your machine and doesn't lock you into any model: bring your own API 
 <sub>builds are not yet code-signed, so SmartScreen will warn; signing is in progress</sub>
 
 Open the app, add a model key (or point it at Ollama), and ask for something real.
+
+OpenRouter comes two ways under **Settings → Models & Keys**: **OpenRouter** (API
+keys) takes a key you paste; **OpenRouter account** (Subscriptions) signs you in
+through the browser and uses your OpenRouter credits — the key OpenRouter issues
+stays on this computer. On a remote backend choose **Use a manual code** and paste
+the code OpenRouter shows. Each card is its own provider with its own models, so
+disconnecting the account never falls back to a pasted key. To revoke the issued
+key on OpenRouter's side, use the **Manage or revoke keys on OpenRouter** link.
+
+## Use cases
+
+Pick a coworker, point it at real work, get a finished deliverable:
+
+- **Security review** - scan a codebase and its dependencies for real risk. Findings come from deterministic scanners (like semgrep) plus model reasoning; proposed fixes are re-scanned and diff-reviewed before you approve them - the fixer is never the only checker.
+- **Cloud posture** - audit cloud configuration against common misconfiguration classes and draft the remediation plan.
+- **Incident triage** - work a security or ops incident: gather context across your tools, draft the timeline, prepare the report.
+- **Everyday work** - prep a customer call from your CRM and inbox, turn scattered notes into a shippable plan, produce documents and spreadsheets, keep your calendar and Slack threads handled.
+- **Standing automations** - a morning brief, a weekly report, a watch over a channel - on a schedule, with full transcripts.
+
+Specialist coworkers arrive with the tools, working style, and check-ins for one job already set up. Security coworkers ship first.
 
 ## How it works
 
@@ -68,13 +73,26 @@ Under the hood:
 └───────────────┴────────────────┴───────────────┘
 ```
 
+## Governed by design
+
+Governance is the architecture, not a plugin - the agent can't grant itself new permissions, and no prompt can talk it past a gate. Four tiers, all in this repo:
+
+1. **Hard floors.** A set of dangerous and irreversible operations is human-only, always. No mode - including full auto-approve - lowers these floors; they always escalate to you.
+2. **A ladder of earned autonomy.** Actions are approval-gated by default. One-off approvals can graduate into standing rules, then into config allowlists - each step explicit, visible, and revocable. In auto-approve mode a reviewer model lets routine actions through and escalates anything it isn't sure about to you; repeated denials trip a circuit breaker that pauses the reviewer and hands control back. Reviewer verdicts are judgments, not guarantees - the floors and the audit trail are what backstop them.
+3. **An audit trail that answers "who did this, and why?"** Every tool call is recorded with its approval provenance - auto-approved, user-approved, or denied, with the reviewer's reasoning attached - and persisted with the conversation.
+
+4. **A sandbox for what the agent runs.** A session's commands and file tools can run inside an [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox — one Linux container per agent that holds the session's folders and nothing else: no keys, no other files, and only an allow list of network hosts. The agent loop, the model keys and the connectors stay outside the wall, so a prompt injection that reaches a command lands in a box that holds nothing. On a Mac the same protection is available with nothing to install, through the sandbox built into macOS; on Windows, through a hidden local account that cannot see your profile. See [docs/openshell.md](docs/openshell.md), [docs/macos-sandbox.md](docs/macos-sandbox.md) and [docs/windows-sandbox.md](docs/windows-sandbox.md).
+
+Unattended runs never self-approve: their asks park in an inbox until a human answers. Found a vulnerability? See [SECURITY.md](SECURITY.md).
+
 ## What it can do
 
 - **Produce real deliverables** - documents, spreadsheets, reports, and web pages land as files you can open and share.
 - **Work from Slack** - mention `@OpenWorker` in a channel; a session opens on your desktop, the work happens with your tools, and the answer comes back as a thread reply.
 - **Use your everyday tools** - 25+ integrations including GitHub, Slack, Jira, Notion, Linear, HubSpot, Outlook, monday.com, Gmail, and Google Calendar, plus your **terminal and local files**. Any tool reachable over [MCP](https://modelcontextprotocol.io/) plugs in too, with per-tool control.
 - **Run on a schedule** - automations for recurring work: a morning brief, a weekly report, a standing watch over a channel. Runs land in the app with full transcripts.
-- **Ask before acting** - writes, sends, and shell commands are approval-gated. Unattended runs park their asks in an inbox instead of acting on their own.
+- **Run commands in a sandbox** - turn on [NVIDIA OpenShell](docs/openshell.md) for a machine and every agent's shell and file tools run in their own Linux container, with the session's folders and an allow-listed network and nothing else; on a Mac, the [built-in sandbox](docs/macos-sandbox.md) does the same with nothing to install, and on Windows a [hidden local account](docs/windows-sandbox.md) does.
+- **Ask before acting** - writes, sends, and shell commands are approval-gated, with an optional auto-approve mode that still escalates anything uncertain - see [Governed by design](#governed-by-design).
 
 ## Bring your own model
 
@@ -101,8 +119,8 @@ cd openworker
 bash packaging/setup_dev_env.sh
 
 # 2. Start the local agent server
-.venv/bin/openworker-server --cwd ~/some/project --port 8765
-#    (Windows: .venv\Scripts\openworker-server.exe)
+.venv/bin/python -m coworker.server.run --cwd ~/some/project --port 8765
+#    (Windows: .venv\Scripts\python -m coworker.server.run ...)
 
 # 3. In a second terminal, start the UI
 cd surfaces/gui

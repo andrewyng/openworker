@@ -140,6 +140,26 @@ export function humanizeApprovalTitle(name: string, args: any): HumanLine {
       return a.name
         ? { pre: "Add skill ", obj: String(a.name), post: " to your skills" }
         : { pre: "Add a skill to your skills" };
+    // Egress cards (OPE-136 finding 5): name the destination in the headline; the full
+    // URL/query renders in the card's expandable preview.
+    case "web_fetch": {
+      let host = "";
+      try {
+        host = new URL(String(a.url ?? "")).host;
+      } catch {
+        /* unparseable url → generic title; the preview still shows the raw string */
+      }
+      return host ? { pre: "Fetch from ", obj: host } : { pre: "Fetch a web page" };
+    }
+    case "web_search":
+      return { pre: "Search the web" };
+    // OPE-219: the agent asks for sites its sandboxed commands cannot reach.
+    case "request_network_access": {
+      const raw = Array.isArray(a.hosts) ? a.hosts : a.hosts ? [a.hosts] : [];
+      const hosts = raw.map((h: unknown) => String(h).replace(/:443$/, "")).filter(Boolean);
+      if (!hosts.length) return { pre: "Let commands reach a site" };
+      return { pre: "Let commands reach ", obj: hosts.length > 2 ? `${hosts[0]} and ${hosts.length - 1} more` : hosts.join(" and ") };
+    }
     default:
       return { pre: `Use ${name}` };
   }

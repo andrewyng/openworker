@@ -48,6 +48,9 @@ def _origin_allowed(origin: str | None) -> bool:
 # process can reach it), so bound frames, messages, and per-connection request rate before
 # building model content or starting a turn.
 _WS_MAX_FRAME_BYTES = 16 * 1024 * 1024
+# Close code for a session socket whose engine could not be built (a refused sandbox, a
+# failed build). Private-use range; the client treats it as final and does not reconnect.
+WS_CLOSE_SESSION_REFUSED = 4403
 _WS_RATE_LIMIT_COUNT = 30
 _WS_RATE_LIMIT_WINDOW_SECONDS = 10.0
 _MAX_MESSAGE_TEXT_CHARS = 200_000
@@ -158,16 +161,46 @@ from ..attachments import (
     build_user_content,
 )
 from ..engine import ApprovalOutcome
+from ..events import EventType
+from ..connectors import connector_list
 from ..inbox import VIS_INBOX, VIS_INLINE, args_preview
 from ..permissions import Mode
 from ..providers import AssistantTurn
 from .. import toolchain
+
+
+def _session_sandbox(engine: Any) -> dict[str, Any]:
+    """The session's sandbox, for its header chip. Never raises: a header must not break
+    a session."""
+    try:
+        from ..sandbox.settings import session_sandbox
+
+        return session_sandbox(engine)
+    except Exception:  # noqa: BLE001
+        return {"state": "off"}
 from ..teams.model import AuthorityError as TeamsAuthorityError
 from ..teams.model import BoardError as TeamsBoardError
-from .manager import SessionManager
+from ..teams.model import BoardNotFoundError as TeamsBoardNotFoundError
+from .manager import SessionManager, _approval_body
 
 
 def create_app(manager: SessionManager) -> FastAPI:
+    from ..providers.openrouter_auth import OpenRouterAuth
+
+    def openrouter_changed() -> None:
+        manager._refresh_provider("openrouter-account")
+        if manager._provider_configured("openrouter-account"):
+            from ..providers.registry import get_descriptor
+
+            model = get_descriptor("openrouter-account").recommended_model
+            if model:
+                qualified = f"openrouter-account:{model}"
+                manager.add_model(qualified)
+                if not manager._provider_configured(manager._model_provider(manager.model)):
+                    manager.set_default_model(qualified)
+
+    openrouter_auth = OpenRouterAuth(manager.secrets, openrouter_changed)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         try:
@@ -181,6 +214,7 @@ def create_app(manager: SessionManager) -> FastAPI:
 
             traceback.print_exc()
         yield
+        openrouter_auth.cancel()
         await manager.aclose()  # stop gateway + close MCP connections on shutdown
 
     app = FastAPI(title="coworker", version="0.0.0", lifespan=lifespan)
@@ -190,6 +224,10 @@ def create_app(manager: SessionManager) -> FastAPI:
         "/auth/callback",
         "/mcp/oauth/callback",
         "/oauth/callback",
+        # Machine-facing halves of the device-authorization flow (`openworker
+        # auth join`): the box holds no sidecar token. Approval stays gated.
+        "/v1/remote/device/start",
+        "/v1/remote/device/poll",
     }
 
     def _request_authenticated(request: Request) -> bool:
@@ -212,6 +250,10 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.middleware("http")
     async def require_sidecar_token(request: Request, call_next):
+        if request.url.path.startswith("/v1/providers/openrouter-account/") and not _origin_allowed(
+            request.headers.get("origin")
+        ):
+            return JSONResponse({"error": "origin not allowed"}, status_code=403)
         # Preflights carry the requested header name, not its value. CORS checks the
         # Origin; the actual state-changing request still must authenticate.
         if (
@@ -222,6 +264,9 @@ def create_app(manager: SessionManager) -> FastAPI:
             # (identity + access), designed to be handed to external harnesses and
             # other machines — which can never hold the machine-local sidecar token.
             or request.url.path.startswith("/v1/board/")
+            # Join-URL hint page: read by a human on a remote box (no sidecar
+            # token there); serves constant instructions, validates nothing.
+            or request.url.path.startswith("/j/")
             or _request_authenticated(request)
         ):
             return await call_next(request)
@@ -240,6 +285,14 @@ def create_app(manager: SessionManager) -> FastAPI:
     )
     app.state.manager = manager
 
+    @app.get("/v1/capabilities")
+    def capabilities() -> dict[str, Any]:
+        """Deployment self-description (remote-home-design.md §Cloud dashboard).
+        The SAME SPA serves both tiers; this server-driven flag — never a build
+        config — is what tells it which surfaces exist. The desktop sidecar is
+        a full home; the acceptor-only cloud service answers mode:"cloud"."""
+        return {"mode": "desktop"}
+
     @app.get("/v1/health")
     def health(request: Request) -> dict[str, Any]:
         if api_token and not _request_authenticated(request):
@@ -249,6 +302,12 @@ def create_app(manager: SessionManager) -> FastAPI:
             "default_workspace": manager.default_workspace,
             "model": manager.model,
         }
+
+    @app.get("/v1/activity")
+    def activity() -> dict[str, Any]:
+        # Idle signal for a controller that can stop this box (managed
+        # sandboxes): turns in flight + when the last one ended.
+        return manager.activity()
 
     @app.get("/v1/agents")
     def agents() -> dict[str, Any]:
@@ -260,11 +319,12 @@ def create_app(manager: SessionManager) -> FastAPI:
 
         # `internal` tells the GUI it may show internal-build affordances (the
         # "Not in this release" group, the Gallery entry point).
-        return {"personas": manager.personas.list_all(), "internal": include_unshipped()}
+        return {"personas": manager.personas_index(), "internal": include_unshipped()}
 
     @app.get("/v1/inbox")
     def inbox(session_id: str = "", state: str = "") -> dict[str, Any]:
         from dataclasses import asdict
+        manager.reconcile_obsolete_prompts(session_id)
 
         # The cross-session Inbox list shows only Unattended (inbox-visibility) items; a per-session
         # query returns inline ones too, so the answer-in-context card sees parked attended prompts.
@@ -300,10 +360,16 @@ def create_app(manager: SessionManager) -> FastAPI:
         return {"items": out}
 
     @app.post("/v1/inbox/{item_id}/resolve")
-    async def resolve_inbox_item(item_id: str, body: dict) -> dict[str, Any]:
+    async def resolve_inbox_item(item_id: str, body: dict, request: Request) -> dict[str, Any]:
         # Idempotent + first-responder-wins: ok=False means it was already resolved elsewhere.
         # Routes through resolve_inbox so a restart-orphaned prompt durably resumes its turn.
-        ok = await manager.resolve_inbox(item_id, str(body.get("resolution", "deny")))
+        # The deciding person: the controller-verified login on a proxied call (the only
+        # way that header exists on a joined box), else unknown.
+        ok = await manager.resolve_inbox(
+            item_id,
+            str(body.get("resolution", "deny")),
+            by=request.headers.get("x-openworker-actor", ""),
+        )
         return {"ok": ok}
 
     @app.get("/v1/subscriptions")
@@ -358,8 +424,10 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "(channel name ▸ About) or the channel's Copy-link URL.",
                 }
             return {"ok": False, "error": "need a session_id and a channel"}
-        manager.subscriptions.subscribe(session_id, addr)
-        return {"ok": True, "channel": addr}
+        # Cloud first (spec §3.3): one session across all machines answers a source.
+        # A clash comes back as {ok: false, error: "held", held_by, move_allowed};
+        # `move: true` takes it over.
+        return manager.subscribe_session(session_id, addr, move=bool(body.get("move")))
 
     @app.post("/v1/subscriptions/remove")
     def unsubscribe(body: dict) -> dict[str, Any]:
@@ -367,12 +435,13 @@ def create_app(manager: SessionManager) -> FastAPI:
 
         session_id = str(body.get("session_id", "")).strip()
         addr = resolve_channel(str(body.get("channel", "")))
-        removed = manager.subscriptions.unsubscribe(session_id, addr)
+        removed = manager.unsubscribe_session(session_id, addr)
         return {"ok": True, "removed": removed}
 
     @app.get("/v1/inbox/reconcile")
     def reconcile_inbox(session_id: str) -> dict[str, Any]:
         # Called when a session resumes attended control (surface pending + recap inline).
+        manager.reconcile_obsolete_prompts(session_id)
         return manager.inbox.reconcile_on_resume(session_id)
 
     @app.get("/v1/inbox/routing")
@@ -392,7 +461,10 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.get("/v1/sessions/{session_id}/unattended")
     def get_unattended(session_id: str) -> dict[str, Any]:
-        return {"unattended": manager.unattended.is_unattended(session_id)}
+        return {
+            "unattended": manager.unattended.is_unattended(session_id),
+            "attendance": manager.unattended.attendance(session_id),
+        }
 
     @app.get("/v1/sessions/{session_id}/reviewer-stats")
     def get_reviewer_stats(session_id: str) -> dict[str, Any]:
@@ -403,8 +475,18 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/sessions/{session_id}/unattended")
     def set_unattended(session_id: str, body: dict) -> dict[str, Any]:
         # The GUI gates the on-transition behind a one-tap confirm; the manager records the
-        # transition either way, so the change is answerable from the audit store.
-        return manager.set_unattended(session_id, bool(body.get("unattended")))
+        # transition either way, so the change is answerable from the audit store. Newer
+        # clients send `attendance` ("attended" / "inbox" / "auto"); older ones the boolean.
+        value = body["attendance"] if "attendance" in body else bool(body.get("unattended"))
+        return manager.set_unattended(session_id, value)
+
+    @app.get("/v1/sessions/{session_id}/model-settings")
+    def session_model_settings(session_id: str, model: str = "") -> dict[str, Any]:
+        return manager.session_model_settings(session_id, model)
+
+    @app.post("/v1/sessions/{session_id}/model-settings")
+    def set_session_model_settings(session_id: str, body: dict) -> dict[str, Any]:
+        return manager.set_session_model_settings(session_id, body or {})
 
     @app.get("/v1/sessions/{session_id}/skills")
     def session_skills(session_id: str, workspace: str = "") -> dict[str, Any]:
@@ -752,6 +834,19 @@ def create_app(manager: SessionManager) -> FastAPI:
     def session_remove_root(session_id: str, path: str) -> dict[str, Any]:
         return manager.remove_root(session_id, path)
 
+    # OPE-219: the session's allowed sites, for its header chip and Access section.
+    @app.get("/v1/sessions/{session_id}/sites")
+    def session_sites(session_id: str) -> dict[str, Any]:
+        return {"sandbox": manager.session_sites(session_id)}
+
+    @app.post("/v1/sessions/{session_id}/sites")
+    def session_allow_site(session_id: str, body: dict) -> dict[str, Any]:
+        return manager.allow_session_site(session_id, str((body or {}).get("host", "")))
+
+    @app.delete("/v1/sessions/{session_id}/sites")
+    def session_remove_site(session_id: str, host: str) -> dict[str, Any]:
+        return manager.remove_session_site(session_id, host)
+
     @app.get("/v1/sessions/{session_id}/artifacts")
     def session_artifacts(session_id: str) -> dict[str, Any]:
         return {"artifacts": manager.list_artifacts(session_id)}
@@ -782,12 +877,13 @@ def create_app(manager: SessionManager) -> FastAPI:
         from fastapi.responses import Response
 
         try:
-            path = manager.attachment_store.path_for(name)
+            data, mime = manager.board_attachment(session_id, name)
         except TeamsBoardError as error:
             return JSONResponse({"error": str(error)}, status_code=404)
         return Response(
-            content=path.read_bytes(),
-            media_type=manager.attachment_store.mime_for(name),
+            content=data,
+            media_type=mime,
+            headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"},
         )
 
     @app.post("/v1/sessions/{session_id}/board/comment")
@@ -806,6 +902,11 @@ def create_app(manager: SessionManager) -> FastAPI:
             str(body.get("to", "")),
             comment=str(body.get("comment", "")),
         )
+
+    @app.get("/v1/teams/{team_id}/summary")
+    def team_summary(team_id: str):
+        result = manager.team_summary(team_id)
+        return JSONResponse(result, status_code=404 if "error" in result else 200)
 
     @app.get("/v1/teams/{team_id}/chat")
     def team_chat(team_id: str) -> dict[str, Any]:
@@ -837,11 +938,13 @@ def create_app(manager: SessionManager) -> FastAPI:
         if actor is None:
             return JSONResponse(
                 {"error": "board token required (Authorization: Bearer …) — mint"
-                          " one with `ocw board token` on the serving machine"},
+                          " one with `python -m coworker.teams.cli board token` on the serving machine"},
                 status_code=401,
             )
         try:
             return handler(actor)
+        except TeamsBoardNotFoundError as error:
+            return JSONResponse({"error": str(error)}, status_code=404)
         except TeamsAuthorityError as error:
             return JSONResponse({"error": str(error)}, status_code=403)
         except (TeamsBoardError, ValueError) as error:
@@ -873,8 +976,20 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.get("/v1/board/item")
     def board_get_item(request: Request, space: str, id: int):
         return _board(
-            request, lambda actor: manager.team_store.get_item(space, int(id))
+            request,
+            lambda actor: manager.team_store.get_item(space, int(id), actor=actor),
         )
+
+    @app.get("/v1/board/comments")
+    def board_comments(request: Request, space: str, id: int, after_seq: int = 0, limit: int = 20):
+        return _board(request, lambda actor: manager.team_store.comment_page(
+            space, id, actor=actor, after_seq=after_seq, limit=limit))
+
+    @app.get("/v1/board/comment")
+    def board_comment_text(request: Request, space: str, id: int, seq: int,
+                           offset: int = 0, max_chars: int = 12000):
+        return _board(request, lambda actor: manager.team_store.comment_text(
+            space, id, actor=actor, seq=seq, offset=offset, max_chars=max_chars))
 
     @app.post("/v1/board/items")
     def board_create_item(request: Request, body: dict):
@@ -918,16 +1033,18 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/board/items/comment")
     def board_comment_item(request: Request, body: dict):
         body = body or {}
-        return _board(
-            request,
-            lambda actor: manager.team_store.comment(
+        def run(actor):
+            result = manager.team_store.comment(
                 str(body.get("space", "")),
                 actor,
                 int(body.get("id", 0)),
                 str(body.get("body", "")),
                 refs=[str(ref) for ref in body.get("refs") or []],
-            ),
-        )
+                needs_attention=body.get("needs_attention", False),
+            )
+            manager.kick_team_tick()
+            return result
+        return _board(request, run)
 
     @app.post("/v1/board/items/assign")
     def board_assign_item(request: Request, body: dict):
@@ -944,6 +1061,12 @@ def create_app(manager: SessionManager) -> FastAPI:
             return item
 
         return _board(request, run)
+
+    @app.post("/v1/board/items/status")
+    def board_set_status(request: Request, body: dict):
+        return _board(request, lambda actor: manager.team_store.set_status(
+            str(body.get("space", "")), actor, body.get("id"), body.get("text")
+        ))  # Display-only: deliberately no team tick.
 
     @app.post("/v1/board/items/claim")
     def board_claim_item(request: Request, body: dict):
@@ -977,6 +1100,9 @@ def create_app(manager: SessionManager) -> FastAPI:
         body = body or {}
 
         def run(actor):
+            manager.team_store.require_attachment_write(
+                str(body.get("space", "")), actor, int(body.get("id", 0))
+            )
             raw = str(body.get("data_b64", ""))
             # Cheap pre-decode bound: base64 is ~4/3 of the payload, so anything
             # multiples over the cap is refused before allocating the decode.
@@ -994,26 +1120,28 @@ def create_app(manager: SessionManager) -> FastAPI:
                 data, str(body.get("filename", ""))
             )
             filename = str(body.get("filename", ""))
-            event = manager.team_store.comment(
+            event = manager.team_store.attach_ref(
                 str(body.get("space", "")),
                 actor,
                 int(body.get("id", 0)),
                 str(body.get("caption", "")) or f"attached {filename}",
-                refs=[ref],
+                ref,
             )
             return {"ref": ref, "seq": event["seq"]}
 
         return _board(request, run)
 
     @app.get("/v1/board/attachment")
-    def board_attachment(request: Request, name: str):
+    def board_attachment(request: Request, name: str, space: str):
         def run(actor):
             from fastapi.responses import Response
 
+            manager.team_store.require_attachment_access(space, actor, name)
             path = manager.attachment_store.path_for(name)
             return Response(
                 content=path.read_bytes(),
                 media_type=manager.attachment_store.mime_for(name),
+                headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"},
             )
 
         return _board(request, run)
@@ -1193,9 +1321,28 @@ def create_app(manager: SessionManager) -> FastAPI:
     def mcp_delete(name: str) -> dict[str, Any]:
         return manager.delete_mcp(name)
 
+    @app.post("/v1/mcp/config/reveal")
+    def mcp_config_reveal() -> dict[str, Any]:
+        return manager.reveal_mcp_config()
+
     @app.get("/v1/mcp/{name}/tools")
     async def mcp_tools(name: str) -> dict[str, Any]:
         return await manager.mcp_tools(name)
+
+    # OPE-136 §4/§5: the server detail page's trust surface — which tools carry a
+    # standing "don't ask" rule, revoke one, and the one-click migration off the
+    # legacy server-wide requires_approval flag.
+    @app.get("/v1/mcp/{name}/trust")
+    def mcp_trust(name: str) -> dict[str, Any]:
+        return manager.mcp_trust(name)
+
+    @app.delete("/v1/mcp/{name}/trust/{tool}")
+    def mcp_trust_revoke(name: str, tool: str) -> dict[str, Any]:
+        return manager.revoke_mcp_trust(name, tool)
+
+    @app.post("/v1/mcp/{name}/trust/convert")
+    async def mcp_trust_convert(name: str) -> dict[str, Any]:
+        return await manager.convert_mcp_trust(name)
 
     @app.post("/v1/mcp/{name}/connect")
     async def mcp_connect(name: str) -> dict[str, Any]:
@@ -1296,6 +1443,213 @@ def create_app(manager: SessionManager) -> FastAPI:
             return {"ok": False, "error": f"{name} has no MCP connect path"}
         asyncio.create_task(manager.mcp_connect_connector(name))
         return {"ok": True, "started": True}
+
+    @app.get("/v1/connectors/{name}/handoff-info")
+    def connector_handoff_info_route(name: str) -> dict[str, Any]:
+        """Grant handoff (spec §Remote OAuth): whether this connector's grant
+        can move to a machine, and which profile keys the move carries. The
+        GUI then wallet-sends those names (sealed, existing path) and
+        disconnects here — one grant, one holder."""
+        from ..connectors.setup import connector_handoff_info
+
+        return connector_handoff_info(manager.secrets, name)
+
+    @app.post("/v1/connectors/{name}/delegate")
+    async def connector_delegate(name: str, body: Optional[dict] = None) -> dict[str, Any]:
+        """Handoff step for managed grants: mark each of this connector's
+        managed connections machine-held at the broker, and stamp the
+        broker's opaque user_id into the profile — it travels with the grant
+        so the machine can renew by possession.
+
+        With the target machine's `seal_pubkey` in the body, the broker also
+        mints the machine credential (spec §Managed events) — stamped
+        alongside. Delegation is ONE call per connection_id: several profiles
+        can share a connection (every Slack workspace does), and a second
+        call would rotate the credential the first one minted."""
+        from .. import cloud
+        from ..config import load_config
+        from ..connectors.setup import connector_profile_keys
+
+        cfg = load_config()
+        seal_pubkey = str((body or {}).get("seal_pubkey") or "")
+        # Hosted machines only (spec §Fly sandboxes): the id the machines
+        # service knows, so the broker can wake a sleeping sandbox on events.
+        machine_id = str((body or {}).get("machine_id") or "")
+        grants: dict[str, dict[str, str]] = {}  # connection_id → delegate result
+        delegated: list[str] = []
+        failed: list[str] = []
+        for key in connector_profile_keys(manager.secrets, name):
+            # The slack/github pointers hold no grant of their own — they're
+            # stamped after the loop from the minted grant.
+            if name in ("slack", "github") and key == f"{name}:default":
+                continue
+            profile = manager.secrets.get(key) or {}
+            if not profile.get("managed"):
+                continue
+            connection_id = str(profile.get("connection_id") or "")
+            if not connection_id:
+                failed.append(key)
+                continue
+            if connection_id not in grants:
+                grant = await asyncio.to_thread(
+                    lambda cid=connection_id: cloud.delegate_connection(
+                        manager.secrets, cfg, cid, seal_pubkey=seal_pubkey, machine_id=machine_id
+                    )
+                )
+                if not grant:
+                    failed.append(key)
+                    continue
+                grants[connection_id] = grant
+            profile["broker_user_id"] = grants[connection_id]["user_id"]
+            if grants[connection_id].get("machine_credential"):
+                profile["machine_credential"] = grants[connection_id]["machine_credential"]
+            manager.secrets.put(key, profile)
+            delegated.append(key)
+        # The poll adapter (slack) and the delegated mint (github) read the
+        # pointer profile, which carries no connection_id of its own — stamp
+        # it with the (single) grant.
+        if name in ("slack", "github") and grants:
+            connection_id, grant = next(iter(grants.items()))
+            pointer = manager.secrets.get(f"{name}:default") or {}
+            pointer["connection_id"] = connection_id
+            pointer["broker_user_id"] = grant["user_id"]
+            if grant.get("machine_credential"):
+                pointer["machine_credential"] = grant["machine_credential"]
+            manager.secrets.put(f"{name}:default", pointer)
+        if failed:
+            return {
+                "ok": False,
+                "error": "could not delegate: " + ", ".join(sorted(failed)),
+                "delegated": delegated,
+            }
+        return {"ok": True, "delegated": delegated}
+
+    # -- broker views for the desktop GUI (UX-049 4c): the dashboard calls the
+    # broker directly with the user's token; the desktop goes through here so
+    # the token never leaves the sidecar. Explicit paths, no generic proxy.
+    async def _broker(method: str, path: str, body: Optional[dict] = None) -> Any:
+        from .. import cloud
+        from ..config import load_config
+
+        status, data = await asyncio.to_thread(
+            cloud.broker_request, manager.secrets, load_config(), method, path, body
+        )
+        if status == 0:
+            return JSONResponse({"error": "cloud unreachable"}, status_code=502)
+        return JSONResponse(data, status_code=status)
+
+    @app.get("/v1/cloud/connections")
+    async def cloud_connections() -> Any:
+        return await _broker("GET", "/v1/connections")
+
+    @app.post("/v1/cloud/connections/{connection_id}/delegate")
+    async def cloud_connection_delegate(connection_id: str, body: dict) -> Any:
+        return await _broker("POST", f"/v1/connections/{connection_id}/delegate", body or {})
+
+    @app.post("/v1/cloud/connections/{connection_id}/default-machine")
+    async def cloud_connection_default_machine(connection_id: str, body: dict) -> Any:
+        return await _broker("POST", f"/v1/connections/{connection_id}/default-machine", body or {})
+
+    @app.delete("/v1/cloud/connections/{connection_id}/holders/{machine_id}")
+    async def cloud_connection_forget_holder(connection_id: str, machine_id: str) -> Any:
+        return await _broker("DELETE", f"/v1/connections/{connection_id}/holders/{machine_id}")
+
+    @app.get("/v1/cloud/subscriptions")
+    async def cloud_subscriptions(connector: str = "") -> Any:
+        return await _broker("GET", "/v1/subscriptions" + (f"?connector={connector}" if connector else ""))
+
+    @app.post("/v1/cloud/subscriptions/remove")
+    async def cloud_subscriptions_remove(body: dict) -> Any:
+        return await _broker("POST", "/v1/subscriptions/remove", body or {})
+
+    @app.get("/v1/cloud/people")
+    async def cloud_people(connector: str = "", scope: str = "") -> Any:
+        q = "&".join(p for p in (f"connector={connector}" if connector else "", f"scope={scope}" if scope else "") if p)
+        return await _broker("GET", "/v1/people" + (f"?{q}" if q else ""))
+
+    @app.post("/v1/cloud/people")
+    async def cloud_people_add(body: dict) -> Any:
+        return await _broker("POST", "/v1/people", body or {})
+
+    @app.post("/v1/cloud/people/remove")
+    async def cloud_people_remove(body: dict) -> Any:
+        return await _broker("POST", "/v1/people/remove", body or {})
+
+    # Configurations (connectors spec §10): the GitHub glance page's rows.
+    @app.get("/v1/cloud/configurations")
+    async def cloud_configurations(connector: str = "github") -> Any:
+        return await _broker("GET", f"/v1/configurations?connector={connector}")
+
+    @app.post("/v1/cloud/configurations")
+    async def cloud_configurations_add(body: dict) -> Any:
+        return await _broker("POST", "/v1/configurations", body or {})
+
+    @app.post("/v1/cloud/configurations/{config_id}/edit")
+    async def cloud_configurations_edit(config_id: str, body: dict) -> Any:
+        return await _broker("POST", f"/v1/configurations/{config_id}/edit", body or {})
+
+    @app.delete("/v1/cloud/configurations/{config_id}")
+    async def cloud_configurations_delete(config_id: str) -> Any:
+        return await _broker("DELETE", f"/v1/configurations/{config_id}")
+
+    @app.post("/v1/cloud/connections/{name}/revoke")
+    async def cloud_revoke_connections(name: str) -> dict[str, Any]:
+        """Revoke a connector's broker connections by NAME (machines spec
+        §Managed events, drill finding): the completion of a machine-scope
+        disconnect for a MANAGED grant. The box deletes its copy over the
+        proxy; this — from the desktop, which holds the session — kills the
+        delegation at the broker so events stop queueing for a machine that
+        no longer listens. Best-effort and idempotent."""
+        from .. import cloud
+        from ..config import load_config
+
+        revoked = await asyncio.to_thread(
+            lambda: cloud.revoke_connector_connections(
+                manager.secrets, load_config(), name
+            )
+        )
+        return {"ok": True, "revoked": revoked}
+
+    @app.post("/v1/connectors/{name}/handoff-sealed")
+    async def connector_handoff_sealed(name: str, body: dict) -> dict[str, Any]:
+        """Enable on another machine FROM this one (UX-049, spec §2): this
+        engine's profiles for the connector, stamped with the grant the
+        caller obtained for the target (its broker user id + machine
+        credential), sealed to the target's pinned key. The caller relays the
+        ciphertext to the target's deploy route; no plaintext ever leaves
+        this process. Nothing is forgotten here — Enable is a copy."""
+        from ..connectors.setup import connector_handoff_info, connector_profile_keys
+        from ..remote.identity import seal_b64
+
+        seal_pubkey = str((body or {}).get("seal_pubkey") or "")
+        grant = dict((body or {}).get("grant") or {})
+        if not seal_pubkey:
+            return {"ok": False, "error": "seal_pubkey required"}
+        info = connector_handoff_info(manager.secrets, name)
+        if not info.get("ok") or not info.get("portable"):
+            return {"ok": False, "error": info.get("error") or f"{name} can't be copied to a machine", "reason": info.get("reason", "")}
+        if info.get("needs_delegation") and not (grant.get("user_id") and grant.get("machine_credential")):
+            return {"ok": False, "error": "a delegated grant for the target machine is required"}
+        profiles: dict[str, Any] = {}
+        for key in connector_profile_keys(manager.secrets, name):
+            data = dict(manager.secrets.get(key) or {})
+            if data.get("managed") or (name in ("slack", "github") and key == f"{name}:default"):
+                if grant.get("user_id"):
+                    data["broker_user_id"] = grant["user_id"]
+                if grant.get("machine_credential"):
+                    data["machine_credential"] = grant["machine_credential"]
+            profiles[key] = data
+        sealed = seal_b64(seal_pubkey, json.dumps({"profiles": profiles}).encode())
+        return {"ok": True, "sealed_b64": sealed, "profiles": sorted(profiles)}
+
+    @app.post("/v1/connectors/{name}/forget-local")
+    async def connector_forget_local(name: str) -> dict[str, Any]:
+        """The handoff's forget step: delete local profiles WITHOUT telling
+        the broker — the connection is not ending, it MOVED, and a broker
+        disconnect would revoke the delegation the machine now lives on."""
+        from ..connectors.setup import disconnect_connector as _local_disconnect
+
+        return await asyncio.to_thread(_local_disconnect, manager.secrets, name)
 
     @app.post("/v1/connectors/{name}/disconnect")
     async def connector_disconnect(name: str) -> dict[str, Any]:
@@ -1580,29 +1934,117 @@ def create_app(manager: SessionManager) -> FastAPI:
             }
         access = str((body or {}).get("access") or "")
         flow = str((body or {}).get("flow") or "")  # github: "" install | "authorize"
+        # Machine-targeted connect (machines spec §Remote OAuth): OAuth still
+        # completes in THIS browser, but the callback ships the grant — sealed —
+        # to the named machine and stores nothing locally. GitHub included:
+        # its install-flow callback stages every returned installation (the
+        # same unit a Move ships) — metadata + credential, no secrets.
+        machine_id = str((body or {}).get("machine_id") or "")
+        machine_name = str((body or {}).get("machine_name") or "")
         out = await asyncio.to_thread(
             lambda: cloud.begin_managed_connect(
-                manager.secrets, load_config(), name, access=access, flow=flow
+                manager.secrets,
+                load_config(),
+                name,
+                access=access,
+                flow=flow,
+                machine_id=machine_id,
+                machine_name=machine_name,
             )
         )
         if out.get("ok"):
             webbrowser.open(out["authorize_url"])
         return out
 
+    @asynccontextmanager
+    async def _machine_api(machine_id: str):
+        """A client aimed at the machine's controller, by the GUI's id
+        convention: `cloud:`-prefixed ids go to the hosted machines service
+        under the user's cloud session; bare ids are this controller's own
+        machines, reached through its acceptor routes in-process — same
+        sealing, ledger, and audit as a GUI call. Yields (client, headers,
+        bare machine id); raises RuntimeError for a missing cloud session."""
+        import httpx as _httpx
+
+        from .. import cloud
+        from ..config import load_config
+
+        if machine_id.startswith("cloud:"):
+            token = await asyncio.to_thread(
+                cloud.fresh_access_token, manager.secrets, load_config()
+            )
+            if not token:
+                raise RuntimeError("cloud session expired — sign in again")
+            async with _httpx.AsyncClient(
+                base_url=load_config().cloud_machines_base.rstrip("/"), timeout=30
+            ) as client:
+                yield client, {"Authorization": f"Bearer {token}"}, machine_id[
+                    len("cloud:") :
+                ]
+            return
+        async with _httpx.AsyncClient(
+            transport=_httpx.ASGITransport(app=app),
+            base_url="http://sidecar",
+            timeout=30,
+        ) as client:
+            yield client, (
+                {"X-OpenWorker-Token": api_token} if api_token else {}
+            ), machine_id
+
+    async def _find_machine(client, headers: dict, mid: str) -> Optional[dict]:
+        r = await client.get("/v1/machines", headers=headers)
+        rows = r.json().get("machines", []) if r.status_code == 200 else []
+        return next((m for m in rows if m.get("id") == mid), None)
+
+    async def _post_sealed_profiles(
+        client, headers: dict, mid: str, seal_pubkey: str, profiles: dict[str, Any]
+    ) -> dict[str, Any]:
+        from ..remote.acceptor import _hash_profile
+        from ..remote.identity import seal_b64
+
+        names = sorted(profiles)
+        sealed = seal_b64(seal_pubkey, json.dumps({"profiles": profiles}).encode())
+        r = await client.post(
+            f"/v1/machines/{mid}/secrets",
+            json={
+                "sealed_b64": sealed,
+                "profiles": names,
+                "hashes": {n: _hash_profile(profiles[n]) for n in names},
+            },
+            headers=headers,
+        )
+        if r.status_code != 200:
+            detail = {}
+            try:
+                detail = r.json()
+            except ValueError:
+                pass
+            return {
+                "ok": False,
+                "error": str(
+                    detail.get("message") or detail.get("error") or "deploy failed"
+                ),
+            }
+        return {"ok": True}
+
     @app.post("/oauth/callback")
     async def managed_oauth_callback(request: Request) -> Any:
         from fastapi.responses import HTMLResponse
 
         from .. import cloud
+        from ..config import load_config
         from ..connectors.setup import (
-            managed_connect_connector,
             managed_connect_slack_install,
+            store_managed_grant,
+            store_managed_grant_bundle,
         )
+        from ..secrets import EphemeralSecretStore
 
         form = await request.form()
         data = {k: str(v) for k, v in form.items()}
         connector = data.get("connector", "")
-        if not cloud.consume_managed_state(data.get("app_state", "")):
+        pending = cloud.consume_managed_state(data.get("app_state", ""))
+        if pending is None:
             return HTMLResponse(
                 _browser_page(
                     "Connection failed",
@@ -1622,12 +2064,105 @@ def create_app(manager: SessionManager) -> FastAPI:
                 ),
                 status_code=400,
             )
+        # Machine-targeted connect (machines spec §Remote OAuth + §Managed
+        # events): the grant is for another machine — delegate at the broker
+        # (minting the machine credential against the machine's pinned key),
+        # stage through the normal storage layers into an in-memory store,
+        # seal, deploy, and store NOTHING locally (one grant, one holder).
+        # `stage(staging, grant)` is the per-family staging step.
+        target_machine = str(pending.get("machine_id") or "")
+        machine_label = str(pending.get("machine_name") or "") or "the machine"
+
+        async def _targeted_handoff(connection_id: str, stage) -> HTMLResponse:
+            import httpx as _httpx
+
+            def _handoff_failed(error: str, *, status: int = 400) -> HTMLResponse:
+                return HTMLResponse(
+                    _browser_page(
+                        "Connection failed",
+                        f"The connection for {machine_label} could not be completed "
+                        "— nothing was stored anywhere. Connect again from the "
+                        "machine's Connectors page.",
+                        ok=False,
+                        error=error,
+                    ),
+                    status_code=status,
+                )
+
+            if not connection_id:
+                return _handoff_failed("no connection id from the broker")
+            try:
+                async with _machine_api(target_machine) as (mclient, mheaders, mid):
+                    row = await _find_machine(mclient, mheaders, mid)
+                    if row is None:
+                        return _handoff_failed("unknown machine")
+                    seal_pubkey = str(row.get("seal_pubkey") or "")
+                    if not seal_pubkey:
+                        return _handoff_failed(
+                            "machine has no pinned sealing key yet"
+                        )
+                    # Delegate WITH the seal key: the broker mints the machine
+                    # credential and flips this connection's events to the
+                    # machine's sealed queue in the same stroke.
+                    grant = await asyncio.to_thread(
+                        lambda: cloud.delegate_connection(
+                            manager.secrets,
+                            load_config(),
+                            connection_id,
+                            seal_pubkey=seal_pubkey,
+                            # Hosted rows only: the machines service's own id.
+                            machine_id=mid if target_machine.startswith("cloud:") else "",
+                        )
+                    )
+                    if not grant:
+                        return _handoff_failed(
+                            "could not delegate the connection for machine renewal"
+                        )
+                    staging = EphemeralSecretStore()
+                    staged = stage(staging, grant)
+                    if not staged.get("ok"):
+                        return _handoff_failed(
+                            staged.get("error", "could not stage the grant")
+                        )
+                    deployed = await _post_sealed_profiles(
+                        mclient, mheaders, mid, seal_pubkey, staging.profiles()
+                    )
+                    if not deployed.get("ok"):
+                        return _handoff_failed(
+                            deployed.get("error", "deploy failed"), status=502
+                        )
+            except RuntimeError as exc:
+                return _handoff_failed(str(exc))
+            except _httpx.HTTPError as exc:
+                return _handoff_failed(
+                    f"machine unreachable: {type(exc).__name__}", status=502
+                )
+            return HTMLResponse(
+                _browser_page(
+                    f"{_connector_title(connector)} connected on {machine_label}",
+                    "The connection lives on that machine and renews there. "
+                    "This Mac holds nothing. You can close this tab.",
+                    connector=connector,
+                )
+            )
+
         # Managed GitHub deliberately carries NO token fields — the loopback POST
         # is routing metadata only (installation tokens are minted on demand,
         # github-relay-spec §4) — so its branch precedes the access_token check.
         if connector == "github" and data.get("installation_id"):
             from ..connectors.github_installs import managed_connect_install
 
+            if target_machine:
+                # Connect-direct: the shared bundle routine stages EVERY
+                # installation the callback returned (the same unit a Move
+                # ships) and stamps the delegation — one implementation with
+                # the box's browser-sealed path.
+                return await _targeted_handoff(
+                    data.get("connection_id", ""),
+                    lambda staging, grant: store_managed_grant_bundle(
+                        staging, "github", data, grant
+                    ),
+                )
             result = managed_connect_install(manager.secrets, data)
             if result.get("ok"):
                 await manager.refresh_gateway()  # hot-add, like a workspace
@@ -1658,6 +2193,13 @@ def create_app(manager: SessionManager) -> FastAPI:
                 ),
                 status_code=400,
             )
+        if target_machine and connector != "github":
+            return await _targeted_handoff(
+                data.get("connection_id", ""),
+                lambda staging, grant: store_managed_grant_bundle(
+                    staging, connector, data, grant
+                ),
+            )
         # Managed Slack is multi-workspace + relay: store the per-team bot token
         # and flip to relay mode, rather than the single-token connector path.
         if connector == "slack" and data.get("team_id"):
@@ -1666,33 +2208,9 @@ def create_app(manager: SessionManager) -> FastAPI:
                 # Hot-add: rebuild the gateway so the new workspace's token loads
                 # (and the relay socket opens on a first-ever install) right away.
                 await manager.refresh_gateway()
-        elif connector == "gmail":
-            # Multi-account: each sign-in lands in its own gmail:account:<email>
-            # profile; the first becomes the default mailbox.
-            from ..connectors import gmail_accounts
-
-            result = gmail_accounts.managed_connect_account(
-                manager.secrets, cloud.managed_profile_from_callback(data)
-            )
-        elif connector == "google_calendar":
-            # Multi-account, same shape as gmail: google_calendar:account:<email>.
-            from ..connectors import gcal_accounts
-
-            result = gcal_accounts.managed_connect_account(
-                manager.secrets, cloud.managed_profile_from_callback(data)
-            )
-        elif connector == "hubspot" and data.get("hub_id"):
-            # Multi-portal: keyed by hub_id (broker sends it like Slack's team_id).
-            from ..connectors import hubspot_portals
-
-            profile = cloud.managed_profile_from_callback(data)
-            profile["hub_id"] = data.get("hub_id", "")
-            if data.get("sandbox"):
-                profile["sandbox"] = True
-            result = hubspot_portals.managed_connect_portal(manager.secrets, profile)
         else:
-            result = managed_connect_connector(
-                manager.secrets, connector, cloud.managed_profile_from_callback(data)
+            result = store_managed_grant(
+                manager.secrets, connector, data, cloud.managed_profile_from_callback(data)
             )
         if not result.get("ok"):
             return HTMLResponse(
@@ -1819,15 +2337,29 @@ def create_app(manager: SessionManager) -> FastAPI:
         return manager.get_providers()
 
     @app.post("/v1/providers")
-    def providers_set(body: dict) -> dict[str, Any]:
+    async def providers_set(body: dict) -> dict[str, Any]:
         name = (body or {}).get("name", "")
         if not name:
             return {"ok": False, "error": "name required"}
-        return manager.set_provider(name, (body or {}).get("fields"))
+        if name == "openrouter-account":
+            openrouter_auth.cancel()
+            return manager.set_provider(name, (body or {}).get("fields"))
+        return await asyncio.to_thread(manager.set_provider, name, (body or {}).get("fields"))
 
     @app.delete("/v1/providers/{name}")
-    def providers_remove(name: str) -> dict[str, Any]:
-        return manager.remove_provider(name)
+    async def providers_remove(name: str) -> dict[str, Any]:
+        if name == "openrouter-account":
+            openrouter_auth.cancel()
+            return manager.remove_provider(name)
+        return await asyncio.to_thread(manager.remove_provider, name)
+
+    @app.get("/v1/providers/{name}/models")
+    def providers_local_models(name: str) -> dict[str, Any]:
+        return manager.local_model_facts(name)
+
+    @app.get("/v1/system")
+    def system_get() -> dict[str, Any]:
+        return manager.system_facts()
 
     @app.post("/v1/providers/verify")
     async def providers_verify(body: dict) -> dict[str, Any]:
@@ -1846,6 +2378,26 @@ def create_app(manager: SessionManager) -> FastAPI:
         manager.begin_codex_signin()
         asyncio.create_task(manager.codex_signin())
         return {"ok": True, "started": True}
+
+    @app.get("/v1/providers/openrouter-account/status")
+    async def openrouter_status():
+        return openrouter_auth.status()
+
+    @app.post("/v1/providers/openrouter-account/signin")
+    async def openrouter_signin(body: dict):
+        return await openrouter_auth.start(manual=body.get("manual") is True)
+
+    @app.post("/v1/providers/openrouter-account/complete")
+    async def openrouter_complete(body: dict):
+        return await openrouter_auth.complete(body.get("code"), body.get("attempt_id"))
+
+    @app.post("/v1/providers/openrouter-account/cancel")
+    async def openrouter_cancel():
+        return openrouter_auth.cancel()
+
+    @app.post("/v1/providers/openrouter-account/disconnect")
+    async def openrouter_disconnect():
+        return openrouter_auth.disconnect()
 
     @app.get("/v1/providers/openai-codex/status")
     def codex_status() -> dict[str, Any]:
@@ -1875,6 +2427,20 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/settings/models/remove")
     def settings_models_remove(body: dict) -> dict[str, Any]:
         return manager.remove_model((body or {}).get("model", ""))
+
+    # Per-model settings (model_config.py). Model ids carry colons and slashes, so the
+    # id travels in the body or the query, never the path.
+    @app.get("/v1/settings/model-config")
+    def settings_model_config_get(model: str = "") -> dict[str, Any]:
+        return manager.get_model_config(model)
+
+    @app.post("/v1/settings/model-config")
+    def settings_model_config_set(body: dict) -> dict[str, Any]:
+        return manager.set_model_config((body or {}).get("model", ""), (body or {}).get("values") or {})
+
+    @app.post("/v1/settings/model-config/remove")
+    def settings_model_config_remove(body: dict) -> dict[str, Any]:
+        return manager.remove_model_config((body or {}).get("model", ""))
 
     @app.post("/v1/settings/onboarded")
     def settings_set_onboarded(body: dict) -> dict[str, Any]:
@@ -1930,6 +2496,67 @@ def create_app(manager: SessionManager) -> FastAPI:
             max_pages=b.get("pdf_max_pages"),
             max_mb=b.get("pdf_max_mb"),
         )
+
+    @app.get("/v1/settings/sandbox")
+    def settings_get_sandbox() -> dict[str, Any]:
+        # Settings ▸ Sandbox (UX-051 A): provider, network profile, credential grants.
+        # Machine-level, read from the machine's config.toml.
+        from ..sandbox import settings as sandbox_settings
+
+        return sandbox_settings.snapshot()
+
+    @app.post("/v1/settings/sandbox")
+    def settings_set_sandbox(body: dict) -> dict[str, Any]:
+        from ..sandbox import settings as sandbox_settings
+
+        result = sandbox_settings.update(body or {})
+        if result.get("ok") and "provider" in (body or {}):
+            # Live sessions built under the old rule are rebuilt on their next connection;
+            # the app reconnects the one on screen (see App.tsx, onSandboxProviderChanged).
+            result["rebuilt_sessions"] = manager.apply_sandbox_setting()
+        return result
+
+    @app.get("/v1/settings/sandbox/readiness")
+    async def settings_sandbox_readiness() -> dict[str, Any]:
+        # OPE-207: the checklist behind "Set up sandbox". A few CLI calls, so off the loop.
+        from ..sandbox import settings as sandbox_settings
+
+        return await asyncio.to_thread(sandbox_settings.readiness)
+
+    @app.get("/v1/settings/sandbox/setup")
+    def settings_sandbox_setup_state() -> dict[str, Any]:
+        from ..sandbox import setup_job
+
+        return setup_job.job().state()
+
+    @app.post("/v1/settings/sandbox/setup")
+    def settings_sandbox_setup_start() -> dict[str, Any]:
+        # Runs on its own thread: fixes what the app may fix (never as root), hands the
+        # rest over as commands, downloads the image with progress. GET polls the state.
+        from ..sandbox import setup_job
+
+        return setup_job.job().start()
+
+    @app.post("/v1/settings/sandbox/setup/cancel")
+    def settings_sandbox_setup_cancel() -> dict[str, Any]:
+        from ..sandbox import setup_job
+
+        return setup_job.job().cancel()
+
+    @app.post("/v1/settings/sandbox/windows/setup")
+    def settings_sandbox_windows_setup() -> dict[str, Any]:
+        # UX-053: the Windows setup dialog. Runs the elevated setup (Windows shows its own
+        # prompt), proves the wall in a throwaway sandbox, then makes it the choice. Blocks
+        # until Windows answers, unlike the OpenShell setup job above.
+        from ..sandbox import settings as sandbox_settings
+
+        return sandbox_settings.run_windows_setup()
+
+    @app.post("/v1/settings/sandbox/windows/remove")
+    def settings_sandbox_windows_remove() -> dict[str, Any]:
+        from ..sandbox import settings as sandbox_settings
+
+        return sandbox_settings.run_windows_remove()
 
     @app.post("/v1/settings/compaction")
     def settings_set_compaction(body: dict) -> dict[str, Any]:
@@ -2033,6 +2660,10 @@ def create_app(manager: SessionManager) -> FastAPI:
             return
         await ws.accept(subprotocol="openworker" if api_token else None)
         agent = ws.query_params.get("agent") or "code"
+        # Session actor (spec §Fleet under the org): only the channel bridge can
+        # present this header (a joined box has no listener), and the controller
+        # sets it from the login it verified. First writer wins.
+        manager.note_session_actor(session_id, ws.headers.get("x-openworker-actor", ""))
 
         # All four interactive prompts (approval / question / directory / plan) are parked as Inbox
         # items and awaited via inbox.wait — so they survive a dropped socket (redelivered on
@@ -2059,14 +2690,9 @@ def create_app(manager: SessionManager) -> FastAPI:
             item = manager.inbox.add_approval(
                 session_id,
                 f"Run `{_request.tool_name}`?",
-                body="\n".join(
-                    p
-                    for p in (
-                        (getattr(_request, "reason", "") or "").strip(),
-                        args_preview(getattr(_request, "arguments", None)),
-                    )
-                    if p
-                ),
+                # Shared with inbox_approver so parked/mirrored bodies match the live
+                # card's dialect (boilerplate-reason filtering included, §35).
+                body=_approval_body(_request),
                 inbox=_route(),
                 visibility=_visibility(),
                 # Automation-run context (manual "Run now" rides this socket): lets the
@@ -2074,6 +2700,15 @@ def create_app(manager: SessionManager) -> FastAPI:
                 data=manager.approval_prompt_data(session_id, _request),
                 tool_call_id=getattr(_request, "tool_call_id", None),
             )
+            if item.state == "pending":
+                # §11.6: a worker parked here under a Manual lead — tell its lead via the
+                # board, with what it needs to decide (the prompt id is the call_id).
+                manager.note_worker_waiting(
+                    session_id,
+                    _request.tool_name,
+                    prompt_id=item.id,
+                    preview=args_preview(getattr(_request, "arguments", None)) or "",
+                )
             if (
                 item.state == "pending"
             ):  # freshly raised (not a durable-resume re-raise)
@@ -2103,6 +2738,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             if item.state == "pending":
                 manager.persist_session(session_id)
+                manager.note_worker_waiting(session_id, "ask_user", prompt_id=item.id, preview=item.title)
                 if item.visibility == VIS_INBOX:
                     await _mirror(item)
                 else:
@@ -2289,81 +2925,14 @@ def create_app(manager: SessionManager) -> FastAPI:
                 }
             return {"approved": True, "mode": resp.get("mode") or "interactive"}
 
-        async def team_approver(_args: dict, tool_call_id=None) -> dict:
-            # The staffing gate. The engine already emitted TEAM_PROPOSED; park an
-            # Inbox item as the durable resolution vehicle, wait for the verdict, and
-            # on approval PRE-SPAWN the team (create_team fails closed on non-worker
-            # personas, so a bad roster reads as a rejection with the reason).
-            members = _args.get("members") or []
-            roster = "\n".join(
-                f"- {m.get('persona', '?')}"
-                + (f" · {m['model']}" if m.get("model") else "")
-                + (f" — {m['reason']}" if m.get("reason") else "")
-                for m in members
-                if isinstance(m, dict)
-            )
-            item = manager.inbox.add_plan(
-                session_id,
-                "Create this team?",
-                body=roster,
-                inbox=_route(),
-                visibility=_visibility(),
-                tool_call_id=tool_call_id,
-            )
-            if item.state == "pending":
-                manager.persist_session(session_id)
-                if item.visibility == VIS_INBOX:
-                    await _mirror(item)
-            resp = _parse_json(await manager.inbox.wait(item.id))
-            if not resp.get("approved"):
-                return {
-                    "approved": False,
-                    "feedback": resp.get("feedback") or "the user declined this roster",
-                }
-            # The gate checkbox is the USER's call: an explicit enable_chat in the
-            # response overrides whatever the lead proposed.
-            enable_chat = bool(
-                resp["enable_chat"]
-                if "enable_chat" in resp
-                else _args.get("enable_chat", False)
-            )
-            return manager.create_team(
-                session_id,
-                [m for m in members if isinstance(m, dict)],
-                enable_chat=enable_chat,
-            )
+        # §11.6: the connector asks and the team gates are manager handlers now (they
+        # must work on background turns too); the socket only supplies attended
+        # visibility so the prompt renders inline when someone is watching.
+        connector_requester = manager.inbox_connector_requester(session_id, agent, visibility=_visibility)
 
-        async def items_approver(_args: dict, tool_call_id=None) -> dict:
-            # The decomposition gate. TEAMS-flavored sibling of plan_approver:
-            # park a durable Inbox item, wait, and on approval create the items.
-            items = _args.get("items") or []
-            body = "\n".join(
-                f"- {i.get('title', '?')} — Done when: {i.get('criteria', '?')}"
-                for i in items
-                if isinstance(i, dict)
-            )
-            item = manager.inbox.add_plan(
-                session_id,
-                "Approve the proposed work items?",
-                body=body,
-                inbox=_route(),
-                visibility=_visibility(),
-                tool_call_id=tool_call_id,
-            )
-            if item.state == "pending":
-                manager.persist_session(session_id)
-                if item.visibility == VIS_INBOX:
-                    await _mirror(item)
-            resp = _parse_json(await manager.inbox.wait(item.id))
-            if not resp.get("approved"):
-                return {
-                    "approved": False,
-                    "feedback": resp.get("feedback") or "the user declined the split",
-                }
-            return manager.board_create_items(
-                session_id, [i for i in items if isinstance(i, dict)]
-            )
+        team_approver = manager.inbox_team_approver(session_id, agent, visibility=_visibility)
 
+        items_approver = manager.inbox_items_approver(session_id, agent, visibility=_visibility)
         async def _apply_model(model: Optional[str]) -> None:
             # Mid-session rebind is allowed (roadmap item 3, supersedes the 2026-07-04
             # lock): history is canonical and providers convert per call. A real switch
@@ -2373,6 +2942,9 @@ def create_app(manager: SessionManager) -> FastAPI:
             # old lock existed to prevent.
             if not model or manager.is_running(session_id):
                 return
+            # The coworker's `models:` list binds (§4): a model outside it resolves to
+            # the list's first runnable entry, whatever the client asked for.
+            model = manager.resolve_persona_model(getattr(engine, "agent_name", "") or "", model)
             notice = engine.switch_model(model)
             if notice is None:  # same model, or first bind on a fresh session
                 return
@@ -2382,30 +2954,50 @@ def create_app(manager: SessionManager) -> FastAPI:
                 {"type": "model_changed", "data": {"model": model, "text": notice}},
             )
 
+        viewer_actor = ws.headers.get("x-openworker-actor", "")
+
         def _resolve_pending(resolution: str) -> None:
             # Live WS responses resolve THE session's single pending prompt (one at a time, since the
-            # agent blocks). Reconnect / Inbox resolve by id via REST instead.
+            # agent blocks). Reconnect / Inbox resolve by id via REST instead. The decider is this
+            # socket's verified viewer (bridged sessions) — "" on a local desktop.
             pend = manager.inbox.pending(session_id)
             if pend:
-                manager.inbox.resolve(pend[0].id, resolution)
+                manager.inbox.resolve(pend[0].id, resolution, by=viewer_actor)
 
         workspace = ws.query_params.get("workspace")
         mcp_tools = await manager.prepare_mcp_tools(
             session_id, workspace=workspace, agent=agent
         )
-        engine = manager.get_engine(
-            session_id,
-            workspace=workspace,
-            agent=agent,
-            approver=approver,
-            extra_tools=mcp_tools,
-            directory_requester=directory_requester,
-            plan_approver=plan_approver,
-            question_asker=question_asker,
-            tool_requester=tool_requester,
-            team_approver=team_approver,
-            items_approver=items_approver,
-        )
+        # The engine is built off the event loop (OPE-206: a build once froze the server).
+        # Its sandbox is not made here: the first turn makes it and says so
+        # (TurnEngine._start_sandbox), so opening a session or picking its folder builds
+        # nothing. A sandbox that cannot be used at all is still refused here, by the
+        # provider choice (select), with the reason.
+        try:
+            engine = await asyncio.to_thread(
+                manager.get_engine,
+                session_id,
+                workspace=workspace,
+                agent=agent,
+                approver=approver,
+                extra_tools=mcp_tools,
+                directory_requester=directory_requester,
+                plan_approver=plan_approver,
+                question_asker=question_asker,
+                tool_requester=tool_requester,
+                team_approver=team_approver,
+                items_approver=items_approver,
+                connector_requester=connector_requester,
+            )
+        except Exception as exc:
+            # A refused sandbox (OpenShell not usable, its image not downloaded, the
+            # per-machine cap) or a failed build: the reason goes to the session's own
+            # view, and the socket closes cleanly instead of dying in the ASGI stack. The
+            # close code tells the client this is final: reconnecting would only repeat
+            # the refusal every few seconds (the client retries any other close).
+            await ws.send_json({"type": "error", "data": {"error": str(exc)}})
+            await ws.close(code=WS_CLOSE_SESSION_REFUSED, reason="session refused")
+            return
         if engine is None:
             await ws.send_json(
                 {
@@ -2432,7 +3024,13 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
         # Auto-compaction failure prompt (OPE-27): only an ATTENDED session may be asked
         # Retry/Trim — unattended runs auto-trim (the policy in engine._compact_now).
-        engine.is_attended = lambda: _visibility() == VIS_INLINE
+        # §11.5/§11.6: a session the human opted into auto-approve (a spawned session's
+        # configuration, or a worker under an auto-approve lead) is reviewed even when
+        # nobody attends it.
+        engine.is_attended = lambda: _visibility() == VIS_INLINE or manager.reviewer_opted(session_id)
+        # Attendance "auto" (coworker/unattended.py): the engine answers by rule instead of
+        # routing to the Inbox. Read live, so the toggle applies mid-session.
+        engine.attendance = lambda: manager.unattended.attendance(session_id)
         await ws.send_json(
             {
                 "type": "ready",
@@ -2445,6 +3043,8 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "agent": getattr(engine, "agent_name", "code"),
                     "model": engine.model,
                     "mode": engine.permissions.mode.value,
+                    # OPE-218: the header chip says which walls this session runs behind.
+                    "sandbox": _session_sandbox(engine),
                     "workspace": (
                         str(getattr(engine, "executor").cwd)
                         if getattr(engine, "executor", None)
@@ -2484,13 +3084,15 @@ def create_app(manager: SessionManager) -> FastAPI:
                 events = (
                     engine.retry()
                     if retry
-                    else engine.run(content, display=display)
+                    else engine.run(content, display=display,
+                                    activity=manager.prepare_activity(session_id, "user activity"))
                 )
                 async for event in events:
+                    data = event.data
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.
                     await manager.broadcast_session(
-                        session_id, {"type": event.type.value, "data": event.data}
+                        session_id, {"type": event.type.value, "data": data}
                     )
                     if event.type.value in _CHECKPOINTS:
                         manager.save(session_id, engine)
@@ -2605,8 +3207,17 @@ def create_app(manager: SessionManager) -> FastAPI:
                                     if "enable_chat" in message
                                     else {}
                                 ),
+                                **(
+                                    {"members": message.get("members")}
+                                    if isinstance(message.get("members"), list)
+                                    else {}
+                                ),
                             }
                         )
+                    )
+                elif kind == "connector_response":
+                    _resolve_pending(
+                        json.dumps({"approved": bool(message.get("approved"))})
                     )
                 elif kind == "question_response":
                     _resolve_pending(str(message.get("answer", "")))
@@ -2624,7 +3235,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                     else:
                         engine.approve_action_once(name, arguments or {})
                 elif kind == "interrupt":
-                    engine.request_interrupt()
+                    manager.stop_session(session_id)
                 elif kind == "retry":
                     # Re-run after a provider error (engine guards on the error-notice
                     # tail, so a stray frame is a no-op that still ends with turn_done).
@@ -2635,6 +3246,16 @@ def create_app(manager: SessionManager) -> FastAPI:
                     except (TypeError, ValueError):
                         pass
                     else:
+                        if (
+                            new_mode is Mode.DANGEROUSLY_BYPASS_APPROVALS
+                            and not manager.allow_dangerous_mode
+                        ):
+                            await reject_input(
+                                "dangerously-bypass-approvals is not available here: "
+                                "start the server with --allow-dangerous-mode, and only "
+                                "on a disposable machine or container."
+                            )
+                            continue
                         previous = engine.permissions.mode
                         engine.permissions.mode = new_mode
                         if previous is not new_mode:
@@ -2677,6 +3298,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                             # records it, Recents doesn't reorder. The next real turn's
                             # checkpoint save bumps recency as usual.
                             manager.save(session_id, engine, touch=False)
+                            manager.sync_cached_reviewers()
                             await manager.broadcast_session(
                                 session_id,
                                 {"type": "mode_notice", "data": notice_data},
@@ -2804,6 +3426,13 @@ def create_app(manager: SessionManager) -> FastAPI:
             pass
         finally:
             manager.unregister_session_client(session_id, ws.send_json)
+            # Nobody is watching this session any more: a prompt parked inline would wait
+            # invisibly, so it moves to the Inbox (and a bound channel) right now — not
+            # on the next engine rebuild.
+            try:
+                await manager.promote_pending_prompts(session_id)
+            except Exception:
+                pass
 
     @app.websocket("/ws/events")
     async def ws_events(ws: WebSocket) -> None:
@@ -2825,6 +3454,58 @@ def create_app(manager: SessionManager) -> FastAPI:
             pass
         finally:
             manager.unregister_event_client(ws.send_json)
+
+    # Remote homes: the join-acceptor is a separate module mounted here (never
+    # inlined) so the cloud service can deploy it without the engine.
+    from ..remote.acceptor import mount_acceptor
+    from ..remote.audit import AuditLog
+    from ..remote.registry import MachinesRegistry
+
+    app.state.remote_acceptor = mount_acceptor(
+        app,
+        MachinesRegistry(manager.session_store.db_path),
+        ws_authenticated=_websocket_authenticated,
+        origin_allowed=_origin_allowed,
+        api_token=api_token,
+        # The desktop's SecretStore IS the keys wallet (§Keys wallet).
+        wallet=manager.secrets,
+        audit=AuditLog(manager.session_store.db_path.parent / "remote-audit.jsonl"),
+        # Org policy + audit sink (spec §Audit export): a desktop controller has
+        # neither; an embedder sets them on the manager before create_app.
+        policy_for=getattr(manager, "policy_for", None),
+        audit_sink=getattr(manager, "audit_sink", None),
+        policy_status=getattr(manager, "policy_status", None),
+    )
+
+    # Union view (spec §"Union view on the signed-in desktop"): a signed-in
+    # desktop also shows the hosted cloud's machines, proxied through here so
+    # the cloud session token never enters the webview. Signed out or expired
+    # degrades the cloud section only — never the local path.
+    from ..config import load_config as _load_cfg
+    from ..remote.cloudproxy import mount_cloud_proxy
+
+    _machines_base = _load_cfg().cloud_machines_base
+    if _machines_base:
+
+        async def _cloud_machines_token() -> tuple[str, Optional[str]]:
+            from .. import cloud as _cloud
+
+            profile = manager.secrets.get(_cloud.CLOUD_AUTH_PROFILE) or {}
+            if not profile.get("access_token"):
+                return "signed_out", None
+            token = await asyncio.to_thread(
+                _cloud.fresh_access_token, manager.secrets, _load_cfg()
+            )
+            return ("ok", token) if token else ("expired", None)
+
+        mount_cloud_proxy(
+            app,
+            token_provider=_cloud_machines_token,
+            base_url=_machines_base,
+            wallet=manager.secrets,
+            ws_authenticated=_websocket_authenticated,
+            origin_allowed=_origin_allowed,
+        )
 
     return app
 

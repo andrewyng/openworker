@@ -30,6 +30,7 @@ test("skills-session: new skill offered in '/', disabled one absent", async ({ p
   await expect(page.getByRole("status")).toContainText("turned off everywhere");
 
   // Back in the session: the popup reflects the new state — created offered, disabled gone.
+  await page.getByTestId("settings-back").click(); // Settings owns the left column while open
   await page.getByText("Draft the launch note").first().click();
   await box.fill("/");
   await expect(page.getByTestId("skill-popup")).toBeVisible();

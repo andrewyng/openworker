@@ -27,6 +27,7 @@ test("connected connectors come first with status + health chip", async ({ page 
 test("row navigates to the detail subpage; breadcrumb returns", async ({ page }) => {
   await openConnectors(page);
   await page.getByTestId("connector-slack").click();
+  await page.getByTestId("manage-local-slack").click();
   await expect(page.getByTestId("slack-workspaces")).toBeVisible();
   await page.getByTestId("connectors-breadcrumb").click();
   await expect(page.getByTestId("connector-slack")).toContainText("2 workspaces · relay");

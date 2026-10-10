@@ -439,3 +439,72 @@ def test_outbound_replaces_images_for_non_vision_models(tmp_path):
     assert all(p["type"] != "image_url" for p in parts)
     assert "not viewable" in parts[-1]["text"]
     assert engine.messages[-1]["content"][1]["type"] == "image_url"  # history untouched
+
+
+def test_new_turn_repairs_dangling_tool_calls(tmp_path):
+    """A restart mid-approval leaves an assistant tool_use with no result;
+    providers 400 the whole conversation for it, poisoning the session (found
+    live in the machine-events drill). A NEW user turn stubs every orphan —
+    in place, id-matched, honest — before appending its message."""
+    engine, _ = _engine(tmp_path, [_text_turn("recovered")])
+    engine.messages.append(
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_lost",
+                    "type": "function",
+                    "function": {"name": "send_message", "arguments": "{}"},
+                }
+            ],
+        }
+    )
+    events = _collect(engine, "follow-up")
+    assert events[-1].data["status"] == "completed"
+    idx = next(
+        i
+        for i, m in enumerate(engine.messages)
+        if m.get("role") == "assistant" and m.get("tool_calls")
+    )
+    stub = engine.messages[idx + 1]
+    assert stub["role"] == "tool" and stub["tool_call_id"] == "call_lost"
+    assert "interrupted" in stub["content"]
+    # The user's follow-up comes AFTER the stub — valid provider ordering.
+    assert engine.messages[idx + 2]["role"] == "user"
+
+
+def test_leaked_tool_call_ends_the_turn_as_a_retriable_error(tmp_path):
+    """A tool call the endpoint couldn't parse must not pass as an answer. Ending "completed"
+    made a half-written call indistinguishable from the model deciding it was done — the user
+    saw narration trailing off into stray tags (owner report 2026-07-26, qwen3.5-9b on LM
+    Studio). It ends on the error path so the GUI offers Retry; the drift is probabilistic, so
+    retrying the same model usually works."""
+    leaked = "Let me read the key files.\n<tool_call>\n<function=nope_not_a_tool>\n<parameter="
+    engine, _ = _engine(tmp_path, [_text_turn(leaked)])
+    events = _collect(engine, "explore the codebase")
+
+    assert EventType.ERROR in _types(events)
+    assert EventType.TURN_END not in _types(events)
+    err = next(ev for ev in events if ev.type == EventType.ERROR)
+    assert err.data["error_type"] == "UnparsedToolCall"
+    assert "couldn't parse" in err.data["error"]
+    # Persisted as an error notice, which is what unlocks retry().
+    assert engine.messages[-1] == {
+        **engine.messages[-1],
+        "role": "notice",
+        "kind": "error",
+    }
+    assert engine._tail_is_retriable_error() is True
+
+
+def test_ordinary_text_answer_still_completes(tmp_path):
+    """Guard the other side: prose that merely mentions tool syntax inside code fences is a
+    real answer and must still complete normally."""
+    engine, _ = _engine(
+        tmp_path,
+        [_text_turn("Qwen writes calls like:\n```\n<tool_call><function=x>\n```\nThat's it.")],
+    )
+    events = _collect(engine, "how does qwen format tool calls?")
+    assert EventType.ERROR not in _types(events)
+    assert next(ev for ev in events if ev.type == EventType.TURN_END).data["status"] == "completed"

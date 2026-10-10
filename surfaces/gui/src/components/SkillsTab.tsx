@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { useEffect } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import {
   createSkill,
   deleteSkill,
@@ -8,9 +8,12 @@ import {
   stageSkillUpload,
   confirmSkillUpload,
   updateSkill,
+  type Machine,
   type SkillRow,
   type SkillUploadPreview,
 } from "../api";
+import { useMachineData } from "../useMachineData";
+import { CachedNote, LoadingRow, UnreachableRow } from "./ScopedStatus";
 import { Icon } from "./Icon";
 
 // Settings ▸ Skills (SKILLS-SPEC §5/§6) — the management home: the LIST is the page; every
@@ -22,15 +25,15 @@ import { Icon } from "./Icon";
 // Persona-bundled skills arrive with personas (§10), managed on the persona page, not here.
 
 const CARD = "rounded-xl2 border border-line bg-panel";
-const FIELD_LABEL = "text-[13px] font-medium text-ink";
+const FIELD_LABEL = "text-ui font-medium text-ink";
 const INPUT =
-  "w-full min-w-0 px-3 py-2 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent";
+  "w-full min-w-0 px-3 py-2 rounded-lg border border-line bg-paper text-ui text-ink outline-none focus:border-accent";
 const BTN_ACCENT =
-  "text-[13px] px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
+  "text-ui px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
 const BTN_BORDERED =
-  "text-[13px] px-3 py-2 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
+  "text-ui px-3 py-2 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
 const BADGE =
-  "text-[11px] px-2 py-0.5 rounded-full border border-line bg-paper text-muted shrink-0";
+  "text-label px-2 py-0.5 rounded-full border border-line bg-paper text-muted shrink-0";
 
 type Editor = {
   mode: "new" | "edit";
@@ -68,12 +71,17 @@ async function fileToB64(file: File): Promise<string> {
 
 export function SkillsTab({
   onCreateSkill,
+  machine,
 }: {
   // The doorway (SKILLS-SPEC §5.2): starts a new conversation with the description
   // prefilled in the composer — the worker builds the skill and proposes it via save_skill.
+  // With a machine scope, that conversation runs ON the machine.
   onCreateSkill?: (description: string) => void;
+  // UX-046 machine scope: manage THIS machine's skills through the proxy.
+  machine?: Machine | null;
 }) {
-  const [rows, setRows] = useState<SkillRow[]>([]);
+  const { t } = useTranslation();
+  const mid = machine?.id ?? null;
   const [editor, setEditor] = useState<Editor | null>(null);
   const [upload, setUpload] = useState<SkillUploadPreview | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -91,21 +99,20 @@ export function SkillsTab({
   // model will be told…") or engineering timing ("from the next message") — owner-driver
   // review rounds, 2026-07-27. The engine countermands disabled-but-loaded skills silently;
   // the copy promises only the guaranteed part.
-  const CONFIRMATION = "— the worker can now use it in every conversation.";
-  const OFF_NOTE =
-    "turned off everywhere. If a conversation already used it, start a new one for a completely clean slate.";
-  const DELETE_NOTE =
-    "removed. If a conversation already used it, start a new one for a completely clean slate.";
+  const CONFIRMATION = t("skills.confirmation");
+  const OFF_NOTE = t("skills.off_note");
+  const DELETE_NOTE = t("skills.delete_note");
 
-  const refresh = () => listSkills().then(setRows);
-  useEffect(() => {
-    refresh();
-  }, []);
+  const skills = useMachineData<SkillRow[]>(`skills:${mid ?? "local"}`, () =>
+    listSkills(undefined, mid),
+  );
+  const rows = skills.data ?? [];
+  const refresh = skills.refresh;
 
   const fail = (res: { ok?: boolean; error?: string }) => {
     setNotice(null);
     if (res.ok === false) {
-      setError(res.error || "Something went wrong.");
+      setError(res.error || t("skills.error_generic"));
       return true;
     }
     setError("");
@@ -116,15 +123,22 @@ export function SkillsTab({
     if (!editor) return;
     const res =
       editor.mode === "new"
-        ? await createSkill({
-            name: editor.name.trim(),
-            description: editor.description.trim(),
-            instructions: editor.instructions,
-          })
-        : await updateSkill(editor.name, {
-            description: editor.description.trim(),
-            instructions: editor.instructions,
-          });
+        ? await createSkill(
+            {
+              name: editor.name.trim(),
+              description: editor.description.trim(),
+              instructions: editor.instructions,
+            },
+            mid,
+          )
+        : await updateSkill(
+            editor.name,
+            {
+              description: editor.description.trim(),
+              instructions: editor.instructions,
+            },
+            mid,
+          );
     if (fail(res)) return;
     setEditor(null);
     if (editor.mode === "new")
@@ -134,17 +148,17 @@ export function SkillsTab({
 
   const onPickFile = async (file: File | undefined) => {
     if (!file) return;
-    const res = await stageSkillUpload(await fileToB64(file), file.name);
+    const res = await stageSkillUpload(await fileToB64(file), file.name, mid);
     if (fail(res)) return;
     setUpload(res);
   };
 
   const confirmUpload = async () => {
     if (!upload?.token) return;
-    const res = await confirmSkillUpload(upload.token);
+    const res = await confirmSkillUpload(upload.token, "global", undefined, mid);
     if (fail(res)) return;
     setUpload(null);
-    setNotice({ name: upload.name || "Skill", text: CONFIRMATION, tone: "ok" });
+    setNotice({ name: upload.name || t("skills.fallback_name"), text: CONFIRMATION, tone: "ok" });
     refresh();
   };
 
@@ -154,7 +168,7 @@ export function SkillsTab({
       return;
     }
     setArmedDelete(null);
-    const res = await deleteSkill(row.name);
+    const res = await deleteSkill(row.name, undefined, mid);
     if (fail(res)) return;
     setNotice({ name: row.name, text: DELETE_NOTE, tone: "warn" });
     refresh();
@@ -164,10 +178,11 @@ export function SkillsTab({
     <section>
       <div className="flex items-start justify-between gap-3 mb-4">
         <div>
-          <h2 className="text-[16px] font-semibold">Skills</h2>
-          <p className="text-[13px] text-muted mt-1 leading-relaxed">
-            Reusable instructions the worker can follow in every conversation. Off here means
-            off everywhere.
+          <h2 className="text-body font-semibold">{t("settings.tab.skills")}</h2>
+          <p className="text-ui text-muted mt-1 leading-relaxed">
+            {machine
+              ? t("settingsx.skills.machine_subtitle", { name: machine.name })
+              : t("skills.subtitle")}
           </p>
         </div>
         {/* One add-action, three doors behind it (SKILLS-SPEC §5): the list is the page. */}
@@ -179,7 +194,7 @@ export function SkillsTab({
             onClick={() => setAddOpen((v) => !v)}
           >
             <span className="inline-flex items-center gap-1.5">
-              <Icon name="plus" size={13} /> Add skill
+              <Icon name="plus" size={13} /> {t("skills.add_skill")}
             </span>
           </button>
           {addOpen ? (
@@ -198,10 +213,8 @@ export function SkillsTab({
                     setEditor(emptyEditor());
                   }}
                 >
-                  <div className="text-[13px] font-medium">Write it myself</div>
-                  <div className="text-[12px] text-muted">
-                    A name, a description, and the instructions
-                  </div>
+                  <div className="text-ui font-medium">{t("skills.door_write")}</div>
+                  <div className="text-meta text-muted">{t("skills.door_write_sub")}</div>
                 </button>
                 <button
                   role="menuitem"
@@ -211,10 +224,8 @@ export function SkillsTab({
                     fileInput.current?.click();
                   }}
                 >
-                  <div className="text-[13px] font-medium">Import a file</div>
-                  <div className="text-[12px] text-muted">
-                    A .zip or SKILL.md someone shared — you review before it installs
-                  </div>
+                  <div className="text-ui font-medium">{t("skills.door_import")}</div>
+                  <div className="text-meta text-muted">{t("skills.door_import_sub")}</div>
                 </button>
                 <button
                   role="menuitem"
@@ -225,11 +236,8 @@ export function SkillsTab({
                     onCreateSkill?.("");
                   }}
                 >
-                  <div className="text-[13px] font-medium">Create with OpenWorker</div>
-                  <div className="text-[12px] text-muted">
-                    Starts a conversation — the worker builds it and asks before adding it to
-                    your skills
-                  </div>
+                  <div className="text-ui font-medium">{t("skills.door_ai")}</div>
+                  <div className="text-meta text-muted">{t("skills.door_ai_sub")}</div>
                 </button>
               </div>
             </>
@@ -241,7 +249,7 @@ export function SkillsTab({
         type="file"
         accept=".zip,.md"
         className="hidden"
-        aria-label="Upload a skill archive"
+        aria-label={t("skills.upload_aria")}
         onChange={(e) => {
           onPickFile(e.target.files?.[0]);
           e.target.value = "";
@@ -249,7 +257,7 @@ export function SkillsTab({
       />
 
       {error ? (
-        <div className="text-[13px] text-red-500 mb-3" role="alert">
+        <div className="text-ui text-red-500 mb-3" role="alert">
           {error}
         </div>
       ) : null}
@@ -257,7 +265,7 @@ export function SkillsTab({
         <div
           role="status"
           className={
-            "mb-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-[13px] " +
+            "mb-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-ui " +
             (notice.tone === "ok"
               ? "bg-tealSoft/70 text-tealInk border-tealInk/20"
               : "bg-warnSoft/70 text-warnInk border-warnInk/20")
@@ -268,7 +276,7 @@ export function SkillsTab({
           </span>
           <button
             className="ml-auto shrink-0 opacity-60 hover:opacity-100"
-            aria-label="Dismiss"
+            aria-label={t("common.dismiss")}
             onClick={() => setNotice(null)}
           >
             ✕
@@ -278,28 +286,26 @@ export function SkillsTab({
 
       {upload ? (
         <div className={`${CARD} p-4 mb-4`}>
-          <div className="text-[13px] font-medium mb-1">Review before installing</div>
-          <p className="text-[13px] text-muted mb-3">
-            Read the instructions — installing a skill means the worker will follow them.
-          </p>
-          <div className="text-[13px] mb-1">
+          <div className="text-ui font-medium mb-1">{t("skills.review_title")}</div>
+          <p className="text-ui text-muted mb-3">{t("skills.review_sub")}</p>
+          <div className="text-ui mb-1">
             <span className="font-medium">{upload.name}</span>
-            <span className="text-muted"> — {upload.description || "no description"}</span>
+            <span className="text-muted"> — {upload.description || t("skills.no_description")}</span>
           </div>
-          <pre className="text-[12px] bg-paper border border-line rounded-lg p-3 whitespace-pre-wrap max-h-64 overflow-y-auto mb-2">
+          <pre className="text-meta bg-paper border border-line rounded-lg p-3 whitespace-pre-wrap max-h-64 overflow-y-auto mb-2">
             {upload.instructions}
           </pre>
           {upload.files?.length ? (
-            <div className="text-[12px] text-muted mb-2">
-              Bundled files: {upload.files.join(", ")}
+            <div className="text-meta text-muted mb-2">
+              {t("skills.bundled_files", { files: upload.files.join(", ") })}
             </div>
           ) : null}
           <div className="flex gap-2 mt-3">
             <button className={BTN_ACCENT} onClick={confirmUpload}>
-              Install skill
+              {t("skills.install_skill")}
             </button>
             <button className={BTN_BORDERED} onClick={() => setUpload(null)}>
-              Cancel
+              {t("folder_gate.cancel")}
             </button>
           </div>
         </div>
@@ -307,38 +313,40 @@ export function SkillsTab({
 
       {editor ? (
         <div className={`${CARD} p-4 mb-4`}>
-          <div className="text-[13px] font-medium mb-3">
-            {editor.mode === "new" ? "New skill" : `Edit ${editor.name}`}
+          <div className="text-ui font-medium mb-3">
+            {editor.mode === "new"
+              ? t("skills.editor_new")
+              : t("skills.editor_edit", { name: editor.name })}
           </div>
           <label className={FIELD_LABEL} htmlFor="skill-name">
-            Name
+            {t("skills.name_label")}
           </label>
           <input
             id="skill-name"
             className={`${INPUT} mt-1 mb-3`}
             value={editor.name}
             disabled={editor.mode === "edit"}
-            placeholder="weekly-report"
+            placeholder={t("skills.name_placeholder")}
             onChange={(e) => setEditor({ ...editor, name: e.target.value })}
           />
           <label className={FIELD_LABEL} htmlFor="skill-desc">
-            Description
+            {t("skills.desc_label")}
           </label>
           <input
             id="skill-desc"
             className={`${INPUT} mt-1 mb-3`}
             value={editor.description}
-            placeholder="One line the worker uses to decide when this applies"
+            placeholder={t("skills.desc_placeholder")}
             onChange={(e) => setEditor({ ...editor, description: e.target.value })}
           />
           <label className={FIELD_LABEL} htmlFor="skill-instructions">
-            Instructions
+            {t("skills.instructions_label")}
           </label>
           <textarea
             id="skill-instructions"
             className={`${INPUT} mt-1 mb-3 min-h-[140px] font-mono`}
             value={editor.instructions}
-            placeholder={"1. Gather last week's updates\n2. Write the report, under 300 words"}
+            placeholder={t("skills.instructions_placeholder")}
             onChange={(e) => setEditor({ ...editor, instructions: e.target.value })}
           />
           <div className="flex gap-2 mt-3">
@@ -347,27 +355,37 @@ export function SkillsTab({
               disabled={!editor.name.trim() || !editor.instructions.trim()}
               onClick={save}
             >
-              Save skill
+              {t("skills.save_skill")}
             </button>
             <button className={BTN_BORDERED} onClick={() => setEditor(null)}>
-              Cancel
+              {t("folder_gate.cancel")}
             </button>
           </div>
         </div>
       ) : null}
 
+      {skills.cachedAt ? <CachedNote at={skills.cachedAt} /> : null}
       <div className={`${CARD} divide-y divide-line`}>
-        {rows.length === 0 && !editor ? (
-          <div className="p-5 text-[13px] text-muted">
-            No skills yet — <b>Add skill</b> teaches your worker its first one, like
-            “prepare my Monday status report”.
+        {skills.loading && !skills.data ? (
+          <LoadingRow
+            what={
+              machine
+                ? t("settingsx.skills.loading_what_on", { name: machine.name })
+                : t("settingsx.skills.loading_what")
+            }
+          />
+        ) : skills.error && !skills.data && machine ? (
+          <UnreachableRow machineName={machine.name} />
+        ) : rows.length === 0 && !editor ? (
+          <div className="p-5 text-ui text-muted">
+            <Trans i18nKey="skills.empty" components={{ b: <b /> }} />
           </div>
         ) : null}
         {rows.map((row) => (
           <div key={row.name} className="flex items-center gap-3 px-4 py-3">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className={`text-[13px] font-medium ${row.enabled ? "" : "text-muted"}`}>
+                <span className={`text-ui font-medium ${row.enabled ? "" : "text-muted"}`}>
                   {row.name}
                 </span>
                 {row.source !== "local" ? <span className={BADGE}>{row.source}</span> : null}
@@ -375,22 +393,31 @@ export function SkillsTab({
                     chip with a folder icon so it READS as clickable (live drive: plain
                     text hid the affordance). */}
                 {row.files ? (
-                  <button
-                    className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md border border-line bg-paper text-muted hover:text-ink hover:border-lineStrong shrink-0"
-                    title="Show folder"
-                    onClick={() => revealSkill(row.name)}
-                  >
-                    <Icon name="folder" size={11} /> {row.files} file{row.files === 1 ? "" : "s"}
-                  </button>
+                  machine ? (
+                    <span
+                      className="inline-flex items-center gap-1 text-label px-1.5 py-0.5 rounded-md border border-line bg-paper text-muted shrink-0"
+                      title={t("settingsx.skills.files_live_on", { name: machine.name })}
+                    >
+                      <Icon name="folder" size={11} /> {t("skills.file_count", { count: row.files })}
+                    </span>
+                  ) : (
+                    <button
+                      className="inline-flex items-center gap-1 text-label px-1.5 py-0.5 rounded-md border border-line bg-paper text-muted hover:text-ink hover:border-lineStrong shrink-0"
+                      title={t("skills.show_folder")}
+                      onClick={() => revealSkill(row.name)}
+                    >
+                      <Icon name="folder" size={11} /> {t("skills.file_count", { count: row.files })}
+                    </button>
+                  )
                 ) : null}
               </div>
               {/* Full description, wrapping — a skill's one-liner is its menu entry; cutting
                   it mid-word hid what the skill does (live drive). */}
-              <div className="text-[12px] text-muted leading-relaxed">{row.description}</div>
+              <div className="text-meta text-muted leading-relaxed">{row.description}</div>
             </div>
             <button
               className={BTN_BORDERED}
-              title="Edit"
+              title={t("skills.edit_tip")}
               onClick={() =>
                 setEditor({
                   mode: "edit",
@@ -404,21 +431,25 @@ export function SkillsTab({
             </button>
             <button
               className={BTN_BORDERED}
-              aria-label={`Delete ${row.name}`}
+              aria-label={t("skills.delete_aria", { name: row.name })}
               onClick={() => remove(row)}
               onBlur={() => setArmedDelete(null)}
             >
-              {armedDelete === row.name ? "Confirm delete" : <Icon name="trash" size={13} />}
+              {armedDelete === row.name ? (
+                t("skills.confirm_delete")
+              ) : (
+                <Icon name="trash" size={13} />
+              )}
             </button>
-            <label className="inline-flex items-center gap-1.5 text-[12px] text-muted">
+            <label className="inline-flex items-center gap-1.5 text-meta text-muted">
               <input
                 type="checkbox"
                 role="switch"
-                aria-label={`${row.name} enabled`}
+                aria-label={t("skills.enabled_aria", { name: row.name })}
                 checked={row.enabled}
                 onChange={(e) => {
                   const on = e.target.checked;
-                  updateSkill(row.name, { enabled: on }).then((res) => {
+                  updateSkill(row.name, { enabled: on }, mid).then((res) => {
                     if (!fail(res))
                       setNotice({
                         name: row.name,
@@ -429,7 +460,7 @@ export function SkillsTab({
                   });
                 }}
               />
-              On
+              {t("skills.on")}
             </label>
           </div>
         ))}

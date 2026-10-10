@@ -83,6 +83,53 @@ describe("TurnGroup (Transcript §33)", () => {
   });
 });
 
+// OPE-136: two DIFFERENT standing sources can waive an MCP card, and the chip must
+// name the right one — a user's own trust rule was being described as the server's
+// mcp.json flag (owner-hit 2026-08-30).
+describe("origin chips — standing MCP trust names its source", () => {
+  const toolWith = (origin: string): Item[] => [
+    { kind: "user", text: "search jira" },
+    { kind: "tool", id: "t1", name: "mcp__jira__search", args: { jql: "x" }, status: "ok", approvalOrigin: origin },
+  ];
+  const chipFor = (origin: string) => {
+    const { container } = render(<Transcript items={toolWith(origin)} onApprove={vi.fn()} />);
+    fireEvent.click(container.querySelector("summary.stepgroup-head")!);
+    const chip = screen.getByTestId("tool-approval-origin");
+    return { text: chip.textContent, title: chip.getAttribute("title") };
+  };
+
+  it("a user trust rule says so, and points at the tool page to revoke", () => {
+    const chip = chipFor("trusted_rule");
+    expect(chip.text).toBe("allowed by your trust rule");
+    expect(chip.title).toContain("Always allow this tool");
+    expect(chip.title).toContain("Connectors page");
+  });
+
+  it("the legacy server flag keeps the server-trust label pointing at mcp.json", () => {
+    cleanup();
+    const chip = chipFor("trusted_server");
+    expect(chip.text).toBe("allowed by server trust");
+    expect(chip.title).toContain("mcp.json");
+  });
+
+  it("pre-split transcripts (origin 'trusted') fall back to a generic honest label", () => {
+    cleanup();
+    const chip = chipFor("trusted");
+    expect(chip.text).toBe("allowed by standing trust");
+    expect(chip.title).not.toContain("mcp.json"); // never claims the wrong source
+  });
+
+  it("a run-grant covered call says so, and names the expiry", () => {
+    // OPE-136 "Allow for this request": covered calls run cardless but never
+    // invisible — the chip names the user's own in-run click as the source.
+    cleanup();
+    const chip = chipFor("run_grant");
+    expect(chip.text).toBe("allowed for this request");
+    expect(chip.title).toContain("Allow for this request");
+    expect(chip.title).toContain("expired when the answer finished");
+  });
+});
+
 describe("live turns (§33 flicker fix)", () => {
   const LIVE: Item[] = [
     { kind: "user", text: "build the app" },

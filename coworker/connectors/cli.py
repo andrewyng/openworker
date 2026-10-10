@@ -81,7 +81,7 @@ def _cmd_send(target: str, text: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="openworker-connectors")
+    parser = argparse.ArgumentParser(prog="python -m coworker.connectors.cli")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("status")

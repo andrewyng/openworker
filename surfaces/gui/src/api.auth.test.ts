@@ -1,8 +1,20 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { getHealth, Session } from "./api";
+import { connectManaged, getHealth, Session } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+it("requests installation consent only for explicit GitHub additions", async () => {
+  const bodies: unknown[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    return { json: async () => ({ ok: true }) } as Response;
+  }));
+  await connectManaged("github");
+  await connectManaged("github", { flow: "install" });
+  await connectManaged("hubspot", { access: "read", flow: "install" });
+  expect(bodies).toEqual([{}, { flow: "install" }, { access: "read" }]);
 });
 
 it("authenticates REST and session WebSocket calls with the launch token", async () => {

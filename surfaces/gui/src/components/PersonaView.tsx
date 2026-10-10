@@ -10,6 +10,7 @@
 // <img src> can't carry the sidecar token).
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   deletePersona,
   exportPersona,
@@ -19,6 +20,7 @@ import {
   setPersonaConnection,
   setPersonaEnabled,
   updatePersona,
+  type Machine,
   type PersonaDetail,
 } from "../api";
 import { chooseFolder } from "../tauri";
@@ -29,13 +31,13 @@ import { Markdown } from "./Markdown";
 import { Toggle } from "./Toggle";
 import { indexConnectors, labelFor, visualFor, type ConnectorMap } from "../connectors/visuals";
 
-const SEC_H = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
+const SEC_H = "text-label text-faint font-medium";
 const TAG_CORE =
-  "text-[11px] px-1.5 py-0.5 rounded-full bg-warnSoft/70 text-warnInk border border-warnInk/15";
-const TAG_MCP = "text-[11px] px-1.5 py-0.5 rounded border border-line text-faint";
-const BTN_ACCENT = "text-[12px] px-2.5 py-1.5 rounded-lg bg-accent text-white shrink-0";
+  "text-label px-1.5 py-0.5 rounded-full bg-warnSoft/70 text-warnInk border border-warnInk/15";
+const TAG_MCP = "text-label px-1.5 py-0.5 rounded border border-line text-faint";
+const BTN_ACCENT = "text-meta px-2.5 py-1.5 rounded-lg bg-accent text-white shrink-0";
 const BTN_BORDERED =
-  "text-[12px] px-2.5 py-1.5 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0 disabled:opacity-40";
+  "text-meta px-2.5 py-1.5 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0 disabled:opacity-40";
 const GRP = "rounded-xl2 border border-line bg-panel divide-y divide-line overflow-hidden";
 const COL_STATUS = "w-[96px] flex justify-end items-center shrink-0";
 const COL_ENABLE = "w-[64px] flex justify-center items-center shrink-0";
@@ -44,11 +46,17 @@ export function PersonaView({
   personaId,
   onBack,
   onOpenIntegrations,
+  machine,
 }: {
   personaId: string;
   onBack?: () => void;
   onOpenIntegrations?: () => void;
+  // UX-046 machine scope: this coworker lives on a joined machine; every read
+  // and write goes through the controller's proxy.
+  machine?: Machine | null;
 }) {
+  const { t } = useTranslation();
+  const mid = machine?.id ?? null;
   const [detail, setDetail] = useState<PersonaDetail | null>(null);
   const [byName, setByName] = useState<ConnectorMap>({});
   const [error, setError] = useState<string | null>(null);
@@ -65,51 +73,51 @@ export function PersonaView({
     setError(null);
     setMediaUrls([]);
     setShot(0);
-    getPersonaDetail(personaId)
+    getPersonaDetail(personaId, mid)
       .then(async (d) => {
         if (!live) return;
         setDetail(d);
         const loaded = await Promise.all(
-          (d.media || []).map((name) => getPersonaMediaUrl(personaId, name).catch(() => null)),
+          (d.media || []).map((name) => getPersonaMediaUrl(personaId, name, mid).catch(() => null)),
         );
         urls = loaded.filter(Boolean) as string[];
         if (live) setMediaUrls(urls);
       })
-      .catch(() => live && setError("Could not load this coworker."));
-    getConnectors()
+      .catch(() => live && setError(t("persona.load_error")));
+    getConnectors(mid)
       .then((list) => live && setByName(indexConnectors(list)))
       .catch(() => {});
     return () => {
       live = false;
       urls.forEach((u) => URL.revokeObjectURL(u));
     };
-  }, [personaId]);
+  }, [personaId, mid]);
 
   const toggleEnabled = async (next: boolean) => {
     setDetail((d) => (d ? { ...d, enabled: next } : d)); // optimistic
-    const r = await setPersonaEnabled(personaId, next);
-    if (!r.ok) getPersonaDetail(personaId).then(setDetail).catch(() => {});
+    const r = await setPersonaEnabled(personaId, next, mid);
+    if (!r.ok) getPersonaDetail(personaId, mid).then(setDetail).catch(() => {});
   };
 
   const toggleDefault = async (connector: string, next: boolean) => {
-    const r = await setPersonaConnection(personaId, connector, next);
+    const r = await setPersonaConnection(personaId, connector, next, mid);
     if (r.default_connections) {
       setDetail((d) => (d ? { ...d, default_connections: r.default_connections! } : d));
     } else {
-      getPersonaDetail(personaId).then(setDetail).catch(() => {});
+      getPersonaDetail(personaId, mid).then(setDetail).catch(() => {});
     }
   };
 
   const patch = async (body: { surfaced?: boolean; default?: boolean }) => {
-    await updatePersona(personaId, body);
-    getPersonaDetail(personaId).then(setDetail).catch(() => {});
+    await updatePersona(personaId, body, mid);
+    getPersonaDetail(personaId, mid).then(setDetail).catch(() => {});
   };
 
   const exportBundle = async () => {
     const dir = await chooseFolder();
     if (!dir) return;
     const r = await exportPersona(personaId, dir);
-    setMsg(r.ok ? `Exported to ${r.path}` : r.error || "export failed");
+    setMsg(r.ok ? t("persona.exported_to", { path: r.path }) : r.error || t("persona.export_failed"));
   };
 
   const header = (
@@ -117,15 +125,15 @@ export function PersonaView({
       {onBack && (
         <>
           <button
-            className="inline-flex items-center gap-1 text-[13px] text-muted hover:text-ink"
+            className="inline-flex items-center gap-1 text-ui text-muted hover:text-ink"
             onClick={onBack}
           >
-            <Icon name="arrowLeft" size={15} /> Back
+            <Icon name="arrowLeft" size={15} /> {t("persona.back")}
           </button>
           <span className="text-faint">·</span>
         </>
       )}
-      <span className="text-[13px] font-semibold">Coworker</span>
+      <span className="text-ui font-semibold">{t("persona.persona")}</span>
     </div>
   );
 
@@ -133,7 +141,14 @@ export function PersonaView({
     return (
       <main className="flex-1 min-w-0 flex flex-col bg-paper">
         {header}
-        <div className="p-12 text-center text-faint text-[13px]">{error || "Loading…"}</div>
+        <div className="p-12 flex items-center justify-center gap-2.5 text-faint text-ui">
+          {error ?? (
+            <>
+              <span className="w-[12px] h-[12px] rounded-full border-[1.5px] border-faint border-t-transparent animate-spin" />
+              {machine ? t("settingsx.persona.loading_from", { name: machine.name }) : t("persona.loading")}
+            </>
+          )}
+        </div>
       </main>
     );
   }
@@ -180,23 +195,23 @@ export function PersonaView({
           {/* identity + enable (no coworker glyph — owner 2026-08-21) */}
           <header className="flex items-start gap-3.5">
             <div className="min-w-0">
-              <h1 className="text-[20px] font-semibold tracking-tight">
+              <h1 className="text-title font-semibold tracking-tight">
                 {fullPersonaName(detail.name, personaId)}
               </h1>
-              <p className="text-[13px] text-muted mt-0.5">{detail.tagline}</p>
+              <p className="text-ui text-muted mt-0.5">{detail.tagline}</p>
             </div>
             <div className="ml-auto flex items-center gap-2">
-              <span className="text-[12px] text-muted">{detail.enabled ? "Enabled" : "Disabled"}</span>
-              <Toggle checked={detail.enabled} onChange={toggleEnabled} title="Enable this coworker" />
+              <span className="text-meta text-muted">{detail.enabled ? t("persona.enabled") : t("persona.disabled")}</span>
+              <Toggle checked={detail.enabled} onChange={toggleEnabled} title={t("persona.enable_title")} />
             </div>
           </header>
 
           {/* about: bundle markdown + screenshot carousel */}
           {(detail.description || mediaUrls.length > 0) && (
             <section>
-              <div className={`${SEC_H} mb-1.5`}>About</div>
+              <div className={`${SEC_H} mb-1.5`}>{t("persona.about")}</div>
               {detail.description && (
-                <div className="text-[14px] leading-relaxed text-ink/90">
+                <div className="text-body leading-relaxed text-ink/90">
                   <Markdown text={detail.description} />
                 </div>
               )}
@@ -206,7 +221,7 @@ export function PersonaView({
                     {mediaUrls.length > 1 && (
                       <button
                         className="w-7 h-7 rounded-full border border-line bg-panel text-muted hover:text-ink hover:border-lineStrong shrink-0"
-                        aria-label="Previous screenshot"
+                        aria-label={t("persona.prev_screenshot")}
                         onClick={() => setShot((s) => (s - 1 + mediaUrls.length) % mediaUrls.length)}
                       >
                         ‹
@@ -214,14 +229,14 @@ export function PersonaView({
                     )}
                     <img
                       src={mediaUrls[shot]}
-                      alt={`${detail.name} screenshot ${shot + 1}`}
+                      alt={t("persona.screenshot_alt", { name: detail.name, n: shot + 1 })}
                       className="flex-1 min-w-0 rounded-xl border border-line bg-panel"
                       data-testid="persona-media"
                     />
                     {mediaUrls.length > 1 && (
                       <button
                         className="w-7 h-7 rounded-full border border-line bg-panel text-muted hover:text-ink hover:border-lineStrong shrink-0"
-                        aria-label="Next screenshot"
+                        aria-label={t("persona.next_screenshot")}
                         onClick={() => setShot((s) => (s + 1) % mediaUrls.length)}
                       >
                         ›
@@ -233,7 +248,7 @@ export function PersonaView({
                       {mediaUrls.map((_, i) => (
                         <button
                           key={i}
-                          aria-label={`Screenshot ${i + 1}`}
+                          aria-label={t("persona.screenshot_n", { n: i + 1 })}
                           className={
                             "w-1.5 h-1.5 rounded-full " + (i === shot ? "bg-accent" : "bg-lineStrong")
                           }
@@ -251,10 +266,10 @@ export function PersonaView({
           {rows.length > 0 && (
             <section>
               <div className={`${SEC_H} mb-1.5 flex items-baseline`}>
-                <span>Connectors</span>
-                <span className="ml-auto flex font-semibold text-[11px] text-faint normal-case tracking-normal">
-                  <span className={COL_STATUS}>Status</span>
-                  <span className={COL_ENABLE}>Enable</span>
+                <span>{t("persona.connectors")}</span>
+                <span className="ml-auto flex font-semibold text-label text-faint normal-case tracking-normal">
+                  <span className={COL_STATUS}>{t("persona.col_status")}</span>
+                  <span className={COL_ENABLE}>{t("persona.col_enable")}</span>
                 </span>
               </div>
               <div className={GRP}>
@@ -263,26 +278,26 @@ export function PersonaView({
                     <ConnectorBadge connector={visualFor(r.ref, r.kind, byName)} size={32} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-[13px] font-medium">{labelFor(r.ref, byName)}</span>
+                        <span className="text-ui font-medium">{labelFor(r.ref, byName)}</span>
                         {r.kind === "mcp" ? (
                           <span className={TAG_MCP}>MCP</span>
                         ) : r.tier === "core" ? (
-                          <span className={TAG_CORE}>core</span>
+                          <span className={TAG_CORE}>{t("persona.core_tag")}</span>
                         ) : null}
                       </div>
-                      {r.reason && <div className="text-[12px] text-muted">{r.reason}</div>}
+                      {r.reason && <div className="text-meta text-muted">{r.reason}</div>}
                     </div>
                     <span className={COL_STATUS}>
                       {r.connected ? (
-                        <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-okSoft text-ok border border-okLine">
-                          ● Ready
+                        <span className="text-label font-medium px-2 py-0.5 rounded-full bg-okSoft text-ok border border-okLine">
+                          {t("persona.connected")}
                         </span>
                       ) : (
                         <button
                           className={r.tier === "core" && r.kind !== "mcp" ? BTN_ACCENT : BTN_BORDERED}
                           onClick={onOpenIntegrations}
                         >
-                          {r.kind === "mcp" ? "Add" : "Connect"}
+                          {r.kind === "mcp" ? t("persona.add") : t("persona.connect")}
                         </button>
                       )}
                     </span>
@@ -294,20 +309,19 @@ export function PersonaView({
                           onChange={(next) => toggleDefault(r.ref, next)}
                           title={
                             r.connected
-                              ? "On by default for new sessions"
-                              : "Connect this first"
+                              ? t("persona.on_by_default")
+                              : t("persona.connect_this_first")
                           }
                         />
                       ) : (
-                        <span className="text-faint text-[11px]">—</span>
+                        <span className="text-faint text-label">—</span>
                       )}
                     </span>
                   </div>
                 ))}
               </div>
-              <p className="text-[12px] text-faint mt-1.5 px-1">
-                Enabled connectors are on when a new session starts — you can still mute any of
-                them per session.
+              <p className="text-meta text-faint mt-1.5 px-1">
+                {t("persona.defaults_footnote")}
               </p>
             </section>
           )}
@@ -315,7 +329,7 @@ export function PersonaView({
           {/* advanced: tool calls, collapsed by default (everyday users don't need these) */}
           {detail.tools.length > 0 && (
             <section>
-              <div className={`${SEC_H} mb-1.5`}>Advanced</div>
+              <div className={`${SEC_H} mb-1.5`}>{t("persona.advanced")}</div>
               <div className="rounded-xl2 border border-line bg-panel">
                 <button
                   className="w-full flex items-center gap-2 px-4 py-2.5 text-left"
@@ -327,11 +341,11 @@ export function PersonaView({
                     size={12}
                     className={"text-faint transition-transform" + (showTools ? " rotate-90" : "")}
                   />
-                  <span className="text-[13px]">Tool calls</span>
-                  <span className="ml-auto text-[12px] text-faint">{detail.tools.length}</span>
+                  <span className="text-ui">{t("persona.tool_calls")}</span>
+                  <span className="ml-auto text-meta text-faint">{detail.tools.length}</span>
                 </button>
                 {showTools && (
-                  <div className="px-4 pb-3 font-mono text-[12px] text-muted">
+                  <div className="px-4 pb-3 font-mono text-meta text-muted">
                     {detail.tools.join(" · ")}
                   </div>
                 )}
@@ -340,10 +354,10 @@ export function PersonaView({
           )}
 
           {/* defaults footer */}
-          <section className="flex flex-wrap gap-x-8 gap-y-2 text-[13px]">
+          <section className="flex flex-wrap gap-x-8 gap-y-2 text-ui">
             {detail.recommended_models.length > 0 && (
               <div>
-                <span className="text-faint">Models</span> ·{" "}
+                <span className="text-faint">{t("persona.models_label")}</span> ·{" "}
                 {detail.recommended_models.map((m, i) => (
                   <span key={m}>
                     <span className="font-mono">{m}</span>
@@ -354,17 +368,17 @@ export function PersonaView({
             )}
             {detail.default_permission_mode && (
               <div>
-                <span className="text-faint">Default mode</span> · {detail.default_permission_mode}
+                <span className="text-faint">{t("persona.default_mode_label")}</span> · {detail.default_permission_mode}
               </div>
             )}
             <div>
-              <span className="text-faint">Workspace</span> ·{" "}
-              {detail.requires_folder ? "picked folder" : "scratch"}
+              <span className="text-faint">{t("persona.workspace_label")}</span> ·{" "}
+              {detail.requires_folder ? t("persona.workspace_picked") : t("persona.workspace_scratch")}
             </div>
           </section>
 
           {/* management — the controls that left the list page (UX-035) */}
-          <section className="border-t border-line pt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]">
+          <section className="border-t border-line pt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-ui">
             <label className="flex items-center gap-2 text-muted select-none">
               <input
                 type="checkbox"
@@ -373,7 +387,7 @@ export function PersonaView({
                 data-testid="persona-surfaced"
                 onChange={(e) => patch({ surfaced: e.target.checked })}
               />
-              Show in picker
+              {t("persona.show_in_picker")}
             </label>
             <button
               className={BTN_BORDERED}
@@ -381,38 +395,38 @@ export function PersonaView({
               data-testid="persona-make-default"
               onClick={() => patch({ default: true })}
             >
-              {detail.default ? "Default for new sessions" : "Make default"}
+              {detail.default ? t("persona.default_for_new") : t("persona.make_default")}
             </button>
-            {!detail.builtin && (
+            {!detail.builtin && !machine && (
               <button className={BTN_BORDERED} data-testid="persona-export" onClick={exportBundle}>
-                Export…
+                {t("persona.export")}
               </button>
             )}
             {!detail.builtin &&
               (confirmDel ? (
                 <span className="flex items-center gap-1.5">
                   <button
-                    className="text-[12px] px-2.5 py-1.5 rounded-lg bg-danger text-white"
+                    className="text-meta px-2.5 py-1.5 rounded-lg bg-danger text-white"
                     data-testid="persona-delete-confirm"
                     onClick={async () => {
-                      const r = await deletePersona(personaId);
+                      const r = await deletePersona(personaId, mid);
                       if (r.ok) onBack?.();
-                      else setMsg(r.error || "delete failed");
+                      else setMsg(r.error || t("persona.delete_failed"));
                     }}
                   >
-                    Delete
+                    {t("persona.delete")}
                   </button>
                   <button className={BTN_BORDERED} onClick={() => setConfirmDel(false)}>
-                    Keep
+                    {t("persona.keep")}
                   </button>
                 </span>
               ) : (
                 <button
-                  className="text-[13px] text-danger/80 hover:text-danger"
+                  className="text-ui text-danger/80 hover:text-danger"
                   data-testid="persona-delete"
                   onClick={() => setConfirmDel(true)}
                 >
-                  Delete…
+                  {t("persona.delete_ellipsis")}
                 </button>
               ))}
             {msg && <span className="text-muted">{msg}</span>}

@@ -1,0 +1,35 @@
+# OpenShell provider profile: OpenWorker calling Anthropic models.
+#
+#   openshell profile import -f packaging/openshell/providers/openworker-anthropic.yaml
+#   ANTHROPIC_API_KEY=... openshell provider create --name openworker-anthropic \
+#       --type openworker-anthropic --from-existing
+#
+# Client binary:     OpenWorker's own Python, as installed in
+#                    ghcr.io/andrewyng/openworker (packaging/openshell/Dockerfile).
+#                    Commands OpenWorker starts count as OpenWorker too.
+# Credential scope:  ANTHROPIC_API_KEY, sent in the x-api-key header to
+#                    api.anthropic.com and nowhere else. Inside the sandbox the variable
+#                    holds a placeholder.
+# Endpoint access:   api.anthropic.com, read-write, L7 enforced.
+
+id: openworker-anthropic
+display_name: OpenWorker (Anthropic)
+description: OpenWorker CLI with Anthropic models
+category: agent
+inference_capable: true
+credentials:
+  - name: api_key
+    description: Anthropic API key
+    env_vars: [ANTHROPIC_API_KEY]
+    required: true
+    auth_style: header
+    header_name: x-api-key
+discovery:
+  credentials: [api_key]
+endpoints:
+  - host: api.anthropic.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries: [/usr/local/lib/openworker/venv/bin/python]

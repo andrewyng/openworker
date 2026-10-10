@@ -1,6 +1,19 @@
 import { useState, type ReactNode } from "react";
-import type { InboxItem } from "../api";
-import type { QuestionOption } from "../types";
+import { useTranslation } from "react-i18next";
+import { ApprovalEscalation } from "./ApprovalEscalation";
+import { routeInboxItemLike, type InboxItem, type TeamMemberDecision } from "../api";
+import {
+  itemsGateResolution,
+  teamGateResolution,
+  teamItemFromPayload,
+  toolItemFromPayload,
+  workItemsItemFromPayload,
+} from "../cardPayloads";
+import { TeamRequestCard } from "./TeamRequestCard";
+import { ToolRequestCard } from "./ToolRequestCard";
+import { leadDecisionFromArgs, WorkerDecisionCard } from "./WorkerDecisionCard";
+import { WorkItemsCard } from "./WorkItemsCard";
+import type { Item, QuestionOption } from "../types";
 import { humanizeApprovalTitle } from "../humanize";
 import {
   approvalActionLabels,
@@ -18,25 +31,53 @@ import {
 // options and single questions render exactly as before.
 
 // Shared styles (mock parity — same language as SourcesDrawer/PersonaView).
-const SEC = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
+const SEC = "text-label text-faint font-medium";
 const BTN_PRIMARY =
-  "px-3 py-1.5 rounded-lg bg-accent text-white text-[13px] font-medium hover:brightness-105 disabled:opacity-40 disabled:hover:brightness-100";
+  "px-3 py-1.5 rounded-lg bg-accent text-white text-ui font-medium hover:brightness-105 disabled:opacity-40 disabled:hover:brightness-100";
 const BTN_BORDERED =
-  "px-3 py-1.5 rounded-lg border border-line bg-paper text-[13px] hover:border-lineStrong";
+  "px-3 py-1.5 rounded-lg border border-line bg-paper text-ui hover:border-lineStrong";
 // §35 approval buttons: blue border for the primary, quiet Deny (matches ApprovalCard).
 const BTN_ACCENT =
-  "px-3 py-1.5 rounded-lg border border-accent text-accent text-[13px] font-semibold hover:bg-accentSoft";
-const BTN_QUIET = "px-3 py-1.5 text-[13px] text-faint hover:text-danger";
+  "px-3 py-1.5 rounded-lg border border-accent text-accent text-ui font-semibold hover:bg-accentSoft";
+const BTN_QUIET = "px-3 py-1.5 text-ui text-faint hover:text-danger";
 const OPT_BASE =
-  "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[13px] transition-colors";
+  "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-ui transition-colors";
 const OPT_OFF = "border-line bg-paper text-ink hover:border-accent hover:bg-accentSoft/50";
 const OPT_ON = "border-accent bg-accentSoft text-accent font-medium";
 const INPUT =
-  "flex-1 min-w-0 rounded-lg bg-paper border border-line px-3 py-2 text-[13px] text-ink placeholder:text-faint outline-none focus:border-lineStrong";
+  "flex-1 min-w-0 rounded-lg bg-paper border border-line px-3 py-2 text-ui text-ink placeholder:text-faint outline-none focus:border-lineStrong";
 // Rich options stack as full-width rows (pills can't hold a description line).
 const ROW_BASE = "w-full text-left rounded-lg border px-3 py-2 transition-colors";
 const ROW_OFF = "border-line bg-paper hover:border-accent hover:bg-accentSoft/50";
 const ROW_ON = "border-accent bg-accentSoft";
+
+// Rebuild a LIVE approval item from a parked Inbox row, so the session view can
+// render the real ApprovalCard for it — ONE renderer, no second dress to drift
+// (OPE-136 found-in-testing: the redelivered parked card kept losing the live
+// card's upgrades — first evidence, then the trust ladder). Returns null for
+// legacy rows without tool data (they keep this file's lean treatment) — and the
+// cross-session Inbox list keeps the lean card on purpose: standing grants are
+// not offered out of context. The decision vocabulary the ApprovalCard sends
+// ("once" / "always_*" / "deny") resolves through the same server-side
+// approval_outcome() as the live path, validation included.
+export function approvalItemFromParked(item: InboxItem): Extract<Item, { kind: "approval" }> | null {
+  const d = item.data;
+  if (item.kind !== "approval" || !d?.tool) return null;
+  return {
+    kind: "approval",
+    toolCallId: item.tool_call_id || undefined,
+    name: String(d.tool),
+    args: d.arguments ?? {},
+    escalation: d.escalation,
+    reviewerUnsure: d.reviewer_unsure,
+    provenance: d.provenance,
+    workerCall: d.worker_call,
+    reason: typeof d.reason === "string" ? d.reason : "",
+    ...(d.category ? { category: String(d.category) } : {}),
+    ...(d.standing_target ? { standingTarget: String(d.standing_target) } : {}),
+    ...(d.mcp_destination ? { mcpDestination: d.mcp_destination } : {}),
+  };
+}
 
 // -- question normalization ---------------------------------------------------
 
@@ -90,6 +131,7 @@ function specsFor(item: InboxItem): QSpec[] {
 // -- one question (options + free-text escape) --------------------------------
 
 function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) => void }) {
+  const { t } = useTranslation();
   const [selected, setSelected] = useState<string[]>([]);
   const [text, setText] = useState("");
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -111,8 +153,8 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
   const preview = previewIdx >= 0 ? options[previewIdx].preview : "";
 
   const recommendedTag = (
-    <span className="text-[11px] uppercase tracking-[0.04em] font-semibold text-ok bg-okSoft border border-okLine rounded-full px-1.5 py-px shrink-0">
-      Recommended
+    <span className="text-label font-medium text-ok bg-okSoft border border-okLine rounded-full px-1.5 py-px shrink-0">
+      {t("inbox.recommended")}
     </span>
   );
 
@@ -132,15 +174,15 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
           >
             <span
               className={
-                "flex items-center gap-2 text-[13px] " + (on ? "text-accent font-medium" : "text-ink font-medium")
+                "flex items-center gap-2 text-ui " + (on ? "text-accent font-medium" : "text-ink font-medium")
               }
             >
-              {multi && on && <span className="text-accent text-[11px] leading-none">✓</span>}
+              {multi && on && <span className="text-accent text-label leading-none">✓</span>}
               <span className="min-w-0 truncate">{o.label}</span>
               {o.recommended && recommendedTag}
             </span>
             {o.description && (
-              <span className="block text-[12px] text-muted mt-0.5 leading-snug">{o.description}</span>
+              <span className="block text-meta text-muted mt-0.5 leading-snug">{o.description}</span>
             )}
           </button>
         );
@@ -157,7 +199,7 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
             {optionRows}
             <pre
               data-testid="question-preview"
-              className="flex-1 min-w-0 rounded-lg border border-line bg-paper p-3 text-[12px] leading-relaxed font-mono whitespace-pre overflow-auto max-h-72 text-ink"
+              className="flex-1 min-w-0 rounded-lg border border-line bg-paper p-3 text-meta leading-relaxed font-mono whitespace-pre overflow-auto max-h-72 text-ink"
             >
               {preview}
             </pre>
@@ -175,7 +217,7 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
                   className={OPT_BASE + " " + (on ? OPT_ON : OPT_OFF)}
                   onClick={() => pick(o)}
                 >
-                  {multi && on && <span className="text-accent text-[11px] leading-none">✓</span>}
+                  {multi && on && <span className="text-accent text-label leading-none">✓</span>}
                   {o.label}
                 </button>
               );
@@ -189,7 +231,7 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
             disabled={!selected.length}
             onClick={() => onAnswer(selected.join(", "))}
           >
-            Send{selected.length ? ` (${selected.length})` : ""}
+            {selected.length ? t("inbox.send_count", { count: selected.length }) : t("common.send")}
           </button>
         </div>
       )}
@@ -197,7 +239,7 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
         <div className="flex items-center gap-2 mt-2.5">
           <input
             className={INPUT}
-            placeholder={options.length ? "Or type your own answer…" : "Your answer…"}
+            placeholder={options.length ? t("inbox.or_type_answer") : t("inbox.your_answer")}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
@@ -205,7 +247,7 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
             }}
           />
           <button className={BTN_PRIMARY} disabled={!text.trim()} onClick={() => onAnswer(text)}>
-            Send
+            {t("common.send")}
           </button>
         </div>
       )}
@@ -224,6 +266,7 @@ function QuestionCard({
   onResolve: (id: string, resolution: string) => void;
   chip?: ReactNode;
 }) {
+  const { t } = useTranslation();
   const specs = specsFor(item);
   const grouped = (item.questions?.length ?? 0) > 0;
   const [step, setStep] = useState(0);
@@ -251,35 +294,34 @@ function QuestionCard({
       <div className={SEC + " flex items-center gap-1.5"} data-testid={grouped ? "question-stepper" : undefined}>
         {grouped && step > 0 && (
           <button
-            className="text-faint hover:text-ink leading-none text-[13px]"
-            title="Previous question"
-            aria-label="Previous question"
+            className="text-faint hover:text-ink leading-none text-ui"
+            title={t("inbox.previous_question")}
+            aria-label={t("inbox.previous_question")}
             onClick={() => setStep(step - 1)}
           >
             ‹
           </button>
         )}
         <span className={grouped ? "text-accent" : undefined}>
-          {spec.header || (grouped ? `Question ${step + 1}` : "question")}
+          {spec.header ||
+            (grouped ? t("inbox.question_n", { n: step + 1 }) : t("inbox.question_label"))}
         </span>
         {grouped && (
           <>
             <span>·</span>
-            <span>
-              {step + 1} of {specs.length}
-            </span>
+            <span>{t("inbox.step_of", { step: step + 1, total: specs.length })}</span>
             {next && (
               <>
                 <span>·</span>
-                <span>{(next.header || `Question ${step + 2}`) + " ›"}</span>
+                <span>{(next.header || t("inbox.question_n", { n: step + 2 })) + " ›"}</span>
               </>
             )}
           </>
         )}
       </div>
-      <div className="text-[14px] font-semibold mt-0.5 leading-snug">{spec.question}</div>
+      <div className="text-body font-semibold mt-0.5 leading-snug">{spec.question}</div>
       {item.body ? (
-        <div className="text-[13px] text-muted mt-1 whitespace-pre-wrap">{item.body}</div>
+        <div className="text-ui text-muted mt-1 whitespace-pre-wrap">{item.body}</div>
       ) : null}
       {chip}
       {/* key={step} resets selection/text/hover state when the stepper advances */}
@@ -293,15 +335,58 @@ export function InboxItemCard({
   onResolve,
   chip,
   compact,
+  modelLabels,
 }: {
   item: InboxItem;
   onResolve: (id: string, resolution: string) => void;
   chip?: ReactNode; // optional "go to session" affordance (shown in the Inbox list, not inline)
   compact?: boolean;
+  // Curated model display names, when the caller has them (the staffing card shows names).
+  modelLabels?: Record<string, string>;
 }) {
+  const { t } = useTranslation();
   const isQuestion = item.kind === "question";
+  // Team and work-item gates render their own card below; the plain-text body repeats
+  // it (it exists for Slack mirrors), so it is not printed above the card.
+  const toolCard = item.kind === "tool" && typeof item.data?.tool === "string";
+  const gateCard =
+    toolCard ||
+    (item.kind === "plan" &&
+      ((item.data?.gate === "team" && Array.isArray(item.data.members)) ||
+        (item.data?.gate === "items" && Array.isArray(item.data.items))));
+  const frame = compact
+    ? "max-w-3xl mx-auto mb-2.5 rounded-xl2 border border-lineStrong bg-panel px-4 py-3.5 shadow-[0_8px_24px_rgba(0,0,0,0.08)]"
+    : "mb-2.5 rounded-xl2 border border-line bg-panel px-3.5 py-3";
+  // A lead's decision on a worker's waiting call: its own card (see WorkerDecisionCard).
+  // Following the lead approves the lead's tool call; overriding answers the worker's
+  // call directly and declines the lead's.
+  if (item.kind === "approval" && item.data?.tool === "decide_worker_call") {
+    const decision = leadDecisionFromArgs(item.data.arguments);
+    return (
+      <div data-testid={`inbox-item-${item.id}`} className={frame}>
+        <WorkerDecisionCard
+          bare
+          decision={decision}
+          workerCall={item.data.worker_call}
+          escalation={item.data.escalation}
+          reviewerUnsure={item.data.reviewer_unsure}
+          chip={chip}
+          onFollow={() => onResolve(item.id, "allow")}
+          onOverride={() => {
+            if (decision.callId) {
+              // The worker's item sits on the same machine as this one.
+              routeInboxItemLike(decision.callId, { itemId: item.id, sessionId: item.session_id });
+              onResolve(decision.callId, decision.decision === "deny" ? "allow" : "deny");
+            }
+            onResolve(item.id, "deny");
+          }}
+        />
+      </div>
+    );
+  }
   return (
     <div
+      data-testid={`inbox-item-${item.id}`}
       className={
         compact
           ? "max-w-3xl mx-auto mb-2.5 rounded-xl2 border border-lineStrong bg-panel px-4 py-3.5 shadow-[0_8px_24px_rgba(0,0,0,0.08)]"
@@ -315,9 +400,17 @@ export function InboxItemCard({
         <div className="flex items-center justify-between gap-3">
           <TitleText line={humanizeApprovalTitle(item.data.tool, item.data.arguments)} />
           {(() => {
-            const s = scopeNote(item.data.tool, item.data.arguments);
+            // OPE-136 §35 parity: the parked chip gets the same category + MCP
+            // destination the live card gets — "leaves this computer → host", not
+            // the vague fallback. Older parked rows lack both and fall back honestly.
+            const s = scopeNote(
+              item.data.tool,
+              item.data.arguments,
+              item.data.category,
+              item.data.mcp_destination,
+            );
             return (
-              <span className={"text-[11px] whitespace-nowrap pt-0.5 " + (s.external ? "text-warnInk" : "text-faint")}>
+              <span className={"text-label whitespace-nowrap pt-0.5 " + (s.external ? "text-warnInk" : "text-faint")}>
                 {s.text}
               </span>
             );
@@ -325,8 +418,14 @@ export function InboxItemCard({
         </div>
       ) : isQuestion ? null : ( // QuestionCard owns its header + title (stepper needs them)
         <>
-          <div className={SEC}>{item.kind}</div>
-          <div className="text-[14px] font-semibold mt-0.5 leading-snug">{item.title}</div>
+          {/* Gate cards say what they are themselves; "plan" / "tool" above the question was
+              a second heading (owner catch 2026-09-17). */}
+          {!gateCard && <div className={SEC}>{item.kind}</div>}
+          {/* Inside its own session a gate card's heading is enough ("Creating a team of
+              agents — 2 workers"); the question stays in the Inbox LIST, where it helps scanning. */}
+          {!(gateCard && compact) && (
+            <div className="text-body font-semibold mt-0.5 leading-snug">{item.title}</div>
+          )}
         </>
       )}
       {item.kind === "approval" && item.data?.tool === "save_skill" ? (
@@ -336,9 +435,24 @@ export function InboxItemCard({
         <PreviewBlock text={item.data.arguments.content} />
       ) : item.kind === "approval" && item.data?.tool && typeof item.data.arguments?.command === "string" ? (
         <PreviewBlock text={item.data.arguments.command} />
-      ) : !isQuestion && item.body ? (
-        <div className="text-[13px] text-muted mt-1 whitespace-pre-wrap">{item.body}</div>
+      ) : item.kind === "approval" &&
+        item.data?.tool?.startsWith("mcp__") &&
+        item.data.arguments &&
+        Object.keys(item.data.arguments).length > 0 ? (
+        // MCP arguments (OPE-136 finding 5, same rule as the live card): for a
+        // stranger's tool the arguments are the only evidence there is — the full
+        // envelope in an expandable block, never the one-line truncated preview
+        // (the body, subsumed by this block, is skipped for this branch).
+        <PreviewBlock text={JSON.stringify(item.data.arguments, null, 2)} />
+      ) : !isQuestion && item.body && !gateCard ? (
+        <div className="text-ui text-muted mt-1 whitespace-pre-wrap">{item.body}</div>
       ) : null}
+      {/* A real (non-boilerplate) reason travels in data — the body may be skipped
+          above, and the reason must survive that (e.g. a reviewer-unsure note). */}
+      {item.kind === "approval" && item.data?.reason && item.data.reason !== item.data.escalation?.reason ? (
+        <div className="text-meta text-muted mt-1">{item.data.reason}</div>
+      ) : null}
+      {item.kind === "approval" && <ApprovalEscalation escalation={item.data?.escalation} reviewerUnsure={item.data?.reviewer_unsure} />}
       {!isQuestion && chip}
       {item.kind === "approval" ? (
         <div className="flex items-center gap-2 mt-2.5 flex-wrap">
@@ -346,7 +460,7 @@ export function InboxItemCard({
             className={item.data?.tool ? BTN_ACCENT : BTN_PRIMARY}
             onClick={() => onResolve(item.id, "allow")}
           >
-            {item.data?.tool ? approvalActionLabels(item.data.tool).allow : "Approve"}
+            {item.data?.tool ? approvalActionLabels(item.data.tool).allow : t("inbox.approve")}
           </button>
           {/* Task-persistent standing grant (§25) — present only when the approval was
               raised inside an automation run AND the call can carry a tool+target rule.
@@ -354,17 +468,20 @@ export function InboxItemCard({
           {item.data?.task_id && item.data?.standing_target && (
             <button
               className={BTN_BORDERED}
-              title={`Always allow against ${item.data.standing_target} for “${item.data.task_title || "this automation"}” — revoke any time on its Automations page`}
+              title={t("inbox.always_task_title", {
+                target: item.data.standing_target,
+                task: item.data.task_title || t("approval.btn.this_automation"),
+              })}
               onClick={() => onResolve(item.id, "always_task")}
             >
-              Allow every time
+              {t("approval.btn.allow_every_time")}
             </button>
           )}
           <button
             className={item.data?.tool ? BTN_QUIET : BTN_BORDERED}
             onClick={() => onResolve(item.id, "deny")}
           >
-            {item.data?.tool ? approvalActionLabels(item.data.tool).deny : "Deny"}
+            {item.data?.tool ? approvalActionLabels(item.data.tool).deny : t("approval.deny")}
           </button>
         </div>
       ) : isQuestion ? (
@@ -374,7 +491,7 @@ export function InboxItemCard({
           <button
             className={BTN_PRIMARY}
             disabled={!item.data?.path}
-            title={item.data?.path || "No folder was suggested"}
+            title={item.data?.path || t("inbox.no_folder_suggested")}
             onClick={() =>
               onResolve(
                 item.id,
@@ -388,13 +505,61 @@ export function InboxItemCard({
           >
             {item.data?.path
               ? item.data?.primary
-                ? "Make workspace"
-                : "Grant"
-              : "Grant (no folder)"}
+                ? t("inbox.make_workspace")
+                : t("inbox.grant")
+              : t("inbox.grant_no_folder")}
           </button>
           <button className={BTN_BORDERED} onClick={() => onResolve(item.id, JSON.stringify({ granted: false }))}>
-            Deny
+            {t("approval.deny")}
           </button>
+        </div>
+      ) : item.kind === "connector" ? (
+        <div className="flex items-center gap-2 mt-2.5">
+          <button
+            className={BTN_PRIMARY}
+            onClick={() => onResolve(item.id, JSON.stringify({ approved: true }))}
+          >
+            {item.data?.request === "grant" ? t("inbox.grant") : t("misc.inbox_item.connected")}
+          </button>
+          <button
+            className={BTN_BORDERED}
+            onClick={() => onResolve(item.id, JSON.stringify({ approved: false }))}
+          >
+            {t("approval.btn.not_now")}
+          </button>
+        </div>
+      ) : toolCard ? (
+        // A parked tool request had no branch here and fell through to "Dismiss", which the
+        // server reads as a decline — an unattended session could never get its scanner
+        // (found in the card gallery, 2026-09-17). Same card and same answer as inline.
+        <div className={(compact ? "" : "mt-2.5 ") + "gate-nested"}>
+          <ToolRequestCard
+            item={toolItemFromPayload({ ...item.data, name: item.data?.tool, reason: item.body })}
+            onRespond={(approved: boolean) => onResolve(item.id, JSON.stringify({ approved }))}
+          />
+        </div>
+      ) : item.kind === "plan" && item.data?.gate === "team" && Array.isArray(item.data.members) ? (
+        // The staffing gate parked in the Inbox (a lead on a box, or an unattended session):
+        // the SAME card as the inline one, so connectors and team chat are the human's call
+        // here too — a bare Approve staffs workers with no connectors and no chat
+        // (owner-hit 2026-09-16).
+        <div className={(compact ? "" : "mt-2.5 ") + "gate-nested"}>
+          <TeamRequestCard
+            item={teamItemFromPayload(item.data)}
+            modelLabels={modelLabels}
+            onRespond={(approved: boolean, feedback?: string, enableChat?: boolean, members?: TeamMemberDecision[]) =>
+              onResolve(item.id, teamGateResolution(approved, feedback, enableChat, members))
+            }
+          />
+        </div>
+      ) : item.kind === "plan" && item.data?.gate === "items" && Array.isArray(item.data.items) ? (
+        <div className={(compact ? "" : "mt-2.5 ") + "gate-nested"}>
+          <WorkItemsCard
+            item={workItemsItemFromPayload(item.data)}
+            onRespond={(approved: boolean, feedback?: string) =>
+              onResolve(item.id, itemsGateResolution(approved, feedback))
+            }
+          />
         </div>
       ) : item.kind === "plan" ? (
         <div className="flex items-center gap-2 mt-2.5">
@@ -402,19 +567,19 @@ export function InboxItemCard({
             className={BTN_PRIMARY}
             onClick={() => onResolve(item.id, JSON.stringify({ approved: true, mode: "interactive" }))}
           >
-            Approve
+            {t("inbox.approve")}
           </button>
           <button
             className={BTN_BORDERED}
             onClick={() => onResolve(item.id, JSON.stringify({ approved: false, feedback: "" }))}
           >
-            Reject
+            {t("inbox.reject")}
           </button>
         </div>
       ) : (
         <div className="flex items-center gap-2 mt-2.5">
           <button className={BTN_BORDERED} onClick={() => onResolve(item.id, "seen")}>
-            Dismiss
+            {t("inbox.dismiss")}
           </button>
         </div>
       )}

@@ -46,6 +46,16 @@ export default {
         mono: ["SF Mono", "JetBrains Mono", "Menlo", "monospace"],
       },
       borderRadius: { xl2: "14px" },
+      // UX-048: the six-size type scale as classes bound to the CSS tokens (styles.css),
+      // so a scale change is one edit. Arbitrary text-[Npx] classes are retired.
+      fontSize: {
+        title: "var(--fs-title)",
+        heading: "var(--fs-heading)",
+        body: ["var(--fs-body)", { lineHeight: "var(--lh-body)" }],
+        ui: "var(--fs-ui)",
+        meta: "var(--fs-meta)",
+        label: "var(--fs-label)",
+      },
     },
   },
   plugins: [],

@@ -11,6 +11,9 @@ import gemini from "./logos/gemini.svg";
 import byteplus from "./logos/byteplus.svg";
 import volcengine from "./logos/volcengine.svg";
 import ollama from "./logos/ollama.svg";
+// llama.cpp: selfhst/icons (CC BY 4.0); vLLM: homarr-labs/dashboard-icons (Apache 2.0).
+import llamacpp from "./logos/llamacpp.svg";
+import vllm from "./logos/vllm.svg";
 import bedrock from "./logos/bedrock.svg";
 import vertex from "./logos/vertex.svg";
 import openrouter from "./logos/openrouter.svg";
@@ -36,9 +39,13 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   "ark-agent-plan-cn": volcengine,
   meta,
   ollama,
+  llamacpp,
+  vllm,
   bedrock,
   vertex,
   openrouter,
+  // Same mark for the signed-in OpenRouter provider: same models, billed to the account.
+  "openrouter-account": openrouter,
   fireworks,
   together,
   zai,
@@ -58,9 +65,12 @@ export const PROVIDER_ORDER = [
   "ark-agent-plan-cn",
   "meta",
   "ollama",
+  "llamacpp",
+  "vllm",
   "bedrock",
   "vertex",
   "openrouter",
+  "openrouter-account",
   "fireworks",
   "together",
   "zai",

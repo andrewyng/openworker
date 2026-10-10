@@ -125,6 +125,36 @@ def test_standing_rule_candidate():
     assert standing_rule_candidate("send_message", {"text": "hi"}, _Meta()) is None
     # local writes are covered by path scoping, not standing rules
     assert standing_rule_candidate("write_file", {"path": "a"}, None) is None
+    # composite targets (§10.7 (b)): a GitHub thread is owner + repo + number, and the
+    # handle is the thread grant's own `github:owner/repo#N`
+    meta = _Meta("connector")
+    assert (
+        standing_rule_candidate("github_reply", {"owner": "acme", "repo": "site", "number": 42, "body": "x"}, meta)
+        == "github:acme/site#42"
+    )
+    assert (
+        standing_rule_candidate("github_review", {"owner": "acme", "repo": "site", "pull_number": "42"}, meta)
+        == "github:acme/site#42"
+    )
+    # a call that does not fully name the thread is not eligible
+    assert standing_rule_candidate("github_reply", {"owner": "acme", "body": "x"}, meta) is None
+
+
+def test_engine_matches_github_thread_rules(tmp_path):
+    # One thread grant covers replying and reviewing on THAT pull request only.
+    e = PermissionEngine(
+        workspace_root=tmp_path,
+        task_rules={t: {"github:acme/site#42"} for t in ("send_message", "github_reply", "github_review")},
+    )
+    meta = _Meta(category="connector")
+    hit = e.evaluate("github_review", {"owner": "acme", "repo": "site", "pull_number": 42, "event": "COMMENT"}, meta)
+    assert hit.allowed and hit.rule == "github_review → github:acme/site#42"
+    hit = e.evaluate("github_reply", {"owner": "acme", "repo": "site", "number": 42, "body": "lgtm"}, meta)
+    assert hit.allowed
+    other = e.evaluate("github_reply", {"owner": "acme", "repo": "site", "number": 43, "body": "x"}, meta)
+    assert not other.allowed and other.needs_user
+    elsewhere = e.evaluate("github_reply", {"owner": "acme", "repo": "api", "number": 42, "body": "x"}, meta)
+    assert not elsewhere.allowed
 
 
 def test_engine_matches_target(tmp_path):
@@ -421,6 +451,43 @@ async def test_blocked_run_does_not_stall_other_tasks(tmp_path):
     gate.set()
     await asyncio.sleep(0.1)
     assert store.get(blocked.id).run_count == 1
+    await sched.stop()
+
+
+async def test_tick_while_run_is_parked_never_redispatches_it(tmp_path):
+    """The overlap guard is claimed at dispatch, not inside the spawned run.
+
+    Regression: a tick's due() snapshot still lists a task whose run is parked on
+    an approval (next_run only advances on completion). When the guard lived
+    inside the spawn, an approval landing just before that tick let the parked
+    run finish and clear the guard before the duplicate spawn took its first
+    step — the task ran twice (the intermittent `assert 2 == 1` above)."""
+    store = TaskStore(tmp_path / "auto.db")
+    task = _task(title="parked")
+    store.save(task)
+    store._conn.execute("UPDATE scheduled_tasks SET next_run=1.0 WHERE id=?", (task.id,))
+    store._conn.commit()
+
+    gate = asyncio.Event()
+    started = asyncio.Event()
+    calls = 0
+
+    async def runner(t, trigger):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await gate.wait()
+        return TaskRun(task_id=t.id, status="ok", trigger=trigger)
+
+    sched = Scheduler(store, runner, tick_seconds=9999)
+    await sched._tick(trigger="schedule")  # dispatch; the run parks on the gate
+    await started.wait()
+    gate.set()  # the approval lands...
+    await sched._tick(trigger="schedule")  # ...right as the next tick fires
+    for _ in range(5):
+        await asyncio.sleep(0)  # parked run finishes; any duplicate would start now
+    assert calls == 1
+    assert store.get(task.id).run_count == 1
     await sched.stop()
 
 

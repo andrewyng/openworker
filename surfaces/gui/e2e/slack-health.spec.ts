@@ -37,6 +37,7 @@ test("signed out: chip and status line say Sign-in needed", async ({ page }) => 
   await openConnectors(page);
   await expect(page.getByTestId("connector-slack")).toContainText("Sign-in needed");
   await page.getByTestId("connector-slack").click();
+  await page.getByTestId("manage-local-slack").click();
   await expect(page.getByTestId("slack-mode-badge")).toContainText(
     "Sign-in needed — relaying is paused",
   );
@@ -45,8 +46,9 @@ test("signed out: chip and status line say Sign-in needed", async ({ page }) => 
 test("signed in + live socket: Live everywhere", async ({ page }) => {
   await forceStatus(page, {});
   await openConnectors(page);
-  await expect(page.getByTestId("connector-slack")).toContainText("Live");
+  await expect(page.getByTestId("connector-slack")).toContainText("Ready");
   await page.getByTestId("connector-slack").click();
+  await page.getByTestId("manage-local-slack").click();
   await expect(page.getByTestId("slack-mode-badge")).toContainText("Live · managed relay");
 });
 
@@ -57,6 +59,7 @@ test("relay socket reconnecting: warn chip + status line", async ({ page }) => {
   await openConnectors(page);
   await expect(page.getByTestId("connector-slack")).toContainText("Reconnecting");
   await page.getByTestId("connector-slack").click();
+  await page.getByTestId("manage-local-slack").click();
   await expect(page.getByTestId("slack-mode-badge")).toContainText("Reconnecting to the relay");
 });
 
@@ -67,6 +70,7 @@ test("relay unreachable: Offline, not a Slack-outage claim", async ({ page }) =>
   await openConnectors(page);
   await expect(page.getByTestId("connector-slack")).toContainText("Offline");
   await page.getByTestId("connector-slack").click();
+  await page.getByTestId("manage-local-slack").click();
   await expect(page.getByTestId("slack-mode-badge")).toContainText("can't reach the relay");
 });
 
@@ -77,6 +81,7 @@ test("one dead bot token: ⚠ chip + a warning on THAT workspace only", async ({
   await openConnectors(page);
   await expect(page.getByTestId("connector-slack")).toContainText("Token");
   await page.getByTestId("connector-slack").click();
+  await page.getByTestId("manage-local-slack").click();
   await expect(page.getByTestId("token-warn-T2AC")).toContainText("Token revoked");
   await expect(page.getByTestId("token-warn-T1DL")).toHaveCount(0);
 });

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   checkForUpdate,
   clearPendingUpdate,
@@ -7,7 +8,6 @@ import {
   isTauri,
   type UpdateInfo,
 } from "../tauri";
-import { useI18n } from "../i18n";
 
 // Auto-update prompt (desktop shell only — the browser build never renders this).
 // Deliberately a PROMPT, not a silent background install: swapping the app under a
@@ -32,7 +32,7 @@ const RECHECK_MS = 30 * 60_000;
 type Phase = "downloading" | "ready" | "fallback" | "installing" | "error";
 
 export function UpdateBanner() {
-  const { t } = useI18n();
+  const { t } = useTranslation();
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [phase, setPhase] = useState<Phase>("downloading");
   // Per-run, per-version dismissal — no localStorage, so a restart re-offers, and a
@@ -90,26 +90,26 @@ export function UpdateBanner() {
       role="status"
       data-testid="update-banner"
     >
-      <div className="text-[13px] font-semibold">{t("update.available")}</div>
-      <div className="text-[12px] text-muted mt-0.5">
+      <div className="text-ui font-semibold">{t("update.banner_title")}</div>
+      <div className="text-meta text-muted mt-0.5">
         {t("update.ready", { version: update.version })}
       </div>
       {phase === "error" && (
-        <div className="text-[12px] text-warnInk mt-1.5">
-          {t("update.installError")}
+        <div className="text-meta text-warnInk mt-1.5">
+          {t("update.install_failed")}
         </div>
       )}
       <div className="flex items-center gap-2 mt-2.5">
         <button
-          className="px-3 py-1.5 rounded-full bg-accent text-white text-[13px] disabled:opacity-50"
+          className="px-3 py-1.5 rounded-full bg-accent text-white text-ui disabled:opacity-50"
           onClick={install}
           disabled={busy}
           data-testid="update-install"
         >
-          {busy ? t("update.downloading") : t("update.restart")}
+          {busy ? t("update.downloading") : t("update.restart_to_update")}
         </button>
         <button
-          className="px-2 py-1.5 text-[13px] text-faint hover:text-muted"
+          className="px-2 py-1.5 text-ui text-faint hover:text-muted"
           onClick={() => {
             dismissed.current = update.version;
             setUpdate(null);

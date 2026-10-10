@@ -244,7 +244,24 @@ class CodexTokenStore:
     def refresh(self) -> tuple[str, str]:
         """refresh_token grant → fresh (access token, account id). A rejected refresh
         token blanks the profile — the provider reads as cleanly signed out."""
-        refresh = (self._data().get("tokens") or {}).get("refresh_token") or ""
+        seen = (self._data().get("tokens") or {}).get("access_token") or ""
+        exclusive = getattr(self._secrets, "exclusive", None)
+        if exclusive is None:  # a store without the lock (tests' stand-ins)
+            return self._refresh_locked(seen)
+        # One renewal at a time, across processes: the app and each `openworker run`
+        # share this store, and a second renewal with the refresh token the first one
+        # replaced would sign the user out.
+        with exclusive():
+            return self._refresh_locked(seen)
+
+    def _refresh_locked(self, seen: str) -> tuple[str, str]:
+        data = self._data()
+        tokens = data.get("tokens") or {}
+        access = tokens.get("access_token") or ""
+        exp = _jwt_claims(access).get("exp")
+        if access and access != seen and isinstance(exp, (int, float)) and exp - time.time() >= REFRESH_MARGIN_SECONDS:
+            return access, data.get("account_id") or ""  # another process just renewed it
+        refresh = tokens.get("refresh_token") or ""
         if not refresh:
             self.clear()
             raise CodexSignInRequired(EXPIRED_ERROR)

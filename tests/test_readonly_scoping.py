@@ -76,6 +76,18 @@ def test_openworkers_own_secrets_are_no_longer_readable(session):
     assert not runs(session, "jq . ~/.config/coworker/secrets.json")
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        r"cat $env:APPDATA\coworker\secrets.json",
+        r"cat $HOME/.config/coworker/secrets.json",
+        r"cat ${HOME}/.config/coworker/secrets.json",
+    ],
+)
+def test_variable_expansion_cannot_hide_an_out_of_scope_read(session, command):
+    assert not runs(session, command)
+
+
 def test_another_repository_is_not_in_scope(session):
     # `git -C <dir>` is the one accepted way to leave the working directory.
     assert not runs(session, "git -C ~/other-private-repo log -p")

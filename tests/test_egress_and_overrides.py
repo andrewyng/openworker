@@ -104,13 +104,21 @@ def test_override_cannot_downgrade_builtin_write(tmp_path):
 
 
 def test_override_can_still_relax_a_plugin_tool(tmp_path):
-    # The intended use survives: a non-built-in (MCP) tool defaulting to external can be
-    # relaxed to read.
+    # The intended use survives for NON-MCP third-party tools: a plugin defaulting to
+    # external can be relaxed to read. (This test used to pin the same relaxation for
+    # an MCP tool — retired by OPE-136: MCP tools are floored at EXTERNAL, and "stop
+    # asking" is expressed as a trust rule, never a reclassification. The floor's own
+    # pins live in test_mcp_floor.py.)
     from types import SimpleNamespace
 
-    ov = _override({"mcp__notion__search": RiskClass.READ})
-    meta = SimpleNamespace(requires_approval=True, category="mcp")
-    assert classify("mcp__notion__search", meta, ov) is RiskClass.READ
+    ov = _override({"plugin_notes_search": RiskClass.READ})
+    meta = SimpleNamespace(requires_approval=True, category="plugin")
+    assert classify("plugin_notes_search", meta, ov) is RiskClass.READ
+
+    # The identical rule aimed at an MCP tool is neutralized by the floor.
+    ov_mcp = _override({"mcp__notion__search": RiskClass.READ})
+    meta_mcp = SimpleNamespace(requires_approval=True, category="mcp")
+    assert classify("mcp__notion__search", meta_mcp, ov_mcp) is RiskClass.EXTERNAL
 
 
 def test_override_may_tighten(tmp_path):

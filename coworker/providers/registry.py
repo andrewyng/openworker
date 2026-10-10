@@ -90,6 +90,9 @@ class ProviderDescriptor:
     # (tokens in its `provider:<name>` profile) and the GUI renders connect/sign-out
     # instead of fields. None → the usual key/field form.
     auth: Optional[str] = None
+    # How the GUI groups it: "local" (a server on the user's own hardware), "subscription"
+    # (a plan signed into), or "api_key" (everything else).
+    kind: str = "api_key"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -100,6 +103,7 @@ class ProviderDescriptor:
             "recommended_model": self.recommended_model,
             "blurb": self.blurb,
             "auth": self.auth,
+            "kind": self.kind,
         }
 
 
@@ -197,8 +201,47 @@ def _build_vertex(profile: dict[str, Any], secrets: Any) -> ProviderClient:
 def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Ollama's OpenAI-compatible endpoint ignores the key but the SDK requires a non-empty
     # string, so we pass a placeholder. `base_url` comes from the stored profile (or the default).
+    # Chat calls are rewritten onto the native API so we can set num_ctx — the /v1 handler
+    # cannot, and its 4,096-token default drops the Cowork prompt (see ollama_context.py).
+    from .ollama_context import ollama_http_client
+
     base_url = _normalize_ollama_url((profile or {}).get("base_url"))
-    return OpenAIProvider(api_key="ollama", base_url=base_url)
+    return OpenAIProvider(api_key="ollama", base_url=base_url, http_client=ollama_http_client())
+
+
+def _local_server(name: str):
+    """Builder for llama.cpp and vLLM (providers/local_server.py): the user's own server,
+    reached through its `/v1`, with an optional key. Without a key the server takes any
+    value, so a placeholder goes out."""
+    from .local_server import PLACEHOLDER_KEY, remember_server, thinking_as_template_kwargs, v1_base
+
+    class _LocalServerProvider(OpenAIProvider):
+        # The thinking switch, in the form these servers read.
+        def complete(self, **kwargs: Any):
+            return super().complete(**thinking_as_template_kwargs(kwargs))
+
+        def stream(self, **kwargs: Any):
+            return super().stream(**thinking_as_template_kwargs(kwargs))
+
+    def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+        key = ((profile or {}).get("api_key") or "").strip() or PLACEHOLDER_KEY
+        remember_server(name, (profile or {}).get("base_url"), key if key != PLACEHOLDER_KEY else None)
+        return _LocalServerProvider(api_key=key, base_url=v1_base(name, (profile or {}).get("base_url")))
+
+    return build
+
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def _build_openrouter_account(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    """The `openrouter-account` provider: the key OpenRouter issued at sign-in
+    (providers/openrouter_auth.py), always against OpenRouter's own endpoint — a
+    browser credential is never sent to a custom gateway."""
+    api_key = ((profile or {}).get("api_key") or "").strip()
+    if not api_key:
+        raise RuntimeError("OpenRouter account not signed in — sign in under Models & Keys.")
+    return OpenAIProvider(api_key=api_key, base_url=OPENROUTER_BASE_URL)
 
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
@@ -362,6 +405,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
     ),
     ProviderDescriptor(
         name="openai-codex",
+        kind="subscription",
         title="ChatGPT subscription",
         needs_key=False,
         fields=[],
@@ -669,8 +713,20 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="OPENROUTER_API_KEY",
     ),
     ProviderDescriptor(
+        name="openrouter-account",
+        kind="subscription",
+        title="OpenRouter account",
+        needs_key=False,
+        fields=[],
+        build=_build_openrouter_account,
+        recommended_model="z-ai/glm-5.2",
+        blurb="Sign in with your OpenRouter account and use its credits — nothing to "
+        "paste. The key OpenRouter issues stays on this machine.",
+        auth="oauth",
+    ),
+    ProviderDescriptor(
         name="ollama",
-        title="Ollama (local models)",
+        title="Ollama",
         needs_key=False,
         fields=[
             ProviderField(
@@ -686,6 +742,55 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         # Reliable native tool-calling + strong coding quality (verified). Pull with
         # `ollama pull qwen3-coder:30b`.
         recommended_model="qwen3-coder:30b",
+        kind="local",
+    ),
+    ProviderDescriptor(
+        name="llamacpp",
+        title="llama.cpp",
+        needs_key=False,
+        fields=[
+            ProviderField(
+                "base_url",
+                "Server address",
+                secret=False,
+                required=False,
+                placeholder="http://localhost:8080",
+                help="Where `llama-server` is listening. The /v1 path is added automatically.",
+            ),
+            ProviderField(
+                "api_key",
+                "API key (only if the server was started with one)",
+                secret=True,
+                required=False,
+            ),
+        ],
+        build=_local_server("llamacpp"),
+        blurb="A llama-server you started yourself, on this computer or another one.",
+        kind="local",
+    ),
+    ProviderDescriptor(
+        name="vllm",
+        title="vLLM",
+        needs_key=False,
+        fields=[
+            ProviderField(
+                "base_url",
+                "Server address",
+                secret=False,
+                required=False,
+                placeholder="http://localhost:8000",
+                help="Where `vllm serve` is listening. The /v1 path is added automatically.",
+            ),
+            ProviderField(
+                "api_key",
+                "API key (only if the server was started with one)",
+                secret=True,
+                required=False,
+            ),
+        ],
+        build=_local_server("vllm"),
+        blurb="A vLLM server, usually on a Linux machine with an NVIDIA GPU.",
+        kind="local",
     ),
 ]
 
@@ -718,8 +823,9 @@ def descriptor_configured(d: ProviderDescriptor, profile: dict[str, Any]) -> boo
     every required field present — their actual credentials may be ambient (~/.aws, ADC).
     """
     if d.auth == "oauth":
-        # A stored token set = signed in (the tokens live in the same profile).
-        return bool((profile or {}).get("tokens"))
+        # Signed in = a stored token set, or the key a sign-in issued (OpenRouter).
+        profile = profile or {}
+        return bool(profile.get("tokens") or profile.get("api_key"))
     if not d.needs_key:
         return True  # keyless (Ollama) — usable out of the box
     profile = profile or {}
@@ -756,16 +862,10 @@ def _verify_bedrock(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
     def get(key: str) -> Optional[str]:
         return (fields.get(key) or "").strip() or None
 
-    try:
-        import boto3
-        from botocore.config import Config
-    except ImportError:
-        return {
-            "ok": False,
-            "error": "boto3 is not installed — `pip install 'openworker[bedrock]'`.",
-        }
     # Exactly one auth method is exercised — the one the form has selected. Per-method
-    # required fields are checked here so the Test button says what's missing.
+    # required fields are checked here so the Test button says what's missing. Do this
+    # before importing boto3 so the test suite (and users) get a helpful missing-field
+    # message even when the optional `bedrock` extra is not installed.
     method = get("auth_method") or "api_key"
     if method == "api_key" and not (
         get("bedrock_api_key") or os.environ.get("AWS_BEARER_TOKEN_BEDROCK")
@@ -775,6 +875,14 @@ def _verify_bedrock(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
         get("aws_access_key_id") and get("aws_secret_access_key")
     ):
         return {"ok": False, "error": "Enter an access key ID and secret access key."}
+    try:
+        import boto3
+        from botocore.config import Config
+    except ImportError:
+        return {
+            "ok": False,
+            "error": "boto3 is not installed — `pip install 'openworker[bedrock]'`.",
+        }
     try:
         if method == "api_key":
             # The key rides the env var (boto3's only bearer channel); bearer then wins
@@ -970,6 +1078,11 @@ def verify_provider_key(
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
+        elif name in ("llamacpp", "vllm"):
+            from .local_server import v1_base
+
+            headers = {"Authorization": f"Bearer {key}"} if key else {}
+            resp = httpx.get(v1_base(name, base_url) + "/models", headers=headers, timeout=timeout)
         elif name in ("ark", "ark-agent-plan-cn"):
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""
@@ -1000,6 +1113,24 @@ def verify_provider_key(
                 headers={"Authorization": f"Bearer {key}"},
                 timeout=timeout,
             )
+            # Reachability of /models isn't enough: a base URL that omits the /v1 path
+            # segment (e.g. LM Studio served at http://127.0.0.1:1234) can still answer
+            # /models while every completion 404s — the session then hangs silently on
+            # an endpoint that "tested" fine. Probe the real completions route too and
+            # fail fast with a path-specific message instead (issue #431).
+            if resp.status_code < 300:
+                route = httpx.get(
+                    base + "/chat/completions",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=timeout,
+                )
+                if route.status_code == 404:
+                    return {
+                        "ok": False,
+                        "error": "Server reachable, but the completions route 404s — the "
+                        "endpoint is usually missing a /v1 path segment (e.g. "
+                        "http://127.0.0.1:1234/v1).",
+                    }
     except Exception as exc:  # DNS/connection/timeout — never let it bubble to a 500
         return {
             "ok": False,
