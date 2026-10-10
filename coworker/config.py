@@ -134,6 +134,8 @@ class Config:
     # 3d.4): `[[sandbox_toolchains]]` tables with name, path, enabled, editing or adding to
     # the shipped list in coworker/sandbox/toolchains.py by name. Machine-level.
     sandbox_toolchains: list[dict[str, Any]] = field(default_factory=list)
+    # Default TTL (seconds) for unattended/parked approval items. None means no expiry.
+    inbox_approval_ttl_seconds: Optional[float] = None
 
 
 _FIELDS = {
@@ -164,6 +166,7 @@ _FIELDS = {
     "cloud_audience",
     "cloud_relay_ws_url",
     "cloud_machines_base",
+    "inbox_approval_ttl_seconds",
 }
 
 # These fields change what consequential actions can run without a prompt, so the normal
