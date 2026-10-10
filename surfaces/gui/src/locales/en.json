@@ -286,7 +286,10 @@
       "undone_forgotten": "Okay — forgotten.",
       "undone_restored": "Okay — put back the way it was.",
       "undo": "Undo"
-    }
+    },
+    "show_thinking": "Show thinking",
+    "hide_thinking": "Hide thinking",
+    "hide_live_thinking": "Hide live thinking"
   },
   "rail": {
     "progress_title": "Progress",
@@ -462,7 +465,10 @@
     "personas_desc": "Coworkers are agents specialized for a particular role or task. They come equipped with the tools and skills to be successful in that role. Enabling a coworker lets you pick it when starting a conversation.",
     "composer_section": "Composer",
     "context_bar_title": "Show the context ring on the model pill",
-    "context_bar_desc": "A small ring showing how full the model’s context window is. The pill’s tooltip states the figures either way."
+    "context_bar_desc": "A small ring showing how full the model’s context window is. The pill’s tooltip states the figures either way.",
+    "thinking_section": "Reasoning & Thinking",
+    "hide_live_thinking_title": "Hide live thinking steps while a task is running",
+    "hide_live_thinking_desc": "Suppress streaming reasoning text from the live transcript during execution. The full thought process remains available once the turn completes."
   },
   "cloud": {
     "check_browser": "Check your browser…",

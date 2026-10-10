@@ -17,6 +17,7 @@ import {
   deleteMemory,
   updateMemory,
   getSettings,
+  setHideLiveThinking as apiSetHideLiveThinking,
   getPersonas,
   getInbox,
   getAttendance,
@@ -247,6 +248,8 @@ export function App() {
   // Settings: show the composer's context-window fill bar. OFF by default (owner ask),
   // so an older backend without the field also shows the session total.
   const [contextBar, setContextBar] = useState(false);
+  // Option to hide/collapse live thinking/reasoning steps while running (#611).
+  const [hideLiveThinking, setHideLiveThinkingState] = useState(false);
   // Per-session token usage (OPE-42): rebuilt from the transcript on session load,
   // accumulated live from assistant_message events, reset with the transcript.
   const [usage, setUsage] = useState<SessionUsage>(emptyUsage());
@@ -791,6 +794,7 @@ export function App() {
         setModelConfig(s.model_config || {});
         setModelContextWindows(s.model_context_windows || {});
         setContextBar(s.context_bar === true);
+        setHideLiveThinkingState(s.hide_live_thinking === true);
         setModelReady(s.model_ready);
         if (s.surfaces) setSurfaces(s.surfaces);
       })
@@ -2321,7 +2325,16 @@ export function App() {
                       the message finalizes. */}
                   {running && reasoningStream && !streaming && (
                     <div className="transcript">
-                      <ThinkingBlock text={reasoningStream} live />
+                      <ThinkingBlock
+                        text={reasoningStream}
+                        live
+                        hidden={hideLiveThinking}
+                        onToggleHidden={() => {
+                          const next = !hideLiveThinking;
+                          setHideLiveThinkingState(next);
+                          void apiSetHideLiveThinking(next);
+                        }}
+                      />
                     </div>
                   )}
                   {/* OPE-206: the sandbox for this session is being built (a container, its
