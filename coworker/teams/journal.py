@@ -279,6 +279,69 @@ class JournalStore:
                 ).fetchall()
         return [row["case_id"] for row in rows]
 
+    def export(
+        self,
+        actor: Actor,
+        case: str,
+        *,
+        store: Optional[Any] = None,
+        format: str = "markdown",
+        include_raw: bool = False,
+    ) -> str:
+        """Compile a journal case and linked items into a standalone report."""
+        with self._lock:
+            if not self._case_exists(case):
+                raise BoardError(f"no case '{case}'")
+            self._check_access(actor, case)
+            meta_row = self._conn.execute(
+                "SELECT * FROM journal_meta WHERE case_id = ?", (case,)
+            ).fetchone()
+            meta = dict(meta_row) if meta_row else {}
+
+        entries: list[dict[str, Any]] = []
+        since_seq = 0
+        while True:
+            page = self.read(
+                actor, case, include_raw=include_raw, since_seq=since_seq, limit=1000
+            )
+            entries.extend(page)
+            if len(page) < 1000:
+                break
+            since_seq = page[-1]["seq"]
+        items: list[dict[str, Any]] = []
+        if store is not None:
+            spaces = {e.get("space") for e in entries if e.get("space")}
+            if hasattr(store, "spaces"):
+                try:
+                    spaces.update(store.spaces())
+                except Exception:
+                    pass
+            for space in spaces:
+                try:
+                    space_items = store.list_items(space, actor)
+                    items.extend(
+                        it
+                        for it in space_items
+                        if it.get("case_id") == case or it.get("case") == case
+                    )
+                except Exception:
+                    pass
+            known_ids = {it.get("id") for it in items}
+            for e in entries:
+                item_id = e.get("item")
+                space = e.get("space")
+                if item_id and space and item_id not in known_ids:
+                    try:
+                        it = store.get_item(space, item_id, actor=actor)
+                        items.append(it)
+                        known_ids.add(item_id)
+                    except Exception:
+                        pass
+
+        return format_case_report(
+            case, entries, meta=meta, items=items, format=format
+        )
+
     # ---------------------------------------------------------------------- grants
 
     def grant(self, actor: Actor, case: str, principal: str) -> None:
@@ -432,3 +495,136 @@ def _row_to_entry(row: sqlite3.Row) -> dict[str, Any]:
     entry["role"] = entry.pop("actor_role")
     entry["item"] = entry.pop("item_id")
     return entry
+
+
+def format_case_report(
+    case: str,
+    entries: list[dict[str, Any]],
+    *,
+    meta: Optional[dict[str, Any]] = None,
+    items: Optional[list[dict[str, Any]]] = None,
+    format: str = "markdown",
+) -> str:
+    """Format a journal case and any linked work items into a report."""
+    if format.lower() == "json":
+        data = {
+            "case": case,
+            "meta": meta or {},
+            "entries": entries,
+            "items": items or [],
+            "summary": {
+                "total_entries": len(entries),
+                "total_items": len(items or []),
+                "findings": sum(
+                    1 for e in entries if e.get("kind") == "finding"
+                ),
+                "evidence": sum(
+                    1 for e in entries if e.get("kind") == "evidence"
+                ),
+                "decisions": sum(
+                    1 for e in entries if e.get("kind") == "decision"
+                ),
+                "notes": sum(1 for e in entries if e.get("kind") == "note"),
+            },
+        }
+        return json.dumps(data, indent=2)
+
+    lines = [f"# Journal Case Report: {case}", ""]
+    if meta:
+        created = meta.get("created_ts") or meta.get("created") or ""
+        head = meta.get("head_hash") or ""
+        if created:
+            lines.append(f"- **Created**: {created}")
+        if head:
+            lines.append(f"- **Head Hash**: `{head}`")
+    lines.append(f"- **Total Entries**: {len(entries)}")
+    if items:
+        lines.append(f"- **Linked Items**: {len(items)}")
+    lines.append("")
+
+    findings = [e for e in entries if e.get("kind") == "finding"]
+    decisions = [e for e in entries if e.get("kind") == "decision"]
+    evidence = [e for e in entries if e.get("kind") == "evidence"]
+
+    lines.append("## Executive Summary")
+    lines.append(f"- **Findings**: {len(findings)}")
+    lines.append(f"- **Decisions**: {len(decisions)}")
+    lines.append(f"- **Evidence**: {len(evidence)}")
+    if items:
+        lines.append(f"- **Linked Items**: {len(items)}")
+    lines.append("")
+
+    if findings:
+        lines.append("## Findings")
+        for f in findings:
+            ts = f.get("ts", "")
+            author = f.get("author", "unknown")
+            body = (f.get("body") or "").strip()
+            lines.append(
+                f"### Finding #{f.get('seq', '?')} ({author} at {ts})"
+            )
+            lines.append(body)
+            if f.get("entities"):
+                lines.append(f"- **Entities**: {', '.join(f['entities'])}")
+            if f.get("refs"):
+                lines.append(f"- **References**: {', '.join(f['refs'])}")
+            lines.append("")
+
+    if decisions:
+        lines.append("## Decisions")
+        for d in decisions:
+            ts = d.get("ts", "")
+            author = d.get("author", "unknown")
+            body = (d.get("body") or "").strip()
+            lines.append(f"- **[{ts}] {author}**: {body}")
+        lines.append("")
+
+    if evidence:
+        lines.append("## Evidence")
+        for ev in evidence:
+            ts = ev.get("ts", "")
+            author = ev.get("author", "unknown")
+            body = (ev.get("body") or "").strip()
+            lines.append(
+                f"### Evidence #{ev.get('seq', '?')} ({author} at {ts})"
+            )
+            lines.append(body)
+            if ev.get("refs"):
+                lines.append(f"- **References**: {', '.join(ev['refs'])}")
+            lines.append("")
+
+    if items:
+        lines.append("## Linked Work Items")
+        lines.append("| ID | Title | State | Assignee | Criteria |")
+        lines.append("|---|---|---|---|---|")
+        for it in items:
+            iid = f"#{it.get('id', '?')}"
+            title = str(it.get("title", "")).replace("|", "\\|")
+            state = it.get("state", "")
+            assignee = it.get("assignee") or "-"
+            criteria = (
+                str(it.get("criteria", ""))
+                .replace("|", "\\|")
+                .replace("\n", " ")
+            )
+            lines.append(
+                f"| {iid} | {title} | {state} | {assignee} | {criteria} |"
+            )
+        lines.append("")
+
+    lines.append("## Chronological Activity Log")
+    for e in entries:
+        seq = e.get("seq", "?")
+        kind = (e.get("kind") or "note").upper()
+        author = e.get("author", "unknown")
+        ts = e.get("ts", "")
+        body = (e.get("body") or "").strip()
+        lines.append(f"#### [{seq}] {kind} · {author} · {ts}")
+        lines.append(body)
+        if e.get("entities"):
+            lines.append(f"- *Entities*: {', '.join(e['entities'])}")
+        if e.get("refs"):
+            lines.append(f"- *Refs*: {', '.join(e['refs'])}")
+        lines.append("")
+
+    return "\n".join(lines).strip() + "\n"
