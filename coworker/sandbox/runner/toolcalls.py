@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from . import tools_git, tools_grep, tools_read
+from . import checkpoints, tools_git, tools_grep, tools_read
 
 try:  # inside the packed runner
     from .aisuite_toolkits.files import FileToolkit
@@ -67,6 +67,8 @@ def call(
             return tools_read.list_files(workspace, roots=extra, **args)
         if name == "grep":
             return tools_grep.grep(workspace, **args)
+        if name in ("create_checkpoint", "list_checkpoints", "restore_checkpoint"):
+            return getattr(checkpoints, name)(workspace, roots=roots, **args)
         if name == "git_log":
             return tools_git.git_log(workspace, **args)
         if name in GIT_TOOLKIT_TOOLS:

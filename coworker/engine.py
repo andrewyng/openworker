@@ -131,6 +131,7 @@ class TurnEngine:
         model: str,
         instructions: Optional[str] = None,
         approver: Optional[Approver] = None,
+        session_id: str = "default",
         max_iterations: int = 12,
         model_settings: Optional[dict[str, Any]] = None,
         messages: Optional[list[dict[str, Any]]] = None,
@@ -173,6 +174,9 @@ class TurnEngine:
         self.permissions = permissions
         self.model = model
         self.approver = approver or _deny_all
+        self.session_id = session_id or "default"
+        self.turn_index = 0
+        self._turn_checkpoint_created = False
         self.max_iterations = max_iterations
         self.model_settings = dict(model_settings or {})
         self.messages: list[dict[str, Any]] = list(messages or [])
@@ -378,6 +382,25 @@ class TurnEngine:
     ) -> None:
         self._steering.append((text, source, activity))
 
+    def revert_turn(self, turn: Optional[int] = None) -> dict[str, Any]:
+        """Revert workspace files to the checkpoint taken before turn `turn`."""
+        from .tools.git import list_checkpoints, restore_checkpoint
+
+        target = turn
+        if target is None or target <= 0:
+            ckpts = list_checkpoints(
+                self.permissions.workspace_root, session_id=self.session_id, sandbox=getattr(self, "sandbox_workspace", None), roots=self.permissions.roots
+            )
+            if not ckpts:
+                return {
+                    "ok": False,
+                    "error": "No checkpoints available to revert.",
+                }
+            target = ckpts[-1]["turn"]
+        return restore_checkpoint(
+            self.permissions.workspace_root, self.session_id, target, sandbox=getattr(self, "sandbox_workspace", None), roots=self.permissions.roots
+        )
+
     # -- main loop --------------------------------------------------------------
     async def run(
         self,
@@ -441,6 +464,12 @@ class TurnEngine:
                 yield event
                 if event.type is EventType.ERROR:
                     return
+            if self.turn_index == 0:
+                from .tools.git import list_checkpoints
+                previous = list_checkpoints(self.permissions.workspace_root, self.session_id, sandbox=getattr(self, "sandbox_workspace", None), roots=self.permissions.roots)
+                self.turn_index = max((c["turn"] for c in previous), default=0)
+            self.turn_index += 1
+            self._turn_checkpoint_created = False
             async for event in self._loop():
                 yield event
         finally:
@@ -1163,6 +1192,22 @@ class TurnEngine:
                     allowed = item
             if allowed:
                 cleared.append(tool_call)
+
+        if cleared and not self._turn_checkpoint_created:
+            from .risk import WRITE_TOOLS
+
+            if any(tc.name in WRITE_TOOLS for tc in cleared):
+                try:
+                    from .tools.git import create_checkpoint
+
+                    self._turn_checkpoint_created = create_checkpoint(
+                        self.permissions.workspace_root,
+                        self.session_id,
+                        self.turn_index,
+                        sandbox=getattr(self, "sandbox_workspace", None), roots=self.permissions.roots,
+                    ) is not None
+                except Exception:
+                    pass
 
         concurrent = (
             [tc for tc in cleared if self._parallel_safe(tc)]
