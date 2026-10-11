@@ -644,7 +644,7 @@ fn show_main(app: &tauri::AppHandle) {
 // else — no global plugin JS): check, background pre-download, install. Update
 // artifacts are minisign-verified against the pubkey in tauri.conf.json before
 // anything is installed; the manifest lives at the endpoints configured there
-// (download.openworker.com → GitHub Releases).
+// (this fork's GitHub Releases latest.json — not the upstream English channel).
 
 #[derive(serde::Serialize)]
 struct UpdateInfo {

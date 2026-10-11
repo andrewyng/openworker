@@ -6,6 +6,21 @@
 
 > **Beta** - OpenWorker is in open beta: fully usable, updates itself, and we're actively polishing rough edges. [Issues](https://github.com/andrewyng/openworker/issues) welcome.
 
+## 社区简体中文构建
+
+这是 [andrewyng/openworker](https://github.com/andrewyng/openworker) 的社区 Fork。自 0.3 起上游已自带简体中文（系统语言为中文时自动使用，也可在设置里切换）。本仓库跟随上游发版，并把桌面版的**自动更新**指到本 Fork 的 Releases，而不是官方英文频道。
+
+- Fork：<https://github.com/cr-yijieshusheng/openworker>
+- 分支：`i18n-simplified-chinese`
+- 当前版本：<https://github.com/cr-yijieshusheng/openworker/releases/tag/v0.3.4-zh.1>（上游 `v0.3.4`）
+- 维护说明：[docs/FORK-MAINTENANCE.md](docs/FORK-MAINTENANCE.md)
+
+请从本 Fork 的 [Releases](https://github.com/cr-yijieshusheng/openworker/releases) 下载，不要用下方官方 `download.openworker.com` 链接。已经装过 `v0.2.1-zh.4` 的，启动后会提示更新到本版；更早的手动包需要先手动安装一次。
+
+### Maintainer note
+
+I maintain this community fork: macOS and Windows release builds, and safeguards so auto-update stays on this repository instead of the official channel. I track upstream releases and publish the matching build. Since upstream 0.3, interface strings come from the official Simplified Chinese locale; syncing keeps that locale and this update channel together.
+
 **AI that gets your everyday tasks done.** OpenWorker is an open-source AI coworker that lives on your desktop and delivers **finished work**, not just chat: your code reviewed for vulnerabilities with fixes ready to go, a polished document, a Slack reply with the numbers, a triaged inbox. It ships **specialist Security coworkers** first — attackers already use AI, and defenders deserve the same leverage, governed.
 
 It runs on your machine and doesn't lock you into any model: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider, or run fully local with Ollama. Your data leaves your machine only through the model and integrations *you* choose. Every action an agent takes is governed and logged — see [Governed by design](#governed-by-design) — and its commands can run inside an [NVIDIA OpenShell](docs/openshell.md) sandbox.

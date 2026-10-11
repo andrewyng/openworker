@@ -27,7 +27,8 @@
 [CmdletBinding()]
 param(
     # Which installer bundles to produce. Both by default.
-    [string]$Bundles = "nsis,msi"
+    # MSI (WiX) rejects non-numeric prerelease ids such as "zh" in 0.2.1-zh.3.
+    [string]$Bundles = ""
 )
 $ErrorActionPreference = "Stop"
 
@@ -80,6 +81,19 @@ if (Test-Path $Dst) { Remove-Item -Recurse -Force $Dst }
 Remove-Item -Force (Join-Path $BinDir "openworker-server-$Triple.exe") -ErrorAction SilentlyContinue
 Copy-Item -Recurse -Force $Src $Dst
 Write-Host "    -> $Dst"
+
+$ConfPath = Join-Path $Gui "src-tauri\tauri.conf.json"
+$AppVersion = (Get-Content $ConfPath -Raw | ConvertFrom-Json).version
+if (-not $Bundles) {
+    # WiX/MSI: prerelease identifier must be numeric-only (max 65535). Fork tags
+    # like 0.2.1-zh.3 therefore ship NSIS only; official X.Y.Z still builds both.
+    if ($AppVersion -match '[A-Za-z]') {
+        $Bundles = "nsis"
+        Write-Host "    version $AppVersion is not MSI-safe; bundling NSIS only" -ForegroundColor Yellow
+    } else {
+        $Bundles = "nsis,msi"
+    }
+}
 
 Write-Host "==> [3/3] tauri build (--bundles $Bundles)" -ForegroundColor Cyan
 # Auto-update artifacts (NSIS setup .exe + minisign .sig): produced only when the updater
