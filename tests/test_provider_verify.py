@@ -99,6 +99,14 @@ def test_verify_openai_completions_route_404_is_clear(monkeypatch):
     assert "v1" in res["error"]
 
 
+def test_verify_novita_uses_openai_compatible_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("novita", api_key="sk-nov") == {"ok": True}
+    assert cap["url"] == "https://api.novita.ai/openai/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer sk-nov"
+
+
 def test_verify_bad_key_is_invalid(monkeypatch):
     _patch_get(monkeypatch, status=401)
     assert verify_provider_key("openai", api_key="sk-bad") == {
