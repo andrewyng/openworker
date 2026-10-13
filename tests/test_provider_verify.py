@@ -131,6 +131,14 @@ def test_verify_ollama_uses_v1_models_no_key(monkeypatch):
     assert "headers" not in cap  # keyless
 
 
+def test_verify_cheaperinference_lists_models_on_its_own_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("cheaperinference", api_key="ci-x") == {"ok": True}
+    assert cap["url"] == "https://api.cheaperinference.com/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer ci-x"
+
+
 @pytest.mark.parametrize(
     "name,base_url,model",
     [

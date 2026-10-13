@@ -120,3 +120,9 @@ describe("Ark provider presentation", () => {
     );
   });
 });
+
+describe("Cheaper Inference provider presentation", () => {
+  it("links to the Cheaper Inference API key page", () => {
+    expect(KEY_HELP.cheaperinference.url).toBe("https://cheaperinference.com/signup");
+  });
+});
