@@ -42,6 +42,7 @@ const BEDROCK: ProviderInfo = {
 function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): ProviderSetupState {
   return {
     providers: [BEDROCK],
+    loaded: true,
     ordered: [BEDROCK],
     refreshProviders: async () => {},
     sel: "bedrock",

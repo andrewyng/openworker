@@ -4044,7 +4044,9 @@ class SessionManager:
         non-secret field values (e.g. the Ollama base URL) ARE returned so the form can prefill.
         """
         out: list[dict[str, Any]] = []
-        for d in provider_descriptors():
+        descriptors = provider_descriptors()
+        alive = self._local_servers_alive([d.name for d in descriptors if d.kind == "local"])
+        for d in descriptors:
             profile = self.secrets.get(f"provider:{d.name}") or {}
             configured = descriptor_configured(d, profile)
             values = {
@@ -4063,7 +4065,11 @@ class SessionManager:
                 # to hide "Remove key" for a key it cannot remove (#742).
                 "key_source": "store" if profile.get("api_key") else ("env" if env_var else None),
                 "env_key": env_var,
-                "suggested_models": self._suggested_models(d.name),
+                # A local server that does not answer has no models to list; asking anyway is
+                # one more refused connection, ~2 s each on Windows.
+                "suggested_models": (
+                    self._suggested_models(d.name) if d.kind != "local" or alive[d.name] else []
+                ),
                 # Key hygiene for the Settings pane: when the key was saved (date, stamped
                 # by set_provider) and when the provider last served a completion (epoch,
                 # stamped by the router's on_use hook). Absent for env-only config.
@@ -4075,7 +4081,7 @@ class SessionManager:
             if d.kind == "local":
                 # A keyless server is "connected" when it answers (cached probes), not
                 # when a form was saved; the page groups connected providers first.
-                row["alive"] = self._ollama_alive() if d.name == "ollama" else self._local_server_alive(d.name)
+                row["alive"] = alive[d.name]
             if d.auth == "oauth":
                 # Sign-in state instead of key state; the token values themselves
                 # never leave the SecretStore.
@@ -4463,6 +4469,23 @@ class SessionManager:
             return {"provider": name, "models": rows, "alive": self._local_server_alive(name)}
         return {"provider": name, "models": [], "error": "no local model list for this provider"}
 
+    def _local_servers_alive(self, names: list[str]) -> dict[str, bool]:
+        """Liveness of each local server, probed side by side: a probe of a closed port can
+        take seconds (Windows retries a refused localhost connection for ~2 s), so the
+        Settings page waits for the slowest server, not the sum."""
+        if not names:
+            return {}
+        from concurrent.futures import ThreadPoolExecutor
+
+        if getattr(self, "_local_alive_cache", None) is None:
+            self._local_alive_cache = {}  # one shared cache, not one per probing thread
+
+        def probe(name: str) -> bool:
+            return self._ollama_alive() if name == "ollama" else self._local_server_alive(name)
+
+        with ThreadPoolExecutor(max_workers=len(names)) as pool:
+            return dict(zip(names, pool.map(probe, names)))
+
     def _local_server_alive(self, name: str) -> bool:
         """Best-effort liveness of a llama.cpp or vLLM server, cached 30 s like Ollama's."""
         import time
@@ -4470,14 +4493,15 @@ class SessionManager:
         from ..providers import local_server
 
         now = time.monotonic()
-        cache = getattr(self, "_local_alive_cache", None) or {}
+        cache = getattr(self, "_local_alive_cache", None)
+        if cache is None:
+            cache = self._local_alive_cache = {}
         hit = cache.get(name)
         if hit and now - hit[0] < 30:
             return hit[1]
         profile = self.secrets.get(f"provider:{name}") or {}
         alive = local_server.alive(name, profile.get("base_url"), profile.get("api_key"))
         cache[name] = (now, alive)
-        self._local_alive_cache = cache
         return alive
 
     def _local_server_models(self, name: str) -> list[str]:

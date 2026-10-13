@@ -97,7 +97,11 @@ export function ProviderGroups({
           data-testid="provider-search"
         />
       </label>
-      {shown.length === 0 && <p className="text-meta text-faint mb-6" data-testid="provider-search-empty">{t("manage.no_providers_match")}</p>}
+      {!ps.loaded ? (
+        <p className="text-meta text-faint mb-6" data-testid="provider-loading">{t("manage.loading_providers")}</p>
+      ) : (
+        shown.length === 0 && <p className="text-meta text-faint mb-6" data-testid="provider-search-empty">{t("manage.no_providers_match")}</p>
+      )}
       {KINDS.map((kind) => {
         const inKind = shown.filter((p) => providerKind(p) === kind);
         if (inKind.length === 0) return null;
