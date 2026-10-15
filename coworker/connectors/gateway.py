@@ -30,6 +30,11 @@ logger = logging.getLogger("coworker.connectors")
 
 _RECENT_CAP = 20  # most-recent distinct senders kept for chat-ID auto-capture
 
+# One sentence for a human whose approve/deny was refused by the owner check — sent as a
+# Slack ephemeral for button clicks and as a plain reply for tagged text replies on any
+# transport, so a refusal never looks like the bot ignoring them (OPE-217 / #712).
+APPROVAL_OWNER_REQUIRED = "Only a designated approval owner can respond to this request."
+
 
 class Gateway:
     def __init__(
@@ -93,7 +98,7 @@ class Gateway:
     async def reject_interaction(
         self,
         event: InteractionEvent,
-        text: str = "Only a designated approval owner can respond to this request.",
+        text: str = APPROVAL_OWNER_REQUIRED,
     ) -> None:
         """Best-effort private feedback for a rejected Slack button click."""
         response_url = str(event.response_url or "")

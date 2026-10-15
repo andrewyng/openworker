@@ -895,7 +895,7 @@ export interface Connector {
   mcp?: boolean; // MCP-backed one-click (vendor-hosted MCP + local OAuth — no cloud sign-in)
   allowed_users: string[]; // the allow-list (managed inline in the Connectors tab)
   allowed_user_names?: Record<string, string | null>; // id → display name (people directory)
-  approval_owner_ids?: string[]; // Manual Slack: humans allowed to resolve approvals
+  approval_owner_ids?: string[]; // Manual Slack / Telegram: humans allowed to resolve approvals
   approval_owner_names?: Record<string, string | null>;
   recent?: RecentSender[]; // recently-seen senders on a connected two-way connector
   unauthorized?: ParkedMessage[]; // parked messages from unallowed senders (§19)
@@ -2408,7 +2408,6 @@ export interface ProviderField {
 }
 
 export interface ProviderInfo {
-  api_key_configured?: boolean;
   name: string;
   title: string;
   needs_key: boolean;
@@ -2419,6 +2418,11 @@ export interface ProviderInfo {
   recommended_model: string | null; // pre-filled default for this provider (e.g. qwen3-coder:30b)
   blurb?: string; // one-line note under the title ("Uses X's OpenAI-compatible API…")
   key_set_at?: string | null; // ISO date the key was last (re)saved — absent for env-only config
+  // Where the key comes from: saved in Settings, the provider's environment variable, or
+  // nowhere. "env" keys cannot be removed from the app, so the card hides "Remove key" and
+  // names the variable instead (#742). Absent on an older backend → treated as "store".
+  key_source?: "store" | "env" | null;
+  env_key?: string | null; // the variable's name, when it is set
   last_used_at?: number | null; // epoch secs the provider last served a completion
   // OAuth providers (auth === "oauth"): browser sign-in instead of a key form.
   auth?: string | null;
@@ -2436,7 +2440,6 @@ export interface ProviderInfo {
 // -- ChatGPT-subscription provider sign-in (OAuth; tokens never reach the GUI) ------
 export interface OpenRouterAuthStatus {
   connected: boolean;
-  active: boolean;
   authorizing: boolean;
   attempt_id: string | null;
   authorize_url: string | null;
@@ -2447,7 +2450,7 @@ export async function openRouterAuth(
   action: "status" | "signin" | "complete" | "cancel" | "disconnect",
   body: Record<string, unknown> = {},
 ): Promise<OpenRouterAuthStatus> {
-  const response = await fetch(`${httpBase()}/v1/providers/openrouter/${action}`, action === "status" ? undefined : {
+  const response = await fetch(`${httpBase()}/v1/providers/openrouter-account/${action}`, action === "status" ? undefined : {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error("OpenRouter authentication request failed");
@@ -2547,15 +2550,29 @@ export async function removeModelConfig(model: string): Promise<{ ok: boolean }>
 }
 
 /** This session's thinking switch and effort level (UX-055, the ⚙ beside the model). */
-export async function getSessionModelSettings(sessionId: string): Promise<{ thinking: boolean | null; reasoning_effort: string | null }> {
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/model-settings`);
+// UX-056: what a model lets the user set per session (providers/model_controls.py).
+export interface ModelControls {
+  thinking: { support: "supported" | "not_supported"; default?: boolean | null };
+  reasoning: { support: "supported" | "not_supported"; levels?: string[]; default?: string | null };
+}
+
+export interface SessionModelControls {
+  // What this session changed; null = the model's default.
+  thinking: boolean | null;
+  reasoning_effort: string | null;
+  controls: ModelControls;
+}
+
+export async function getSessionModelSettings(sessionId: string, model = ""): Promise<SessionModelControls> {
+  const q = model ? `?model=${encodeURIComponent(model)}` : "";
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/model-settings${q}`);
   return res.json();
 }
 
 export async function setSessionModelSettings(
   sessionId: string,
   values: { thinking?: boolean | null; reasoning_effort?: string | null },
-): Promise<{ ok: boolean; error?: string; thinking?: boolean | null; reasoning_effort?: string | null }> {
+): Promise<{ ok: boolean; error?: string } & Partial<SessionModelControls>> {
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/model-settings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2604,7 +2621,11 @@ export async function getLocalModels(
   provider: string,
   machineId?: string | null,
 ): Promise<{ provider: string; models: LocalModelRow[]; alive?: boolean; error?: string }> {
-  const res = await fetch(`${engineBase(machineId)}/v1/providers/${encodeURIComponent(provider)}/models`);
+  // A stuck request must end in an error the page can show, never an endless blank.
+  const res = await fetch(`${engineBase(machineId)}/v1/providers/${encodeURIComponent(provider)}/models`, {
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
@@ -2941,6 +2962,32 @@ export async function removeSlackApprovalOwner(
   userId: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`${httpBase()}/v1/connectors/slack/approval-owners/remove`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId }),
+  });
+  return res.json();
+}
+
+export async function addTelegramApprovalOwner(
+  userId: string,
+  displayName?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/connectors/telegram/approval-owners/add`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id: userId,
+      ...(displayName ? { name: displayName } : {}),
+    }),
+  });
+  return res.json();
+}
+
+export async function removeTelegramApprovalOwner(
+  userId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/connectors/telegram/approval-owners/remove`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_id: userId }),

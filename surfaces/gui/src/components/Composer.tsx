@@ -3,7 +3,7 @@ import { getI18n, useTranslation } from "react-i18next";
 import type { Attachment, SessionUsage } from "../types";
 import { isPdfFile, readFile } from "../attach";
 import { ProjectBindMenu } from "./ProjectBindMenu";
-import { getSessionModelSettings, getSettings, inspectPdf, sessionSkills, setSessionModelSettings, type SessionSkillRow } from "../api";
+import { getSessionModelSettings, getSettings, inspectPdf, sessionSkills, setSessionModelSettings, type ModelControls, type SessionSkillRow } from "../api";
 import { formatTokens, totalTokens } from "../usage";
 import { Dropdown, type Option } from "./Dropdown";
 import { Icon } from "./Icon";
@@ -110,6 +110,9 @@ interface Props {
   // so `running` is true — but typing must stay possible, because a typed reply
   // IS an answer (decline-with-feedback). Unblocks Send while the gate is up.
   gateOpen?: boolean;
+  // What the open gate is, for the placeholder: a proposal to adjust, or a question
+  // whose answer the composer sends.
+  gateKind?: "proposal" | "question";
   connected: boolean;
   // False when the default model's provider has no key — the composer shows a "connect a model"
   // banner and routes sends to setup (preserving the draft) instead of dropping them.
@@ -671,7 +674,7 @@ export function Composer(props: Props) {
           className="w-full block px-3.5 pt-3.5 pb-1.5 text-body"
           placeholder={
             props.gateOpen
-              ? t("composer.placeholder_gate")
+              ? t(props.gateKind === "question" ? "composer.placeholder_question" : "composer.placeholder_gate")
               : props.placeholder || t("composer.placeholder")
           }
           value={text}
@@ -843,7 +846,7 @@ export function Composer(props: Props) {
           ))}
 
           {!props.compact && modelsLoaded && props.sessionId && (
-            <SessionModelSettings sessionId={props.sessionId} model={props.model} local={isLocalModel(props.model)} onPickModel={props.onPickModel} />
+            <SessionModelControls sessionId={props.sessionId} model={props.model} onPickModel={props.onPickModel} />
           )}
 
           {/* mic — immediately before send (owner call, DMG #28 walkthrough) */}
@@ -1110,80 +1113,211 @@ function AttachChip({ a, onRemove }: { a: Attachment; onRemove: () => void }) {
 }
 
 
-// UX-055: the ⚙ beside the model pill. This session's thinking switch (a local model)
-// or effort level (a cloud model), over the model's own setting; other sessions keep
-// theirs. The link at the bottom opens the model's defaults in Models & Keys.
-function SessionModelSettings({
+// UX-056: beside the model, this session's reasoning effort (a grey pill showing the
+// level; click for a slider over the model's own levels) and thinking switch (a brain;
+// click to flip). Each appears only when the model has it — the server says which
+// (providers/model_controls.py). The model's default is a tick on the track and
+// "Default" under its name; a session that differs gets a small dot and a Reset.
+// No accent colour here: the composer stays muted.
+function SessionModelControls({
   sessionId,
   model,
-  local,
   onPickModel,
 }: {
   sessionId: string;
   model: string;
-  local: boolean;
   onPickModel?: () => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const [state, setState] = useState<{ thinking: boolean | null; reasoning_effort: string | null } | null>(null);
+  const [controls, setControls] = useState<ModelControls | null>(null);
+  const [thinking, setThinking] = useState<boolean | null>(null);
+  const [effort, setEffort] = useState<string | null>(null);
+  const [drag, setDrag] = useState<number | null>(null);
+  const [hover, setHover] = useState<number | null>(null);
   useEffect(() => {
-    if (!open) return;
-    getSessionModelSettings(sessionId).then(setState).catch(() => setState({ thinking: null, reasoning_effort: null }));
-  }, [open, sessionId, model]);
+    let live = true;
+    setControls(null);
+    getSessionModelSettings(sessionId, model)
+      .then((s) => {
+        if (!live) return;
+        setControls(s.controls || null);
+        setThinking(s.thinking ?? null);
+        setEffort(s.reasoning_effort ?? null);
+      })
+      .catch(() => live && setControls(null));
+    return () => {
+      live = false;
+    };
+  }, [sessionId, model]);
   const apply = (values: { thinking?: boolean | null; reasoning_effort?: string | null }) =>
     setSessionModelSettings(sessionId, values).then((r) => {
-      if (r.ok) setState({ thinking: r.thinking ?? null, reasoning_effort: r.reasoning_effort ?? null });
+      if (!r.ok) return;
+      setThinking(r.thinking ?? null);
+      setEffort(r.reasoning_effort ?? null);
     });
-  const seg = (on: boolean, label: string, onClick: () => void) => (
-    <button className={"px-2.5 py-0.5 text-meta " + (on ? "bg-accent text-panel" : "text-muted hover:text-ink")} onClick={onClick}>
-      {label}
-    </button>
-  );
+  if (!controls) return null;
+  const think = controls.thinking.support === "supported" ? controls.thinking : null;
+  const reason = controls.reasoning.support === "supported" && (controls.reasoning.levels || []).length ? controls.reasoning : null;
+  if (!think && !reason) return null;
+  const levels = reason?.levels || [];
+  const label = (lvl: string) => t(`composer.model.effort_${lvl}`, { defaultValue: lvl });
+
+  const thinkOn = thinking ?? !!think?.default;
+  const thinkChanged = thinking !== null && thinking !== !!think?.default;
+  const level = effort ?? reason?.default ?? levels[0];
+  const effortChanged = effort !== null && effort !== reason?.default;
+  const at = Math.max(0, levels.indexOf(level));
+  // While dragging, the thumb follows the pointer's nearest level; it saves on release.
+  const shown = drag ?? at;
+  // The first and last levels sit at the very ends of the track: the thumb (30px, 3px
+  // inset) touches the edge there. A stop's centre is 18px in from each end at most.
+  const frac = (i: number) => (levels.length > 1 ? i / (levels.length - 1) : 0.5);
+  const centre = (i: number) => `calc(18px + (100% - 36px) * ${frac(i)})`;
+  const choose = (i: number) => {
+    const lvl = levels[Math.max(0, Math.min(levels.length - 1, i))];
+    if (!lvl || lvl === level) return;
+    const value = lvl === reason?.default ? null : lvl;
+    // Show the new level at once, so the thumb stays where it was let go of instead of
+    // sliding back to the old level until the server answers.
+    setEffort(value);
+    apply({ reasoning_effort: value });
+  };
+  // More than three levels crowd the row: name the ends, the current level and the
+  // default; the rest show when the pointer is over their stop.
+  const named = (i: number) =>
+    levels.length <= 3 || i === 0 || i === levels.length - 1 || i === shown || levels[i] === reason?.default;
+  const nearest = (clientX: number, el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    const f = (clientX - r.left - 18) / Math.max(1, r.width - 36);
+    return Math.max(0, Math.min(levels.length - 1, Math.round(f * (levels.length - 1))));
+  };
+  const dot = <span className="w-[5px] h-[5px] rounded-full bg-muted" aria-hidden />;
+
   return (
-    <div className="relative shrink-0">
-      <button
-        className={"w-7 h-7 grid place-items-center rounded-md hover:bg-paper " + (open ? "text-accent" : "text-faint hover:text-ink")}
-        title={t("composer.model.session_settings")}
-        aria-label={t("composer.model.session_settings")}
-        onClick={() => setOpen((v) => !v)}
-        data-testid="session-model-settings"
-      >
-        ⚙
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute z-40 bottom-full mb-1 right-0 w-[300px] rounded-xl border border-line bg-panel shadow-2xl p-3" data-testid="session-model-settings-menu">
-            <div className="text-label text-faint font-semibold tracking-wide uppercase mb-2">{t("composer.model.this_session")}</div>
-            {state && local && (
-              <div className="flex items-center text-ui">
-                {t("composer.model.thinking_label")}
-                <span className="ml-auto flex rounded-md border border-lineStrong overflow-hidden">
-                  {seg(state.thinking === false, t("composer.model.off"), () => apply({ thinking: false }))}
-                  {seg(state.thinking === true, t("composer.model.on"), () => apply({ thinking: true }))}
-                  {seg(state.thinking === null, t("composer.model.models_setting"), () => apply({ thinking: null }))}
-                </span>
+    <>
+      {reason && (
+        <div className="relative shrink-0">
+          <button
+            className={"inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-meta text-ink " + (open ? "bg-lineStrong/60" : "bg-paper hover:bg-line")}
+            title={t("composer.model.effort_label")}
+            onClick={() => setOpen((v) => !v)}
+            data-testid="effort-pill"
+          >
+            {effortChanged && dot}
+            {label(level)}
+          </button>
+          {open && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+              <div className="absolute z-40 bottom-full mb-2 right-0 w-[340px] rounded-2xl border border-line bg-panel shadow-2xl px-[18px] pt-4 pb-3" data-testid="effort-menu">
+                <div className="flex items-baseline gap-2 text-ui">
+                  <span className="text-faint">{t("composer.model.effort_label")}</span>
+                  <span className="font-semibold">{label(levels[shown] || level)}</span>
+                  {effortChanged && (
+                    <button className="ml-auto text-meta text-muted underline underline-offset-2 hover:text-ink" onClick={() => apply({ reasoning_effort: null })} data-testid="effort-reset">
+                      {t("composer.model.reset_to", { level: label(reason.default || "") })}
+                    </button>
+                  )}
+                </div>
+                <div className="flex justify-between text-meta text-faint mt-3.5 mb-1.5">
+                  <span>{t("composer.model.faster")}</span>
+                  <span>{t("composer.model.smarter")}</span>
+                </div>
+                <div
+                  className="relative h-[34px] rounded-[10px] bg-paper cursor-pointer touch-none outline-none focus-visible:ring-1 focus-visible:ring-lineStrong"
+                  role="slider"
+                  tabIndex={0}
+                  aria-label={t("composer.model.effort_label")}
+                  aria-valuemin={0}
+                  aria-valuemax={levels.length - 1}
+                  aria-valuenow={shown}
+                  aria-valuetext={label(levels[shown])}
+                  onPointerDown={(e) => {
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                    setDrag(nearest(e.clientX, e.currentTarget));
+                  }}
+                  onPointerMove={(e) => {
+                    const i = nearest(e.clientX, e.currentTarget);
+                    if (drag !== null) setDrag(i);
+                    setHover(i);
+                  }}
+                  onPointerLeave={() => setHover(null)}
+                  onPointerUp={(e) => {
+                    const i = nearest(e.clientX, e.currentTarget);
+                    setDrag(null);
+                    choose(i);
+                  }}
+                  onPointerCancel={() => setDrag(null)}
+                  onKeyDown={(e) => {
+                    const step = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }[e.key];
+                    if (step) choose(at + step);
+                    else if (e.key === "Home") choose(0);
+                    else if (e.key === "End") choose(levels.length - 1);
+                    else return;
+                    e.preventDefault();
+                  }}
+                  data-testid="effort-slider"
+                >
+                  <div className="absolute inset-y-0 left-0 rounded-[10px] bg-lineStrong" style={{ width: `calc(${centre(shown)} + 15px)` }} />
+                  {levels.map((lvl, i) =>
+                    i === shown ? null : lvl === reason.default ? (
+                      <span key={lvl} className="absolute top-1/2 w-[2px] h-3 -mt-1.5 -ml-px rounded-sm bg-muted" style={{ left: centre(i) }} />
+                    ) : (
+                      <span key={lvl} className="absolute top-1/2 w-1 h-1 -mt-0.5 -ml-0.5 rounded-full bg-faint" style={{ left: centre(i) }} />
+                    ),
+                  )}
+                  <span
+                    className={"absolute top-[3px] w-[30px] h-[28px] -ml-[15px] rounded-[9px] bg-panel shadow pointer-events-none " + (drag === null ? "transition-[left]" : "")}
+                    style={{ left: centre(shown) }}
+                    data-testid="effort-thumb"
+                  />
+                </div>
+                <div className="relative h-[34px] text-[12px] text-faint">
+                  {levels.map((lvl, i) => (
+                    <span
+                      key={lvl}
+                      className={
+                        "absolute top-1.5 -translate-x-1/2 whitespace-nowrap text-center transition-opacity " +
+                        (i === shown ? "text-ink font-semibold " : "") +
+                        (named(i) || i === hover ? "opacity-100" : "opacity-0")
+                      }
+                      style={{ left: centre(i) }}
+                    >
+                      {label(lvl)}
+                      {lvl === reason.default && <small className="block text-[10.5px] font-normal text-muted">{t("composer.model.default")}</small>}
+                    </span>
+                  ))}
+                </div>
+                {onPickModel && (
+                  <div className="flex justify-end mt-2.5 text-meta">
+                    <button className="text-muted hover:text-ink" onClick={() => { setOpen(false); onPickModel(); }}>
+                      {t("composer.model.model_defaults")}
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
-            {state && !local && (
-              <div className="flex items-center text-ui">
-                {t("composer.model.effort_label")}
-                <span className="ml-auto flex rounded-md border border-lineStrong overflow-hidden">
-                  {(["low", "medium", "high"] as const).map((lvl) => seg(state.reasoning_effort === lvl, t(`composer.model.effort_${lvl}`), () => apply({ reasoning_effort: lvl })))}
-                  {seg(state.reasoning_effort === null, t("composer.model.models_setting"), () => apply({ reasoning_effort: null }))}
-                </span>
-              </div>
-            )}
-            <p className="text-meta text-faint mt-2">{t("composer.model.session_only_note")}</p>
-            {onPickModel && (
-              <button className="mt-2 text-meta text-accent" onClick={() => { setOpen(false); onPickModel(); }}>
-                {t("composer.model.change_defaults")}
-              </button>
-            )}
-          </div>
-        </>
+            </>
+          )}
+        </div>
       )}
-    </div>
+      {think && (
+        <button
+          className={"relative w-7 h-7 grid place-items-center rounded-md hover:bg-paper shrink-0 " + (thinkOn ? "text-ink" : "text-faint")}
+          title={t(thinkOn ? "composer.model.thinking_on" : "composer.model.thinking_off") + (thinkChanged ? "" : ` · ${t("composer.model.default")}`)}
+          aria-label={t("composer.model.thinking_label")}
+          aria-pressed={thinkOn}
+          onClick={() => {
+            const next = !thinkOn;
+            apply({ thinking: next === !!think.default ? null : next });
+          }}
+          data-testid="thinking-toggle"
+        >
+          <Icon name="brain" size={16} />
+          {!thinkOn && <span className="absolute w-[18px] h-[1.6px] bg-faint rotate-[-45deg] rounded-sm" aria-hidden />}
+          {thinkChanged && <span className="absolute top-[3px] right-[3px] w-[5px] h-[5px] rounded-full bg-muted" aria-hidden />}
+        </button>
+      )}
+    </>
   );
 }

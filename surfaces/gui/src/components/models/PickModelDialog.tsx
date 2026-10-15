@@ -73,12 +73,13 @@ export function PickModelDialog({
   const [rows, setRows] = useState<LocalModelRow[] | null>(null);
   const [view, setView] = useState<ModelConfigView | null>(null);
   const [draft, setDraft] = useState<Draft>({});
-  const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const connected = providers.filter((p) => providerConnected(p, keylessOk) && kinds.has(providerKind(p)));
   const isLocal = provider ? providerKind(provider) === "local" : false;
+  const [loadError, setLoadError] = useState("");
+  const [reload, setReload] = useState(0);
   const fixedContext = provider?.name === "llamacpp" || provider?.name === "vllm";
 
   // Step 2: the models the chosen provider offers. Also read when the dialog opens on
@@ -87,16 +88,19 @@ export function PickModelDialog({
     if (!provider || (step !== 2 && !(step === 3 && providerKind(provider) === "local" && rows === null))) return;
     setRows(null);
     setError("");
+    setLoadError("");
     if (providerKind(provider) === "local" || provider.name === "deepinfra") {
       let active = true;
       getLocalModels(provider.name).then((r) => {
         if (!active) return;
         setRows(provider.name === "deepinfra" ? r.models || [] : (r.models || []).filter((m) => m.tools !== false));
-        if (r.error) setError(r.error);
+        if (r.error) setLoadError(r.error);
       }).catch(() => {
         if (active) {
           setRows([]);
-          setError("Models could not be loaded. Retry, or enter a model name.");
+          setLoadError(provider.name === "deepinfra"
+            ? "Models could not be loaded. Retry, or enter a model name."
+            : t("manage.local_models_failed"));
         }
       });
       return () => { active = false; };
@@ -107,7 +111,7 @@ export function PickModelDialog({
       })));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, step, catalogAttempt]);
+  }, [provider, step, reload]);
 
   // Step 3: the settings in force for the chosen model.
   useEffect(() => {
@@ -300,6 +304,14 @@ export function PickModelDialog({
                       </button>
                     ))}
                     {rows === null && <div className="px-3 py-3 text-meta text-faint">{t("manage.loading")}</div>}
+                    {loadError && (
+                      <div className="px-3 py-3 text-meta text-warnInk" data-testid="pick-models-failed">
+                        {loadError}{" "}
+                        <button className="text-muted underline underline-offset-2 hover:text-ink" onClick={() => setReload((n) => n + 1)} data-testid="pick-model-retry">
+                          {t("manage.retry")}
+                        </button>
+                      </div>
+                    )}
                   </div>
                   {typed.trim() && provider && !isLocal && (
                     <button className="mt-2 text-meta text-accent" onClick={() => { setError(""); setModel(fullModelId(provider, typed.trim())); setStep(3); }} data-testid="pick-model-typed">
@@ -368,9 +380,6 @@ export function PickModelDialog({
         </div>
 
         {error && <p className="text-meta text-danger mt-3">{error}</p>}
-        {error && step === 2 && provider?.name === "deepinfra" && (
-          <button className="text-meta text-accent mt-2" onClick={() => setCatalogAttempt((n) => n + 1)} data-testid="pick-model-retry">Retry</button>
-        )}
         <div className="flex items-center gap-2 mt-4 pt-3.5 border-t border-line">
           {step === 3 && !configuring && <button className="text-meta text-accent" onClick={reset}>{t("pick.reset")}</button>}
           {configuring && (

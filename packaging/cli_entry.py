@@ -9,6 +9,11 @@ import sys
 
 if __name__ == "__main__":
     # Runner mode first, before anything else is imported (coworker/sandbox/launch.py).
+    # The cryptography library looks for OpenSSL's legacy-algorithms module and warns on
+    # every start when it is not there ("OpenSSL 3's legacy provider failed to load"); the
+    # Intel Mac build, with OpenSSL linked in statically, has no such module. OpenWorker
+    # uses no legacy algorithm, so tell it not to look.
+    os.environ.setdefault("CRYPTOGRAPHY_OPENSSL_NO_LEGACY", "1")
     from coworker.sandbox.launch import maybe_run_runner
 
     maybe_run_runner(sys.argv[1:])

@@ -84,3 +84,21 @@ def test_unrelated_errors_pass_through_raw():
         friendly_model_error("gpt-5.6-sol", RuntimeError("connection reset by peer"))
         is None
     )
+
+
+def test_os_permission_error_is_not_a_model_access_error():
+    """An unreadable FILE is not a billing problem.
+
+    Every OS PermissionError stringifies as "[Errno 13] Permission denied: <path>". The
+    marker list used to contain "permission denied" with a space, so any such error was
+    reported as "your account doesn't have access to <model>", sending debugging after a
+    provider outage that never happened. Unrecognized errors must return None so the
+    caller surfaces the raw message.
+    """
+    exc = PermissionError(13, "Permission denied", "/src/.coworker/skills")
+    assert friendly_model_error("openrouter:moonshotai/kimi-k3", exc) is None
+
+    # The genuine provider marker (Anthropic's underscored error type) still translates.
+    real = RuntimeError("Error code: 403 - {'type': 'permission_error', 'message': '...'}")
+    msg = friendly_model_error("anthropic:claude-fable-5", real)
+    assert msg and "doesn't have access to anthropic:claude-fable-5" in msg

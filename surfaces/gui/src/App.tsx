@@ -1387,6 +1387,14 @@ export function App() {
       respondItemsReq(false, text);
       return;
     }
+    // The same for an open ask_user question: what the user types in the composer is
+    // the answer. Before this, Enter did nothing while a question was up, and a
+    // question sent with allow_text false left no other place to type (owner-hit
+    // 2026-10-06).
+    if (!unattended && pendingQuestion?.kind === "question" && !attachments?.length && !skill) {
+      answerQuestion(text);
+      return;
+    }
     // Force-run shows exactly what the user typed: "/name rest". Must match the server's
     // `display` sidecar formula so the turn_start dedupe recognizes the local echo.
     const shown = skill ? `/${skill}${text ? ` ${text}` : ""}` : text;
@@ -2444,7 +2452,8 @@ export function App() {
                 openSettings("models");
               }}
               running={running}
-              gateOpen={!unattended && (!!pendingTeam || !!pendingItemsReq)}
+              gateOpen={!unattended && (!!pendingTeam || !!pendingItemsReq || !!pendingQuestion)}
+              gateKind={!unattended && pendingQuestion && !pendingTeam && !pendingItemsReq ? "question" : "proposal"}
               // An offline machine's cached transcript is read-only: the send
               // path is dead by construction, so say so explicitly rather than
               // letting a hopeful socket state enable the button.

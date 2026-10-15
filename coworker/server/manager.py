@@ -4052,10 +4052,17 @@ class SessionManager:
                 for f in d.fields
                 if not f.secret and profile.get(f.key)
             }
+            env_var = d.env_key if (d.env_key and os.environ.get(d.env_key)) else None
             row = {
                 **d.to_dict(),
                 "configured": configured,
                 "values": values,
+                # Where the key comes from: a key saved in Settings ("store"), the
+                # provider's environment variable ("env"), or nowhere. A stored key wins
+                # over the variable, as resolve_api_key does. The Settings card uses this
+                # to hide "Remove key" for a key it cannot remove (#742).
+                "key_source": "store" if profile.get("api_key") else ("env" if env_var else None),
+                "env_key": env_var,
                 "suggested_models": self._suggested_models(d.name),
                 # Key hygiene for the Settings pane: when the key was saved (date, stamped
                 # by set_provider) and when the provider last served a completion (epoch,
@@ -4065,10 +4072,6 @@ class SessionManager:
                     d.name
                 ),
             }
-            if d.name == "openrouter":
-                row["api_key_configured"] = bool(
-                    profile.get("api_key") or os.environ.get("OPENROUTER_API_KEY")
-                )
             if d.kind == "local":
                 # A keyless server is "connected" when it answers (cached probes), not
                 # when a form was saved; the page groups connected providers first.
@@ -4189,10 +4192,7 @@ class SessionManager:
                 profile[f.key] = val
             elif not f.required:
                 profile.pop(f.key, None)
-        missing = [
-            f.label for f in d.fields if f.required and not profile.get(f.key)
-            and not (name == "openrouter" and f.key == "api_key" and os.environ.get("OPENROUTER_API_KEY"))
-        ]
+        missing = [f.label for f in d.fields if f.required and not profile.get(f.key)]
         if missing:
             return {"ok": False, "error": "missing: " + ", ".join(missing)}
         # A (re)pasted key stamps its save date — Settings shows "key added <date>" so stale
@@ -4201,8 +4201,6 @@ class SessionManager:
             from datetime import date
 
             profile["key_set_at"] = date.today().isoformat()
-        if name == "openrouter" and "api_key" in fields:
-            profile["auth_method"] = "api_key"
         self.secrets.put(f"provider:{name}", profile)
         self.adopt_provider_default(name)
         return {"ok": True, "provider": name, "recommended_model": d.recommended_model}
@@ -4245,16 +4243,29 @@ class SessionManager:
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
-        if name == "openrouter":
-            profile = self.secrets.get("provider:openrouter") or {}
-            self.secrets.put("provider:openrouter", {
-                key: value for key, value in profile.items()
-                if key in {"auth_method", "account_connected"}
-            })
-        else:
-            self.secrets.delete(f"provider:{name}")
+        env_var = d.env_key if (d.env_key and os.environ.get(d.env_key)) else None
+        stored = bool((self.secrets.get(f"provider:{name}") or {}).get("api_key"))
+        if env_var and not stored:
+            # Nothing of ours to remove: the key is the environment variable, which only
+            # the user can unset. Say so instead of reporting a removal that changes
+            # nothing (#742).
+            return {
+                "ok": False,
+                "provider": name,
+                "env_key": env_var,
+                "error": (
+                    f"The {d.title} key comes from {env_var} in the server's environment. "
+                    "Unset it and restart the server to remove it."
+                ),
+            }
+        self.secrets.delete(f"provider:{name}")
         self._refresh_provider(name)
-        return {"ok": True, "provider": name}
+        out: dict[str, Any] = {"ok": True, "provider": name}
+        if env_var:
+            # The stored key is gone but the variable still configures the provider.
+            out["env_key"] = env_var
+            out["configured"] = True
+        return out
 
     # -- ChatGPT-subscription provider (OAuth, no key) ---------------------------
     def begin_codex_signin(self) -> None:
@@ -5171,6 +5182,80 @@ class SessionManager:
             if str(user_id).strip()
         }
 
+    # -- Telegram approval owners (OPE-217 / #712) -------------------------------
+    # Telegram has no OAuth installer, so like manual Slack Socket Mode the humans who may
+    # resolve consequential prompts are listed explicitly on the connector profile.
+    def telegram_approval_owner_ids(self) -> set[str]:
+        profile = self.secrets.get("telegram:default") or {}
+        return {
+            str(user_id).strip()
+            for user_id in (profile.get("approval_owner_ids") or [])
+            if str(user_id).strip()
+        }
+
+    def set_telegram_approval_owner(
+        self, user_id: str, *, add: bool, display_name: str = ""
+    ) -> dict[str, Any]:
+        """Edit the Telegram approval owners. Owner status implies inbound permission."""
+        user_id = str(user_id).strip()
+        if not user_id:
+            return {"ok": False, "error": "user_id required"}
+        profile = self.secrets.get("telegram:default")
+        if not profile:
+            return {"ok": False, "error": "Telegram is not connected."}
+        owners = self.telegram_approval_owner_ids()
+        if add:
+            owners.add(user_id)
+        else:
+            owners.discard(user_id)
+        profile["approval_owner_ids"] = sorted(owners)
+        if add:
+            allowed = set(profile.get("allowed_users") or [])
+            allowed.add(user_id)
+            profile["allowed_users"] = sorted(allowed)
+        self.secrets.put("telegram:default", profile)
+        if display_name:
+            self._note_person("telegram", user_id, display_name)
+        if self.gateway is not None and "telegram" in self.gateway.settings:
+            self.gateway.settings["telegram"].allowed_users = set(
+                profile.get("allowed_users") or []
+            )
+        return {
+            "ok": True,
+            "approval_owner_ids": sorted(owners),
+            "allowed_users": list(profile.get("allowed_users") or []),
+        }
+
+    def _telegram_actor_owns_item(
+        self, item, *, actor_id: str, chat_id: str
+    ) -> bool:
+        """Authorize a Telegram resolution of a protected item.
+
+        Two conditions, mirroring the Slack rule (owner + bound channel):
+
+        - the reply must arrive in the chat the item's inbox is bound to — a reply from any
+          other chat is refused whoever sent it (an in-app-only inbox is not remotely
+          resolvable at all);
+        - the sender must be an approval owner. With owners configured that is the list.
+          With none configured, a binding to a private chat means exactly one allowed
+          human lives there (a Telegram DM's chat id IS the user's id), so that person is
+          the owner — single-user bots need no setup. A group binding (negative chat id)
+          with no owners configured refuses: a whole group never gains approval rights by
+          accident.
+        """
+        binding = self.inbox_routing.binding_for(item.inbox)
+        if binding.channel != "telegram" or not binding.target:
+            return False
+        bound_chat = str(binding.target).strip()
+        if str(chat_id or "").strip() != bound_chat or not actor_id:
+            return False
+        owners = self.telegram_approval_owner_ids()
+        if owners:
+            return actor_id in owners
+        if bound_chat.startswith("-"):
+            return False  # group/supergroup: owners must be chosen explicitly
+        return actor_id == bound_chat
+
     def set_slack_approval_owner(
         self, user_id: str, *, add: bool, display_name: str = ""
     ) -> dict[str, Any]:
@@ -5274,8 +5359,9 @@ class SessionManager:
         - cross-transport is refused: an item bound to one channel can only be resolved from
           that same channel (an in-app-only item is not remotely resolvable at all);
         - Slack defers to the existing owner + bound-channel check;
-        - no other transport (e.g. Telegram) has an approval-owner model, so it cannot
-          resolve protected items remotely — they stay pending for in-app resolution.
+        - Telegram checks the bound chat and its own approval-owner list (OPE-217);
+        - any other transport has no approval-owner model, so it cannot resolve protected
+          items remotely — they stay pending for in-app resolution.
         """
         binding = self.inbox_routing.binding_for(item.inbox)
         if binding.channel and binding.channel != platform:
@@ -5284,7 +5370,33 @@ class SessionManager:
             return self._slack_actor_owns_item(
                 item, actor_id=actor_id, chat_id=chat_id, team_id=team_id
             )
+        if platform == "telegram":
+            return self._telegram_actor_owns_item(
+                item, actor_id=actor_id, chat_id=chat_id
+            )
         return False
+
+    def _notify_refused_reply(self, platform: str, chat_id: str, thread_id=None) -> None:
+        """Tell a human their tagged reply was refused by the owner check. Best-effort and
+        off the caller's path: the resolver runs synchronously inside the gateway's loop, so
+        the send is scheduled as a task; with no running loop (tests, CLI) it is skipped."""
+        if self.gateway is None or not platform or not chat_id:
+            return
+        from ..connectors.base import format_target
+        from ..connectors.gateway import APPROVAL_OWNER_REQUIRED
+
+        target = format_target(platform, str(chat_id), thread_id)
+
+        async def _send() -> None:
+            try:
+                await self.gateway.deliver(target, APPROVAL_OWNER_REQUIRED)
+            except Exception:
+                logger.debug("refusal reply to %s failed", target, exc_info=True)
+
+        try:
+            asyncio.get_running_loop().create_task(_send())
+        except RuntimeError:
+            pass
 
     def set_inbox_binding(
         self, name: str, *, channel: Optional[str], target: str
@@ -6196,57 +6308,102 @@ class SessionManager:
             pass
 
     def set_session_model_settings(self, session_id: str, values: dict[str, Any]) -> dict[str, Any]:
-        """This session's thinking switch or effort level (UX-055: the ⚙ beside the model
-        in the composer). Overrides the model's saved setting for this session only;
-        None puts the model's setting back. Other sessions are untouched."""
+        """This session's thinking switch or reasoning effort (UX-056: the brain and the
+        effort pill in the composer). Overrides the model's setting for this session only;
+        None puts the model's setting back. Other sessions are untouched. A value the model
+        does not take is refused."""
         engine = self._engines.get(session_id)
         if engine is None:
             return {"ok": False, "error": "session not running"}
+        controls = self.model_controls(engine.model)
+        defaults = _model_config.model_settings_for(engine.model)
         settings = dict(engine.model_settings)
         if "reasoning_effort" in values:
             effort = values["reasoning_effort"]
             if effort is None:
-                settings.pop("reasoning_effort", None)
-            elif isinstance(effort, str) and effort.strip():
-                settings["reasoning_effort"] = effort.strip()
+                if defaults.get("reasoning_effort"):
+                    settings["reasoning_effort"] = defaults["reasoning_effort"]
+                else:
+                    settings.pop("reasoning_effort", None)
+            elif controls["reasoning"]["support"] == "supported" and effort in controls["reasoning"]["levels"]:
+                settings["reasoning_effort"] = effort
             else:
-                return {"ok": False, "error": "reasoning_effort must be text"}
+                return {"ok": False, "error": f"{engine.model} does not take reasoning effort {effort!r}"}
         if "thinking" in values:
             think = values["thinking"]
             extra = dict(settings.get("extra_body") or {})
             if think is None:
-                extra.pop("think", None)
-            elif isinstance(think, bool):
+                default_think = (defaults.get("extra_body") or {}).get("think")
+                if isinstance(default_think, bool):
+                    extra["think"] = default_think
+                else:
+                    extra.pop("think", None)
+            elif isinstance(think, bool) and controls["thinking"]["support"] == "supported":
                 extra["think"] = think
             else:
-                return {"ok": False, "error": "thinking must be true or false"}
+                return {"ok": False, "error": f"{engine.model} has no thinking switch"}
             if extra:
                 settings["extra_body"] = extra
             else:
                 settings.pop("extra_body", None)
-        if "thinking" in values or "reasoning_effort" in values:
-            session_model = _model_config.model_settings_for(engine.model)
-            # Nothing overridden any more → back to the model's own settings.
-            if "reasoning_effort" not in settings and not (settings.get("extra_body") or {}).get("think") in (True, False):
-                for key in ("reasoning_effort",):
-                    if key in session_model:
-                        settings[key] = session_model[key]
-                if "extra_body" in session_model and "extra_body" not in settings:
-                    settings["extra_body"] = session_model["extra_body"]
         engine.model_settings = settings
         return {"ok": True, "session_id": session_id, **self.session_model_settings(session_id)}
 
-    def session_model_settings(self, session_id: str) -> dict[str, Any]:
-        """What this session sends for thinking and effort right now."""
+    def session_model_settings(self, session_id: str, model: str = "") -> dict[str, Any]:
+        """What this session sends for thinking and reasoning effort right now (None = the
+        model's default), and which of the two controls the model has (UX-056). `model`
+        is asked about when the session has not started yet."""
         engine = self._engines.get(session_id)
-        if engine is None:
-            return {"thinking": None, "reasoning_effort": None}
-        settings = engine.model_settings or {}
+        settings = (engine.model_settings if engine else None) or {}
         think = (settings.get("extra_body") or {}).get("think")
+        controls = self.model_controls((engine.model if engine else "") or model)
+        session_model = _model_config.model_settings_for(engine.model) if engine else {}
+        default_think = (session_model.get("extra_body") or {}).get("think")
         return {
-            "thinking": think if isinstance(think, bool) else None,
-            "reasoning_effort": settings.get("reasoning_effort"),
+            # Only what this session changed; the model's own setting reads as None.
+            "thinking": think if isinstance(think, bool) and think != default_think else None,
+            "reasoning_effort": (
+                settings.get("reasoning_effort")
+                if settings.get("reasoning_effort") != session_model.get("reasoning_effort")
+                else None
+            ),
+            "controls": controls,
         }
+
+    def model_controls(self, model: str) -> dict[str, Any]:
+        """The thinking switch and reasoning-effort levels a model has, with its defaults
+        (providers/model_controls.py). Local models: from what their server reports."""
+        from ..providers import local_server, model_controls, ollama_facts
+        from ..providers.recommended import recommendation_for
+
+        if not model:
+            return model_controls.NONE.as_dict()
+        provider = self._model_provider(model)
+        bare = model.split(":", 1)[1] if (provider != "openai" or model.startswith("openai:")) else model
+        d = get_descriptor(provider)
+        local = d is not None and d.kind == "local"
+        server_thinking = None
+        if local:
+            try:
+                profile = self.secrets.get(f"provider:{provider}") or {}
+                rows = (
+                    ollama_facts.model_facts(profile.get("base_url"))
+                    if provider == "ollama"
+                    else local_server.model_facts(provider, profile.get("base_url"), profile.get("api_key"))
+                )
+                server_thinking = next((r.get("thinking") for r in rows if r.get("model") == model), None)
+            except Exception:
+                server_thinking = None
+        rec = recommendation_for(model)
+        controls = model_controls.controls_for(
+            provider,
+            bare,
+            local=local,
+            server_thinking=server_thinking,
+            recommended_thinking=(rec.thinking_available, rec.thinking_default) if rec else None,
+            saved=_model_config.get(model),
+        )
+        return controls.as_dict()
 
     def set_unattended(self, session_id: str, value: Any) -> dict[str, Any]:
         """Set the session's attendance (attended / inbox / auto, or the legacy boolean),
@@ -6416,8 +6573,22 @@ class SessionManager:
                 chat_id=getattr(event, "chat_id", "") or "",
                 team_id=getattr(event, "team_id", None),
             ):
+                platform = str(getattr(event, "platform", "") or "")
                 if self.gateway is not None:
+                    # Slack answers with an ephemeral; everywhere else the gateway's
+                    # reject path is a no-op, so send the same sentence as a plain reply.
                     await self.gateway.reject_interaction(event)
+                    if platform != "slack":
+                        from ..connectors.base import format_target
+                        from ..connectors.gateway import APPROVAL_OWNER_REQUIRED
+
+                        try:
+                            await self.gateway.deliver(
+                                format_target(platform, str(getattr(event, "chat_id", "") or "")),
+                                APPROVAL_OWNER_REQUIRED,
+                            )
+                        except Exception:
+                            logger.debug("refusal reply failed", exc_info=True)
                 return
         already = item is not None and item.state != "pending"
         resolved = await self.resolve_inbox(item_id, resolution)
@@ -6458,6 +6629,11 @@ class SessionManager:
                     chat_id=getattr(event.source, "chat_id", "") or "",
                     team_id=getattr(event.source, "team_id", None),
                 ):
+                    self._notify_refused_reply(
+                        str(getattr(event.source, "platform", "") or ""),
+                        getattr(event.source, "chat_id", "") or "",
+                        getattr(event.source, "thread_id", None),
+                    )
                     return False
             return self.inbox.resolve(item_id, resolution)
 

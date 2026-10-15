@@ -20,12 +20,18 @@ from typing import Optional
 #   you do not have access to it."}} (404/403) and {"code": "insufficient_quota"} (429).
 # Anthropic: {"type": "not_found_error", "message": "model: X"} (404),
 #   {"type": "permission_error"} (403), and "credit balance is too low" (400).
+# NOTE: markers must be specific to a PROVIDER error body. "permission denied" (with a
+# space) was listed here once and was far too broad: every OS PermissionError stringifies
+# as "[Errno 13] Permission denied: <path>", so an unreadable file anywhere in the turn was
+# reported to the user as "your account doesn't have access to <model>" — a billing problem
+# that did not exist, sending debugging after a provider outage that never happened while
+# the real cause sat in the raw traceback. Anthropic's genuine marker is the underscored
+# error TYPE, which is already listed.
 _NO_ACCESS = (
     "model_not_found",
     "does not exist or you do not have access",
     "does not have access to model",
     "permission_error",
-    "permission denied",
 )
 _NO_QUOTA = (
     "insufficient_quota",

@@ -342,6 +342,16 @@ MATRIX: dict[str, ModelEntry] = {
 }
 
 
+# The signed-in OpenRouter provider serves the same catalog as the key-based one.
+MATRIX.update(
+    {
+        "openrouter-account:" + mid.split(":", 1)[1]: entry
+        for mid, entry in list(MATRIX.items())
+        if mid.startswith("openrouter:")
+    }
+)
+
+
 def entry_for(model: str) -> ModelEntry | None:
     return MATRIX.get(model)
 

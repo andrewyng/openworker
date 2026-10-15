@@ -935,6 +935,10 @@ export async function mockApi(page: import("@playwright/test").Page) {
           send("assistant_message", { text: `Done via ${pendingTool} [decision=${msg.decision}]` });
         }
         send("turn_done");
+      } else if (msg.type === "question_response") {
+        // ask_user answered (card or composer): echo it so specs can see what arrived.
+        send("assistant_message", { text: `Got your answer: ${msg.answer}` });
+        send("turn_done");
       } else if (msg.type === "items_response") {
         if (msg.approved) {
           seedBoard(); // "created on the board" — the board fetch now shows them

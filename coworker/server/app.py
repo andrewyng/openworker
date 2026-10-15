@@ -188,13 +188,13 @@ def create_app(manager: SessionManager) -> FastAPI:
     from ..providers.openrouter_auth import OpenRouterAuth
 
     def openrouter_changed() -> None:
-        manager._refresh_provider("openrouter")
-        if manager._provider_configured("openrouter"):
+        manager._refresh_provider("openrouter-account")
+        if manager._provider_configured("openrouter-account"):
             from ..providers.registry import get_descriptor
 
-            model = get_descriptor("openrouter").recommended_model
+            model = get_descriptor("openrouter-account").recommended_model
             if model:
-                qualified = f"openrouter:{model}"
+                qualified = f"openrouter-account:{model}"
                 manager.add_model(qualified)
                 if not manager._provider_configured(manager._model_provider(manager.model)):
                     manager.set_default_model(qualified)
@@ -250,7 +250,7 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.middleware("http")
     async def require_sidecar_token(request: Request, call_next):
-        if request.url.path.startswith("/v1/providers/openrouter/") and not _origin_allowed(
+        if request.url.path.startswith("/v1/providers/openrouter-account/") and not _origin_allowed(
             request.headers.get("origin")
         ):
             return JSONResponse({"error": "origin not allowed"}, status_code=403)
@@ -481,8 +481,8 @@ def create_app(manager: SessionManager) -> FastAPI:
         return manager.set_unattended(session_id, value)
 
     @app.get("/v1/sessions/{session_id}/model-settings")
-    def session_model_settings(session_id: str) -> dict[str, Any]:
-        return manager.session_model_settings(session_id)
+    def session_model_settings(session_id: str, model: str = "") -> dict[str, Any]:
+        return manager.session_model_settings(session_id, model)
 
     @app.post("/v1/sessions/{session_id}/model-settings")
     def set_session_model_settings(session_id: str, body: dict) -> dict[str, Any]:
@@ -2293,6 +2293,20 @@ def create_app(manager: SessionManager) -> FastAPI:
             str(body.get("user_id", "")), add=False
         )
 
+    @app.post("/v1/connectors/telegram/approval-owners/add")
+    def telegram_approval_owner_add(body: dict) -> dict[str, Any]:
+        return manager.set_telegram_approval_owner(
+            str(body.get("user_id", "")),
+            add=True,
+            display_name=str(body.get("name", "")),
+        )
+
+    @app.post("/v1/connectors/telegram/approval-owners/remove")
+    def telegram_approval_owner_remove(body: dict) -> dict[str, Any]:
+        return manager.set_telegram_approval_owner(
+            str(body.get("user_id", "")), add=False
+        )
+
     # -- audit / browser observability ------------------------------------------
     @app.get("/v1/audit")
     def audit_list(
@@ -2341,14 +2355,14 @@ def create_app(manager: SessionManager) -> FastAPI:
         name = (body or {}).get("name", "")
         if not name:
             return {"ok": False, "error": "name required"}
-        if name == "openrouter":
+        if name == "openrouter-account":
             openrouter_auth.cancel()
             return manager.set_provider(name, (body or {}).get("fields"))
         return await asyncio.to_thread(manager.set_provider, name, (body or {}).get("fields"))
 
     @app.delete("/v1/providers/{name}")
     async def providers_remove(name: str) -> dict[str, Any]:
-        if name == "openrouter":
+        if name == "openrouter-account":
             openrouter_auth.cancel()
             return manager.remove_provider(name)
         return await asyncio.to_thread(manager.remove_provider, name)
@@ -2379,23 +2393,23 @@ def create_app(manager: SessionManager) -> FastAPI:
         asyncio.create_task(manager.codex_signin())
         return {"ok": True, "started": True}
 
-    @app.get("/v1/providers/openrouter/status")
+    @app.get("/v1/providers/openrouter-account/status")
     async def openrouter_status():
         return openrouter_auth.status()
 
-    @app.post("/v1/providers/openrouter/signin")
+    @app.post("/v1/providers/openrouter-account/signin")
     async def openrouter_signin(body: dict):
         return await openrouter_auth.start(manual=body.get("manual") is True)
 
-    @app.post("/v1/providers/openrouter/complete")
+    @app.post("/v1/providers/openrouter-account/complete")
     async def openrouter_complete(body: dict):
         return await openrouter_auth.complete(body.get("code"), body.get("attempt_id"))
 
-    @app.post("/v1/providers/openrouter/cancel")
+    @app.post("/v1/providers/openrouter-account/cancel")
     async def openrouter_cancel():
         return openrouter_auth.cancel()
 
-    @app.post("/v1/providers/openrouter/disconnect")
+    @app.post("/v1/providers/openrouter-account/disconnect")
     async def openrouter_disconnect():
         return openrouter_auth.disconnect()
 

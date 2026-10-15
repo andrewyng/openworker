@@ -522,7 +522,9 @@ def test_matrix_labels_and_custom_model_fallback():
     # 70→75 (2026-10-01, OPE-215): three OpenRouter rows (Nemotron 3 Ultra, Nemotron 3.5
     # Lightning, GLM 5.3). The pruning owed above is still not done; it remains the owner's
     # call and should come before this is raised again.
-    assert len(MATRIX) < 75
+    # The `openrouter-account:` rows are aliases of the `openrouter:` rows (one source), so
+    # they are excluded from the count rather than counted against it.
+    assert len([m for m in MATRIX if not m.startswith("openrouter-account:")]) < 75
     assert all(e.caps.tools for e in MATRIX.values())
     # A custom (unlisted) reseller model falls back to the conservative default — usable,
     # but at the user's own risk (no parallel tool calls assumed).

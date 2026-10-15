@@ -111,29 +111,26 @@ def test_cancel_during_listener_creation_closes_stale_listener(tmp_path, monkeyp
     asyncio.run(run())
 
 
-def test_account_uses_official_endpoint_and_ignores_other_keys(tmp_path, monkeypatch):
+def test_account_provider_uses_official_endpoint_and_its_own_key(tmp_path, monkeypatch):
     from coworker.providers import registry
 
-    store = SecretStore(tmp_path / "secrets.json")
-    store.put("provider:openrouter-account", {"api_key": "account-key"})
     monkeypatch.setenv("OPENROUTER_API_KEY", "environment-key")
     monkeypatch.setattr(registry, "OpenAIProvider", lambda **kwargs: kwargs)
-    builder = registry._openai_compat(
-        "OpenRouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"
-    )
-    profile = {
-        "auth_method": "account",
-        "account_connected": True,
-        "api_key": "manual-key",
-        "base_url": "https://untrusted.example",
-    }
-    assert builder(profile, store) == {
+    d = registry.get_descriptor("openrouter-account")
+    assert d.kind == "subscription" and d.auth == "oauth"
+    # The signed-in key, always against OpenRouter's own endpoint.
+    assert d.build({"api_key": "account-key", "base_url": "https://untrusted.example"}, None) == {
         "api_key": "account-key",
         "base_url": "https://openrouter.ai/api/v1",
     }
-    profile["account_connected"] = False
-    with pytest.raises(RuntimeError, match="disconnected"):
-        builder(profile, store)
+    assert registry.descriptor_configured(d, {"api_key": "account-key"})
+    assert not registry.descriptor_configured(d, {})
+    with pytest.raises(RuntimeError, match="not signed in"):
+        d.build({}, None)
+    # The key-based card still resolves its own key and ignores the account's.
+    key_card = registry.get_descriptor("openrouter")
+    assert key_card.build({"api_key": "manual-key"}, None)["api_key"] == "manual-key"
+    assert key_card.build({}, None)["api_key"] == "environment-key"
 
 
 def test_cancel_during_exchange_cannot_restore_account(tmp_path, monkeypatch):
