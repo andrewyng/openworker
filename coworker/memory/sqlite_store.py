@@ -9,6 +9,27 @@ from typing import Optional
 
 from .base import MemoryItem, MemoryStore, Scope
 
+_GET_VISIBLE = (
+    "SELECT * FROM memories WHERE id = ? AND "
+    "(scope = ? OR (scope = ? AND workspace = ?))"
+)
+_UPDATE_VISIBLE = (
+    "UPDATE memories SET content = ? WHERE id = ? AND "
+    "(scope = ? OR (scope = ? AND workspace = ?))"
+)
+_UPDATE_VISIBLE_WITH_SUMMARY = (
+    "UPDATE memories SET content = ?, summary = ? WHERE id = ? AND "
+    "(scope = ? OR (scope = ? AND workspace = ?))"
+)
+_DELETE_VISIBLE = (
+    "DELETE FROM memories WHERE id = ? AND "
+    "(scope = ? OR (scope = ? AND workspace = ?))"
+)
+
+
+def _visibility_params(workspace: Optional[str]) -> tuple[str, str, Optional[str]]:
+    return (Scope.GLOBAL.value, Scope.WORKSPACE.value, workspace)
+
 
 class SQLiteMemoryStore(MemoryStore):
     def __init__(self, path: str | Path) -> None:
@@ -71,6 +92,17 @@ class SQLiteMemoryStore(MemoryStore):
             ).fetchone()
         return _row_to_item(row) if row else None
 
+    def get_visible(
+        self, item_id: int, *, workspace: Optional[str]
+    ) -> Optional[MemoryItem]:
+        """Return a global memory or one belonging to the active workspace."""
+        with self._lock:
+            row = self._conn.execute(
+                _GET_VISIBLE,
+                (item_id, *_visibility_params(workspace)),
+            ).fetchone()
+        return _row_to_item(row) if row else None
+
     def list(
         self,
         *,
@@ -110,9 +142,44 @@ class SQLiteMemoryStore(MemoryStore):
             self._conn.commit()
         return self.get(item_id)
 
+    def update_visible(
+        self,
+        item_id: int,
+        content: str,
+        *,
+        workspace: Optional[str],
+        summary: Optional[str] = None,
+    ) -> Optional[MemoryItem]:
+        """Update a global memory or one belonging to the active workspace."""
+        with self._lock:
+            if summary is not None:
+                cursor = self._conn.execute(
+                    _UPDATE_VISIBLE_WITH_SUMMARY,
+                    (content, summary, item_id, *_visibility_params(workspace)),
+                )
+            else:
+                cursor = self._conn.execute(
+                    _UPDATE_VISIBLE,
+                    (content, item_id, *_visibility_params(workspace)),
+                )
+            self._conn.commit()
+            if cursor.rowcount == 0:
+                return None
+            return self.get_visible(item_id, workspace=workspace)
+
     def delete(self, item_id: int) -> bool:
         with self._lock:
             cursor = self._conn.execute("DELETE FROM memories WHERE id = ?", (item_id,))
+            self._conn.commit()
+        return cursor.rowcount > 0
+
+    def delete_visible(self, item_id: int, *, workspace: Optional[str]) -> bool:
+        """Delete a global memory or one belonging to the active workspace."""
+        with self._lock:
+            cursor = self._conn.execute(
+                _DELETE_VISIBLE,
+                (item_id, *_visibility_params(workspace)),
+            )
             self._conn.commit()
         return cursor.rowcount > 0
 
