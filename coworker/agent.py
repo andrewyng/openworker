@@ -363,6 +363,7 @@ def build_engine(
             extra_hosts=config.sandbox_network_hosts,
             start=False,  # made when the first turn needs it, not when the session opens
             toolchains=config.sandbox_toolchains,
+            allowed_env=config.shell_allowed_env,
         )
         if ws is not None
         else None
