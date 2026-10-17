@@ -454,7 +454,9 @@
     "personas_desc": "同事是专精于特定角色或任务的 agent，自带胜任该角色所需的工具与技能。启用同事后，即可在开始会话时选择它。",
     "composer_section": "输入框",
     "context_bar_title": "在模型标签上显示上下文占用环",
-    "context_bar_desc": "一个小圆环，显示模型上下文窗口的占用程度。无论开关，标签的悬停提示都会给出具体数字。"
+    "context_bar_desc": "一个小圆环，显示模型上下文窗口的占用程度。无论开关，标签的悬停提示都会给出具体数字。",
+    "hide_reasoning_title": "工作时隐藏思考过程",
+    "hide_reasoning_desc": "任务运行期间，将快速滚动的思考文本折叠成一行安静的“思考中…”提示。完整思考内容仍会在任务结束后显示。"
   },
   "cloud": {
     "check_browser": "请查看你的浏览器…",
@@ -513,7 +515,8 @@
       "talk_anytime": "随时可以和它对话。",
       "ask_status": "询问状态",
       "status_prompt": "请快速汇报一下状态 —— 哪些在推进、哪些被卡住、有没有需要我处理的？"
-    }
+    },
+    "thinking_hidden": "思考中…"
   },
   "run_banner": {
     "scheduled_run": "定时任务",
