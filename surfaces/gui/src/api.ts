@@ -1862,6 +1862,7 @@ export interface InboxItem {
   session_agent?: string | null;
   session_workspace?: string | null;
   session_exists?: boolean;
+  expires_at?: string | null;
   // Remote homes: set when the item came from a joined machine's inbox — the
   // Inbox aggregates every connected machine (⌂ tag; resolve routes back).
   machine?: string;
