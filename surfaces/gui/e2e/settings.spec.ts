@@ -174,3 +174,29 @@ test("Settings: Token savings card edits PDF fallback and thresholds", async ({ 
   ]);
   expect(req2.postDataJSON()).toEqual({ pdf_max_pages: 30 });
 });
+
+for (const reject of [false, true]) {
+  test(`MCP grant revoke uses its authoritative id and reports failure=${reject}`, async ({ page }) => {
+    const grant = { id: "mcp:github:read_file", kind: "mcp_tool", name: "read_file", source: "mcp", source_id: "github", source_label: "GitHub" };
+    let revoked = false;
+    let payload: unknown;
+    await page.route("**/v1/grants", route => route.fulfill({ json: { grants: revoked ? [] : [grant] } }));
+    await page.route("**/v1/grants/revoke", async route => {
+      payload = route.request().postDataJSON();
+      revoked = !reject;
+      await route.fulfill({ json: reject ? { ok: false, error: "Grant revocation denied" } : { ok: true, revoked: true } });
+    });
+    await page.goto("/");
+    await page.getByTestId("account-row").click();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Active grants", exact: true }).click();
+    await page.getByRole("button", { name: "Revoke", exact: true }).click();
+    await expect.poll(() => payload).toEqual({ grant_id: grant.id });
+    if (reject) {
+      await expect(page.getByText("Grant revocation denied")).toBeVisible();
+      await expect(page.getByText("read_file", { exact: true })).toBeVisible();
+    } else {
+      await expect(page.getByText("read_file", { exact: true })).toHaveCount(0);
+    }
+  });
+}
