@@ -302,7 +302,7 @@ def _compat(
     title: str,
     *,
     base_url: str,
-    recommended_model: str,
+    recommended_model: Optional[str],
     env_key: str,
     endpoint_help: str = "",
 ) -> ProviderDescriptor:
@@ -340,7 +340,7 @@ def _responses_compat(
     title: str,
     *,
     base_url: str,
-    recommended_model: str,
+    recommended_model: Optional[str],
     env_key: str,
     endpoint_help: str = "",
     reasoning_summary: bool = True,
@@ -711,6 +711,14 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         base_url="https://openrouter.ai/api/v1",
         recommended_model="z-ai/glm-5.2",
         env_key="OPENROUTER_API_KEY",
+    ),
+    _compat(
+        "deepinfra",
+        "DeepInfra",
+        base_url="https://api.deepinfra.com/v1/openai",
+        recommended_model=None,
+        env_key="DEEPINFRA_API_KEY",
+        endpoint_help="Prefilled with DeepInfra's official OpenAI-compatible endpoint.",
     ),
     ProviderDescriptor(
         name="openrouter-account",

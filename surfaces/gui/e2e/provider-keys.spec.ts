@@ -93,3 +93,40 @@ test("the subscription provider signs in from the browser flow, no key form", as
   await page.getByTestId("set-back").click();
   await expect(card).toContainText("Sign in with your plan");
 });
+
+
+test("DeepInfra discovers models on demand, retries catalog failure and saves only the chosen model", async ({ page }) => {
+  let requests = 0;
+  const chosen = "new-org/New-Live-Model";
+  await page.route("**/v1/providers", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const providers = [{ name: "openai", title: "OpenAI", needs_key: true, configured: true,
+      fields: [], values: {}, recommended_model: null, suggested_models: [], kind: "api_key" }];
+    providers.push({ name: "deepinfra", title: "DeepInfra", needs_key: true, configured: true,
+      fields: [], values: {}, recommended_model: null, suggested_models: ["stale/Old-Model"], kind: "api_key" });
+    await route.fulfill({ json: providers });
+  });
+  await page.route("**/v1/providers/deepinfra/models", async (route) => {
+    requests += 1;
+    if (requests === 1) return route.fulfill({ json: { provider: "deepinfra", models: [], error: "DeepInfra models could not be loaded. Retry, or enter a model name." } });
+    await route.fulfill({ json: { provider: "deepinfra", models: [{ model: `deepinfra:${chosen}`, name: chosen,
+      size_bytes: null, tools: true, thinking: false, vision: null, remote: true, parameter_size: null,
+      quantization: null, context_max: 131072, context: null, context_from: "server", fit: "cloud", recommendation: null }] } });
+  });
+  await page.route("**/v1/settings/model-config*", (route) => route.fulfill({ json: {
+    ok: true, model: `deepinfra:${chosen}`, default: { value: false, from: "user" }
+  } }));
+  await openModels(page);
+  expect(requests).toBe(0);
+  await page.getByTestId("pick-model-btn").click();
+  await page.getByTestId("pick-provider-deepinfra").click();
+  await expect(page.getByText("DeepInfra models could not be loaded. Retry, or enter a model name.")).toBeVisible();
+  await page.getByTestId("pick-model-retry").click();
+  await expect(page.getByTestId(`pick-model-${chosen}`)).toBeVisible();
+  await expect(page.getByTestId("pick-model-stale/Old-Model")).toHaveCount(0);
+  await page.getByTestId(`pick-model-${chosen}`).click();
+  await expect(page.getByTestId("pick-default")).not.toBeChecked();
+  const added = page.waitForRequest((request) => request.url().endsWith("/v1/settings/models/add") && request.method() === "POST");
+  await page.getByTestId("pick-save").click();
+  expect((await added).postDataJSON()).toEqual({ model: `deepinfra:${chosen}` });
+});

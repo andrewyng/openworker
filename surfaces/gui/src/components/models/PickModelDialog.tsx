@@ -78,7 +78,7 @@ export function PickModelDialog({
 
   const connected = providers.filter((p) => providerConnected(p, keylessOk) && kinds.has(providerKind(p)));
   const isLocal = provider ? providerKind(provider) === "local" : false;
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [reload, setReload] = useState(0);
   const fixedContext = provider?.name === "llamacpp" || provider?.name === "vllm";
 
@@ -87,14 +87,23 @@ export function PickModelDialog({
   useEffect(() => {
     if (!provider || (step !== 2 && !(step === 3 && providerKind(provider) === "local" && rows === null))) return;
     setRows(null);
-    if (providerKind(provider) === "local") {
-      setLoadFailed(false);
-      getLocalModels(provider.name)
-        .then((r) => setRows((r.models || []).filter((m) => m.tools !== false)))
-        .catch(() => {
-          setLoadFailed(true);
+    setError("");
+    setLoadError("");
+    if (providerKind(provider) === "local" || provider.name === "deepinfra") {
+      let active = true;
+      getLocalModels(provider.name).then((r) => {
+        if (!active) return;
+        setRows(provider.name === "deepinfra" ? r.models || [] : (r.models || []).filter((m) => m.tools !== false));
+        if (r.error) setLoadError(r.error);
+      }).catch(() => {
+        if (active) {
           setRows([]);
-        });
+          setLoadError(provider.name === "deepinfra"
+            ? "Models could not be loaded. Retry, or enter a model name."
+            : t("manage.local_models_failed"));
+        }
+      });
+      return () => { active = false; };
     } else {
       setRows(provider.suggested_models.map((bare) => ({
         model: fullModelId(provider, bare), name: bare, size_bytes: null, tools: true, thinking: null, vision: null, remote: true,
@@ -285,7 +294,7 @@ export function PickModelDialog({
                       <button
                         key={r.model}
                         className="w-full flex items-center gap-2 px-3 py-2 text-ui text-left border-t border-line hover:bg-chrome"
-                        onClick={() => { setModel(r.model); setStep(3); }}
+                        onClick={() => { setError(""); setModel(r.model); setStep(3); }}
                         data-testid={`pick-model-${r.name}`}
                       >
                         <span className="truncate">{settings.model_labels?.[r.model] || r.name}</span>
@@ -295,17 +304,17 @@ export function PickModelDialog({
                       </button>
                     ))}
                     {rows === null && <div className="px-3 py-3 text-meta text-faint">{t("manage.loading")}</div>}
-                    {loadFailed && (
+                    {loadError && (
                       <div className="px-3 py-3 text-meta text-warnInk" data-testid="pick-models-failed">
-                        {t("manage.local_models_failed")}{" "}
-                        <button className="text-muted underline underline-offset-2 hover:text-ink" onClick={() => setReload((n) => n + 1)}>
+                        {loadError}{" "}
+                        <button className="text-muted underline underline-offset-2 hover:text-ink" onClick={() => setReload((n) => n + 1)} data-testid="pick-model-retry">
                           {t("manage.retry")}
                         </button>
                       </div>
                     )}
                   </div>
                   {typed.trim() && provider && !isLocal && (
-                    <button className="mt-2 text-meta text-accent" onClick={() => { setModel(fullModelId(provider, typed.trim())); setStep(3); }} data-testid="pick-model-typed">
+                    <button className="mt-2 text-meta text-accent" onClick={() => { setError(""); setModel(fullModelId(provider, typed.trim())); setStep(3); }} data-testid="pick-model-typed">
                       {t("pick.use_typed", { name: typed.trim() })}
                     </button>
                   )}

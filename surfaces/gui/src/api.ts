@@ -2599,7 +2599,7 @@ export async function getSystemFacts(): Promise<SystemFacts> {
   return res.json();
 }
 
-/** One model a local server holds, as the settings table shows it. */
+/** One model offered by a provider, including local server metadata. */
 export interface LocalModelRow {
   model: string; // full id, e.g. ollama:qwen3-coder:30b
   name: string;
@@ -2619,9 +2619,10 @@ export interface LocalModelRow {
 
 export async function getLocalModels(
   provider: string,
+  machineId?: string | null,
 ): Promise<{ provider: string; models: LocalModelRow[]; alive?: boolean; error?: string }> {
   // A stuck request must end in an error the page can show, never an endless blank.
-  const res = await fetch(`${httpBase()}/v1/providers/${encodeURIComponent(provider)}/models`, {
+  const res = await fetch(`${engineBase(machineId)}/v1/providers/${encodeURIComponent(provider)}/models`, {
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
