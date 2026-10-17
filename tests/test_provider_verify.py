@@ -17,6 +17,7 @@ from coworker.providers import detect_provider, verify_provider_key
         ("sk-ant-api03-abc", "anthropic"),
         ("sk-or-v1-abc", "openrouter"),
         ("AIzaSyAbc123", "gemini"),
+        ("sk-tr-v1-abc", "trustedrouter"),
         ("sk-proj-abc", "openai"),
         ("sk_live_abc", "openai"),
         ("", None),
@@ -97,6 +98,14 @@ def test_verify_openai_completions_route_404_is_clear(monkeypatch):
     assert res["ok"] is False
     assert "completions route 404s" in res["error"]
     assert "v1" in res["error"]
+
+
+def test_verify_trustedrouter_uses_attested_api(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("trustedrouter", api_key="sk-tr-v1-test") == {"ok": True}
+    assert cap["url"] == "https://api.trustedrouter.com/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer sk-tr-v1-test"
 
 
 def test_verify_bad_key_is_invalid(monkeypatch):

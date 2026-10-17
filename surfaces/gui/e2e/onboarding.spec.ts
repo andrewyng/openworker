@@ -24,6 +24,7 @@ test("provider gallery: cards wear their state; Next arms off stored credentials
   // "is OpenAI already connected?" — is answered by the gallery itself).
   await expect(page.getByTestId("ob-provider-openai")).toContainText("✓ Connected");
   await expect(page.getByTestId("ob-provider-anthropic")).toContainText("✓ Connected");
+  await expect(page.getByTestId("ob-provider-trustedrouter")).toContainText("Not set up");
   await expect(page.getByTestId("ob-provider-zai")).toContainText("Not set up");
   await expect(page.getByTestId("ob-provider-ollama")).toContainText("No key needed");
   // Recognition-first order: anthropic before openai before the OpenAI-compat tail.

@@ -27,6 +27,7 @@ import qwen from "./logos/qwen.svg";
 import minimax from "./logos/minimax.svg";
 import xai from "./logos/xai.svg";
 import meta from "./logos/meta.svg";
+import trustedrouter from "./logos/trustedrouter.svg";
 
 export const PROVIDER_LOGOS: Record<string, string> = {
   anthropic,
@@ -55,6 +56,7 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   qwen,
   minimax,
   xai,
+  trustedrouter,
 };
 
 export const PROVIDER_ORDER = [
@@ -80,6 +82,7 @@ export const PROVIDER_ORDER = [
   "qwen",
   "minimax",
   "xai",
+  "trustedrouter",
 ];
 
 export function providerRank(name: string): number {
