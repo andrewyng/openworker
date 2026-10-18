@@ -118,6 +118,57 @@ def test_untrusted_workspace_mcp_ignored(tmp_path, monkeypatch):
     assert "evil" in trusted
 
 
+def test_global_mcp_json_is_written_user_private_with_no_fixed_tmp(
+    tmp_path, monkeypatch
+):
+    """`mcp.json` can carry API keys in `headers` — that is where users paste them — so
+    the global write must be the SecretStore's: a user-only file (an ACL on Windows),
+    an atomic replace, and no fixed-name `.tmp` left behind to rely on."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    import stat
+    import sys
+
+    from coworker.mcp.config import global_mcp_path, put_global_server
+
+    put_global_server(
+        "docs",
+        {
+            "type": "http",
+            "url": "https://x/mcp",
+            "headers": {"Authorization": "Bearer sekret"},
+        },
+    )
+    path = global_mcp_path()
+    if sys.platform != "win32":  # Windows protects with an ACL, not mode bits
+        mode = stat.S_IMODE(path.stat().st_mode)
+        assert not (mode & 0o077), f"mcp.json must be user-only, got {oct(mode)}"
+    assert not path.with_name(path.name + ".tmp").exists()
+
+
+def test_global_mcp_write_never_follows_a_pre_created_fixed_tmp_symlink(
+    tmp_path, monkeypatch,
+):
+    """The old writer wrote `mcp.json.tmp` by that exact name; a local attacker who
+    pre-created it as a symlink steered the write at the link's target (the #143 class,
+    fixed for secrets.json only). The private writer's mkstemp name is unguessable, so
+    the link is never touched and the victim keeps its content."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.mcp.config import global_mcp_path, put_global_server
+
+    put_global_server("docs", {"type": "http", "url": "https://x/mcp"})
+    path = global_mcp_path()
+    victim = path.parent / "victim.txt"
+    victim.write_text("ORIGINAL", encoding="utf-8")
+    link = path.with_name(path.name + ".tmp")
+    link.symlink_to(victim)
+
+    put_global_server("more", {"type": "http", "url": "https://y/mcp"})
+
+    assert victim.read_text(encoding="utf-8") == "ORIGINAL"
+    servers = json.loads(path.read_text(encoding="utf-8"))["mcpServers"]
+    assert "more" in servers and "docs" in servers
+
+
 @pytest.mark.asyncio
 async def test_prepare_mcp_tools_does_not_spawn_untrusted_workspace(
     tmp_path, monkeypatch

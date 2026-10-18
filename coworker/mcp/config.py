@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from ..secrets import SecretStore, state_dir
+from ..secrets import SecretStore, state_dir, write_private_text
 
 _HTTP_TYPES = {"http", "https", "sse", "streamable-http", "streamable_http"}
 
@@ -116,11 +116,15 @@ def read_global() -> dict[str, dict[str, Any]]:
 
 
 def _write_global(servers: dict[str, dict[str, Any]]) -> None:
-    path = global_mcp_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps({"mcpServers": servers}, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    # The SecretStore's writer (secrets.py::_atomic_private_write), because `mcp.json`
+    # can carry API keys in `headers` — that is where users paste them. A fixed-name
+    # `.tmp` written at the umask default was both world-readable plaintext (the keys)
+    # and a symlink a local attacker could pre-create at the predictable name, steering
+    # the write wherever the link pointed — the exact class fixed for secrets.json in
+    # #143. mkstemp names are unguessable and 0600 (an ACL on Windows) before content.
+    write_private_text(
+        global_mcp_path(), json.dumps({"mcpServers": servers}, indent=2)
+    )
 
 
 def put_global_server(name: str, config: dict[str, Any]) -> None:
