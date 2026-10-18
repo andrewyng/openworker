@@ -63,11 +63,19 @@ _FLAG_BAD: dict[str, tuple[str, ...]] = {
     "date": ("-s", "--set"),  # sets the system clock
     "file": ("-C", "--compile"),  # compiles the magic database to magic.mgc
     "rg": ("--pre", "--pre-glob", "--hostname-bin", "--pager"),
-    "ugrep": ("--pager",),
+    "ugrep": ("--pager", "--filter"),  # --filter pipes each file through a shell command
     "du": ("--files0-from",),
+    "actionlint": ("-init-config",),  # writes ./.actionlint.yaml
 }
 
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=[^;&|<>`]*$")
+# Assignments that are provably inert for every listed command — locale selection
+# and the timezone. Every other leading VAR=value can replace or inject executable
+# code: PATH= overrides resolution, LD_PRELOAD= loads a payload into any binary,
+# RIPGREP_CONFIG_PATH= smuggles `--pre` past the flag denials above (a config file
+# carries flags the classifier never sees), GIT_CONFIG_* maps arbitrary config onto
+# git. Fail closed: a refused spelling costs one manual approval.
+_ENV_INERT = re.compile(r"^(?:LC_\w+|LANG|LANGUAGE|TZ)$")
 
 # A sed script token that invokes the `w`/`W` (write-file) command. Two spellings:
 #   * at the start of a script command, optionally after an address —
@@ -80,11 +88,18 @@ _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=[^;&|<>`]*$")
 _SED_WRITE = re.compile(r"(^|[;{])[0-9,$/ ]*[wW]|s(.).*?\2.*?\2.*?[wW]")
 
 # awk programs can execute commands through pipe-redirection (`print x | "sh"`,
-# `"cmd" | getline`) without containing `>` or `system(`.
-_AWK_PIPE = re.compile(r"\|\s*getline|\|\s*[\"']")
+# `"cmd" | getline`) without containing `>` or `system(`. `|&` is gawk's two-way
+# coprocess pipe: `"cmd" |& "cat"` and `"cmd" |& getline x` execute the command.
+_AWK_PIPE = re.compile(r"\|\s*getline|\|\s*[\"']|\|&")
 
 
-def _has_unquoted_shell_variable(command: str) -> bool:
+def _has_unquoted(command: str, chars: str, *, inside_double: bool = False) -> bool:
+    """True when a char of `chars` appears outside quotes (and unescaped).
+
+    A `$` must also count inside double quotes — they expand there — so that caller
+    passes `inside_double=True`; parens are literal inside quotes in both POSIX and
+    PowerShell, so the paren caller uses the default.
+    """
     quote: str | None = None
     escaped = False
     for char in command:
@@ -96,9 +111,13 @@ def _has_unquoted_shell_variable(command: str) -> bool:
             quote = None if quote == "'" else "'"
         elif char == '"' and quote != "'":
             quote = None if quote == '"' else '"'
-        elif char == "$" and quote != "'":
+        elif char in chars and (quote is None or (inside_double and quote == '"')):
             return True
     return False
+
+
+def _has_unquoted_shell_variable(command: str) -> bool:
+    return _has_unquoted(command, "$", inside_double=True)
 
 
 def _stages(command: str) -> list[list[str]] | None:
@@ -107,6 +126,24 @@ def _stages(command: str) -> list[list[str]] | None:
         return None
     # Shell variables are expanded after this check; single-quoted '$' is literal.
     if _has_unquoted_shell_variable(command) or "$(" in command or "`" in command or "<(" in command or ">(" in command:
+        return None
+    # The executor submits the original text to an OS-native shell — /bin/bash on
+    # POSIX, powershell.exe on Windows — not to shlex. What shlex flattens into one
+    # stage the real shell may read as two commands or an expression:
+    #   * a raw newline is a command separator in both bash and PowerShell, but
+    #     whitespace to shlex — `echo safe\nrm -rf target` classified as a lone
+    #     `echo`, and the second command ran under the grant without ever being
+    #     classified (verified against bash);
+    #   * an unquoted paren is inert inside a POSIX word but PowerShell evaluates
+    #     `echo (Remove-Item target)` as a command; a quoted `'(a|b)'` is a literal
+    #     in both, so `grep -E '(a|b)'` stays allowed;
+    #   * a backslash in a stage head is a plain escape to POSIX shlex (`\git` IS
+    #     `git`) but a path separator PowerShell executes as written (`\git`, `l\s`).
+    if "\n" in command or "\r" in command:
+        return None
+    if _has_unquoted(command, "()"):
+        return None
+    if re.search(r"(?:^|\|)\s*[^\s|]*\\", command):
         return None
     lex = shlex.shlex(command, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
@@ -144,6 +181,8 @@ def _git_ok(args: list[str]) -> bool:
     sub, rest = args[i], args[i + 1 :]
     if any(t.startswith("--output") for t in rest):
         return False  # git log/diff --output=<file> writes
+    if any(t in {"--ext-diff", "--textconv"} for t in rest):
+        return False  # repository/user config can map these to helper programs
     if sub == "grep" and any(_flag_denied(t, ("-O", "--open-files-in-pager")) for t in rest):
         return False  # git grep -O<pager> executes the given program
     if sub in _GIT_SAFE:
@@ -157,7 +196,17 @@ def _git_ok(args: list[str]) -> bool:
     if sub == "stash":
         return bool(rest) and rest[0] in {"list", "show"}
     if sub == "remote":
-        return not rest or rest[0] in {"-v", "show", "get-url"}
+        # `-v`/`--verbose` alone only prints. Everything else writes config or
+        # contacts the remote: `show` queries it (network — excluded by contract),
+        # `add`/`rename`/`remove`/`set-url` write .git/config — and `git remote -v
+        # add …` hid its `add` behind a passing first token. `get-url` reads config:
+        # exactly one remote name.
+        if not rest or all(t in {"-v", "--verbose"} for t in rest):
+            return True
+        if rest[0] != "get-url":
+            return False
+        operands = [t for t in rest[1:] if not t.startswith("-")]
+        return len(operands) == 1
     if sub == "config":
         return any(t in {"--get", "--get-all", "--get-regexp", "--list", "-l"} for t in rest)
     if sub == "reflog":
@@ -194,9 +243,13 @@ def _flag_denied(token: str, denied: tuple[str, ...]) -> bool:
 
 
 def _stage_ok(argv: list[str]) -> bool:
-    # Leading VAR=value assignments (LC_ALL=C grep …) are inert — skip them.
+    # Only locale/timezone assignments are inert (LC_ALL=C grep …); any other
+    # leading VAR=value can replace or inject executable code (see _ENV_INERT)
+    # and rejects the stage.
     i = 0
     while i < len(argv) and _ENV_ASSIGN.match(argv[i]):
+        if not _ENV_INERT.match(argv[i].partition("=")[0]):
+            return False
         i += 1
     argv = argv[i:]
     if not argv:
@@ -214,9 +267,38 @@ def _stage_ok(argv: list[str]) -> bool:
             # reject when a second non-flag operand is present (`xxd a.txt b.txt`).
             operands = [t for t in args if not t.startswith("-")]
             return len(operands) < 2
+        if head == "printf":
+            # bash's `printf -v VAR …` writes into a variable of the PERSISTENT
+            # session shell — state the grant promised not to mutate (`-vPATH`
+            # attaches the same way; `-- -v` stays a literal, inert).
+            return not (args and args[0].startswith("-v"))
+        if head == "uniq":
+            # uniq's optional SECOND positional is an OUTPUT file; -f/-s/-w and
+            # their long forms take NUMBER values, not operands.
+            positional = 0
+            skip_value = False
+            for tok in args:
+                if skip_value:
+                    skip_value = False
+                    continue
+                if tok in {"-f", "-s", "-w", "--skip-fields", "--skip-chars", "--check-chars"}:
+                    skip_value = True
+                    continue
+                if tok.startswith(("--skip-fields=", "--skip-chars=", "--check-chars=",
+                                   "--all-repeated=", "--group=")):
+                    continue
+                if tok.startswith("-") and tok != "-":
+                    continue  # flags and attached numbers (-f1); a bare "-" is stdin
+                positional += 1
+                if positional > 1:
+                    return False
+            return not skip_value
         return True
     if head == "env":
-        return not args  # bare `env` prints; `env CMD` executes
+        # Bare `env` prints every variable in the persistent shell's environment —
+        # the user's provider keys ride there by design, and an empty read-target
+        # list passes root scoping vacuously. `env CMD` executes. Both refuse.
+        return False
     if head == "command":
         return bool(args) and args[0] in {"-v", "-V"}
     if head == "git":
