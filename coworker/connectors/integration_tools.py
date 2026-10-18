@@ -112,6 +112,16 @@ def _account_profile(
 
         ensure_fresh_connector_token(secrets, load_config(), connector, profile_key=key)
         profile = secrets.get(key) or profile
+    elif profile.get("refresh_token"):
+        # #753: a manual Google paste that carried a refresh token renews
+        # locally — gated to the Google trio because this helper serves every
+        # account-patterned connector, and another vendor's refresh_token is
+        # not Google's endpoint to answer.
+        from .google_refresh import GOOGLE_CONNECTORS, ensure_fresh_google_token
+
+        if connector in GOOGLE_CONNECTORS:
+            ensure_fresh_google_token(secrets, connector, profile_key=key)
+            profile = secrets.get(key) or profile
     missing = [k for k in keys if not profile.get(k)]
     if missing:
         return (
@@ -157,6 +167,13 @@ def _gmail_profile(
 
         ensure_fresh_connector_token(secrets, load_config(), "gmail", profile_key=key)
         profile = secrets.get(key) or profile
+    elif profile.get("refresh_token"):
+        # #753: a manual paste that carried a refresh token renews locally,
+        # against Google's own endpoint — same hook shape as the managed one.
+        from .google_refresh import ensure_fresh_google_token
+
+        ensure_fresh_google_token(secrets, "gmail", profile_key=key)
+        profile = secrets.get(key) or profile
     if not profile.get("access_token"):
         return "", None, {"error": f"gmail account {email} has no usable token"}
     return email, profile, None
@@ -185,6 +202,13 @@ def _gcal_profile(
         ensure_fresh_connector_token(
             secrets, load_config(), "google_calendar", profile_key=key
         )
+        profile = secrets.get(key) or profile
+    elif profile.get("refresh_token"):
+        # #753: a manual paste that carried a refresh token renews locally,
+        # against Google's own endpoint — same hook shape as the managed one.
+        from .google_refresh import ensure_fresh_google_token
+
+        ensure_fresh_google_token(secrets, "google_calendar", profile_key=key)
         profile = secrets.get(key) or profile
     if not profile.get("access_token"):
         return (
