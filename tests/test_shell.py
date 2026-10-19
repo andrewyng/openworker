@@ -254,11 +254,12 @@ def test_background_tasks_lists_status_and_whether_the_exit_was_read(executor):
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         [listed] = executor.background_tasks()
-        if listed["status"] == "exited":
+        if listed["status"] == "exited" and listed["output_drained"]:
             break
         time.sleep(0.1)
     assert listed["task_id"] == started["task_id"]
     assert listed["status"] == "exited" and listed["exit_code"] == 0
+    assert listed["output_drained"] is True
     assert listed["seen"] is False
     acc, res = _poll_output(reg, started["task_id"], until_status="exited")
     assert "quick_done" in acc  # listing did not eat the output
