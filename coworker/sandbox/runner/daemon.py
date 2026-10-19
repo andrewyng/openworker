@@ -330,12 +330,7 @@ class Daemon:
                 return ex.background_output(str(params.get("task_id") or ""))
             if method == "task.kill":
                 return ex.background_kill(str(params.get("task_id") or ""))
-            return {
-                "tasks": [
-                    {"task_id": tid, "command": t.command, "status": "running" if t.proc.poll() is None else "exited"}
-                    for tid, t in ex._bg_tasks.items()
-                ]
-            }
+            return {"tasks": ex.background_tasks()}
         if method == "proc.run":
             return self._proc_run(params)
         if method == "tool.call":
