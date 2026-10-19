@@ -717,6 +717,13 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="z-ai/glm-5.2",
         env_key="OPENROUTER_API_KEY",
     ),
+    _compat(
+        "atlascloud",
+        "Atlas Cloud",
+        base_url="https://api.atlascloud.ai/v1",
+        recommended_model="deepseek-ai/deepseek-v4-flash",
+        env_key="ATLASCLOUD_API_KEY",
+    ),
     ProviderDescriptor(
         name="openrouter-account",
         kind="subscription",
@@ -1125,6 +1132,24 @@ def verify_provider_key(
 
             headers = {"Authorization": f"Bearer {key}"} if key else {}
             resp = httpx.get(v1_base(name, base_url) + "/models", headers=headers, timeout=timeout)
+        elif name == "atlascloud":
+            # Atlas Cloud's /models is public (a bad key still answers 200) and its
+            # /chat/completions has no GET route (404), so neither default probe can judge
+            # the key. Send a non-persisted one-token completion instead, like Ark above.
+            default_base = next(
+                (f.default for f in d.fields if f.key == "base_url" and f.default), ""
+            )
+            base = (base_url or "").strip().rstrip("/") or default_base.rstrip("/")
+            resp = httpx.post(
+                base + "/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": d.recommended_model,
+                    "messages": [{"role": "user", "content": "Reply with OK."}],
+                    "max_tokens": 1,
+                },
+                timeout=timeout,
+            )
         elif name in ("ark", "ark-agent-plan-cn"):
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""

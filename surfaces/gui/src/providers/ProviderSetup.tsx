@@ -39,6 +39,7 @@ export const KEY_HELP: Record<string, { url: string; label: string; labelKey?: s
   openrouter: { url: "https://openrouter.ai/keys", label: "openrouter.ai" },
   bedrock: { url: "https://console.aws.amazon.com/bedrock/home#/api-keys", label: "the AWS Bedrock console", labelKey: "misc.provider.bedrock_console" },
   fireworks: { url: "https://fireworks.ai/account/api-keys", label: "fireworks.ai" },
+  atlascloud: { url: "https://console.atlascloud.ai/api-keys", label: "console.atlascloud.ai" },
   together: { url: "https://api.together.xyz/settings/api-keys", label: "together.xyz" },
   zai: { url: "https://z.ai/manage-apikey/apikey-list", label: "z.ai" },
   kimi: { url: "https://platform.moonshot.ai/console/api-keys", label: "platform.moonshot.ai" },

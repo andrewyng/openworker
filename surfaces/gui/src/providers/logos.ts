@@ -73,6 +73,7 @@ export const PROVIDER_ORDER = [
   "openrouter-account",
   "fireworks",
   "together",
+  "atlascloud",
   "zai",
   "kimi",
   "deepseek",
