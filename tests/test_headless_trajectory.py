@@ -101,3 +101,40 @@ def test_an_unpriced_model_gets_counts_but_no_cost():
     step = [s for s in traj["steps"] if s["source"] == "agent"][0]
     assert "cost_usd" not in step["metrics"] and step["metrics"]["prompt_tokens"] == 10
     assert "total_cost_usd" not in traj["final_metrics"]
+
+
+def test_mixed_priced_and_unpriced_calls_omit_total_cost():
+    traj = build_trajectory(
+        [
+            {"role": "assistant", "usage": {"input": 100, "model": "priced"}},
+            {"role": "assistant", "usage": {"input": 200, "model": "unpriced"}},
+        ],
+        agent_name="openworker",
+        agent_version="test",
+        model_name="priced",
+        session_id="s",
+        outcome="completed",
+        prices={"priced": {"input": 1}},
+    )
+    assert traj["steps"][0]["metrics"]["cost_usd"] == 0.0001
+    assert "cost_usd" not in traj["steps"][1]["metrics"]
+    assert traj["final_metrics"]["total_prompt_tokens"] == 300
+    assert "total_cost_usd" not in traj["final_metrics"]
+
+
+def test_call_without_usage_omits_total_cost():
+    traj = build_trajectory(
+        [
+            {"role": "assistant", "usage": {"input": 100, "model": "priced"}},
+            {"role": "assistant", "content": "done"},
+        ],
+        agent_name="openworker",
+        agent_version="test",
+        model_name="priced",
+        session_id="s",
+        outcome="completed",
+        prices={"priced": {"input": 1}},
+    )
+    assert traj["steps"][0]["metrics"]["cost_usd"] == 0.0001
+    assert "metrics" not in traj["steps"][1]
+    assert "total_cost_usd" not in traj["final_metrics"]
