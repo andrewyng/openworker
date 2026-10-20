@@ -96,6 +96,7 @@ def test_wait_then_deliver_resolves():
     async def run():
         task = asyncio.create_task(mcp_oauth._wait_for_callback())
         await asyncio.sleep(0)  # let the waiter install its future
+        mcp_oauth._expected_state = "st4te"  # captured from the authorize URL
         assert mcp_oauth.deliver_callback("c0de", "st4te") is True
         return await task
 
@@ -124,6 +125,28 @@ def test_deliver_rejects_mismatched_state_without_consuming_flow():
         return await task
 
     assert asyncio.run(run()) == ("c0de", "good-state")
+
+
+def test_deliver_fails_closed_when_the_flow_captured_no_state():
+    # A flow whose authorize URL carried no `state` has nothing to match. The callback
+    # route is tokenless by design, so accepting any code there is an injection slot:
+    # a local process resolves the flow with a code of its choosing and the client
+    # exchanges it. Such a flow refuses every callback instead — without consuming
+    # the pending future, like a mismatch.
+    async def run():
+        task = asyncio.create_task(mcp_oauth._wait_for_callback())
+        await asyncio.sleep(0)
+        # _expected_state is None — no state was captured for this flow.
+        assert mcp_oauth.deliver_callback("attacker-code", None) is False
+        assert mcp_oauth.deliver_callback("attacker-code", "anything") is False
+        assert not task.done()  # the flow is not consumed by a refused callback
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
 
 
 # -- status surfacing over REST ---------------------------------------------------
@@ -188,11 +211,14 @@ def test_callback_route(tmp_path, monkeypatch):
     r = client.get("/mcp/oauth/callback", params={"code": "x"})
     assert r.status_code == 400 and "waiting" in r.text.lower()
 
-    # A waiting flow gets the code and the browser sees the success page.
+    # A waiting flow gets the code and the browser sees the success page. The flow's
+    # expected state is what the authorize URL carried — without a match the callback
+    # is refused, so the route answers for the genuine redirect only.
     loop = asyncio.new_event_loop()
     try:
         future = loop.create_future()
         mcp_oauth._pending = future
+        mcp_oauth._expected_state = "s1"  # captured from the authorize URL
         r = client.get("/mcp/oauth/callback", params={"code": "c1", "state": "s1"})
         assert r.status_code == 200 and "close this tab" in r.text.lower()
         assert future.result() == ("c1", "s1")
