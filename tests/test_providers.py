@@ -325,6 +325,19 @@ def test_compat_builder_env_key_fallback(monkeypatch):
     assert p._base_url == COMPAT_VENDORS["deepseek"]
 
 
+def test_atlascloud_descriptor_and_env_key(monkeypatch):
+    from coworker.providers.registry import build_provider_client, get_descriptor
+
+    d = get_descriptor("atlascloud")
+    assert d is not None and d.needs_key and d.env_key == "ATLASCLOUD_API_KEY"
+    base = next(f for f in d.fields if f.key == "base_url")
+    assert base.default == "https://api.atlascloud.ai/v1"
+    monkeypatch.setenv("ATLASCLOUD_API_KEY", "ac-key")
+    p = build_provider_client("atlascloud", {}, None)
+    assert p._api_key == "ac-key"
+    assert p._base_url == "https://api.atlascloud.ai/v1"
+
+
 def test_compat_builder_never_leaks_the_openai_key(monkeypatch):
     """A configured OPENAI_API_KEY must never be sent to a different vendor's endpoint —
     a missing vendor key fails fast with a vendor-named error instead."""
@@ -498,6 +511,8 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         "fireworks:accounts/fireworks/models/kimi-k2p6",
         "openrouter:z-ai/glm-5.2",
         "openrouter:meta-llama/llama-4-maverick",
+        "atlascloud:deepseek-ai/deepseek-v4-flash",
+        "atlascloud:zai-org/glm-5.2",
     ):
         caps = capabilities_for(mid)
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
@@ -561,7 +576,7 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
     from coworker.providers.matrix import models_for_provider
     from coworker.providers.registry import get_descriptor
 
-    for name in ("together", "fireworks", "openrouter"):
+    for name in ("together", "fireworks", "openrouter", "atlascloud"):
         d = get_descriptor(name)
         assert d is not None and d.needs_key
         curated = models_for_provider(name)
