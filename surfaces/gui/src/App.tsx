@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
   announceInboxUnlock,
@@ -58,7 +58,6 @@ import type {
   Item,
   SessionInfo,
   SessionUsage,
-  TodoItem,
   WsEvent,
 } from "./types";
 import {
@@ -70,6 +69,7 @@ import {
 import { fullPersonaName, isProjectScoped } from "./personaScope";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
+import { todosFromItems } from "./todosFromItems";
 import { addTurnUsage, emptyUsage, teamUsage, usageFromMessages } from "./usage";
 import { streamMode } from "./streamGate";
 import { InboxItemCard, approvalItemFromParked } from "./components/InboxItemCard";
@@ -134,23 +134,6 @@ const SUGGESTION_KEYS = [
 
 // Tools whose success means a new/changed file should show up under Artifacts right away.
 const FILE_WRITE_TOOLS = new Set(["write_file", "apply_patch", "apply_unified_diff", "replace_in_file"]);
-
-// Models sometimes pass todo items as bare strings instead of {content, status} objects (the
-// backend tool normalizes them the same way; the GUI reads the raw proposal args, so mirror it).
-function normalizeTodos(raw: unknown): TodoItem[] {
-  if (!Array.isArray(raw)) return [];
-  const statuses = new Set(["pending", "in_progress", "done"]);
-  return raw.map((entry: any) => {
-    if (entry && typeof entry === "object") {
-      const status = entry.status === "completed" ? "done" : entry.status; // common model alias
-      return {
-        content: String(entry.content ?? ""),
-        status: statuses.has(status) ? status : "pending",
-      };
-    }
-    return { content: String(entry ?? ""), status: "pending" as const };
-  });
-}
 
 // Fallback used only before the persona list loads (the in-component gatesWorkspace
 // consults the real persona's requires_folder once available).
@@ -291,7 +274,7 @@ export function App() {
     reasoningRef.current = value;
     setReasoningStreamState(value);
   };
-  const [todo, setTodo] = useState<TodoItem[]>([]);
+  const todo = useMemo(() => todosFromItems(items), [items]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
@@ -976,8 +959,6 @@ export function App() {
           break;
         }
         case "tool_proposed":
-          if (d.name === "todo_write" && (d.arguments?.todos || d.arguments?.items))
-            setTodo(normalizeTodos(d.arguments.todos ?? d.arguments.items));
           setItems((p) => [
             ...p,
             { kind: "tool", id: newId(), name: d.name, args: d.arguments, status: "…" },
@@ -1491,7 +1472,6 @@ export function App() {
     setItems([]);
     setUsage(emptyUsage());
     setStreaming("");
-    setTodo([]);
     setRunning(false);
     // "New session" under a browsed persona switches to it (expand≠switch: the header alone
     // doesn't switch; this explicit action does).
@@ -1635,7 +1615,6 @@ export function App() {
   const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
   const selectSession = async (id: string, ws: string, ag: string) => {
     setSurface("session"); // selecting a conversation always returns to the conversation view
-    setTodo([]);
     setStreaming("");
     setRunning(false);
     if (ag) setAgent(ag);
@@ -1703,7 +1682,6 @@ export function App() {
     setItems([]);
     setUsage(emptyUsage());
     setStreaming("");
-    setTodo([]);
     setRunning(false);
 
     // The live workspace is only a valid fallback for a gated persona if it came from
@@ -1760,7 +1738,6 @@ export function App() {
     setItems([]);
     setUsage(emptyUsage());
     setStreaming("");
-    setTodo([]);
     setSessionId(newId());
     getRecentWorkspaces().then(setProjects).catch(() => {});
   };
@@ -1773,7 +1750,6 @@ export function App() {
     setItems([]);
     setUsage(emptyUsage());
     setStreaming("");
-    setTodo([]);
     setRunning(false);
     if (target !== agent) setAgent(target);
     setWorkspace(null);
@@ -1798,7 +1774,6 @@ export function App() {
       setItems([]);
       setUsage(emptyUsage());
       setStreaming("");
-      setTodo([]);
       setRunning(false);
       setSessionId(newId());
     }
@@ -1811,7 +1786,6 @@ export function App() {
       setItems([]);
       setUsage(emptyUsage());
       setStreaming("");
-      setTodo([]);
       setRunning(false);
       setSessionId(newId());
     }
