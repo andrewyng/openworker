@@ -56,6 +56,7 @@ it("is the account card's whole form: sign-in, no key field", async () => {
   };
   const ps: ProviderSetupState = {
     providers: [info],
+    loaded: true,
     ordered: [info],
     info,
     sel: "openrouter-account",
