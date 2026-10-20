@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any, Optional
 
 # Indexed by cron day-of-week: 0 and 7 are Sunday, 1 is Monday … 6 is Saturday. Must start
@@ -138,6 +138,10 @@ class ScheduledTask:
     last_status: Optional[str] = None
     run_count: int = 0
     max_runs: Optional[int] = None
+    timeout_seconds: Optional[float] = 900.0  # 15 minutes default run timeout
+    max_retries: int = 0  # max retries on error (0 = disabled)
+    retry_backoff_seconds: float = 60.0  # base backoff duration for retries
+    retry_count: int = 0  # consecutive error retry attempt count
     # Sidebar unread tracking (UX-023): runs started after this mark count as
     # "unseen"; opening the automation's detail advances it. 0.0 = never opened.
     seen_runs_at: float = 0.0
@@ -155,7 +159,9 @@ class ScheduledTask:
     def from_dict(cls, d: dict) -> "ScheduledTask":
         d = dict(d)
         d["schedule"] = Schedule.from_dict(d.get("schedule") or {})
-        return cls(**d)
+        valid_fields = {f.name for f in fields(cls)}
+        filtered = {k: v for k, v in d.items() if k in valid_fields}
+        return cls(**filtered)
 
     # -- standing rules (§25) --------------------------------------------------
     def standing_rules(self) -> dict[str, set[str]]:
@@ -204,6 +210,10 @@ class ScheduledTask:
             "last_run": self.last_run,
             "last_status": self.last_status,
             "run_count": self.run_count,
+            "timeout_seconds": self.timeout_seconds,
+            "max_retries": self.max_retries,
+            "retry_backoff_seconds": self.retry_backoff_seconds,
+            "retry_count": self.retry_count,
             "notify_on_completion": self.notify_on_completion,
             # UX-023: lets the detail freeze the pre-open mark for its "new" pills.
             "seen_runs_at": self.seen_runs_at,
@@ -223,11 +233,11 @@ class TaskRun:
     run_id: str = field(default_factory=lambda: "run-" + uuid.uuid4().hex[:10])
     started_at: float = field(default_factory=_now)
     finished_at: Optional[float] = None
-    status: str = "running"  # running | ok | error | skipped
+    status: str = "running"  # running | ok | error | skipped | timed_out | cancelled
     result_text: Optional[str] = None
     artifacts: list[str] = field(default_factory=list)
     error: Optional[str] = None
-    trigger: str = "schedule"  # schedule | manual | catchup
+    trigger: str = "schedule"  # schedule | manual | catchup | retry
     session_id: str = ""  # the run's own conversation thread — persisted + continuable
 
     def __post_init__(self) -> None:
@@ -239,4 +249,6 @@ class TaskRun:
 
     @classmethod
     def from_dict(cls, d: dict) -> "TaskRun":
-        return cls(**d)
+        valid_fields = {f.name for f in fields(cls)}
+        filtered = {k: v for k, v in d.items() if k in valid_fields}
+        return cls(**filtered)

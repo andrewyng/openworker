@@ -100,9 +100,14 @@ class TaskStore:
             self._conn.commit()
 
     # -- tasks ------------------------------------------------------------------
-    def save(self, task: ScheduledTask) -> ScheduledTask:
+    def save(
+        self, task: ScheduledTask, *, recompute_next_run: bool = True
+    ) -> ScheduledTask:
         task.updated_at = _epoch_now()
-        task.next_run = compute_next_run(task) if task.enabled else None
+        if recompute_next_run:
+            task.next_run = compute_next_run(task) if task.enabled else None
+        else:
+            task.next_run = task.next_run if task.enabled else None
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO scheduled_tasks (id, enabled, next_run, data) VALUES (?, ?, ?, ?)",

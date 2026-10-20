@@ -10,7 +10,7 @@ async function openTaskDetail(page: import("@playwright/test").Page) {
   // Via the nav row — the account-menu Automations entry was removed (UX-035 chrome cleanup).
   await page.getByTestId("nav-automations").click();
   await page.getByText("Daily AI News").first().click();
-  await expect(page.getByRole("button", { name: /Run now/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Force Stop", exact: true }).first()).toBeVisible();
 }
 
 test("creation consent card renders writes as grants and reads as disclosure", async ({ page }) => {
@@ -39,6 +39,7 @@ test("a run session's approval card offers Allow every time and sends always_tas
   page,
 }) => {
   await openTaskDetail(page);
+  await page.getByRole("button", { name: "Force Stop", exact: true }).first().click();
   await page.getByRole("button", { name: /Run now/ }).click();
   await expect(page.getByTestId("run-banner")).toBeVisible();
   // The manual run auto-sends the task prompt; wait for that turn to finish (the composer
