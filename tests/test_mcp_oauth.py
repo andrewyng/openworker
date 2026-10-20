@@ -85,6 +85,105 @@ def test_token_storage_roundtrip(tmp_path, monkeypatch):
     assert not mcp_oauth.has_tokens("granola", secrets)
 
 
+def test_dcr_secret_without_method_is_recorded_as_client_secret_post(
+    tmp_path, monkeypatch
+):
+    """Supabase's hosted MCP registers a CONFIDENTIAL client: DCR answers 201 with a
+    client_secret while ignoring the `token_endpoint_auth_method: "none"` we asked for and
+    omitting the field (verified against api.supabase.com/platform/oauth/apps/register).
+    The SDK takes the method off the stored registration and sends no secret when it is
+    absent/"none", so the token exchange 422s "Required parameter: client_secret" and
+    one-click Connect can never finish. Storage records what the issued secret implies."""
+    _state(tmp_path, monkeypatch)
+    storage = mcp_oauth.SecretStoreTokenStorage("supabase", SecretStore())
+    redirect = {"redirect_uris": ["http://127.0.0.1:8765/mcp/oauth/callback"]}
+
+    async def roundtrip(registration):
+        await storage.set_client_info(
+            OAuthClientInformationFull.model_validate(registration)
+        )
+        return await storage.get_client_info()
+
+    # Supabase: secret issued, method absent -> inferred as confidential.
+    info = asyncio.run(roundtrip({"client_id": "dcr-1", "client_secret": "s3cret", **redirect}))
+    assert info.client_secret == "s3cret"
+    assert info.token_endpoint_auth_method == "client_secret_post"
+
+    # A genuinely public DCR (no secret) stays public: nothing is invented.
+    info = asyncio.run(roundtrip({"client_id": "dcr-2", **redirect}))
+    assert info.client_secret is None
+    assert info.token_endpoint_auth_method is None
+
+    # A method the server names always wins, secret or not.
+    info = asyncio.run(
+        roundtrip({"client_id": "dcr-3", "client_secret": "s3cret",
+                   "token_endpoint_auth_method": "client_secret_basic", **redirect})
+    )
+    assert info.token_endpoint_auth_method == "client_secret_basic"
+
+
+def test_confidential_registration_puts_secret_in_the_token_request(
+    tmp_path, monkeypatch
+):
+    """The point of recording the method: the SDK's own token request now carries the
+    secret. Built with the SDK's real `prepare_token_auth`, through the provider
+    `build_auth` hands to streamablehttp_client — the request that used to 422."""
+    _state(tmp_path, monkeypatch)
+    secrets = SecretStore()
+
+    async def run():
+        auth = mcp_oauth.build_auth("supabase", "https://mcp.supabase.com/mcp", secrets)
+        await auth.context.storage.set_client_info(
+            OAuthClientInformationFull.model_validate(
+                {
+                    "client_id": "dcr-1",
+                    "client_secret": "s3cret",
+                    "redirect_uris": ["http://127.0.0.1:8765/mcp/oauth/callback"],
+                }
+            )
+        )
+        auth.context.client_info = await auth.context.storage.get_client_info()
+        data, headers = auth.context.prepare_token_auth(
+            {"grant_type": "authorization_code", "code": "c0de", "client_id": "dcr-1"}
+        )
+        return data, headers
+
+    data, _headers = asyncio.run(run())
+    assert data["client_secret"] == "s3cret"
+
+
+def test_registration_is_corrected_on_the_object_the_sdk_keeps_live(tmp_path, monkeypatch):
+    """The SDK keeps the registered object ITSELF live (`context.client_info =
+    client_information`) and calls storage with that same instance, then reads the method off
+    that live copy when building the token request. So the correction has to land on the
+    object, not only in the store: a version that normalized just the stored copy satisfied
+    the reload test above while a real one-click Connect still 422d "Required parameter:
+    client_secret" right after a successful browser sign-in (live run 2026-09-27)."""
+    _state(tmp_path, monkeypatch)
+    secrets = SecretStore()
+
+    async def run():
+        auth = mcp_oauth.build_auth("supabase", "https://mcp.supabase.com/mcp", secrets)
+        registration = OAuthClientInformationFull.model_validate(
+            {
+                "client_id": "dcr-1",
+                "client_secret": "s3cret",
+                "redirect_uris": ["http://127.0.0.1:8765/mcp/oauth/callback"],
+            }
+        )
+        # Exactly the SDK's Step 4 ordering: assign it live, then hand us the same object.
+        auth.context.client_info = registration
+        await auth.context.storage.set_client_info(registration)
+        data, _headers = auth.context.prepare_token_auth(
+            {"grant_type": "authorization_code", "code": "c0de", "client_id": "dcr-1"}
+        )
+        return registration, data
+
+    registration, data = asyncio.run(run())
+    assert registration.token_endpoint_auth_method == "client_secret_post"
+    assert data["client_secret"] == "s3cret"
+
+
 # -- callback plumbing -----------------------------------------------------------
 
 
