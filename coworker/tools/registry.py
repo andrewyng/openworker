@@ -25,6 +25,7 @@ class ToolSpec:
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, ToolSpec] = {}
+        self._aliases: dict[str, str] = {}
 
     def register(
         self,
@@ -36,6 +37,14 @@ class ToolRegistry:
         name = getattr(func, "__name__", None)
         if not name:
             raise ValueError("Tool function must have a __name__.")
+        aliases = getattr(func, "__coworker_aliases__", ())
+        if name in self._aliases and self._aliases[name] != name:
+            raise ValueError(f"Tool name already registered as an alias: {name}")
+        for alias in aliases:
+            if (alias in self._tools and alias != name) or (
+                alias in self._aliases and self._aliases[alias] != name
+            ):
+                raise ValueError(f"Tool alias already registered: {alias}")
         meta = metadata or getattr(func, "__aisuite_tool_metadata__", None)
         # Allow an explicit schema override (param or a `__coworker_schema__` attribute)
         # for tools whose signature can't be auto-converted to a valid JSON schema.
@@ -44,6 +53,9 @@ class ToolRegistry:
         )
         spec = ToolSpec(name=name, schema=resolved_schema, func=func, metadata=meta)
         self._tools[name] = spec
+        # Re-registration replaces the callable and its aliases together.
+        self._aliases = {a: n for a, n in self._aliases.items() if n != name}
+        self._aliases.update({alias: name for alias in aliases if alias != name})
         return spec
 
     def register_all(self, funcs: list[Callable[..., Any]]) -> None:
@@ -54,13 +66,13 @@ class ToolRegistry:
         return list(self._tools)
 
     def get(self, name: str) -> Optional[ToolSpec]:
-        return self._tools.get(name)
+        return self._tools.get(self._aliases.get(name, name))
 
     def schemas(self) -> list[dict[str, Any]]:
         return [spec.schema for spec in self._tools.values()]
 
     def execute(self, name: str, arguments: Optional[dict[str, Any]] = None) -> Any:
-        spec = self._tools.get(name)
+        spec = self.get(name)
         if spec is None:
             raise KeyError(f"Tool not registered: {name}")
         return spec.func(**(arguments or {}))
