@@ -244,6 +244,79 @@ def test_background_task_kill(executor):
     assert res["status"] == "exited"
 
 
+DELAYED_ECHO = (
+    "Start-Sleep -Seconds 1; Write-Output later_line" if _WIN else "sleep 1; echo later_line"
+)
+
+
+def test_background_wait_returns_as_soon_as_the_task_exits(executor):
+    reg = ToolRegistry()
+    reg.register_all(shell_tools(executor))
+    started = reg.execute("run_shell", {"command": QUICK_ECHO, "run_in_background": True})
+    t0 = time.monotonic()
+    res = reg.execute("shell_task_output", {"task_id": started["task_id"], "wait_seconds": 10})
+    elapsed = time.monotonic() - t0
+    # Asked for up to 10 s; got the exit (and its last line) well before that.
+    assert res["status"] == "exited" and res["exit_code"] == 0, res
+    assert "quick_done" in res["output"], res
+    assert elapsed < 5, elapsed
+    assert res["waited_seconds"] <= 5
+
+
+def test_background_wait_returns_when_new_output_arrives(executor):
+    reg = ToolRegistry()
+    reg.register_all(shell_tools(executor))
+    started = reg.execute("run_shell", {"command": DELAYED_ECHO, "run_in_background": True})
+    t0 = time.monotonic()
+    res = reg.execute("shell_task_output", {"task_id": started["task_id"], "wait_seconds": 10})
+    elapsed = time.monotonic() - t0
+    # Nothing is printed for ~1 s; the wait ends on the first line, not at 10 s.
+    assert "later_line" in res["output"], res
+    assert elapsed < 8, elapsed
+
+
+def test_background_wait_gives_up_at_the_deadline_while_still_running(executor):
+    reg = ToolRegistry()
+    reg.register_all(shell_tools(executor))
+    started = reg.execute("run_shell", {"command": ECHO_THEN_SLEEP, "run_in_background": True})
+    _poll_output(reg, started["task_id"])  # consume the initial "started" line
+    t0 = time.monotonic()
+    res = reg.execute("shell_task_output", {"task_id": started["task_id"], "wait_seconds": 1})
+    elapsed = time.monotonic() - t0
+    assert res["status"] == "running" and res["output"] == "", res
+    assert 0.8 <= elapsed < 4, elapsed
+    assert 0.8 <= res["waited_seconds"] <= 4
+    reg.execute("shell_task_kill", {"task_id": started["task_id"]})
+
+
+def test_background_read_without_wait_is_unchanged(executor):
+    reg = ToolRegistry()
+    reg.register_all(shell_tools(executor))
+    started = reg.execute("run_shell", {"command": ECHO_THEN_SLEEP, "run_in_background": True})
+    _poll_output(reg, started["task_id"])
+    for args in ({"task_id": started["task_id"]}, {"task_id": started["task_id"], "wait_seconds": 0},
+                 {"task_id": started["task_id"], "wait_seconds": -3}):
+        t0 = time.monotonic()
+        res = reg.execute("shell_task_output", args)
+        assert res["status"] == "running" and time.monotonic() - t0 < 0.5, (args, res)
+        assert res["waited_seconds"] == 0.0
+    reg.execute("shell_task_kill", {"task_id": started["task_id"]})
+
+
+def test_wait_is_capped_at_the_shell_maximum(executor):
+    from coworker.tools.shell import _TASK_OUTPUT_SCHEMA, _MAX_TIMEOUT
+
+    desc = _TASK_OUTPUT_SCHEMA["function"]["parameters"]["properties"]["wait_seconds"]["description"]
+    assert f"max {int(_MAX_TIMEOUT)}" in desc
+    # The wrapper clamps before the executor sees it: a huge wait on an exited task is instant.
+    reg = ToolRegistry()
+    reg.register_all(shell_tools(executor))
+    started = reg.execute("run_shell", {"command": QUICK_ECHO, "run_in_background": True})
+    t0 = time.monotonic()
+    res = reg.execute("shell_task_output", {"task_id": started["task_id"], "wait_seconds": 10 ** 6})
+    assert res["status"] == "exited" and time.monotonic() - t0 < 5
+
+
 def test_background_unknown_task_errors(executor):
     reg = ToolRegistry()
     reg.register_all(shell_tools(executor))

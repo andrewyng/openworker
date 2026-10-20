@@ -89,15 +89,20 @@ class RunnerExecutor(Executor):
     def run_background(self, command: str) -> dict[str, Any]:
         return self._simple("task.start", {"command": command, "cwd": self.cwd})
 
-    def background_output(self, task_id: str) -> dict[str, Any]:
-        return self._simple("task.output", {"task_id": task_id})
+    def background_output(self, task_id: str, wait_seconds: float = 0) -> dict[str, Any]:
+        wait = max(0.0, float(wait_seconds or 0))
+        # The runner does the waiting; this side only has to outlast it on the pipe.
+        return self._simple(
+            "task.output", {"task_id": task_id, "wait_seconds": wait},
+            timeout=max(30.0, wait + _GRACE_SECONDS),
+        )
 
     def background_kill(self, task_id: str) -> dict[str, Any]:
         return self._simple("task.kill", {"task_id": task_id})
 
-    def _simple(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    def _simple(self, method: str, params: dict[str, Any], timeout: float = 30) -> dict[str, Any]:
         try:
-            result = self._client.call(method, {"shell": self.shell, **params}, timeout=30)
+            result = self._client.call(method, {"shell": self.shell, **params}, timeout=timeout)
         except P.RunnerError as exc:
             return {"error": exc.message}
         result.pop("seq", None)
