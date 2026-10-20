@@ -8,6 +8,7 @@ import {
   getJournalCases,
   getRoots,
   readArtifact,
+  replayPlan,
   revealArtifact,
   type ArtifactContent,
   type ArtifactInfo,
@@ -94,6 +95,7 @@ interface Props {
   onOpenWorkers?: (filter: WorkerFilter) => void;
   teamSummary?: TeamSummary | null;
   teamMachine?: string;
+  onOpenSession?: (id: string, ws?: string, ag?: string) => void;
   // Bumped when a [.](board:) chip in the transcript is clicked — expands the Board section.
   openBoardKey?: number;
 }
@@ -132,6 +134,7 @@ export function RightRail({
   onOpenWorkers,
   teamSummary,
   teamMachine,
+  onOpenSession,
   openBoardKey = 0,
 }: Props) {
   const { t } = useTranslation();
@@ -276,6 +279,7 @@ export function RightRail({
           content={content}
           onReload={reloadSelected}
           onBack={() => setSelected(null)}
+          onOpenSession={onOpenSession}
           onOpenEntry={(path) =>
             setSelected({
               path,
@@ -543,6 +547,7 @@ function ArtifactViewer({
   onReload,
   onBack,
   onOpenEntry,
+  onOpenSession,
 }: {
   sessionId: string;
   artifact: ArtifactInfo;
@@ -551,9 +556,13 @@ function ArtifactViewer({
   onBack: () => void;
   // Folder listings: open a child entry in the viewer (files and subfolders alike).
   onOpenEntry?: (path: string) => void;
+  onOpenSession?: (id: string, ws?: string, ag?: string) => void;
 }) {
   const { t } = useTranslation();
   const [reloadKey, setReloadKey] = useState(0);
+  const [replaying, setReplaying] = useState(false);
+  const [replayError, setReplayError] = useState<string | null>(null);
+  useEffect(() => setReplayError(null), [artifact.path, sessionId]);
   // UX-038: the ambiguous icon cluster collapsed into ONE labeled ⋯ menu; the
   // breadcrumb parent is the back action and ✕ closes. Copy CONTENTS is the
   // primary copy — the path copy (a 2026-07-12 tester fix) lives under it, labeled.
@@ -572,7 +581,26 @@ function ArtifactViewer({
   const isApp = content?.kind === "sheet" || content?.kind === "pdf" || content?.kind === "office";
   // Text-bearing kinds can copy their contents; images/PDFs/sheets have nothing textual to copy.
   const copyableText = typeof content?.content === "string" && !content?.error;
+  const planId = /^plans\/([^/]+)\.md$/.exec(artifact.path)?.[1];
+  const isPlan = artifact.path === "plan.md" || !!planId;
   const crumbRoot = artifact.origin === "files" ? t("rail.crumb_files") : t("rail.artifacts_title");
+
+  const handleReplay = async () => {
+    if (replaying) return;
+    setReplayError(null);
+    setReplaying(true);
+    try {
+      const res = await replayPlan(sessionId, planId);
+      if (onOpenSession && res.session_id) {
+        onOpenSession(res.session_id, res.workspace, res.agent);
+      }
+    } catch (err) {
+      setReplayError(err instanceof Error ? err.message : "Failed to replay plan");
+    } finally {
+      setReplaying(false);
+    }
+  };
+
   const item = (
     testid: string,
     icon: Parameters<typeof Icon>[0]["name"],
@@ -611,6 +639,18 @@ function ArtifactViewer({
           <div className="artifact-path">{artifact.path}</div>
         </div>
         <div className="rail-actions">
+          {isPlan && (
+            <button
+              className="artifact-icon-btn"
+              data-testid="artifact-rerun-plan"
+              onClick={handleReplay}
+              disabled={replaying}
+              aria-label={t("rail.plan_rerun")}
+              title={replaying ? t("rail.plan_replaying") : t("rail.plan_rerun")}
+            >
+              <Icon name="play" size={16} />
+            </button>
+          )}
           {isHtml && (
             <button
               className="artifact-icon-btn"
@@ -636,6 +676,13 @@ function ArtifactViewer({
             </button>
             {menuOpen && (
               <div className="artifact-menu" data-testid="artifact-menu">
+                {isPlan &&
+                  item(
+                    "artifact-menu-rerun-plan",
+                    "play",
+                    replaying ? t("rail.plan_replaying") : t("rail.plan_rerun"),
+                    handleReplay,
+                  )}
                 {copyableText &&
                   item("artifact-copy-contents", "copy", t("rail.copy_contents"), () =>
                     navigator.clipboard?.writeText(content?.content || ""),
@@ -669,6 +716,7 @@ function ArtifactViewer({
           </button>
         </div>
       </div>
+      {replayError && <div className="rail-error" role="alert">{replayError}</div>}
       <div className="artifact-preview">
         {!content ? (
           <div className="rail-muted">{t("rail.loading")}</div>

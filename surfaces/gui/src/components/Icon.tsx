@@ -48,6 +48,7 @@ export type IconName =
   | "table"
   | "mic"
   | "stop"
+  | "play"
   | "warning"
   | "user"
   | "x";
@@ -406,6 +407,12 @@ export function Icon({
         <svg {...s}>
           <path d="M4.5 7.5h15M6 7.5v10.2c0 1 .8 1.8 1.8 1.8h8.4c1 0 1.8-.8 1.8-1.8V7.5M5.6 4.5h12.8c.6 0 1.1.5 1.1 1.1v1.9h-15V5.6c0-.6.5-1.1 1.1-1.1z" />
           <path d="M9.5 11.5h5" />
+        </svg>
+      );
+    case "play":
+      return (
+        <svg {...s}>
+          <polygon points="7 4 19 12 7 20 7 4" fill="currentColor" stroke="none" />
         </svg>
       );
     case "trash":

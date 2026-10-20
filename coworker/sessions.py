@@ -56,6 +56,8 @@ class SessionRecord:
     # user's standing rules for this session only; `worktree` is removed on archive
     # or delete (the clone stays). {} for every other session.
     spawn: dict[str, Any] = field(default_factory=dict)
+    # Durable approved plan artifact.
+    plan: dict[str, Any] = field(default_factory=dict)
 
 
 USAGE_FIELDS = ("input", "output", "cache_read", "cache_write")
