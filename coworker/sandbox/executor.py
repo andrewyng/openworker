@@ -44,6 +44,9 @@ class RunnerExecutor(Executor):
         self.cwd = str(cwd)  # the last folder the runner reported; a reopened shell starts here
         self.default_timeout = default_timeout
         self._on_output = on_output
+        # Whether this session started any background task, so listing them (polled by the
+        # scheduler) costs no runner call — and never starts the sandbox — when it has none.
+        self._started_background = False
 
     def _failed(self, command: str, message: str) -> dict[str, Any]:
         return {
@@ -87,7 +90,20 @@ class RunnerExecutor(Executor):
         return answer
 
     def run_background(self, command: str) -> dict[str, Any]:
-        return self._simple("task.start", {"command": command, "cwd": self.cwd})
+        result = self._simple("task.start", {"command": command, "cwd": self.cwd})
+        if result.get("task_id"):
+            self._started_background = True
+        return result
+
+    def background_tasks(self) -> list[dict[str, Any]]:
+        if not self._started_background:
+            return []
+        # A failed poll is not an empty shell: the scheduler must keep watching rather
+        # than announce that every task finished during a temporary disconnect.
+        tasks = self._client.call("task.list", {"shell": self.shell}, timeout=30).get("tasks")
+        if not isinstance(tasks, list):
+            raise ValueError("the runner returned no background task list")
+        return tasks
 
     def background_output(self, task_id: str) -> dict[str, Any]:
         return self._simple("task.output", {"task_id": task_id})
