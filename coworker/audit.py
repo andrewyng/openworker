@@ -89,6 +89,10 @@ class AuditStore:
             # this call ran in — "" for local/desktop or automated sessions.
             ("actor", "TEXT DEFAULT ''"),
             ("approved_by", "TEXT DEFAULT ''"),
+            # Which Auto-Approve reviewer produced a reviewer_verdict / reviewer_shadow row
+            # (OPE-224): "session", "openai-decisions" or "jev". Lets shadow results be
+            # summarised per reviewer instead of mixing them.
+            ("reviewer", "TEXT DEFAULT ''"),
         ):
             try:
                 self._conn.execute(
@@ -133,8 +137,8 @@ class AuditStore:
             self._conn.execute(
                 """
                 INSERT INTO audit_events
-                    (session_id, agent, workspace, connector, tool, stage, status, approval, args, result_preview, reason, resource, call_id, tokens_in, tokens_out, cache_read, cache_write, actor, approved_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (session_id, agent, workspace, connector, tool, stage, status, approval, args, result_preview, reason, resource, call_id, tokens_in, tokens_out, cache_read, cache_write, actor, approved_by, reviewer)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.get("session_id") or "",
@@ -156,6 +160,7 @@ class AuditStore:
                     int(event.get("cache_write") or 0),
                     str(event.get("actor") or ""),
                     str(event.get("approved_by") or ""),
+                    str(event.get("reviewer") or ""),
                 ),
             )
             self._conn.commit()
@@ -202,6 +207,52 @@ class AuditStore:
             return out
 
         return {"live": _bucket("reviewer_verdict"), "shadow": _bucket("reviewer_shadow")}
+
+    def shadow_rows(self, reviewer: str, *, days: int = 30) -> list[dict[str, Any]]:
+        """Shadow verdicts of one reviewer over the last `days`, each joined to the human's
+        own decision on the same tool call (OPE-224). `decision` is "approved", "denied" or
+        "" when the card was never answered by a person (unattended auto-refusals and
+        superseded calls are not a person's decision)."""
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT s.timestamp, s.session_id, s.tool, s.args, s.status AS verdict,
+                       s.reason, s.call_id,
+                       COALESCE((
+                           SELECT d.status FROM audit_events d
+                           WHERE d.call_id = s.call_id AND s.call_id != ''
+                             AND d.stage = 'approval_resolved'
+                             AND d.status IN ('approved', 'denied')
+                             AND COALESCE(d.approval, '') != 'auto_refused'
+                           ORDER BY d.id DESC LIMIT 1
+                       ), '') AS decision
+                FROM audit_events s
+                WHERE s.stage = 'reviewer_shadow' AND s.reviewer = ?
+                  AND s.timestamp >= datetime('now', ?)
+                ORDER BY s.id
+                """,
+                (reviewer, f"-{int(days)} days"),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def shadow_summary(self, reviewer: str, *, days: int = 30) -> dict[str, Any]:
+        """Counts for the Settings line. `matched` counts calls where the reviewer would
+        have decided (run or stop) the same way the person did; an "ask" verdict would have
+        left the call to the person anyway, so it is not counted either way."""
+        rows = self.shadow_rows(reviewer, days=days)
+        run = sum(r["verdict"] == "allow" for r in rows)
+        stopped = sum(r["verdict"] == "deny" for r in rows)
+        decided = [r for r in rows if r["verdict"] in ("allow", "deny") and r["decision"]]
+        matched = sum(
+            (r["verdict"] == "allow" and r["decision"] == "approved")
+            or (r["verdict"] == "deny" and r["decision"] == "denied")
+            for r in decided
+        )
+        return {
+            "reviewer": reviewer, "days": days, "checks": len(rows),
+            "run": run, "asked": len(rows) - run - stopped, "stopped": stopped,
+            "decided": len(decided), "matched": matched,
+        }
 
     def list(
         self,

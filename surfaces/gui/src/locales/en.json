@@ -730,7 +730,8 @@
       "blocked_now": "The sandbox blocked this site a moment ago.",
       "blocked_minutes_one": "The sandbox blocked this site {{count}} minute ago.",
       "blocked_minutes_other": "The sandbox blocked this site {{count}} minutes ago."
-    }
+    },
+    "escalation_reviewer_asks": "Auto-approve wants you to decide this one."
   },
   "search": {
     "placeholder": "Search chats",
@@ -2405,9 +2406,31 @@
     "auto_approve": {
       "title": "Auto-approve (experimental)",
       "enable": "Enable Auto-approve mode",
-      "enable_desc": "Adds an <em>Auto-approve</em> option to the mode picker. In that mode, your session model reviews each action that would normally need approval and clears the routine ones; anything doubtful still asks you. It can never allow something the rules block. One extra model call per check, billed to your usage.",
-      "shadow_title": "Shadow evaluation <faint>(for measuring)</faint>",
-      "shadow_desc": "On any mode, the reviewer records what it <em>would</em> have decided next to your own choice — without changing anything. Lets you see how it would behave before trusting it. Also costs one model call per approval."
+      "enable_desc": "Adds an <em>Auto-approve</em> option to the mode picker. In that mode, the reviewer you choose below checks each action that would normally need approval and clears the routine ones; anything doubtful still asks you. It can never allow something the rules block. One extra model call per check, billed to your usage.",
+      "shadow_title": "Shadow evaluation",
+      "shadow_desc": "On any mode, the reviewer records what it <em>would</em> have decided next to your own choice — without changing anything. Lets you see how it would behave before trusting it. Also costs one model call per approval.",
+      "reviewer_title": "Reviewer",
+      "reviewer_session": "Session’s own model (default)",
+      "reviewer_session_desc": "The model running the session reviews each action and says why when it asks you.",
+      "reviewer_decisions": "OpenAI Decisions",
+      "reviewer_decisions_desc": "A fast decision model from OpenAI. Uses your OpenAI API key.",
+      "reviewer_jev": "TypeSafe Jev",
+      "reviewer_jev_desc": "A fast decision model from TypeSafe. Needs a TypeSafe API key.",
+      "reviewer_no_reasons": "Decisions and Jev aren’t chat models, so the approval card won’t explain why it asks.",
+      "reviewer_key_set": "API key added.",
+      "reviewer_key_save": "Save key",
+      "reviewer_key_placeholder_decisions": "OpenAI API key",
+      "reviewer_key_placeholder_jev": "TypeSafe API key",
+      "reviewer_key_failed": "Couldn’t save the key.",
+      "shadow_summary_title": "Shadow results · last {{days}} days, all sessions, {{reviewer}}",
+      "shadow_summary_matched": "Matched your own decision {{matched}} of {{decided}} times.",
+      "shadow_summary_empty": "Nothing recorded yet. Keep working as usual; each approval card you answer is recorded.",
+      "shadow_export": "Export full results",
+      "shadow_export_saved": "Saved at {{time}} to {{path}}",
+      "shadow_export_failed": "Couldn’t export the results.",
+      "shadow_summary_counts_one": "{{count}} check: would have run {{run}} · asked you {{asked}} · stopped {{stopped}}",
+      "shadow_summary_counts_other": "{{count}} checks: would have run {{run}} · asked you {{asked}} · stopped {{stopped}}",
+      "shadow_exporting": "Exporting…"
     },
     "sandbox": {
       "title": "Sandbox",

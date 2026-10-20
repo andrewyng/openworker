@@ -1198,6 +1198,10 @@ export interface ModelSettings {
   // hides the Auto-Approve mode entry unless auto_approve is explicitly true.
   auto_approve?: boolean;
   auto_approve_shadow?: boolean;
+  // Which reviewer Auto-Approve uses (OPE-224), and whether each decision-model reviewer
+  // has a key. Absent on older backends, meaning the session model.
+  auto_approve_reviewer?: ReviewerChoice;
+  auto_approve_reviewer_keys?: Partial<Record<"openai-decisions" | "jev", boolean>>;
   // Curated-matrix display names ({full id → "GLM-5.2 · via Together"}); custom models absent.
   model_labels?: Record<string, string>;
   // Per-model settings the user saved (model_config.json), keyed by model id.
@@ -1303,6 +1307,56 @@ export async function setAutoApproveShadow(on: boolean): Promise<AutoApproveResu
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ auto_approve_shadow: on }),
+  });
+  return res.json();
+}
+
+export type ReviewerChoice = "session" | "openai-decisions" | "jev";
+
+/** Choose which reviewer Auto-Approve uses (OPE-224); open sessions switch at once. */
+export async function setAutoApproveReviewer(
+  choice: ReviewerChoice,
+): Promise<{ ok: boolean; auto_approve_reviewer?: ReviewerChoice; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/auto-approve-reviewer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ auto_approve_reviewer: choice }),
+  });
+  return res.json();
+}
+
+export type ShadowSummary = {
+  reviewer: ReviewerChoice;
+  days: number;
+  checks: number;
+  run: number;
+  asked: number;
+  stopped: number;
+  decided: number;
+  matched: number;
+};
+
+/** Shadow results of the chosen reviewer, last 30 days (OPE-224). */
+export async function getShadowSummary(): Promise<ShadowSummary> {
+  const res = await fetch(`${httpBase()}/v1/settings/auto-approve-shadow-summary`);
+  return res.json();
+}
+
+/** Write every shadow check of the chosen reviewer to a CSV; returns where it was saved. */
+export async function exportShadowResults(): Promise<{ ok: boolean; path?: string; rows?: number; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/auto-approve-shadow-export`, { method: "POST" });
+  return res.json();
+}
+
+/** Save the API key a decision-model reviewer needs. The key is never sent back. */
+export async function setAutoApproveReviewerKey(
+  reviewer: "openai-decisions" | "jev",
+  apiKey: string,
+): Promise<{ ok: boolean; auto_approve_reviewer_keys?: Record<string, boolean>; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/settings/auto-approve-reviewer-key`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reviewer, api_key: apiKey }),
   });
   return res.json();
 }

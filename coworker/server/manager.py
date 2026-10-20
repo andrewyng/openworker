@@ -960,6 +960,7 @@ class SessionManager:
             # the next session build without a config.toml edit.
             auto_approve=self.auto_approve(),
             auto_approve_shadow=self.auto_approve_shadow(),
+            auto_approve_reviewer=self.auto_approve_reviewer(),
         )
         engine.delegated_approval = lambda args: self.worker_review_context(session_id, args)
         engine.reviewer_context = lambda: self.approval_context(session_id)
@@ -1239,7 +1240,8 @@ class SessionManager:
         Does not resolve parked prompts or reset the per-turn denial guard.
         """
         live, shadow = self.auto_approve(), self.auto_approve_shadow()
-        key = (live, shadow, engine.permissions.mode)
+        choice = self.auto_approve_reviewer()
+        key = (live, shadow, engine.permissions.mode, choice)
         if engine.reviewer_settings_key != key:
             engine.reviewer_settings_epoch += 1
             engine.reviewer_settings_key = key
@@ -1248,12 +1250,13 @@ class SessionManager:
         engine.reviewer_shadow = shadow
         if not live and not shadow:
             engine.reviewer = None
-        elif engine.reviewer is None:
-            from ..reviewer import Reviewer
-            engine.reviewer = Reviewer(
-                provider=engine.provider, model=engine.model,
+        elif engine.reviewer is None or getattr(engine, "reviewer_choice", "session") != choice:
+            from ..decision_reviewer import make_auto_reviewer
+            engine.reviewer = make_auto_reviewer(
+                choice, provider=engine.provider, model=engine.model,
                 known_world=(engine.session_facts.world.render() if engine.session_facts else "") + "\nRUNTIME FACTS (availability, not access grants)\n" + json.dumps(getattr(engine, "runtime_facts", {})),
             )
+            engine.reviewer_choice = choice
 
     def sync_cached_reviewers(self) -> None:
         for sid, engine in list(self._engines.items()):
@@ -4776,6 +4779,9 @@ class SessionManager:
             # Settings toggles and gate the composer's Auto-Approve mode entry.
             "auto_approve": self.auto_approve(),
             "auto_approve_shadow": self.auto_approve_shadow(),
+            "auto_approve_reviewer": self.auto_approve_reviewer(),
+            # Whether each decision-model reviewer has a key (env or saved), never the key.
+            "auto_approve_reviewer_keys": self.reviewer_key_status(),
             "scratch_base": self._prefs.get("scratch_base")
             or self.DEFAULT_SCRATCH_BASE,
             # Real on-disk secrets location, so the UI shows the OS-native path instead of a
@@ -4880,6 +4886,86 @@ class SessionManager:
         if "auto_approve_shadow" in self._prefs:
             return bool(self._prefs["auto_approve_shadow"])
         return bool(load_config().auto_approve_shadow)
+
+    def auto_approve_reviewer(self) -> str:
+        """Which reviewer Auto-Approve uses (OPE-224). User-global: prefs, else config.toml."""
+        from ..config import load_config
+        from ..decision_reviewer import normalize_reviewer_choice
+
+        if "auto_approve_reviewer" in self._prefs:
+            return normalize_reviewer_choice(self._prefs["auto_approve_reviewer"])
+        return normalize_reviewer_choice(getattr(load_config(), "auto_approve_reviewer", "session"))
+
+    def set_auto_approve_reviewer(self, choice: Any) -> dict[str, Any]:
+        from ..decision_reviewer import REVIEWER_CHOICES
+
+        value = str(choice or "").strip().lower()
+        if value not in REVIEWER_CHOICES:
+            return {"ok": False, "error": f"unknown reviewer {choice!r}; one of {list(REVIEWER_CHOICES)}"}
+        self._prefs["auto_approve_reviewer"] = value
+        self._save_prefs()
+        self.sync_cached_reviewers()
+        return {"ok": True, "auto_approve_reviewer": self.auto_approve_reviewer()}
+
+    def reviewer_key_status(self) -> dict[str, bool]:
+        from ..decision_reviewer import BACKENDS
+
+        return {name: bool(cls.resolve_api_key(self.secrets)) for name, cls in BACKENDS.items()}
+
+    def set_reviewer_key(self, backend: Any, api_key: Any) -> dict[str, Any]:
+        """Save the API key a decision-model reviewer needs (OPE-224). Decisions uses the
+        OpenAI key, so it is saved as the OpenAI provider's key. TypeSafe is not a chat
+        provider, so its key gets its own `provider:typesafe` profile, which the adapter
+        reads, and it never appears in the model picker."""
+        key = str(api_key or "").strip()
+        if not key:
+            return {"ok": False, "error": "api key required"}
+        if backend == "openai-decisions":
+            result = self.set_provider("openai", {"api_key": key})
+        elif backend == "jev":
+            from datetime import date
+
+            profile = dict(self.secrets.get("provider:typesafe") or {})
+            profile.update({"api_key": key, "key_set_at": date.today().isoformat()})
+            self.secrets.put("provider:typesafe", profile)
+            result = {"ok": True}
+        else:
+            return {"ok": False, "error": f"unknown reviewer {backend!r}"}
+        if result.get("ok"):
+            self.sync_cached_reviewers()
+            result = {"ok": True, "auto_approve_reviewer_keys": self.reviewer_key_status()}
+        return result
+
+    def shadow_summary(self) -> dict[str, Any]:
+        """Shadow results of the currently chosen reviewer, last 30 days (OPE-224)."""
+        return self.audit_store.shadow_summary(self.auto_approve_reviewer())
+
+    def export_shadow_csv(self) -> dict[str, Any]:
+        """Write every shadow check of the chosen reviewer (last 30 days) to a readable CSV
+        and return its path, for a person to investigate in a spreadsheet (OPE-224)."""
+        import csv
+        from datetime import date
+
+        reviewer = self.auto_approve_reviewer()
+        rows = self.audit_store.shadow_rows(reviewer)
+        out_dir = self._data_base / "shadow-results"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"shadow-{reviewer}-{date.today().isoformat()}.csv"
+        would = {"allow": "run", "unsure": "ask you", "deny": "stop"}
+        yours = {"approved": "allowed", "denied": "denied", "": "not answered"}
+        with path.open("w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.writer(fh)
+            w.writerow(["time (UTC)", "session", "tool", "action", "reviewer",
+                        "reviewer would", "reviewer reason", "your decision", "matched"])
+            for r in rows:
+                v, d = r["verdict"], r["decision"]
+                if v == "unsure" or not d:
+                    matched = ""
+                else:
+                    matched = "yes" if (v, d) in (("allow", "approved"), ("deny", "denied")) else "no"
+                w.writerow([r["timestamp"], r["session_id"], r["tool"], r["args"], reviewer,
+                            would.get(v, v), r["reason"], yours.get(d, d), matched])
+        return {"ok": True, "path": str(path), "rows": len(rows)}
 
     def set_auto_approve(self, on: Any) -> dict[str, Any]:
         self._prefs["auto_approve"] = bool(on)
