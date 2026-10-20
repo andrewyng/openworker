@@ -15,6 +15,9 @@ from coworker.risk import RiskClass, classify, is_consequential
 
 EXTERNAL_META = SimpleNamespace(requires_approval=True, category="connector")
 PLAIN_META = SimpleNamespace(requires_approval=False)
+MEMORY_META = SimpleNamespace(
+    requires_approval=False, category="memory", risk_level="low", capabilities=["remember"]
+)
 
 
 # -- classify -------------------------------------------------------------------
@@ -92,6 +95,24 @@ def test_external_asks_in_interactive_allows_in_auto(tmp_path):
     auto = PermissionEngine(workspace_root=tmp_path, mode=Mode.BYPASS_APPROVALS)
     d = auto.evaluate("send_message", {"text": "hi"}, EXTERNAL_META)
     assert d.allowed
+
+
+@pytest.mark.parametrize("mode", list(Mode))
+@pytest.mark.parametrize(
+    "name,args",
+    [
+        ("remember", {"content": "a durable fact", "scope": "global"}),
+        ("memory_update", {"memory_id": 1, "content": "corrected fact"}),
+        ("memory_forget", {"memory_id": 1}),
+    ],
+)
+def test_memory_mutations_are_human_only_in_every_mode(tmp_path, mode, name, args):
+    eng = PermissionEngine(workspace_root=tmp_path, mode=mode)
+    decision = eng.evaluate(name, args, MEMORY_META)
+    assert not decision.allowed
+    assert decision.needs_user
+    assert decision.human_only
+    assert "outlives the session" in decision.reason
 
 
 def test_write_local_path_scoped(tmp_path):
