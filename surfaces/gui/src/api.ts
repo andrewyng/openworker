@@ -1,4 +1,5 @@
 import i18n from "i18next";
+import { createSessionReader, SessionReadError } from "./sessionReads";
 import {
   approvalMessage,
   connectorResponseMessage,
@@ -38,8 +39,14 @@ const apiToken = (): string =>
 // needs no per-endpoint plumbing. HTTP carries it as a header; a browser WebSocket cannot
 // set headers, so there it is a query parameter (org ids are tenant labels, not secrets).
 let activeOrg = "";
+let sessionScopeGeneration = 0;
+export const getSessionScopeGeneration = () => sessionScopeGeneration;
+export const SESSION_SCOPE_CHANGED = "openworker:session-scope-changed";
 export function setActiveOrg(orgId: string): void {
+  if (orgId === activeOrg) return;
   activeOrg = orgId;
+  sessionScopeGeneration++;
+  window.dispatchEvent(new CustomEvent(SESSION_SCOPE_CHANGED));
 }
 export function getActiveOrg(): string {
   return activeOrg;
@@ -79,6 +86,9 @@ const fetch = (
     return res;
   });
 };
+
+const readSessionJson = createSessionReader(fetch);
+const sessionReadScope = () => JSON.stringify([activeOrg, apiToken(), sessionScopeGeneration]);
 
 // A Sec-WebSocket-Protocol entry must be an RFC 6455 token — no '@', '=', etc.
 // Desktop tokens (hex) and Auth0 JWTs (base64url + dots) qualify; anything else
@@ -266,18 +276,21 @@ export async function setWorkspaceTrusted(
 
 export async function getSessions(workspace?: string): Promise<SessionInfo[]> {
   const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
-  const res = await fetch(`${httpBase()}/v1/sessions${q}`);
-  return (await res.json()).sessions ?? [];
+  const data = await readSessionJson<{ sessions: SessionInfo[] }>(`${httpBase()}/v1/sessions${q}`, sessionReadScope());
+  if (!Array.isArray(data?.sessions)) throw new SessionReadError("Invalid session list");
+  return data.sessions;
 }
 
 /** Sessions of one machine's list, tagged and registered for machine-aware
  * routing. Works for joined and `cloud:` machines alike — machineApi is the
  * routing seam. */
-async function machineSessions(m: Machine): Promise<SessionInfo[]> {
+async function machineSessions(m: Machine, previous: SessionInfo[], failed: () => void): Promise<SessionInfo[]> {
+  const scope = sessionScopeGeneration;
   try {
-    const res = await fetch(`${machineApi(m.id)}/sessions`);
-    const data = await res.json();
-    const rows: SessionInfo[] = data.sessions ?? [];
+    const data = await readSessionJson<{ sessions: SessionInfo[]; live: boolean }>(`${machineApi(m.id)}/sessions`, sessionReadScope(), true);
+    if (!Array.isArray(data?.sessions)) throw new SessionReadError("Invalid remote session list");
+    const rows = data.sessions;
+    if (scope !== sessionScopeGeneration) throw new SessionReadError("Session scope changed");
     for (const s of rows) {
       s.machine = m.id;
       s.machine_name = m.name;
@@ -286,9 +299,14 @@ async function machineSessions(m: Machine): Promise<SessionInfo[]> {
     }
     return rows;
   } catch {
-    return [];
+    failed();
+    return previous.filter(s => s.machine === m.id).map(s => ({ ...s, machine_offline: true }));
   }
 }
+
+export type SessionListProgress =
+  | { type: "local"; sessions: SessionInfo[] }
+  | { type: "remote"; state: "loading" | "idle" | "error" };
 
 /** Local sessions + every machine's sessions — joined AND cloud (union v1.5)
  * — tagged with machine id/name and registered for machine-aware routing.
@@ -296,22 +314,42 @@ async function machineSessions(m: Machine): Promise<SessionInfo[]> {
  * stored snapshot while it's offline (`machine_offline` marks those rows) —
  * greyed, never vanished. A signed-out/expired cloud session only hides the
  * cloud rows, never the rest. */
-export async function getAllSessions(): Promise<SessionInfo[]> {
+export async function getAllSessions(
+  onProgress?: (progress: SessionListProgress) => void,
+  previous: SessionInfo[] = [],
+): Promise<SessionInfo[]> {
+  const scope = sessionScopeGeneration;
   const local = await getSessions();
+  if (scope !== sessionScopeGeneration) throw new SessionReadError("Session scope changed");
   for (const s of local) registerSessionMachine(s.session_id, null);
-  let remote: SessionInfo[] = [];
-  try {
-    const joined = getMachines()
-      .then(({ machines }) => machines)
-      .catch(() => [] as Machine[]);
-    const cloud = getCloudMachines()
-      .then((info) => (info.session === "ok" ? info.machines : []))
-      .catch(() => [] as Machine[]);
-    const machines = (await Promise.all([joined, cloud])).flat();
-    remote = (await Promise.all(machines.map(machineSessions))).flat();
-  } catch {
-    /* machines API unavailable — local list is still the truth for This Mac */
-  }
+  onProgress?.({ type: "local", sessions: local });
+  onProgress?.({ type: "remote", state: "loading" });
+  let hadError = false;
+  const failed = () => { hadError = true; };
+  const fallback = (cloud: boolean) => previous
+    .filter(s => !!s.machine && isCloudMachineId(s.machine) === cloud)
+    .map(s => ({ ...s, machine_offline: true }));
+  const loadRows = async (machines: Machine[]) => (await Promise.all(
+    machines.map(m => machineSessions(m, previous, failed)),
+  )).flat();
+  const joined = (async () => {
+    try {
+      const data = await readSessionJson<{ machines: Machine[] }>(`${httpBase()}/v1/machines`, sessionReadScope(), true);
+      if (!Array.isArray(data?.machines)) throw new SessionReadError("Invalid machine list");
+      return await loadRows(data.machines);
+    } catch { failed(); return fallback(false); }
+  })();
+  const cloud = (async () => {
+    if (isCloudMode()) return [];
+    const info = await getCloudMachines();
+    if (info.session === "unreachable") { failed(); return fallback(true); }
+    // Explicit sign-out/expiry removes that account's rows, unlike a transport failure.
+    if (info.session !== "ok") return [];
+    return loadRows(info.machines);
+  })();
+  const remote = (await Promise.all([joined, cloud])).flat();
+  if (scope !== sessionScopeGeneration) throw new SessionReadError("Session scope changed");
+  onProgress?.({ type: "remote", state: hadError ? "error" : "idle" });
   return [...local, ...remote];
 }
 
@@ -1357,6 +1395,7 @@ export async function setNavLayout(
 // waiting for the next window focus.
 export const CLOUD_CHANGED = "coworker:cloud-changed";
 export function announceCloudChanged() {
+  sessionScopeGeneration++;
   window.dispatchEvent(new CustomEvent(CLOUD_CHANGED));
 }
 
@@ -3469,24 +3508,24 @@ export interface CloudMachinesInfo {
  * the hosted service itself has no such route). Ids come back prefixed so
  * every existing consumer routes them through the proxy automatically. */
 export async function getCloudMachines(): Promise<CloudMachinesInfo> {
-  // Only an explicit session state from the proxy counts. A backend without
-  // the route (older sidecar, hosted service) answers something else — that
-  // is "no cloud attachment here", i.e. signed_out, never an error state.
+  // Only an explicit session state counts. A missing route is handled as a
+  // legacy backend below; malformed successful responses are not sign-outs.
   try {
-    const r = await fetch(`${httpBase()}/v1/cloud/machines`);
-    if (!r.ok) return { session: "signed_out", machines: [] };
-    const data = await r.json();
+    const data = await readSessionJson<CloudMachinesInfo>(`${httpBase()}/v1/cloud/machines`, sessionReadScope(), true);
     const session = ["ok", "signed_out", "expired", "unreachable"].includes(data.session)
       ? (data.session as CloudMachinesInfo["session"])
-      : "signed_out";
+      : "unreachable";
+    if (session === "ok" && !Array.isArray(data.machines)) return { session: "unreachable", machines: [] };
     const machines: Machine[] = (data.machines ?? []).map((m: Machine) => ({
       ...m,
       id: CLOUD_ID_PREFIX + m.id,
       origin: "cloud" as const,
     }));
     return { session, org: data.org, machines };
-  } catch {
-    return { session: "signed_out", machines: [] };
+  } catch (error) {
+    if (error instanceof SessionReadError && error.status === 404) return { session: "signed_out", machines: [] };
+    if (error instanceof SessionReadError && error.status === 401) return { session: "expired", machines: [] };
+    return { session: "unreachable", machines: [] };
   }
 }
 
