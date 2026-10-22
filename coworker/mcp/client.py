@@ -8,6 +8,12 @@ the same loop, which is safe.
 
 Tool execution from the (sync) ToolRegistry bridges back here via
 `run_coroutine_threadsafe` — see `coworker/mcp/tools.py`.
+
+A connection can die under a live session: a remote server restarts and forgets its
+session ids (streamable HTTP then answers 404, which the SDK surfaces as
+"Session terminated"), or the transport drops. The MCP spec has the client open a new
+session; `call` does that once and retries, but only on errors that prove the request
+never ran — a tool call is never repeated after it might have executed.
 """
 
 from __future__ import annotations
@@ -17,15 +23,30 @@ import tempfile
 from contextlib import AsyncExitStack
 from typing import Any, IO, Optional
 
+import anyio
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.shared.exceptions import McpError
 
 from .config import MCPServerDef
 
 
 _STDERR_TAIL_LINES = 20
 _STDERR_TAIL_CHARS = 1500
+
+# What the SDK's streamable-HTTP client reports when the server 404s a request
+# carrying our session id (mcp/client/streamable_http.py `_send_session_terminated_error`).
+_SESSION_TERMINATED = "Session terminated"
+
+
+def _session_lost(exc: BaseException) -> bool:
+    """True when `exc` proves the request never reached a live server session, so
+    reconnecting and sending it again cannot run the tool twice: the server rejected
+    our session id, or the write side of the transport was already closed."""
+    if isinstance(exc, McpError):
+        return exc.error.message == _SESSION_TERMINATED
+    return isinstance(exc, (anyio.ClosedResourceError, anyio.BrokenResourceError))
 
 
 def _read_tail(errfile: Optional[IO[str]]) -> Optional[str]:
@@ -44,10 +65,17 @@ def _read_tail(errfile: Optional[IO[str]]) -> Optional[str]:
 
 
 class _Conn:
-    def __init__(self, session: ClientSession, tools: list[Any]) -> None:
+    def __init__(
+        self,
+        session: ClientSession,
+        tools: list[Any],
+        server: Optional[MCPServerDef] = None,
+    ) -> None:
         self.session = session
         self.tools = tools  # list[mcp.types.Tool]
         self.shutdown = asyncio.Event()
+        # The definition this connection was opened from — what a reconnect reopens.
+        self.server = server
 
 
 class MCPManager:
@@ -58,6 +86,10 @@ class MCPManager:
         self._tasks: dict[str, asyncio.Task] = {}
         self._stderr_tails: dict[str, str] = {}
         self._lock = asyncio.Lock()
+        # Servers whose connection died on its own (not shut down on purpose), kept so
+        # the next tool call reopens them instead of failing "not connected" forever.
+        self._lost: dict[str, MCPServerDef] = {}
+        self._reopen_locks: dict[str, asyncio.Lock] = {}
         # SecretStore for OAuth servers' token persistence (mcp/oauth.py); lazy default
         # so library/CLI construction without secrets keeps working.
         self._secrets = secrets
@@ -80,6 +112,7 @@ class MCPManager:
             )
             conn = await ready  # propagates connection errors
             self._conns[server.name] = conn
+            self._lost.pop(server.name, None)
             return conn
 
     async def tools(self, server: MCPServerDef) -> list[Any]:
@@ -98,30 +131,41 @@ class MCPManager:
                 conn.tools = list(listed.tools)
                 return conn
             except Exception:
-                conn.shutdown.set()
-                task = self._tasks.pop(server.name, None)
-                if task is not None:
-                    try:
-                        await asyncio.wait_for(asyncio.shield(task), timeout=5)
-                    except Exception:
-                        task.cancel()
-                self._conns.pop(server.name, None)  # _serve pops too; belt and braces
+                await self._drop(server.name, conn)
         return await self.ensure(server, interactive=interactive)
 
     def last_stderr(self, name: str) -> Optional[str]:
         """Stderr tail from the most recent failed startup of `name`, if any."""
         return self._stderr_tails.get(name)
 
+    def forget(self, name: str) -> None:
+        """The user closed `name` on purpose (removed, signed out, disconnected): a
+        connection that died earlier must not be reopened by a later tool call.
+        A plain dict pop, so it is safe from the server's threadpool routes."""
+        self._lost.pop(name, None)
+
     async def call(
         self, name: str, tool: str, arguments: Optional[dict[str, Any]]
     ) -> Any:
         conn = self._conns.get(name)
         if conn is None:
-            raise RuntimeError(f"MCP server not connected: {name}")
-        result = await conn.session.call_tool(tool, arguments or {})
+            lost = self._lost.get(name)
+            if lost is None:
+                raise RuntimeError(f"MCP server not connected: {name}")
+            conn = await self._reopen(lost, None)
+            return _result_payload(await conn.session.call_tool(tool, arguments or {}))
+        try:
+            result = await conn.session.call_tool(tool, arguments or {})
+        except Exception as exc:
+            if conn.server is None or not _session_lost(exc):
+                raise
+            # One fresh session, one retry: a second failure surfaces as-is.
+            conn = await self._reopen(conn.server, conn)
+            result = await conn.session.call_tool(tool, arguments or {})
         return _result_payload(result)
 
     async def aclose(self) -> None:
+        self._lost.clear()
         for conn in self._conns.values():
             conn.shutdown.set()
         for task in list(self._tasks.values()):
@@ -132,11 +176,41 @@ class MCPManager:
         self._conns.clear()
         self._tasks.clear()
 
+    async def _reopen(self, server: MCPServerDef, dead: Optional[_Conn]) -> _Conn:
+        """Replace a dead connection with a fresh session (never an interactive
+        sign-in). Serialized per server, so calls that fail together on one dead
+        session share a single reconnect instead of each opening their own."""
+        lock = self._reopen_locks.setdefault(server.name, asyncio.Lock())
+        async with lock:
+            current = self._conns.get(server.name)
+            if current is not None and current is not dead:
+                return current  # another caller already reconnected
+            if dead is not None:
+                await self._drop(server.name, dead)
+            # Reconnectable until a fresh session is up (ensure clears it): if the
+            # server is still down, the next call tries again instead of failing
+            # "not connected" for good.
+            self._lost[server.name] = server
+            return await self.ensure(server)
+
+    async def _drop(self, name: str, conn: _Conn) -> None:
+        """Shut down `conn` and wait (briefly) for its task to close the transport."""
+        conn.shutdown.set()
+        task = self._tasks.pop(name, None)
+        if task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=5)
+            except Exception:
+                task.cancel()
+        if self._conns.get(name) is conn:  # _serve pops too; belt and braces
+            self._conns.pop(name, None)
+
     # -- per-server lifecycle (one task owns enter+exit) ------------------------
     async def _serve(
         self, server: MCPServerDef, ready: asyncio.Future, *, interactive: bool = False
     ) -> None:
         errfile = None
+        conn: Optional[_Conn] = None
         try:
             async with AsyncExitStack() as stack:
                 if server.transport == "http":
@@ -184,7 +258,7 @@ class MCPManager:
                 session = await stack.enter_async_context(ClientSession(read, write))
                 await session.initialize()
                 listed = await session.list_tools()
-                conn = _Conn(session, list(listed.tools))
+                conn = _Conn(session, list(listed.tools), server)
                 self._stderr_tails.pop(server.name, None)
                 if not ready.done():
                     ready.set_result(conn)
@@ -201,8 +275,16 @@ class MCPManager:
                     errfile.close()
                 except OSError:
                     pass
-            self._conns.pop(server.name, None)
-            self._tasks.pop(server.name, None)
+            if conn is not None and not conn.shutdown.is_set():
+                # Died under us (transport error, server gone) rather than closed on
+                # purpose: the next tool call reopens it instead of failing for good.
+                self._lost[server.name] = server
+            # Pop only our own entries: a late-cancelled task must not evict the
+            # connection a reconnect has already put in its place.
+            if conn is not None and self._conns.get(server.name) is conn:
+                self._conns.pop(server.name, None)
+            if self._tasks.get(server.name) is asyncio.current_task():
+                self._tasks.pop(server.name, None)
 
 
 def _result_payload(result: Any) -> Any:
