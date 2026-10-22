@@ -1,8 +1,8 @@
 """Web search providers — a keyless default + pluggable third-party services.
 
-`duckduckgo` works with no API key (our "starting version of our own"). `tavily` and `brave`
-give better results but need a key (configured via the SecretStore / env). All providers
-return a uniform `list[SearchResult]`; the heavy client libs are lazy-imported.
+`duckduckgo` works with no API key (our "starting version of our own"). `tavily`, `brave` and
+`serper` give better results but need a key (configured via the SecretStore / env). All
+providers return a uniform `list[SearchResult]`; the heavy client libs are lazy-imported.
 """
 
 from __future__ import annotations
@@ -108,10 +108,45 @@ class BraveProvider(WebSearchProvider):
         ]
 
 
+class SerperProvider(WebSearchProvider):
+    """Google search results via serper.dev — $0.001/search, 2500 free searches.
+
+    POSTs to the Serper API and maps organic results into uniform SearchResult
+    items. Requires a key from https://serper.dev (free tier includes 2500 searches
+    with no time limit).
+    """
+
+    name = "serper"
+    requires_key = True
+
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
+
+    def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        import httpx
+
+        resp = httpx.post(
+            "https://google.serper.dev/search",
+            headers={"X-API-KEY": self.api_key},
+            json={"q": query, "num": max_results},
+            timeout=_TIMEOUT,
+        )
+        data = resp.json()
+        return [
+            SearchResult(
+                title=r.get("title", ""),
+                url=r.get("link", ""),
+                snippet=r.get("snippet", ""),
+            )
+            for r in data.get("organic", [])
+        ]
+
+
 _PROVIDERS = {
     "duckduckgo": DuckDuckGoProvider,
     "tavily": TavilyProvider,
     "brave": BraveProvider,
+    "serper": SerperProvider,
 }
 
 
