@@ -24,7 +24,8 @@ import type { WorkerFilter } from "../teamRoster";
 
 import { Icon } from "./Icon";
 import type { SessionUsage } from "../types";
-import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
+import { OPEN_ARTIFACT_EVENT } from "./Markdown";
+import { MarkdownFileView } from "./MarkdownFileView";
 
 type Panel = "progress" | "artifacts" | "board" | "journal" | "team" | "files";
 
@@ -554,6 +555,10 @@ function ArtifactViewer({
 }) {
   const { t } = useTranslation();
   const [reloadKey, setReloadKey] = useState(0);
+  const [mdMode, setMdMode] = useState<"preview" | "source">("preview");
+  useEffect(() => {
+    setMdMode("preview");
+  }, [artifact.path]);
   // UX-038: the ambiguous icon cluster collapsed into ONE labeled ⋯ menu; the
   // breadcrumb parent is the back action and ✕ closes. Copy CONTENTS is the
   // primary copy — the path copy (a 2026-07-12 tester fix) lives under it, labeled.
@@ -568,6 +573,7 @@ function ArtifactViewer({
     return () => window.removeEventListener("mousedown", close);
   }, [menuOpen]);
   const isHtml = content?.kind === "html" && !content.error;
+  const isMarkdown = content?.kind === "markdown" && !content.error;
   // Best viewed in a real app: spreadsheets, PDFs, and Office docs (pptx/docx can't preview inline)
   const isApp = content?.kind === "sheet" || content?.kind === "pdf" || content?.kind === "office";
   // Text-bearing kinds can copy their contents; images/PDFs/sheets have nothing textual to copy.
@@ -611,6 +617,30 @@ function ArtifactViewer({
           <div className="artifact-path">{artifact.path}</div>
         </div>
         <div className="rail-actions">
+          {isMarkdown && (
+            <div className="md-mode" role="tablist" aria-label={t("rail.markdown_view")}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mdMode === "preview"}
+                className={mdMode === "preview" ? "md-mode-btn active" : "md-mode-btn"}
+                data-testid="markdown-preview-tab"
+                onClick={() => setMdMode("preview")}
+              >
+                {t("rail.preview")}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mdMode === "source"}
+                className={mdMode === "source" ? "md-mode-btn active" : "md-mode-btn"}
+                data-testid="markdown-source-tab"
+                onClick={() => setMdMode("source")}
+              >
+                {t("rail.source")}
+              </button>
+            </div>
+          )}
           {isHtml && (
             <button
               className="artifact-icon-btn"
@@ -683,9 +713,7 @@ function ArtifactViewer({
             srcDoc={sandboxHtml(content.content || "")}
           />
         ) : content.kind === "markdown" ? (
-          <div className="artifact-md">
-            <Markdown text={content.content || ""} />
-          </div>
+          <MarkdownFileView text={content.content || ""} mode={mdMode} />
         ) : content.kind === "image" ? (
           <img className="artifact-image" src={content.data_url} />
         ) : content.kind === "pdf" ? (
